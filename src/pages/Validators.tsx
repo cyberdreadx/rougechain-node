@@ -1,14 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { Link } from "react-router-dom";
-import { 
-  Shield, ArrowLeft, Info, Zap, TrendingUp, Lock
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Shield, Info, Zap, TrendingUp, Lock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { MainNav } from "@/components/MainNav";
 import { ValidatorDashboard } from "@/components/validators/ValidatorDashboard";
 import { STAKE_REQUIREMENTS, TIER_BENEFITS, formatStake, ValidatorTier } from "@/lib/pqc-validators";
-import xrgeLogo from "@/assets/xrge-logo.webp";
 
 export default function Validators() {
   // In a real app, these would come from wallet context
@@ -18,45 +14,13 @@ export default function Validators() {
 
   return (
     <div className="min-h-screen bg-background text-foreground relative overflow-hidden">
+      <MainNav />
+      
       {/* Background Effects */}
       <div className="fixed inset-0 pointer-events-none">
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl" />
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
         <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
       </div>
-
-      {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Link to="/">
-                <Button variant="ghost" size="icon">
-                  <ArrowLeft className="w-5 h-5" />
-                </Button>
-              </Link>
-              <div className="flex items-center gap-3">
-                <img src={xrgeLogo} alt="XRGE" className="w-10 h-10" />
-                <div>
-                  <h1 className="text-xl font-bold">RougeChain Validators</h1>
-                  <p className="text-xs text-muted-foreground">Proof of Stake • Quantum-Secured</p>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Link to="/wallet">
-                <Button variant="outline" size="sm">
-                  Open Wallet
-                </Button>
-              </Link>
-              <Link to="/blockchain">
-                <Button variant="outline" size="sm">
-                  View Blockchain
-                </Button>
-              </Link>
-            </div>
-          </div>
-        </div>
-      </header>
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8 relative z-10">

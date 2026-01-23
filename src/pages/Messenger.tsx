@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Shield, Plus, Lock, Key, Settings, Download } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Shield, Plus, Lock, Key, Settings, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { MainNav } from "@/components/MainNav";
 import WalletSetup from "@/components/messenger/WalletSetup";
 import ConversationList from "@/components/messenger/ConversationList";
 import ChatView from "@/components/messenger/ChatView";
@@ -19,7 +19,6 @@ import {
   toMessengerWallet, 
   fromMessengerWallet 
 } from "@/lib/unified-wallet";
-import xrgeLogo from "@/assets/xrge-logo.webp";
 
 const Messenger = () => {
   const [wallet, setWallet] = useState<UnifiedWallet | null>(null);
@@ -117,31 +116,20 @@ const Messenger = () => {
 
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">
+      <MainNav />
+      
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
       <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
 
-      {/* Header */}
-      <motion.header
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="sticky top-0 z-50 flex items-center justify-between px-4 py-4 border-b border-border bg-card/50 backdrop-blur-xl"
-      >
-        <div className="flex items-center gap-3">
-          <Link to="/">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="w-5 h-5" />
-            </Button>
-          </Link>
-          <div className="flex items-center gap-2">
-            <img src={xrgeLogo} alt="XRGE" className="w-8 h-8 rounded-full" />
-            <div>
-              <h1 className="text-lg font-bold text-foreground">Rouge Messenger</h1>
-              <p className="text-xs text-muted-foreground">End-to-end quantum-safe</p>
-            </div>
-          </div>
+      {/* Action Bar */}
+      <div className="sticky top-[60px] z-40 flex items-center justify-between px-4 py-2 bg-background/80 backdrop-blur-sm border-b border-border">
+        <div className="flex items-center gap-2">
+          <Key className="w-4 h-4 text-primary" />
+          <span className="text-sm text-muted-foreground truncate max-w-[150px]">
+            {wallet.displayName}
+          </span>
         </div>
-
         <div className="flex items-center gap-2">
           <Button
             variant="ghost"
@@ -167,14 +155,8 @@ const Messenger = () => {
             <Plus className="w-4 h-4 mr-1" />
             New Chat
           </Button>
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-secondary border border-border">
-            <Key className="w-4 h-4 text-primary" />
-            <span className="text-xs text-muted-foreground truncate max-w-[100px]">
-              {wallet.displayName}
-            </span>
-          </div>
         </div>
-      </motion.header>
+      </div>
 
       {/* Main content */}
       <main className="relative z-10 h-[calc(100vh-73px)] flex">

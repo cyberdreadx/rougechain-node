@@ -1,8 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Link } from "react-router-dom";
 import { 
-  ArrowLeft, 
   Loader2, 
   RefreshCw, 
   Unlink,
@@ -14,6 +12,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { MainNav } from "@/components/MainNav";
 import WalletCard from "@/components/wallet/WalletCard";
 import AssetList from "@/components/wallet/AssetList";
 import TransactionHistory from "@/components/wallet/TransactionHistory";
@@ -43,7 +42,6 @@ import {
   saveUnifiedWallet, 
   clearUnifiedWallet 
 } from "@/lib/unified-wallet";
-import xrgeLogo from "@/assets/xrge-logo.webp";
 
 const Wallet = () => {
   const [wallet, setWallet] = useState<UnifiedWallet | null>(null);
@@ -217,20 +215,13 @@ const Wallet = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border">
-        <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link to="/">
-              <Button variant="ghost" size="icon" className="h-9 w-9">
-                <ArrowLeft className="w-5 h-5" />
-              </Button>
-            </Link>
-            <img src={xrgeLogo} alt="XRGE" className="w-9 h-9 rounded-full" />
-            <div>
-              <h1 className="text-lg font-bold text-foreground">XRGE Wallet</h1>
-              <p className="text-xs text-muted-foreground">RougeChain</p>
-            </div>
+      <MainNav />
+      
+      {/* Action Bar */}
+      <div className="sticky top-[60px] z-40 bg-background/80 backdrop-blur-sm border-b border-border">
+        <div className="max-w-lg mx-auto px-4 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <NetworkBadge isConnected={!!wallet} />
           </div>
           
           <div className="flex items-center gap-2">
@@ -256,10 +247,9 @@ const Wallet = () => {
                 </Button>
               </>
             )}
-            <NetworkBadge isConnected={!!wallet} />
           </div>
         </div>
-      </header>
+      </div>
 
       <main className="max-w-lg mx-auto px-4 py-6 space-y-6">
         {!wallet ? (
