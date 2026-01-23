@@ -10,6 +10,7 @@ import PQCInfo from "@/components/blockchain/PQCInfo";
 import { QuantumThreatPanel } from "@/components/blockchain/QuantumThreatPanel";
 import { TamperDemo } from "@/components/blockchain/TamperDemo";
 import GlobalNetworkGlobe from "@/components/blockchain/GlobalNetworkGlobe";
+import NetworkStatsBar from "@/components/blockchain/NetworkStatsBar";
 import type { Block, Keypair, CryptoInfo } from "@/lib/pqc-blockchain";
 import { loadChain, resetChain, validateChain } from "@/lib/pqc-blockchain";
 import xrgeLogo from "@/assets/xrge-logo.webp";
@@ -158,9 +159,19 @@ const Blockchain = () => {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-6"
+          className="mb-4"
         >
           <GlobalNetworkGlobe className="h-[500px]" />
+        </motion.div>
+
+        {/* Network Stats Bar */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="mb-6"
+        >
+          <NetworkStatsBar />
         </motion.div>
 
         {isLoading ? (
