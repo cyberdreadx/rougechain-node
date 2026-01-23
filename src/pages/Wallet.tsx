@@ -166,11 +166,11 @@ const Wallet = () => {
         wallet.signingPrivateKey,
         wallet.signingPublicKey,
         wallet.signingPublicKey,
-        100,
+        10000,
         "XRGE"
       );
       
-      toast.success("🎉 Claimed 100 XRGE from faucet!");
+      toast.success("🎉 Claimed 10,000 XRGE from faucet!");
       await refreshWalletData();
     } catch (error) {
       console.error("Faucet error:", error);
