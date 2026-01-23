@@ -40,6 +40,18 @@ export interface Conversation {
 }
 
 const WALLET_STORAGE_KEY = "pqc_messenger_wallet";
+const DEMO_BOT_STORAGE_KEY = "pqc_demo_bot_wallet";
+
+// Demo bot responses
+const DEMO_BOT_RESPONSES = [
+  "🔐 Your message was encrypted with ML-KEM-768 and I decrypted it successfully!",
+  "✅ Signature verified using ML-DSA-65. I know it's really you!",
+  "🛡️ This message traveled encrypted - even quantum computers can't break it!",
+  "🔑 I used my private key to decrypt your message. Only I could read it!",
+  "📝 Message received and verified. The future of secure communication is here!",
+  "🌐 End-to-end encrypted with post-quantum cryptography. We're quantum-safe!",
+  "💬 Echo: I received your quantum-encrypted message loud and clear!",
+];
 
 // Store wallet in localStorage (private keys stay local)
 export function saveWalletLocally(wallet: WalletWithPrivateKeys): void {
@@ -94,6 +106,63 @@ export async function getWallets(): Promise<Wallet[]> {
 
   if (error) throw new Error(error.message);
   return data.wallets || [];
+}
+
+// Create or get demo bot wallet
+export async function getOrCreateDemoBot(): Promise<WalletWithPrivateKeys> {
+  // Check if we already have a demo bot stored
+  const stored = localStorage.getItem(DEMO_BOT_STORAGE_KEY);
+  if (stored) {
+    try {
+      return JSON.parse(stored);
+    } catch {
+      // Continue to create new one
+    }
+  }
+
+  // Create a new demo bot wallet
+  const { data, error } = await supabase.functions.invoke("pqc-crypto", {
+    body: { action: "create-wallet", payload: { displayName: "🤖 Quantum Bot" } },
+  });
+
+  if (error) throw new Error(error.message);
+  if (!data.success) throw new Error(data.error || "Failed to create demo bot");
+
+  const botWallet: WalletWithPrivateKeys = {
+    id: data.wallet.id,
+    displayName: data.wallet.displayName,
+    signingPublicKey: data.wallet.signingPublicKey,
+    encryptionPublicKey: data.wallet.encryptionPublicKey,
+    signingPrivateKey: data.privateKeys.signingPrivateKey,
+    encryptionPrivateKey: data.privateKeys.encryptionPrivateKey,
+  };
+
+  // Store the bot wallet locally so it can respond
+  localStorage.setItem(DEMO_BOT_STORAGE_KEY, JSON.stringify(botWallet));
+
+  return botWallet;
+}
+
+// Load demo bot wallet
+export function loadDemoBotWallet(): WalletWithPrivateKeys | null {
+  const stored = localStorage.getItem(DEMO_BOT_STORAGE_KEY);
+  if (!stored) return null;
+  try {
+    return JSON.parse(stored);
+  } catch {
+    return null;
+  }
+}
+
+// Check if a wallet is the demo bot
+export function isDemoBot(walletId: string): boolean {
+  const botWallet = loadDemoBotWallet();
+  return botWallet?.id === walletId;
+}
+
+// Get a random demo bot response
+export function getDemoBotResponse(): string {
+  return DEMO_BOT_RESPONSES[Math.floor(Math.random() * DEMO_BOT_RESPONSES.length)];
 }
 
 // Create a 1:1 conversation
