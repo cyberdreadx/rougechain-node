@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key } from "lucide-react";
+import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Conversation, WalletWithPrivateKeys, Message, Wallet } from "@/lib/pqc-messenger";
 import { getMessages, sendMessage, isDemoBot, loadDemoBotWallet, getDemoBotResponse } from "@/lib/pqc-messenger";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,6 +14,227 @@ interface ChatViewProps {
   wallet: WalletWithPrivateKeys;
   onBack: () => void;
 }
+
+interface EncryptedPackage {
+  kemCipherText: string;
+  iv: string;
+  encryptedContent: string;
+}
+
+// Encryption details panel component
+const EncryptionDetailsPanel = ({
+  message,
+  onClose,
+}: {
+  message: Message;
+  onClose: () => void;
+}) => {
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  
+  let parsedPackage: EncryptedPackage | null = null;
+  try {
+    parsedPackage = JSON.parse(message.encryptedContent);
+  } catch {
+    // Invalid JSON
+  }
+
+  const copyToClipboard = (text: string, field: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  const formatHex = (hex: string, maxLength: number = 64) => {
+    if (hex.length <= maxLength) return hex;
+    return `${hex.slice(0, maxLength / 2)}...${hex.slice(-maxLength / 2)}`;
+  };
+
+  const CopyButton = ({ text, field }: { text: string; field: string }) => (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-6 w-6 shrink-0"
+      onClick={() => copyToClipboard(text, field)}
+    >
+      {copiedField === field ? (
+        <Check className="w-3 h-3 text-success" />
+      ) : (
+        <Copy className="w-3 h-3" />
+      )}
+    </Button>
+  );
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.9, y: 20 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.9, y: 20 }}
+        className="bg-card border border-border rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-border bg-muted/30">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+              <FileKey2 className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-foreground">Encryption Details</h3>
+              <p className="text-xs text-muted-foreground">ML-KEM-768 + AES-256-GCM</p>
+            </div>
+          </div>
+          <Button variant="ghost" size="icon" onClick={onClose}>
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
+
+        <ScrollArea className="max-h-[calc(80vh-80px)]">
+          <div className="p-4 space-y-4">
+            {/* Message info */}
+            <div className="p-3 rounded-lg bg-muted/30 border border-border">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs font-medium text-muted-foreground">Message ID</span>
+                <span className="text-xs font-mono text-foreground">{message.id}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground">Timestamp</span>
+                <span className="text-xs text-foreground">
+                  {new Date(message.createdAt).toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {parsedPackage ? (
+              <>
+                {/* KEM Ciphertext */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Key className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-medium text-foreground">KEM Ciphertext</span>
+                    <span className="text-xs text-muted-foreground">
+                      ({parsedPackage.kemCipherText.length / 2} bytes)
+                    </span>
+                    <CopyButton text={parsedPackage.kemCipherText} field="kem" />
+                  </div>
+                  <div className="p-3 rounded-lg bg-background border border-border overflow-hidden">
+                    <p className="text-xs font-mono text-muted-foreground break-all leading-relaxed">
+                      {formatHex(parsedPackage.kemCipherText, 128)}
+                    </p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    ML-KEM-768 encapsulated shared secret (FIPS 203)
+                  </p>
+                </div>
+
+                {/* IV */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Binary className="w-4 h-4 text-accent" />
+                    <span className="text-sm font-medium text-foreground">Initialization Vector</span>
+                    <span className="text-xs text-muted-foreground">
+                      ({parsedPackage.iv.length / 2} bytes)
+                    </span>
+                    <CopyButton text={parsedPackage.iv} field="iv" />
+                  </div>
+                  <div className="p-3 rounded-lg bg-background border border-border">
+                    <p className="text-xs font-mono text-foreground break-all">
+                      {parsedPackage.iv}
+                    </p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Random nonce for AES-256-GCM encryption
+                  </p>
+                </div>
+
+                {/* Encrypted Content */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-destructive" />
+                    <span className="text-sm font-medium text-foreground">Encrypted Content</span>
+                    <span className="text-xs text-muted-foreground">
+                      ({parsedPackage.encryptedContent.length / 2} bytes)
+                    </span>
+                    <CopyButton text={parsedPackage.encryptedContent} field="content" />
+                  </div>
+                  <div className="p-3 rounded-lg bg-background border border-border overflow-hidden">
+                    <p className="text-xs font-mono text-muted-foreground break-all leading-relaxed">
+                      {formatHex(parsedPackage.encryptedContent, 128)}
+                    </p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    AES-256-GCM ciphertext with authentication tag
+                  </p>
+                </div>
+              </>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-primary" />
+                  <span className="text-sm font-medium text-foreground">Raw Encrypted Package</span>
+                  <CopyButton text={message.encryptedContent} field="raw" />
+                </div>
+                <div className="p-3 rounded-lg bg-background border border-border overflow-hidden">
+                  <p className="text-xs font-mono text-muted-foreground break-all leading-relaxed">
+                    {formatHex(message.encryptedContent, 128)}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Signature */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Fingerprint className="w-4 h-4 text-success" />
+                <span className="text-sm font-medium text-foreground">Digital Signature</span>
+                <span className="text-xs text-muted-foreground">
+                  ({message.signature.length / 2} bytes)
+                </span>
+                {message.signatureValid ? (
+                  <span className="flex items-center gap-1 text-xs text-success">
+                    <CheckCircle2 className="w-3 h-3" /> Valid
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 text-xs text-destructive">
+                    <XCircle className="w-3 h-3" /> Invalid
+                  </span>
+                )}
+                <CopyButton text={message.signature} field="sig" />
+              </div>
+              <div className="p-3 rounded-lg bg-background border border-border overflow-hidden">
+                <p className="text-xs font-mono text-muted-foreground break-all leading-relaxed">
+                  {formatHex(message.signature, 128)}
+                </p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                ML-DSA-65 digital signature (FIPS 204) - proves sender authenticity
+              </p>
+            </div>
+
+            {/* Decrypted plaintext */}
+            {message.plaintext && !message.plaintext.startsWith("[") && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-success" />
+                  <span className="text-sm font-medium text-foreground">Decrypted Plaintext</span>
+                </div>
+                <div className="p-3 rounded-lg bg-success/10 border border-success/20">
+                  <p className="text-sm text-foreground">{message.plaintext}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      </motion.div>
+    </motion.div>
+  );
+};
 
 // Encryption animation overlay component
 const EncryptionAnimation = ({ 
@@ -192,6 +414,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
   const [isSending, setIsSending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [encryptingMessage, setEncryptingMessage] = useState<string | null>(null);
+  const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const recipient = conversation.participants?.find(p => p.id !== wallet.id);
@@ -365,6 +588,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
                 message={msg}
                 isOwn={msg.senderWalletId === wallet.id}
                 index={index}
+                onTap={() => setSelectedMessage(msg)}
               />
             ))}
             {encryptingMessage && (
@@ -417,12 +641,32 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
           </Button>
         </div>
       </div>
+
+      {/* Encryption details panel */}
+      <AnimatePresence>
+        {selectedMessage && (
+          <EncryptionDetailsPanel
+            message={selectedMessage}
+            onClose={() => setSelectedMessage(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 };
 
 // Message bubble component
-const MessageBubble = ({ message, isOwn, index }: { message: Message; isOwn: boolean; index: number }) => {
+const MessageBubble = ({ 
+  message, 
+  isOwn, 
+  index,
+  onTap 
+}: { 
+  message: Message; 
+  isOwn: boolean; 
+  index: number;
+  onTap: () => void;
+}) => {
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -430,11 +674,14 @@ const MessageBubble = ({ message, isOwn, index }: { message: Message; isOwn: boo
       transition={{ delay: index * 0.02 }}
       className={`flex ${isOwn ? "justify-end" : "justify-start"}`}
     >
-      <div
-        className={`max-w-[80%] rounded-2xl px-4 py-2 ${
+      <motion.div
+        whileHover={{ scale: 1.01 }}
+        whileTap={{ scale: 0.98 }}
+        onClick={onTap}
+        className={`max-w-[80%] rounded-2xl px-4 py-2 cursor-pointer transition-shadow hover:shadow-lg ${
           isOwn
-            ? "bg-primary text-primary-foreground rounded-br-md"
-            : "bg-muted text-foreground rounded-bl-md"
+            ? "bg-primary text-primary-foreground rounded-br-md hover:shadow-primary/20"
+            : "bg-muted text-foreground rounded-bl-md hover:shadow-accent/20"
         }`}
       >
         {!isOwn && (
@@ -456,7 +703,8 @@ const MessageBubble = ({ message, isOwn, index }: { message: Message; isOwn: boo
             <XCircle className="w-3 h-3 text-destructive" />
           )}
         </div>
-      </div>
+        <p className="text-[10px] opacity-40 mt-0.5 text-right">Tap for details</p>
+      </motion.div>
     </motion.div>
   );
 };
