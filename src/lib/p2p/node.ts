@@ -7,15 +7,18 @@ import type {
   NetworkStats, 
   SyncState,
   P2PMessage,
-  NodeRole
+  NodeRole,
+  ProposedBlock
 } from './types';
 import { PeerConnectionManager } from './peer-connection';
 import { ConsensusProtocol } from './consensus';
 import * as storage from './storage';
+import * as chainSync from './chain-sync';
 import { supabase } from '@/integrations/supabase/client';
 
 const HEARTBEAT_INTERVAL = 5000; // 5 seconds
 const SYNC_INTERVAL = 10000; // 10 seconds
+const SUPABASE_SYNC_INTERVAL = 30000; // 30 seconds
 const NODE_VERSION = '1.0.0';
 
 type NodeEventHandler = (event: string, data: unknown) => void;
@@ -28,6 +31,8 @@ export class P2PNode {
   private eventHandlers: Set<NodeEventHandler> = new Set();
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private syncInterval: ReturnType<typeof setInterval> | null = null;
+  private supabaseSyncInterval: ReturnType<typeof setInterval> | null = null;
+  private blockSubscription: (() => void) | null = null;
   private isRunning = false;
   private syncState: SyncState = {
     localHeight: -1,
@@ -140,19 +145,81 @@ export class P2PNode {
     console.log('[Node] Starting P2P node...');
     this.isRunning = true;
 
+    // Initial sync from Supabase (get the canonical chain state)
+    await this.syncFromSupabase();
+
     // Connect to signaling server (using Supabase Realtime)
     await this.connectSignaling();
+
+    // Subscribe to real-time block updates from Supabase
+    this.subscribeToBlockchain();
 
     // Start heartbeat
     this.startHeartbeat();
 
-    // Start sync
+    // Start P2P sync
     this.startSync();
+
+    // Start periodic Supabase sync
+    this.startSupabaseSync();
 
     // Announce presence
     await this.announcePresence();
 
     this.emit('node:started', this.identity);
+  }
+
+  private async syncFromSupabase(): Promise<void> {
+    console.log('[Node] Initial sync from Supabase...');
+    this.syncState.isSyncing = true;
+    this.emit('sync:started', this.syncState);
+
+    try {
+      const result = await chainSync.syncFromSupabase();
+      console.log(`[Node] Supabase sync: ${result.added} blocks added`);
+      
+      this.syncState.localHeight = await storage.getChainHeight();
+      this.syncState.lastSyncAt = Date.now();
+      await storage.setMetadata('lastSyncTime', Date.now());
+      
+      this.emit('sync:supabase', { added: result.added, conflicts: result.conflicts });
+    } catch (error) {
+      console.error('[Node] Supabase sync error:', error);
+    }
+
+    this.syncState.isSyncing = false;
+    this.emit('sync:completed', this.syncState);
+  }
+
+  private subscribeToBlockchain(): void {
+    console.log('[Node] Subscribing to blockchain updates...');
+    
+    this.blockSubscription = chainSync.subscribeToBlockUpdates((block) => {
+      console.log(`[Node] New block from Supabase: ${block.index}`);
+      this.syncState.localHeight = block.index;
+      this.emit('block:received', block);
+      
+      // Broadcast to P2P peers
+      if (this.peerManager && this.identity) {
+        const message: P2PMessage = {
+          type: 'BLOCK_FINALIZED',
+          from: this.identity.peerId,
+          timestamp: Date.now(),
+          signature: '',
+          payload: { block },
+        };
+        this.peerManager.broadcast(message);
+      }
+    });
+  }
+
+  private startSupabaseSync(): void {
+    this.supabaseSyncInterval = setInterval(async () => {
+      const status = await chainSync.getSyncStatus();
+      if (!status.isSynced) {
+        await this.syncFromSupabase();
+      }
+    }, SUPABASE_SYNC_INTERVAL);
   }
 
   private async connectSignaling(): Promise<void> {
@@ -394,14 +461,24 @@ export class P2PNode {
   }
 
   private async handleSyncResponse(message: P2PMessage) {
-    const { blocks } = message.payload as { blocks: unknown[] };
+    const { blocks } = message.payload as { blocks: ProposedBlock[] };
 
     console.log(`[Node] Received ${blocks.length} blocks from ${message.from}`);
 
     for (const block of blocks) {
-      // Verify and store each block
-      // In production, verify signatures and chain linkage
-      await storage.saveBlock(block as Parameters<typeof storage.saveBlock>[0]);
+      // Verify the block's PQC signature
+      const isValid = await chainSync.verifyBlock(block);
+      if (!isValid) {
+        console.warn(`[Node] Invalid block signature at index ${block.index}`);
+        continue;
+      }
+
+      // Store locally
+      await storage.saveBlock(block);
+      
+      // Push to Supabase so all nodes see it
+      await chainSync.pushToSupabase(block);
+      
       this.syncState.syncProgress = (blocks.indexOf(block) + 1) / blocks.length;
       this.emit('sync:progress', this.syncState);
     }
@@ -425,6 +502,16 @@ export class P2PNode {
     if (this.syncInterval) {
       clearInterval(this.syncInterval);
       this.syncInterval = null;
+    }
+
+    if (this.supabaseSyncInterval) {
+      clearInterval(this.supabaseSyncInterval);
+      this.supabaseSyncInterval = null;
+    }
+
+    if (this.blockSubscription) {
+      this.blockSubscription();
+      this.blockSubscription = null;
     }
 
     if (this.signalingChannel) {

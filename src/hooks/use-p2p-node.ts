@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getNode, type NodeIdentity, type PeerInfo, type NetworkStats, type SyncState, type NodeRole } from '@/lib/p2p';
+import { getNode, getSyncStatus, type NodeIdentity, type PeerInfo, type NetworkStats, type SyncState, type NodeRole, type ChainSyncStatus } from '@/lib/p2p';
 
 export function useP2PNode() {
   const [identity, setIdentity] = useState<NodeIdentity | null>(null);
@@ -8,6 +8,7 @@ export function useP2PNode() {
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [networkStats, setNetworkStats] = useState<NetworkStats | null>(null);
   const [syncState, setSyncState] = useState<SyncState | null>(null);
+  const [chainSyncStatus, setChainSyncStatus] = useState<ChainSyncStatus | null>(null);
   const [consensusPhase, setConsensusPhase] = useState<string>('idle');
   const [logs, setLogs] = useState<Array<{ time: string; message: string; type: string }>>([]);
 
@@ -65,12 +66,21 @@ export function useP2PNode() {
         case 'sync:started':
           addLog('Chain sync started', 'info');
           break;
+        case 'sync:supabase':
+          const syncResult = data as { added: number; conflicts: number };
+          if (syncResult.added > 0) {
+            addLog(`Synced ${syncResult.added} blocks from network`, 'success');
+          }
+          break;
         case 'sync:progress':
           setSyncState(data as SyncState);
           break;
         case 'sync:completed':
           setSyncState(data as SyncState);
           addLog('Chain sync completed', 'success');
+          break;
+        case 'block:received':
+          addLog(`New block received from network`, 'info');
           break;
       }
     });
@@ -95,6 +105,10 @@ export function useP2PNode() {
       setPeers(node.getConnectedPeers());
       setNetworkStats(await node.getNetworkStats());
       setSyncState(node.getSyncState());
+      
+      // Get chain sync status
+      const status = await getSyncStatus();
+      setChainSyncStatus(status);
     }, 2000);
 
     return () => clearInterval(interval);
@@ -163,6 +177,7 @@ export function useP2PNode() {
     peers,
     networkStats,
     syncState,
+    chainSyncStatus,
     consensusPhase,
     logs,
     initializeNode,
