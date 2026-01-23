@@ -40,7 +40,7 @@ const ReceiveDialog = ({ publicKey, onClose }: ReceiveDialogProps) => {
         className="w-full max-w-md bg-card rounded-2xl border border-border p-6 shadow-xl"
       >
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold text-foreground">Receive QBIT</h2>
+          <h2 className="text-xl font-bold text-foreground">Receive XRGE</h2>
           <Button variant="ghost" size="icon" onClick={onClose}>
             <X className="w-5 h-5" />
           </Button>
@@ -78,7 +78,7 @@ const ReceiveDialog = ({ publicKey, onClose }: ReceiveDialogProps) => {
           </Button>
 
           <p className="text-xs text-center text-muted-foreground">
-            Share this address to receive QBIT tokens
+            Share this address to receive XRGE tokens
           </p>
         </div>
       </motion.div>

@@ -24,7 +24,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
 
-  const qbitBalance = balances.find(b => b.symbol === "QBIT")?.balance || 0;
+  const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
 
   const handleSend = async () => {
     setError("");
@@ -40,7 +40,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
       return;
     }
 
-    if (amountNum > qbitBalance) {
+    if (amountNum > xrgeBalance) {
       setError("Insufficient balance");
       return;
     }
@@ -52,11 +52,11 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
         wallet.publicKey,
         recipient.trim(),
         amountNum,
-        "QBIT",
+        "XRGE",
         memo || undefined
       );
       
-      toast.success(`Sent ${amountNum} QBIT successfully!`);
+      toast.success(`Sent ${amountNum} XRGE successfully!`);
       onSuccess();
     } catch (err) {
       console.error("Send error:", err);
@@ -82,7 +82,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
         className="w-full max-w-md bg-card rounded-2xl border border-border p-6 shadow-xl"
       >
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold text-foreground">Send QBIT</h2>
+          <h2 className="text-xl font-bold text-foreground">Send XRGE</h2>
           <Button variant="ghost" size="icon" onClick={onClose}>
             <X className="w-5 h-5" />
           </Button>
@@ -112,11 +112,11 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
                 className="pr-16"
               />
               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                QBIT
+                XRGE
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Available: {qbitBalance.toLocaleString()} QBIT
+              Available: {xrgeBalance.toLocaleString()} XRGE
             </p>
           </div>
 
@@ -151,7 +151,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
             ) : (
               <>
                 <Send className="w-4 h-4 mr-2" />
-                Send QBIT
+                Send XRGE
               </>
             )}
           </Button>

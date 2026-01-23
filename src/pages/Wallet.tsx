@@ -174,10 +174,10 @@ const Wallet = () => {
         wallet.publicKey,
         wallet.publicKey,
         100,
-        "QBIT"
+        "XRGE"
       );
       
-      toast.success("🎉 Claimed 100 QBIT from faucet!");
+      toast.success("🎉 Claimed 100 XRGE from faucet!");
       await refreshWalletData();
     } catch (error) {
       console.error("Faucet error:", error);
