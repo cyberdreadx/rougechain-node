@@ -415,7 +415,9 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
   const [isLoading, setIsLoading] = useState(true);
   const [encryptingMessage, setEncryptingMessage] = useState<string | null>(null);
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+  const [newMessageIds, setNewMessageIds] = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const seenMessageIdsRef = useRef<Set<string>>(new Set());
 
   const recipient = conversation.participants?.find(p => p.id !== wallet.id);
   const isRecipientBot = recipient ? isDemoBot(recipient.id) : false;
@@ -427,7 +429,10 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
 
   // Load messages
   useEffect(() => {
-    loadMessages();
+    // Reset seen messages on conversation change
+    seenMessageIdsRef.current = new Set();
+    setNewMessageIds(new Set());
+    loadMessages(true);
     
     // Subscribe to realtime updates
     const channel = supabase
@@ -442,7 +447,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
         },
         () => {
           // Reload messages when new one arrives
-          loadMessages();
+          loadMessages(false);
         }
       )
       .subscribe();
@@ -457,13 +462,30 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const loadMessages = async () => {
+  const loadMessages = async (isInitialLoad = false) => {
     try {
       const msgs = await getMessages(
         conversation.id,
         wallet,
         conversation.participants || []
       );
+      
+      // Track new messages that arrived after initial load (not from current user)
+      if (!isInitialLoad && msgs.length > 0) {
+        const newIds = new Set<string>();
+        msgs.forEach(msg => {
+          if (!seenMessageIdsRef.current.has(msg.id) && msg.senderWalletId !== wallet.id) {
+            newIds.add(msg.id);
+          }
+        });
+        if (newIds.size > 0) {
+          setNewMessageIds(prev => new Set([...prev, ...newIds]));
+        }
+      }
+      
+      // Update seen messages
+      msgs.forEach(msg => seenMessageIdsRef.current.add(msg.id));
+      
       setMessages(msgs);
     } catch (error) {
       console.error("Failed to load messages:", error);
@@ -589,6 +611,14 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
                 isOwn={msg.senderWalletId === wallet.id}
                 index={index}
                 onTap={() => setSelectedMessage(msg)}
+                isNew={newMessageIds.has(msg.id)}
+                onAnimationComplete={() => {
+                  setNewMessageIds(prev => {
+                    const next = new Set(prev);
+                    next.delete(msg.id);
+                    return next;
+                  });
+                }}
               />
             ))}
             {encryptingMessage && (
@@ -655,18 +685,211 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
   );
 };
 
+// Decryption animation component for incoming messages
+const DecryptionAnimation = ({
+  message,
+  onComplete,
+}: {
+  message: Message;
+  onComplete: () => void;
+}) => {
+  const [phase, setPhase] = useState<"ciphertext" | "decrypting" | "verifying" | "done">("ciphertext");
+  const [displayText, setDisplayText] = useState("");
+  const plaintext = message.plaintext || "";
+
+  // Generate pseudo-ciphertext from the actual encrypted content
+  const generateDisplayCiphertext = () => {
+    try {
+      const parsed = JSON.parse(message.encryptedContent);
+      return parsed.encryptedContent?.slice(0, 40) || message.encryptedContent.slice(0, 40);
+    } catch {
+      return message.encryptedContent.slice(0, 40);
+    }
+  };
+
+  useEffect(() => {
+    setDisplayText(generateDisplayCiphertext());
+    const timer = setTimeout(() => setPhase("decrypting"), 600);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (phase === "decrypting") {
+      let iterations = 0;
+      const maxIterations = 12;
+      const scrambleInterval = setInterval(() => {
+        const progress = iterations / maxIterations;
+        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+        
+        // Gradually reveal plaintext from left to right
+        const revealed = plaintext.slice(0, Math.floor(progress * plaintext.length));
+        const remaining = plaintext.length - revealed.length;
+        const scrambled = Array.from({ length: remaining }, () => 
+          chars[Math.floor(Math.random() * chars.length)]
+        ).join("");
+        
+        setDisplayText(revealed + scrambled);
+        iterations++;
+
+        if (iterations >= maxIterations) {
+          clearInterval(scrambleInterval);
+          setDisplayText(plaintext);
+          setPhase("verifying");
+        }
+      }, 50);
+
+      return () => clearInterval(scrambleInterval);
+    }
+  }, [phase, plaintext]);
+
+  useEffect(() => {
+    if (phase === "verifying") {
+      const timer = setTimeout(() => setPhase("done"), 400);
+      return () => clearTimeout(timer);
+    }
+    if (phase === "done") {
+      const timer = setTimeout(onComplete, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [phase, onComplete]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex justify-start"
+    >
+      <div className="relative max-w-[80%]">
+        {/* Decryption status indicator */}
+        <motion.div
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="absolute -top-6 left-0 flex items-center gap-1.5 text-xs text-accent"
+        >
+          <motion.div
+            animate={{ rotate: phase === "decrypting" ? -360 : 0 }}
+            transition={{ duration: 0.5, repeat: phase === "decrypting" ? Infinity : 0, ease: "linear" }}
+          >
+            <Key className="w-3 h-3" />
+          </motion.div>
+          <span className="font-mono">
+            {phase === "ciphertext" && "Receiving encrypted..."}
+            {phase === "decrypting" && "Decrypting with ML-KEM-768..."}
+            {phase === "verifying" && "Verifying ML-DSA-65 signature..."}
+            {phase === "done" && "✓ Verified"}
+          </span>
+        </motion.div>
+
+        {/* Message bubble with animation */}
+        <motion.div
+          className={`rounded-2xl px-4 py-2 rounded-bl-md overflow-hidden ${
+            phase === "done"
+              ? "bg-muted text-foreground"
+              : "bg-gradient-to-r from-accent/80 via-primary/80 to-accent/80 bg-[length:200%_100%] text-foreground"
+          }`}
+          animate={{
+            backgroundPosition: phase !== "done" ? ["0% 0%", "100% 0%", "0% 0%"] : "0% 0%",
+          }}
+          transition={{
+            duration: 1,
+            repeat: phase === "ciphertext" || phase === "decrypting" ? Infinity : 0,
+            ease: "linear"
+          }}
+        >
+          <p className="text-xs font-medium mb-1 opacity-70">
+            {message.senderDisplayName}
+          </p>
+          <motion.p
+            className={`text-sm ${phase !== "done" ? "font-mono" : ""} break-all`}
+            animate={{
+              opacity: phase === "verifying" ? [1, 0.7, 1] : 1
+            }}
+            transition={{ duration: 0.2, repeat: phase === "verifying" ? Infinity : 0 }}
+          >
+            {displayText}
+          </motion.p>
+
+          {/* Lock icon animation */}
+          <motion.div className="flex items-center gap-1 mt-1 text-xs">
+            <span className="opacity-60">
+              {new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+            <motion.div
+              animate={{
+                scale: phase === "verifying" || phase === "done" ? [1, 1.3, 1] : 1,
+              }}
+              transition={{ duration: 0.3 }}
+            >
+              {phase === "done" ? (
+                <CheckCircle2 className="w-3 h-3 text-success" />
+              ) : (
+                <Lock className="w-3 h-3 text-primary" />
+              )}
+            </motion.div>
+          </motion.div>
+        </motion.div>
+
+        {/* Particle effects during decryption */}
+        {(phase === "ciphertext" || phase === "decrypting") && (
+          <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
+            {[...Array(6)].map((_, i) => (
+              <motion.div
+                key={i}
+                className="absolute w-1 h-1 bg-accent rounded-full"
+                initial={{
+                  x: `${Math.random() * 100}%`,
+                  y: `${Math.random() * 100}%`,
+                  opacity: 0
+                }}
+                animate={{
+                  x: "50%",
+                  y: "50%",
+                  opacity: [0, 1, 0],
+                }}
+                transition={{
+                  duration: 0.6,
+                  delay: i * 0.1,
+                  repeat: Infinity,
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+};
+
 // Message bubble component
 const MessageBubble = ({ 
   message, 
   isOwn, 
   index,
-  onTap 
+  onTap,
+  isNew = false,
+  onAnimationComplete,
 }: { 
   message: Message; 
   isOwn: boolean; 
   index: number;
   onTap: () => void;
+  isNew?: boolean;
+  onAnimationComplete?: () => void;
 }) => {
+  const [showDecryptAnimation, setShowDecryptAnimation] = useState(isNew && !isOwn);
+
+  if (showDecryptAnimation && onAnimationComplete) {
+    return (
+      <DecryptionAnimation
+        message={message}
+        onComplete={() => {
+          setShowDecryptAnimation(false);
+          onAnimationComplete();
+        }}
+      />
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
