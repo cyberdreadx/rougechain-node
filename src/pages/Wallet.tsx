@@ -25,6 +25,10 @@ import {
   mintTokens,
   getTotalSupply,
   TOTAL_SUPPLY,
+  TOKEN_ADDRESS,
+  TOKEN_NAME,
+  CHAIN_ID,
+  EXPLORER_URL,
   WalletBalance,
   WalletTransaction
 } from "@/lib/pqc-wallet";
@@ -377,7 +381,35 @@ const Wallet = () => {
               transition={{ delay: 0.2 }}
               className="p-4 rounded-xl bg-card border border-border"
             >
-              <h3 className="text-sm font-semibold text-foreground mb-3">XRGE Tokenomics</h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-foreground">XRGE Token Info</h3>
+                <a 
+                  href={EXPLORER_URL} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-xs text-primary hover:underline"
+                >
+                  rougeelabs.com ↗
+                </a>
+              </div>
+              
+              {/* Token Address */}
+              <div className="p-3 rounded-lg bg-secondary/50 border border-border mb-3">
+                <p className="text-xs text-muted-foreground mb-1">Token Address</p>
+                <p className="text-xs font-mono text-foreground break-all">{TOKEN_ADDRESS}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <div className="p-2 rounded-lg bg-secondary/30">
+                  <p className="text-[10px] text-muted-foreground">Name</p>
+                  <p className="text-xs font-medium text-foreground">{TOKEN_NAME}</p>
+                </div>
+                <div className="p-2 rounded-lg bg-secondary/30">
+                  <p className="text-[10px] text-muted-foreground">Chain ID</p>
+                  <p className="text-xs font-mono text-foreground">{CHAIN_ID}</p>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-muted-foreground">Total Supply</span>

@@ -5,6 +5,10 @@ export const TOTAL_SUPPLY = 36_000_000_000; // 36 Billion XRGE
 export const TOKEN_SYMBOL = "XRGE";
 export const TOKEN_NAME = "RougeCoin";
 export const CHAIN_NAME = "RougeChain";
+export const TOKEN_ADDRESS = "xrge:0xR0UG3CH41N-X7G3-QU4N7UM-C01N-R0UG33L4B5";
+export const TOKEN_DECIMALS = 18;
+export const CHAIN_ID = "rougechain-1";
+export const EXPLORER_URL = "https://rougeelabs.com";
 
 // Transaction structure embedded in block data
 export interface Transaction {
