@@ -5,13 +5,12 @@ import {
   ArrowLeft, 
   Loader2, 
   RefreshCw, 
-  Link2, 
   Unlink,
   Droplets,
   Send,
   Download,
-  Wallet as WalletIcon,
-  Plus
+  Plus,
+  FileKey2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -20,6 +19,7 @@ import AssetList from "@/components/wallet/AssetList";
 import TransactionHistory from "@/components/wallet/TransactionHistory";
 import NetworkBadge from "@/components/wallet/NetworkBadge";
 import SecurityStatus from "@/components/wallet/SecurityStatus";
+import WalletBackup from "@/components/wallet/WalletBackup";
 import { 
   getWalletBalance, 
   getWalletTransactions, 
@@ -29,28 +29,24 @@ import {
   TOKEN_NAME,
   CHAIN_ID,
   EXPLORER_URL,
-  BASE_TRANSFER_FEE,
   WalletBalance,
   WalletTransaction
 } from "@/lib/pqc-wallet";
-import { generateKeypair, loadChain, createGenesisBlock } from "@/lib/pqc-blockchain";
+import { loadChain, createGenesisBlock } from "@/lib/pqc-blockchain";
+import { supabase } from "@/integrations/supabase/client";
 import SendTokensDialog from "@/components/wallet/SendTokensDialog";
 import ReceiveDialog from "@/components/wallet/ReceiveDialog";
 import CreateTokenDialog from "@/components/wallet/CreateTokenDialog";
+import { 
+  UnifiedWallet, 
+  loadUnifiedWallet, 
+  saveUnifiedWallet, 
+  clearUnifiedWallet 
+} from "@/lib/unified-wallet";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 
-const WALLET_STORAGE_KEY = "pqc-blockchain-wallet";
-const MESSENGER_WALLET_KEY = "pqc-messenger-wallet";
-
-interface StoredWallet {
-  publicKey: string;
-  privateKey: string;
-  createdAt: number;
-  linkedToMessenger?: boolean;
-}
-
 const Wallet = () => {
-  const [wallet, setWallet] = useState<StoredWallet | null>(null);
+  const [wallet, setWallet] = useState<UnifiedWallet | null>(null);
   const [balances, setBalances] = useState<WalletBalance[]>([]);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [circulatingSupply, setCirculatingSupply] = useState<number>(0);
@@ -60,23 +56,14 @@ const Wallet = () => {
   const [showSend, setShowSend] = useState(false);
   const [showReceive, setShowReceive] = useState(false);
   const [showCreateToken, setShowCreateToken] = useState(false);
-  const [messengerWalletAvailable, setMessengerWalletAvailable] = useState(false);
+  const [showBackup, setShowBackup] = useState(false);
 
   // Load wallet from storage
   useEffect(() => {
-    const stored = localStorage.getItem(WALLET_STORAGE_KEY);
-    if (stored) {
-      try {
-        setWallet(JSON.parse(stored));
-      } catch (e) {
-        console.error("Failed to parse stored wallet:", e);
-      }
+    const unified = loadUnifiedWallet();
+    if (unified) {
+      setWallet(unified);
     }
-    
-    // Check if messenger wallet exists
-    const messengerWallet = localStorage.getItem(MESSENGER_WALLET_KEY);
-    setMessengerWalletAvailable(!!messengerWallet);
-    
     setLoading(false);
   }, []);
 
@@ -85,7 +72,7 @@ const Wallet = () => {
     if (wallet) {
       refreshWalletData();
     }
-  }, [wallet?.publicKey]);
+  }, [wallet?.signingPublicKey]);
 
   const refreshWalletData = async () => {
     if (!wallet) return;
@@ -93,8 +80,8 @@ const Wallet = () => {
     
     try {
       const [newBalances, newTxs, supply] = await Promise.all([
-        getWalletBalance(wallet.publicKey),
-        getWalletTransactions(wallet.publicKey),
+        getWalletBalance(wallet.signingPublicKey),
+        getWalletTransactions(wallet.signingPublicKey),
         getTotalSupply("XRGE"),
       ]);
       
@@ -119,16 +106,30 @@ const Wallet = () => {
         await createGenesisBlock();
       }
 
-      const { keypair } = await generateKeypair();
-      const newWallet: StoredWallet = {
-        publicKey: keypair.publicKey,
-        privateKey: keypair.privateKey,
+      // Create unified wallet with both signing and encryption keys
+      const { data, error } = await supabase.functions.invoke("pqc-crypto", {
+        body: { action: "create-wallet", payload: { displayName: "My Wallet" } },
+      });
+
+      if (error) throw new Error(error.message);
+      if (!data.success) throw new Error(data.error || "Failed to create wallet");
+
+      const newWallet: UnifiedWallet = {
+        id: data.wallet.id,
+        displayName: data.wallet.displayName,
         createdAt: Date.now(),
+        signingPublicKey: data.wallet.signingPublicKey,
+        signingPrivateKey: data.privateKeys.signingPrivateKey,
+        encryptionPublicKey: data.wallet.encryptionPublicKey,
+        encryptionPrivateKey: data.privateKeys.encryptionPrivateKey,
+        version: 2,
       };
       
-      localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(newWallet));
+      saveUnifiedWallet(newWallet);
       setWallet(newWallet);
-      toast.success("Quantum-safe wallet created!");
+      toast.success("Quantum-safe wallet created!", {
+        description: "Your wallet works for both blockchain and messaging"
+      });
     } catch (error) {
       console.error("Failed to create wallet:", error);
       toast.error("Failed to create wallet");
@@ -137,37 +138,18 @@ const Wallet = () => {
     }
   };
 
-  const linkMessengerWallet = () => {
-    const messengerData = localStorage.getItem(MESSENGER_WALLET_KEY);
-    if (!messengerData) {
-      toast.error("No messenger wallet found");
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(messengerData);
-      const linkedWallet: StoredWallet = {
-        publicKey: parsed.signingPublicKey || parsed.publicKey,
-        privateKey: parsed.signingPrivateKey || parsed.privateKey,
-        createdAt: Date.now(),
-        linkedToMessenger: true,
-      };
-      
-      localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(linkedWallet));
-      setWallet(linkedWallet);
-      toast.success("Messenger wallet linked!");
-    } catch (error) {
-      console.error("Failed to link messenger wallet:", error);
-      toast.error("Failed to link wallet");
-    }
-  };
-
   const disconnectWallet = () => {
-    localStorage.removeItem(WALLET_STORAGE_KEY);
+    clearUnifiedWallet();
     setWallet(null);
     setBalances([]);
     setTransactions([]);
     toast.info("Wallet disconnected");
+  };
+
+  const handleWalletImport = (importedWallet: UnifiedWallet) => {
+    saveUnifiedWallet(importedWallet);
+    setWallet(importedWallet);
+    refreshWalletData();
   };
 
   const claimFromFaucet = async () => {
@@ -183,9 +165,9 @@ const Wallet = () => {
       }
 
       await mintTokens(
-        wallet.privateKey,
-        wallet.publicKey,
-        wallet.publicKey,
+        wallet.signingPrivateKey,
+        wallet.signingPublicKey,
+        wallet.signingPublicKey,
         100,
         "XRGE"
       );
@@ -252,15 +234,26 @@ const Wallet = () => {
           
           <div className="flex items-center gap-2">
             {wallet && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={refreshWalletData}
-                disabled={refreshing}
-                className="h-9 w-9"
-              >
-                <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setShowBackup(true)}
+                  className="h-9 w-9"
+                  title="Backup Wallet"
+                >
+                  <FileKey2 className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={refreshWalletData}
+                  disabled={refreshing}
+                  className="h-9 w-9"
+                >
+                  <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                </Button>
+              </>
             )}
             <NetworkBadge isConnected={!!wallet} />
           </div>
@@ -280,27 +273,6 @@ const Wallet = () => {
               onConnect={createNewWallet}
             />
 
-            {messengerWalletAvailable && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.2 }}
-                className="p-4 rounded-xl bg-card border border-border"
-              >
-                <div className="flex items-center gap-3 mb-3">
-                  <Link2 className="w-5 h-5 text-primary" />
-                  <h3 className="font-semibold text-foreground">Link Existing Wallet</h3>
-                </div>
-                <p className="text-sm text-muted-foreground mb-4">
-                  You have a messenger wallet. Link it to use the same keys for blockchain transactions.
-                </p>
-                <Button onClick={linkMessengerWallet} variant="outline" className="w-full">
-                  <Link2 className="w-4 h-4 mr-2" />
-                  Link Messenger Wallet
-                </Button>
-              </motion.div>
-            )}
-
             <SecurityStatus />
           </motion.div>
         ) : (
@@ -310,8 +282,8 @@ const Wallet = () => {
             animate={{ opacity: 1 }}
             className="space-y-6"
           >
-            <WalletCard
-              address={wallet.publicKey}
+          <WalletCard
+              address={wallet.signingPublicKey}
               balance={totalBalance.toString()}
               usdValue="N/A"
               isConnected={true}
@@ -381,12 +353,6 @@ const Wallet = () => {
               </Button>
             </div>
 
-            {wallet.linkedToMessenger && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10 border border-primary/30">
-                <Link2 className="w-4 h-4 text-primary" />
-                <span className="text-xs text-primary">Linked to Messenger Wallet</span>
-              </div>
-            )}
 
             {/* Token Supply Info */}
             <motion.div
@@ -476,7 +442,7 @@ const Wallet = () => {
       <AnimatePresence>
         {showReceive && wallet && (
           <ReceiveDialog
-            publicKey={wallet.publicKey}
+            publicKey={wallet.signingPublicKey}
             onClose={() => setShowReceive(false)}
           />
         )}
@@ -493,6 +459,17 @@ const Wallet = () => {
               setShowCreateToken(false);
               refreshWalletData();
             }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Backup Dialog */}
+      <AnimatePresence>
+        {showBackup && wallet && (
+          <WalletBackup
+            wallet={wallet}
+            onClose={() => setShowBackup(false)}
+            onImport={handleWalletImport}
           />
         )}
       </AnimatePresence>

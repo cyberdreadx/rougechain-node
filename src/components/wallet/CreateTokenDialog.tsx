@@ -9,8 +9,8 @@ import { createToken, TOKEN_CREATION_FEE, WalletBalance } from "@/lib/pqc-wallet
 
 interface CreateTokenDialogProps {
   wallet: {
-    publicKey: string;
-    privateKey: string;
+    signingPublicKey: string;
+    signingPrivateKey: string;
   };
   balances: WalletBalance[];
   onClose: () => void;
@@ -60,8 +60,8 @@ const CreateTokenDialog = ({ wallet, balances, onClose, onSuccess }: CreateToken
     setCreating(true);
     try {
       const { tokenAddress } = await createToken(
-        wallet.privateKey,
-        wallet.publicKey,
+        wallet.signingPrivateKey,
+        wallet.signingPublicKey,
         tokenName.trim(),
         tokenSymbol.trim().toUpperCase(),
         supply,
