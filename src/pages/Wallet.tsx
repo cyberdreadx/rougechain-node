@@ -31,6 +31,7 @@ import {
 import { generateKeypair, loadChain, createGenesisBlock } from "@/lib/pqc-blockchain";
 import SendTokensDialog from "@/components/wallet/SendTokensDialog";
 import ReceiveDialog from "@/components/wallet/ReceiveDialog";
+import xrgeLogo from "@/assets/xrge-logo.webp";
 
 const WALLET_STORAGE_KEY = "pqc-blockchain-wallet";
 const MESSENGER_WALLET_KEY = "pqc-messenger-wallet";
@@ -235,6 +236,7 @@ const Wallet = () => {
                 <ArrowLeft className="w-5 h-5" />
               </Button>
             </Link>
+            <img src={xrgeLogo} alt="XRGE" className="w-9 h-9 rounded-full" />
             <div>
               <h1 className="text-lg font-bold text-foreground">XRGE Wallet</h1>
               <p className="text-xs text-muted-foreground">RougeChain</p>
