@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, Shield, Blocks, RotateCcw, CheckCircle2, XCircle } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Shield, Blocks, RotateCcw, CheckCircle2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { MainNav } from "@/components/MainNav";
 import BlockchainVisualizer from "@/components/blockchain/BlockchainVisualizer";
 import MiningPanel from "@/components/blockchain/MiningPanel";
 import PQCInfo from "@/components/blockchain/PQCInfo";
@@ -14,7 +14,6 @@ import NetworkStatsBar from "@/components/blockchain/NetworkStatsBar";
 import NetworkHistoryChart from "@/components/blockchain/NetworkHistoryChart";
 import type { Block, Keypair, CryptoInfo } from "@/lib/pqc-blockchain";
 import { loadChain, resetChain, validateChain } from "@/lib/pqc-blockchain";
-import xrgeLogo from "@/assets/xrge-logo.webp";
 
 const Blockchain = () => {
   const [chain, setChain] = useState<Block[]>([]);
@@ -90,69 +89,50 @@ const Blockchain = () => {
 
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">
+      <MainNav />
+      
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
       <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
       <div className="fixed bottom-0 right-0 w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />
 
-      {/* Header */}
-      <motion.header
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="sticky top-0 z-50 flex items-center justify-between px-4 py-4 border-b border-border bg-card/50 backdrop-blur-xl"
-      >
-        <div className="flex items-center gap-3">
-          <Link to="/">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="w-5 h-5" />
-            </Button>
-          </Link>
-          <div className="flex items-center gap-2">
-            <img src={xrgeLogo} alt="XRGE" className="w-8 h-8 rounded-full" />
-            <div>
-              <h1 className="text-lg font-bold text-foreground">RougeChain Explorer</h1>
-              <p className="text-xs text-muted-foreground">ML-DSA-65 Signatures</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {chain.length > 0 && (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleValidateChain}
-                disabled={isValidating}
-                className="hidden sm:flex"
-              >
-                {chainValidity.checked ? (
-                  chainValidity.valid ? (
-                    <CheckCircle2 className="w-4 h-4 mr-1 text-success" />
-                  ) : (
-                    <XCircle className="w-4 h-4 mr-1 text-destructive" />
-                  )
+      {/* Action Bar */}
+      <div className="sticky top-[60px] z-40 flex items-center justify-end gap-2 px-4 py-2 bg-background/80 backdrop-blur-sm border-b border-border">
+        {chain.length > 0 && (
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleValidateChain}
+              disabled={isValidating}
+              className="hidden sm:flex"
+            >
+              {chainValidity.checked ? (
+                chainValidity.valid ? (
+                  <CheckCircle2 className="w-4 h-4 mr-1 text-success" />
                 ) : (
-                  <Shield className="w-4 h-4 mr-1" />
-                )}
-                {isValidating ? "Verifying..." : "Verify Chain"}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleResetChain}
-                className="text-muted-foreground hover:text-destructive"
-              >
-                <RotateCcw className="w-4 h-4" />
-              </Button>
-            </>
-          )}
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-secondary border border-border">
-            <Shield className="w-4 h-4 text-primary" />
-            <span className="text-xs text-muted-foreground">ML-DSA-65</span>
-          </div>
+                  <XCircle className="w-4 h-4 mr-1 text-destructive" />
+                )
+              ) : (
+                <Shield className="w-4 h-4 mr-1" />
+              )}
+              {isValidating ? "Verifying..." : "Verify Chain"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleResetChain}
+              className="text-muted-foreground hover:text-destructive"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </Button>
+          </>
+        )}
+        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-secondary border border-border">
+          <Shield className="w-4 h-4 text-primary" />
+          <span className="text-xs text-muted-foreground">ML-DSA-65</span>
         </div>
-      </motion.header>
+      </div>
 
       {/* Main content */}
       <main className="relative z-10 max-w-7xl mx-auto px-4 py-6">
