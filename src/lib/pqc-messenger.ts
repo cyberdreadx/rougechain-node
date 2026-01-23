@@ -42,9 +42,42 @@ export interface Conversation {
 const WALLET_STORAGE_KEY = "pqc_messenger_wallet";
 const DEMO_BOT_STORAGE_KEY = "pqc_demo_bot_wallet";
 const SENT_MESSAGES_KEY = "pqc_sent_messages";
+const PRIVACY_SETTINGS_KEY = "pqc_privacy_settings";
 
-// Helper to store sent message plaintext locally
+// Privacy settings interface
+export interface PrivacySettings {
+  storeSentMessages: boolean;
+}
+
+// Get privacy settings
+export function getPrivacySettings(): PrivacySettings {
+  try {
+    const stored = localStorage.getItem(PRIVACY_SETTINGS_KEY);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  // Default: store sent messages (better UX)
+  return { storeSentMessages: true };
+}
+
+// Save privacy settings
+export function savePrivacySettings(settings: PrivacySettings): void {
+  localStorage.setItem(PRIVACY_SETTINGS_KEY, JSON.stringify(settings));
+}
+
+// Clear stored sent messages (for privacy)
+export function clearStoredSentMessages(): void {
+  localStorage.removeItem(SENT_MESSAGES_KEY);
+}
+
+// Helper to store sent message plaintext locally (respects privacy settings)
 function storeSentMessage(messageId: string, plaintext: string): void {
+  const settings = getPrivacySettings();
+  if (!settings.storeSentMessages) return;
+  
   try {
     const stored = localStorage.getItem(SENT_MESSAGES_KEY);
     const messages: Record<string, string> = stored ? JSON.parse(stored) : {};
@@ -63,6 +96,9 @@ function storeSentMessage(messageId: string, plaintext: string): void {
 
 // Helper to retrieve sent message plaintext
 function getSentMessage(messageId: string): string | null {
+  const settings = getPrivacySettings();
+  if (!settings.storeSentMessages) return null;
+  
   try {
     const stored = localStorage.getItem(SENT_MESSAGES_KEY);
     if (!stored) return null;
