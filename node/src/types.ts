@@ -8,12 +8,22 @@ export interface ChainConfig {
 
 export interface TxV1 {
   version: 1;
-  type: "transfer" | "stake" | "unstake";
+  type: "transfer" | "stake" | "unstake" | "slash";
   fromPubKey: Hex; // ML-DSA public key (hex)
   nonce: number;
   payload: unknown;
   fee: number;
   sig: Hex; // signature over canonical tx bytes (hex)
+}
+
+export interface StakePayload {
+  amount: number;
+}
+
+export interface SlashPayload {
+  targetPubKey: Hex;
+  amount: number;
+  reason?: string;
 }
 
 export interface BlockHeaderV1 {
@@ -35,10 +45,11 @@ export interface BlockV1 {
 }
 
 export type P2PMessage =
-  | { type: "HELLO"; nodeId: string; chainId: string; height: number }
+  | { type: "HELLO"; nodeId: string; chainId: string; height: number; listenHost?: string; listenPort?: number }
   | { type: "GET_TIP" }
   | { type: "TIP"; height: number; hash: Hex }
   | { type: "GET_BLOCK"; height: number }
   | { type: "BLOCK"; block: BlockV1 }
-  | { type: "TX"; tx: TxV1 };
+  | { type: "TX"; tx: TxV1 }
+  | { type: "PEERS"; peers: Array<{ host: string; port: number }> };
 

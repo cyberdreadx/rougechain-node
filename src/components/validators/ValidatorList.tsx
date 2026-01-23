@@ -150,6 +150,16 @@ export function ValidatorList({ onSelectValidator }: ValidatorListProps) {
                           <Clock className="w-3 h-3" />
                           {validator.uptimePercentage.toFixed(1)}%
                         </span>
+                        {validator.slashCount && validator.slashCount > 0 && (
+                          <span className="flex items-center gap-1 text-red-400">
+                            Slashed {validator.slashCount}x
+                          </span>
+                        )}
+                        {validator.status === "jailed" && validator.jailedUntil ? (
+                          <span className="flex items-center gap-1 text-red-400">
+                            Jailed until #{validator.jailedUntil}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   </div>

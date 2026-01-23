@@ -44,6 +44,13 @@ export class TcpPeer extends EventEmitter<{
     this.socket.end();
   }
 
+  getRemoteEndpoint(): PeerEndpoint | null {
+    const host = this.socket.remoteAddress;
+    const port = this.socket.remotePort;
+    if (!host || !port) return null;
+    return { host, port };
+  }
+
   private onData(chunk: string) {
     this.buffer += chunk;
     while (true) {

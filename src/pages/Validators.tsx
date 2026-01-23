@@ -53,6 +53,7 @@ export default function Validators() {
 
   const walletId = wallet?.id;
   const signingPublicKey = wallet?.signingPublicKey;
+  const signingPrivateKey = wallet?.signingPrivateKey;
 
   return (
     <div className="min-h-screen bg-background text-foreground relative overflow-hidden">
@@ -72,6 +73,7 @@ export default function Validators() {
             <ValidatorDashboard
               walletId={walletId}
               signingPublicKey={signingPublicKey}
+              signingPrivateKey={signingPrivateKey}
               availableBalance={availableBalance}
             />
           </div>

@@ -17,10 +17,13 @@ export function getNodeApiBaseUrl(): string {
   const testnetUrl = import.meta.env.VITE_NODE_API_URL_TESTNET as string | undefined;
 
   if (network === "mainnet") {
-    return mainnetUrl || defaultUrl;
+    if (!mainnetUrl) {
+      return "";
+    }
+    return normalizeApiBaseUrl(mainnetUrl);
   }
 
-  return testnetUrl || defaultUrl;
+  return normalizeApiBaseUrl(testnetUrl || defaultUrl);
 }
 
 export function getNetworkLabel(chainId?: string): string {
@@ -31,4 +34,12 @@ export function getNetworkLabel(chainId?: string): string {
   }
 
   return getActiveNetwork() === "mainnet" ? "Mainnet" : "Testnet";
+}
+
+function normalizeApiBaseUrl(url: string): string {
+  const trimmed = url.replace(/\/+$/, "");
+  if (trimmed.endsWith("/api")) {
+    return trimmed;
+  }
+  return `${trimmed}/api`;
 }

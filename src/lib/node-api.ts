@@ -25,7 +25,11 @@ export interface NodeBalance {
  * Note: In production, generate keys client-side instead!
  */
 export async function createWalletViaNode(): Promise<NodeWallet> {
-  const res = await fetch(`${getNodeApiBaseUrl()}/wallet/create`, {
+  const apiBase = getNodeApiBaseUrl();
+  if (!apiBase) {
+    throw new Error("Mainnet API is not configured");
+  }
+  const res = await fetch(`${apiBase}/wallet/create`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -56,7 +60,11 @@ export async function submitTransactionViaNode(
   amount: number,
   fee?: number
 ): Promise<NodeTxResponse> {
-  const res = await fetch(`${getNodeApiBaseUrl()}/tx/submit`, {
+  const apiBase = getNodeApiBaseUrl();
+  if (!apiBase) {
+    throw new Error("Mainnet API is not configured");
+  }
+  const res = await fetch(`${apiBase}/tx/submit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -76,7 +84,11 @@ export async function submitTransactionViaNode(
  * Get balance for a public key
  */
 export async function getBalanceViaNode(publicKey: string): Promise<number> {
-  const res = await fetch(`${getNodeApiBaseUrl()}/balance/${publicKey}`);
+  const apiBase = getNodeApiBaseUrl();
+  if (!apiBase) {
+    return 0;
+  }
+  const res = await fetch(`${apiBase}/balance/${publicKey}`);
   
   if (!res.ok) {
     return 0; // Return 0 if error (account doesn't exist yet)
@@ -90,7 +102,11 @@ export async function getBalanceViaNode(publicKey: string): Promise<number> {
  * Get node stats
  */
 export async function getNodeStats() {
-  const res = await fetch(`${getNodeApiBaseUrl()}/stats`);
+  const apiBase = getNodeApiBaseUrl();
+  if (!apiBase) {
+    throw new Error("Mainnet API is not configured");
+  }
+  const res = await fetch(`${apiBase}/stats`);
   if (!res.ok) {
     throw new Error("Failed to fetch node stats");
   }

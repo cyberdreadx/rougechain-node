@@ -29,6 +29,10 @@ const NetworkHistoryChart = () => {
     try {
       // Use network-aware API base URL, fallback to local ports if localhost
       const NODE_API_URL = getNodeApiBaseUrl();
+      if (!NODE_API_URL) {
+        setChartData([]);
+        return;
+      }
       let blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> = [];
       
       try {

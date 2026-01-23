@@ -4,7 +4,6 @@ import { Shield, Blocks, RotateCcw, CheckCircle2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { MainNav } from "@/components/MainNav";
-import BlockchainVisualizer from "@/components/blockchain/BlockchainVisualizer";
 import PQCInfo from "@/components/blockchain/PQCInfo";
 import { QuantumThreatPanel } from "@/components/blockchain/QuantumThreatPanel";
 import { TamperDemo } from "@/components/blockchain/TamperDemo";
@@ -38,6 +37,10 @@ const Blockchain = () => {
   const [nodeConnected, setNodeConnected] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [viewMode, setViewMode] = useState<"table" | "grid">(() => {
+    const saved = localStorage.getItem("blockchain-view-mode");
+    return saved === "grid" ? "grid" : "table";
+  });
 
   // Convert BlockV1 to Block format for UI
   const convertBlock = (b: BlockV1): Block => ({
@@ -57,6 +60,12 @@ const Blockchain = () => {
       try {
         // Use network-aware API base URL
         const NODE_API_URL = getNodeApiBaseUrl();
+        if (!NODE_API_URL) {
+          setChain([]);
+          setNodeConnected(false);
+          setIsLoading(false);
+          return;
+        }
         
         try {
           const res = await fetch(`${NODE_API_URL}/blocks`, {
@@ -116,6 +125,35 @@ const Blockchain = () => {
   const startIndex = (safePage - 1) * pageSize;
   const endIndex = Math.min(startIndex + pageSize, sortedChain.length);
   const pagedChain = sortedChain.slice(startIndex, endIndex);
+  const getTxCount = (block: Block) => {
+    try {
+      const parsed = JSON.parse(block.data);
+      if (Array.isArray(parsed)) return parsed.length;
+      if (parsed && typeof parsed === "object" && Array.isArray((parsed as { txs?: unknown[] }).txs)) {
+        return (parsed as { txs?: unknown[] }).txs?.length ?? 0;
+      }
+      return parsed ? 1 : 0;
+    } catch {
+      return 0;
+    }
+  };
+
+  const formatAge = (timestamp: number) => {
+    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  };
+
+  const truncateHash = (value: string, left = 10, right = 6) => {
+    if (!value) return "—";
+    if (value.length <= left + right + 3) return value;
+    return `${value.slice(0, left)}...${value.slice(-right)}`;
+  };
 
   useEffect(() => {
     if (page > totalPages) {
@@ -126,6 +164,10 @@ const Blockchain = () => {
   useEffect(() => {
     setPage(1);
   }, [pageSize]);
+
+  useEffect(() => {
+    localStorage.setItem("blockchain-view-mode", viewMode);
+  }, [viewMode]);
 
   const handleValidateChain = async () => {
     if (chain.length === 0) return;
@@ -259,6 +301,26 @@ const Blockchain = () => {
                       <span className="text-xs text-muted-foreground">Page {safePage} of {totalPages}</span>
                     </div>
                     <div className="flex items-center gap-2">
+                      <div className="flex items-center rounded-full border border-border bg-background p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setViewMode("table")}
+                          className={`px-3 py-1 text-[11px] rounded-full transition ${
+                            viewMode === "table" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                          }`}
+                        >
+                          Compact table
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setViewMode("grid")}
+                          className={`px-3 py-1 text-[11px] rounded-full transition ${
+                            viewMode === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                          }`}
+                        >
+                          Visual grid
+                        </button>
+                      </div>
                       <select
                         className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
                         value={pageSize}
@@ -306,10 +368,62 @@ const Blockchain = () => {
                   </div>
                 )}
                 {nodeConnected && chain.length === 0 && (
-                  <BlockchainVisualizer chain={chain} isValidating={isValidating} />
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Blocks className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                    <p>No blocks yet. Create a genesis block to start.</p>
+                  </div>
                 )}
-                {chain.length > 0 && (
-                  <BlockchainVisualizer chain={pagedChain} isValidating={isValidating} />
+                {chain.length > 0 && viewMode === "table" && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="text-xs text-muted-foreground border-b border-border">
+                        <tr>
+                          <th className="text-left py-2 px-2 font-medium">Block</th>
+                          <th className="text-left py-2 px-2 font-medium">Age</th>
+                          <th className="text-right py-2 px-2 font-medium">Txns</th>
+                          <th className="text-left py-2 px-2 font-medium">Hash</th>
+                          <th className="text-left py-2 px-2 font-medium">Proposer</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {pagedChain.map((block) => (
+                          <tr key={block.hash} className="hover:bg-secondary/40 transition-colors">
+                            <td className="py-2 px-2 font-medium text-primary">#{block.index}</td>
+                            <td className="py-2 px-2 text-muted-foreground">{formatAge(block.timestamp)}</td>
+                            <td className="py-2 px-2 text-right font-mono">{getTxCount(block)}</td>
+                            <td className="py-2 px-2 font-mono">{truncateHash(block.hash)}</td>
+                            <td className="py-2 px-2 font-mono">{truncateHash(block.signerPublicKey, 8, 6)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {chain.length > 0 && viewMode === "grid" && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {pagedChain.map((block) => (
+                      <div key={block.hash} className="rounded-lg border border-border bg-background/60 p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-semibold text-primary">#{block.index}</span>
+                          <span className="text-xs text-muted-foreground">{formatAge(block.timestamp)}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <p className="text-muted-foreground">Txns</p>
+                            <p className="font-mono text-foreground">{getTxCount(block)}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Proposer</p>
+                            <p className="font-mono text-foreground">{truncateHash(block.signerPublicKey, 8, 6)}</p>
+                          </div>
+                          <div className="col-span-2">
+                            <p className="text-muted-foreground">Hash</p>
+                            <p className="font-mono text-foreground">{truncateHash(block.hash, 14, 10)}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </motion.div>
 

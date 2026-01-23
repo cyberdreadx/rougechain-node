@@ -1,5 +1,5 @@
 import { Block, loadChain, mineBlock } from "./pqc-blockchain";
-import { getNodeApiBaseUrl } from "./network";
+import { getActiveNetwork, getNodeApiBaseUrl } from "./network";
 
 // RougeChain constants
 export const TOTAL_SUPPLY = 36_000_000_000; // 36 Billion XRGE
@@ -100,6 +100,9 @@ export function parseBlockTransaction(block: Block): Transaction | null {
 export async function getAllTransactions(): Promise<{ tx: Transaction; block: Block }[]> {
   // Try node API first (for public deployment)
   const NODE_API_URL = getNodeApiBaseUrl();
+  if (!NODE_API_URL) {
+    return [];
+  }
   
   try {
     const res = await fetch(`${NODE_API_URL}/blocks`);
@@ -126,14 +129,16 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
         // Convert each transaction in the block
         for (const txV1 of blockV1.txs) {
           if (txV1.type === "transfer") {
-            const payload = txV1.payload as { toPubKeyHex?: string; amount?: number };
+            const payload = txV1.payload as { toPubKeyHex?: string; amount?: number; faucet?: boolean };
+            const isFaucet = payload.faucet === true;
             const tx: Transaction = {
-              type: "transfer",
-              from: txV1.fromPubKey,
+              type: isFaucet ? "mint" : "transfer",
+              from: isFaucet ? "FAUCET" : txV1.fromPubKey,
               to: payload.toPubKeyHex || "",
               amount: payload.amount || 0,
               symbol: "XRGE",
               timestamp: blockV1.header.time,
+              memo: isFaucet ? "Faucet" : undefined,
               fee: txV1.fee,
               feeRecipient: blockV1.header.proposerPubKey,
             };
@@ -159,6 +164,9 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
       return transactions;
     }
   } catch (nodeError) {
+    if (getActiveNetwork() === "mainnet") {
+      return [];
+    }
     console.log("Node API unavailable, falling back to local...", nodeError);
   }
 
@@ -222,6 +230,15 @@ export async function getTokenBySymbol(symbol: string): Promise<TokenInfo | null
 export async function getWalletBalance(publicKey: string): Promise<WalletBalance[]> {
   // Try node API first (for public deployment)
   const NODE_API_URL = getNodeApiBaseUrl();
+  if (!NODE_API_URL) {
+    return [{
+      symbol: "XRGE",
+      balance: 0,
+      name: "RougeCoin",
+      icon: "🔴",
+      tokenAddress: "",
+    }];
+  }
   
   try {
     const res = await fetch(`${NODE_API_URL}/balance/${publicKey}`);
@@ -239,6 +256,15 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
       }
     }
   } catch (nodeError) {
+    if (getActiveNetwork() === "mainnet") {
+      return [{
+        symbol: "XRGE",
+        balance: 0,
+        name: "RougeCoin",
+        icon: "🔴",
+        tokenAddress: "",
+      }];
+    }
     console.log("Node API unavailable, falling back to local...", nodeError);
   }
 
@@ -527,6 +553,9 @@ export async function mintTokens(
 ): Promise<Block> {
   // Try node API first (for public deployment)
   const NODE_API_URL = getNodeApiBaseUrl();
+  if (!NODE_API_URL) {
+    throw new Error("Mainnet API is not configured");
+  }
   
   try {
     // Use the faucet endpoint which handles minting properly
@@ -556,6 +585,9 @@ export async function mintTokens(
       }
     }
   } catch (nodeError) {
+    if (getActiveNetwork() === "mainnet") {
+      throw nodeError;
+    }
     console.log("Node API unavailable for faucet, falling back to local...", nodeError);
   }
 

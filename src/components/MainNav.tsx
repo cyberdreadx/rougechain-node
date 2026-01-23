@@ -1,4 +1,5 @@
 import { NavLink } from "@/components/NavLink";
+import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { 
   Home, 
@@ -9,6 +10,7 @@ import {
   Network 
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
+import { getActiveNetwork, getNetworkLabel, getNodeApiBaseUrl, NETWORK_STORAGE_KEY } from "@/lib/network";
 
 const navItems = [
   { to: "/", label: "Home", icon: Home },
@@ -21,6 +23,44 @@ const navItems = [
 
 export function MainNav() {
   const location = useLocation();
+  const [chainId, setChainId] = useState<string | null>(null);
+  const [networkLabel, setNetworkLabel] = useState<string>(() => getNetworkLabel());
+
+  useEffect(() => {
+    const updateFromSelection = () => {
+      setNetworkLabel(getNetworkLabel(chainId ?? undefined));
+    };
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === NETWORK_STORAGE_KEY) {
+        updateFromSelection();
+        void fetchChainId();
+      }
+    };
+
+    const fetchChainId = async () => {
+      try {
+        const apiBase = getNodeApiBaseUrl();
+        if (!apiBase) {
+          return;
+        }
+        const response = await fetch(`${apiBase}/stats`);
+        if (!response.ok) return;
+        const data = await response.json().catch(() => null);
+        if (data?.chainId) {
+          setChainId(data.chainId);
+          setNetworkLabel(getNetworkLabel(data.chainId));
+        }
+      } catch {
+        updateFromSelection();
+      }
+    };
+
+    updateFromSelection();
+    void fetchChainId();
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [chainId]);
 
   return (
     <nav className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border">
@@ -30,6 +70,12 @@ export function MainNav() {
           <div className="flex items-center gap-3">
             <img src={xrgeLogo} alt="XRGE" className="w-8 h-8 rounded-full" />
             <span className="font-bold text-lg hidden sm:block">RougeChain</span>
+            <div className="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-full bg-card border border-border text-xs text-muted-foreground">
+              <span className={`h-2 w-2 rounded-full ${getActiveNetwork() === "mainnet" ? "bg-success" : "bg-amber-500"}`} />
+              <span className="font-medium text-foreground">{networkLabel}</span>
+              {chainId && <span className="text-muted-foreground">·</span>}
+              {chainId && <span className="font-mono text-[10px]">{chainId}</span>}
+            </div>
           </div>
 
           {/* Navigation Links */}

@@ -33,10 +33,12 @@ async function main() {
   const mine = hasFlag("--mine");
   const name = getArg("--name") ?? `node-${port}`;
   const chainId = getArg("--chain") ?? "rougechain-devnet-1";
+  const advertiseHost = getArg("--advertise") ?? undefined;
 
   const node = new L1Node({
     listenHost: host,
     listenPort: port,
+    advertiseHost,
     peers,
     mine,
     dataDir: defaultDataDir(name),
@@ -88,6 +90,32 @@ async function main() {
         totalFeesCollected: feeStats.totalFees,
         feesInLastBlock: feeStats.lastBlockFees,
         chainId: chainId, // Include chain ID so frontend can detect mainnet
+      }));
+      return;
+    }
+
+    if (req.url === "/api/selection" && req.method === "GET") {
+      const selection = await node.getSelectionInfo();
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        success: true,
+        height: selection.height,
+        proposer: selection.result?.proposerPubKey ?? null,
+        totalStake: selection.result?.totalStake?.toString() ?? null,
+        selectionWeight: selection.result?.selectionWeight?.toString() ?? null,
+        entropySource: selection.result?.entropySource ?? null,
+        entropyHex: selection.result?.entropyHex ?? null,
+      }));
+      return;
+    }
+
+    if (req.url === "/api/validators" && req.method === "GET") {
+      const set = await node.getValidatorSet();
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        success: true,
+        validators: set.validators,
+        totalStake: set.totalStake,
       }));
       return;
     }
@@ -176,6 +204,74 @@ async function main() {
           res.end(JSON.stringify({
             success: false,
             error: error instanceof Error ? error.message : "Invalid transaction",
+          }));
+        }
+      });
+      return;
+    }
+
+    if (req.url === "/api/stake/submit" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk.toString(); });
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body) as {
+            fromPrivateKey: string;
+            fromPublicKey: string;
+            amount: number;
+            fee?: number;
+          };
+          const tx = await node.submitStakeTx(
+            data.fromPrivateKey,
+            data.fromPublicKey,
+            data.amount,
+            data.fee
+          );
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            success: true,
+            txId: bytesToHex(sha256(encodeTxV1(tx))),
+            tx,
+          }));
+        } catch (error) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : "Invalid stake transaction",
+          }));
+        }
+      });
+      return;
+    }
+
+    if (req.url === "/api/unstake/submit" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk.toString(); });
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body) as {
+            fromPrivateKey: string;
+            fromPublicKey: string;
+            amount: number;
+            fee?: number;
+          };
+          const tx = await node.submitUnstakeTx(
+            data.fromPrivateKey,
+            data.fromPublicKey,
+            data.amount,
+            data.fee
+          );
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            success: true,
+            txId: bytesToHex(sha256(encodeTxV1(tx))),
+            tx,
+          }));
+        } catch (error) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : "Invalid unstake transaction",
           }));
         }
       });
@@ -289,12 +385,11 @@ async function main() {
           // Submit a transfer from the miner (acting as faucet) to the recipient
           // Fee is 0 for faucet transactions
           try {
-            const tx = await node.submitUserTx(
+            const tx = await node.submitFaucetTx(
               validatedKeys.secretKeyHex,
               validatedKeys.publicKeyHex,
               data.recipientPublicKey,
-              data.amount ?? 10000,
-              0 // Free faucet transaction
+              data.amount ?? 10000
             );
             
             res.writeHead(200);

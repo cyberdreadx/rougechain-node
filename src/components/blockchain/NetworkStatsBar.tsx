@@ -24,6 +24,17 @@ const NetworkStatsBar = () => {
   const fetchStats = async () => {
     try {
       const NODE_API_URL = getNodeApiBaseUrl();
+      if (!NODE_API_URL) {
+        setStats({
+          blocksPerMinute: 0,
+          totalTransactions: 0,
+          avgBlockTime: 0,
+          currentGasFee: 0.001,
+          totalBlocks: 0,
+        });
+        setIsLoading(false);
+        return;
+      }
       const isLocal = NODE_API_URL.includes("localhost") || NODE_API_URL.includes("127.0.0.1");
       const fetchBlocks = async (url: string) => {
         const res = await fetch(`${url}/blocks`);

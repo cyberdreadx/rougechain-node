@@ -15,6 +15,7 @@ import {
   ValidatorTier, 
   getValidators, 
   selectProposer, 
+  getProposerSelectionInfo,
   formatStake,
   STAKE_REQUIREMENTS,
 } from "@/lib/pqc-validators";
@@ -22,6 +23,7 @@ import {
 interface ValidatorDashboardProps {
   walletId?: string;
   signingPublicKey?: string;
+  signingPrivateKey?: string;
   availableBalance?: number;
 }
 
@@ -34,11 +36,22 @@ const tierConfig: Record<ValidatorTier, { icon: typeof Shield; color: string }> 
 export function ValidatorDashboard({ 
   walletId, 
   signingPublicKey,
+  signingPrivateKey,
   availableBalance = 0,
 }: ValidatorDashboardProps) {
   const [validators, setValidators] = useState<Validator[]>([]);
   const [loading, setLoading] = useState(true);
   const [showStaking, setShowStaking] = useState(false);
+  const [pendingStake, setPendingStake] = useState<{ publicKey: string; amount: number } | null>(null);
+  const [selectionInfo, setSelectionInfo] = useState<{
+    height: number;
+    proposerPubKey: string | null;
+    totalStake: number;
+    selectionWeight: string;
+    entropySource: string;
+    entropyHex: string;
+  } | null>(null);
+  const [selectionLoading, setSelectionLoading] = useState(false);
   const [selectedProposer, setSelectedProposer] = useState<{
     proposer: Validator;
     entropy: string;
@@ -50,11 +63,40 @@ export function ValidatorDashboard({
     loadData();
   }, []);
 
+  useEffect(() => {
+    if (!pendingStake) return;
+    const interval = setInterval(() => {
+      loadData();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [pendingStake]);
+
+  useEffect(() => {
+    const loadSelection = async () => {
+      setSelectionLoading(true);
+      try {
+        const info = await getProposerSelectionInfo();
+        setSelectionInfo(info);
+      } catch (error) {
+        console.error("Failed to load proposer selection info:", error);
+      } finally {
+        setSelectionLoading(false);
+      }
+    };
+
+    loadSelection();
+    const interval = setInterval(loadSelection, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   const loadData = async () => {
     setLoading(true);
     try {
       const data = await getValidators();
       setValidators(data);
+      if (pendingStake && data.some((validator) => validator.signingPublicKey === pendingStake.publicKey)) {
+        setPendingStake(null);
+      }
     } catch (error) {
       console.error("Failed to load validators:", error);
     } finally {
@@ -87,9 +129,16 @@ export function ValidatorDashboard({
   }, {} as Record<ValidatorTier, number>);
 
   // Check if current wallet is a validator
-  const myValidator = walletId 
-    ? validators.find(v => v.walletId === walletId) 
+  const myValidator = signingPublicKey
+    ? validators.find((validator) => validator.signingPublicKey === signingPublicKey)
     : null;
+
+  const handleStakeSuccess = (amount: number) => {
+    if (signingPublicKey) {
+      setPendingStake({ publicKey: signingPublicKey, amount });
+    }
+    loadData();
+  };
 
   return (
     <div className="space-y-6">
@@ -153,6 +202,26 @@ export function ValidatorDashboard({
         </Card>
       </div>
 
+      {/* Pending Stake */}
+      {pendingStake && (
+        <Card className="bg-amber-500/5 border-amber-500/30">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <div className="text-sm font-semibold text-amber-400">Stake submitted</div>
+                <div className="text-xs text-muted-foreground">
+                  Waiting for a block to include your stake transaction.
+                </div>
+              </div>
+              <div className="text-right text-xs text-muted-foreground">
+                <div className="font-mono">{pendingStake.publicKey.slice(0, 16)}...</div>
+                <div>{formatStake(pendingStake.amount)} XRGE</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Tier Distribution */}
       <Card className="bg-card/50 backdrop-blur border-border">
         <CardHeader className="pb-3">
@@ -184,6 +253,62 @@ export function ValidatorDashboard({
               );
             })}
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Current Proposer */}
+      <Card className="bg-card/50 backdrop-blur border-border">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Shield className="w-4 h-4 text-primary" />
+            Current Proposer
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-xs text-muted-foreground">Height</div>
+              <div className="text-lg font-semibold">
+                {selectionLoading ? "..." : selectionInfo?.height ?? "—"}
+              </div>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-muted-foreground">Proposer</div>
+              <div className="font-mono text-sm truncate">
+                {selectionLoading
+                  ? "..."
+                  : selectionInfo?.proposerPubKey
+                  ? `${selectionInfo.proposerPubKey.slice(0, 16)}...`
+                  : "—"}
+              </div>
+            </div>
+            <div className="text-right">
+              {selectionInfo?.proposerPubKey && signingPublicKey && selectionInfo.proposerPubKey === signingPublicKey ? (
+                <Badge className="bg-green-500/20 text-green-500 border-green-500/30">You are selected</Badge>
+              ) : (
+                <Badge variant="outline" className="text-xs">Waiting</Badge>
+              )}
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-muted-foreground">
+            <div>
+              <div>Selection Weight</div>
+              <div className="text-foreground font-semibold">
+                {selectionLoading ? "..." : selectionInfo?.selectionWeight ?? "—"}
+              </div>
+            </div>
+            <div>
+              <div>Total Stake</div>
+              <div className="text-foreground font-semibold">
+                {selectionLoading ? "..." : formatStake(selectionInfo?.totalStake ?? 0)} XRGE
+              </div>
+            </div>
+          </div>
+          {selectionInfo?.entropyHex && (
+            <div className="mt-3 text-[10px] text-muted-foreground font-mono break-all">
+              {selectionInfo.entropySource} · {selectionInfo.entropyHex.slice(0, 32)}...
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -289,6 +414,11 @@ export function ValidatorDashboard({
                   <div className="text-sm text-muted-foreground">
                     Staked: {formatStake(myValidator.stakedAmount)} XRGE • {myValidator.blocksValidated} validations
                   </div>
+                  {(myValidator.slashCount ?? 0) > 0 && (
+                    <div className="text-xs text-red-400">
+                      Slashed {myValidator.slashCount}x{myValidator.jailedUntil ? ` · Jail until #${myValidator.jailedUntil}` : ""}
+                    </div>
+                  )}
                 </div>
               </div>
               <Badge className={`capitalize ${
@@ -338,9 +468,10 @@ export function ValidatorDashboard({
               <StakingDialog
                 walletId={walletId}
                 signingPublicKey={signingPublicKey}
+                signingPrivateKey={signingPrivateKey}
                 availableBalance={availableBalance}
                 onClose={() => setShowStaking(false)}
-                onSuccess={loadData}
+                onSuccess={handleStakeSuccess}
               />
             </motion.div>
           </motion.div>

@@ -91,7 +91,7 @@ User submits TX to Node A
 
 3. **No Finality**: Blocks are considered final once accepted, but there's no finality mechanism for deep confirmations.
 
-4. **Single Proposer**: Currently, any mining node can propose blocks. No leader election or rotation.
+4. **Devnet Proposer Selection**: Proposer selection is quantum‑weighted and stake‑based, but uses a public QRNG endpoint and simple on‑chain stake tracking (not production‑grade).
 
 5. **No Slashing**: No penalties for invalid behavior.
 
@@ -172,6 +172,17 @@ To make this production-ready, you'd need:
 4. **Validator Set**: Known validator set with stake/weight
 5. **Slashing**: Penalties for misbehavior
 6. **State Machine**: Proper state transitions (not just scanning chain)
+
+## Proposer Selection (Devnet)
+
+RougeChain devnet uses **quantum‑weighted proposer selection**:
+
+1. **Entropy**: Fetches randomness from a public QRNG endpoint.
+2. **Seed**: Hash of `(entropy || lastBlockHash || height)`.
+3. **Stake Map**: Derived from on‑chain `stake` / `unstake` txs (by `fromPubKey`).
+4. **Selection**: Weighted lottery proportional to stake.
+
+Only the selected proposer should produce the block for that height.
 
 ## Current Status
 
