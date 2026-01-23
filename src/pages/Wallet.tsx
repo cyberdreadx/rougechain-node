@@ -23,6 +23,8 @@ import {
   getWalletBalance, 
   getWalletTransactions, 
   mintTokens,
+  getTotalSupply,
+  TOTAL_SUPPLY,
   WalletBalance,
   WalletTransaction
 } from "@/lib/pqc-wallet";
@@ -44,6 +46,7 @@ const Wallet = () => {
   const [wallet, setWallet] = useState<StoredWallet | null>(null);
   const [balances, setBalances] = useState<WalletBalance[]>([]);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
+  const [circulatingSupply, setCirculatingSupply] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [minting, setMinting] = useState(false);
@@ -81,13 +84,15 @@ const Wallet = () => {
     setRefreshing(true);
     
     try {
-      const [newBalances, newTxs] = await Promise.all([
+      const [newBalances, newTxs, supply] = await Promise.all([
         getWalletBalance(wallet.publicKey),
         getWalletTransactions(wallet.publicKey),
+        getTotalSupply("XRGE"),
       ]);
       
       setBalances(newBalances);
       setTransactions(newTxs);
+      setCirculatingSupply(supply);
     } catch (error) {
       console.error("Failed to refresh wallet data:", error);
       toast.error("Failed to load wallet data");
@@ -362,6 +367,39 @@ const Wallet = () => {
                 <span className="text-xs text-primary">Linked to Messenger Wallet</span>
               </div>
             )}
+
+            {/* Token Supply Info */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="p-4 rounded-xl bg-card border border-border"
+            >
+              <h3 className="text-sm font-semibold text-foreground mb-3">XRGE Tokenomics</h3>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-muted-foreground">Total Supply</span>
+                  <span className="text-sm font-mono text-foreground">{TOTAL_SUPPLY.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-muted-foreground">Circulating</span>
+                  <span className="text-sm font-mono text-foreground">{circulatingSupply.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-muted-foreground">Remaining</span>
+                  <span className="text-sm font-mono text-primary">{(TOTAL_SUPPLY - circulatingSupply).toLocaleString()}</span>
+                </div>
+                <div className="mt-3 h-2 bg-secondary rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-primary to-accent rounded-full transition-all duration-500"
+                    style={{ width: `${(circulatingSupply / TOTAL_SUPPLY) * 100}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-muted-foreground text-center">
+                  {((circulatingSupply / TOTAL_SUPPLY) * 100).toFixed(6)}% in circulation
+                </p>
+              </div>
+            </motion.div>
 
             <AssetList assets={assets} />
             <TransactionHistory transactions={txHistory} />

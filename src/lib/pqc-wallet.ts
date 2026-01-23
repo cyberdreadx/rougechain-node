@@ -1,5 +1,11 @@
 import { Block, loadChain, mineBlock } from "./pqc-blockchain";
 
+// RougeChain constants
+export const TOTAL_SUPPLY = 36_000_000_000; // 36 Billion XRGE
+export const TOKEN_SYMBOL = "XRGE";
+export const TOKEN_NAME = "RougeCoin";
+export const CHAIN_NAME = "RougeChain";
+
 // Transaction structure embedded in block data
 export interface Transaction {
   type: "transfer" | "mint" | "genesis";
@@ -185,6 +191,13 @@ export async function mintTokens(
     throw new Error("Blockchain not initialized. Create genesis block first.");
   }
 
+  // Check total supply cap
+  const currentSupply = await getTotalSupply(symbol);
+  if (currentSupply + amount > TOTAL_SUPPLY) {
+    const remaining = TOTAL_SUPPLY - currentSupply;
+    throw new Error(`Cannot mint ${amount} ${symbol}. Only ${remaining.toLocaleString()} tokens remaining of ${TOTAL_SUPPLY.toLocaleString()} total supply.`);
+  }
+
   const transaction: Transaction = {
     type: "mint",
     from: "FAUCET",
@@ -205,6 +218,12 @@ export async function mintTokens(
   );
 
   return newBlock;
+}
+
+// Get remaining supply available to mint
+export async function getRemainingSupply(symbol: string = "XRGE"): Promise<number> {
+  const minted = await getTotalSupply(symbol);
+  return TOTAL_SUPPLY - minted;
 }
 
 // Helper functions
