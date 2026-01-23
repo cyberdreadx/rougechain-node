@@ -1,14 +1,15 @@
 import { motion } from "framer-motion";
-import { ArrowUpRight, ArrowDownLeft, RefreshCw, History } from "lucide-react";
+import { ArrowUpRight, ArrowDownLeft, RefreshCw, History, Plus, Coins } from "lucide-react";
 
 interface Transaction {
   id: string;
-  type: "send" | "receive" | "swap";
+  type: "send" | "receive" | "swap" | "create_token" | "fee";
   amount: string;
   symbol: string;
   address: string;
   time: string;
   status: "completed" | "pending";
+  fee?: number;
 }
 
 interface TransactionHistoryProps {
@@ -23,8 +24,29 @@ const getIcon = (type: string) => {
       return <ArrowDownLeft className="w-4 h-4 text-success" />;
     case "swap":
       return <RefreshCw className="w-4 h-4 text-accent" />;
+    case "create_token":
+      return <Plus className="w-4 h-4 text-primary" />;
+    case "fee":
+      return <Coins className="w-4 h-4 text-muted-foreground" />;
     default:
       return null;
+  }
+};
+
+const getTypeLabel = (type: string) => {
+  switch (type) {
+    case "send":
+      return "Sent";
+    case "receive":
+      return "Received";
+    case "swap":
+      return "Swap";
+    case "create_token":
+      return "Token Created";
+    case "fee":
+      return "Fee";
+    default:
+      return type;
   }
 };
 
@@ -64,7 +86,7 @@ const TransactionHistory = ({ transactions = [] }: TransactionHistoryProps) => {
                   {getIcon(tx.type)}
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-foreground capitalize">{tx.type}</p>
+                  <p className="text-sm font-medium text-foreground">{getTypeLabel(tx.type)}</p>
                   <p className="text-xs text-muted-foreground font-mono">{tx.address}</p>
                 </div>
               </div>
@@ -72,11 +94,17 @@ const TransactionHistory = ({ transactions = [] }: TransactionHistoryProps) => {
               <div className="text-right">
                 <p className={`text-sm font-medium font-mono ${
                   tx.type === "receive" ? "text-success" : 
-                  tx.type === "send" ? "text-destructive" : "text-foreground"
+                  tx.type === "send" ? "text-destructive" : 
+                  tx.type === "create_token" ? "text-primary" : "text-foreground"
                 }`}>
-                  {tx.amount} {tx.symbol}
+                  {tx.type === "send" ? "-" : tx.type === "receive" ? "+" : ""}{tx.amount} {tx.symbol}
                 </p>
-                <p className="text-xs text-muted-foreground">{tx.time}</p>
+                <div className="flex items-center justify-end gap-1">
+                  <p className="text-xs text-muted-foreground">{tx.time}</p>
+                  {tx.fee && tx.fee > 0 && (
+                    <span className="text-[10px] text-muted-foreground">• {tx.fee} fee</span>
+                  )}
+                </div>
               </div>
             </motion.div>
           ))}

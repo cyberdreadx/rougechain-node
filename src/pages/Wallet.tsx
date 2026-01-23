@@ -10,7 +10,8 @@ import {
   Droplets,
   Send,
   Download,
-  Wallet as WalletIcon
+  Wallet as WalletIcon,
+  Plus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -25,16 +26,17 @@ import {
   mintTokens,
   getTotalSupply,
   TOTAL_SUPPLY,
-  TOKEN_ADDRESS,
   TOKEN_NAME,
   CHAIN_ID,
   EXPLORER_URL,
+  BASE_TRANSFER_FEE,
   WalletBalance,
   WalletTransaction
 } from "@/lib/pqc-wallet";
 import { generateKeypair, loadChain, createGenesisBlock } from "@/lib/pqc-blockchain";
 import SendTokensDialog from "@/components/wallet/SendTokensDialog";
 import ReceiveDialog from "@/components/wallet/ReceiveDialog";
+import CreateTokenDialog from "@/components/wallet/CreateTokenDialog";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 
 const WALLET_STORAGE_KEY = "pqc-blockchain-wallet";
@@ -57,6 +59,7 @@ const Wallet = () => {
   const [minting, setMinting] = useState(false);
   const [showSend, setShowSend] = useState(false);
   const [showReceive, setShowReceive] = useState(false);
+  const [showCreateToken, setShowCreateToken] = useState(false);
   const [messengerWalletAvailable, setMessengerWalletAvailable] = useState(false);
 
   // Load wallet from storage
@@ -315,55 +318,66 @@ const Wallet = () => {
             />
 
             {/* Action Buttons */}
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-5 gap-2">
               <Button
                 variant="outline"
-                className="flex-col h-auto py-4 gap-2 bg-card hover:bg-secondary border-border"
+                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
                 onClick={() => setShowSend(true)}
                 disabled={totalBalance === 0}
               >
-                <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center">
-                  <Send className="w-5 h-5 text-primary" />
+                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
+                  <Send className="w-4 h-4 text-primary" />
                 </div>
-                <span className="text-xs">Send</span>
+                <span className="text-[10px]">Send</span>
               </Button>
               
               <Button
                 variant="outline"
-                className="flex-col h-auto py-4 gap-2 bg-card hover:bg-secondary border-border"
+                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
                 onClick={() => setShowReceive(true)}
               >
-                <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center">
-                  <Download className="w-5 h-5 text-success" />
+                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
+                  <Download className="w-4 h-4 text-success" />
                 </div>
-                <span className="text-xs">Receive</span>
+                <span className="text-[10px]">Receive</span>
               </Button>
               
               <Button
                 variant="outline"
-                className="flex-col h-auto py-4 gap-2 bg-card hover:bg-secondary border-border"
+                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
                 onClick={claimFromFaucet}
                 disabled={minting}
               >
-                <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center">
+                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
                   {minting ? (
-                    <Loader2 className="w-5 h-5 text-accent animate-spin" />
+                    <Loader2 className="w-4 h-4 text-accent animate-spin" />
                   ) : (
-                    <Droplets className="w-5 h-5 text-accent" />
+                    <Droplets className="w-4 h-4 text-accent" />
                   )}
                 </div>
-                <span className="text-xs">Faucet</span>
+                <span className="text-[10px]">Faucet</span>
+              </Button>
+
+              <Button
+                variant="outline"
+                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
+                onClick={() => setShowCreateToken(true)}
+              >
+                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
+                  <Plus className="w-4 h-4 text-primary" />
+                </div>
+                <span className="text-[10px]">Create</span>
               </Button>
               
               <Button
                 variant="outline"
-                className="flex-col h-auto py-4 gap-2 bg-card hover:bg-secondary border-border"
+                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
                 onClick={disconnectWallet}
               >
-                <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center">
-                  <Unlink className="w-5 h-5 text-destructive" />
+                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
+                  <Unlink className="w-4 h-4 text-destructive" />
                 </div>
-                <span className="text-xs">Disconnect</span>
+                <span className="text-[10px]">Disconnect</span>
               </Button>
             </div>
 
@@ -393,10 +407,11 @@ const Wallet = () => {
                 </a>
               </div>
               
-              {/* Token Address */}
+              {/* Native Token Info */}
               <div className="p-3 rounded-lg bg-secondary/50 border border-border mb-3">
-                <p className="text-xs text-muted-foreground mb-1">Token Address</p>
-                <p className="text-xs font-mono text-foreground break-all">{TOKEN_ADDRESS}</p>
+                <p className="text-xs text-muted-foreground mb-1">Token Type</p>
+                <p className="text-xs font-mono text-foreground">Native Chain Token</p>
+                <p className="text-[10px] text-muted-foreground mt-1">XRGE is the native currency of RougeChain</p>
               </div>
 
               <div className="grid grid-cols-2 gap-2 mb-3">
@@ -463,6 +478,21 @@ const Wallet = () => {
           <ReceiveDialog
             publicKey={wallet.publicKey}
             onClose={() => setShowReceive(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Create Token Dialog */}
+      <AnimatePresence>
+        {showCreateToken && wallet && (
+          <CreateTokenDialog
+            wallet={wallet}
+            balances={balances}
+            onClose={() => setShowCreateToken(false)}
+            onSuccess={() => {
+              setShowCreateToken(false);
+              refreshWalletData();
+            }}
           />
         )}
       </AnimatePresence>
