@@ -95,7 +95,73 @@ export function parseBlockTransaction(block: Block): Transaction | null {
 }
 
 // Get all transactions from the chain
+// Now supports both node API (for public deployment) and local Supabase (for dev)
 export async function getAllTransactions(): Promise<{ tx: Transaction; block: Block }[]> {
+  // Try node API first (for public deployment)
+  const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100/api";
+  
+  try {
+    const res = await fetch(`${NODE_API_URL}/blocks`);
+    if (res.ok) {
+      const data = await res.json() as { blocks: Array<{
+        version: 1;
+        header: { height: number; time: number; prevHash: string; proposerPubKey: string };
+        txs: Array<{
+          version: 1;
+          type: "transfer" | "stake" | "unstake";
+          fromPubKey: string;
+          nonce: number;
+          payload: { toPubKeyHex?: string; amount?: number };
+          fee: number;
+          sig: string;
+        }>;
+        proposerSig: string;
+        hash: string;
+      }> };
+      
+      const transactions: { tx: Transaction; block: Block }[] = [];
+      
+      for (const blockV1 of data.blocks) {
+        // Convert each transaction in the block
+        for (const txV1 of blockV1.txs) {
+          if (txV1.type === "transfer") {
+            const payload = txV1.payload as { toPubKeyHex?: string; amount?: number };
+            const tx: Transaction = {
+              type: "transfer",
+              from: txV1.fromPubKey,
+              to: payload.toPubKeyHex || "",
+              amount: payload.amount || 0,
+              symbol: "XRGE",
+              timestamp: blockV1.header.time,
+              fee: txV1.fee,
+              feeRecipient: blockV1.header.proposerPubKey,
+            };
+            
+            const block: Block = {
+              index: blockV1.header.height,
+              timestamp: blockV1.header.time,
+              data: JSON.stringify(tx),
+              previousHash: blockV1.header.prevHash,
+              hash: blockV1.hash,
+              nonce: 0,
+              signature: blockV1.proposerSig,
+              signerPublicKey: blockV1.header.proposerPubKey,
+            };
+            
+            transactions.push({ tx, block });
+          }
+        }
+      }
+      
+      console.log(`[Wallet] Loaded ${transactions.length} transactions from ${data.blocks.length} blocks`);
+      
+      return transactions;
+    }
+  } catch (nodeError) {
+    console.log("Node API unavailable, falling back to local...", nodeError);
+  }
+
+  // Fallback to local Supabase method (for dev)
   const chain = await loadChain();
   const transactions: { tx: Transaction; block: Block }[] = [];
 

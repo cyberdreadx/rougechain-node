@@ -142,9 +142,11 @@ export class L1Node {
         return;
       }
       case "TX": {
-        await this.acceptTx(msg.tx);
-        // Gossip
-        this.broadcast(msg, peer);
+        const accepted = await this.acceptTx(msg.tx);
+        if (accepted) {
+          // Gossip to other peers
+          this.broadcast(msg, peer);
+        }
         return;
       }
       case "BLOCK": {
@@ -185,11 +187,20 @@ export class L1Node {
   }
 
   private async acceptTx(tx: TxV1): Promise<boolean> {
-    if (tx.version !== 1) return false;
+    if (tx.version !== 1) {
+      console.warn(`[Node ${this.nodeId.slice(0, 8)}] ⚠️  Rejected tx: invalid version`);
+      return false;
+    }
     const ok = await pqcVerify(tx.fromPubKey, encodeTxV1(tx), tx.sig);
-    if (!ok) return false;
+    if (!ok) {
+      console.warn(`[Node ${this.nodeId.slice(0, 8)}] ⚠️  Rejected tx: invalid signature`);
+      return false;
+    }
     const id = bytesToHex(sha256(encodeTxV1(tx)));
-    if (!this.mempool.has(id)) this.mempool.set(id, tx);
+    if (!this.mempool.has(id)) {
+      this.mempool.set(id, tx);
+      console.log(`[Node ${this.nodeId.slice(0, 8)}] ✅ Added tx to mempool (id: ${id.slice(0, 16)}..., mempool: ${this.mempool.size})`);
+    }
     return true;
   }
 
@@ -252,6 +263,9 @@ export class L1Node {
     const height = tip.height + 1;
 
     const txs = Array.from(this.mempool.values()).slice(0, 250);
+    if (txs.length > 0) {
+      console.log(`[Node ${this.nodeId.slice(0, 8)}] 📦 Including ${txs.length} transaction(s) in block #${height}`);
+    }
     const txHash = computeTxHash(txs);
 
     const header = {
@@ -351,8 +365,12 @@ export class L1Node {
     const ok = await pqcVerify(fromPublicKeyHex, bytes, tx.sig);
     if (!ok) throw new Error("Invalid signature");
     
-    await this.acceptTx(tx);
+    const accepted = await this.acceptTx(tx);
+    if (!accepted) {
+      throw new Error("Transaction was not accepted into mempool");
+    }
     this.broadcast({ type: "TX", tx });
+    console.log(`[Node ${this.nodeId.slice(0, 8)}] 📤 User transaction submitted: ${amount} XRGE from ${fromPublicKeyHex.slice(0, 16)}... to ${toPublicKeyHex.slice(0, 16)}...`);
     return tx;
   }
 

@@ -71,6 +71,9 @@ const Wallet = () => {
   useEffect(() => {
     if (wallet) {
       refreshWalletData();
+      // Auto-refresh every 3 seconds to see new transactions
+      const interval = setInterval(refreshWalletData, 3000);
+      return () => clearInterval(interval);
     }
   }, [wallet?.signingPublicKey]);
 

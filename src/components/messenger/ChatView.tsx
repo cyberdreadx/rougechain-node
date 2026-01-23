@@ -530,7 +530,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
           const botWallet = loadDemoBotWallet();
           if (botWallet) {
             try {
-              // Call Lovable AI for intelligent response
+              // Call AI for intelligent response
               const { data: aiData, error: aiError } = await supabase.functions.invoke("quantum-bot", {
                 body: { 
                   userMessage: messageText,

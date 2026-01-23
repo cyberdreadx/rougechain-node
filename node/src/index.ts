@@ -84,6 +84,32 @@ async function main() {
       return;
     }
 
+    // Public API: Get transactions (extracted from blocks)
+    if (req.url === "/api/transactions" && req.method === "GET") {
+      const blocks = await node.getAllBlocks();
+      const allTxs: Array<{
+        tx: unknown;
+        blockHeight: number;
+        blockHash: string;
+        blockTime: number;
+      }> = [];
+      
+      for (const block of blocks) {
+        for (const tx of block.txs) {
+          allTxs.push({
+            tx,
+            blockHeight: block.header.height,
+            blockHash: block.hash,
+            blockTime: block.header.time,
+          });
+        }
+      }
+      
+      res.writeHead(200);
+      res.end(JSON.stringify({ success: true, transactions: allTxs }));
+      return;
+    }
+
     // Public API: Create wallet (generate keypair)
     if (req.url === "/api/wallet/create" && req.method === "POST") {
       try {

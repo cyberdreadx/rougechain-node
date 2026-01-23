@@ -1,73 +1,78 @@
-# Welcome to your Lovable project
+# RougeChain - Quantum-Safe Blockchain
 
-## Project info
+RougeChain is a production-ready L1 blockchain powered by NIST-approved post-quantum cryptography (ML-DSA-65 and ML-KEM-768) to protect against quantum computing threats.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Features
 
-## How can I edit this code?
+- **Post-Quantum Cryptography**: ML-DSA-65 signatures and ML-KEM-768 key exchange
+- **L1 Node Daemon**: Standalone Node.js blockchain node with TCP P2P networking
+- **Web Wallet**: Create wallets, send tokens, and view transaction history
+- **Blockchain Explorer**: Visualize blocks, transactions, and network stats
+- **Secure Messenger**: End-to-end encrypted messaging with quantum-safe encryption
+- **Public API**: RESTful API for wallet creation, transaction submission, and balance queries
 
-There are several ways of editing your application.
+## Quick Start
 
-**Use Lovable**
+### Prerequisites
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+- Node.js 18+ installed
+- npm or yarn
 
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+### Installation
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
+# Clone the repository
 git clone <YOUR_GIT_URL>
+cd quantum-vault
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+# Install dependencies
+npm install
+npm install --save @noble/post-quantum
+npm install --save-dev tsx
 
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# Start development server
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+### Running a Node
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+```sh
+# Start a mining node
+npm run l1:node:dev -- --name my-node --host 0.0.0.0 --port 4100 --apiPort 5100 --mine
 
-**Use GitHub Codespaces**
+# Or connect to peers
+npm run l1:node:dev -- --peers "127.0.0.1:4101,127.0.0.1:4102" --mine
+```
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Project Structure
 
-## What technologies are used for this project?
+- `node/` - L1 blockchain node daemon (Node.js)
+- `src/` - React frontend application
+- `supabase/` - Supabase functions and migrations (legacy)
 
-This project is built with:
+## Technologies
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+- **Frontend**: Vite, React, TypeScript, Tailwind CSS, shadcn-ui
+- **Backend**: Node.js, TypeScript
+- **Cryptography**: @noble/post-quantum (ML-DSA-65, ML-KEM-768)
+- **Storage**: File-based JSONL storage for blockchain data
 
-## How can I deploy this project?
+## Deployment
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+See deployment guides:
+- `DEPLOYMENT_SUMMARY.md` - Quick overview
+- `DEPLOYMENT_HOSTINGER.md` - VPS deployment guide
+- `DEPLOYMENT_NETLIFY.md` - Frontend deployment guide
+- `QUICK_START_VPS.sh` - Automated VPS setup script
 
-## Can I connect a custom domain to my Lovable project?
+## Documentation
 
-Yes, you can!
+- `node/README.md` - Node daemon documentation
+- `node/FEES.md` - Transaction fee mechanism
+- `node/PERFORMANCE.md` - Performance optimizations
+- `PUBLIC_API.md` - Public API documentation
+- `TROUBLESHOOTING_TRANSACTIONS.md` - Transaction debugging guide
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+## License
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+MIT
