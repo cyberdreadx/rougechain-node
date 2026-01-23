@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Shield, ShieldCheck, Crown, AlertCircle, Check, Coins, Info } from "lucide-react";
+import { Shield, ShieldCheck, Crown, AlertCircle, Check, Coins, Info, Key } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,10 +14,11 @@ import {
   getTierFromStake,
   formatStake,
 } from "@/lib/pqc-validators";
+import { supabase } from "@/integrations/supabase/client";
 
 interface StakingDialogProps {
-  walletId: string;
-  signingPublicKey: string;
+  walletId?: string;
+  signingPublicKey?: string;
   availableBalance: number;
   onClose: () => void;
   onSuccess: () => void;
@@ -42,8 +43,8 @@ const tierConfig: Record<ValidatorTier, { icon: typeof Shield; color: string; gr
 };
 
 export function StakingDialog({
-  walletId,
-  signingPublicKey,
+  walletId: providedWalletId,
+  signingPublicKey: providedSigningKey,
   availableBalance,
   onClose,
   onSuccess,
@@ -53,19 +54,46 @@ export function StakingDialog({
   const [isStaking, setIsStaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [isGeneratingKeys, setIsGeneratingKeys] = useState(false);
+  const [generatedWalletId, setGeneratedWalletId] = useState<string | null>(null);
+  const [generatedSigningKey, setGeneratedSigningKey] = useState<string | null>(null);
+
+  const walletId = providedWalletId || generatedWalletId;
+  const signingPublicKey = providedSigningKey || generatedSigningKey;
 
   const amount = parseInt(stakeAmount) || 0;
   const achievableTier = getTierFromStake(amount);
   const minRequired = STAKE_REQUIREMENTS[selectedTier];
   const hasEnoughBalance = amount <= availableBalance;
   const meetsMinimum = amount >= minRequired;
-  const canStake = hasEnoughBalance && meetsMinimum && amount > 0;
+  const hasKeys = !!walletId && !!signingPublicKey;
+  const canStake = hasEnoughBalance && meetsMinimum && amount > 0 && hasKeys;
 
   useEffect(() => {
     if (amount >= STAKE_REQUIREMENTS[selectedTier]) return;
     // Auto-select tier based on amount
     setSelectedTier(achievableTier);
   }, [amount, achievableTier, selectedTier]);
+
+  const generateKeys = async () => {
+    setIsGeneratingKeys(true);
+    setError(null);
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke("pqc-crypto", {
+        body: { action: "generate-keypair" },
+      });
+      if (fnError) throw fnError;
+      
+      // Generate a demo wallet ID
+      const demoWalletId = `xrge:${data.publicKey.slice(0, 32)}`;
+      setGeneratedWalletId(demoWalletId);
+      setGeneratedSigningKey(data.publicKey);
+    } catch (err) {
+      setError("Failed to generate keys. Please try again.");
+    } finally {
+      setIsGeneratingKeys(false);
+    }
+  };
 
   const handleStake = async () => {
     if (!canStake) return;
@@ -129,6 +157,57 @@ export function StakingDialog({
           Stake XRGE to secure the network and earn rewards
         </p>
       </div>
+
+      {/* Step 1: Generate Keys (if not provided) */}
+      {!hasKeys && (
+        <Card className="bg-primary/5 border-primary/20">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+                <Key className="w-4 h-4 text-primary" />
+              </div>
+              <div>
+                <div className="font-medium">Step 1: Generate Validator Keys</div>
+                <p className="text-xs text-muted-foreground">
+                  Create PQC signing keys for your validator node
+                </p>
+              </div>
+            </div>
+            <Button 
+              onClick={generateKeys} 
+              disabled={isGeneratingKeys}
+              className="w-full gap-2"
+            >
+              {isGeneratingKeys ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  Generating ML-DSA-65 Keys...
+                </>
+              ) : (
+                <>
+                  <Key className="w-4 h-4" />
+                  Generate Quantum-Safe Keys
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Show generated keys */}
+      {hasKeys && !providedWalletId && (
+        <Card className="bg-success/5 border-success/20">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Check className="w-4 h-4 text-success" />
+              <span className="text-sm font-medium text-success">Keys Generated</span>
+            </div>
+            <div className="text-xs font-mono text-muted-foreground break-all">
+              {walletId}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Tier Selection */}
       <div className="grid grid-cols-3 gap-3">
