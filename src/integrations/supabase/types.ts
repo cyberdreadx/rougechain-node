@@ -14,6 +14,44 @@ export type Database = {
   }
   public: {
     Tables: {
+      block_validations: {
+        Row: {
+          block_hash: string
+          block_index: number
+          id: string
+          is_proposer: boolean
+          signature: string
+          validated_at: string
+          validator_id: string
+        }
+        Insert: {
+          block_hash: string
+          block_index: number
+          id?: string
+          is_proposer?: boolean
+          signature: string
+          validated_at?: string
+          validator_id: string
+        }
+        Update: {
+          block_hash?: string
+          block_index?: number
+          id?: string
+          is_proposer?: boolean
+          signature?: string
+          validated_at?: string
+          validator_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "block_validations_validator_id_fkey"
+            columns: ["validator_id"]
+            isOneToOne: false
+            referencedRelation: "validators"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversation_participants: {
         Row: {
           conversation_id: string
@@ -199,6 +237,206 @@ export type Database = {
         }
         Relationships: []
       }
+      quantum_entropy: {
+        Row: {
+          block_index: number
+          contributed_at: string
+          entropy_value: string
+          id: string
+          used_for_selection: boolean
+          validator_id: string
+        }
+        Insert: {
+          block_index: number
+          contributed_at?: string
+          entropy_value: string
+          id?: string
+          used_for_selection?: boolean
+          validator_id: string
+        }
+        Update: {
+          block_index?: number
+          contributed_at?: string
+          entropy_value?: string
+          id?: string
+          used_for_selection?: boolean
+          validator_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quantum_entropy_validator_id_fkey"
+            columns: ["validator_id"]
+            isOneToOne: false
+            referencedRelation: "validators"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      slashing_events: {
+        Row: {
+          amount_slashed: number
+          block_index: number | null
+          created_at: string
+          evidence: string | null
+          id: string
+          reason: string
+          validator_id: string
+        }
+        Insert: {
+          amount_slashed: number
+          block_index?: number | null
+          created_at?: string
+          evidence?: string | null
+          id?: string
+          reason: string
+          validator_id: string
+        }
+        Update: {
+          amount_slashed?: number
+          block_index?: number | null
+          created_at?: string
+          evidence?: string | null
+          id?: string
+          reason?: string
+          validator_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "slashing_events_validator_id_fkey"
+            columns: ["validator_id"]
+            isOneToOne: false
+            referencedRelation: "validators"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      staking_history: {
+        Row: {
+          action: string
+          amount: number
+          block_index: number | null
+          created_at: string
+          id: string
+          tx_hash: string | null
+          validator_id: string
+        }
+        Insert: {
+          action: string
+          amount: number
+          block_index?: number | null
+          created_at?: string
+          id?: string
+          tx_hash?: string | null
+          validator_id: string
+        }
+        Update: {
+          action?: string
+          amount?: number
+          block_index?: number | null
+          created_at?: string
+          id?: string
+          tx_hash?: string | null
+          validator_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "staking_history_validator_id_fkey"
+            columns: ["validator_id"]
+            isOneToOne: false
+            referencedRelation: "validators"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      validator_rewards: {
+        Row: {
+          block_index: number
+          created_at: string
+          fee_share: number
+          id: string
+          reward_amount: number
+          validator_id: string
+        }
+        Insert: {
+          block_index: number
+          created_at?: string
+          fee_share?: number
+          id?: string
+          reward_amount: number
+          validator_id: string
+        }
+        Update: {
+          block_index?: number
+          created_at?: string
+          fee_share?: number
+          id?: string
+          reward_amount?: number
+          validator_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "validator_rewards_validator_id_fkey"
+            columns: ["validator_id"]
+            isOneToOne: false
+            referencedRelation: "validators"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      validators: {
+        Row: {
+          blocks_proposed: number
+          blocks_validated: number
+          commission_rate: number
+          id: string
+          last_seen_at: string | null
+          quantum_entropy_contributions: number
+          registered_at: string
+          signing_public_key: string
+          slashed_amount: number
+          staked_amount: number
+          status: Database["public"]["Enums"]["validator_status"]
+          tier: Database["public"]["Enums"]["validator_tier"]
+          unbonding_at: string | null
+          uptime_percentage: number
+          wallet_id: string
+        }
+        Insert: {
+          blocks_proposed?: number
+          blocks_validated?: number
+          commission_rate?: number
+          id?: string
+          last_seen_at?: string | null
+          quantum_entropy_contributions?: number
+          registered_at?: string
+          signing_public_key: string
+          slashed_amount?: number
+          staked_amount?: number
+          status?: Database["public"]["Enums"]["validator_status"]
+          tier?: Database["public"]["Enums"]["validator_tier"]
+          unbonding_at?: string | null
+          uptime_percentage?: number
+          wallet_id: string
+        }
+        Update: {
+          blocks_proposed?: number
+          blocks_validated?: number
+          commission_rate?: number
+          id?: string
+          last_seen_at?: string | null
+          quantum_entropy_contributions?: number
+          registered_at?: string
+          signing_public_key?: string
+          slashed_amount?: number
+          staked_amount?: number
+          status?: Database["public"]["Enums"]["validator_status"]
+          tier?: Database["public"]["Enums"]["validator_tier"]
+          unbonding_at?: string | null
+          uptime_percentage?: number
+          wallet_id?: string
+        }
+        Relationships: []
+      }
       wallets: {
         Row: {
           created_at: string
@@ -231,7 +469,13 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      validator_status:
+        | "pending"
+        | "active"
+        | "jailed"
+        | "unbonding"
+        | "inactive"
+      validator_tier: "standard" | "operator" | "genesis"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -358,6 +602,15 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      validator_status: [
+        "pending",
+        "active",
+        "jailed",
+        "unbonding",
+        "inactive",
+      ],
+      validator_tier: ["standard", "operator", "genesis"],
+    },
   },
 } as const
