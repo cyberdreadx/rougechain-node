@@ -163,6 +163,17 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
       balances[symbol] = 0;
     }
 
+    // For token creation, creator receives the full supply (don't double-count)
+    if (tx.type === "create_token" && tx.from === publicKey) {
+      balances[symbol] += tx.amount;
+      // Deduct the creation fee
+      if (tx.fee && tx.fee > 0) {
+        if (!balances["XRGE"]) balances["XRGE"] = 0;
+        balances["XRGE"] -= tx.fee;
+      }
+      continue;
+    }
+
     // Received tokens
     if (tx.to === publicKey && tx.type !== "fee") {
       balances[symbol] += tx.amount;
