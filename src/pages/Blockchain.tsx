@@ -265,23 +265,6 @@ const Blockchain = () => {
           </div>
         )}
       </main>
-
-            {/* Sidebar */}
-            <div className="space-y-4">
-              <MiningPanel
-                chain={chain}
-                keypair={keypair}
-                onBlockMined={handleBlockMined}
-                onKeypairGenerated={setKeypair}
-                onGenesisCreated={handleGenesisCreated}
-              />
-              <TamperDemo chain={chain} />
-              <QuantumThreatPanel />
-              <PQCInfo />
-            </div>
-          </div>
-        )}
-      </main>
     </div>
   );
 };

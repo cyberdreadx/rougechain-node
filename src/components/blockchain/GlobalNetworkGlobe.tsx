@@ -164,8 +164,9 @@ interface NetworkSceneProps {
   peerCount: number;
 }
 
-const NetworkScene = ({ validators, peerCount }: NetworkSceneProps) => {
-  const totalNodes = validators.length + peerCount;
+const NetworkScene = ({ validators = [], peerCount }: NetworkSceneProps) => {
+  const validatorList = validators || [];
+  const totalNodes = Math.max(validatorList.length + peerCount, peerCount);
   const nodes = useMemo(() => generateNodePositions(totalNodes, 2), [totalNodes]);
   const connections = useMemo(() => generateConnections(nodes, 0.12), [nodes]);
 
@@ -182,8 +183,8 @@ const NetworkScene = ({ validators, peerCount }: NetworkSceneProps) => {
           <Node
             key={i}
             position={pos}
-            validator={i < validators.length ? validators[i] : undefined}
-            isValidator={i < validators.length}
+            validator={i < validatorList.length ? validatorList[i] : undefined}
+            isValidator={i < validatorList.length}
           />
         ))}
 
