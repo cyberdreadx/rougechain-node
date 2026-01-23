@@ -1,16 +1,58 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Shield, Info, Zap, TrendingUp, Lock } from "lucide-react";
+import { Shield, Info, Zap, TrendingUp, Lock, Wallet, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { MainNav } from "@/components/MainNav";
 import { ValidatorDashboard } from "@/components/validators/ValidatorDashboard";
 import { STAKE_REQUIREMENTS, TIER_BENEFITS, formatStake, ValidatorTier } from "@/lib/pqc-validators";
+import { loadUnifiedWallet, UnifiedWallet } from "@/lib/unified-wallet";
+import { getWalletBalance } from "@/lib/pqc-wallet";
+import { Link } from "react-router-dom";
 
 export default function Validators() {
-  // In a real app, these would come from wallet context
-  const [walletId] = useState<string | undefined>(undefined);
-  const [signingPublicKey] = useState<string | undefined>(undefined);
-  const [availableBalance] = useState(50000); // Demo balance
+  const [wallet, setWallet] = useState<UnifiedWallet | null>(null);
+  const [availableBalance, setAvailableBalance] = useState(0);
+  const [isLoadingBalance, setIsLoadingBalance] = useState(true);
+
+  // Load wallet and balance
+  useEffect(() => {
+    const loadWalletData = async () => {
+      setIsLoadingBalance(true);
+      const unifiedWallet = loadUnifiedWallet();
+      setWallet(unifiedWallet);
+
+      if (unifiedWallet) {
+        try {
+          const balances = await getWalletBalance(unifiedWallet.signingPublicKey);
+          const xrgeBalance = balances.find(b => b.symbol === "XRGE");
+          setAvailableBalance(xrgeBalance?.balance || 0);
+        } catch (error) {
+          console.error("Failed to load balance:", error);
+          setAvailableBalance(0);
+        }
+      }
+      setIsLoadingBalance(false);
+    };
+
+    loadWalletData();
+  }, []);
+
+  const refreshBalance = async () => {
+    if (!wallet) return;
+    setIsLoadingBalance(true);
+    try {
+      const balances = await getWalletBalance(wallet.signingPublicKey);
+      const xrgeBalance = balances.find(b => b.symbol === "XRGE");
+      setAvailableBalance(xrgeBalance?.balance || 0);
+    } catch (error) {
+      console.error("Failed to refresh balance:", error);
+    }
+    setIsLoadingBalance(false);
+  };
+
+  const walletId = wallet?.id;
+  const signingPublicKey = wallet?.signingPublicKey;
 
   return (
     <div className="min-h-screen bg-background text-foreground relative overflow-hidden">
@@ -36,6 +78,56 @@ export default function Validators() {
 
           {/* Sidebar */}
           <div className="space-y-6">
+            {/* Wallet Balance Card */}
+            <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/30">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Wallet className="w-4 h-4 text-primary" />
+                    Your Balance
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={refreshBalance}
+                    disabled={isLoadingBalance || !wallet}
+                    className="h-6 w-6 p-0"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isLoadingBalance ? "animate-spin" : ""}`} />
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {wallet ? (
+                  <div className="space-y-3">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-3xl font-bold">
+                        {isLoadingBalance ? "..." : formatStake(availableBalance)}
+                      </span>
+                      <span className="text-muted-foreground">XRGE</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {wallet.displayName}
+                    </div>
+                    {availableBalance < STAKE_REQUIREMENTS.standard && (
+                      <div className="p-2 bg-destructive/10 border border-destructive/30 rounded text-xs text-destructive">
+                        Need {formatStake(STAKE_REQUIREMENTS.standard - availableBalance)} more XRGE to stake
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      Connect your wallet to view balance and stake
+                    </p>
+                    <Button asChild size="sm" className="w-full">
+                      <Link to="/wallet">Open Wallet</Link>
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             {/* How It Works */}
             <Card className="bg-card/50 backdrop-blur border-border">
               <CardHeader className="pb-3">
