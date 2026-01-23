@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Shield, MessageSquare, Plus, Users, Lock, Key } from "lucide-react";
+import { ArrowLeft, Shield, MessageSquare, Plus, Users, Lock, Key, Settings } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -8,6 +8,7 @@ import WalletSetup from "@/components/messenger/WalletSetup";
 import ConversationList from "@/components/messenger/ConversationList";
 import ChatView from "@/components/messenger/ChatView";
 import ContactPicker from "@/components/messenger/ContactPicker";
+import PrivacySettings from "@/components/messenger/PrivacySettings";
 import type { WalletWithPrivateKeys, Conversation, Wallet } from "@/lib/pqc-messenger";
 import { loadLocalWallet, getConversations, getWallets } from "@/lib/pqc-messenger";
 
@@ -17,6 +18,7 @@ const Messenger = () => {
   const [contacts, setContacts] = useState<Wallet[]>([]);
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [showContactPicker, setShowContactPicker] = useState(false);
+  const [showPrivacySettings, setShowPrivacySettings] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   // Load wallet from localStorage on mount
@@ -122,6 +124,14 @@ const Messenger = () => {
 
         <div className="flex items-center gap-2">
           <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setShowPrivacySettings(true)}
+            title="Privacy Settings"
+          >
+            <Settings className="w-4 h-4" />
+          </Button>
+          <Button
             variant="outline"
             size="sm"
             onClick={() => setShowContactPicker(true)}
@@ -179,6 +189,13 @@ const Messenger = () => {
             onClose={() => setShowContactPicker(false)}
             onConversationCreated={handleConversationCreated}
           />
+        )}
+      </AnimatePresence>
+
+      {/* Privacy settings modal */}
+      <AnimatePresence>
+        {showPrivacySettings && (
+          <PrivacySettings onClose={() => setShowPrivacySettings(false)} />
         )}
       </AnimatePresence>
     </div>
