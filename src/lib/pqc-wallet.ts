@@ -65,7 +65,7 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
   const balances: Record<string, number> = {};
 
   for (const { tx } of transactions) {
-    const symbol = tx.symbol || "QBIT";
+    const symbol = tx.symbol || "XRGE";
     
     // Initialize if needed
     if (!balances[symbol]) {
@@ -87,8 +87,8 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
   return Object.entries(balances).map(([symbol, balance]) => ({
     symbol,
     balance,
-    name: symbol === "QBIT" ? "Quantum Bit" : symbol,
-    icon: symbol === "QBIT" ? "⚛" : "🪙",
+    name: symbol === "XRGE" ? "Xurge Token" : symbol,
+    icon: symbol === "XRGE" ? "⚡" : "🪙",
   }));
 }
 
@@ -129,7 +129,7 @@ export async function sendTransaction(
   fromPublicKey: string,
   toPublicKey: string,
   amount: number,
-  symbol: string = "QBIT",
+  symbol: string = "XRGE",
   memo?: string
 ): Promise<Block> {
   const chain = await loadChain();
@@ -176,7 +176,7 @@ export async function mintTokens(
   minerPublicKey: string,
   recipientPublicKey: string,
   amount: number = 100,
-  symbol: string = "QBIT"
+  symbol: string = "XRGE"
 ): Promise<Block> {
   const chain = await loadChain();
   const lastBlock = chain[chain.length - 1];
@@ -231,7 +231,7 @@ function formatTimestamp(timestamp: number): string {
 }
 
 // Get total supply minted
-export async function getTotalSupply(symbol: string = "QBIT"): Promise<number> {
+export async function getTotalSupply(symbol: string = "XRGE"): Promise<number> {
   const transactions = await getAllTransactions();
   let supply = 0;
 

@@ -58,9 +58,9 @@ const WalletCard = ({ address, balance, usdValue, isConnected = false, onConnect
               transition={{ delay: 0.2 }}
               className="text-4xl font-bold text-gradient-quantum"
             >
-              {balance || "0"} ETH
+              {balance || "0"} XRGE
             </motion.h2>
-            <p className="text-lg text-muted-foreground mt-1">≈ ${usdValue || "0.00"} USD</p>
+            <p className="text-lg text-muted-foreground mt-1">Quantum Chain</p>
           </div>
 
           {/* Address section */}
