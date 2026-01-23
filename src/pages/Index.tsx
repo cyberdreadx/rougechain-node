@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Blocks } from "lucide-react";
+import { Blocks, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Header from "@/components/wallet/Header";
 import WalletCard from "@/components/wallet/WalletCard";
@@ -66,12 +66,31 @@ const Index = () => {
               </div>
             </motion.div>
 
-            {/* PQC Blockchain Demo Link */}
+            {/* PQC Web Wallet Link */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.6 }}
               className="bg-gradient-to-br from-primary/10 to-accent/10 rounded-xl border border-primary/20 p-4"
+            >
+              <h3 className="text-sm font-semibold text-foreground mb-2">💰 PQC Web Wallet</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed mb-3">
+                Create a quantum-safe wallet, claim tokens from the faucet, and send QBIT with ML-DSA signed transactions.
+              </p>
+              <Link to="/wallet">
+                <Button className="w-full" variant="default">
+                  <Wallet className="w-4 h-4 mr-2" />
+                  Open Wallet
+                </Button>
+              </Link>
+            </motion.div>
+
+            {/* PQC Blockchain Demo Link */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.7 }}
+              className="bg-gradient-to-br from-accent/10 to-primary/10 rounded-xl border border-accent/20 p-4"
             >
               <h3 className="text-sm font-semibold text-foreground mb-2">🔗 PQC Blockchain Demo</h3>
               <p className="text-xs text-muted-foreground leading-relaxed mb-3">
@@ -90,7 +109,7 @@ const Index = () => {
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.7 }}
+              transition={{ delay: 0.8 }}
               className="bg-gradient-to-br from-accent/10 to-primary/10 rounded-xl border border-accent/20 p-4"
             >
               <h3 className="text-sm font-semibold text-foreground mb-2">🛡️ Quantum-Safe</h3>
