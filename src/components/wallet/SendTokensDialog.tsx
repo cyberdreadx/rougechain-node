@@ -9,8 +9,8 @@ import { sendTransaction, WalletBalance } from "@/lib/pqc-wallet";
 
 interface SendTokensDialogProps {
   wallet: {
-    publicKey: string;
-    privateKey: string;
+    signingPublicKey: string;
+    signingPrivateKey: string;
   };
   balances: WalletBalance[];
   onClose: () => void;
@@ -77,7 +77,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
     }
 
     // Prevent sending to self
-    if (parsed.address === wallet.publicKey) {
+    if (parsed.address === wallet.signingPublicKey) {
       setError("Cannot send to your own address");
       return;
     }
@@ -85,8 +85,8 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
     setSending(true);
     try {
       await sendTransaction(
-        wallet.privateKey,
-        wallet.publicKey,
+        wallet.signingPrivateKey,
+        wallet.signingPublicKey,
         parsed.address, // Use parsed address without prefix
         amountNum,
         "XRGE",

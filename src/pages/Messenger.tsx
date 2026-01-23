@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Shield, MessageSquare, Plus, Lock, Key, Settings, Download } from "lucide-react";
+import { ArrowLeft, Shield, Plus, Lock, Key, Settings, Download } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -9,13 +9,20 @@ import ConversationList from "@/components/messenger/ConversationList";
 import ChatView from "@/components/messenger/ChatView";
 import ContactPicker from "@/components/messenger/ContactPicker";
 import PrivacySettings from "@/components/messenger/PrivacySettings";
-import WalletBackup from "@/components/messenger/WalletBackup";
-import type { WalletWithPrivateKeys, Conversation, Wallet } from "@/lib/pqc-messenger";
-import { loadLocalWallet, getConversations, getWallets, saveWalletLocally } from "@/lib/pqc-messenger";
+import WalletBackup from "@/components/wallet/WalletBackup";
+import type { Conversation, Wallet, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
+import { getConversations, getWallets, saveWalletLocally } from "@/lib/pqc-messenger";
+import { 
+  UnifiedWallet, 
+  loadUnifiedWallet, 
+  saveUnifiedWallet, 
+  toMessengerWallet, 
+  fromMessengerWallet 
+} from "@/lib/unified-wallet";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 
 const Messenger = () => {
-  const [wallet, setWallet] = useState<WalletWithPrivateKeys | null>(null);
+  const [wallet, setWallet] = useState<UnifiedWallet | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [contacts, setContacts] = useState<Wallet[]>([]);
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
@@ -26,7 +33,7 @@ const Messenger = () => {
 
   // Load wallet from localStorage on mount
   useEffect(() => {
-    const savedWallet = loadLocalWallet();
+    const savedWallet = loadUnifiedWallet();
     if (savedWallet) {
       setWallet(savedWallet);
     }
@@ -61,10 +68,18 @@ const Messenger = () => {
     }
   };
 
+  // Convert wallet to messenger format for components
+  const messengerWallet = useMemo(() => 
+    wallet ? toMessengerWallet(wallet) as WalletWithPrivateKeys : null, 
+    [wallet]
+  );
+
   const handleWalletCreated = (newWallet: WalletWithPrivateKeys) => {
-    setWallet(newWallet);
+    const unified = fromMessengerWallet(newWallet);
+    saveUnifiedWallet(unified);
+    setWallet(unified);
     toast.success("Wallet created!", {
-      description: "Your quantum-safe keypairs are ready",
+      description: "Your quantum-safe keypairs are ready for both messaging and blockchain",
     });
   };
 
@@ -74,8 +89,10 @@ const Messenger = () => {
     setShowContactPicker(false);
   };
 
-  const handleWalletImport = (importedWallet: WalletWithPrivateKeys) => {
-    saveWalletLocally(importedWallet);
+  const handleWalletImport = (importedWallet: UnifiedWallet) => {
+    saveUnifiedWallet(importedWallet);
+    // Also save to messenger format for backward compatibility
+    saveWalletLocally(toMessengerWallet(importedWallet) as WalletWithPrivateKeys);
     setWallet(importedWallet);
     loadConversations();
   };
@@ -173,10 +190,10 @@ const Messenger = () => {
 
         {/* Chat view */}
         <div className={`flex-1 ${!selectedConversation ? 'hidden sm:flex' : 'flex'}`}>
-          {selectedConversation ? (
+          {selectedConversation && messengerWallet ? (
             <ChatView
               conversation={selectedConversation}
-              wallet={wallet}
+              wallet={messengerWallet}
               onBack={() => setSelectedConversation(null)}
             />
           ) : (
@@ -193,10 +210,10 @@ const Messenger = () => {
 
       {/* Contact picker modal */}
       <AnimatePresence>
-        {showContactPicker && (
+        {showContactPicker && messengerWallet && (
           <ContactPicker
             contacts={contacts}
-            wallet={wallet}
+            wallet={messengerWallet}
             onClose={() => setShowContactPicker(false)}
             onConversationCreated={handleConversationCreated}
           />

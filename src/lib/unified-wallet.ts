@@ -1,0 +1,290 @@
+/**
+ * Unified Wallet System
+ * Combines messenger and blockchain wallet functionality with shared backup
+ */
+
+// Storage keys
+export const UNIFIED_WALLET_KEY = "pqc-unified-wallet";
+export const MESSENGER_WALLET_KEY = "pqc_messenger_wallet";
+export const BLOCKCHAIN_WALLET_KEY = "pqc-blockchain-wallet";
+
+// Unified wallet structure that works for both messenger and blockchain
+export interface UnifiedWallet {
+  // Core identity
+  id: string;
+  displayName: string;
+  createdAt: number;
+  
+  // Signing keys (ML-DSA-65) - used for blockchain transactions
+  signingPublicKey: string;
+  signingPrivateKey: string;
+  
+  // Encryption keys (ML-KEM-768) - used for messenger E2EE
+  encryptionPublicKey: string;
+  encryptionPrivateKey: string;
+  
+  // Metadata
+  version: number;
+}
+
+// Legacy wallet types for migration
+interface LegacyMessengerWallet {
+  id: string;
+  displayName: string;
+  signingPublicKey: string;
+  signingPrivateKey: string;
+  encryptionPublicKey: string;
+  encryptionPrivateKey: string;
+  createdAt?: string;
+}
+
+interface LegacyBlockchainWallet {
+  publicKey: string;
+  privateKey: string;
+  createdAt: number;
+  linkedToMessenger?: boolean;
+}
+
+// Derive encryption key from password using PBKDF2
+async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+  
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: salt.buffer as ArrayBuffer,
+      iterations: 100000,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+// Encrypt wallet data
+export async function encryptWallet(wallet: UnifiedWallet, password: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(password, salt);
+  
+  const encoder = new TextEncoder();
+  const data = encoder.encode(JSON.stringify({
+    ...wallet,
+    version: 2, // Unified wallet version
+  }));
+  
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    data
+  );
+  
+  // Combine salt + iv + encrypted data
+  const combined = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
+  combined.set(salt, 0);
+  combined.set(iv, salt.length);
+  combined.set(new Uint8Array(encrypted), salt.length + iv.length);
+  
+  // Convert to base64
+  return btoa(String.fromCharCode(...combined));
+}
+
+// Decrypt wallet data
+export async function decryptWallet(encryptedData: string, password: string): Promise<UnifiedWallet> {
+  // Decode base64
+  const combined = Uint8Array.from(atob(encryptedData), c => c.charCodeAt(0));
+  
+  // Extract salt, iv, and encrypted data
+  const salt = combined.slice(0, 16);
+  const iv = combined.slice(16, 28);
+  const encrypted = combined.slice(28);
+  
+  const key = await deriveKey(password, salt);
+  
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    encrypted
+  );
+  
+  const decoder = new TextDecoder();
+  const walletData = JSON.parse(decoder.decode(decrypted));
+  
+  // Handle legacy format (v1)
+  if (!walletData.version || walletData.version === 1) {
+    return migrateFromV1(walletData);
+  }
+  
+  return walletData as UnifiedWallet;
+}
+
+// Migrate from v1 (messenger-only) format
+function migrateFromV1(data: any): UnifiedWallet {
+  return {
+    id: data.id,
+    displayName: data.displayName || "My Wallet",
+    createdAt: data.createdAt ? new Date(data.createdAt).getTime() : Date.now(),
+    signingPublicKey: data.signingPublicKey,
+    signingPrivateKey: data.signingPrivateKey,
+    encryptionPublicKey: data.encryptionPublicKey,
+    encryptionPrivateKey: data.encryptionPrivateKey,
+    version: 2,
+  };
+}
+
+// Save unified wallet (syncs to both storage locations for compatibility)
+export function saveUnifiedWallet(wallet: UnifiedWallet): void {
+  // Save to unified storage
+  localStorage.setItem(UNIFIED_WALLET_KEY, JSON.stringify(wallet));
+  
+  // Sync to messenger format for backward compatibility
+  localStorage.setItem(MESSENGER_WALLET_KEY, JSON.stringify({
+    id: wallet.id,
+    displayName: wallet.displayName,
+    signingPublicKey: wallet.signingPublicKey,
+    signingPrivateKey: wallet.signingPrivateKey,
+    encryptionPublicKey: wallet.encryptionPublicKey,
+    encryptionPrivateKey: wallet.encryptionPrivateKey,
+    createdAt: new Date(wallet.createdAt).toISOString(),
+  }));
+  
+  // Sync to blockchain format for backward compatibility
+  localStorage.setItem(BLOCKCHAIN_WALLET_KEY, JSON.stringify({
+    publicKey: wallet.signingPublicKey,
+    privateKey: wallet.signingPrivateKey,
+    createdAt: wallet.createdAt,
+    linkedToMessenger: true,
+  }));
+}
+
+// Load unified wallet (checks all storage locations)
+export function loadUnifiedWallet(): UnifiedWallet | null {
+  // Try unified storage first
+  const unified = localStorage.getItem(UNIFIED_WALLET_KEY);
+  if (unified) {
+    try {
+      return JSON.parse(unified);
+    } catch {
+      // Continue to legacy formats
+    }
+  }
+  
+  // Try messenger format
+  const messenger = localStorage.getItem(MESSENGER_WALLET_KEY);
+  if (messenger) {
+    try {
+      const parsed: LegacyMessengerWallet = JSON.parse(messenger);
+      return {
+        id: parsed.id,
+        displayName: parsed.displayName,
+        createdAt: parsed.createdAt ? new Date(parsed.createdAt).getTime() : Date.now(),
+        signingPublicKey: parsed.signingPublicKey,
+        signingPrivateKey: parsed.signingPrivateKey,
+        encryptionPublicKey: parsed.encryptionPublicKey,
+        encryptionPrivateKey: parsed.encryptionPrivateKey,
+        version: 2,
+      };
+    } catch {
+      // Continue to blockchain format
+    }
+  }
+  
+  // Try blockchain format (limited - no encryption keys)
+  const blockchain = localStorage.getItem(BLOCKCHAIN_WALLET_KEY);
+  if (blockchain) {
+    try {
+      const parsed: LegacyBlockchainWallet = JSON.parse(blockchain);
+      // Blockchain-only wallet doesn't have encryption keys
+      // Return null to prompt full wallet creation
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  
+  return null;
+}
+
+// Clear all wallet storage
+export function clearUnifiedWallet(): void {
+  localStorage.removeItem(UNIFIED_WALLET_KEY);
+  localStorage.removeItem(MESSENGER_WALLET_KEY);
+  localStorage.removeItem(BLOCKCHAIN_WALLET_KEY);
+}
+
+// Check if any wallet exists
+export function hasWallet(): boolean {
+  return !!(
+    localStorage.getItem(UNIFIED_WALLET_KEY) ||
+    localStorage.getItem(MESSENGER_WALLET_KEY) ||
+    localStorage.getItem(BLOCKCHAIN_WALLET_KEY)
+  );
+}
+
+// Get wallet for blockchain operations (signing key only)
+export function getBlockchainWallet(): { publicKey: string; privateKey: string } | null {
+  const wallet = loadUnifiedWallet();
+  if (!wallet) return null;
+  
+  return {
+    publicKey: wallet.signingPublicKey,
+    privateKey: wallet.signingPrivateKey,
+  };
+}
+
+// Get wallet for messenger operations
+export function getMessengerWallet(): UnifiedWallet | null {
+  return loadUnifiedWallet();
+}
+
+// Convert UnifiedWallet to WalletWithPrivateKeys format (for messenger compatibility)
+export function toMessengerWallet(wallet: UnifiedWallet): {
+  id: string;
+  displayName: string;
+  signingPublicKey: string;
+  signingPrivateKey: string;
+  encryptionPublicKey: string;
+  encryptionPrivateKey: string;
+  createdAt?: string;
+} {
+  return {
+    id: wallet.id,
+    displayName: wallet.displayName,
+    signingPublicKey: wallet.signingPublicKey,
+    signingPrivateKey: wallet.signingPrivateKey,
+    encryptionPublicKey: wallet.encryptionPublicKey,
+    encryptionPrivateKey: wallet.encryptionPrivateKey,
+    createdAt: new Date(wallet.createdAt).toISOString(),
+  };
+}
+
+// Convert WalletWithPrivateKeys to UnifiedWallet format
+export function fromMessengerWallet(wallet: {
+  id: string;
+  displayName: string;
+  signingPublicKey: string;
+  signingPrivateKey: string;
+  encryptionPublicKey: string;
+  encryptionPrivateKey: string;
+  createdAt?: string;
+}): UnifiedWallet {
+  return {
+    id: wallet.id,
+    displayName: wallet.displayName,
+    createdAt: wallet.createdAt ? new Date(wallet.createdAt).getTime() : Date.now(),
+    signingPublicKey: wallet.signingPublicKey,
+    signingPrivateKey: wallet.signingPrivateKey,
+    encryptionPublicKey: wallet.encryptionPublicKey,
+    encryptionPrivateKey: wallet.encryptionPrivateKey,
+    version: 2,
+  };
+}
