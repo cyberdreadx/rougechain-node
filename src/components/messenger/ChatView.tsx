@@ -96,7 +96,7 @@ const EncryptionDetailsPanel = ({
         </div>
 
         <ScrollArea className="max-h-[calc(80vh-80px)]">
-          <div className="p-4 space-y-4">
+          <div className="p-4 pb-8 space-y-4">
             {/* Message info */}
             <div className="p-3 rounded-lg bg-muted/30 border border-border">
               <div className="flex items-center gap-2 mb-2">
