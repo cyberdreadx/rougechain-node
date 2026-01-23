@@ -1,4 +1,7 @@
 import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
+import { Blocks } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import Header from "@/components/wallet/Header";
 import WalletCard from "@/components/wallet/WalletCard";
 import ActionButtons from "@/components/wallet/ActionButtons";
@@ -66,17 +69,37 @@ const Index = () => {
               </div>
             </motion.div>
 
-            {/* Info card */}
+            {/* PQC Blockchain Demo Link */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.6 }}
               className="bg-gradient-to-br from-primary/10 to-accent/10 rounded-xl border border-primary/20 p-4"
             >
+              <h3 className="text-sm font-semibold text-foreground mb-2">🔗 PQC Blockchain Demo</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed mb-3">
+                Explore our post-quantum blockchain with CRYSTALS-Dilithium signatures. 
+                Mine blocks and see quantum-safe cryptography in action.
+              </p>
+              <Link to="/blockchain">
+                <Button className="w-full" variant="outline">
+                  <Blocks className="w-4 h-4 mr-2" />
+                  Launch Blockchain Demo
+                </Button>
+              </Link>
+            </motion.div>
+
+            {/* Info card */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.7 }}
+              className="bg-gradient-to-br from-accent/10 to-primary/10 rounded-xl border border-accent/20 p-4"
+            >
               <h3 className="text-sm font-semibold text-foreground mb-2">🛡️ Quantum-Safe</h3>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Your wallet is protected by NIST-approved post-quantum cryptographic algorithms, 
-                ensuring security against both classical and quantum computing threats.
+                Protected by NIST-approved post-quantum cryptographic algorithms, 
+                ensuring security against quantum computing threats.
               </p>
             </motion.div>
           </div>
