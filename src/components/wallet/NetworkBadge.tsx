@@ -97,10 +97,10 @@ const NetworkBadge = ({ isConnected = true, blockNumber, onNetworkChange }: Netw
             
             {/* Dropdown */}
             <motion.div
-              initial={{ opacity: 0, y: -10, scale: 0.95 }}
+              initial={{ opacity: 0, y: 10, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -10, scale: 0.95 }}
-              className="absolute bottom-full left-0 mb-2 w-56 bg-card rounded-xl border border-border shadow-xl z-50 overflow-hidden"
+              exit={{ opacity: 0, y: 10, scale: 0.95 }}
+              className="absolute top-full left-0 mt-2 w-56 bg-card rounded-xl border border-border shadow-xl z-50 overflow-hidden"
             >
               <div className="p-2 border-b border-border">
                 <p className="text-xs font-medium text-muted-foreground px-2">Select Network</p>
