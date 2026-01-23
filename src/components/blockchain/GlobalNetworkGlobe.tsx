@@ -1,6 +1,6 @@
 import { useRef, useMemo, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, Sphere, Line, Html } from "@react-three/drei";
+import { OrbitControls, Html } from "@react-three/drei";
 import * as THREE from "three";
 import { motion } from "framer-motion";
 import { Globe, Activity, Users } from "lucide-react";
@@ -85,19 +85,27 @@ const Node = ({ position, isActive = false, isValidator = false, onClick }: Node
 interface ConnectionLineProps {
   start: [number, number, number];
   end: [number, number, number];
-  animated?: boolean;
 }
 
 const ConnectionLine = ({ start, end }: ConnectionLineProps) => {
-  return (
-    <Line
-      points={[start, end]}
-      color="#6366f1"
-      lineWidth={0.5}
-      transparent
-      opacity={0.3}
-    />
-  );
+  const lineRef = useRef<THREE.Line>(null);
+  
+  const geometry = useMemo(() => {
+    const geo = new THREE.BufferGeometry();
+    const positions = new Float32Array([...start, ...end]);
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    return geo;
+  }, [start, end]);
+
+  const material = useMemo(() => {
+    return new THREE.LineBasicMaterial({ 
+      color: "#6366f1", 
+      transparent: true, 
+      opacity: 0.3 
+    });
+  }, []);
+
+  return <primitive ref={lineRef} object={new THREE.Line(geometry, material)} />
 };
 
 const GlobeWireframe = () => {
@@ -174,7 +182,6 @@ const NetworkScene = ({ nodeCount, validatorCount }: NetworkSceneProps) => {
             key={i}
             start={conn[0]}
             end={conn[1]}
-            animated={Math.random() > 0.8}
           />
         ))}
       </RotatingGroup>
