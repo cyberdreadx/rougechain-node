@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot } from "lucide-react";
+import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -14,6 +14,176 @@ interface ChatViewProps {
   onBack: () => void;
 }
 
+// Encryption animation overlay component
+const EncryptionAnimation = ({ 
+  plaintext, 
+  onComplete 
+}: { 
+  plaintext: string; 
+  onComplete: () => void;
+}) => {
+  const [phase, setPhase] = useState<"plaintext" | "scrambling" | "encrypted" | "sending">("plaintext");
+  const [displayText, setDisplayText] = useState(plaintext);
+  
+  // Generate pseudo-ciphertext
+  const generateCiphertext = (length: number) => {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+    return Array.from({ length: Math.min(length * 2, 64) }, () => 
+      chars[Math.floor(Math.random() * chars.length)]
+    ).join("");
+  };
+
+  useEffect(() => {
+    // Phase 1: Show plaintext briefly
+    const timer1 = setTimeout(() => setPhase("scrambling"), 400);
+    
+    return () => clearTimeout(timer1);
+  }, []);
+
+  useEffect(() => {
+    if (phase === "scrambling") {
+      // Scramble animation
+      let iterations = 0;
+      const maxIterations = 8;
+      const scrambleInterval = setInterval(() => {
+        const progress = iterations / maxIterations;
+        const scrambled = plaintext.split("").map((char, i) => {
+          if (i / plaintext.length < progress) {
+            return generateCiphertext(1)[0];
+          }
+          return char;
+        }).join("");
+        setDisplayText(scrambled);
+        iterations++;
+        
+        if (iterations >= maxIterations) {
+          clearInterval(scrambleInterval);
+          setPhase("encrypted");
+          setDisplayText(generateCiphertext(plaintext.length));
+        }
+      }, 60);
+      
+      return () => clearInterval(scrambleInterval);
+    }
+  }, [phase, plaintext]);
+
+  useEffect(() => {
+    if (phase === "encrypted") {
+      const timer = setTimeout(() => setPhase("sending"), 300);
+      return () => clearTimeout(timer);
+    }
+    if (phase === "sending") {
+      const timer = setTimeout(onComplete, 400);
+      return () => clearTimeout(timer);
+    }
+  }, [phase, onComplete]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.8, y: -20 }}
+      className="flex justify-end mb-4"
+    >
+      <div className="relative max-w-[80%]">
+        {/* Encryption status indicator */}
+        <motion.div
+          initial={{ opacity: 0, x: 10 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="absolute -top-6 right-0 flex items-center gap-1.5 text-xs text-primary"
+        >
+          <motion.div
+            animate={{ rotate: phase === "scrambling" ? 360 : 0 }}
+            transition={{ duration: 0.5, repeat: phase === "scrambling" ? Infinity : 0, ease: "linear" }}
+          >
+            <Key className="w-3 h-3" />
+          </motion.div>
+          <span className="font-mono">
+            {phase === "plaintext" && "Preparing..."}
+            {phase === "scrambling" && "Encrypting with ML-KEM-768..."}
+            {phase === "encrypted" && "Signing with ML-DSA-65..."}
+            {phase === "sending" && "Sending..."}
+          </span>
+        </motion.div>
+
+        {/* Message bubble with animation */}
+        <motion.div
+          className={`rounded-2xl px-4 py-2 rounded-br-md overflow-hidden ${
+            phase === "plaintext" 
+              ? "bg-primary/50 text-primary-foreground" 
+              : "bg-gradient-to-r from-primary via-accent to-primary bg-[length:200%_100%] text-primary-foreground"
+          }`}
+          animate={{
+            backgroundPosition: phase !== "plaintext" ? ["0% 0%", "100% 0%", "0% 0%"] : "0% 0%",
+          }}
+          transition={{
+            duration: 1,
+            repeat: phase === "scrambling" || phase === "encrypted" ? Infinity : 0,
+            ease: "linear"
+          }}
+        >
+          <motion.p 
+            className="text-sm font-mono break-all"
+            animate={{ 
+              opacity: phase === "sending" ? [1, 0.5, 1] : 1 
+            }}
+            transition={{ duration: 0.3, repeat: phase === "sending" ? Infinity : 0 }}
+          >
+            {displayText}
+          </motion.p>
+          
+          {/* Lock icon animation */}
+          <motion.div
+            className="flex justify-end mt-1"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+          >
+            <motion.div
+              animate={{ 
+                scale: phase === "encrypted" || phase === "sending" ? [1, 1.2, 1] : 1,
+              }}
+              transition={{ duration: 0.3 }}
+            >
+              <Lock className={`w-3 h-3 ${
+                phase === "encrypted" || phase === "sending" 
+                  ? "text-success" 
+                  : "text-primary-foreground/60"
+              }`} />
+            </motion.div>
+          </motion.div>
+        </motion.div>
+
+        {/* Particle effects during encryption */}
+        {(phase === "scrambling" || phase === "encrypted") && (
+          <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
+            {[...Array(6)].map((_, i) => (
+              <motion.div
+                key={i}
+                className="absolute w-1 h-1 bg-primary rounded-full"
+                initial={{ 
+                  x: "50%", 
+                  y: "50%", 
+                  opacity: 0 
+                }}
+                animate={{ 
+                  x: `${Math.random() * 100}%`,
+                  y: `${Math.random() * 100}%`,
+                  opacity: [0, 1, 0],
+                }}
+                transition={{
+                  duration: 0.6,
+                  delay: i * 0.1,
+                  repeat: Infinity,
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+};
+
 const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
@@ -21,6 +191,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
   const [destructSeconds, setDestructSeconds] = useState(30);
   const [isSending, setIsSending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [encryptingMessage, setEncryptingMessage] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const recipient = conversation.participants?.find(p => p.id !== wallet.id);
@@ -81,9 +252,17 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
   const handleSend = async () => {
     if (!newMessage.trim() || !recipient || isSending) return;
 
-    setIsSending(true);
     const messageText = newMessage.trim();
     setNewMessage("");
+    setEncryptingMessage(messageText);
+  };
+
+  const handleEncryptionComplete = async () => {
+    if (!encryptingMessage || !recipient) return;
+    
+    setIsSending(true);
+    const messageText = encryptingMessage;
+    setEncryptingMessage(null);
     
     try {
       const msg = await sendMessage(
@@ -170,7 +349,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
           <div className="flex items-center justify-center h-full">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
           </div>
-        ) : messages.length === 0 ? (
+        ) : messages.length === 0 && !encryptingMessage ? (
           <div className="flex items-center justify-center h-full text-muted-foreground">
             <div className="text-center">
               <Lock className="w-12 h-12 mx-auto mb-3 opacity-50" />
@@ -179,7 +358,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
             </div>
           </div>
         ) : (
-          <AnimatePresence>
+          <AnimatePresence mode="popLayout">
             {messages.map((msg, index) => (
               <MessageBubble
                 key={msg.id}
@@ -188,6 +367,13 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
                 index={index}
               />
             ))}
+            {encryptingMessage && (
+              <EncryptionAnimation
+                key="encrypting"
+                plaintext={encryptingMessage}
+                onComplete={handleEncryptionComplete}
+              />
+            )}
           </AnimatePresence>
         )}
         <div ref={messagesEndRef} />
@@ -216,14 +402,14 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
             placeholder="Type a message..."
             className="flex-1"
             onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
-            disabled={isSending}
+            disabled={isSending || !!encryptingMessage}
           />
           <Button
             onClick={handleSend}
-            disabled={!newMessage.trim() || isSending}
+            disabled={!newMessage.trim() || isSending || !!encryptingMessage}
             size="icon"
           >
-            {isSending ? (
+            {isSending || encryptingMessage ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <Send className="w-4 h-4" />
