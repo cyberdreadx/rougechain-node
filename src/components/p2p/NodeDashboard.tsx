@@ -4,9 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
-import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { useP2PNode } from "@/hooks/use-p2p-node";
+import { NetworkTopology } from "./NetworkTopology";
 import { 
   Globe, 
   Play, 
@@ -226,6 +226,23 @@ export function NodeDashboard() {
           </CardContent>
         </Card>
       )}
+
+      {/* Network Topology Visualization */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Globe className="h-4 w-4" />
+            Network Topology
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <NetworkTopology 
+            identity={identity} 
+            peers={peers} 
+            isRunning={isRunning} 
+          />
+        </CardContent>
+      </Card>
 
       <div className="grid md:grid-cols-2 gap-6">
         {/* Propose Block */}
