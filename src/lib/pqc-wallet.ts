@@ -1,4 +1,5 @@
 import { Block, loadChain, mineBlock } from "./pqc-blockchain";
+import { getNodeApiBaseUrl } from "./network";
 
 // RougeChain constants
 export const TOTAL_SUPPLY = 36_000_000_000; // 36 Billion XRGE
@@ -98,7 +99,7 @@ export function parseBlockTransaction(block: Block): Transaction | null {
 // Now supports both node API (for public deployment) and local Supabase (for dev)
 export async function getAllTransactions(): Promise<{ tx: Transaction; block: Block }[]> {
   // Try node API first (for public deployment)
-  const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100/api";
+  const NODE_API_URL = getNodeApiBaseUrl();
   
   try {
     const res = await fetch(`${NODE_API_URL}/blocks`);
@@ -220,7 +221,7 @@ export async function getTokenBySymbol(symbol: string): Promise<TokenInfo | null
 // Now supports both node API (for public deployment) and local Supabase (for dev)
 export async function getWalletBalance(publicKey: string): Promise<WalletBalance[]> {
   // Try node API first (for public deployment)
-  const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100/api";
+  const NODE_API_URL = getNodeApiBaseUrl();
   
   try {
     const res = await fetch(`${NODE_API_URL}/balance/${publicKey}`);
@@ -360,7 +361,7 @@ export async function sendTransaction(
   memo?: string
 ): Promise<Block> {
   // Try node API first (for public deployment)
-  const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100/api";
+  const NODE_API_URL = getNodeApiBaseUrl();
   
   try {
     const res = await fetch(`${NODE_API_URL}/tx/submit`, {
@@ -525,7 +526,7 @@ export async function mintTokens(
   symbol: string = "XRGE"
 ): Promise<Block> {
   // Try node API first (for public deployment)
-  const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100/api";
+  const NODE_API_URL = getNodeApiBaseUrl();
   
   try {
     // Use the faucet endpoint which handles minting properly

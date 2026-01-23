@@ -26,7 +26,13 @@ export class ChainStore {
 
   async getTip(): Promise<{ height: number; hash: string }> {
     const raw = await readFile(this.tipPath, "utf8");
-    return JSON.parse(raw) as { height: number; hash: string };
+    try {
+      return JSON.parse(raw) as { height: number; hash: string };
+    } catch {
+      const fallback = { height: -1, hash: "0".repeat(64) };
+      await writeFile(this.tipPath, JSON.stringify(fallback), "utf8");
+      return fallback;
+    }
   }
 
   async setTip(tip: { height: number; hash: string }): Promise<void> {

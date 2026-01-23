@@ -163,12 +163,15 @@ your-domain.com {
 
 ## Step 5: Update Frontend
 
-Update your frontend to point to your public node:
+Update your frontend to point to your public nodes:
 
 ```typescript
-// In your frontend config
-const NODE_API_URL = "https://your-domain.com/api";
-// Or direct IP: "http://YOUR_SERVER_IP:5100/api";
+// In your frontend env
+VITE_NODE_API_URL_TESTNET="https://testnet.your-domain.com/api"
+VITE_NODE_API_URL_MAINNET="https://mainnet.your-domain.com/api"
+// Or direct IPs for quick testing
+VITE_NODE_API_URL_TESTNET="http://YOUR_SERVER_IP:5100/api"
+VITE_NODE_API_URL_MAINNET="http://YOUR_SERVER_IP:5100/api"
 ```
 
 ## Step 6: Security Considerations
@@ -271,7 +274,10 @@ Response: {
 Update `src/lib/pqc-wallet.ts` to use the new node API instead of Supabase:
 
 ```typescript
-const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100";
+const NODE_API_URL =
+  import.meta.env.VITE_NODE_API_URL_TESTNET ||
+  import.meta.env.VITE_NODE_API_URL_MAINNET ||
+  "http://localhost:5100";
 
 export async function createWallet(): Promise<Wallet> {
   const res = await fetch(`${NODE_API_URL}/api/wallet/create`, {

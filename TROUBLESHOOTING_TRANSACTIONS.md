@@ -53,7 +53,7 @@ pm2 logs rougechain-node
 **Solution**: 
 - UI now auto-refreshes every 3 seconds
 - Check browser console for errors
-- Verify `VITE_NODE_API_URL` is set correctly
+- Verify `VITE_NODE_API_URL_TESTNET` or `VITE_NODE_API_URL_MAINNET` is set correctly
 
 ### 5. Reading from Wrong Source
 
@@ -142,7 +142,7 @@ curl http://localhost:5100/api/blocks
 
 1. **Check node logs**: `pm2 logs rougechain-node`
 2. **Check browser console**: Look for errors
-3. **Verify API URL**: Ensure `VITE_NODE_API_URL` points to your node
+3. **Verify API URL**: Ensure `VITE_NODE_API_URL_TESTNET` / `VITE_NODE_API_URL_MAINNET` point to your node
 4. **Test API directly**: `curl http://your-node:5100/api/blocks`
 5. **Check transaction format**: Ensure payload matches expected structure
 

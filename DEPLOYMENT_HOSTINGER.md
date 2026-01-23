@@ -184,8 +184,10 @@ sudo certbot --nginx -d your-domain.com
 
 4. **Environment Variables**
    - Go to Site settings → Environment variables
-   - Add: `VITE_NODE_API_URL` = `https://your-domain.com/api`
-   - Or: `http://your-vps-ip:5100/api` (if no domain)
+   - Add:
+     - `VITE_NODE_API_URL_TESTNET` = `https://your-testnet-domain.com/api`
+     - `VITE_NODE_API_URL_MAINNET` = `https://your-mainnet-domain.com/api`
+   - Or use IPs if no domain
 
 5. **Deploy**
    - Click "Deploy site"
@@ -225,7 +227,8 @@ npm run build
 ### Environment Variables
 
 **On Netlify:**
-- `VITE_NODE_API_URL` = `https://your-domain.com/api` (or your VPS IP)
+- `VITE_NODE_API_URL_TESTNET` = `https://your-testnet-domain.com/api` (or your VPS IP)
+- `VITE_NODE_API_URL_MAINNET` = `https://your-mainnet-domain.com/api` (or your VPS IP)
 
 **On VPS (for node):**
 - No env vars needed, all via command-line args
@@ -234,12 +237,14 @@ npm run build
 
 In your `.env` file (or Netlify env vars):
 ```
-VITE_NODE_API_URL=https://your-domain.com/api
+VITE_NODE_API_URL_TESTNET=https://your-testnet-domain.com/api
+VITE_NODE_API_URL_MAINNET=https://your-mainnet-domain.com/api
 ```
 
 Or if using IP:
 ```
-VITE_NODE_API_URL=http://your-vps-ip:5100/api
+VITE_NODE_API_URL_TESTNET=http://your-vps-ip:5100/api
+VITE_NODE_API_URL_MAINNET=http://your-vps-ip:5100/api
 ```
 
 ## Monitoring

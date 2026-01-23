@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Check } from "lucide-react";
+import { NETWORK_STORAGE_KEY } from "@/lib/network";
 
 export type NetworkType = "testnet" | "mainnet";
 
@@ -28,8 +29,6 @@ const networks: NetworkConfig[] = [
     dotColor: "bg-success",
   },
 ];
-
-const NETWORK_STORAGE_KEY = "rougechain-network";
 
 interface NetworkBadgeProps {
   isConnected?: boolean;

@@ -2,6 +2,7 @@
  * Unified Wallet System
  * Combines messenger and blockchain wallet functionality with shared backup
  */
+import { getActiveNetwork } from "./network";
 
 // Storage keys
 export const UNIFIED_WALLET_KEY = "pqc-unified-wallet";
@@ -143,11 +144,14 @@ function migrateFromV1(data: any): UnifiedWallet {
 
 // Save unified wallet (syncs to both storage locations for compatibility)
 export function saveUnifiedWallet(wallet: UnifiedWallet): void {
+  const unifiedKey = getScopedKey(UNIFIED_WALLET_KEY);
+  const messengerKey = getScopedKey(MESSENGER_WALLET_KEY);
+  const blockchainKey = getScopedKey(BLOCKCHAIN_WALLET_KEY);
   // Save to unified storage
-  localStorage.setItem(UNIFIED_WALLET_KEY, JSON.stringify(wallet));
+  localStorage.setItem(unifiedKey, JSON.stringify(wallet));
   
   // Sync to messenger format for backward compatibility
-  localStorage.setItem(MESSENGER_WALLET_KEY, JSON.stringify({
+  localStorage.setItem(messengerKey, JSON.stringify({
     id: wallet.id,
     displayName: wallet.displayName,
     signingPublicKey: wallet.signingPublicKey,
@@ -158,7 +162,7 @@ export function saveUnifiedWallet(wallet: UnifiedWallet): void {
   }));
   
   // Sync to blockchain format for backward compatibility
-  localStorage.setItem(BLOCKCHAIN_WALLET_KEY, JSON.stringify({
+  localStorage.setItem(blockchainKey, JSON.stringify({
     publicKey: wallet.signingPublicKey,
     privateKey: wallet.signingPrivateKey,
     createdAt: wallet.createdAt,
@@ -168,8 +172,11 @@ export function saveUnifiedWallet(wallet: UnifiedWallet): void {
 
 // Load unified wallet (checks all storage locations)
 export function loadUnifiedWallet(): UnifiedWallet | null {
+  const unifiedKey = getScopedKey(UNIFIED_WALLET_KEY);
+  const messengerKey = getScopedKey(MESSENGER_WALLET_KEY);
+  const blockchainKey = getScopedKey(BLOCKCHAIN_WALLET_KEY);
   // Try unified storage first
-  const unified = localStorage.getItem(UNIFIED_WALLET_KEY);
+  const unified = localStorage.getItem(unifiedKey);
   if (unified) {
     try {
       return JSON.parse(unified);
@@ -179,7 +186,7 @@ export function loadUnifiedWallet(): UnifiedWallet | null {
   }
   
   // Try messenger format
-  const messenger = localStorage.getItem(MESSENGER_WALLET_KEY);
+  const messenger = localStorage.getItem(messengerKey);
   if (messenger) {
     try {
       const parsed: LegacyMessengerWallet = JSON.parse(messenger);
@@ -199,12 +206,58 @@ export function loadUnifiedWallet(): UnifiedWallet | null {
   }
   
   // Try blockchain format (limited - no encryption keys)
-  const blockchain = localStorage.getItem(BLOCKCHAIN_WALLET_KEY);
+  const blockchain = localStorage.getItem(blockchainKey);
   if (blockchain) {
     try {
       const parsed: LegacyBlockchainWallet = JSON.parse(blockchain);
       // Blockchain-only wallet doesn't have encryption keys
       // Return null to prompt full wallet creation
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Legacy fallback (pre-network scoping)
+  const legacyUnified = localStorage.getItem(UNIFIED_WALLET_KEY);
+  if (legacyUnified) {
+    try {
+      const parsed = JSON.parse(legacyUnified) as UnifiedWallet;
+      saveUnifiedWallet(parsed);
+      clearLegacyWallets();
+      return parsed;
+    } catch {
+      // Continue to legacy formats
+    }
+  }
+
+  const legacyMessenger = localStorage.getItem(MESSENGER_WALLET_KEY);
+  if (legacyMessenger) {
+    try {
+      const parsed: LegacyMessengerWallet = JSON.parse(legacyMessenger);
+      const unifiedWallet: UnifiedWallet = {
+        id: parsed.id,
+        displayName: parsed.displayName,
+        createdAt: parsed.createdAt ? new Date(parsed.createdAt).getTime() : Date.now(),
+        signingPublicKey: parsed.signingPublicKey,
+        signingPrivateKey: parsed.signingPrivateKey,
+        encryptionPublicKey: parsed.encryptionPublicKey,
+        encryptionPrivateKey: parsed.encryptionPrivateKey,
+        version: 2,
+      };
+      saveUnifiedWallet(unifiedWallet);
+      clearLegacyWallets();
+      return unifiedWallet;
+    } catch {
+      // Continue
+    }
+  }
+
+  const legacyBlockchain = localStorage.getItem(BLOCKCHAIN_WALLET_KEY);
+  if (legacyBlockchain) {
+    try {
+      const parsed: LegacyBlockchainWallet = JSON.parse(legacyBlockchain);
+      // Blockchain-only wallet doesn't have encryption keys
       return null;
     } catch {
       return null;
@@ -216,18 +269,32 @@ export function loadUnifiedWallet(): UnifiedWallet | null {
 
 // Clear all wallet storage
 export function clearUnifiedWallet(): void {
-  localStorage.removeItem(UNIFIED_WALLET_KEY);
-  localStorage.removeItem(MESSENGER_WALLET_KEY);
-  localStorage.removeItem(BLOCKCHAIN_WALLET_KEY);
+  localStorage.removeItem(getScopedKey(UNIFIED_WALLET_KEY));
+  localStorage.removeItem(getScopedKey(MESSENGER_WALLET_KEY));
+  localStorage.removeItem(getScopedKey(BLOCKCHAIN_WALLET_KEY));
+  clearLegacyWallets();
 }
 
 // Check if any wallet exists
 export function hasWallet(): boolean {
   return !!(
+    localStorage.getItem(getScopedKey(UNIFIED_WALLET_KEY)) ||
+    localStorage.getItem(getScopedKey(MESSENGER_WALLET_KEY)) ||
+    localStorage.getItem(getScopedKey(BLOCKCHAIN_WALLET_KEY)) ||
     localStorage.getItem(UNIFIED_WALLET_KEY) ||
     localStorage.getItem(MESSENGER_WALLET_KEY) ||
     localStorage.getItem(BLOCKCHAIN_WALLET_KEY)
   );
+}
+
+function getScopedKey(baseKey: string): string {
+  return `${baseKey}:${getActiveNetwork()}`;
+}
+
+function clearLegacyWallets(): void {
+  localStorage.removeItem(UNIFIED_WALLET_KEY);
+  localStorage.removeItem(MESSENGER_WALLET_KEY);
+  localStorage.removeItem(BLOCKCHAIN_WALLET_KEY);
 }
 
 // Get wallet for blockchain operations (signing key only)

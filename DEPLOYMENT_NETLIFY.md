@@ -31,8 +31,12 @@
    - Click "Add variable"
    - Add:
      ```
-     Key: VITE_NODE_API_URL
-     Value: https://your-vps-domain.com/api
+     Key: VITE_NODE_API_URL_TESTNET
+     Value: https://your-testnet-domain.com/api
+     ```
+     ```
+     Key: VITE_NODE_API_URL_MAINNET
+     Value: https://your-mainnet-domain.com/api
      ```
    - Or if using IP: `http://your-vps-ip:5100/api`
 
@@ -74,15 +78,18 @@ netlify deploy --prod
 ## Environment Variables
 
 **Required:**
-- `VITE_NODE_API_URL` - Your node API endpoint
+- `VITE_NODE_API_URL_TESTNET` - Your testnet node API endpoint
+- `VITE_NODE_API_URL_MAINNET` - Your mainnet node API endpoint
 
 **Example values:**
 ```
 # With domain
-VITE_NODE_API_URL=https://rougechain.example.com/api
+VITE_NODE_API_URL_TESTNET=https://testnet.rougechain.example.com/api
+VITE_NODE_API_URL_MAINNET=https://mainnet.rougechain.example.com/api
 
 # With IP (less secure, but works)
-VITE_NODE_API_URL=http://123.456.789.0:5100/api
+VITE_NODE_API_URL_TESTNET=http://123.456.789.0:5100/api
+VITE_NODE_API_URL_MAINNET=http://123.456.789.1:5100/api
 ```
 
 ## Custom Domain (Optional)
@@ -116,7 +123,7 @@ Check build logs in Netlify dashboard:
 
 ### API Not Working
 
-- Check `VITE_NODE_API_URL` is set correctly
+- Check `VITE_NODE_API_URL_TESTNET` / `VITE_NODE_API_URL_MAINNET` are set correctly
 - Verify your node is accessible from internet
 - Check CORS settings on your node
 
@@ -138,7 +145,7 @@ npm install -g vercel
 vercel
 ```
 
-Follow prompts. Add `VITE_NODE_API_URL` in Vercel dashboard.
+Follow prompts. Add `VITE_NODE_API_URL_TESTNET` / `VITE_NODE_API_URL_MAINNET` in Vercel dashboard.
 
 ## Alternative: Same VPS
 

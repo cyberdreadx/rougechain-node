@@ -34,6 +34,7 @@ import {
 import { loadChain, createGenesisBlock } from "@/lib/pqc-blockchain";
 import { supabase } from "@/integrations/supabase/client";
 import { createWalletViaNode } from "@/lib/node-api";
+import { NETWORK_STORAGE_KEY, getNetworkLabel, getNodeApiBaseUrl } from "@/lib/network";
 import SendTokensDialog from "@/components/wallet/SendTokensDialog";
 import ReceiveDialog from "@/components/wallet/ReceiveDialog";
 import CreateTokenDialog from "@/components/wallet/CreateTokenDialog";
@@ -59,6 +60,9 @@ const Wallet = () => {
   const [isMainnet, setIsMainnet] = useState(false); // Default to false (show faucet) - safer for devnet/testnet
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [chainIdLabel, setChainIdLabel] = useState<string>(CHAIN_ID);
+  const [activeNetwork, setActiveNetwork] = useState<"testnet" | "mainnet">(
+    (localStorage.getItem(NETWORK_STORAGE_KEY) as "testnet" | "mainnet" | null) || "testnet"
+  );
 
   // Load wallet from storage
   useEffect(() => {
@@ -67,13 +71,24 @@ const Wallet = () => {
       setWallet(unified);
     }
     setLoading(false);
-  }, []);
+  }, [activeNetwork]);
 
   // Check network selection from NetworkBadge (localStorage) - prioritize UI selection
   useEffect(() => {
     const checkNetwork = () => {
       // Check the user's explicit network selection from NetworkBadge
-      const savedNetwork = localStorage.getItem("rougechain-network") as "testnet" | "mainnet" | null;
+      const savedNetwork = localStorage.getItem(NETWORK_STORAGE_KEY) as "testnet" | "mainnet" | null;
+      const nextNetwork = savedNetwork ?? "testnet";
+
+      if (nextNetwork !== activeNetwork) {
+        setActiveNetwork(nextNetwork);
+        const unified = loadUnifiedWallet();
+        setWallet(unified);
+        setBalances([]);
+        setTransactions([]);
+        setCirculatingSupply(0);
+        setLastUpdated(null);
+      }
       
       // Prioritize UI selection: if user selected testnet, show faucet; if mainnet, hide it
       if (savedNetwork === "mainnet") {
@@ -93,7 +108,7 @@ const Wallet = () => {
       // No UI selection - fall back to checking node's chainId
       const checkNodeChainId = async () => {
         try {
-          const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100/api";
+          const NODE_API_URL = getNodeApiBaseUrl();
           const res = await fetch(`${NODE_API_URL}/stats`, {
             signal: AbortSignal.timeout(2000), // 2 second timeout
           });
@@ -126,7 +141,7 @@ const Wallet = () => {
     checkNetwork();
     // Listen for network changes from NetworkBadge (storage events work across tabs)
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === "rougechain-network") {
+      if (e.key === NETWORK_STORAGE_KEY) {
         checkNetwork();
       }
     };
@@ -244,7 +259,7 @@ const Wallet = () => {
     setMinting(true);
     try {
       // Try node API faucet endpoint directly (preferred method)
-      const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100/api";
+          const NODE_API_URL = getNodeApiBaseUrl();
       const faucetUrl = `${NODE_API_URL}/faucet`;
       
       try {
@@ -320,11 +335,7 @@ const Wallet = () => {
   // Get XRGE balance specifically for the main display (native token)
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
 
-  const networkLabel = chainIdLabel.includes("devnet")
-    ? "Devnet"
-    : chainIdLabel.includes("testnet")
-      ? "Testnet"
-      : "Mainnet";
+  const networkLabel = getNetworkLabel(chainIdLabel);
 
   const formatLastUpdated = (timestamp: number | null) => {
     if (!timestamp) return "Not synced yet";

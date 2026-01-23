@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, Link, Hash, Clock, Fingerprint } from "lucide-react";
+import { Shield, Link, Hash, Clock } from "lucide-react";
 import type { Block } from "@/lib/pqc-blockchain";
 
 interface BlockchainVisualizerProps {
@@ -8,8 +8,20 @@ interface BlockchainVisualizerProps {
 }
 
 const BlockCard = ({ block, index, isFirst }: { block: Block; index: number; isFirst: boolean }) => {
-  const truncate = (str: string, len: number) => 
+  const truncate = (str: string, len: number) =>
     str.length > len ? `${str.slice(0, len)}...` : str;
+  const getTxCount = () => {
+    try {
+      const parsed = JSON.parse(block.data);
+      if (Array.isArray(parsed)) return parsed.length;
+      if (parsed && typeof parsed === "object" && Array.isArray(parsed.txs)) {
+        return parsed.txs.length;
+      }
+      return parsed ? 1 : 0;
+    } catch {
+      return 0;
+    }
+  };
 
   return (
     <motion.div
@@ -20,10 +32,10 @@ const BlockCard = ({ block, index, isFirst }: { block: Block; index: number; isF
     >
       {/* Chain link connector */}
       {!isFirst && (
-        <div className="absolute -left-8 top-1/2 -translate-y-1/2 flex items-center">
+        <div className="absolute -left-6 top-1/2 -translate-y-1/2 flex items-center">
           <motion.div
             initial={{ width: 0 }}
-            animate={{ width: 32 }}
+            animate={{ width: 24 }}
             transition={{ delay: index * 0.1 + 0.2 }}
             className="h-0.5 bg-gradient-to-r from-primary/50 to-primary"
           />
@@ -31,16 +43,16 @@ const BlockCard = ({ block, index, isFirst }: { block: Block; index: number; isF
         </div>
       )}
 
-      <div className="bg-card border border-border rounded-xl p-4 min-w-[280px] hover:border-primary/50 transition-colors group">
+      <div className="bg-card border border-border rounded-xl p-3 min-w-[220px] hover:border-primary/50 transition-colors group">
         {/* Block header */}
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
-              <span className="text-primary font-bold text-sm">#{block.index}</span>
+            <div className="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center">
+              <span className="text-primary font-bold text-xs">#{block.index}</span>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Block</p>
-              <p className="text-sm font-medium text-foreground">
+              <p className="text-[10px] text-muted-foreground">Block</p>
+              <p className="text-xs font-medium text-foreground">
                 {block.index === 0 ? "Genesis" : `Block ${block.index}`}
               </p>
             </div>
@@ -54,12 +66,12 @@ const BlockCard = ({ block, index, isFirst }: { block: Block; index: number; isF
         </div>
 
         {/* Block data */}
-        <div className="space-y-2 text-xs">
+        <div className="space-y-2 text-[11px]">
           <div className="flex items-start gap-2 p-2 rounded-lg bg-muted/50">
             <Hash className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
             <div className="min-w-0">
               <p className="text-muted-foreground">Hash</p>
-              <p className="font-mono text-foreground break-all">{truncate(block.hash, 20)}</p>
+              <p className="font-mono text-foreground break-all">{truncate(block.hash, 18)}</p>
             </div>
           </div>
 
@@ -67,7 +79,7 @@ const BlockCard = ({ block, index, isFirst }: { block: Block; index: number; isF
             <Link className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
             <div className="min-w-0">
               <p className="text-muted-foreground">Prev Hash</p>
-              <p className="font-mono text-foreground break-all">{truncate(block.previousHash, 16)}</p>
+              <p className="font-mono text-foreground break-all">{truncate(block.previousHash, 14)}</p>
             </div>
           </div>
 
@@ -80,28 +92,11 @@ const BlockCard = ({ block, index, isFirst }: { block: Block; index: number; isF
               </p>
             </div>
           </div>
-
-          <div className="flex items-start gap-2 p-2 rounded-lg bg-primary/10 border border-primary/20">
-            <Fingerprint className="w-3 h-3 text-primary mt-0.5 shrink-0" />
-            <div className="min-w-0">
-              <p className="text-primary">Dilithium Signature</p>
-              <p className="font-mono text-foreground break-all">{truncate(block.signature, 24)}</p>
-              <p className="text-muted-foreground mt-1">2420 bytes • Quantum-safe</p>
-            </div>
-          </div>
         </div>
 
-        {/* Data payload */}
-        <div className="mt-3 p-2 rounded-lg bg-secondary/50 border border-border">
-          <p className="text-xs text-muted-foreground mb-1">Data</p>
-          <p className="text-sm text-foreground" title={block.data}>
-            {truncate(block.data, 40)}
-          </p>
-        </div>
-
-        {/* Nonce indicator */}
-        <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-          <span>Nonce: {block.nonce}</span>
+        {/* Compact footer */}
+        <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
+          <span>{getTxCount()} tx</span>
           <span className="text-success flex items-center gap-1">
             <div className="w-1.5 h-1.5 rounded-full bg-success" />
             Verified
@@ -136,7 +131,7 @@ const BlockchainVisualizer = ({ chain, isValidating }: BlockchainVisualizerProps
 
       {/* Chain visualization */}
       <div className="overflow-x-auto pb-4">
-        <div className="flex gap-10 pl-2">
+        <div className="flex gap-6 pl-2">
           <AnimatePresence>
             {chain.map((block, index) => (
               <BlockCard

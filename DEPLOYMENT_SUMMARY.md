@@ -49,7 +49,9 @@ pm2 start npm --name "rougechain-node" -- run l1:node:dev -- \
 4. Build settings:
    - Build command: `npm run build`
    - Publish: `dist`
-5. Add env var: `VITE_NODE_API_URL` = `http://your-vps-ip:5100/api`
+5. Add env vars:
+   - `VITE_NODE_API_URL_TESTNET` = `http://your-vps-ip:5100/api`
+   - `VITE_NODE_API_URL_MAINNET` = `https://your-mainnet-domain.com/api`
 6. Deploy!
 
 ## Configuration
@@ -60,7 +62,7 @@ pm2 start npm --name "rougechain-node" -- run l1:node:dev -- \
 - Auto-restarts on reboot
 
 ### Netlify
-- Environment variable: `VITE_NODE_API_URL`
+- Environment variables: `VITE_NODE_API_URL_TESTNET`, `VITE_NODE_API_URL_MAINNET`
 - Auto-deploys on git push
 - Free SSL included
 

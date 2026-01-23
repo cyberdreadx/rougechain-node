@@ -12,6 +12,7 @@ import GlobalNetworkGlobe from "@/components/blockchain/GlobalNetworkGlobe";
 import NetworkStatsBar from "@/components/blockchain/NetworkStatsBar";
 import NetworkHistoryChart from "@/components/blockchain/NetworkHistoryChart";
 import type { Block } from "@/lib/pqc-blockchain";
+import { getNodeApiBaseUrl } from "@/lib/network";
 
 interface BlockV1 {
   version: 1;
@@ -35,6 +36,8 @@ const Blockchain = () => {
   const [chainValidity, setChainValidity] = useState<{ valid: boolean; checked: boolean }>({ valid: true, checked: false });
   const [isLoading, setIsLoading] = useState(true);
   const [nodeConnected, setNodeConnected] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   // Convert BlockV1 to Block format for UI
   const convertBlock = (b: BlockV1): Block => ({
@@ -52,8 +55,8 @@ const Blockchain = () => {
   useEffect(() => {
     const fetchChain = async () => {
       try {
-        // Use VITE_NODE_API_URL if set, otherwise default to localhost:5100/api (same as wallet)
-        const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100/api";
+        // Use network-aware API base URL
+        const NODE_API_URL = getNodeApiBaseUrl();
         
         try {
           const res = await fetch(`${NODE_API_URL}/blocks`, {
@@ -69,7 +72,7 @@ const Blockchain = () => {
           }
         } catch (error) {
           // If configured URL fails, try local ports as fallback
-          if (NODE_API_URL !== "http://localhost:5100/api") {
+          if (NODE_API_URL === "http://localhost:5100/api") {
             console.warn(`Failed to fetch from ${NODE_API_URL}, trying local ports...`, error);
             for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
               try {
@@ -106,6 +109,23 @@ const Blockchain = () => {
     const interval = setInterval(fetchChain, 3000); // Refresh every 3s
     return () => clearInterval(interval);
   }, []);
+
+  const sortedChain = [...chain].sort((a, b) => b.index - a.index);
+  const totalPages = Math.max(1, Math.ceil(sortedChain.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, sortedChain.length);
+  const pagedChain = sortedChain.slice(startIndex, endIndex);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [pageSize]);
 
   const handleValidateChain = async () => {
     if (chain.length === 0) return;
@@ -229,6 +249,46 @@ const Blockchain = () => {
                 animate={{ opacity: 1, y: 0 }}
                 className="bg-card rounded-xl border border-border p-4"
               >
+                {chain.length > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        Showing {sortedChain.length === 0 ? 0 : startIndex + 1}-{endIndex} of {sortedChain.length}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">•</span>
+                      <span className="text-xs text-muted-foreground">Page {safePage} of {totalPages}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <select
+                        className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                        value={pageSize}
+                        onChange={(e) => setPageSize(Number(e.target.value))}
+                      >
+                        {[10, 20, 50].map(size => (
+                          <option key={size} value={size}>{size} / page</option>
+                        ))}
+                      </select>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={safePage <= 1}
+                          onClick={() => setPage(prev => Math.max(1, prev - 1))}
+                        >
+                          Prev
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={safePage >= totalPages}
+                          onClick={() => setPage(prev => Math.min(totalPages, prev + 1))}
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {!nodeConnected && chain.length === 0 && !isLoading && (
                   <div className="text-center py-12 px-4">
                     <Blocks className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
@@ -241,7 +301,7 @@ const Blockchain = () => {
                       <code className="block bg-background p-2 rounded mb-2">
                         npm run l1:node:dev -- --name my-node --host 0.0.0.0 --port 4100 --apiPort 5100 --mine
                       </code>
-                      <p className="text-xs">Or set <code className="bg-background px-1 rounded">VITE_NODE_API_URL</code> in your <code className="bg-background px-1 rounded">.env</code> file</p>
+                      <p className="text-xs">Or set <code className="bg-background px-1 rounded">VITE_NODE_API_URL_TESTNET</code> or <code className="bg-background px-1 rounded">VITE_NODE_API_URL_MAINNET</code> in your <code className="bg-background px-1 rounded">.env</code> file</p>
                     </div>
                   </div>
                 )}
@@ -249,7 +309,7 @@ const Blockchain = () => {
                   <BlockchainVisualizer chain={chain} isValidating={isValidating} />
                 )}
                 {chain.length > 0 && (
-                  <BlockchainVisualizer chain={chain} isValidating={isValidating} />
+                  <BlockchainVisualizer chain={pagedChain} isValidating={isValidating} />
                 )}
               </motion.div>
 

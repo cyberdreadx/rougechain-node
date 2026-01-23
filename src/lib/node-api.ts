@@ -1,7 +1,6 @@
 // Node API client for RougeChain L1
 // This connects to the public node daemon API
-
-const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100/api";
+import { getNodeApiBaseUrl } from "./network";
 
 export interface NodeWallet {
   publicKey: string;
@@ -26,7 +25,7 @@ export interface NodeBalance {
  * Note: In production, generate keys client-side instead!
  */
 export async function createWalletViaNode(): Promise<NodeWallet> {
-  const res = await fetch(`${NODE_API_URL}/wallet/create`, {
+  const res = await fetch(`${getNodeApiBaseUrl()}/wallet/create`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -57,7 +56,7 @@ export async function submitTransactionViaNode(
   amount: number,
   fee?: number
 ): Promise<NodeTxResponse> {
-  const res = await fetch(`${NODE_API_URL}/tx/submit`, {
+  const res = await fetch(`${getNodeApiBaseUrl()}/tx/submit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -77,7 +76,7 @@ export async function submitTransactionViaNode(
  * Get balance for a public key
  */
 export async function getBalanceViaNode(publicKey: string): Promise<number> {
-  const res = await fetch(`${NODE_API_URL}/balance/${publicKey}`);
+  const res = await fetch(`${getNodeApiBaseUrl()}/balance/${publicKey}`);
   
   if (!res.ok) {
     return 0; // Return 0 if error (account doesn't exist yet)
@@ -91,7 +90,7 @@ export async function getBalanceViaNode(publicKey: string): Promise<number> {
  * Get node stats
  */
 export async function getNodeStats() {
-  const res = await fetch(`${NODE_API_URL}/stats`);
+  const res = await fetch(`${getNodeApiBaseUrl()}/stats`);
   if (!res.ok) {
     throw new Error("Failed to fetch node stats");
   }

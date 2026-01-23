@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Blocks, Clock, Zap, Activity, TrendingUp } from "lucide-react";
+import { getNodeApiBaseUrl } from "@/lib/network";
 
 interface NetworkStats {
   blocksPerMinute: number;
@@ -22,54 +23,62 @@ const NetworkStatsBar = () => {
 
   const fetchStats = async () => {
     try {
-      // Try to fetch from any running node
-      for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
-        try {
-          const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks`);
-          if (res.ok) {
-            const data = await res.json() as { blocks: Array<{ header: { height: number; time: number }; txs: unknown[] }> };
-            const blocks = data.blocks;
+      const NODE_API_URL = getNodeApiBaseUrl();
+      const isLocal = NODE_API_URL.includes("localhost") || NODE_API_URL.includes("127.0.0.1");
+      const fetchBlocks = async (url: string) => {
+        const res = await fetch(`${url}/blocks`);
+        if (!res.ok) return null;
+        const data = await res.json() as { blocks: Array<{ header: { height: number; time: number }; txs: unknown[] }> };
+        return data.blocks;
+      };
 
-            if (blocks && blocks.length > 0) {
-              const totalBlocks = blocks.length;
-              
-              // Calculate time span in minutes
-              const firstBlockTime = blocks[0].header.time;
-              const lastBlockTime = blocks[blocks.length - 1].header.time;
-              const timeSpanMinutes = Math.max((lastBlockTime - firstBlockTime) / 60000, 1);
-              
-              // Blocks per minute (only if more than 1 block)
-              const blocksPerMinute = totalBlocks > 1 
-                ? Math.round((totalBlocks / timeSpanMinutes) * 100) / 100
-                : 0;
-
-              // Average block time in seconds
-              const avgBlockTime = totalBlocks > 1 
-                ? Math.round((lastBlockTime - firstBlockTime) / (totalBlocks - 1) / 1000)
-                : 0;
-
-              // Count transactions across all blocks
-              const totalTransactions = blocks.reduce((sum, b) => sum + b.txs.length, 0);
-
-              // Dynamic gas fee based on network activity (simple model)
-              const baseFee = 0.001;
-              const activityMultiplier = Math.min(blocksPerMinute * 0.1, 0.5);
-              const currentGasFee = Math.round((baseFee + activityMultiplier) * 10000) / 10000;
-
-              setStats({
-                blocksPerMinute,
-                totalTransactions,
-                avgBlockTime,
-                currentGasFee,
-                totalBlocks,
-              });
-              setIsLoading(false);
-              return;
-            }
+      let blocks = await fetchBlocks(NODE_API_URL);
+      if (!blocks && isLocal) {
+        for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
+          try {
+            blocks = await fetchBlocks(`http://127.0.0.1:${apiPort}/api`);
+            if (blocks) break;
+          } catch {
+            // Try next port
           }
-        } catch {
-          // Try next port
         }
+      }
+
+      if (blocks && blocks.length > 0) {
+        const totalBlocks = blocks.length;
+        
+        // Calculate time span in minutes
+        const firstBlockTime = blocks[0].header.time;
+        const lastBlockTime = blocks[blocks.length - 1].header.time;
+        const timeSpanMinutes = Math.max((lastBlockTime - firstBlockTime) / 60000, 1);
+        
+        // Blocks per minute (only if more than 1 block)
+        const blocksPerMinute = totalBlocks > 1 
+          ? Math.round((totalBlocks / timeSpanMinutes) * 100) / 100
+          : 0;
+
+        // Average block time in seconds
+        const avgBlockTime = totalBlocks > 1 
+          ? Math.round((lastBlockTime - firstBlockTime) / (totalBlocks - 1) / 1000)
+          : 0;
+
+        // Count transactions across all blocks
+        const totalTransactions = blocks.reduce((sum, b) => sum + b.txs.length, 0);
+
+        // Dynamic gas fee based on network activity (simple model)
+        const baseFee = 0.001;
+        const activityMultiplier = Math.min(blocksPerMinute * 0.1, 0.5);
+        const currentGasFee = Math.round((baseFee + activityMultiplier) * 10000) / 10000;
+
+        setStats({
+          blocksPerMinute,
+          totalTransactions,
+          avgBlockTime,
+          currentGasFee,
+          totalBlocks,
+        });
+        setIsLoading(false);
+        return;
       }
       // No nodes found
       setStats({
