@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 const features = [
   {
     icon: Wallet,
-    title: "PQC Web Wallet",
-    description: "Create a quantum-safe wallet, claim QBIT tokens, and send transactions signed with ML-DSA-65.",
+    title: "XRGE Wallet",
+    description: "Create a quantum-safe wallet, claim XRGE tokens, and send transactions on RougeChain.",
     link: "/wallet",
     color: "primary",
   },

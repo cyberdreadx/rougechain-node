@@ -253,7 +253,7 @@ const Wallet = () => {
                 <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
               </Button>
             )}
-            <NetworkBadge />
+            <NetworkBadge isConnected={!!wallet} />
           </div>
         </div>
       </header>
