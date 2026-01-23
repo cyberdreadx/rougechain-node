@@ -130,12 +130,20 @@ export async function verifyBlockSignature(block: Block): Promise<boolean> {
 
 // Load the entire chain from database
 export async function loadChain(): Promise<Block[]> {
-  const { data, error } = await supabase.functions.invoke("pqc-crypto", {
-    body: { action: "load-chain" },
-  });
+  try {
+    const { data, error } = await supabase.functions.invoke("pqc-crypto", {
+      body: { action: "load-chain" },
+    });
 
-  if (error) throw new Error(error.message);
-  return data.chain || [];
+    if (error) {
+      console.error("Load chain error:", error);
+      return [];
+    }
+    return data?.chain || [];
+  } catch (e) {
+    console.error("Load chain exception:", e);
+    return [];
+  }
 }
 
 // Reset the blockchain (clear database)

@@ -73,7 +73,9 @@ serve(async (req) => {
   }
 
   try {
-    const { action, payload } = await req.json();
+    const body = await req.json();
+    const { action, payload } = body;
+    console.log("Received action:", action, "payload keys:", payload ? Object.keys(payload) : "none");
     const supabase = getSupabaseClient();
 
     switch (action) {
