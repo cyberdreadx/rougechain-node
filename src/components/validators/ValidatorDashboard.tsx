@@ -271,59 +271,57 @@ export function ValidatorDashboard({
       </Card>
 
       {/* My Validator Status / Become Validator */}
-      {walletId && (
-        <Card className="bg-card/50 backdrop-blur border-border">
-          <CardContent className="p-4">
-            {myValidator ? (
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  {(() => {
-                    const TierIcon = tierConfig[myValidator.tier].icon;
-                    return (
-                      <div className={`p-2 rounded-lg bg-background ${tierConfig[myValidator.tier].color}`}>
-                        <TierIcon className="w-5 h-5" />
-                      </div>
-                    );
-                  })()}
-                  <div>
-                    <div className="font-semibold">You're a {myValidator.tier} Validator</div>
-                    <div className="text-sm text-muted-foreground">
-                      Staked: {formatStake(myValidator.stakedAmount)} XRGE • {myValidator.blocksValidated} validations
+      <Card className="bg-card/50 backdrop-blur border-border">
+        <CardContent className="p-4">
+          {myValidator ? (
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {(() => {
+                  const TierIcon = tierConfig[myValidator.tier].icon;
+                  return (
+                    <div className={`p-2 rounded-lg bg-background ${tierConfig[myValidator.tier].color}`}>
+                      <TierIcon className="w-5 h-5" />
                     </div>
-                  </div>
-                </div>
-                <Badge className={`capitalize ${
-                  myValidator.status === "active" ? "bg-green-500/20 text-green-500" :
-                  myValidator.status === "jailed" ? "bg-red-500/20 text-red-500" :
-                  "bg-yellow-500/20 text-yellow-500"
-                }`}>
-                  {myValidator.status}
-                </Badge>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between">
+                  );
+                })()}
                 <div>
-                  <div className="font-semibold">Become a Validator</div>
+                  <div className="font-semibold">You're a {myValidator.tier} Validator</div>
                   <div className="text-sm text-muted-foreground">
-                    Stake XRGE to help secure the network and earn rewards
+                    Staked: {formatStake(myValidator.stakedAmount)} XRGE • {myValidator.blocksValidated} validations
                   </div>
                 </div>
-                <Button onClick={() => setShowStaking(true)} className="gap-2">
-                  <Plus className="w-4 h-4" />
-                  Stake XRGE
-                </Button>
               </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+              <Badge className={`capitalize ${
+                myValidator.status === "active" ? "bg-green-500/20 text-green-500" :
+                myValidator.status === "jailed" ? "bg-red-500/20 text-red-500" :
+                "bg-yellow-500/20 text-yellow-500"
+              }`}>
+                {myValidator.status}
+              </Badge>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-semibold">Become a Validator</div>
+                <div className="text-sm text-muted-foreground">
+                  Stake XRGE to help secure the network and earn rewards
+                </div>
+              </div>
+              <Button onClick={() => setShowStaking(true)} className="gap-2">
+                <Plus className="w-4 h-4" />
+                Stake XRGE
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Validator List */}
       <ValidatorList />
 
       {/* Staking Dialog */}
       <AnimatePresence>
-        {showStaking && walletId && signingPublicKey && (
+        {showStaking && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -335,7 +333,7 @@ export function ValidatorDashboard({
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-card border border-border rounded-xl shadow-xl max-w-md w-full p-6"
+              className="bg-card border border-border rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto p-6"
             >
               <StakingDialog
                 walletId={walletId}
