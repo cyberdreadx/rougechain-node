@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import BlockchainVisualizer from "@/components/blockchain/BlockchainVisualizer";
 import MiningPanel from "@/components/blockchain/MiningPanel";
 import PQCInfo from "@/components/blockchain/PQCInfo";
+import { QuantumThreatPanel } from "@/components/blockchain/QuantumThreatPanel";
 import type { Block, Keypair, CryptoInfo } from "@/lib/pqc-blockchain";
 import { loadChain, resetChain, validateChain } from "@/lib/pqc-blockchain";
 
@@ -251,6 +252,7 @@ const Blockchain = () => {
                 onKeypairGenerated={setKeypair}
                 onGenesisCreated={handleGenesisCreated}
               />
+              <QuantumThreatPanel />
               <PQCInfo />
             </div>
           </div>
