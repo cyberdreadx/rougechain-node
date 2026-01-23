@@ -84,10 +84,14 @@ export function StakingDialog({
       });
       if (fnError) throw fnError;
       
+      // The response has keypair nested inside data
+      const publicKey = data?.keypair?.publicKey || data?.publicKey;
+      if (!publicKey) throw new Error("No public key in response");
+      
       // Generate a demo wallet ID
-      const demoWalletId = `xrge:${data.publicKey.slice(0, 32)}`;
+      const demoWalletId = `xrge:${publicKey.slice(0, 32)}`;
       setGeneratedWalletId(demoWalletId);
-      setGeneratedSigningKey(data.publicKey);
+      setGeneratedSigningKey(publicKey);
     } catch (err) {
       setError("Failed to generate keys. Please try again.");
     } finally {
