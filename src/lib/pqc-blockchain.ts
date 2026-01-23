@@ -16,33 +16,54 @@ export interface Keypair {
   privateKey: string;
 }
 
+export interface CryptoInfo {
+  algorithm: string;
+  standard: string;
+  publicKeySize: string;
+  signatureSize: string;
+  securityLevel: string;
+}
+
 export interface BlockchainState {
   chain: Block[];
   keypair: Keypair | null;
   isValid: boolean;
 }
 
-// Generate a new PQC keypair
-export async function generateKeypair(): Promise<Keypair> {
+// Generate a new PQC keypair (REAL ML-DSA-65)
+export async function generateKeypair(): Promise<{ keypair: Keypair; info: CryptoInfo }> {
   const { data, error } = await supabase.functions.invoke("pqc-crypto", {
     body: { action: "generate-keypair" },
   });
 
   if (error) throw new Error(error.message);
-  return data.keypair;
+  return {
+    keypair: data.keypair,
+    info: {
+      algorithm: data.algorithm,
+      standard: data.standard,
+      publicKeySize: data.publicKeySize,
+      signatureSize: "~3300 bytes",
+      securityLevel: "NIST Level 3",
+    },
+  };
 }
 
-// Create genesis block
-export async function createGenesisBlock(): Promise<{ block: Block; keypair: Keypair }> {
+// Create genesis block with REAL PQC crypto
+export async function createGenesisBlock(): Promise<{ block: Block; keypair: Keypair; crypto: CryptoInfo }> {
   const { data, error } = await supabase.functions.invoke("pqc-crypto", {
     body: { action: "create-genesis" },
   });
 
   if (error) throw new Error(error.message);
-  return { block: data.block, keypair: data.keypair };
+  return { 
+    block: data.block, 
+    keypair: data.keypair,
+    crypto: data.crypto,
+  };
 }
 
-// Mine a new block
+// Mine a new block with REAL PQC signature
 export async function mineBlock(
   index: number,
   blockData: string,
@@ -63,7 +84,7 @@ export async function mineBlock(
 
   const minedBlock = mineResult.data.block;
 
-  // Then sign it with Dilithium
+  // Then sign it with REAL ML-DSA-65
   const signResult = await supabase.functions.invoke("pqc-crypto", {
     body: {
       action: "sign-block",
@@ -73,14 +94,24 @@ export async function mineBlock(
 
   if (signResult.error) throw new Error(signResult.error.message);
 
-  return {
+  const fullBlock = {
     ...minedBlock,
     signature: signResult.data.signature,
     signerPublicKey: publicKey,
   };
+
+  // Save to database
+  await supabase.functions.invoke("pqc-crypto", {
+    body: {
+      action: "save-block",
+      payload: { block: fullBlock },
+    },
+  });
+
+  return fullBlock;
 }
 
-// Verify a block's signature
+// Verify a block's signature with REAL ML-DSA-65
 export async function verifyBlockSignature(block: Block): Promise<boolean> {
   const { data, error } = await supabase.functions.invoke("pqc-crypto", {
     body: {
@@ -97,22 +128,46 @@ export async function verifyBlockSignature(block: Block): Promise<boolean> {
   return data.valid;
 }
 
-// Validate the entire chain
-export async function validateChain(chain: Block[]): Promise<boolean> {
-  for (let i = 1; i < chain.length; i++) {
-    const currentBlock = chain[i];
-    const previousBlock = chain[i - 1];
+// Load the entire chain from database
+export async function loadChain(): Promise<Block[]> {
+  const { data, error } = await supabase.functions.invoke("pqc-crypto", {
+    body: { action: "load-chain" },
+  });
 
-    // Check hash linkage
-    if (currentBlock.previousHash !== previousBlock.hash) {
-      return false;
+  if (error) throw new Error(error.message);
+  return data.chain || [];
+}
+
+// Reset the blockchain (clear database)
+export async function resetChain(): Promise<void> {
+  const { error } = await supabase.functions.invoke("pqc-crypto", {
+    body: { action: "reset-chain" },
+  });
+
+  if (error) throw new Error(error.message);
+}
+
+// Validate the entire chain
+export async function validateChain(chain: Block[]): Promise<{ valid: boolean; errors: string[] }> {
+  const errors: string[] = [];
+
+  for (let i = 0; i < chain.length; i++) {
+    const currentBlock = chain[i];
+    
+    // Check hash linkage (skip genesis)
+    if (i > 0) {
+      const previousBlock = chain[i - 1];
+      if (currentBlock.previousHash !== previousBlock.hash) {
+        errors.push(`Block ${i}: Invalid previous hash linkage`);
+      }
     }
 
     // Verify PQC signature
     const validSig = await verifyBlockSignature(currentBlock);
     if (!validSig) {
-      return false;
+      errors.push(`Block ${i}: Invalid ML-DSA-65 signature`);
     }
   }
-  return true;
+
+  return { valid: errors.length === 0, errors };
 }
