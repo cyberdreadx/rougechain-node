@@ -33,6 +33,7 @@ export function NodeDashboard() {
     peers,
     networkStats,
     syncState,
+    chainSyncStatus,
     consensusPhase,
     logs,
     initializeNode,
@@ -207,7 +208,33 @@ export function NodeDashboard() {
         </div>
       )}
 
-      {/* Sync Status */}
+      {/* Chain Sync Status */}
+      {isRunning && chainSyncStatus && (
+        <Card className={chainSyncStatus.isSynced ? "border-green-500/50" : "border-yellow-500/50"}>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-4">
+              <Database className={`h-5 w-5 ${chainSyncStatus.isSynced ? 'text-green-500' : 'text-yellow-500'}`} />
+              <div className="flex-1">
+                <div className="flex justify-between mb-2">
+                  <span className="text-sm font-medium">
+                    {chainSyncStatus.isSynced ? '✓ Chain Synchronized' : 'Syncing Chain...'}
+                  </span>
+                  <span className="text-sm text-muted-foreground">
+                    Local: {chainSyncStatus.localHeight} | Network: {chainSyncStatus.networkHeight}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-4 text-xs text-muted-foreground">
+                  <div>Local Height: <span className="text-foreground font-mono">{chainSyncStatus.localHeight}</span></div>
+                  <div>Supabase: <span className="text-foreground font-mono">{chainSyncStatus.supabaseHeight}</span></div>
+                  <div>Last Sync: <span className="text-foreground">{chainSyncStatus.lastSyncTime > 0 ? new Date(chainSyncStatus.lastSyncTime).toLocaleTimeString() : 'Never'}</span></div>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Sync Status (P2P Sync) */}
       {syncState?.isSyncing && (
         <Card className="border-yellow-500/50">
           <CardContent className="pt-6">
@@ -215,7 +242,7 @@ export function NodeDashboard() {
               <RefreshCw className="h-5 w-5 animate-spin text-yellow-500" />
               <div className="flex-1">
                 <div className="flex justify-between mb-2">
-                  <span className="text-sm">Syncing blockchain...</span>
+                  <span className="text-sm">Syncing from peers...</span>
                   <span className="text-sm text-muted-foreground">
                     {syncState.localHeight} / {syncState.networkHeight}
                   </span>
@@ -360,9 +387,10 @@ export function NodeDashboard() {
               <ul className="text-sm text-muted-foreground space-y-1">
                 <li>• Each node maintains its own local blockchain copy (IndexedDB)</li>
                 <li>• Nodes connect directly via WebRTC data channels</li>
-                <li>• Signaling uses Supabase Realtime for peer discovery only</li>
+                <li>• Real-time block sync from distributed network</li>
                 <li>• Byzantine Fault Tolerant consensus requires 2/3 majority</li>
-                <li>• No central database - blocks synced via gossip protocol</li>
+                <li>• All blocks verified with ML-DSA-65 PQC signatures</li>
+                <li>• Gossip protocol for P2P block propagation</li>
               </ul>
             </div>
           </div>
