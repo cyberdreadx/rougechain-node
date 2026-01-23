@@ -85,7 +85,7 @@ export function QuantumThreatPanel() {
         <div className="flex items-center gap-2 p-2 rounded-lg bg-success/10 border border-success/30">
           <Lock className="w-4 h-4 text-success" />
           <div>
-            <p className="text-xs font-medium text-success">Your Chain is Protected</p>
+            <p className="text-xs font-medium text-success">RougeChain is Protected</p>
             <p className="text-[10px] text-muted-foreground">
               Using NIST-standardized ML-DSA-65 (FIPS 204)
             </p>

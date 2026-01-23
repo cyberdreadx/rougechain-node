@@ -63,7 +63,7 @@ const WalletCard = ({ address, balance, usdValue, isConnected = false, onConnect
             >
               {balance || "0"} XRGE
             </motion.h2>
-            <p className="text-lg text-muted-foreground mt-1">Quantum Chain</p>
+            <p className="text-lg text-muted-foreground mt-1">RougeChain</p>
           </div>
 
           {/* Address section */}
