@@ -8,8 +8,8 @@ import Blockchain from "./pages/Blockchain";
 import Messenger from "./pages/Messenger";
 import Wallet from "./pages/Wallet";
 import Validators from "./pages/Validators";
+import Node from "./pages/Node";
 import NotFound from "./pages/NotFound";
-
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -24,6 +24,7 @@ const App = () => (
           <Route path="/messenger" element={<Messenger />} />
           <Route path="/wallet" element={<Wallet />} />
           <Route path="/validators" element={<Validators />} />
+          <Route path="/node" element={<Node />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
