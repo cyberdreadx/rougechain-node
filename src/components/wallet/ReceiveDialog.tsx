@@ -13,16 +13,18 @@ const ReceiveDialog = ({ publicKey, onClose }: ReceiveDialogProps) => {
   const [copied, setCopied] = useState(false);
 
   const copyAddress = () => {
-    navigator.clipboard.writeText(publicKey);
+    const fullAddress = `xrge:${publicKey}`;
+    navigator.clipboard.writeText(fullAddress);
     setCopied(true);
     toast.success("Address copied!");
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Truncate for display
-  const displayKey = publicKey.length > 40 
-    ? `${publicKey.slice(0, 20)}...${publicKey.slice(-20)}`
-    : publicKey;
+  // Format with xrge prefix
+  const fullAddress = `xrge:${publicKey}`;
+  const displayKey = fullAddress.length > 45 
+    ? `xrge:${publicKey.slice(0, 16)}...${publicKey.slice(-16)}`
+    : fullAddress;
 
   return (
     <motion.div
