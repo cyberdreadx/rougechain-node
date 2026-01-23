@@ -8,6 +8,7 @@ import BlockchainVisualizer from "@/components/blockchain/BlockchainVisualizer";
 import MiningPanel from "@/components/blockchain/MiningPanel";
 import PQCInfo from "@/components/blockchain/PQCInfo";
 import { QuantumThreatPanel } from "@/components/blockchain/QuantumThreatPanel";
+import { TamperDemo } from "@/components/blockchain/TamperDemo";
 import type { Block, Keypair, CryptoInfo } from "@/lib/pqc-blockchain";
 import { loadChain, resetChain, validateChain } from "@/lib/pqc-blockchain";
 
@@ -252,6 +253,7 @@ const Blockchain = () => {
                 onKeypairGenerated={setKeypair}
                 onGenesisCreated={handleGenesisCreated}
               />
+              <TamperDemo chain={chain} />
               <QuantumThreatPanel />
               <PQCInfo />
             </div>
