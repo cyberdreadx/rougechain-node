@@ -3,8 +3,9 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Html } from "@react-three/drei";
 import * as THREE from "three";
 import { motion } from "framer-motion";
-import { Globe, Activity, Users, Loader2 } from "lucide-react";
+import { Globe, Activity, Users, Loader2, Wifi } from "lucide-react";
 import { getValidators, type Validator } from "@/lib/pqc-validators";
+import { supabase } from "@/integrations/supabase/client";
 
 // Generate random points on a sphere based on validator count
 const generateNodePositions = (count: number, radius: number) => {
@@ -215,6 +216,7 @@ interface GlobalNetworkGlobeProps {
 const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
   const [validators, setValidators] = useState<Validator[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLive, setIsLive] = useState(false);
   const peerCount = 30; // Additional network peers
 
   useEffect(() => {
@@ -229,6 +231,30 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
       }
     };
     fetchValidators();
+
+    // Subscribe to real-time validator updates
+    const channel = supabase
+      .channel('validators-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'validators',
+        },
+        async () => {
+          // Refetch all validators when any change occurs
+          const data = await getValidators();
+          setValidators(data);
+        }
+      )
+      .subscribe((status) => {
+        setIsLive(status === 'SUBSCRIBED');
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const totalStake = validators.reduce((sum, v) => sum + v.stakedAmount, 0);
@@ -241,9 +267,15 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
         <div className="flex items-center gap-2 mb-2">
           <Globe className="w-5 h-5 text-primary" />
           <h3 className="text-sm font-semibold text-foreground">Global Network</h3>
+          {isLive && (
+            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-success/20 border border-success/30">
+              <Wifi className="w-3 h-3 text-success" />
+              <span className="text-[10px] text-success font-medium">LIVE</span>
+            </div>
+          )}
         </div>
         <p className="text-xs text-muted-foreground max-w-[200px]">
-          Live RougeChain validator network
+          Real-time RougeChain validator network
         </p>
       </div>
 
