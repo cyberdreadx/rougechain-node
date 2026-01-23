@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2 } from "lucide-react";
+import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import type { Conversation, WalletWithPrivateKeys, Message, Wallet } from "@/lib/pqc-messenger";
-import { getMessages, sendMessage } from "@/lib/pqc-messenger";
+import { getMessages, sendMessage, isDemoBot, loadDemoBotWallet, getDemoBotResponse } from "@/lib/pqc-messenger";
 import { supabase } from "@/integrations/supabase/client";
 
 interface ChatViewProps {
@@ -24,6 +24,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const recipient = conversation.participants?.find(p => p.id !== wallet.id);
+  const isRecipientBot = recipient ? isDemoBot(recipient.id) : false;
 
   const getConversationName = (): string => {
     if (conversation.name) return conversation.name;
@@ -81,17 +82,42 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
     if (!newMessage.trim() || !recipient || isSending) return;
 
     setIsSending(true);
+    const messageText = newMessage.trim();
+    setNewMessage("");
+    
     try {
       const msg = await sendMessage(
         conversation.id,
-        newMessage.trim(),
+        messageText,
         wallet,
         recipient.encryptionPublicKey,
         selfDestruct,
         selfDestruct ? destructSeconds : undefined
       );
       setMessages(prev => [...prev, msg]);
-      setNewMessage("");
+      
+      // If recipient is demo bot, send an auto-reply
+      if (isRecipientBot) {
+        // Small delay to make it feel natural
+        setTimeout(async () => {
+          const botWallet = loadDemoBotWallet();
+          if (botWallet) {
+            try {
+              const botResponse = getDemoBotResponse();
+              const botMsg = await sendMessage(
+                conversation.id,
+                botResponse,
+                botWallet,
+                wallet.encryptionPublicKey, // Encrypt for the user
+                false
+              );
+              setMessages(prev => [...prev, botMsg]);
+            } catch (e) {
+              console.error("Bot reply failed:", e);
+            }
+          }
+        }, 1000 + Math.random() * 1000); // 1-2 second delay
+      }
     } catch (error) {
       console.error("Failed to send message:", error);
     } finally {
@@ -111,11 +137,26 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
         >
           <ArrowLeft className="w-5 h-5" />
         </Button>
-        <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center">
-          <Shield className="w-5 h-5 text-primary" />
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+          isRecipientBot 
+            ? "bg-gradient-to-br from-primary to-accent" 
+            : "bg-primary/20"
+        }`}>
+          {isRecipientBot ? (
+            <Bot className="w-5 h-5 text-primary-foreground" />
+          ) : (
+            <Shield className="w-5 h-5 text-primary" />
+          )}
         </div>
         <div className="flex-1">
-          <p className="font-medium text-foreground">{getConversationName()}</p>
+          <div className="flex items-center gap-2">
+            <p className="font-medium text-foreground">{getConversationName()}</p>
+            {isRecipientBot && (
+              <span className="px-1.5 py-0.5 text-[10px] rounded bg-primary/20 text-primary">
+                Demo
+              </span>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground flex items-center gap-1">
             <Lock className="w-3 h-3" />
             ML-KEM-768 + ML-DSA-65
