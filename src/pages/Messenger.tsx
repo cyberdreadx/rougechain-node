@@ -12,6 +12,7 @@ import PrivacySettings from "@/components/messenger/PrivacySettings";
 import WalletBackup from "@/components/messenger/WalletBackup";
 import type { WalletWithPrivateKeys, Conversation, Wallet } from "@/lib/pqc-messenger";
 import { loadLocalWallet, getConversations, getWallets, saveWalletLocally } from "@/lib/pqc-messenger";
+import xrgeLogo from "@/assets/xrge-logo.webp";
 
 const Messenger = () => {
   const [wallet, setWallet] = useState<WalletWithPrivateKeys | null>(null);
@@ -116,15 +117,9 @@ const Messenger = () => {
             </Button>
           </Link>
           <div className="flex items-center gap-2">
-            <motion.div
-              animate={{ scale: [1, 1.1, 1] }}
-              transition={{ duration: 2, repeat: Infinity }}
-              className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center"
-            >
-              <MessageSquare className="w-4 h-4 text-primary-foreground" />
-            </motion.div>
+            <img src={xrgeLogo} alt="XRGE" className="w-8 h-8 rounded-full" />
             <div>
-              <h1 className="text-lg font-bold text-foreground">PQC Messenger</h1>
+              <h1 className="text-lg font-bold text-foreground">Rouge Messenger</h1>
               <p className="text-xs text-muted-foreground">End-to-end quantum-safe</p>
             </div>
           </div>
