@@ -1,7 +1,8 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Blocks, Wallet, MessageSquareLock, Shield, Atom, Lock } from "lucide-react";
+import { Blocks, Wallet, MessageSquareLock, Shield, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import xrgeLogo from "@/assets/xrge-logo.webp";
 
 const features = [
   {
@@ -42,15 +43,14 @@ const Index = () => {
           animate={{ opacity: 1, y: 0 }}
           className="text-center mb-16"
         >
-          <motion.div
-            initial={{ scale: 0.8 }}
-            animate={{ scale: 1 }}
+          <motion.img
+            src={xrgeLogo}
+            alt="XRGE"
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
             transition={{ delay: 0.1 }}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/30 mb-6"
-          >
-            <Atom className="w-5 h-5 text-primary" />
-            <span className="text-sm font-medium text-primary">Post-Quantum Cryptography</span>
-          </motion.div>
+            className="w-24 h-24 mx-auto mb-6 rounded-full shadow-lg shadow-primary/20"
+          />
 
           <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-4">
             Welcome to{" "}
