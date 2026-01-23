@@ -87,8 +87,8 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
   return Object.entries(balances).map(([symbol, balance]) => ({
     symbol,
     balance,
-    name: symbol === "XRGE" ? "Xurge Token" : symbol,
-    icon: symbol === "XRGE" ? "⚡" : "🪙",
+    name: symbol === "XRGE" ? "RougeCoin" : symbol,
+    icon: symbol === "XRGE" ? "🔴" : "🪙",
   }));
 }
 
