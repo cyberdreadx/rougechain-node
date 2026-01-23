@@ -39,14 +39,10 @@ const WalletCard = ({ address, balance, usdValue, isConnected = false, onConnect
       
       {/* Quantum security badge */}
       <div className="relative flex items-center gap-2 mb-6">
-        <motion.div
-          animate={{ scale: [1, 1.1, 1] }}
-          transition={{ duration: 2, repeat: Infinity }}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/30"
-        >
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/30">
           <Shield className="w-4 h-4 text-primary" />
           <span className="text-xs font-medium text-primary">PQC Protected</span>
-        </motion.div>
+        </div>
         <span className="text-xs text-muted-foreground">CRYSTALS-Dilithium</span>
       </div>
 
