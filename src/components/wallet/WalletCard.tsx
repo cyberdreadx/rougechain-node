@@ -16,13 +16,16 @@ const WalletCard = ({ address, balance, usdValue, isConnected = false, onConnect
 
   const copyAddress = () => {
     if (address) {
-      navigator.clipboard.writeText(address);
+      const fullAddress = `xrge:${address}`;
+      navigator.clipboard.writeText(fullAddress);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
   };
 
-  const truncatedAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : null;
+  const truncatedAddress = address 
+    ? `xrge:${address.slice(0, 6)}...${address.slice(-4)}` 
+    : null;
 
   return (
     <motion.div
