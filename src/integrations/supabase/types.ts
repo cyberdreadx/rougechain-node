@@ -14,7 +14,66 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      pqc_blocks: {
+        Row: {
+          block_index: number
+          created_at: string
+          data: string
+          hash: string
+          id: string
+          nonce: number
+          previous_hash: string
+          signature: string
+          signer_public_key: string
+          timestamp: number
+        }
+        Insert: {
+          block_index: number
+          created_at?: string
+          data: string
+          hash: string
+          id?: string
+          nonce: number
+          previous_hash: string
+          signature: string
+          signer_public_key: string
+          timestamp: number
+        }
+        Update: {
+          block_index?: number
+          created_at?: string
+          data?: string
+          hash?: string
+          id?: string
+          nonce?: number
+          previous_hash?: string
+          signature?: string
+          signer_public_key?: string
+          timestamp?: number
+        }
+        Relationships: []
+      }
+      pqc_keypairs: {
+        Row: {
+          algorithm: string
+          created_at: string
+          id: string
+          public_key: string
+        }
+        Insert: {
+          algorithm?: string
+          created_at?: string
+          id?: string
+          public_key: string
+        }
+        Update: {
+          algorithm?: string
+          created_at?: string
+          id?: string
+          public_key?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
