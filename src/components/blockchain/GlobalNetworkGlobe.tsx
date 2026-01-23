@@ -3,9 +3,11 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Html } from "@react-three/drei";
 import * as THREE from "three";
 import { motion } from "framer-motion";
-import { Globe, Activity, Users, Loader2, Wifi } from "lucide-react";
+import { Globe, Activity, Users, Loader2, Wifi, Shield } from "lucide-react";
 import { getValidators, type Validator } from "@/lib/pqc-validators";
 import { supabase } from "@/integrations/supabase/client";
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 
 // Generate random points on a sphere based on validator count
 const generateNodePositions = (count: number, radius: number) => {
@@ -342,8 +344,14 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
         )}
       </div>
 
-      {/* Interaction hint */}
-      <div className="absolute bottom-4 right-4 z-10">
+      {/* Bottom right actions */}
+      <div className="absolute bottom-4 right-4 z-10 flex flex-col items-end gap-2">
+        <Link to="/validators">
+          <Button size="sm" className="gap-2 shadow-lg">
+            <Shield className="w-4 h-4" />
+            Become a Validator
+          </Button>
+        </Link>
         <p className="text-xs text-muted-foreground bg-card/60 backdrop-blur-sm px-2 py-1 rounded">
           Drag to rotate • Scroll to zoom
         </p>
