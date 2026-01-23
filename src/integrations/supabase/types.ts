@@ -14,6 +14,131 @@ export type Database = {
   }
   public: {
     Tables: {
+      conversation_participants: {
+        Row: {
+          conversation_id: string
+          encrypted_group_key: string | null
+          id: string
+          joined_at: string
+          wallet_id: string
+        }
+        Insert: {
+          conversation_id: string
+          encrypted_group_key?: string | null
+          id?: string
+          joined_at?: string
+          wallet_id: string
+        }
+        Update: {
+          conversation_id?: string
+          encrypted_group_key?: string | null
+          id?: string
+          joined_at?: string
+          wallet_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_participants_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversation_participants_wallet_id_fkey"
+            columns: ["wallet_id"]
+            isOneToOne: false
+            referencedRelation: "wallets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      conversations: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          is_group: boolean
+          name: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_group?: boolean
+          name?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_group?: boolean
+          name?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversations_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "wallets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      encrypted_messages: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          destruct_after_seconds: number | null
+          encrypted_content: string
+          encryption_type: string
+          id: string
+          read_at: string | null
+          self_destruct: boolean
+          sender_wallet_id: string
+          signature: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          destruct_after_seconds?: number | null
+          encrypted_content: string
+          encryption_type?: string
+          id?: string
+          read_at?: string | null
+          self_destruct?: boolean
+          sender_wallet_id: string
+          signature: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          destruct_after_seconds?: number | null
+          encrypted_content?: string
+          encryption_type?: string
+          id?: string
+          read_at?: string | null
+          self_destruct?: boolean
+          sender_wallet_id?: string
+          signature?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "encrypted_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "encrypted_messages_sender_wallet_id_fkey"
+            columns: ["sender_wallet_id"]
+            isOneToOne: false
+            referencedRelation: "wallets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pqc_blocks: {
         Row: {
           block_index: number
@@ -71,6 +196,30 @@ export type Database = {
           created_at?: string
           id?: string
           public_key?: string
+        }
+        Relationships: []
+      }
+      wallets: {
+        Row: {
+          created_at: string
+          display_name: string
+          encryption_public_key: string
+          id: string
+          signing_public_key: string
+        }
+        Insert: {
+          created_at?: string
+          display_name: string
+          encryption_public_key: string
+          id?: string
+          signing_public_key: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string
+          encryption_public_key?: string
+          id?: string
+          signing_public_key?: string
         }
         Relationships: []
       }

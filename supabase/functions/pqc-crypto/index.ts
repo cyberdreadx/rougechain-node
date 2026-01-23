@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa";
+import { ml_kem768 } from "@noble/post-quantum/ml-kem";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -317,6 +318,213 @@ serve(async (req) => {
 
         return new Response(JSON.stringify({
           success: true,
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // ===== MESSENGER WALLET ACTIONS =====
+
+      case "create-wallet": {
+        const { displayName } = payload;
+        
+        // Generate ML-DSA-65 keypair for signing
+        const signingSeed = crypto.getRandomValues(new Uint8Array(32));
+        const signingKeypair = ml_dsa65.keygen(signingSeed);
+        
+        // Generate ML-KEM-768 keypair for encryption
+        const encryptionSeed = crypto.getRandomValues(new Uint8Array(64));
+        const encryptionKeypair = ml_kem768.keygen(encryptionSeed);
+        
+        const signingPublicKeyHex = bytesToHex(signingKeypair.publicKey);
+        const signingPrivateKeyHex = bytesToHex(signingKeypair.secretKey);
+        const encryptionPublicKeyHex = bytesToHex(encryptionKeypair.publicKey);
+        const encryptionPrivateKeyHex = bytesToHex(encryptionKeypair.secretKey);
+
+        // Store wallet in database (public keys only)
+        const { data: wallet, error: walletError } = await supabase
+          .from("wallets")
+          .insert({
+            display_name: displayName,
+            signing_public_key: signingPublicKeyHex,
+            encryption_public_key: encryptionPublicKeyHex,
+          })
+          .select()
+          .single();
+
+        if (walletError) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: walletError.message,
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        return new Response(JSON.stringify({
+          success: true,
+          wallet: {
+            id: wallet.id,
+            displayName: wallet.display_name,
+            signingPublicKey: signingPublicKeyHex,
+            encryptionPublicKey: encryptionPublicKeyHex,
+          },
+          privateKeys: {
+            signingPrivateKey: signingPrivateKeyHex,
+            encryptionPrivateKey: encryptionPrivateKeyHex,
+          },
+          algorithms: {
+            signing: "ML-DSA-65 (FIPS 204)",
+            encryption: "ML-KEM-768 (FIPS 203)",
+          },
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "encrypt-message": {
+        const { plaintext, recipientEncryptionPublicKey, senderSigningPrivateKey } = payload;
+        
+        // Encapsulate a shared secret using recipient's ML-KEM public key
+        const recipientPubKeyBytes = hexToBytes(recipientEncryptionPublicKey);
+        const { cipherText, sharedSecret } = ml_kem768.encapsulate(recipientPubKeyBytes);
+        
+        // Copy to a fresh ArrayBuffer to avoid type issues
+        const keyBuffer = new ArrayBuffer(32);
+        new Uint8Array(keyBuffer).set(sharedSecret.slice(0, 32));
+        
+        const aesKey = await crypto.subtle.importKey(
+          "raw",
+          keyBuffer,
+          { name: "AES-GCM" },
+          false,
+          ["encrypt"]
+        );
+        
+        // Encrypt the message with AES-GCM
+        const ivBuffer = new ArrayBuffer(12);
+        const iv = new Uint8Array(ivBuffer);
+        crypto.getRandomValues(iv);
+        
+        const plaintextBytes = new TextEncoder().encode(plaintext);
+        const encryptedBytes = await crypto.subtle.encrypt(
+          { name: "AES-GCM", iv: ivBuffer },
+          aesKey,
+          plaintextBytes
+        );
+        
+        // Sign the plaintext with sender's ML-DSA private key
+        const senderPrivKeyBytes = hexToBytes(senderSigningPrivateKey);
+        const signature = ml_dsa65.sign(senderPrivKeyBytes, plaintextBytes);
+        
+        // Package: cipherText (KEM) + iv + encryptedData
+        const encryptedData = {
+          kemCipherText: bytesToHex(cipherText),
+          iv: bytesToHex(iv),
+          encryptedContent: bytesToHex(new Uint8Array(encryptedBytes)),
+        };
+
+        return new Response(JSON.stringify({
+          success: true,
+          encryptedPackage: JSON.stringify(encryptedData),
+          signature: bytesToHex(signature),
+          algorithm: "ML-KEM-768 + AES-256-GCM",
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "decrypt-message": {
+        const { encryptedPackage, recipientEncryptionPrivateKey, senderSigningPublicKey, signature } = payload;
+        
+        try {
+          const encryptedData = JSON.parse(encryptedPackage);
+          
+          // Decapsulate shared secret using recipient's ML-KEM private key
+          const recipientPrivKeyBytes = hexToBytes(recipientEncryptionPrivateKey);
+          const kemCipherTextBytes = hexToBytes(encryptedData.kemCipherText);
+          const sharedSecret = ml_kem768.decapsulate(kemCipherTextBytes, recipientPrivKeyBytes);
+          
+          // Copy to a fresh ArrayBuffer to avoid type issues
+          const keyBuffer = new ArrayBuffer(32);
+          new Uint8Array(keyBuffer).set(sharedSecret.slice(0, 32));
+          
+          const aesKey = await crypto.subtle.importKey(
+            "raw",
+            keyBuffer,
+            { name: "AES-GCM" },
+            false,
+            ["decrypt"]
+          );
+          
+          // Decrypt the message - copy to fresh buffers
+          const ivBytes = hexToBytes(encryptedData.iv);
+          const ivBuffer = new ArrayBuffer(ivBytes.length);
+          new Uint8Array(ivBuffer).set(ivBytes);
+          
+          const contentBytes = hexToBytes(encryptedData.encryptedContent);
+          const contentBuffer = new ArrayBuffer(contentBytes.length);
+          new Uint8Array(contentBuffer).set(contentBytes);
+          
+          const decryptedBytes = await crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: ivBuffer },
+            aesKey,
+            contentBuffer
+          );
+          
+          const plaintext = new TextDecoder().decode(decryptedBytes);
+          
+          // Verify signature
+          const senderPubKeyBytes = hexToBytes(senderSigningPublicKey);
+          const signatureBytes = hexToBytes(signature);
+          const plaintextBytes = new TextEncoder().encode(plaintext);
+          const validSignature = ml_dsa65.verify(senderPubKeyBytes, plaintextBytes, signatureBytes);
+
+          return new Response(JSON.stringify({
+            success: true,
+            plaintext,
+            signatureValid: validSignature,
+            algorithm: "ML-KEM-768 + AES-256-GCM",
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        } catch (e) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: e instanceof Error ? e.message : "Decryption failed",
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      case "get-wallets": {
+        const { data: wallets, error } = await supabase
+          .from("wallets")
+          .select("id, display_name, signing_public_key, encryption_public_key, created_at")
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: error.message,
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        return new Response(JSON.stringify({
+          success: true,
+          wallets: wallets.map(w => ({
+            id: w.id,
+            displayName: w.display_name,
+            signingPublicKey: w.signing_public_key,
+            encryptionPublicKey: w.encryption_public_key,
+            createdAt: w.created_at,
+          })),
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
