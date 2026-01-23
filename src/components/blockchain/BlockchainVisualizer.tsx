@@ -94,7 +94,9 @@ const BlockCard = ({ block, index, isFirst }: { block: Block; index: number; isF
         {/* Data payload */}
         <div className="mt-3 p-2 rounded-lg bg-secondary/50 border border-border">
           <p className="text-xs text-muted-foreground mb-1">Data</p>
-          <p className="text-sm text-foreground">{block.data}</p>
+          <p className="text-sm text-foreground" title={block.data}>
+            {truncate(block.data, 40)}
+          </p>
         </div>
 
         {/* Nonce indicator */}

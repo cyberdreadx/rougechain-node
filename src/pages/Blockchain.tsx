@@ -9,6 +9,7 @@ import MiningPanel from "@/components/blockchain/MiningPanel";
 import PQCInfo from "@/components/blockchain/PQCInfo";
 import { QuantumThreatPanel } from "@/components/blockchain/QuantumThreatPanel";
 import { TamperDemo } from "@/components/blockchain/TamperDemo";
+import GlobalNetworkGlobe from "@/components/blockchain/GlobalNetworkGlobe";
 import type { Block, Keypair, CryptoInfo } from "@/lib/pqc-blockchain";
 import { loadChain, resetChain, validateChain } from "@/lib/pqc-blockchain";
 import xrgeLogo from "@/assets/xrge-logo.webp";
@@ -237,6 +238,20 @@ const Blockchain = () => {
                   </div>
                 </motion.div>
               )}
+
+              {/* Global Network Globe */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+                className="mt-4"
+              >
+                <GlobalNetworkGlobe
+                  nodeCount={50}
+                  validatorCount={8}
+                  className="h-[450px]"
+                />
+              </motion.div>
             </div>
 
             {/* Sidebar */}
