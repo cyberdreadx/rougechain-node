@@ -182,7 +182,8 @@ const Wallet = () => {
     }
   };
 
-  const totalBalance = balances.reduce((sum, b) => sum + b.balance, 0);
+  // Get XRGE balance specifically for the main display (native token)
+  const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
 
   // Convert balances to asset format
   const assets = balances.map(b => ({
@@ -284,7 +285,7 @@ const Wallet = () => {
           >
           <WalletCard
               address={wallet.signingPublicKey}
-              balance={totalBalance.toString()}
+              balance={xrgeBalance.toLocaleString()}
               usdValue="N/A"
               isConnected={true}
             />
@@ -295,7 +296,7 @@ const Wallet = () => {
                 variant="outline"
                 className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
                 onClick={() => setShowSend(true)}
-                disabled={totalBalance === 0}
+                disabled={balances.length === 0}
               >
                 <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
                   <Send className="w-4 h-4 text-primary" />
