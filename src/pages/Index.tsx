@@ -18,30 +18,31 @@ const Index = () => {
       <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
       <div className="fixed bottom-0 right-0 w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />
       
-      <Header />
+      <Header isConnected={false} />
       
       <main className="relative z-10 max-w-6xl mx-auto px-4 py-6 pb-20">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Main column */}
           <div className="lg:col-span-2 space-y-6">
             <WalletCard
-              address="0x742d35Cc6634C0532925a3b844Bc9e7595f8234f"
-              balance="2.4521"
-              usdValue="4,892.42"
+              isConnected={false}
+              onConnect={() => {
+                // TODO: Implement wallet connection
+              }}
             />
             
             <ActionButtons />
             
-            <AssetList />
+            <AssetList assets={[]} />
             
-            <TransactionHistory />
+            <TransactionHistory transactions={[]} />
           </div>
           
           {/* Sidebar */}
           <div className="space-y-6">
             <SecurityStatus />
             
-            {/* Quick stats */}
+            {/* Network stats - empty state */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -51,16 +52,12 @@ const Index = () => {
               <h3 className="text-sm font-semibold text-foreground mb-4">Network Stats</h3>
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">Gas Price</span>
-                  <span className="text-sm font-mono text-foreground">0.001 GWEI</span>
+                  <span className="text-xs text-muted-foreground">Status</span>
+                  <span className="text-sm font-mono text-muted-foreground">Not connected</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">Block Time</span>
-                  <span className="text-sm font-mono text-foreground">2.0s</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">TPS</span>
-                  <span className="text-sm font-mono text-foreground">1,247</span>
+                  <span className="text-xs text-muted-foreground">Network</span>
+                  <span className="text-sm font-mono text-muted-foreground">—</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-muted-foreground">PQC Algorithm</span>
@@ -106,7 +103,7 @@ const Index = () => {
         </div>
       </main>
       
-      <NetworkBadge />
+      <NetworkBadge isConnected={false} />
     </div>
   );
 };
