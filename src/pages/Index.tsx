@@ -1,14 +1,31 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Blocks, Wallet } from "lucide-react";
+import { Blocks, Wallet, MessageSquareLock, Shield, Atom, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import Header from "@/components/wallet/Header";
-import WalletCard from "@/components/wallet/WalletCard";
-import ActionButtons from "@/components/wallet/ActionButtons";
-import AssetList from "@/components/wallet/AssetList";
-import TransactionHistory from "@/components/wallet/TransactionHistory";
-import SecurityStatus from "@/components/wallet/SecurityStatus";
-import NetworkBadge from "@/components/wallet/NetworkBadge";
+
+const features = [
+  {
+    icon: Wallet,
+    title: "PQC Web Wallet",
+    description: "Create a quantum-safe wallet, claim QBIT tokens, and send transactions signed with ML-DSA-65.",
+    link: "/wallet",
+    color: "primary",
+  },
+  {
+    icon: Blocks,
+    title: "Blockchain Explorer",
+    description: "Mine blocks and explore the post-quantum blockchain with CRYSTALS-Dilithium signatures.",
+    link: "/blockchain",
+    color: "accent",
+  },
+  {
+    icon: MessageSquareLock,
+    title: "Secure Messenger",
+    description: "End-to-end encrypted messaging with ML-KEM key exchange and quantum-safe signatures.",
+    link: "/messenger",
+    color: "success",
+  },
+];
 
 const Index = () => {
   return (
@@ -17,112 +34,109 @@ const Index = () => {
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
       <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
       <div className="fixed bottom-0 right-0 w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />
-      
-      <Header isConnected={false} />
-      
-      <main className="relative z-10 max-w-6xl mx-auto px-4 py-6 pb-20">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main column */}
-          <div className="lg:col-span-2 space-y-6">
-            <WalletCard
-              isConnected={false}
-              onConnect={() => {
-                // TODO: Implement wallet connection
-              }}
-            />
-            
-            <ActionButtons />
-            
-            <AssetList assets={[]} />
-            
-            <TransactionHistory transactions={[]} />
-          </div>
+
+      <main className="relative z-10 max-w-4xl mx-auto px-4 py-12">
+        {/* Hero */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-center mb-16"
+        >
+          <motion.div
+            initial={{ scale: 0.8 }}
+            animate={{ scale: 1 }}
+            transition={{ delay: 0.1 }}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/30 mb-6"
+          >
+            <Atom className="w-5 h-5 text-primary" />
+            <span className="text-sm font-medium text-primary">Post-Quantum Cryptography</span>
+          </motion.div>
+
+          <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-4">
+            Quantum-Safe{" "}
+            <span className="text-gradient-quantum">Blockchain</span>
+          </h1>
           
-          {/* Sidebar */}
-          <div className="space-y-6">
-            <SecurityStatus />
-            
-            {/* Network stats - empty state */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.5 }}
-              className="bg-card rounded-xl border border-border p-4"
-            >
-              <h3 className="text-sm font-semibold text-foreground mb-4">Network Stats</h3>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">Status</span>
-                  <span className="text-sm font-mono text-muted-foreground">Not connected</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">Network</span>
-                  <span className="text-sm font-mono text-muted-foreground">—</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">PQC Algorithm</span>
-                  <span className="text-sm font-mono text-primary">Dilithium-3</span>
-                </div>
-              </div>
-            </motion.div>
+          <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
+            Experience the future of cryptography. Built with NIST-approved algorithms 
+            to protect against quantum computing threats.
+          </p>
 
-            {/* PQC Web Wallet Link */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.6 }}
-              className="bg-gradient-to-br from-primary/10 to-accent/10 rounded-xl border border-primary/20 p-4"
-            >
-              <h3 className="text-sm font-semibold text-foreground mb-2">💰 PQC Web Wallet</h3>
-              <p className="text-xs text-muted-foreground leading-relaxed mb-3">
-                Create a quantum-safe wallet, claim tokens from the faucet, and send QBIT with ML-DSA signed transactions.
-              </p>
-              <Link to="/wallet">
-                <Button className="w-full" variant="default">
-                  <Wallet className="w-4 h-4 mr-2" />
-                  Open Wallet
-                </Button>
-              </Link>
-            </motion.div>
-
-            {/* PQC Blockchain Demo Link */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.7 }}
-              className="bg-gradient-to-br from-accent/10 to-primary/10 rounded-xl border border-accent/20 p-4"
-            >
-              <h3 className="text-sm font-semibold text-foreground mb-2">🔗 PQC Blockchain Demo</h3>
-              <p className="text-xs text-muted-foreground leading-relaxed mb-3">
-                Explore our post-quantum blockchain with CRYSTALS-Dilithium signatures. 
-                Mine blocks and see quantum-safe cryptography in action.
-              </p>
-              <Link to="/blockchain">
-                <Button className="w-full" variant="outline">
-                  <Blocks className="w-4 h-4 mr-2" />
-                  Launch Blockchain Demo
-                </Button>
-              </Link>
-            </motion.div>
-
-            {/* Info card */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.8 }}
-              className="bg-gradient-to-br from-accent/10 to-primary/10 rounded-xl border border-accent/20 p-4"
-            >
-              <h3 className="text-sm font-semibold text-foreground mb-2">🛡️ Quantum-Safe</h3>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Protected by NIST-approved post-quantum cryptographic algorithms, 
-                ensuring security against quantum computing threats.
-              </p>
-            </motion.div>
+          <div className="flex items-center justify-center gap-3 flex-wrap">
+            <Link to="/wallet">
+              <Button size="lg" className="gap-2">
+                <Wallet className="w-5 h-5" />
+                Open Wallet
+              </Button>
+            </Link>
+            <Link to="/blockchain">
+              <Button size="lg" variant="outline" className="gap-2">
+                <Blocks className="w-5 h-5" />
+                Explore Chain
+              </Button>
+            </Link>
           </div>
+        </motion.div>
+
+        {/* Feature Cards */}
+        <div className="grid md:grid-cols-3 gap-6 mb-16">
+          {features.map((feature, index) => (
+            <motion.div
+              key={feature.title}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 + index * 0.1 }}
+            >
+              <Link to={feature.link}>
+                <div className="group h-full p-6 rounded-2xl bg-card border border-border hover:border-primary/50 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5">
+                  <div className={`w-12 h-12 rounded-xl bg-${feature.color}/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                    <feature.icon className={`w-6 h-6 text-${feature.color}`} />
+                  </div>
+                  <h3 className="text-lg font-semibold text-foreground mb-2">{feature.title}</h3>
+                  <p className="text-sm text-muted-foreground">{feature.description}</p>
+                </div>
+              </Link>
+            </motion.div>
+          ))}
         </div>
+
+        {/* Security Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+          className="rounded-2xl bg-gradient-to-br from-primary/5 to-accent/5 border border-border p-8"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Shield className="w-5 h-5 text-primary" />
+            </div>
+            <h2 className="text-xl font-bold text-foreground">Quantum Security Stack</h2>
+          </div>
+
+          <div className="grid sm:grid-cols-3 gap-4">
+            <div className="p-4 rounded-xl bg-background/50 border border-border">
+              <Lock className="w-5 h-5 text-primary mb-2" />
+              <h4 className="font-semibold text-foreground text-sm">ML-DSA-65</h4>
+              <p className="text-xs text-muted-foreground">Digital signatures (Dilithium)</p>
+            </div>
+            <div className="p-4 rounded-xl bg-background/50 border border-border">
+              <Lock className="w-5 h-5 text-accent mb-2" />
+              <h4 className="font-semibold text-foreground text-sm">ML-KEM-768</h4>
+              <p className="text-xs text-muted-foreground">Key encapsulation (Kyber)</p>
+            </div>
+            <div className="p-4 rounded-xl bg-background/50 border border-border">
+              <Lock className="w-5 h-5 text-success mb-2" />
+              <h4 className="font-semibold text-foreground text-sm">SHA-3</h4>
+              <p className="text-xs text-muted-foreground">Quantum-resistant hashing</p>
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground mt-4 text-center">
+            All algorithms are NIST FIPS 203/204 approved standards
+          </p>
+        </motion.div>
       </main>
-      
-      <NetworkBadge isConnected={false} />
     </div>
   );
 };
