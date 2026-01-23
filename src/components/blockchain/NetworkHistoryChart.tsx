@@ -26,18 +26,38 @@ const NetworkHistoryChart = () => {
 
   const fetchChartData = async () => {
     try {
-      // Try to fetch from any running node
+      // Use VITE_NODE_API_URL if set, otherwise try local ports
+      const NODE_API_URL = import.meta.env.VITE_NODE_API_URL;
       let blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> = [];
-      for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
+      
+      if (NODE_API_URL) {
+        // Use configured API URL
         try {
-          const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks`);
+          const res = await fetch(`${NODE_API_URL}/blocks`, {
+            signal: AbortSignal.timeout(500),
+          });
           if (res.ok) {
             const data = await res.json() as { blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> };
             blocks = data.blocks;
-            break;
           }
-        } catch {
-          // Try next port
+        } catch (error) {
+          console.warn(`Failed to fetch from ${NODE_API_URL}:`, error);
+        }
+      } else {
+        // Fallback: Try to fetch from any running local node
+        for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
+          try {
+            const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks`, {
+              signal: AbortSignal.timeout(500),
+            });
+            if (res.ok) {
+              const data = await res.json() as { blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> };
+              blocks = data.blocks;
+              break;
+            }
+          } catch {
+            // Try next port
+          }
         }
       }
 

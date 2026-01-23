@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { ArrowUpRight, ArrowDownLeft, RefreshCw, History, Plus, Coins } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface Transaction {
   id: string;
@@ -14,6 +15,8 @@ interface Transaction {
 
 interface TransactionHistoryProps {
   transactions?: Transaction[];
+  emptyActionLabel?: string;
+  onEmptyAction?: () => void;
 }
 
 const getIcon = (type: string) => {
@@ -50,7 +53,7 @@ const getTypeLabel = (type: string) => {
   }
 };
 
-const TransactionHistory = ({ transactions = [] }: TransactionHistoryProps) => {
+const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction }: TransactionHistoryProps) => {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -70,6 +73,16 @@ const TransactionHistory = ({ transactions = [] }: TransactionHistoryProps) => {
           <History className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
           <p className="text-sm text-muted-foreground">No transactions yet</p>
           <p className="text-xs text-muted-foreground/70 mt-1">Your activity will appear here</p>
+          {emptyActionLabel && onEmptyAction && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-4"
+              onClick={onEmptyAction}
+            >
+              {emptyActionLabel}
+            </Button>
+          )}
         </div>
       ) : (
         <div className="divide-y divide-border">

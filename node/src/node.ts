@@ -44,7 +44,17 @@ export class L1Node {
     console.log(`[Node ${this.nodeId.slice(0, 8)}] Initializing...`);
     await this.store.init();
     this.keys = await this.loadOrCreateKeys();
-    console.log(`[Node ${this.nodeId.slice(0, 8)}] Generated PQC keypair (ML-DSA-65)`);
+    // Validate keys after generation
+    if (this.keys) {
+      const secretKeyBytes = this.keys.secretKeyHex.length / 2; // Hex is 2 chars per byte
+      const publicKeyBytes = this.keys.publicKeyHex.length / 2;
+      console.log(`[Node ${this.nodeId.slice(0, 8)}] Generated PQC keypair (ML-DSA-65)`);
+      console.log(`[Node ${this.nodeId.slice(0, 8)}] Secret key: ${this.keys.secretKeyHex.length} hex chars = ${secretKeyBytes} bytes (expected: 4032)`);
+      console.log(`[Node ${this.nodeId.slice(0, 8)}] Public key: ${this.keys.publicKeyHex.length} hex chars = ${publicKeyBytes} bytes`);
+      if (secretKeyBytes !== 4032) {
+        console.error(`[Node ${this.nodeId.slice(0, 8)}] ⚠️  WARNING: Secret key has wrong length! Expected 4032 bytes, got ${secretKeyBytes}`);
+      }
+    }
 
     await this.startServer();
     console.log(`[Node ${this.nodeId.slice(0, 8)}] Listening on ${this.opts.listenHost}:${this.opts.listenPort}`);
@@ -180,7 +190,7 @@ export class L1Node {
       sig: "",
     };
     const bytes = encodeTxV1(tx);
-    tx.sig = await pqcSign(this.keys.secretKeyHex, bytes);
+    tx.sig = await pqcSign(this.keys.secretKeyHex, bytes, (this.keys as any)._secretKeyBytes);
     await this.acceptTx(tx);
     this.broadcast({ type: "TX", tx });
     return tx;
@@ -279,7 +289,7 @@ export class L1Node {
     };
 
     const headerBytes = encodeHeaderV1(header);
-    const proposerSig = await pqcSign(this.keys.secretKeyHex, headerBytes);
+    const proposerSig = await pqcSign(this.keys.secretKeyHex, headerBytes, (this.keys as any)._secretKeyBytes);
     const hash = computeBlockHash(headerBytes, proposerSig);
 
     const block: BlockV1 = {
@@ -372,6 +382,17 @@ export class L1Node {
     this.broadcast({ type: "TX", tx });
     console.log(`[Node ${this.nodeId.slice(0, 8)}] 📤 User transaction submitted: ${amount} XRGE from ${fromPublicKeyHex.slice(0, 16)}... to ${toPublicKeyHex.slice(0, 16)}...`);
     return tx;
+  }
+
+  // Public API: Get miner keys (for faucet)
+  async getMinerKeys(): Promise<PQKeypair | null> {
+    if (!this.keys) return null;
+    // Return a copy to avoid any reference issues
+    return {
+      algorithm: this.keys.algorithm,
+      publicKeyHex: this.keys.publicKeyHex,
+      secretKeyHex: this.keys.secretKeyHex, // Return as-is, should be a string
+    };
   }
 
   // Public API: Get balance (simple implementation - scans chain)

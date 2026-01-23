@@ -64,9 +64,24 @@ const WalletCard = ({ address, balance, usdValue, isConnected = false, onConnect
 
           {/* Address section */}
           <div className="relative flex items-center gap-3 p-3 rounded-lg bg-muted/50 border border-border">
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <p className="text-xs text-muted-foreground mb-0.5">Wallet Address</p>
-              <p className="font-mono text-sm text-foreground">{truncatedAddress}</p>
+              <p className="font-mono text-sm text-foreground truncate">{truncatedAddress}</p>
+              <div className="mt-1 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={copyAddress}
+                  className="text-[11px] text-primary hover:underline"
+                >
+                  {copied ? "Copied" : "Copy address"}
+                </button>
+                <a
+                  href="/blockchain"
+                  className="text-[11px] text-muted-foreground hover:underline inline-flex items-center gap-1"
+                >
+                  View on chain <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
             </div>
             <Button
               variant="ghost"
@@ -75,13 +90,6 @@ const WalletCard = ({ address, balance, usdValue, isConnected = false, onConnect
               className="h-8 w-8 text-muted-foreground hover:text-primary"
             >
               <Copy className="w-4 h-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-primary"
-            >
-              <ExternalLink className="w-4 h-4" />
             </Button>
           </div>
 

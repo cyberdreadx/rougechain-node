@@ -93,13 +93,20 @@ export async function registerValidator(
 }
 
 // Get all validators
+// TODO: Implement validators in node daemon (staking/validation not yet implemented)
 export async function getValidators(): Promise<Validator[]> {
-  const { data, error } = await supabase.functions.invoke("pqc-crypto", {
-    body: { action: "get-validators" },
-  });
-
-  if (error) throw new Error(error.message);
-  return data.validators || [];
+  // For now, validators are not implemented in the node daemon
+  // Return empty array - validators will be implemented in future update
+  // This prevents showing stale Supabase data
+  console.log("Validators not yet implemented in node daemon - returning empty list");
+  return [];
+  
+  // Old Supabase implementation (disabled):
+  // const { data, error } = await supabase.functions.invoke("pqc-crypto", {
+  //   body: { action: "get-validators" },
+  // });
+  // if (error) throw new Error(error.message);
+  // return data.validators || [];
 }
 
 // Select next block proposer (quantum-weighted random)

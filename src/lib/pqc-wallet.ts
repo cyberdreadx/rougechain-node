@@ -516,6 +516,7 @@ export async function createToken(
 }
 
 // Mint new tokens (faucet functionality) - with fee
+// Now supports both node API (for public deployment) and local Supabase (for dev)
 export async function mintTokens(
   minerPrivateKey: string,
   minerPublicKey: string,
@@ -523,6 +524,41 @@ export async function mintTokens(
   amount: number = 100,
   symbol: string = "XRGE"
 ): Promise<Block> {
+  // Try node API first (for public deployment)
+  const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100/api";
+  
+  try {
+    // Use the faucet endpoint which handles minting properly
+    const res = await fetch(`${NODE_API_URL}/faucet`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipientPublicKey,
+        amount,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success) {
+        // Return a mock Block object for compatibility
+        return {
+          index: 0, // Will be updated when block is mined
+          timestamp: Date.now(),
+          data: JSON.stringify({ type: "mint", from: "FAUCET", to: recipientPublicKey, amount, symbol }),
+          previousHash: "",
+          hash: data.txId || "",
+          nonce: 0,
+          signature: "",
+          signerPublicKey: minerPublicKey,
+        };
+      }
+    }
+  } catch (nodeError) {
+    console.log("Node API unavailable for faucet, falling back to local...", nodeError);
+  }
+
+  // Fallback to local Supabase method (for dev)
   const chain = await loadChain();
   const lastBlock = chain[chain.length - 1];
   
@@ -593,6 +629,11 @@ export async function getTotalSupply(symbol: string = "XRGE"): Promise<number> {
   for (const { tx } of transactions) {
     if (tx.symbol === symbol) {
       if (tx.type === "mint" || tx.from === "FAUCET" || tx.from === "GENESIS") {
+        supply += tx.amount;
+      }
+      // Devnet/Testnet node: faucet uses miner keys and transfer txs.
+      // Treat transfers originating from the block proposer as mint-like issuance.
+      if (tx.type === "transfer" && tx.feeRecipient && tx.from === tx.feeRecipient) {
         supply += tx.amount;
       }
       if (tx.type === "create_token" && tx.tokenData?.symbol === symbol) {

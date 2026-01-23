@@ -11,6 +11,12 @@ export function bytesToHex(bytes: Uint8Array): string {
 }
 
 export function hexToBytes(hex: string): Uint8Array {
-  return new Uint8Array(Buffer.from(hex, "hex"));
+  const buffer = Buffer.from(hex, "hex");
+  // Create a completely isolated Uint8Array with its own ArrayBuffer
+  // This ensures no shared buffer issues that could cause the ML-DSA library
+  // to read beyond the intended data
+  const isolated = new Uint8Array(buffer.length);
+  isolated.set(buffer);
+  return isolated;
 }
 

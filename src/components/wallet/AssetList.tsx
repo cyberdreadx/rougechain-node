@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { TrendingUp, TrendingDown, Wallet } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 
 interface Asset {
@@ -14,9 +15,12 @@ interface Asset {
 
 interface AssetListProps {
   assets?: Asset[];
+  emptyActionLabel?: string;
+  onEmptyAction?: () => void;
+  emptyHint?: string;
 }
 
-const AssetList = ({ assets = [] }: AssetListProps) => {
+const AssetList = ({ assets = [], emptyActionLabel, onEmptyAction, emptyHint }: AssetListProps) => {
   const renderIcon = (asset: Asset) => {
     if (asset.symbol === "XRGE") {
       return (
@@ -49,7 +53,19 @@ const AssetList = ({ assets = [] }: AssetListProps) => {
         <div className="py-12 text-center">
           <Wallet className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
           <p className="text-sm text-muted-foreground">No assets yet</p>
-          <p className="text-xs text-muted-foreground/70 mt-1">Claim from faucet to get started</p>
+          <p className="text-xs text-muted-foreground/70 mt-1">
+            {emptyHint || "Fund your wallet to get started"}
+          </p>
+          {emptyActionLabel && onEmptyAction && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-4"
+              onClick={onEmptyAction}
+            >
+              {emptyActionLabel}
+            </Button>
+          )}
         </div>
       ) : (
         <div className="divide-y divide-border">

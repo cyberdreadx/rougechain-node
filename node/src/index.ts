@@ -1,7 +1,7 @@
 import http from "node:http";
 import { L1Node, defaultDataDir } from "./node";
 import { encodeTxV1 } from "./codec";
-import { sha256, bytesToHex } from "./crypto/hash";
+import { sha256, bytesToHex, hexToBytes } from "./crypto/hash";
 
 function getArg(flag: string): string | null {
   const idx = process.argv.indexOf(flag);
@@ -58,7 +58,21 @@ async function main() {
   // Start HTTP API server for React UI
   const apiPort = Number(getArg("--apiPort") ?? String(port + 1000));
   const apiServer = http.createServer(async (req, res) => {
+    // Handle CORS preflight (OPTIONS) requests
+    if (req.method === "OPTIONS") {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader("Access-Control-Max-Age", "86400"); // 24 hours
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+    
+    // Set CORS headers for all responses
     res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
     res.setHeader("Content-Type", "application/json");
 
     if (req.url === "/api/stats" && req.method === "GET") {
@@ -73,6 +87,7 @@ async function main() {
         nodeId: node.getNodeId(),
         totalFeesCollected: feeStats.totalFees,
         feesInLastBlock: feeStats.lastBlockFees,
+        chainId: chainId, // Include chain ID so frontend can detect mainnet
       }));
       return;
     }
@@ -161,6 +176,148 @@ async function main() {
           res.end(JSON.stringify({
             success: false,
             error: error instanceof Error ? error.message : "Invalid transaction",
+          }));
+        }
+      });
+      return;
+    }
+
+    // Public API: Faucet (mint tokens for devnet ONLY - disabled on mainnet)
+    if (req.url === "/api/faucet" && req.method === "POST") {
+      // SECURITY: Disable faucet on mainnet
+      if (!chainId.includes("devnet") && !chainId.includes("testnet")) {
+        res.writeHead(403);
+        res.end(JSON.stringify({
+          success: false,
+          error: "Faucet is disabled on mainnet. Use devnet or testnet for testing.",
+        }));
+        return;
+      }
+
+      let body = "";
+      req.on("data", (chunk) => { body += chunk.toString(); });
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body) as {
+            recipientPublicKey: string;
+            amount?: number;
+          };
+          
+          // For faucet, we create a special transaction from a "FAUCET" address
+          // In a real system, this would be a mint transaction type
+          // For now, we'll use the node's own keypair to send tokens (devnet only)
+          if (!node.isMining()) {
+            res.writeHead(400);
+            res.end(JSON.stringify({
+              success: false,
+              error: "Faucet only works when node is mining",
+            }));
+            return;
+          }
+          
+          // Get node's keypair (miner)
+          const nodeKeys = await node.getMinerKeys();
+          if (!nodeKeys) {
+            res.writeHead(500);
+            res.end(JSON.stringify({
+              success: false,
+              error: "Node not configured for mining",
+            }));
+            return;
+          }
+          
+          // Validate key format
+          if (!nodeKeys.secretKeyHex || typeof nodeKeys.secretKeyHex !== "string") {
+            res.writeHead(500);
+            res.end(JSON.stringify({
+              success: false,
+              error: "Invalid miner key format",
+            }));
+            return;
+          }
+          
+          // Debug: Log key lengths and validate BEFORE using
+          console.log(`[Faucet] Secret key hex length: ${nodeKeys.secretKeyHex.length} (expected: 8064 for 4032 bytes)`);
+          console.log(`[Faucet] Public key hex length: ${nodeKeys.publicKeyHex.length}`);
+          
+          // Validate hex string length before using
+          // Check if hex string is valid (even length, correct size)
+          const secretKeyHex = nodeKeys.secretKeyHex.trim();
+          
+          // Check for invalid hex characters
+          if (!/^[0-9a-fA-F]+$/.test(secretKeyHex)) {
+            const invalidChars = secretKeyHex.split('').filter(c => !/[0-9a-fA-F]/.test(c));
+            console.error(`[Faucet] Invalid hex characters found: ${invalidChars.slice(0, 20).join('')}`);
+            res.writeHead(500);
+            res.end(JSON.stringify({
+              success: false,
+              error: `Invalid miner key: contains non-hex characters. Please restart the node.`,
+            }));
+            return;
+          }
+          
+          if (secretKeyHex.length % 2 !== 0) {
+            console.error(`[Faucet] Invalid secret key hex: odd length ${secretKeyHex.length}`);
+            res.writeHead(500);
+            res.end(JSON.stringify({
+              success: false,
+              error: `Invalid miner key: hex string has odd length ${secretKeyHex.length}. Node needs to be restarted.`,
+            }));
+            return;
+          }
+          
+          // Convert to bytes to verify actual length (Buffer.from handles invalid hex differently)
+          const testBytes = hexToBytes(secretKeyHex);
+          console.log(`[Faucet] Secret key converts to ${testBytes.length} bytes (expected: 4032, hex length: ${secretKeyHex.length})`);
+          
+          if (testBytes.length !== 4032) {
+            console.error(`[Faucet] Invalid secret key: ${testBytes.length} bytes, expected 4032 (hex length: ${secretKeyHex.length}, expected: 8064)`);
+            res.writeHead(500);
+            res.end(JSON.stringify({
+              success: false,
+              error: `Invalid miner key: secret key is ${testBytes.length} bytes (${secretKeyHex.length} hex chars), expected 4032 bytes (8064 hex chars). Please restart the node to regenerate keys.`,
+            }));
+            return;
+          }
+          
+          // Use the trimmed/validated hex string
+          const validatedKeys = {
+            ...nodeKeys,
+            secretKeyHex: secretKeyHex,
+          };
+          
+          // Submit a transfer from the miner (acting as faucet) to the recipient
+          // Fee is 0 for faucet transactions
+          try {
+            const tx = await node.submitUserTx(
+              validatedKeys.secretKeyHex,
+              validatedKeys.publicKeyHex,
+              data.recipientPublicKey,
+              data.amount ?? 10000,
+              0 // Free faucet transaction
+            );
+            
+            res.writeHead(200);
+            res.end(JSON.stringify({
+              success: true,
+              txId: bytesToHex(sha256(encodeTxV1(tx))),
+              tx,
+              message: `Faucet transaction submitted. ${data.amount ?? 10000} XRGE will be included in the next block.`,
+            }));
+          } catch (txError) {
+            console.error("[Faucet] Transaction submission error:", txError);
+            res.writeHead(400);
+            res.end(JSON.stringify({
+              success: false,
+              error: txError instanceof Error ? txError.message : "Failed to submit faucet transaction",
+            }));
+            return;
+          }
+        } catch (error) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : "Invalid faucet request",
           }));
         }
       });

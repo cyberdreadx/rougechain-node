@@ -34,6 +34,7 @@ const Blockchain = () => {
   const [isValidating, setIsValidating] = useState(false);
   const [chainValidity, setChainValidity] = useState<{ valid: boolean; checked: boolean }>({ valid: true, checked: false });
   const [isLoading, setIsLoading] = useState(true);
+  const [nodeConnected, setNodeConnected] = useState(false);
 
   // Convert BlockV1 to Block format for UI
   const convertBlock = (b: BlockV1): Block => ({
@@ -51,23 +52,49 @@ const Blockchain = () => {
   useEffect(() => {
     const fetchChain = async () => {
       try {
-        // Try to fetch from any running node (prefer first one found)
-        for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
-          try {
-            const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks`);
-            if (res.ok) {
-              const data = await res.json() as { blocks: BlockV1[] };
-              const converted = data.blocks.map(convertBlock);
-              setChain(converted);
-              setIsLoading(false);
-              return;
+        // Use VITE_NODE_API_URL if set, otherwise default to localhost:5100/api (same as wallet)
+        const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100/api";
+        
+        try {
+          const res = await fetch(`${NODE_API_URL}/blocks`, {
+            signal: AbortSignal.timeout(2000), // 2 second timeout
+          });
+          if (res.ok) {
+            const data = await res.json() as { blocks: BlockV1[] };
+            const converted = data.blocks.map(convertBlock);
+            setChain(converted);
+            setNodeConnected(true);
+            setIsLoading(false);
+            return;
+          }
+        } catch (error) {
+          // If configured URL fails, try local ports as fallback
+          if (NODE_API_URL !== "http://localhost:5100/api") {
+            console.warn(`Failed to fetch from ${NODE_API_URL}, trying local ports...`, error);
+            for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
+              try {
+                const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks`, {
+                  signal: AbortSignal.timeout(500), // 500ms timeout per request
+                });
+                if (res.ok) {
+                  const data = await res.json() as { blocks: BlockV1[] };
+                  const converted = data.blocks.map(convertBlock);
+                  setChain(converted);
+                  setNodeConnected(true);
+                  setIsLoading(false);
+                  return;
+                }
+              } catch {
+                // Try next port
+              }
             }
-          } catch {
-            // Try next port
           }
         }
+        
         // No nodes found
         setChain([]);
+        setNodeConnected(false);
+        console.warn("No node daemon found. Make sure a node is running with --mine flag.");
       } catch (error) {
         console.error("Failed to load chain:", error);
       } finally {
@@ -202,7 +229,28 @@ const Blockchain = () => {
                 animate={{ opacity: 1, y: 0 }}
                 className="bg-card rounded-xl border border-border p-4"
               >
-                <BlockchainVisualizer chain={chain} isValidating={isValidating} />
+                {!nodeConnected && chain.length === 0 && !isLoading && (
+                  <div className="text-center py-12 px-4">
+                    <Blocks className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
+                    <h3 className="text-lg font-semibold text-foreground mb-2">Node Not Connected</h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      No node daemon detected. Start a mining node to see blocks.
+                    </p>
+                    <div className="text-xs text-muted-foreground space-y-1 bg-secondary/50 p-4 rounded-lg text-left max-w-md mx-auto">
+                      <p className="font-semibold mb-2">To start a node:</p>
+                      <code className="block bg-background p-2 rounded mb-2">
+                        npm run l1:node:dev -- --name my-node --host 0.0.0.0 --port 4100 --apiPort 5100 --mine
+                      </code>
+                      <p className="text-xs">Or set <code className="bg-background px-1 rounded">VITE_NODE_API_URL</code> in your <code className="bg-background px-1 rounded">.env</code> file</p>
+                    </div>
+                  </div>
+                )}
+                {nodeConnected && chain.length === 0 && (
+                  <BlockchainVisualizer chain={chain} isValidating={isValidating} />
+                )}
+                {chain.length > 0 && (
+                  <BlockchainVisualizer chain={chain} isValidating={isValidating} />
+                )}
               </motion.div>
 
               {/* Stats */}
