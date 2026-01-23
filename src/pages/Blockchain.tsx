@@ -154,6 +154,15 @@ const Blockchain = () => {
 
       {/* Main content */}
       <main className="relative z-10 max-w-7xl mx-auto px-4 py-6">
+        {/* Global Network Globe - First thing visible */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-6"
+        >
+          <GlobalNetworkGlobe className="h-[500px]" />
+        </motion.div>
+
         {isLoading ? (
           <div className="flex items-center justify-center py-20">
             <motion.div
@@ -238,21 +247,24 @@ const Blockchain = () => {
                   </div>
                 </motion.div>
               )}
-
-              {/* Global Network Globe */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.3 }}
-                className="mt-4"
-              >
-                <GlobalNetworkGlobe
-                  nodeCount={50}
-                  validatorCount={8}
-                  className="h-[450px]"
-                />
-              </motion.div>
             </div>
+
+            {/* Sidebar */}
+            <div className="space-y-4">
+              <MiningPanel
+                chain={chain}
+                keypair={keypair}
+                onBlockMined={handleBlockMined}
+                onKeypairGenerated={setKeypair}
+                onGenesisCreated={handleGenesisCreated}
+              />
+              <TamperDemo chain={chain} />
+              <QuantumThreatPanel />
+              <PQCInfo />
+            </div>
+          </div>
+        )}
+      </main>
 
             {/* Sidebar */}
             <div className="space-y-4">

@@ -1,11 +1,12 @@
-import { useRef, useMemo, useState } from "react";
+import { useRef, useMemo, useState, useEffect } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Html } from "@react-three/drei";
 import * as THREE from "three";
 import { motion } from "framer-motion";
-import { Globe, Activity, Users } from "lucide-react";
+import { Globe, Activity, Users, Loader2 } from "lucide-react";
+import { getValidators, type Validator } from "@/lib/pqc-validators";
 
-// Generate random points on a sphere
+// Generate random points on a sphere based on validator count
 const generateNodePositions = (count: number, radius: number) => {
   const positions: [number, number, number][] = [];
   for (let i = 0; i < count; i++) {
@@ -38,43 +39,61 @@ const generateConnections = (
 
 interface NodeProps {
   position: [number, number, number];
-  isActive?: boolean;
+  validator?: Validator;
   isValidator?: boolean;
-  onClick?: () => void;
 }
 
-const Node = ({ position, isActive = false, isValidator = false, onClick }: NodeProps) => {
+const Node = ({ position, validator, isValidator = false }: NodeProps) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const [hovered, setHovered] = useState(false);
 
   useFrame((state) => {
-    if (meshRef.current && isActive) {
+    if (meshRef.current && isValidator) {
       meshRef.current.scale.setScalar(1 + Math.sin(state.clock.elapsedTime * 3) * 0.1);
     }
   });
 
-  const color = isValidator ? "#22c55e" : isActive ? "#a855f7" : "#6366f1";
+  const getColorByTier = () => {
+    if (!validator) return "#6366f1";
+    switch (validator.tier) {
+      case "genesis": return "#f59e0b";
+      case "operator": return "#22c55e";
+      default: return "#6366f1";
+    }
+  };
+
+  const color = getColorByTier();
 
   return (
     <mesh
       ref={meshRef}
       position={position}
-      onClick={onClick}
       onPointerOver={() => setHovered(true)}
       onPointerOut={() => setHovered(false)}
     >
-      <sphereGeometry args={[isValidator ? 0.08 : 0.05, 16, 16]} />
+      <sphereGeometry args={[isValidator ? 0.08 : 0.04, 16, 16]} />
       <meshStandardMaterial
         color={hovered ? "#ffffff" : color}
         emissive={color}
         emissiveIntensity={hovered ? 0.8 : 0.4}
       />
-      {hovered && (
+      {hovered && validator && (
+        <Html distanceFactor={10}>
+          <div className="bg-card/90 backdrop-blur-sm border border-border rounded-lg px-3 py-2 text-xs whitespace-nowrap">
+            <p className="text-foreground font-semibold capitalize">{validator.tier} Validator</p>
+            <p className="text-muted-foreground">
+              Staked: {(validator.stakedAmount / 1000).toFixed(0)}K XRGE
+            </p>
+            <p className="text-muted-foreground">
+              Uptime: {validator.uptimePercentage.toFixed(1)}%
+            </p>
+          </div>
+        </Html>
+      )}
+      {hovered && !validator && (
         <Html distanceFactor={10}>
           <div className="bg-card/90 backdrop-blur-sm border border-border rounded-lg px-2 py-1 text-xs whitespace-nowrap">
-            <span className="text-foreground">
-              {isValidator ? "Validator Node" : "Network Node"}
-            </span>
+            <span className="text-muted-foreground">Network Peer</span>
           </div>
         </Html>
       )}
@@ -88,8 +107,6 @@ interface ConnectionLineProps {
 }
 
 const ConnectionLine = ({ start, end }: ConnectionLineProps) => {
-  const lineRef = useRef<THREE.Line>(null);
-  
   const geometry = useMemo(() => {
     const geo = new THREE.BufferGeometry();
     const positions = new Float32Array([...start, ...end]);
@@ -105,7 +122,7 @@ const ConnectionLine = ({ start, end }: ConnectionLineProps) => {
     });
   }, []);
 
-  return <primitive ref={lineRef} object={new THREE.Line(geometry, material)} />
+  return <primitive object={new THREE.Line(geometry, material)} />
 };
 
 const GlobeWireframe = () => {
@@ -143,21 +160,14 @@ const RotatingGroup = ({ children }: { children: React.ReactNode }) => {
 };
 
 interface NetworkSceneProps {
-  nodeCount: number;
-  validatorCount: number;
+  validators: Validator[];
+  peerCount: number;
 }
 
-const NetworkScene = ({ nodeCount, validatorCount }: NetworkSceneProps) => {
-  const nodes = useMemo(() => generateNodePositions(nodeCount, 2), [nodeCount]);
+const NetworkScene = ({ validators, peerCount }: NetworkSceneProps) => {
+  const totalNodes = validators.length + peerCount;
+  const nodes = useMemo(() => generateNodePositions(totalNodes, 2), [totalNodes]);
   const connections = useMemo(() => generateConnections(nodes, 0.12), [nodes]);
-  const validatorIndices = useMemo(() => {
-    const indices: number[] = [];
-    while (indices.length < validatorCount && indices.length < nodeCount) {
-      const idx = Math.floor(Math.random() * nodeCount);
-      if (!indices.includes(idx)) indices.push(idx);
-    }
-    return indices;
-  }, [nodeCount, validatorCount]);
 
   return (
     <>
@@ -172,8 +182,8 @@ const NetworkScene = ({ nodeCount, validatorCount }: NetworkSceneProps) => {
           <Node
             key={i}
             position={pos}
-            isValidator={validatorIndices.includes(i)}
-            isActive={Math.random() > 0.7}
+            validator={i < validators.length ? validators[i] : undefined}
+            isValidator={i < validators.length}
           />
         ))}
 
@@ -198,16 +208,31 @@ const NetworkScene = ({ nodeCount, validatorCount }: NetworkSceneProps) => {
 };
 
 interface GlobalNetworkGlobeProps {
-  nodeCount?: number;
-  validatorCount?: number;
   className?: string;
 }
 
-const GlobalNetworkGlobe = ({
-  nodeCount = 50,
-  validatorCount = 8,
-  className = "",
-}: GlobalNetworkGlobeProps) => {
+const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
+  const [validators, setValidators] = useState<Validator[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const peerCount = 30; // Additional network peers
+
+  useEffect(() => {
+    const fetchValidators = async () => {
+      try {
+        const data = await getValidators();
+        setValidators(data);
+      } catch (error) {
+        console.error("Failed to fetch validators:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchValidators();
+  }, []);
+
+  const totalStake = validators.reduce((sum, v) => sum + v.stakedAmount, 0);
+  const activeValidators = validators.filter(v => v.status === "active").length;
+
   return (
     <div className={`relative ${className}`}>
       {/* Header */}
@@ -217,19 +242,23 @@ const GlobalNetworkGlobe = ({
           <h3 className="text-sm font-semibold text-foreground">Global Network</h3>
         </div>
         <p className="text-xs text-muted-foreground max-w-[200px]">
-          Interactive view of RougeChain nodes worldwide
+          Live RougeChain validator network
         </p>
       </div>
 
       {/* Legend */}
       <div className="absolute bottom-4 left-4 z-10 flex flex-col gap-2">
         <div className="flex items-center gap-2 text-xs">
+          <div className="w-3 h-3 rounded-full bg-amber-500" />
+          <span className="text-muted-foreground">Genesis Validators</span>
+        </div>
+        <div className="flex items-center gap-2 text-xs">
           <div className="w-3 h-3 rounded-full bg-success" />
-          <span className="text-muted-foreground">Validator Nodes</span>
+          <span className="text-muted-foreground">Operator Validators</span>
         </div>
         <div className="flex items-center gap-2 text-xs">
           <div className="w-3 h-3 rounded-full bg-primary" />
-          <span className="text-muted-foreground">Network Nodes</span>
+          <span className="text-muted-foreground">Standard / Peers</span>
         </div>
       </div>
 
@@ -242,24 +271,42 @@ const GlobalNetworkGlobe = ({
         <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg px-3 py-2 flex items-center gap-2">
           <Users className="w-4 h-4 text-primary" />
           <div>
-            <p className="text-xs text-muted-foreground">Total Nodes</p>
-            <p className="text-sm font-semibold text-foreground">{nodeCount}</p>
+            <p className="text-xs text-muted-foreground">Validators</p>
+            <p className="text-sm font-semibold text-foreground">
+              {isLoading ? "..." : validators.length}
+            </p>
           </div>
         </div>
         <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg px-3 py-2 flex items-center gap-2">
           <Activity className="w-4 h-4 text-success" />
           <div>
-            <p className="text-xs text-muted-foreground">Validators</p>
-            <p className="text-sm font-semibold text-foreground">{validatorCount}</p>
+            <p className="text-xs text-muted-foreground">Active</p>
+            <p className="text-sm font-semibold text-foreground">
+              {isLoading ? "..." : activeValidators}
+            </p>
           </div>
         </div>
+        {totalStake > 0 && (
+          <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg px-3 py-2">
+            <p className="text-xs text-muted-foreground">Total Staked</p>
+            <p className="text-sm font-semibold text-foreground">
+              {(totalStake / 1000).toFixed(0)}K XRGE
+            </p>
+          </div>
+        )}
       </motion.div>
 
       {/* 3D Canvas */}
       <div className="w-full h-full min-h-[400px] bg-gradient-to-b from-background to-card rounded-xl border border-border overflow-hidden">
-        <Canvas camera={{ position: [0, 0, 5], fov: 50 }}>
-          <NetworkScene nodeCount={nodeCount} validatorCount={validatorCount} />
-        </Canvas>
+        {isLoading ? (
+          <div className="w-full h-full flex items-center justify-center">
+            <Loader2 className="w-8 h-8 text-primary animate-spin" />
+          </div>
+        ) : (
+          <Canvas camera={{ position: [0, 0, 5], fov: 50 }}>
+            <NetworkScene validators={validators} peerCount={peerCount} />
+          </Canvas>
+        )}
       </div>
 
       {/* Interaction hint */}
