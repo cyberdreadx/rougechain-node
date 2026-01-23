@@ -1,170 +1,101 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Progress } from "@/components/ui/progress";
-import { Input } from "@/components/ui/input";
-import { useP2PNode } from "@/hooks/use-p2p-node";
-import { NetworkTopology } from "./NetworkTopology";
 import { 
-  Globe, 
-  Play, 
-  Square, 
-  RefreshCw, 
-  Users, 
   Server, 
-  Cpu, 
-  Clock,
-  Link2,
-  Link2Off,
-  Shield,
-  Zap,
+  Users, 
   Database,
-  Send
+  Activity,
+  Zap,
+  CheckCircle2,
+  XCircle
 } from "lucide-react";
-import type { NodeRole } from "@/lib/p2p";
+
+interface DaemonStats {
+  connectedPeers: number;
+  networkHeight: number;
+  isMining: boolean;
+  nodeId: string;
+}
 
 export function NodeDashboard() {
-  const {
-    identity,
-    isRunning,
-    isInitializing,
-    peers,
-    networkStats,
-    syncState,
-    chainSyncStatus,
-    consensusPhase,
-    logs,
-    initializeNode,
-    startNode,
-    stopNode,
-    proposeBlock,
-    resetNode,
-  } = useP2PNode();
+  const [daemonStats, setDaemonStats] = useState<DaemonStats[]>([]);
+  const [isChecking, setIsChecking] = useState(true);
 
-  const [selectedRole, setSelectedRole] = useState<NodeRole>("validator");
-  const [blockData, setBlockData] = useState("");
+  // Fetch stats from all running node daemons (parallel check for faster detection)
+  useEffect(() => {
+    const fetchAllDaemonStats = async () => {
+      setIsChecking(true);
+      const apiPorts = [5100, 5101, 5102, 5103, 5104];
+      
+      // Check all ports in parallel for faster detection
+      const promises = apiPorts.map(async (apiPort) => {
+        try {
+          // Use AbortController with short timeout for faster failure
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 500); // 500ms timeout per port
+          
+          const res = await fetch(`http://127.0.0.1:${apiPort}/api/stats`, {
+            signal: controller.signal,
+          });
+          clearTimeout(timeoutId);
+          
+          if (res.ok) {
+            const data = await res.json() as DaemonStats;
+            return { port: apiPort, data };
+          }
+        } catch {
+          // Node not running on this port
+        }
+        return null;
+      });
 
-  const handlePropose = () => {
-    if (blockData.trim()) {
-      proposeBlock(blockData);
-      setBlockData("");
-    }
-  };
+      const results = await Promise.all(promises);
+      const stats = results
+        .filter((r): r is { port: number; data: DaemonStats } => r !== null)
+        .map(r => r.data);
+      
+      setDaemonStats(stats);
+      setIsChecking(false);
+    };
+
+    // Check immediately on mount
+    void fetchAllDaemonStats();
+    
+    // Then check every 2 seconds
+    const interval = setInterval(fetchAllDaemonStats, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const totalPeers = daemonStats.reduce((sum, s) => sum + s.connectedPeers, 0);
+  const maxHeight = daemonStats.length > 0 ? Math.max(...daemonStats.map(s => s.networkHeight)) : -1;
+  const miningNodes = daemonStats.filter(s => s.isMining).length;
 
   return (
     <div className="space-y-6">
-      {/* Node Status Header */}
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <Server className="h-6 w-6 text-primary" />
-            <h2 className="text-2xl font-bold">P2P Node</h2>
+            <h2 className="text-2xl font-bold">RougeChain L1 Nodes</h2>
           </div>
-          <Badge 
-            variant={isRunning ? "default" : "secondary"}
-            className={isRunning ? "bg-green-500" : ""}
-          >
-            {isRunning ? "RUNNING" : identity ? "STOPPED" : "NOT INITIALIZED"}
+          <Badge variant={daemonStats.length > 0 ? "default" : "secondary"} className={daemonStats.length > 0 ? "bg-green-500" : ""}>
+            {isChecking ? "Checking..." : daemonStats.length > 0 ? `${daemonStats.length} Node(s) Running` : "No Nodes Detected"}
           </Badge>
-          {consensusPhase !== 'idle' && (
-            <Badge variant="outline" className="border-yellow-500 text-yellow-500">
-              {consensusPhase.toUpperCase()}
-            </Badge>
-          )}
-        </div>
-        <div className="flex gap-2">
-          {!identity ? (
-            <div className="flex gap-2">
-              <select 
-                className="bg-background border rounded px-3 py-2 text-sm"
-                value={selectedRole}
-                onChange={(e) => setSelectedRole(e.target.value as NodeRole)}
-              >
-                <option value="validator">Validator</option>
-                <option value="full-node">Full Node</option>
-                <option value="light-client">Light Client</option>
-              </select>
-              <Button 
-                onClick={() => initializeNode(selectedRole)}
-                disabled={isInitializing}
-              >
-                {isInitializing ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                    Initializing...
-                  </>
-                ) : (
-                  <>
-                    <Cpu className="h-4 w-4 mr-2" />
-                    Initialize Node
-                  </>
-                )}
-              </Button>
-            </div>
-          ) : !isRunning ? (
-            <>
-              <Button onClick={startNode} className="bg-green-600 hover:bg-green-700">
-                <Play className="h-4 w-4 mr-2" />
-                Start Node
-              </Button>
-              <Button variant="outline" onClick={resetNode}>
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Reset
-              </Button>
-            </>
-          ) : (
-            <Button variant="destructive" onClick={stopNode}>
-              <Square className="h-4 w-4 mr-2" />
-              Stop Node
-            </Button>
-          )}
         </div>
       </div>
 
-      {/* Node Identity */}
-      {identity && (
-        <Card className="border-primary/20">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Shield className="h-4 w-4" />
-              Node Identity
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div>
-                <span className="text-muted-foreground">Peer ID:</span>
-                <p className="font-mono text-xs mt-1 truncate">{identity.peerId}</p>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Role:</span>
-                <p className="font-medium mt-1 capitalize">{identity.nodeRole}</p>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Version:</span>
-                <p className="font-medium mt-1">{identity.version}</p>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Public Key:</span>
-                <p className="font-mono text-xs mt-1 truncate">{identity.publicKey.slice(0, 20)}...</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Network Stats Grid */}
-      {isRunning && (
+      {/* Summary Stats */}
+      {daemonStats.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
-                <Users className="h-8 w-8 text-blue-500" />
+                <Server className="h-8 w-8 text-blue-500" />
                 <div>
-                  <p className="text-2xl font-bold">{networkStats?.connectedPeers || 0}</p>
-                  <p className="text-xs text-muted-foreground">Connected Peers</p>
+                  <p className="text-2xl font-bold">{daemonStats.length}</p>
+                  <p className="text-xs text-muted-foreground">Active Nodes</p>
                 </div>
               </div>
             </CardContent>
@@ -173,10 +104,10 @@ export function NodeDashboard() {
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
-                <Shield className="h-8 w-8 text-green-500" />
+                <Users className="h-8 w-8 text-green-500" />
                 <div>
-                  <p className="text-2xl font-bold">{networkStats?.activeValidators || 0}</p>
-                  <p className="text-xs text-muted-foreground">Active Validators</p>
+                  <p className="text-2xl font-bold">{totalPeers}</p>
+                  <p className="text-xs text-muted-foreground">Total TCP Peers</p>
                 </div>
               </div>
             </CardContent>
@@ -187,7 +118,7 @@ export function NodeDashboard() {
               <div className="flex items-center gap-3">
                 <Database className="h-8 w-8 text-purple-500" />
                 <div>
-                  <p className="text-2xl font-bold">{networkStats?.networkHeight ?? 0}</p>
+                  <p className="text-2xl font-bold">{maxHeight >= 0 ? maxHeight : "—"}</p>
                   <p className="text-xs text-muted-foreground">Network Height</p>
                 </div>
               </div>
@@ -197,10 +128,10 @@ export function NodeDashboard() {
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
-                <Clock className="h-8 w-8 text-orange-500" />
+                <Zap className="h-8 w-8 text-orange-500" />
                 <div>
-                  <p className="text-2xl font-bold">{networkStats?.averageBlockTime || 0}ms</p>
-                  <p className="text-xs text-muted-foreground">Avg Block Time</p>
+                  <p className="text-2xl font-bold">{miningNodes}</p>
+                  <p className="text-xs text-muted-foreground">Mining Nodes</p>
                 </div>
               </div>
             </CardContent>
@@ -208,189 +139,110 @@ export function NodeDashboard() {
         </div>
       )}
 
-      {/* Chain Sync Status */}
-      {isRunning && chainSyncStatus && (
-        <Card className={chainSyncStatus.isSynced ? "border-green-500/50" : "border-yellow-500/50"}>
+      {/* Individual Node Cards */}
+      {isChecking && daemonStats.length === 0 ? (
+        <Card className="border-blue-500/50">
           <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <Database className={`h-5 w-5 ${chainSyncStatus.isSynced ? 'text-green-500' : 'text-yellow-500'}`} />
-              <div className="flex-1">
-                <div className="flex justify-between mb-2">
-                  <span className="text-sm font-medium">
-                    {chainSyncStatus.isSynced ? '✓ Chain Synchronized' : 'Syncing Chain...'}
-                  </span>
-                  <span className="text-sm text-muted-foreground">
-                    Local: {chainSyncStatus.localHeight} | Network: {chainSyncStatus.networkHeight}
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 gap-4 text-xs text-muted-foreground">
-                  <div>Local Height: <span className="text-foreground font-mono">{chainSyncStatus.localHeight}</span></div>
-                  <div>Supabase: <span className="text-foreground font-mono">{chainSyncStatus.supabaseHeight}</span></div>
-                  <div>Last Sync: <span className="text-foreground">{chainSyncStatus.lastSyncTime > 0 ? new Date(chainSyncStatus.lastSyncTime).toLocaleTimeString() : 'Never'}</span></div>
-                </div>
+            <div className="text-center py-8">
+              <div className="flex items-center justify-center mb-4">
+                <Server className="h-12 w-12 text-primary animate-pulse" />
               </div>
+              <p className="text-lg font-semibold mb-2">Scanning for nodes...</p>
+              <p className="text-sm text-muted-foreground">
+                Checking ports 5100-5104
+              </p>
             </div>
           </CardContent>
         </Card>
-      )}
-
-      {/* Sync Status (P2P Sync) */}
-      {syncState?.isSyncing && (
+      ) : daemonStats.length === 0 ? (
         <Card className="border-yellow-500/50">
           <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <RefreshCw className="h-5 w-5 animate-spin text-yellow-500" />
-              <div className="flex-1">
-                <div className="flex justify-between mb-2">
-                  <span className="text-sm">Syncing from peers...</span>
-                  <span className="text-sm text-muted-foreground">
-                    {syncState.localHeight} / {syncState.networkHeight}
-                  </span>
-                </div>
-                <Progress value={syncState.syncProgress * 100} />
+            <div className="text-center py-8">
+              <Server className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
+              <p className="text-lg font-semibold mb-2">No Node Daemons Detected</p>
+              <p className="text-sm text-muted-foreground mb-4">
+                Start a node daemon to see stats here
+              </p>
+              <div className="bg-muted/50 rounded-lg p-4 text-left max-w-2xl mx-auto">
+                <p className="text-xs font-mono mb-2">Terminal command:</p>
+                <code className="text-xs bg-background px-3 py-2 rounded block">
+                  npm run l1:node:dev -- --name a --port 4100 --mine
+                </code>
               </div>
             </div>
           </CardContent>
         </Card>
-      )}
-
-      {/* Network Topology Visualization */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Globe className="h-4 w-4" />
-            Network Topology
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <NetworkTopology 
-            identity={identity} 
-            peers={peers} 
-            isRunning={isRunning} 
-          />
-        </CardContent>
-      </Card>
-
-      <div className="grid md:grid-cols-2 gap-6">
-        {/* Propose Block */}
-        {isRunning && identity?.nodeRole === 'validator' && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Zap className="h-4 w-4" />
-                Propose Block
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Enter block data (e.g., transaction)"
-                  value={blockData}
-                  onChange={(e) => setBlockData(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handlePropose()}
-                />
-                <Button onClick={handlePropose} disabled={!blockData.trim()}>
-                  <Send className="h-4 w-4" />
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                As a validator, you can propose blocks that other nodes will vote on.
-                Requires 2/3 majority to finalize.
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Connected Peers */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Globe className="h-4 w-4" />
-              Connected Peers ({peers.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {peers.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <Link2Off className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">No peers connected</p>
-                <p className="text-xs mt-1">Waiting for peer discovery...</p>
-              </div>
-            ) : (
-              <ScrollArea className="h-[200px]">
-                <div className="space-y-2">
-                  {peers.map((peer) => (
-                    <div 
-                      key={peer.peerId}
-                      className="flex items-center justify-between p-2 rounded-lg bg-muted/50"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Link2 className="h-4 w-4 text-green-500" />
-                        <div>
-                          <p className="text-xs font-mono">{peer.peerId.slice(0, 16)}...</p>
-                          <p className="text-xs text-muted-foreground capitalize">{peer.nodeRole}</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-xs">Height: {peer.chainHeight}</p>
-                        <p className="text-xs text-muted-foreground">{peer.latency}ms</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Node Logs */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Cpu className="h-4 w-4" />
-            Node Logs
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ScrollArea className="h-[200px] rounded-lg bg-black/90 p-4">
-            {logs.length === 0 ? (
-              <p className="text-muted-foreground text-sm">No logs yet...</p>
-            ) : (
-              <div className="space-y-1 font-mono text-xs">
-                {logs.map((log, i) => (
-                  <div key={i} className="flex gap-2">
-                    <span className="text-muted-foreground">[{log.time}]</span>
-                    <span className={
-                      log.type === 'error' ? 'text-red-400' :
-                      log.type === 'success' ? 'text-green-400' :
-                      log.type === 'warning' ? 'text-yellow-400' :
-                      'text-blue-300'
-                    }>
-                      {log.message}
+      ) : (
+        <div className="grid gap-4">
+          {daemonStats.map((stats, idx) => (
+            <Card key={idx} className="border-primary/30">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <Server className="h-5 w-5" />
+                    Node {idx + 1}
+                    {stats.isMining && (
+                      <Badge variant="outline" className="border-orange-500 text-orange-500 text-xs">
+                        MINING
+                      </Badge>
+                    )}
+                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    {stats.connectedPeers > 0 ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-500" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <span className="text-xs text-muted-foreground font-mono">
+                      {stats.nodeId.slice(0, 8)}...
                     </span>
                   </div>
-                ))}
-              </div>
-            )}
-          </ScrollArea>
-        </CardContent>
-      </Card>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <Users className="h-4 w-4 text-blue-500" />
+                      <p className="text-2xl font-bold">{stats.connectedPeers}</p>
+                    </div>
+                    <p className="text-xs text-muted-foreground">TCP Peers</p>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <Database className="h-4 w-4 text-purple-500" />
+                      <p className="text-2xl font-bold">{stats.networkHeight}</p>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Chain Height</p>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <Activity className="h-4 w-4 text-orange-500" />
+                      <p className="text-2xl font-bold">{stats.isMining ? "YES" : "NO"}</p>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Mining</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
-      {/* Architecture Info */}
-      <Card className="bg-muted/30">
+      {/* Info Card */}
+      <Card className="bg-primary/5 border-primary/20">
         <CardContent className="pt-6">
           <div className="flex items-start gap-4">
-            <Globe className="h-6 w-6 text-primary mt-1" />
+            <Server className="h-6 w-6 text-primary mt-1" />
             <div>
-              <h3 className="font-semibold mb-2">True P2P Decentralization</h3>
+              <h3 className="font-semibold mb-2">RougeChain L1 Node Daemon</h3>
               <ul className="text-sm text-muted-foreground space-y-1">
-                <li>• Each node maintains its own local blockchain copy (IndexedDB)</li>
-                <li>• Nodes connect directly via WebRTC data channels</li>
-                <li>• Real-time block sync from distributed network</li>
-                <li>• Byzantine Fault Tolerant consensus requires 2/3 majority</li>
-                <li>• All blocks verified with ML-DSA-65 PQC signatures</li>
-                <li>• Gossip protocol for P2P block propagation</li>
+                <li>• Standalone TypeScript/Node.js daemon (not browser-based)</li>
+                <li>• TCP P2P networking for block/tx propagation</li>
+                <li>• ML-DSA-65 (FIPS 204) post-quantum signatures</li>
+                <li>• Local disk storage (JSONL chain files)</li>
+                <li>• HTTP API for stats at <code className="text-xs bg-background px-1 rounded">/api/stats</code></li>
+                <li>• Devnet mode: simple block production (not production consensus yet)</li>
               </ul>
             </div>
           </div>

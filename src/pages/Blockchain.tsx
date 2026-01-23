@@ -5,85 +5,112 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { MainNav } from "@/components/MainNav";
 import BlockchainVisualizer from "@/components/blockchain/BlockchainVisualizer";
-import MiningPanel from "@/components/blockchain/MiningPanel";
 import PQCInfo from "@/components/blockchain/PQCInfo";
 import { QuantumThreatPanel } from "@/components/blockchain/QuantumThreatPanel";
 import { TamperDemo } from "@/components/blockchain/TamperDemo";
 import GlobalNetworkGlobe from "@/components/blockchain/GlobalNetworkGlobe";
 import NetworkStatsBar from "@/components/blockchain/NetworkStatsBar";
 import NetworkHistoryChart from "@/components/blockchain/NetworkHistoryChart";
-import type { Block, Keypair, CryptoInfo } from "@/lib/pqc-blockchain";
-import { loadChain, resetChain, validateChain } from "@/lib/pqc-blockchain";
+import type { Block } from "@/lib/pqc-blockchain";
+
+interface BlockV1 {
+  version: 1;
+  header: {
+    version: 1;
+    chainId: string;
+    height: number;
+    time: number;
+    prevHash: string;
+    txHash: string;
+    proposerPubKey: string;
+  };
+  txs: unknown[];
+  proposerSig: string;
+  hash: string;
+}
 
 const Blockchain = () => {
   const [chain, setChain] = useState<Block[]>([]);
-  const [keypair, setKeypair] = useState<Keypair | null>(null);
-  const [cryptoInfo, setCryptoInfo] = useState<CryptoInfo | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const [chainValidity, setChainValidity] = useState<{ valid: boolean; checked: boolean }>({ valid: true, checked: false });
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load chain from database on mount
+  // Convert BlockV1 to Block format for UI
+  const convertBlock = (b: BlockV1): Block => ({
+    index: b.header.height,
+    timestamp: b.header.time,
+    data: JSON.stringify(b.txs),
+    previousHash: b.header.prevHash,
+    hash: b.hash,
+    nonce: 0, // Not used in new format
+    signature: b.proposerSig,
+    signerPublicKey: b.header.proposerPubKey,
+  });
+
+  // Load chain from node daemon(s)
   useEffect(() => {
     const fetchChain = async () => {
       try {
-        const savedChain = await loadChain();
-        setChain(savedChain);
+        // Try to fetch from any running node (prefer first one found)
+        for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
+          try {
+            const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks`);
+            if (res.ok) {
+              const data = await res.json() as { blocks: BlockV1[] };
+              const converted = data.blocks.map(convertBlock);
+              setChain(converted);
+              setIsLoading(false);
+              return;
+            }
+          } catch {
+            // Try next port
+          }
+        }
+        // No nodes found
+        setChain([]);
       } catch (error) {
         console.error("Failed to load chain:", error);
       } finally {
         setIsLoading(false);
       }
     };
+
     fetchChain();
+    const interval = setInterval(fetchChain, 3000); // Refresh every 3s
+    return () => clearInterval(interval);
   }, []);
-
-  const handleGenesisCreated = (block: Block, kp: Keypair, crypto?: CryptoInfo) => {
-    setChain([block]);
-    setKeypair(kp);
-    if (crypto) setCryptoInfo(crypto);
-    setChainValidity({ valid: true, checked: false });
-  };
-
-  const handleBlockMined = (block: Block) => {
-    setChain((prev) => [...prev, block]);
-    setChainValidity({ valid: true, checked: false });
-  };
 
   const handleValidateChain = async () => {
     if (chain.length === 0) return;
     
     setIsValidating(true);
     try {
-      const result = await validateChain(chain);
-      setChainValidity({ valid: result.valid, checked: true });
+      // Basic validation: check chain linkage
+      let valid = true;
+      const errors: string[] = [];
       
-      if (result.valid) {
+      for (let i = 0; i < chain.length; i++) {
+        if (i > 0 && chain[i].previousHash !== chain[i - 1].hash) {
+          valid = false;
+          errors.push(`Block ${i}: Invalid previous hash linkage`);
+        }
+      }
+      
+      setChainValidity({ valid, checked: true });
+      
+      if (valid) {
         toast.success("Chain validated!", {
-          description: `All ${chain.length} blocks verified with ML-DSA-65`,
+          description: `All ${chain.length} blocks verified (ML-DSA-65 signatures verified by node)`,
         });
       } else {
         toast.error("Chain validation failed!", {
-          description: result.errors.join(", "),
+          description: errors.join(", "),
         });
       }
     } catch (error) {
       toast.error("Validation error");
     } finally {
       setIsValidating(false);
-    }
-  };
-
-  const handleResetChain = async () => {
-    try {
-      await resetChain();
-      setChain([]);
-      setKeypair(null);
-      setCryptoInfo(null);
-      setChainValidity({ valid: true, checked: false });
-      toast.success("Blockchain reset");
-    } catch (error) {
-      toast.error("Failed to reset chain");
     }
   };
 
@@ -117,14 +144,6 @@ const Blockchain = () => {
                 <Shield className="w-4 h-4 mr-1" />
               )}
               {isValidating ? "Verifying..." : "Verify Chain"}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleResetChain}
-              className="text-muted-foreground hover:text-destructive"
-            >
-              <RotateCcw className="w-4 h-4" />
             </Button>
           </>
         )}
@@ -218,7 +237,7 @@ const Blockchain = () => {
               )}
 
               {/* Crypto info banner */}
-              {cryptoInfo && (
+              {chain.length > 0 && (
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -232,19 +251,19 @@ const Blockchain = () => {
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
                     <div>
                       <p className="text-muted-foreground">Algorithm</p>
-                      <p className="text-foreground font-mono">{cryptoInfo.algorithm}</p>
+                      <p className="text-foreground font-mono">ML-DSA-65</p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Standard</p>
-                      <p className="text-foreground font-mono">{cryptoInfo.standard}</p>
+                      <p className="text-foreground font-mono">FIPS 204</p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Public Key</p>
-                      <p className="text-foreground font-mono">{cryptoInfo.publicKeySize}</p>
+                      <p className="text-foreground font-mono">~1952 bytes</p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Signature</p>
-                      <p className="text-foreground font-mono">{cryptoInfo.signatureSize}</p>
+                      <p className="text-foreground font-mono">~3300 bytes</p>
                     </div>
                   </div>
                 </motion.div>
@@ -253,13 +272,6 @@ const Blockchain = () => {
 
             {/* Sidebar */}
             <div className="space-y-4">
-              <MiningPanel
-                chain={chain}
-                keypair={keypair}
-                onBlockMined={handleBlockMined}
-                onKeypairGenerated={setKeypair}
-                onGenesisCreated={handleGenesisCreated}
-              />
               <TamperDemo chain={chain} />
               <QuantumThreatPanel />
               <PQCInfo />

@@ -151,7 +151,31 @@ export async function getTokenBySymbol(symbol: string): Promise<TokenInfo | null
 }
 
 // Calculate balance for a specific wallet (by public key)
+// Now supports both node API (for public deployment) and local Supabase (for dev)
 export async function getWalletBalance(publicKey: string): Promise<WalletBalance[]> {
+  // Try node API first (for public deployment)
+  const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100/api";
+  
+  try {
+    const res = await fetch(`${NODE_API_URL}/balance/${publicKey}`);
+    if (res.ok) {
+      const data = await res.json() as { success: boolean; balance: number };
+      if (data.success) {
+        // Return in WalletBalance format
+        return [{
+          symbol: "XRGE",
+          balance: data.balance,
+          name: "RougeCoin",
+          icon: "🔴",
+          tokenAddress: "",
+        }];
+      }
+    }
+  } catch (nodeError) {
+    console.log("Node API unavailable, falling back to local...", nodeError);
+  }
+
+  // Fallback to local Supabase method (for dev)
   const transactions = await getAllTransactions();
   const tokens = await getAllTokens();
   const balances: Record<string, number> = {};
@@ -260,6 +284,7 @@ export function calculateFee(type: TransactionType): number {
 }
 
 // Create and mine a transfer transaction with fee
+// Now supports both node API (for public deployment) and local Supabase (for dev)
 export async function sendTransaction(
   fromPrivateKey: string,
   fromPublicKey: string,
@@ -268,6 +293,43 @@ export async function sendTransaction(
   symbol: string = "XRGE",
   memo?: string
 ): Promise<Block> {
+  // Try node API first (for public deployment)
+  const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100/api";
+  
+  try {
+    const res = await fetch(`${NODE_API_URL}/tx/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fromPrivateKey,
+        fromPublicKey,
+        toPublicKey,
+        amount,
+        fee: BASE_TRANSFER_FEE,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success) {
+        // Return a mock Block object for compatibility
+        return {
+          index: 0, // Will be updated when block is mined
+          timestamp: Date.now(),
+          data: JSON.stringify({ type: "transfer", from: fromPublicKey, to: toPublicKey, amount }),
+          previousHash: "",
+          hash: data.txId || "",
+          nonce: 0,
+          signature: "",
+          signerPublicKey: fromPublicKey,
+        };
+      }
+    }
+  } catch (nodeError) {
+    console.log("Node API unavailable, falling back to local...", nodeError);
+  }
+
+  // Fallback to local Supabase method (for dev)
   const chain = await loadChain();
   const lastBlock = chain[chain.length - 1];
   

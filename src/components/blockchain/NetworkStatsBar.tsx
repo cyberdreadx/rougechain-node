@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Blocks, Clock, Zap, Activity, TrendingUp } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 
 interface NetworkStats {
   blocksPerMinute: number;
@@ -23,49 +22,63 @@ const NetworkStatsBar = () => {
 
   const fetchStats = async () => {
     try {
-      // Get all blocks to calculate stats
-      const { data: blocks, error } = await supabase
-        .from("pqc_blocks")
-        .select("timestamp, data, block_index")
-        .order("timestamp", { ascending: true });
+      // Try to fetch from any running node
+      for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks`);
+          if (res.ok) {
+            const data = await res.json() as { blocks: Array<{ header: { height: number; time: number }; txs: unknown[] }> };
+            const blocks = data.blocks;
 
-      if (error) throw error;
+            if (blocks && blocks.length > 0) {
+              const totalBlocks = blocks.length;
+              
+              // Calculate time span in minutes
+              const firstBlockTime = blocks[0].header.time;
+              const lastBlockTime = blocks[blocks.length - 1].header.time;
+              const timeSpanMinutes = Math.max((lastBlockTime - firstBlockTime) / 60000, 1);
+              
+              // Blocks per minute (only if more than 1 block)
+              const blocksPerMinute = totalBlocks > 1 
+                ? Math.round((totalBlocks / timeSpanMinutes) * 100) / 100
+                : 0;
 
-      if (blocks && blocks.length > 0) {
-        const totalBlocks = blocks.length;
-        
-        // Calculate time span in minutes
-        const firstBlockTime = blocks[0].timestamp;
-        const lastBlockTime = blocks[blocks.length - 1].timestamp;
-        const timeSpanMinutes = Math.max((lastBlockTime - firstBlockTime) / 60000, 1);
-        
-        // Blocks per minute (only if more than 1 block)
-        const blocksPerMinute = totalBlocks > 1 
-          ? Math.round((totalBlocks / timeSpanMinutes) * 100) / 100
-          : 0;
+              // Average block time in seconds
+              const avgBlockTime = totalBlocks > 1 
+                ? Math.round((lastBlockTime - firstBlockTime) / (totalBlocks - 1) / 1000)
+                : 0;
 
-        // Average block time in seconds
-        const avgBlockTime = totalBlocks > 1 
-          ? Math.round((lastBlockTime - firstBlockTime) / (totalBlocks - 1) / 1000)
-          : 0;
+              // Count transactions across all blocks
+              const totalTransactions = blocks.reduce((sum, b) => sum + b.txs.length, 0);
 
-        // Count transactions (non-genesis blocks represent transactions)
-        const totalTransactions = Math.max(totalBlocks - 1, 0);
+              // Dynamic gas fee based on network activity (simple model)
+              const baseFee = 0.001;
+              const activityMultiplier = Math.min(blocksPerMinute * 0.1, 0.5);
+              const currentGasFee = Math.round((baseFee + activityMultiplier) * 10000) / 10000;
 
-        // Dynamic gas fee based on network activity (simple model)
-        // Base fee + activity multiplier
-        const baseFee = 0.001;
-        const activityMultiplier = Math.min(blocksPerMinute * 0.1, 0.5);
-        const currentGasFee = Math.round((baseFee + activityMultiplier) * 10000) / 10000;
-
-        setStats({
-          blocksPerMinute,
-          totalTransactions,
-          avgBlockTime,
-          currentGasFee,
-          totalBlocks,
-        });
+              setStats({
+                blocksPerMinute,
+                totalTransactions,
+                avgBlockTime,
+                currentGasFee,
+                totalBlocks,
+              });
+              setIsLoading(false);
+              return;
+            }
+          }
+        } catch {
+          // Try next port
+        }
       }
+      // No nodes found
+      setStats({
+        blocksPerMinute: 0,
+        totalTransactions: 0,
+        avgBlockTime: 0,
+        currentGasFee: 0.001,
+        totalBlocks: 0,
+      });
     } catch (error) {
       console.error("Failed to fetch network stats:", error);
     } finally {
@@ -75,26 +88,8 @@ const NetworkStatsBar = () => {
 
   useEffect(() => {
     fetchStats();
-
-    // Subscribe to real-time block updates
-    const channel = supabase
-      .channel("network-stats")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "pqc_blocks",
-        },
-        () => {
-          fetchStats();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const interval = setInterval(fetchStats, 3000); // Refresh every 3s
+    return () => clearInterval(interval);
   }, []);
 
   const statItems = [

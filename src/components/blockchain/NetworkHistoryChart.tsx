@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { BarChart3, TrendingUp } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import {
   AreaChart,
   Area,
@@ -27,12 +26,20 @@ const NetworkHistoryChart = () => {
 
   const fetchChartData = async () => {
     try {
-      const { data: blocks, error } = await supabase
-        .from("pqc_blocks")
-        .select("timestamp, block_index, data")
-        .order("timestamp", { ascending: true });
-
-      if (error) throw error;
+      // Try to fetch from any running node
+      let blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> = [];
+      for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks`);
+          if (res.ok) {
+            const data = await res.json() as { blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> };
+            blocks = data.blocks;
+            break;
+          }
+        } catch {
+          // Try next port
+        }
+      }
 
       if (blocks && blocks.length > 0) {
         // Group blocks by time intervals based on range
@@ -57,16 +64,14 @@ const NetworkHistoryChart = () => {
 
         // Fill buckets with data
         blocks.forEach((block) => {
-          const blockTime = block.timestamp;
+          const blockTime = block.header.time;
           if (blockTime >= startTime) {
             const bucketKey = Math.floor(blockTime / intervalMs) * intervalMs;
             const bucket = buckets.get(bucketKey);
             if (bucket) {
               bucket.blocks += 1;
-              // Count non-genesis blocks as transactions
-              if (block.block_index > 0) {
-                bucket.transactions += 1;
-              }
+              // Count transactions in block
+              bucket.transactions += block.txs.length;
             }
           }
         });
@@ -94,13 +99,13 @@ const NetworkHistoryChart = () => {
         if (data.every(d => d.blocks === 0) && blocks.length > 0) {
           // Create cumulative data from actual blocks
           const cumulativeData: ChartDataPoint[] = blocks.map((block, index) => ({
-            time: new Date(block.timestamp).toLocaleTimeString([], { 
+            time: new Date(block.header.time).toLocaleTimeString([], { 
               hour: "2-digit", 
               minute: "2-digit" 
             }),
             blocks: index + 1,
-            transactions: Math.max(index, 0),
-            timestamp: block.timestamp,
+            transactions: blocks.slice(0, index + 1).reduce((sum, b) => sum + b.txs.length, 0),
+            timestamp: block.header.time,
           }));
           setChartData(cumulativeData);
         } else {
@@ -116,26 +121,8 @@ const NetworkHistoryChart = () => {
 
   useEffect(() => {
     fetchChartData();
-
-    // Subscribe to real-time updates
-    const channel = supabase
-      .channel("network-history-chart")
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "pqc_blocks",
-        },
-        () => {
-          fetchChartData();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const interval = setInterval(fetchChartData, 3000); // Refresh every 3s
+    return () => clearInterval(interval);
   }, [timeRange]);
 
   const CustomTooltip = ({ active, payload, label }: any) => {

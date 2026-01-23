@@ -33,6 +33,8 @@ import {
 } from "@/lib/pqc-wallet";
 import { loadChain, createGenesisBlock } from "@/lib/pqc-blockchain";
 import { supabase } from "@/integrations/supabase/client";
+import { createWalletViaNode, submitTransactionViaNode, getBalanceViaNode } from "@/lib/node-api";
+import { pqcKeygen } from "@/lib/pqc-blockchain";
 import SendTokensDialog from "@/components/wallet/SendTokensDialog";
 import ReceiveDialog from "@/components/wallet/ReceiveDialog";
 import CreateTokenDialog from "@/components/wallet/CreateTokenDialog";
@@ -97,36 +99,46 @@ const Wallet = () => {
   const createNewWallet = async () => {
     setLoading(true);
     try {
-      // Check if chain exists, if not create genesis
-      const chain = await loadChain();
-      if (chain.length === 0) {
-        toast.info("Initializing blockchain...");
-        await createGenesisBlock();
+      // Try to create wallet via node API first (for public deployment)
+      let signingPublicKey: string;
+      let signingPrivateKey: string;
+      
+      try {
+        const nodeWallet = await createWalletViaNode();
+        signingPublicKey = nodeWallet.publicKey;
+        signingPrivateKey = nodeWallet.privateKey;
+        toast.info("Wallet created via node API");
+      } catch (nodeError) {
+        // Fallback to Supabase if node API unavailable (for local dev)
+        console.log("Node API unavailable, trying Supabase...", nodeError);
+        const { data, error } = await supabase.functions.invoke("pqc-crypto", {
+          body: { action: "create-wallet", payload: { displayName: "My Wallet" } },
+        });
+
+        if (error) throw new Error(error.message);
+        if (!data.success) throw new Error(data.error || "Failed to create wallet");
+        
+        signingPublicKey = data.wallet.signingPublicKey;
+        signingPrivateKey = data.privateKeys.signingPrivateKey;
       }
 
-      // Create unified wallet with both signing and encryption keys
-      const { data, error } = await supabase.functions.invoke("pqc-crypto", {
-        body: { action: "create-wallet", payload: { displayName: "My Wallet" } },
-      });
-
-      if (error) throw new Error(error.message);
-      if (!data.success) throw new Error(data.error || "Failed to create wallet");
-
+      // For now, create a simplified wallet (just signing keys for blockchain)
+      // TODO: Add encryption keys for messaging if needed
       const newWallet: UnifiedWallet = {
-        id: data.wallet.id,
-        displayName: data.wallet.displayName,
+        id: `wallet-${Date.now()}`,
+        displayName: "My Wallet",
         createdAt: Date.now(),
-        signingPublicKey: data.wallet.signingPublicKey,
-        signingPrivateKey: data.privateKeys.signingPrivateKey,
-        encryptionPublicKey: data.wallet.encryptionPublicKey,
-        encryptionPrivateKey: data.privateKeys.encryptionPrivateKey,
+        signingPublicKey,
+        signingPrivateKey,
+        encryptionPublicKey: "", // Can be added later
+        encryptionPrivateKey: "", // Can be added later
         version: 2,
       };
       
       saveUnifiedWallet(newWallet);
       setWallet(newWallet);
       toast.success("Quantum-safe wallet created!", {
-        description: "Your wallet works for both blockchain and messaging"
+        description: "Your wallet is ready to use"
       });
     } catch (error) {
       console.error("Failed to create wallet:", error);

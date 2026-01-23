@@ -4,10 +4,6 @@ import { OrbitControls, Html } from "@react-three/drei";
 import * as THREE from "three";
 import { motion } from "framer-motion";
 import { Globe, Activity, Users, Loader2, Wifi, Shield } from "lucide-react";
-import { getValidators, type Validator } from "@/lib/pqc-validators";
-import { supabase } from "@/integrations/supabase/client";
-import { Link } from "react-router-dom";
-import { Button } from "@/components/ui/button";
 
 // Generate random points on a sphere based on validator count
 const generateNodePositions = (count: number, radius: number) => {
@@ -42,11 +38,10 @@ const generateConnections = (
 
 interface NodeProps {
   position: [number, number, number];
-  validator?: Validator;
   isValidator?: boolean;
 }
 
-const Node = ({ position, validator, isValidator = false }: NodeProps) => {
+const Node = ({ position, isValidator = false }: NodeProps) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const [hovered, setHovered] = useState(false);
 
@@ -56,16 +51,7 @@ const Node = ({ position, validator, isValidator = false }: NodeProps) => {
     }
   });
 
-  const getColorByTier = () => {
-    if (!validator) return "#6366f1";
-    switch (validator.tier) {
-      case "genesis": return "#f59e0b";
-      case "operator": return "#22c55e";
-      default: return "#6366f1";
-    }
-  };
-
-  const color = getColorByTier();
+  const color = isValidator ? "#22c55e" : "#6366f1"; // Green for nodes, blue for peers
 
   return (
     <mesh
@@ -80,23 +66,12 @@ const Node = ({ position, validator, isValidator = false }: NodeProps) => {
         emissive={color}
         emissiveIntensity={hovered ? 0.8 : 0.4}
       />
-      {hovered && validator && (
-        <Html distanceFactor={10}>
-          <div className="bg-card/90 backdrop-blur-sm border border-border rounded-lg px-3 py-2 text-xs whitespace-nowrap">
-            <p className="text-foreground font-semibold capitalize">{validator.tier} Validator</p>
-            <p className="text-muted-foreground">
-              Staked: {(validator.stakedAmount / 1000).toFixed(0)}K XRGE
-            </p>
-            <p className="text-muted-foreground">
-              Uptime: {validator.uptimePercentage.toFixed(1)}%
-            </p>
-          </div>
-        </Html>
-      )}
-      {hovered && !validator && (
+      {hovered && (
         <Html distanceFactor={10}>
           <div className="bg-card/90 backdrop-blur-sm border border-border rounded-lg px-2 py-1 text-xs whitespace-nowrap">
-            <span className="text-muted-foreground">Network Peer</span>
+            <span className="text-muted-foreground">
+              {isValidator ? "L1 Node" : "Network Peer"}
+            </span>
           </div>
         </Html>
       )}
@@ -163,13 +138,12 @@ const RotatingGroup = ({ children }: { children: React.ReactNode }) => {
 };
 
 interface NetworkSceneProps {
-  validators: Validator[];
+  nodeCount: number;
   peerCount: number;
 }
 
-const NetworkScene = ({ validators = [], peerCount }: NetworkSceneProps) => {
-  const validatorList = validators || [];
-  const totalNodes = Math.max(validatorList.length + peerCount, peerCount);
+const NetworkScene = ({ nodeCount, peerCount }: NetworkSceneProps) => {
+  const totalNodes = Math.max(nodeCount + peerCount, 3); // At least 3 for visualization
   const nodes = useMemo(() => generateNodePositions(totalNodes, 2), [totalNodes]);
   const connections = useMemo(() => generateConnections(nodes, 0.12), [nodes]);
 
@@ -186,8 +160,7 @@ const NetworkScene = ({ validators = [], peerCount }: NetworkSceneProps) => {
           <Node
             key={i}
             position={pos}
-            validator={i < validatorList.length ? validatorList[i] : undefined}
-            isValidator={i < validatorList.length}
+            isValidator={i < nodeCount}
           />
         ))}
 
@@ -215,52 +188,50 @@ interface GlobalNetworkGlobeProps {
   className?: string;
 }
 
+interface NodeStats {
+  connectedPeers: number;
+  networkHeight: number;
+  isMining: boolean;
+  nodeId: string;
+}
+
 const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
-  const [validators, setValidators] = useState<Validator[]>([]);
+  const [nodeStats, setNodeStats] = useState<NodeStats[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLive, setIsLive] = useState(false);
-  const peerCount = 30; // Additional network peers
 
   useEffect(() => {
-    const fetchValidators = async () => {
+    const fetchNodes = async () => {
       try {
-        const data = await getValidators();
-        setValidators(data);
+        const stats: NodeStats[] = [];
+        // Try common API ports
+        for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
+          try {
+            const res = await fetch(`http://127.0.0.1:${apiPort}/api/stats`);
+            if (res.ok) {
+              const data = await res.json() as NodeStats;
+              stats.push(data);
+            }
+          } catch {
+            // Node not running on this port
+          }
+        }
+        setNodeStats(stats);
+        setIsLive(stats.length > 0);
       } catch (error) {
-        console.error("Failed to fetch validators:", error);
+        console.error("Failed to fetch nodes:", error);
       } finally {
         setIsLoading(false);
       }
     };
-    fetchValidators();
 
-    // Subscribe to real-time validator updates
-    const channel = supabase
-      .channel('validators-realtime')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'validators',
-        },
-        async () => {
-          // Refetch all validators when any change occurs
-          const data = await getValidators();
-          setValidators(data);
-        }
-      )
-      .subscribe((status) => {
-        setIsLive(status === 'SUBSCRIBED');
-      });
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    fetchNodes();
+    const interval = setInterval(fetchNodes, 3000);
+    return () => clearInterval(interval);
   }, []);
 
-  const totalStake = validators.reduce((sum, v) => sum + v.stakedAmount, 0);
-  const activeValidators = validators.filter(v => v.status === "active").length;
+  const totalPeers = nodeStats.reduce((sum, s) => sum + s.connectedPeers, 0);
+  const activeNodes = nodeStats.length;
 
   return (
     <div className={`relative ${className}`}>
@@ -277,23 +248,19 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
           )}
         </div>
         <p className="text-xs text-muted-foreground max-w-[200px]">
-          Real-time RougeChain validator network
+          Real-time RougeChain L1 node network
         </p>
       </div>
 
       {/* Legend */}
       <div className="absolute bottom-4 left-4 z-10 flex flex-col gap-2">
         <div className="flex items-center gap-2 text-xs">
-          <div className="w-3 h-3 rounded-full bg-amber-500" />
-          <span className="text-muted-foreground">Genesis Validators</span>
-        </div>
-        <div className="flex items-center gap-2 text-xs">
           <div className="w-3 h-3 rounded-full bg-success" />
-          <span className="text-muted-foreground">Operator Validators</span>
+          <span className="text-muted-foreground">L1 Nodes</span>
         </div>
         <div className="flex items-center gap-2 text-xs">
           <div className="w-3 h-3 rounded-full bg-primary" />
-          <span className="text-muted-foreground">Standard / Peers</span>
+          <span className="text-muted-foreground">Network Peers</span>
         </div>
       </div>
 
@@ -306,26 +273,26 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
         <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg px-3 py-2 flex items-center gap-2">
           <Users className="w-4 h-4 text-primary" />
           <div>
-            <p className="text-xs text-muted-foreground">Validators</p>
+            <p className="text-xs text-muted-foreground">Nodes</p>
             <p className="text-sm font-semibold text-foreground">
-              {isLoading ? "..." : validators.length}
+              {isLoading ? "..." : activeNodes}
             </p>
           </div>
         </div>
         <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg px-3 py-2 flex items-center gap-2">
           <Activity className="w-4 h-4 text-success" />
           <div>
-            <p className="text-xs text-muted-foreground">Active</p>
+            <p className="text-xs text-muted-foreground">Peers</p>
             <p className="text-sm font-semibold text-foreground">
-              {isLoading ? "..." : activeValidators}
+              {isLoading ? "..." : totalPeers}
             </p>
           </div>
         </div>
-        {totalStake > 0 && (
+        {nodeStats.length > 0 && (
           <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg px-3 py-2">
-            <p className="text-xs text-muted-foreground">Total Staked</p>
+            <p className="text-xs text-muted-foreground">Mining</p>
             <p className="text-sm font-semibold text-foreground">
-              {(totalStake / 1000).toFixed(0)}K XRGE
+              {nodeStats.filter(s => s.isMining).length} / {activeNodes}
             </p>
           </div>
         )}
@@ -339,19 +306,13 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
           </div>
         ) : (
           <Canvas camera={{ position: [0, 0, 5], fov: 50 }}>
-            <NetworkScene validators={validators} peerCount={peerCount} />
+            <NetworkScene nodeCount={activeNodes} peerCount={totalPeers} />
           </Canvas>
         )}
       </div>
 
       {/* Bottom right actions */}
       <div className="absolute bottom-4 right-4 z-10 flex flex-col items-end gap-2">
-        <Link to="/validators">
-          <Button size="sm" className="gap-2 shadow-lg">
-            <Shield className="w-4 h-4" />
-            Become a Validator
-          </Button>
-        </Link>
         <p className="text-xs text-muted-foreground bg-card/60 backdrop-blur-sm px-2 py-1 rounded">
           Drag to rotate • Scroll to zoom
         </p>
