@@ -231,8 +231,8 @@ const Wallet = () => {
               </Button>
             </Link>
             <div>
-              <h1 className="text-lg font-bold text-foreground">PQC Wallet</h1>
-              <p className="text-xs text-muted-foreground">Quantum-Safe Assets</p>
+              <h1 className="text-lg font-bold text-foreground">XRGE Wallet</h1>
+              <p className="text-xs text-muted-foreground">RougeChain</p>
             </div>
           </div>
           

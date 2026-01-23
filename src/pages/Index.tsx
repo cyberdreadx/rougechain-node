@@ -14,7 +14,7 @@ const features = [
   {
     icon: Blocks,
     title: "Blockchain Explorer",
-    description: "Mine blocks and explore the post-quantum blockchain with CRYSTALS-Dilithium signatures.",
+    description: "Mine blocks and explore RougeChain with post-quantum CRYSTALS-Dilithium signatures.",
     link: "/blockchain",
     color: "accent",
   },
@@ -53,12 +53,12 @@ const Index = () => {
           </motion.div>
 
           <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-4">
-            Quantum-Safe{" "}
-            <span className="text-gradient-quantum">Blockchain</span>
+            Welcome to{" "}
+            <span className="text-gradient-quantum">RougeChain</span>
           </h1>
           
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
-            Experience the future of cryptography. Built with NIST-approved algorithms 
+            The quantum-safe blockchain powered by NIST-approved post-quantum cryptography.
             to protect against quantum computing threats.
           </p>
 
