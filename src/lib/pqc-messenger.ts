@@ -41,6 +41,37 @@ export interface Conversation {
 
 const WALLET_STORAGE_KEY = "pqc_messenger_wallet";
 const DEMO_BOT_STORAGE_KEY = "pqc_demo_bot_wallet";
+const SENT_MESSAGES_KEY = "pqc_sent_messages";
+
+// Helper to store sent message plaintext locally
+function storeSentMessage(messageId: string, plaintext: string): void {
+  try {
+    const stored = localStorage.getItem(SENT_MESSAGES_KEY);
+    const messages: Record<string, string> = stored ? JSON.parse(stored) : {};
+    messages[messageId] = plaintext;
+    // Keep only last 500 messages to avoid storage bloat
+    const keys = Object.keys(messages);
+    if (keys.length > 500) {
+      const toRemove = keys.slice(0, keys.length - 500);
+      toRemove.forEach(k => delete messages[k]);
+    }
+    localStorage.setItem(SENT_MESSAGES_KEY, JSON.stringify(messages));
+  } catch (e) {
+    console.error("Failed to store sent message:", e);
+  }
+}
+
+// Helper to retrieve sent message plaintext
+function getSentMessage(messageId: string): string | null {
+  try {
+    const stored = localStorage.getItem(SENT_MESSAGES_KEY);
+    if (!stored) return null;
+    const messages: Record<string, string> = JSON.parse(stored);
+    return messages[messageId] || null;
+  } catch {
+    return null;
+  }
+}
 
 // Demo bot responses
 const DEMO_BOT_RESPONSES = [
@@ -328,6 +359,9 @@ export async function sendMessage(
 
   if (msgError) throw new Error(msgError.message);
 
+  // Store the plaintext locally so we can display it later
+  storeSentMessage(msg.id, plaintext);
+
   return {
     id: msg.id,
     conversationId: msg.conversation_id,
@@ -379,8 +413,9 @@ export async function getMessages(
 
     // Only decrypt if we're the recipient (sender can see their own messages)
     if (msg.sender_wallet_id === recipientWallet.id) {
-      // We sent this message, we can't decrypt it (it was encrypted for recipient)
-      plaintext = "[Your encrypted message]";
+      // We sent this message - try to get plaintext from local storage
+      const storedPlaintext = getSentMessage(msg.id);
+      plaintext = storedPlaintext || "[Your encrypted message]";
       signatureValid = true;
     } else if (sender) {
       try {
