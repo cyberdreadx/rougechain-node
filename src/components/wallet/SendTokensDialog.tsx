@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { X, Send, Loader2, AlertCircle } from "lucide-react";
+import { X, Send, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +17,32 @@ interface SendTokensDialogProps {
   onSuccess: () => void;
 }
 
+// Validate and parse xrge: prefixed address
+const parseXrgeAddress = (input: string): { valid: boolean; address: string; error?: string } => {
+  const trimmed = input.trim();
+  
+  if (!trimmed) {
+    return { valid: false, address: "", error: "Recipient address required" };
+  }
+
+  // Check for xrge: prefix (case-insensitive)
+  const prefixMatch = trimmed.match(/^xrge:/i);
+  const rawAddress = prefixMatch ? trimmed.slice(5) : trimmed;
+
+  // Validate the address (ML-DSA-65 public keys are base64 encoded, ~2600+ chars)
+  if (rawAddress.length < 100) {
+    return { valid: false, address: rawAddress, error: "Address too short - invalid public key" };
+  }
+
+  // Check for valid base64 characters
+  const base64Regex = /^[A-Za-z0-9+/=]+$/;
+  if (!base64Regex.test(rawAddress)) {
+    return { valid: false, address: rawAddress, error: "Invalid address format" };
+  }
+
+  return { valid: true, address: rawAddress };
+};
+
 const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDialogProps) => {
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
@@ -26,11 +52,16 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
 
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
 
+  // Live address validation
+  const addressValidation = recipient ? parseXrgeAddress(recipient) : null;
+  const isAddressValid = addressValidation?.valid ?? false;
+
   const handleSend = async () => {
     setError("");
     
-    if (!recipient.trim()) {
-      setError("Recipient address required");
+    const parsed = parseXrgeAddress(recipient);
+    if (!parsed.valid) {
+      setError(parsed.error || "Invalid address");
       return;
     }
 
@@ -45,12 +76,18 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
       return;
     }
 
+    // Prevent sending to self
+    if (parsed.address === wallet.publicKey) {
+      setError("Cannot send to your own address");
+      return;
+    }
+
     setSending(true);
     try {
       await sendTransaction(
         wallet.privateKey,
         wallet.publicKey,
-        recipient.trim(),
+        parsed.address, // Use parsed address without prefix
         amountNum,
         "XRGE",
         memo || undefined
@@ -91,13 +128,32 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
         <div className="space-y-4">
           <div>
             <Label htmlFor="recipient">Recipient Address</Label>
-            <Input
-              id="recipient"
-              value={recipient}
-              onChange={(e) => setRecipient(e.target.value)}
-              placeholder="Enter public key..."
-              className="mt-1.5 font-mono text-sm"
-            />
+            <div className="relative mt-1.5">
+              <Input
+                id="recipient"
+                value={recipient}
+                onChange={(e) => setRecipient(e.target.value)}
+                placeholder="xrge:... or public key"
+                className={`font-mono text-sm pr-10 ${
+                  recipient && !isAddressValid ? "border-destructive" : ""
+                } ${recipient && isAddressValid ? "border-success" : ""}`}
+              />
+              {recipient && (
+                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                  {isAddressValid ? (
+                    <CheckCircle2 className="w-4 h-4 text-success" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-destructive" />
+                  )}
+                </div>
+              )}
+            </div>
+            {recipient && !isAddressValid && addressValidation?.error && (
+              <p className="text-xs text-destructive mt-1">{addressValidation.error}</p>
+            )}
+            {recipient && isAddressValid && (
+              <p className="text-xs text-success mt-1">✓ Valid XRGE address</p>
+            )}
           </div>
 
           <div>
