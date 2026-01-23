@@ -518,29 +518,53 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
         selfDestruct,
         selfDestruct ? destructSeconds : undefined
       );
+      
+      // Add to seen messages so it doesn't trigger animations
+      seenMessageIdsRef.current.add(msg.id);
       setMessages(prev => [...prev, msg]);
       
-      // If recipient is demo bot, send an auto-reply
+      // If recipient is demo bot, get AI response
       if (isRecipientBot) {
         // Small delay to make it feel natural
         setTimeout(async () => {
           const botWallet = loadDemoBotWallet();
           if (botWallet) {
             try {
-              const botResponse = getDemoBotResponse();
+              // Call Lovable AI for intelligent response
+              const { data: aiData, error: aiError } = await supabase.functions.invoke("quantum-bot", {
+                body: { 
+                  userMessage: messageText,
+                  conversationContext: messages.slice(-6).map(m => ({
+                    role: m.senderWalletId === wallet.id ? "user" : "assistant",
+                    content: m.plaintext || ""
+                  }))
+                },
+              });
+              
+              let botResponse: string;
+              if (aiError || !aiData?.success) {
+                // Fallback to static response if AI fails
+                botResponse = aiData?.fallbackResponse || getDemoBotResponse();
+              } else {
+                botResponse = aiData.response;
+              }
+              
               const botMsg = await sendMessage(
                 conversation.id,
                 botResponse,
                 botWallet,
-                wallet.encryptionPublicKey, // Encrypt for the user
+                wallet.encryptionPublicKey,
                 false
               );
+              
+              // Mark bot message as new for decryption animation
+              setNewMessageIds(prev => new Set([...prev, botMsg.id]));
               setMessages(prev => [...prev, botMsg]);
             } catch (e) {
               console.error("Bot reply failed:", e);
             }
           }
-        }, 1000 + Math.random() * 1000); // 1-2 second delay
+        }, 1000 + Math.random() * 1000);
       }
     } catch (error) {
       console.error("Failed to send message:", error);
