@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 
 export interface Block {
   index: number;
@@ -30,40 +30,70 @@ export interface BlockchainState {
   isValid: boolean;
 }
 
-// Generate a new PQC keypair (REAL ML-DSA-65)
-export async function generateKeypair(): Promise<{ keypair: Keypair; info: CryptoInfo }> {
-  const { data, error } = await supabase.functions.invoke("pqc-crypto", {
-    body: { action: "generate-keypair" },
-  });
+const CHAIN_STORAGE_KEY = "pqc-demo-chain";
 
-  if (error) throw new Error(error.message);
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+
+async function hashBlock(block: { index: number; timestamp: number; data: string; previousHash: string; nonce: number }): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(
+    `${block.index}${block.timestamp}${block.data}${block.previousHash}${block.nonce}`
+  );
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function saveChain(chain: Block[]): Promise<void> {
+  localStorage.setItem(CHAIN_STORAGE_KEY, JSON.stringify(chain));
+}
+
+// Generate a new PQC keypair (ML-DSA-65)
+export async function generateKeypair(): Promise<{ keypair: Keypair; info: CryptoInfo }> {
+  const seed = crypto.getRandomValues(new Uint8Array(32));
+  const keypair = ml_dsa65.keygen(seed);
   return {
-    keypair: data.keypair,
+    keypair: {
+      publicKey: bytesToHex(keypair.publicKey),
+      privateKey: bytesToHex(keypair.secretKey),
+    },
     info: {
-      algorithm: data.algorithm,
-      standard: data.standard,
-      publicKeySize: data.publicKeySize,
+      algorithm: "ML-DSA-65 (CRYSTALS-Dilithium)",
+      standard: "FIPS 204",
+      publicKeySize: `${keypair.publicKey.length} bytes`,
       signatureSize: "~3300 bytes",
       securityLevel: "NIST Level 3",
     },
   };
 }
 
-// Create genesis block with REAL PQC crypto
+// Create genesis block with local PQC crypto
 export async function createGenesisBlock(): Promise<{ block: Block; keypair: Keypair; crypto: CryptoInfo }> {
-  const { data, error } = await supabase.functions.invoke("pqc-crypto", {
-    body: { action: "create-genesis" },
-  });
-
-  if (error) throw new Error(error.message);
-  return { 
-    block: data.block, 
-    keypair: data.keypair,
-    crypto: data.crypto,
-  };
+  const { keypair, info } = await generateKeypair();
+  const block = await mineBlock(
+    0,
+    "Genesis Block - PQC Blockchain",
+    "0".repeat(64),
+    keypair.privateKey,
+    keypair.publicKey,
+    2
+  );
+  await saveChain([block]);
+  return { block, keypair, crypto: info };
 }
 
-// Mine a new block with REAL PQC signature
+// Mine a new block with ML-DSA-65 signature (local demo only)
 export async function mineBlock(
   index: number,
   blockData: string,
@@ -72,87 +102,59 @@ export async function mineBlock(
   publicKey: string,
   difficulty: number = 2
 ): Promise<Block> {
-  // First mine the block
-  const mineResult = await supabase.functions.invoke("pqc-crypto", {
-    body: {
-      action: "mine-block",
-      payload: { index, data: blockData, previousHash, difficulty },
-    },
-  });
+  let nonce = 0;
+  let hash = "";
+  const timestamp = Date.now();
+  const target = "0".repeat(difficulty);
 
-  if (mineResult.error) throw new Error(mineResult.error.message);
+  while (!hash.startsWith(target)) {
+    nonce++;
+    hash = await hashBlock({ index, timestamp, data: blockData, previousHash, nonce });
+    if (nonce > 1_000_000) break;
+  }
 
-  const minedBlock = mineResult.data.block;
+  const messageBytes = new TextEncoder().encode(hash);
+  const signature = ml_dsa65.sign(messageBytes, hexToBytes(privateKey));
 
-  // Then sign it with REAL ML-DSA-65
-  const signResult = await supabase.functions.invoke("pqc-crypto", {
-    body: {
-      action: "sign-block",
-      payload: { blockHash: minedBlock.hash, privateKey },
-    },
-  });
-
-  if (signResult.error) throw new Error(signResult.error.message);
-
-  const fullBlock = {
-    ...minedBlock,
-    signature: signResult.data.signature,
+  return {
+    index,
+    timestamp,
+    data: blockData,
+    previousHash,
+    hash,
+    nonce,
+    signature: bytesToHex(signature),
     signerPublicKey: publicKey,
   };
-
-  // Save to database
-  await supabase.functions.invoke("pqc-crypto", {
-    body: {
-      action: "save-block",
-      payload: { block: fullBlock },
-    },
-  });
-
-  return fullBlock;
 }
 
-// Verify a block's signature with REAL ML-DSA-65
+// Verify a block's signature with ML-DSA-65 (demo chain only)
 export async function verifyBlockSignature(block: Block): Promise<boolean> {
-  const { data, error } = await supabase.functions.invoke("pqc-crypto", {
-    body: {
-      action: "verify-signature",
-      payload: {
-        blockHash: block.hash,
-        signature: block.signature,
-        publicKey: block.signerPublicKey,
-      },
-    },
-  });
-
-  if (error) return false;
-  return data.valid;
+  try {
+    const messageBytes = new TextEncoder().encode(block.hash);
+    const signatureBytes = hexToBytes(block.signature);
+    const publicKeyBytes = hexToBytes(block.signerPublicKey);
+    return ml_dsa65.verify(signatureBytes, messageBytes, publicKeyBytes);
+  } catch {
+    return false;
+  }
 }
 
-// Load the entire chain from database
+// Load the entire chain from localStorage (demo only)
 export async function loadChain(): Promise<Block[]> {
   try {
-    const { data, error } = await supabase.functions.invoke("pqc-crypto", {
-      body: { action: "load-chain" },
-    });
-
-    if (error) {
-      console.error("Load chain error:", error);
-      return [];
-    }
-    return data?.chain || [];
+    const raw = localStorage.getItem(CHAIN_STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as Block[];
   } catch (e) {
-    console.error("Load chain exception:", e);
+    console.error("Load chain error:", e);
     return [];
   }
 }
 
-// Reset the blockchain (clear database)
+// Reset the blockchain (clear local demo chain)
 export async function resetChain(): Promise<void> {
-  const { error } = await supabase.functions.invoke("pqc-crypto", {
-    body: { action: "reset-chain" },
-  });
-
-  if (error) throw new Error(error.message);
+  localStorage.removeItem(CHAIN_STORAGE_KEY);
 }
 
 // Validate the entire chain
@@ -161,8 +163,6 @@ export async function validateChain(chain: Block[]): Promise<{ valid: boolean; e
 
   for (let i = 0; i < chain.length; i++) {
     const currentBlock = chain[i];
-    
-    // Check hash linkage (skip genesis)
     if (i > 0) {
       const previousBlock = chain[i - 1];
       if (currentBlock.previousHash !== previousBlock.hash) {
@@ -170,7 +170,6 @@ export async function validateChain(chain: Block[]): Promise<{ valid: boolean; e
       }
     }
 
-    // Verify PQC signature
     const validSig = await verifyBlockSignature(currentBlock);
     if (!validSig) {
       errors.push(`Block ${i}: Invalid ML-DSA-65 signature`);

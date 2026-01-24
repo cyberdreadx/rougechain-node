@@ -7,7 +7,6 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Conversation, WalletWithPrivateKeys, Message, Wallet } from "@/lib/pqc-messenger";
 import { getMessages, sendMessage, isDemoBot, loadDemoBotWallet, getDemoBotResponse } from "@/lib/pqc-messenger";
-import { supabase } from "@/integrations/supabase/client";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -433,28 +432,12 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
     seenMessageIdsRef.current = new Set();
     setNewMessageIds(new Set());
     loadMessages(true);
-    
-    // Subscribe to realtime updates
-    const channel = supabase
-      .channel(`messages-${conversation.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "encrypted_messages",
-          filter: `conversation_id=eq.${conversation.id}`,
-        },
-        () => {
-          // Reload messages when new one arrives
-          loadMessages(false);
-        }
-      )
-      .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const interval = setInterval(() => {
+      loadMessages(false);
+    }, 3000);
+
+    return () => clearInterval(interval);
   }, [conversation.id]);
 
   // Scroll to bottom on new messages
@@ -530,24 +513,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
           const botWallet = loadDemoBotWallet();
           if (botWallet) {
             try {
-              // Call AI for intelligent response
-              const { data: aiData, error: aiError } = await supabase.functions.invoke("quantum-bot", {
-                body: { 
-                  userMessage: messageText,
-                  conversationContext: messages.slice(-6).map(m => ({
-                    role: m.senderWalletId === wallet.id ? "user" : "assistant",
-                    content: m.plaintext || ""
-                  }))
-                },
-              });
-              
-              let botResponse: string;
-              if (aiError || !aiData?.success) {
-                // Fallback to static response if AI fails
-                botResponse = aiData?.fallbackResponse || getDemoBotResponse();
-              } else {
-                botResponse = aiData.response;
-              }
+              const botResponse = getDemoBotResponse();
               
               const botMsg = await sendMessage(
                 conversation.id,

@@ -22,7 +22,6 @@ import WalletBackup from "@/components/wallet/WalletBackup";
 import { 
   getWalletBalance, 
   getWalletTransactions, 
-  mintTokens,
   getTotalSupply,
   TOTAL_SUPPLY,
   TOKEN_NAME,
@@ -31,8 +30,6 @@ import {
   WalletBalance,
   WalletTransaction
 } from "@/lib/pqc-wallet";
-import { loadChain, createGenesisBlock } from "@/lib/pqc-blockchain";
-import { supabase } from "@/integrations/supabase/client";
 import { createWalletViaNode } from "@/lib/node-api";
 import { NETWORK_STORAGE_KEY, getNetworkLabel, getNodeApiBaseUrl } from "@/lib/network";
 import SendTokensDialog from "@/components/wallet/SendTokensDialog";
@@ -197,24 +194,10 @@ const Wallet = () => {
       let signingPublicKey: string;
       let signingPrivateKey: string;
       
-      try {
-        const nodeWallet = await createWalletViaNode();
-        signingPublicKey = nodeWallet.publicKey;
-        signingPrivateKey = nodeWallet.privateKey;
-        toast.info("Wallet created via node API");
-      } catch (nodeError) {
-        // Fallback to Supabase if node API unavailable (for local dev)
-        console.log("Node API unavailable, trying Supabase...", nodeError);
-        const { data, error } = await supabase.functions.invoke("pqc-crypto", {
-          body: { action: "create-wallet", payload: { displayName: "My Wallet" } },
-        });
-
-        if (error) throw new Error(error.message);
-        if (!data.success) throw new Error(data.error || "Failed to create wallet");
-        
-        signingPublicKey = data.wallet.signingPublicKey;
-        signingPrivateKey = data.privateKeys.signingPrivateKey;
-      }
+      const nodeWallet = await createWalletViaNode();
+      signingPublicKey = nodeWallet.publicKey;
+      signingPrivateKey = nodeWallet.privateKey;
+      toast.info("Wallet created via node API");
 
       // For now, create a simplified wallet (just signing keys for blockchain)
       // TODO: Add encryption keys for messaging if needed
@@ -303,26 +286,8 @@ const Wallet = () => {
           throw new Error(errorMsg);
         }
       } catch (nodeError) {
-        // If node API fails, try the old mintTokens method as fallback
-        console.warn("[Faucet] Node API faucet failed, trying fallback method:", nodeError);
-        
-        // Check if chain exists (for fallback to Supabase)
-        const chain = await loadChain();
-        if (chain.length === 0) {
-          toast.info("Initializing blockchain first...");
-          await createGenesisBlock();
-        }
-
-        await mintTokens(
-          wallet.signingPrivateKey,
-          wallet.signingPublicKey,
-          wallet.signingPublicKey,
-          10000,
-          "XRGE"
-        );
-        
-        toast.success("🎉 Claimed 10,000 XRGE from faucet!");
-        await refreshWalletData();
+        console.warn("[Faucet] Node API faucet failed:", nodeError);
+        throw nodeError;
       }
     } catch (error) {
       console.error("[Faucet] Final error:", error);

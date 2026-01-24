@@ -1,4 +1,0 @@
-project_id = "umlgiteybthpgyitemaw"
-
-[functions.pqc-crypto]
-verify_jwt = false

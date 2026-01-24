@@ -2,6 +2,7 @@ import http from "node:http";
 import { L1Node, defaultDataDir } from "./node";
 import { encodeTxV1 } from "./codec";
 import { sha256, bytesToHex, hexToBytes } from "./crypto/hash";
+import { MessengerStore } from "./storage/messenger-store";
 
 function getArg(flag: string): string | null {
   const idx = process.argv.indexOf(flag);
@@ -43,6 +44,7 @@ async function main() {
   const name = getArg("--name") ?? `node-${port}`;
   const chainId = getArg("--chain") ?? "rougechain-devnet-1";
   const advertiseHost = getArg("--advertise") ?? undefined;
+  const dataDir = defaultDataDir(name);
 
   const node = new L1Node({
     listenHost: host,
@@ -50,7 +52,7 @@ async function main() {
     advertiseHost,
     peers,
     mine,
-    dataDir: defaultDataDir(name),
+    dataDir,
     chain: {
       chainId,
       genesisTime: Date.now(),
@@ -59,6 +61,8 @@ async function main() {
   });
 
   await node.start();
+  const messengerStore = new MessengerStore(dataDir);
+  await messengerStore.init();
   console.log(`\n✅ RougeChain L1 Node running`);
   console.log(`   Chain ID: ${chainId}`);
   console.log(`   P2P Port: ${port}`);
@@ -80,8 +84,9 @@ async function main() {
     // Set CORS headers for all responses
     setCorsHeaders(req, res);
     res.setHeader("Content-Type", "application/json");
+    const url = new URL(req.url ?? "/", "http://localhost");
 
-    if (req.url === "/api/stats" && req.method === "GET") {
+    if (url.pathname === "/api/stats" && req.method === "GET") {
       const height = await node.getChainHeight();
       const peerCount = node.getPeerCount();
       const feeStats = await node.getFeeStats();
@@ -98,7 +103,7 @@ async function main() {
       return;
     }
 
-    if (req.url === "/api/selection" && req.method === "GET") {
+    if (url.pathname === "/api/selection" && req.method === "GET") {
       const selection = await node.getSelectionInfo();
       res.writeHead(200);
       res.end(JSON.stringify({
@@ -113,7 +118,7 @@ async function main() {
       return;
     }
 
-    if (req.url === "/api/validators" && req.method === "GET") {
+    if (url.pathname === "/api/validators" && req.method === "GET") {
       const set = await node.getValidatorSet();
       res.writeHead(200);
       res.end(JSON.stringify({
@@ -124,7 +129,7 @@ async function main() {
       return;
     }
 
-    if (req.url === "/api/blocks" && req.method === "GET") {
+    if (url.pathname === "/api/blocks" && req.method === "GET") {
       const blocks = await node.getAllBlocks();
       res.writeHead(200);
       res.end(JSON.stringify({ blocks }));
@@ -132,7 +137,7 @@ async function main() {
     }
 
     // Public API: Get transactions (extracted from blocks)
-    if (req.url === "/api/transactions" && req.method === "GET") {
+    if (url.pathname === "/api/transactions" && req.method === "GET") {
       const blocks = await node.getAllBlocks();
       const allTxs: Array<{
         tx: unknown;
@@ -158,7 +163,7 @@ async function main() {
     }
 
     // Public API: Create wallet (generate keypair)
-    if (req.url === "/api/wallet/create" && req.method === "POST") {
+    if (url.pathname === "/api/wallet/create" && req.method === "POST") {
       try {
         const keypair = await node.createWallet();
         res.writeHead(200);
@@ -176,7 +181,7 @@ async function main() {
     }
 
     // Public API: Submit transaction
-    if (req.url === "/api/tx/submit" && req.method === "POST") {
+    if (url.pathname === "/api/tx/submit" && req.method === "POST") {
       let body = "";
       req.on("data", (chunk) => { body += chunk.toString(); });
       req.on("end", async () => {
@@ -214,7 +219,7 @@ async function main() {
       return;
     }
 
-    if (req.url === "/api/stake/submit" && req.method === "POST") {
+    if (url.pathname === "/api/stake/submit" && req.method === "POST") {
       let body = "";
       req.on("data", (chunk) => { body += chunk.toString(); });
       req.on("end", async () => {
@@ -248,7 +253,7 @@ async function main() {
       return;
     }
 
-    if (req.url === "/api/unstake/submit" && req.method === "POST") {
+    if (url.pathname === "/api/unstake/submit" && req.method === "POST") {
       let body = "";
       req.on("data", (chunk) => { body += chunk.toString(); });
       req.on("end", async () => {
@@ -283,7 +288,7 @@ async function main() {
     }
 
     // Public API: Faucet (mint tokens for devnet ONLY - disabled on mainnet)
-    if (req.url === "/api/faucet" && req.method === "POST") {
+    if (url.pathname === "/api/faucet" && req.method === "POST") {
       // SECURITY: Disable faucet on mainnet
       if (!chainId.includes("devnet") && !chainId.includes("testnet")) {
         res.writeHead(403);
@@ -424,14 +429,162 @@ async function main() {
     }
 
     // Public API: Get balance (placeholder - needs state system)
-    if (req.url?.startsWith("/api/balance/") && req.method === "GET") {
-      const publicKey = req.url.split("/api/balance/")[1];
+    if (url.pathname.startsWith("/api/balance/") && req.method === "GET") {
+      const publicKey = url.pathname.split("/api/balance/")[1];
       if (publicKey) {
         const balance = await node.getBalance(publicKey);
         res.writeHead(200);
         res.end(JSON.stringify({ success: true, balance }));
         return;
       }
+    }
+
+    if (url.pathname === "/api/messenger/wallets" && req.method === "GET") {
+      const wallets = await messengerStore.listWallets();
+      res.writeHead(200);
+      res.end(JSON.stringify({ success: true, wallets }));
+      return;
+    }
+
+    if (url.pathname === "/api/messenger/wallets/register" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk.toString(); });
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body) as {
+            id: string;
+            displayName: string;
+            signingPublicKey: string;
+            encryptionPublicKey: string;
+          };
+          const wallet = await messengerStore.registerWallet({
+            id: data.id,
+            displayName: data.displayName,
+            signingPublicKey: data.signingPublicKey,
+            encryptionPublicKey: data.encryptionPublicKey,
+            createdAt: new Date().toISOString(),
+          });
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: true, wallet }));
+        } catch (error) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : "Invalid wallet request",
+          }));
+        }
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/messenger/conversations" && req.method === "GET") {
+      const walletId = url.searchParams.get("walletId");
+      if (!walletId) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: "walletId is required" }));
+        return;
+      }
+      const conversations = await messengerStore.listConversations(walletId);
+      res.writeHead(200);
+      res.end(JSON.stringify({ success: true, conversations }));
+      return;
+    }
+
+    if (url.pathname === "/api/messenger/conversations" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk.toString(); });
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body) as {
+            createdBy: string;
+            participantIds: string[];
+            name?: string;
+            isGroup?: boolean;
+          };
+          const conversation = await messengerStore.createConversation({
+            createdBy: data.createdBy,
+            participantIds: data.participantIds,
+            name: data.name,
+            isGroup: data.isGroup,
+          });
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: true, conversation }));
+        } catch (error) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : "Invalid conversation request",
+          }));
+        }
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/messenger/messages" && req.method === "GET") {
+      const conversationId = url.searchParams.get("conversationId");
+      if (!conversationId) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: "conversationId is required" }));
+        return;
+      }
+      const messages = await messengerStore.listMessages(conversationId);
+      res.writeHead(200);
+      res.end(JSON.stringify({ success: true, messages }));
+      return;
+    }
+
+    if (url.pathname === "/api/messenger/messages" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk.toString(); });
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body) as {
+            conversationId: string;
+            senderWalletId: string;
+            encryptedContent: string;
+            signature: string;
+            selfDestruct: boolean;
+            destructAfterSeconds?: number;
+          };
+          const message = await messengerStore.addMessage({
+            conversationId: data.conversationId,
+            senderWalletId: data.senderWalletId,
+            encryptedContent: data.encryptedContent,
+            signature: data.signature,
+            selfDestruct: data.selfDestruct,
+            destructAfterSeconds: data.destructAfterSeconds,
+          });
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: true, message }));
+        } catch (error) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : "Invalid message request",
+          }));
+        }
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/messenger/messages/read" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk.toString(); });
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body) as { messageId: string };
+          const message = await messengerStore.markMessageRead(data.messageId);
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: true, message }));
+        } catch (error) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : "Invalid read request",
+          }));
+        }
+      });
+      return;
     }
 
     res.writeHead(404);

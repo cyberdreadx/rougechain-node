@@ -1,4 +1,6 @@
-import { supabase } from "@/integrations/supabase/client";
+import { getNodeApiBaseUrl } from "@/lib/network";
+import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
+import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 
 export interface Wallet {
   id: string;
@@ -43,6 +45,7 @@ const WALLET_STORAGE_KEY = "pqc_messenger_wallet";
 const DEMO_BOT_STORAGE_KEY = "pqc_demo_bot_wallet";
 const SENT_MESSAGES_KEY = "pqc_sent_messages";
 const PRIVACY_SETTINGS_KEY = "pqc_privacy_settings";
+const MESSENGER_API_PREFIX = "/messenger";
 
 // Privacy settings interface
 export interface PrivacySettings {
@@ -141,38 +144,160 @@ export function clearLocalWallet(): void {
   localStorage.removeItem(WALLET_STORAGE_KEY);
 }
 
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+
+function getMessengerApiBase(): string | null {
+  const apiBase = getNodeApiBaseUrl();
+  return apiBase || null;
+}
+
+async function registerWalletOnNode(wallet: Wallet): Promise<void> {
+  const apiBase = getMessengerApiBase();
+  if (!apiBase) return;
+  await fetch(`${apiBase}${MESSENGER_API_PREFIX}/wallets/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: wallet.id,
+      displayName: wallet.displayName,
+      signingPublicKey: wallet.signingPublicKey,
+      encryptionPublicKey: wallet.encryptionPublicKey,
+    }),
+  });
+}
+
+async function encryptMessage(
+  plaintext: string,
+  recipientEncryptionPublicKey: string,
+  senderSigningPrivateKey: string
+): Promise<{ encryptedPackage: string; signature: string }> {
+  const recipientPubKeyBytes = hexToBytes(recipientEncryptionPublicKey);
+  const { cipherText, sharedSecret } = ml_kem768.encapsulate(recipientPubKeyBytes);
+
+  const keyBuffer = new ArrayBuffer(32);
+  new Uint8Array(keyBuffer).set(sharedSecret.slice(0, 32));
+
+  const aesKey = await crypto.subtle.importKey(
+    "raw",
+    keyBuffer,
+    { name: "AES-GCM" },
+    false,
+    ["encrypt"]
+  );
+
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plaintextBytes = new TextEncoder().encode(plaintext);
+  const encryptedBytes = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    aesKey,
+    plaintextBytes
+  );
+
+  const senderPrivKeyBytes = hexToBytes(senderSigningPrivateKey);
+  const signature = ml_dsa65.sign(plaintextBytes, senderPrivKeyBytes);
+
+  const encryptedData = {
+    kemCipherText: bytesToHex(cipherText),
+    iv: bytesToHex(iv),
+    encryptedContent: bytesToHex(new Uint8Array(encryptedBytes)),
+  };
+
+  return {
+    encryptedPackage: JSON.stringify(encryptedData),
+    signature: bytesToHex(signature),
+  };
+}
+
+async function decryptMessage(
+  encryptedPackage: string,
+  recipientEncryptionPrivateKey: string,
+  senderSigningPublicKey: string,
+  signature: string
+): Promise<{ plaintext: string; signatureValid: boolean }> {
+  const encryptedData = JSON.parse(encryptedPackage) as {
+    kemCipherText: string;
+    iv: string;
+    encryptedContent: string;
+  };
+
+  const recipientPrivKeyBytes = hexToBytes(recipientEncryptionPrivateKey);
+  const kemCipherTextBytes = hexToBytes(encryptedData.kemCipherText);
+  const sharedSecret = ml_kem768.decapsulate(kemCipherTextBytes, recipientPrivKeyBytes);
+
+  const keyBuffer = new ArrayBuffer(32);
+  new Uint8Array(keyBuffer).set(sharedSecret.slice(0, 32));
+
+  const aesKey = await crypto.subtle.importKey(
+    "raw",
+    keyBuffer,
+    { name: "AES-GCM" },
+    false,
+    ["decrypt"]
+  );
+
+  const ivBytes = hexToBytes(encryptedData.iv);
+  const contentBytes = hexToBytes(encryptedData.encryptedContent);
+
+  const decryptedBytes = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: ivBytes },
+    aesKey,
+    contentBytes
+  );
+
+  const plaintext = new TextDecoder().decode(decryptedBytes);
+  const senderPubKeyBytes = hexToBytes(senderSigningPublicKey);
+  const signatureBytes = hexToBytes(signature);
+  const plaintextBytes = new TextEncoder().encode(plaintext);
+  const signatureValid = ml_dsa65.verify(signatureBytes, plaintextBytes, senderPubKeyBytes);
+
+  return { plaintext, signatureValid };
+}
+
 // Create a new wallet with ML-DSA-65 + ML-KEM-768 keypairs
 export async function createWallet(displayName: string): Promise<WalletWithPrivateKeys> {
-  const { data, error } = await supabase.functions.invoke("pqc-crypto", {
-    body: { action: "create-wallet", payload: { displayName } },
-  });
-
-  if (error) throw new Error(error.message);
-  if (!data.success) throw new Error(data.error || "Failed to create wallet");
+  const signingSeed = crypto.getRandomValues(new Uint8Array(32));
+  const signingKeypair = ml_dsa65.keygen(signingSeed);
+  const encryptionSeed = crypto.getRandomValues(new Uint8Array(32));
+  const encryptionKeypair = ml_kem768.keygen(encryptionSeed);
 
   const wallet: WalletWithPrivateKeys = {
-    id: data.wallet.id,
-    displayName: data.wallet.displayName,
-    signingPublicKey: data.wallet.signingPublicKey,
-    encryptionPublicKey: data.wallet.encryptionPublicKey,
-    signingPrivateKey: data.privateKeys.signingPrivateKey,
-    encryptionPrivateKey: data.privateKeys.encryptionPrivateKey,
+    id: crypto.randomUUID(),
+    displayName,
+    signingPublicKey: bytesToHex(signingKeypair.publicKey),
+    encryptionPublicKey: bytesToHex(encryptionKeypair.publicKey),
+    signingPrivateKey: bytesToHex(signingKeypair.secretKey),
+    encryptionPrivateKey: bytesToHex(encryptionKeypair.secretKey),
   };
 
   // Save locally
   saveWalletLocally(wallet);
+  try {
+    await registerWalletOnNode(wallet);
+  } catch (error) {
+    console.warn("Failed to register wallet with node:", error);
+  }
 
   return wallet;
 }
 
 // Get all wallets (for finding contacts)
 export async function getWallets(): Promise<Wallet[]> {
-  const { data, error } = await supabase.functions.invoke("pqc-crypto", {
-    body: { action: "get-wallets" },
-  });
-
-  if (error) throw new Error(error.message);
-  return data.wallets || [];
+  const apiBase = getMessengerApiBase();
+  if (!apiBase) return [];
+  const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/wallets`);
+  if (!response.ok) return [];
+  const data = await response.json().catch(() => null);
+  return data?.wallets || [];
 }
 
 // Create or get demo bot wallet
@@ -187,27 +312,28 @@ export async function getOrCreateDemoBot(): Promise<WalletWithPrivateKeys> {
     }
   }
 
-  // Create a new demo bot wallet
-  const { data, error } = await supabase.functions.invoke("pqc-crypto", {
-    body: { action: "create-wallet", payload: { displayName: "🤖 Quantum Bot" } },
-  });
+  const signingSeed = crypto.getRandomValues(new Uint8Array(32));
+  const signingKeypair = ml_dsa65.keygen(signingSeed);
+  const encryptionSeed = crypto.getRandomValues(new Uint8Array(32));
+  const encryptionKeypair = ml_kem768.keygen(encryptionSeed);
 
-  if (error) throw new Error(error.message);
-  if (!data.success) throw new Error(data.error || "Failed to create demo bot");
-
-  const botWallet: WalletWithPrivateKeys = {
-    id: data.wallet.id,
-    displayName: data.wallet.displayName,
-    signingPublicKey: data.wallet.signingPublicKey,
-    encryptionPublicKey: data.wallet.encryptionPublicKey,
-    signingPrivateKey: data.privateKeys.signingPrivateKey,
-    encryptionPrivateKey: data.privateKeys.encryptionPrivateKey,
+  const saved: WalletWithPrivateKeys = {
+    id: "demo-bot",
+    displayName: "🤖 Quantum Bot",
+    signingPublicKey: bytesToHex(signingKeypair.publicKey),
+    encryptionPublicKey: bytesToHex(encryptionKeypair.publicKey),
+    signingPrivateKey: bytesToHex(signingKeypair.secretKey),
+    encryptionPrivateKey: bytesToHex(encryptionKeypair.secretKey),
   };
 
   // Store the bot wallet locally so it can respond
-  localStorage.setItem(DEMO_BOT_STORAGE_KEY, JSON.stringify(botWallet));
-
-  return botWallet;
+  localStorage.setItem(DEMO_BOT_STORAGE_KEY, JSON.stringify(saved));
+  try {
+    await registerWalletOnNode(saved);
+  } catch (error) {
+    console.warn("Failed to register demo bot with node:", error);
+  }
+  return saved;
 }
 
 // Load demo bot wallet
@@ -237,122 +363,34 @@ export async function createConversation(
   myWalletId: string,
   recipientWalletId: string
 ): Promise<Conversation> {
-  // Check if conversation already exists
-  const { data: existing } = await supabase
-    .from("conversation_participants")
-    .select("conversation_id")
-    .eq("wallet_id", myWalletId);
-
-  if (existing) {
-    for (const p of existing) {
-      const { data: otherParticipant } = await supabase
-        .from("conversation_participants")
-        .select("wallet_id")
-        .eq("conversation_id", p.conversation_id)
-        .eq("wallet_id", recipientWalletId)
-        .single();
-
-      if (otherParticipant) {
-        // Conversation already exists
-        const { data: conv } = await supabase
-          .from("conversations")
-          .select("*")
-          .eq("id", p.conversation_id)
-          .single();
-        
-        if (conv && !conv.is_group) {
-          return {
-            id: conv.id,
-            name: conv.name,
-            isGroup: conv.is_group,
-            createdBy: conv.created_by,
-            createdAt: conv.created_at,
-          };
-        }
-      }
-    }
+  const apiBase = getMessengerApiBase();
+  if (!apiBase) {
+    throw new Error("Node API is not configured");
   }
-
-  // Create new conversation
-  const { data: conv, error: convError } = await supabase
-    .from("conversations")
-    .insert({
-      is_group: false,
-      created_by: myWalletId,
-    })
-    .select()
-    .single();
-
-  if (convError) throw new Error(convError.message);
-
-  // Add participants
-  await supabase.from("conversation_participants").insert([
-    { conversation_id: conv.id, wallet_id: myWalletId },
-    { conversation_id: conv.id, wallet_id: recipientWalletId },
-  ]);
-
-  return {
-    id: conv.id,
-    name: conv.name,
-    isGroup: conv.is_group,
-    createdBy: conv.created_by,
-    createdAt: conv.created_at,
-  };
+  const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/conversations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      createdBy: myWalletId,
+      participantIds: [myWalletId, recipientWalletId],
+      isGroup: false,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error("Failed to create conversation");
+  }
+  const data = await response.json().catch(() => null);
+  return data?.conversation as Conversation;
 }
 
 // Get conversations for a wallet
 export async function getConversations(walletId: string): Promise<Conversation[]> {
-  const { data: participations, error } = await supabase
-    .from("conversation_participants")
-    .select(`
-      conversation_id,
-      conversations (
-        id,
-        name,
-        is_group,
-        created_by,
-        created_at
-      )
-    `)
-    .eq("wallet_id", walletId);
-
-  if (error) throw new Error(error.message);
-
-  const conversations: Conversation[] = [];
-  
-  for (const p of participations || []) {
-    const conv = p.conversations as any;
-    if (conv) {
-      // Get other participants
-      const { data: participants } = await supabase
-        .from("conversation_participants")
-        .select(`
-          wallets (
-            id,
-            display_name,
-            signing_public_key,
-            encryption_public_key
-          )
-        `)
-        .eq("conversation_id", conv.id);
-
-      conversations.push({
-        id: conv.id,
-        name: conv.name,
-        isGroup: conv.is_group,
-        createdBy: conv.created_by,
-        createdAt: conv.created_at,
-        participants: (participants || []).map((pt: any) => ({
-          id: pt.wallets.id,
-          displayName: pt.wallets.display_name,
-          signingPublicKey: pt.wallets.signing_public_key,
-          encryptionPublicKey: pt.wallets.encryption_public_key,
-        })),
-      });
-    }
-  }
-
-  return conversations;
+  const apiBase = getMessengerApiBase();
+  if (!apiBase) return [];
+  const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/conversations?walletId=${encodeURIComponent(walletId)}`);
+  if (!response.ok) return [];
+  const data = await response.json().catch(() => null);
+  return data?.conversations || [];
 }
 
 // Send an encrypted message
@@ -364,51 +402,53 @@ export async function sendMessage(
   selfDestruct: boolean = false,
   destructAfterSeconds?: number
 ): Promise<Message> {
-  // Encrypt the message
-  const { data: encryptData, error: encryptError } = await supabase.functions.invoke("pqc-crypto", {
-    body: {
-      action: "encrypt-message",
-      payload: {
-        plaintext,
-        recipientEncryptionPublicKey,
-        senderSigningPrivateKey: senderWallet.signingPrivateKey,
-      },
-    },
+  const apiBase = getMessengerApiBase();
+  if (!apiBase) {
+    throw new Error("Node API is not configured");
+  }
+
+  const encryptData = await encryptMessage(
+    plaintext,
+    recipientEncryptionPublicKey,
+    senderWallet.signingPrivateKey
+  );
+
+  const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      conversationId,
+      senderWalletId: senderWallet.id,
+      encryptedContent: encryptData.encryptedPackage,
+      signature: encryptData.signature,
+      selfDestruct,
+      destructAfterSeconds,
+    }),
   });
 
-  if (encryptError) throw new Error(encryptError.message);
-  if (!encryptData.success) throw new Error(encryptData.error || "Encryption failed");
+  if (!response.ok) {
+    throw new Error("Failed to send message");
+  }
 
-  // Store encrypted message
-  const { data: msg, error: msgError } = await supabase
-    .from("encrypted_messages")
-    .insert({
-      conversation_id: conversationId,
-      sender_wallet_id: senderWallet.id,
-      encrypted_content: encryptData.encryptedPackage,
-      signature: encryptData.signature,
-      self_destruct: selfDestruct,
-      destruct_after_seconds: destructAfterSeconds,
-    })
-    .select()
-    .single();
+  const data = await response.json().catch(() => null);
+  const msg = data?.message;
+  if (!msg) {
+    throw new Error("Message was not stored");
+  }
 
-  if (msgError) throw new Error(msgError.message);
-
-  // Store the plaintext locally so we can display it later
   storeSentMessage(msg.id, plaintext);
 
   return {
     id: msg.id,
-    conversationId: msg.conversation_id,
-    senderWalletId: msg.sender_wallet_id,
-    encryptedContent: msg.encrypted_content,
+    conversationId: msg.conversationId,
+    senderWalletId: msg.senderWalletId,
+    encryptedContent: msg.encryptedContent,
     signature: msg.signature,
-    selfDestruct: msg.self_destruct,
-    destructAfterSeconds: msg.destruct_after_seconds,
-    readAt: msg.read_at,
-    createdAt: msg.created_at,
-    plaintext, // We know the plaintext since we sent it
+    selfDestruct: msg.selfDestruct,
+    destructAfterSeconds: msg.destructAfterSeconds,
+    readAt: msg.readAt,
+    createdAt: msg.createdAt,
+    plaintext,
     signatureValid: true,
   };
 }
@@ -419,65 +459,42 @@ export async function getMessages(
   recipientWallet: WalletWithPrivateKeys,
   participants: Wallet[]
 ): Promise<Message[]> {
-  const { data: messages, error } = await supabase
-    .from("encrypted_messages")
-    .select("*")
-    .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: true });
+  const apiBase = getMessengerApiBase();
+  if (!apiBase) return [];
+  const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/messages?conversationId=${encodeURIComponent(conversationId)}`);
+  if (!response.ok) return [];
 
-  if (error) throw new Error(error.message);
-
+  const data = await response.json().catch(() => null);
+  const messages = Array.isArray(data?.messages) ? data.messages : [];
   const decryptedMessages: Message[] = [];
 
-  for (const msg of messages || []) {
-    const sender = participants.find(p => p.id === msg.sender_wallet_id);
-    
-    // Check self-destruct
-    if (msg.self_destruct && msg.read_at && msg.destruct_after_seconds) {
-      const readTime = new Date(msg.read_at).getTime();
-      const now = Date.now();
-      const ttl = msg.destruct_after_seconds * 1000;
-      if (now - readTime > ttl) {
-        // Message expired, delete it
-        await supabase.from("encrypted_messages").delete().eq("id", msg.id);
-        continue;
-      }
-    }
+  for (const msg of messages) {
+    const sender = participants.find(p => p.id === msg.senderWalletId);
 
     let plaintext = "[Unable to decrypt]";
     let signatureValid = false;
 
-    // Only decrypt if we're the recipient (sender can see their own messages)
-    if (msg.sender_wallet_id === recipientWallet.id) {
-      // We sent this message - try to get plaintext from local storage
+    if (msg.senderWalletId === recipientWallet.id) {
       const storedPlaintext = getSentMessage(msg.id);
       plaintext = storedPlaintext || "[Your encrypted message]";
       signatureValid = true;
     } else if (sender) {
       try {
-        const { data: decryptData } = await supabase.functions.invoke("pqc-crypto", {
-          body: {
-            action: "decrypt-message",
-            payload: {
-              encryptedPackage: msg.encrypted_content,
-              recipientEncryptionPrivateKey: recipientWallet.encryptionPrivateKey,
-              senderSigningPublicKey: sender.signingPublicKey,
-              signature: msg.signature,
-            },
-          },
-        });
+        const decryptData = await decryptMessage(
+          msg.encryptedContent,
+          recipientWallet.encryptionPrivateKey,
+          sender.signingPublicKey,
+          msg.signature
+        );
+        plaintext = decryptData.plaintext;
+        signatureValid = decryptData.signatureValid;
 
-        if (decryptData?.success) {
-          plaintext = decryptData.plaintext;
-          signatureValid = decryptData.signatureValid;
-
-          // Mark as read for self-destruct
-          if (msg.self_destruct && !msg.read_at) {
-            await supabase
-              .from("encrypted_messages")
-              .update({ read_at: new Date().toISOString() })
-              .eq("id", msg.id);
-          }
+        if (msg.selfDestruct && !msg.readAt) {
+          await fetch(`${apiBase}${MESSENGER_API_PREFIX}/messages/read`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ messageId: msg.id }),
+          });
         }
       } catch (e) {
         console.error("Decryption error:", e);
@@ -486,14 +503,14 @@ export async function getMessages(
 
     decryptedMessages.push({
       id: msg.id,
-      conversationId: msg.conversation_id,
-      senderWalletId: msg.sender_wallet_id,
-      encryptedContent: msg.encrypted_content,
+      conversationId: msg.conversationId,
+      senderWalletId: msg.senderWalletId,
+      encryptedContent: msg.encryptedContent,
       signature: msg.signature,
-      selfDestruct: msg.self_destruct,
-      destructAfterSeconds: msg.destruct_after_seconds,
-      readAt: msg.read_at,
-      createdAt: msg.created_at,
+      selfDestruct: msg.selfDestruct,
+      destructAfterSeconds: msg.destructAfterSeconds,
+      readAt: msg.readAt,
+      createdAt: msg.createdAt,
       plaintext,
       signatureValid,
       senderDisplayName: sender?.displayName || "Unknown",

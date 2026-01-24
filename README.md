@@ -48,7 +48,6 @@ npm run l1:node:dev -- --peers "127.0.0.1:4101,127.0.0.1:4102" --mine
 
 - `node/` - L1 blockchain node daemon (Node.js)
 - `src/` - React frontend application
-- `supabase/` - Supabase functions and migrations (legacy)
 
 ## Technologies
 

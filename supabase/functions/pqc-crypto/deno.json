@@ -1,6 +1,0 @@
-{
-  "imports": {
-    "@noble/post-quantum/ml-dsa": "npm:@noble/post-quantum@0.2.1/ml-dsa",
-    "@noble/post-quantum/ml-kem": "npm:@noble/post-quantum@0.2.1/ml-kem"
-  }
-}

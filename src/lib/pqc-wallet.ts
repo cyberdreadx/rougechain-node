@@ -1,4 +1,4 @@
-import { Block, loadChain, mineBlock } from "./pqc-blockchain";
+import { Block } from "./pqc-blockchain";
 import { getActiveNetwork, getNodeApiBaseUrl } from "./network";
 
 // RougeChain constants
@@ -98,12 +98,11 @@ export function parseBlockTransaction(block: Block): Transaction | null {
 // Get all transactions from the chain
 // Now supports both node API (for public deployment) and local Supabase (for dev)
 export async function getAllTransactions(): Promise<{ tx: Transaction; block: Block }[]> {
-  // Try node API first (for public deployment)
   const NODE_API_URL = getNodeApiBaseUrl();
   if (!NODE_API_URL) {
     return [];
   }
-  
+
   try {
     const res = await fetch(`${NODE_API_URL}/blocks`);
     if (res.ok) {
@@ -122,11 +121,10 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
         proposerSig: string;
         hash: string;
       }> };
-      
+
       const transactions: { tx: Transaction; block: Block }[] = [];
-      
+
       for (const blockV1 of data.blocks) {
-        // Convert each transaction in the block
         for (const txV1 of blockV1.txs) {
           if (txV1.type === "transfer") {
             const payload = txV1.payload as { toPubKeyHex?: string; amount?: number; faucet?: boolean };
@@ -142,7 +140,7 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
               fee: txV1.fee,
               feeRecipient: blockV1.header.proposerPubKey,
             };
-            
+
             const block: Block = {
               index: blockV1.header.height,
               timestamp: blockV1.header.time,
@@ -153,35 +151,24 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
               signature: blockV1.proposerSig,
               signerPublicKey: blockV1.header.proposerPubKey,
             };
-            
+
             transactions.push({ tx, block });
           }
         }
       }
-      
+
       console.log(`[Wallet] Loaded ${transactions.length} transactions from ${data.blocks.length} blocks`);
-      
+
       return transactions;
     }
   } catch (nodeError) {
     if (getActiveNetwork() === "mainnet") {
       return [];
     }
-    console.log("Node API unavailable, falling back to local...", nodeError);
+    console.log("Node API unavailable.", nodeError);
   }
 
-  // Fallback to local Supabase method (for dev)
-  const chain = await loadChain();
-  const transactions: { tx: Transaction; block: Block }[] = [];
-
-  for (const block of chain) {
-    const tx = parseBlockTransaction(block);
-    if (tx) {
-      transactions.push({ tx, block });
-    }
-  }
-
-  return transactions;
+  return [];
 }
 
 // Get all created tokens
@@ -419,59 +406,10 @@ export async function sendTransaction(
       }
     }
   } catch (nodeError) {
-    console.log("Node API unavailable, falling back to local...", nodeError);
+    console.log("Node API unavailable.", nodeError);
   }
 
-  // Fallback to local Supabase method (for dev)
-  const chain = await loadChain();
-  const lastBlock = chain[chain.length - 1];
-  
-  if (!lastBlock) {
-    throw new Error("Blockchain not initialized");
-  }
-
-  const fee = calculateFee("transfer");
-  
-  // Check balance (need amount + fee if sending XRGE, or amount + separate XRGE for fee)
-  const balances = await getWalletBalance(fromPublicKey);
-  const tokenBalance = balances.find(b => b.symbol === symbol)?.balance || 0;
-  const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
-
-  if (symbol === "XRGE") {
-    if (tokenBalance < amount + fee) {
-      throw new Error(`Insufficient XRGE. Need ${amount + fee} XRGE (${amount} + ${fee} fee)`);
-    }
-  } else {
-    if (tokenBalance < amount) {
-      throw new Error(`Insufficient ${symbol} balance`);
-    }
-    if (xrgeBalance < fee) {
-      throw new Error(`Insufficient XRGE for fee. Need ${fee} XRGE`);
-    }
-  }
-
-  const transaction: Transaction = {
-    type: "transfer",
-    from: fromPublicKey,
-    to: toPublicKey,
-    amount,
-    symbol,
-    timestamp: Date.now(),
-    memo,
-    fee,
-    feeRecipient: lastBlock.signerPublicKey, // Fee goes to last block miner
-  };
-
-  const newBlock = await mineBlock(
-    lastBlock.index + 1,
-    JSON.stringify(transaction),
-    lastBlock.hash,
-    fromPrivateKey,
-    fromPublicKey,
-    2
-  );
-
-  return newBlock;
+  throw new Error("Node API is unavailable. Start a node with --mine to submit transactions.");
 }
 
 // Create a new token
@@ -483,63 +421,7 @@ export async function createToken(
   totalSupply: number,
   decimals: number = 18
 ): Promise<{ block: Block; tokenAddress: string }> {
-  const chain = await loadChain();
-  const lastBlock = chain[chain.length - 1];
-  
-  if (!lastBlock) {
-    throw new Error("Blockchain not initialized. Create genesis block first.");
-  }
-
-  // Check if symbol already exists
-  const existingToken = await getTokenBySymbol(tokenSymbol);
-  if (existingToken) {
-    throw new Error(`Token symbol ${tokenSymbol} already exists`);
-  }
-
-  // Check XRGE balance for fee
-  const fee = calculateFee("create_token");
-  const balances = await getWalletBalance(creatorPublicKey);
-  const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
-  
-  if (xrgeBalance < fee) {
-    throw new Error(`Insufficient XRGE for token creation. Need ${fee} XRGE`);
-  }
-
-  // Generate a preliminary token address (will be finalized with block hash)
-  const tempAddress = `xrge:${Date.now().toString(36)}${creatorPublicKey.slice(0, 20)}`;
-
-  const transaction: Transaction = {
-    type: "create_token",
-    from: creatorPublicKey,
-    to: creatorPublicKey, // Creator receives the initial supply
-    amount: totalSupply,
-    symbol: tokenSymbol,
-    timestamp: Date.now(),
-    fee,
-    feeRecipient: lastBlock.signerPublicKey,
-    tokenData: {
-      name: tokenName,
-      symbol: tokenSymbol,
-      totalSupply,
-      decimals,
-      creatorAddress: creatorPublicKey,
-      tokenAddress: tempAddress, // Will be updated
-    },
-  };
-
-  const newBlock = await mineBlock(
-    lastBlock.index + 1,
-    JSON.stringify(transaction),
-    lastBlock.hash,
-    creatorPrivateKey,
-    creatorPublicKey,
-    2
-  );
-
-  // Derive final token address from block hash
-  const finalTokenAddress = deriveTokenAddress(newBlock.hash, creatorPublicKey);
-
-  return { block: newBlock, tokenAddress: finalTokenAddress };
+  throw new Error("Token creation is not supported on the node yet.");
 }
 
 // Mint new tokens (faucet functionality) - with fee
@@ -585,50 +467,8 @@ export async function mintTokens(
       }
     }
   } catch (nodeError) {
-    if (getActiveNetwork() === "mainnet") {
-      throw nodeError;
-    }
-    console.log("Node API unavailable for faucet, falling back to local...", nodeError);
+    throw nodeError instanceof Error ? nodeError : new Error("Faucet request failed");
   }
-
-  // Fallback to local Supabase method (for dev)
-  const chain = await loadChain();
-  const lastBlock = chain[chain.length - 1];
-  
-  if (!lastBlock) {
-    throw new Error("Blockchain not initialized. Create genesis block first.");
-  }
-
-  // Only check supply cap for XRGE
-  if (symbol === "XRGE") {
-    const currentSupply = await getTotalSupply(symbol);
-    if (currentSupply + amount > TOTAL_SUPPLY) {
-      const remaining = TOTAL_SUPPLY - currentSupply;
-      throw new Error(`Cannot mint ${amount} ${symbol}. Only ${remaining.toLocaleString()} remaining.`);
-    }
-  }
-
-  const transaction: Transaction = {
-    type: "mint",
-    from: "FAUCET",
-    to: recipientPublicKey,
-    amount,
-    symbol,
-    timestamp: Date.now(),
-    memo: "Token faucet mint",
-    fee: 0, // Faucet mints are free
-  };
-
-  const newBlock = await mineBlock(
-    lastBlock.index + 1,
-    JSON.stringify(transaction),
-    lastBlock.hash,
-    minerPrivateKey,
-    minerPublicKey,
-    2
-  );
-
-  return newBlock;
 }
 
 // Helper functions
