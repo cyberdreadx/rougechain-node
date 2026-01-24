@@ -26,6 +26,15 @@ function parsePeers(raw: string | null): Array<{ host: string; port: number }> {
     .filter((p) => p.host && Number.isFinite(p.port));
 }
 
+function setCorsHeaders(req: http.IncomingMessage, res: http.ServerResponse) {
+  const origin = typeof req.headers.origin === "string" ? req.headers.origin : "*";
+  res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Max-Age", "86400");
+}
+
 async function main() {
   const host = getArg("--host") ?? "127.0.0.1";
   const port = Number(getArg("--port") ?? "4100");
@@ -62,19 +71,14 @@ async function main() {
   const apiServer = http.createServer(async (req, res) => {
     // Handle CORS preflight (OPTIONS) requests
     if (req.method === "OPTIONS") {
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-      res.setHeader("Access-Control-Max-Age", "86400"); // 24 hours
-      res.writeHead(200);
+      setCorsHeaders(req, res);
+      res.writeHead(204);
       res.end();
       return;
     }
     
     // Set CORS headers for all responses
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    setCorsHeaders(req, res);
     res.setHeader("Content-Type", "application/json");
 
     if (req.url === "/api/stats" && req.method === "GET") {
