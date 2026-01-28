@@ -52,15 +52,16 @@ npm run l1:node:dev -- \
   --host 0.0.0.0 \
   --port 4100 \
   --apiPort 5100 \
-  --mine \
-  --blockTimeMs 1000
+  --blockTimeMs 1000 \
+  --light
 ```
 
 **Key flags:**
 - `--host 0.0.0.0`: Listen on all interfaces (not just localhost)
 - `--port 4100`: P2P port for node connections
 - `--apiPort 5100`: HTTP API port for users
-- `--mine`: Enable block production
+- `--light`: Low-resource mode (recommended for lightweight systems)
+- `--mine`: Enable block production (optional)
 
 ### Validator Keys (Required for voting)
 
@@ -72,7 +73,6 @@ npm run l1:node:dev -- \
   --host 0.0.0.0 \
   --port 4100 \
   --apiPort 5100 \
-  --mine \
   --validatorPubKey YOUR_PUBLIC_KEY_HEX \
   --validatorPrivKey YOUR_PRIVATE_KEY_HEX
 ```
@@ -88,7 +88,7 @@ npm run l1:node:dev -- \
   --host 0.0.0.0 \
   --port 4100 \
   --apiPort 5100 \
-  --mine
+  --light
 ```
 
 **Node 2 (Secondary/Validator):**
@@ -117,7 +117,7 @@ pm2 start npm --name "rougechain-node" -- run l1:node:dev -- \
   --host 0.0.0.0 \
   --port 4100 \
   --apiPort 5100 \
-  --mine
+  --light
 
 # Save PM2 config
 pm2 save
@@ -139,7 +139,7 @@ After=network.target
 Type=simple
 User=your-user
 WorkingDirectory=/path/to/quantum-vault
-ExecStart=/usr/bin/npm run l1:node:dev -- --name public-node --host 0.0.0.0 --port 4100 --apiPort 5100 --mine
+ExecStart=/usr/bin/npm run l1:node:dev -- --name public-node --host 0.0.0.0 --port 4100 --apiPort 5100 --light
 Restart=always
 RestartSec=10
 
@@ -153,6 +153,40 @@ sudo systemctl enable rougechain
 sudo systemctl start rougechain
 sudo systemctl status rougechain
 ```
+
+## Step 3.5: Lightweight Mode (Recommended)
+
+For low-resource systems, use the `--light` preset. It caps peers/mempool, reduces log volume, and limits work per block.
+
+```bash
+# Lightweight node (no mining)
+npm run l1:node:dev -- \
+  --name public-node-1 \
+  --host 0.0.0.0 \
+  --port 4100 \
+  --apiPort 5100 \
+  --light
+```
+
+You can also override specific limits:
+
+```bash
+npm run l1:node:dev -- \
+  --name public-node-1 \
+  --host 0.0.0.0 \
+  --port 4100 \
+  --apiPort 5100 \
+  --log-level warn \
+  --max-peers 8 \
+  --max-known-peers 25 \
+  --max-mempool 500 \
+  --max-txs-per-block 50 \
+  --max-pending-blocks 10 \
+  --vote-history 20 \
+  --disable-peer-discovery
+```
+
+Mining is optional. If you want block production, add `--mine`.
 
 ## Step 4: Reverse Proxy (Optional but Recommended)
 

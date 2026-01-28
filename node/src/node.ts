@@ -20,6 +20,8 @@ const MINT_FEE = 1; // 1 XRGE per mint operation
 const JAIL_BLOCKS = 20; // Devnet/testnet jail duration
 const SLASH_DIVISOR = 10n; // 10% of stake
 
+export type LogLevel = "silent" | "error" | "warn" | "info" | "debug";
+
 export interface NodeOptions {
   listenHost: string;
   listenPort: number;
@@ -28,6 +30,14 @@ export interface NodeOptions {
   mine: boolean;
   dataDir: string;
   chain: ChainConfig;
+  maxPeers?: number;
+  maxKnownPeers?: number;
+  maxMempoolSize?: number;
+  maxTxsPerBlock?: number;
+  voteHistoryKeepHeights?: number;
+  maxPendingBlocks?: number;
+  enablePeerDiscovery?: boolean;
+  logLevel?: LogLevel;
   validatorKeys?: {
     publicKeyHex: string;
     secretKeyHex: string;
@@ -64,8 +74,45 @@ export class L1Node {
     this.validatorStore = new ValidatorStateStore(opts.dataDir);
   }
 
+  private shouldLog(level: LogLevel): boolean {
+    const levels: Record<LogLevel, number> = {
+      silent: 0,
+      error: 1,
+      warn: 2,
+      info: 3,
+      debug: 4,
+    };
+    const configured = this.opts.logLevel ?? "info";
+    return levels[configured] >= levels[level];
+  }
+
+  private log(level: LogLevel, ...args: unknown[]): void {
+    if (!this.shouldLog(level)) return;
+    const logger = level === "error"
+      ? console.error
+      : level === "warn"
+      ? console.warn
+      : level === "debug"
+      ? console.debug
+      : console.log;
+    logger(...args);
+  }
+
+  private isPeerDiscoveryEnabled(): boolean {
+    return this.opts.enablePeerDiscovery ?? true;
+  }
+
+  private rememberPeer(ep: PeerEndpoint): void {
+    const key = this.endpointKey(ep);
+    if (this.knownPeers.has(key)) return;
+    if (this.opts.maxKnownPeers && this.knownPeers.size >= this.opts.maxKnownPeers) {
+      return;
+    }
+    this.knownPeers.add(key);
+  }
+
   async start(): Promise<void> {
-    console.log(`[Node ${this.nodeId.slice(0, 8)}] Initializing...`);
+    this.log("info", `[Node ${this.nodeId.slice(0, 8)}] Initializing...`);
     await this.store.init();
     await this.validatorStore.init();
     const tip = await this.store.getTip();
@@ -73,31 +120,31 @@ export class L1Node {
     this.finalizedHeight = tip.height;
     this.keys = await this.loadOrCreateKeys();
     if (this.opts.validatorKeys) {
-      console.log(`[Node ${this.nodeId.slice(0, 8)}] Using provided validator keys`);
+      this.log("info", `[Node ${this.nodeId.slice(0, 8)}] Using provided validator keys`);
     }
     // Validate keys after generation
     if (this.keys) {
       const secretKeyBytes = this.keys.secretKeyHex.length / 2; // Hex is 2 chars per byte
       const publicKeyBytes = this.keys.publicKeyHex.length / 2;
-      console.log(`[Node ${this.nodeId.slice(0, 8)}] Generated PQC keypair (ML-DSA-65)`);
-      console.log(`[Node ${this.nodeId.slice(0, 8)}] Secret key: ${this.keys.secretKeyHex.length} hex chars = ${secretKeyBytes} bytes (expected: 4032)`);
-      console.log(`[Node ${this.nodeId.slice(0, 8)}] Public key: ${this.keys.publicKeyHex.length} hex chars = ${publicKeyBytes} bytes`);
+      this.log("info", `[Node ${this.nodeId.slice(0, 8)}] Generated PQC keypair (ML-DSA-65)`);
+      this.log("debug", `[Node ${this.nodeId.slice(0, 8)}] Secret key: ${this.keys.secretKeyHex.length} hex chars = ${secretKeyBytes} bytes (expected: 4032)`);
+      this.log("debug", `[Node ${this.nodeId.slice(0, 8)}] Public key: ${this.keys.publicKeyHex.length} hex chars = ${publicKeyBytes} bytes`);
       if (secretKeyBytes !== 4032) {
-        console.error(`[Node ${this.nodeId.slice(0, 8)}] ⚠️  WARNING: Secret key has wrong length! Expected 4032 bytes, got ${secretKeyBytes}`);
+        this.log("warn", `[Node ${this.nodeId.slice(0, 8)}] ⚠️  WARNING: Secret key has wrong length! Expected 4032 bytes, got ${secretKeyBytes}`);
       }
     }
 
     await this.startServer();
-    console.log(`[Node ${this.nodeId.slice(0, 8)}] Listening on ${this.opts.listenHost}:${this.opts.listenPort}`);
+    this.log("info", `[Node ${this.nodeId.slice(0, 8)}] Listening on ${this.opts.listenHost}:${this.opts.listenPort}`);
     
     await this.connectToSeeds();
-    console.log(`[Node ${this.nodeId.slice(0, 8)}] Connected to ${this.peers.size} peer(s)`);
+    this.log("info", `[Node ${this.nodeId.slice(0, 8)}] Connected to ${this.peers.size} peer(s)`);
 
     if (this.opts.mine) {
-      console.log(`[Node ${this.nodeId.slice(0, 8)}] Mining enabled (block time: ${this.opts.chain.blockTimeMs}ms)`);
+      this.log("info", `[Node ${this.nodeId.slice(0, 8)}] Mining enabled (block time: ${this.opts.chain.blockTimeMs}ms)`);
       this.startMiningLoop();
     } else {
-      console.log(`[Node ${this.nodeId.slice(0, 8)}] Running as follower (not mining)`);
+      this.log("info", `[Node ${this.nodeId.slice(0, 8)}] Running as follower (not mining)`);
     }
   }
 
@@ -141,12 +188,17 @@ export class L1Node {
   }
 
   private attachPeer(peer: TcpPeer) {
+    if (this.opts.maxPeers && this.peers.size >= this.opts.maxPeers) {
+      this.log("warn", `[Node ${this.nodeId.slice(0, 8)}] ⚠️  Max peers reached (${this.opts.maxPeers}). Rejecting connection.`);
+      peer.close();
+      return;
+    }
     this.peers.add(peer);
-    console.log(`[Node ${this.nodeId.slice(0, 8)}] Peer connected (total: ${this.peers.size})`);
+    this.log("info", `[Node ${this.nodeId.slice(0, 8)}] Peer connected (total: ${this.peers.size})`);
     peer.on("close", () => {
       this.peers.delete(peer);
       this.peerEndpoints.delete(peer);
-      console.log(`[Node ${this.nodeId.slice(0, 8)}] Peer disconnected (total: ${this.peers.size})`);
+      this.log("info", `[Node ${this.nodeId.slice(0, 8)}] Peer disconnected (total: ${this.peers.size})`);
     });
     peer.on("error", () => void 0);
     peer.on("message", (msg) => void this.onMessage(peer, msg));
@@ -172,9 +224,11 @@ export class L1Node {
         if (msg.chainId !== this.opts.chain.chainId) return;
         const advertised = this.getEndpointFromHello(peer, msg);
         if (advertised) {
-          this.knownPeers.add(this.endpointKey(advertised));
           this.peerEndpoints.set(peer, advertised);
-          void this.connectToPeer(advertised);
+          if (this.isPeerDiscoveryEnabled()) {
+            this.rememberPeer(advertised);
+            void this.connectToPeer(advertised);
+          }
         }
         const tip = await this.store.getTip();
         if (msg.height > tip.height) {
@@ -182,7 +236,9 @@ export class L1Node {
         } else if (msg.height < tip.height) {
           peer.send({ type: "TIP", height: tip.height, hash: tip.hash });
         }
-        peer.send({ type: "PEERS", peers: this.getKnownPeers() });
+        if (this.isPeerDiscoveryEnabled()) {
+          peer.send({ type: "PEERS", peers: this.getKnownPeers() });
+        }
         return;
       }
       case "GET_TIP": {
@@ -224,7 +280,9 @@ export class L1Node {
         return;
       }
       case "PEERS": {
-        for (const ep of msg.peers) {
+        if (!this.isPeerDiscoveryEnabled()) return;
+        const maxPeersToConnect = this.opts.maxKnownPeers ?? msg.peers.length;
+        for (const ep of msg.peers.slice(0, maxPeersToConnect)) {
           void this.connectToPeer(ep);
         }
         return;
@@ -240,6 +298,9 @@ export class L1Node {
   }
 
   private async connectToPeer(ep: PeerEndpoint): Promise<void> {
+    if (this.opts.maxPeers && this.peers.size >= this.opts.maxPeers) {
+      return;
+    }
     const key = this.endpointKey(ep);
     if (this.isSelfEndpoint(ep)) return;
     if (this.knownPeers.has(key)) {
@@ -247,7 +308,7 @@ export class L1Node {
     }
     try {
       const peer = await TcpPeer.connect(ep);
-      this.knownPeers.add(key);
+      this.rememberPeer(ep);
       this.peerEndpoints.set(peer, ep);
       this.attachPeer(peer);
     } catch {
@@ -365,7 +426,8 @@ export class L1Node {
       history.precommitVoters.add(vote.voterPubKey);
     }
     this.voteHistory.set(height, history);
-    const pruneBefore = Math.max(0, height - 100);
+    const keepHeights = this.opts.voteHistoryKeepHeights ?? 100;
+    const pruneBefore = Math.max(0, height - keepHeights);
     for (const entry of this.voteHistory.keys()) {
       if (entry < pruneBefore) {
         this.voteHistory.delete(entry);
@@ -467,7 +529,8 @@ export class L1Node {
       this.mempool.delete(id);
     }
     const totalFees = block.txs.reduce((sum, tx) => sum + tx.fee, 0);
-    console.log(
+    this.log(
+      "info",
       `[Node ${this.nodeId.slice(0, 8)}] ✅ Finalized block #${block.header.height} (${block.txs.length} txs, ${totalFees.toFixed(2)} XRGE fees, hash: ${block.hash.slice(0, 16)}...)`
     );
   }
@@ -492,18 +555,25 @@ export class L1Node {
 
   private async acceptTx(tx: TxV1): Promise<boolean> {
     if (tx.version !== 1) {
-      console.warn(`[Node ${this.nodeId.slice(0, 8)}] ⚠️  Rejected tx: invalid version`);
+      this.log("warn", `[Node ${this.nodeId.slice(0, 8)}] ⚠️  Rejected tx: invalid version`);
       return false;
     }
     const ok = await pqcVerify(tx.fromPubKey, encodeTxV1(tx), tx.sig);
     if (!ok) {
-      console.warn(`[Node ${this.nodeId.slice(0, 8)}] ⚠️  Rejected tx: invalid signature`);
+      this.log("warn", `[Node ${this.nodeId.slice(0, 8)}] ⚠️  Rejected tx: invalid signature`);
       return false;
     }
     const id = bytesToHex(sha256(encodeTxV1(tx)));
     if (!this.mempool.has(id)) {
+      if (this.opts.maxMempoolSize && this.mempool.size >= this.opts.maxMempoolSize) {
+        const oldestId = this.mempool.keys().next().value as string | undefined;
+        if (oldestId) {
+          this.mempool.delete(oldestId);
+        }
+        this.log("warn", `[Node ${this.nodeId.slice(0, 8)}] ⚠️  Mempool full, evicted oldest tx`);
+      }
       this.mempool.set(id, tx);
-      console.log(`[Node ${this.nodeId.slice(0, 8)}] ✅ Added tx to mempool (id: ${id.slice(0, 16)}..., mempool: ${this.mempool.size})`);
+      this.log("debug", `[Node ${this.nodeId.slice(0, 8)}] ✅ Added tx to mempool (id: ${id.slice(0, 16)}..., mempool: ${this.mempool.size})`);
     }
     return true;
   }
@@ -548,7 +618,7 @@ export class L1Node {
     }
     const activeValidators = await this.getActiveValidatorCount();
     if (this.peers.size === 0 || activeValidators <= 1) {
-      console.warn(`[Node ${this.nodeId.slice(0, 8)}] ⚠️  Finalizing block #${block.header.height} without quorum (devnet/testnet single-node)`);
+      this.log("warn", `[Node ${this.nodeId.slice(0, 8)}] ⚠️  Finalizing block #${block.header.height} without quorum (devnet/testnet single-node)`);
       await this.finalizeBlock(block);
       return true;
     }
@@ -558,6 +628,13 @@ export class L1Node {
       return false;
     }
     this.pendingBlocks.set(block.header.height, block);
+    if (this.opts.maxPendingBlocks && this.pendingBlocks.size > this.opts.maxPendingBlocks) {
+      const heights = Array.from(this.pendingBlocks.keys()).sort((a, b) => a - b);
+      const excess = this.pendingBlocks.size - this.opts.maxPendingBlocks;
+      for (const h of heights.slice(0, excess)) {
+        this.pendingBlocks.delete(h);
+      }
+    }
     await this.maybeCastVote("prevote", block);
     await this.checkVoteQuorum(block.header.height, block.hash);
     return true;
@@ -594,9 +671,10 @@ export class L1Node {
       return;
     }
 
-    const txs = Array.from(this.mempool.values()).slice(0, 250);
+    const maxTxs = this.opts.maxTxsPerBlock ?? 250;
+    const txs = Array.from(this.mempool.values()).slice(0, maxTxs);
     if (txs.length > 0) {
-      console.log(`[Node ${this.nodeId.slice(0, 8)}] 📦 Including ${txs.length} transaction(s) in block #${height}`);
+      this.log("debug", `[Node ${this.nodeId.slice(0, 8)}] 📦 Including ${txs.length} transaction(s) in block #${height}`);
     }
     const txHash = computeTxHash(txs);
 
@@ -626,18 +704,18 @@ export class L1Node {
     if (accepted) {
       const totalFees = txs.reduce((sum, tx) => sum + tx.fee, 0);
       const blockTime = Date.now() - header.time;
-      console.log(`[Node ${this.nodeId.slice(0, 8)}] 📣 Proposed block #${height} (${txs.length} txs, ${totalFees.toFixed(2)} XRGE fees, ${blockTime}ms, hash: ${hash.slice(0, 16)}...)`);
+      this.log("info", `[Node ${this.nodeId.slice(0, 8)}] 📣 Proposed block #${height} (${txs.length} txs, ${totalFees.toFixed(2)} XRGE fees, ${blockTime}ms, hash: ${hash.slice(0, 16)}...)`);
       this.broadcast({ type: "BLOCK", block });
     } else {
       // Block rejected (shouldn't happen for self-mined, but log if it does)
-      console.warn(`[Node ${this.nodeId.slice(0, 8)}] ⚠️  Self-mined block #${height} rejected`);
+      this.log("warn", `[Node ${this.nodeId.slice(0, 8)}] ⚠️  Self-mined block #${height} rejected`);
     }
   }
 
   private async isSelectedProposer(): Promise<boolean> {
     if (!this.keys) return false;
     if (await this.shouldBypassSelection()) {
-      console.log(`[Node ${this.nodeId.slice(0, 8)}] ⚠️  No active stake set; bypassing proposer selection for devnet/testnet mining`);
+      this.log("warn", `[Node ${this.nodeId.slice(0, 8)}] ⚠️  No active stake set; bypassing proposer selection for devnet/testnet mining`);
       return true;
     }
     const tip = await this.store.getTip();
@@ -646,10 +724,11 @@ export class L1Node {
     if (!selection) return false;
     const isMe = selection.proposerPubKey === this.keys.publicKeyHex;
     if (isMe) {
-      console.log(`[Node ${this.nodeId.slice(0, 8)}] 🧬 Selected proposer for height ${height} (total stake: ${selection.totalStake.toString()})`);
+      this.log("info", `[Node ${this.nodeId.slice(0, 8)}] 🧬 Selected proposer for height ${height} (total stake: ${selection.totalStake.toString()})`);
     } else if (this.lastSelectionLogHeight !== height) {
       this.lastSelectionLogHeight = height;
-      console.log(
+      this.log(
+        "info",
         `[Node ${this.nodeId.slice(0, 8)}] ⏳ Waiting for proposer ${selection.proposerPubKey.slice(0, 16)}... at height ${height}`
       );
     }
@@ -822,7 +901,7 @@ export class L1Node {
     const accepted = await this.acceptTx(tx);
     if (accepted) {
       this.broadcast({ type: "TX", tx });
-      console.warn(`[Node ${this.nodeId.slice(0, 8)}] ⚠️  Slashed ${targetPubKey.slice(0, 16)}... for ${reason}`);
+      this.log("warn", `[Node ${this.nodeId.slice(0, 8)}] ⚠️  Slashed ${targetPubKey.slice(0, 16)}... for ${reason}`);
     }
   }
 
@@ -1038,7 +1117,7 @@ export class L1Node {
       throw new Error("Transaction was not accepted into mempool");
     }
     this.broadcast({ type: "TX", tx });
-    console.log(`[Node ${this.nodeId.slice(0, 8)}] 📤 User transaction submitted: ${amount} XRGE from ${fromPublicKeyHex.slice(0, 16)}... to ${toPublicKeyHex.slice(0, 16)}...`);
+    this.log("info", `[Node ${this.nodeId.slice(0, 8)}] 📤 User transaction submitted: ${amount} XRGE from ${fromPublicKeyHex.slice(0, 16)}... to ${toPublicKeyHex.slice(0, 16)}...`);
     return tx;
   }
 

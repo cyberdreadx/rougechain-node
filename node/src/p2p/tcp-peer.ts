@@ -15,6 +15,8 @@ export class TcpPeer extends EventEmitter<{
 }> {
   private socket: net.Socket;
   private buffer = "";
+  private maxBufferChars = 1024 * 1024; // 1MB buffer cap for lightweight nodes
+  private maxMessageChars = 256 * 1024; // 256KB max message size
 
   constructor(socket: net.Socket) {
     super();
@@ -53,12 +55,23 @@ export class TcpPeer extends EventEmitter<{
 
   private onData(chunk: string) {
     this.buffer += chunk;
+    if (this.buffer.length > this.maxBufferChars) {
+      this.emit("error", new Error("Peer buffer overflow"));
+      this.close();
+      this.buffer = "";
+      return;
+    }
     while (true) {
       const idx = this.buffer.indexOf("\n");
       if (idx === -1) break;
       const line = this.buffer.slice(0, idx).trim();
       this.buffer = this.buffer.slice(idx + 1);
       if (!line) continue;
+      if (line.length > this.maxMessageChars) {
+        this.emit("error", new Error("Peer message too large"));
+        this.close();
+        return;
+      }
       try {
         const obj = decodeNetMessage(line) as P2PMessage;
         this.emit("message", obj);

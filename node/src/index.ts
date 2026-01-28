@@ -1,5 +1,5 @@
 import http from "node:http";
-import { L1Node, defaultDataDir } from "./node";
+import { L1Node, defaultDataDir, type LogLevel } from "./node";
 import { encodeTxV1 } from "./codec";
 import { sha256, bytesToHex, hexToBytes } from "./crypto/hash";
 import { MessengerStore } from "./storage/messenger-store";
@@ -12,6 +12,22 @@ function getArg(flag: string): string | null {
 
 function hasFlag(flag: string): boolean {
   return process.argv.includes(flag);
+}
+
+function parseNumberArg(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return undefined;
+  return num;
+}
+
+function parseLogLevel(value: string | null): LogLevel | undefined {
+  if (!value) return undefined;
+  const normalized = value.toLowerCase();
+  if (normalized === "silent" || normalized === "error" || normalized === "warn" || normalized === "info" || normalized === "debug") {
+    return normalized as LogLevel;
+  }
+  return undefined;
 }
 
 function parsePeers(raw: string | null): Array<{ host: string; port: number }> {
@@ -41,12 +57,21 @@ async function main() {
   const port = Number(getArg("--port") ?? "4100");
   const peers = parsePeers(getArg("--peers"));
   const mine = hasFlag("--mine");
+  const lightMode = hasFlag("--light");
   const name = getArg("--name") ?? `node-${port}`;
   const chainId = getArg("--chain") ?? "rougechain-devnet-1";
   const advertiseHost = getArg("--advertise") ?? undefined;
   const dataDir = defaultDataDir(name);
   const validatorPubKey = getArg("--validatorPubKey");
   const validatorPrivKey = getArg("--validatorPrivKey");
+  const logLevel = parseLogLevel(getArg("--log-level")) ?? (lightMode ? "warn" : "info");
+  const maxPeers = parseNumberArg(getArg("--max-peers")) ?? (lightMode ? 8 : 20);
+  const maxKnownPeers = parseNumberArg(getArg("--max-known-peers")) ?? (lightMode ? 25 : 100);
+  const maxMempoolSize = parseNumberArg(getArg("--max-mempool")) ?? (lightMode ? 500 : 2000);
+  const maxTxsPerBlock = parseNumberArg(getArg("--max-txs-per-block")) ?? (lightMode ? 50 : 100);
+  const voteHistoryKeepHeights = parseNumberArg(getArg("--vote-history")) ?? (lightMode ? 20 : 50);
+  const maxPendingBlocks = parseNumberArg(getArg("--max-pending-blocks")) ?? (lightMode ? 10 : 50);
+  const enablePeerDiscovery = !hasFlag("--disable-peer-discovery");
 
   const node = new L1Node({
     listenHost: host,
@@ -55,6 +80,14 @@ async function main() {
     peers,
     mine,
     dataDir,
+    logLevel,
+    maxPeers,
+    maxKnownPeers,
+    maxMempoolSize,
+    maxTxsPerBlock,
+    voteHistoryKeepHeights,
+    maxPendingBlocks,
+    enablePeerDiscovery,
     chain: {
       chainId,
       genesisTime: Date.now(),
@@ -77,6 +110,8 @@ async function main() {
   console.log(`   P2P Port: ${port}`);
   console.log(`   Peers: ${peers.length > 0 ? peers.map(p => `${p.host}:${p.port}`).join(", ") : "none (standalone)"}`);
   console.log(`   Mining: ${mine ? "YES" : "NO"}`);
+  console.log(`   Peer Discovery: ${enablePeerDiscovery ? "ON" : "OFF"}`);
+  console.log(`   Log Level: ${logLevel}`);
   console.log(`   Block Time: ${Number(getArg("--blockTimeMs") ?? "1000")}ms\n`);
 
   // Start HTTP API server for React UI

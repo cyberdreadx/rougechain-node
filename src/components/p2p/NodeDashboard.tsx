@@ -166,7 +166,7 @@ export function NodeDashboard() {
               <div className="bg-muted/50 rounded-lg p-4 text-left max-w-2xl mx-auto">
                 <p className="text-xs font-mono mb-2">Terminal command:</p>
                 <code className="text-xs bg-background px-3 py-2 rounded block">
-                  npm run l1:node:dev -- --name a --port 4100 --mine
+                  npm run l1:node:dev -- --name a --port 4100 --apiPort 5100 --light
                 </code>
               </div>
             </div>
@@ -242,6 +242,8 @@ export function NodeDashboard() {
                 <li>• ML-DSA-65 (FIPS 204) post-quantum signatures</li>
                 <li>• Local disk storage (JSONL chain files)</li>
                 <li>• HTTP API for stats at <code className="text-xs bg-background px-1 rounded">/api/stats</code></li>
+                <li>• Mining is optional (add <code className="text-xs bg-background px-1 rounded">--mine</code>)</li>
+                <li>• Lightweight mode available (use <code className="text-xs bg-background px-1 rounded">--light</code> for lower resource usage)</li>
                 <li>• Devnet mode: simple block production (not production consensus yet)</li>
               </ul>
             </div>
