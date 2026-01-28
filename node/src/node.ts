@@ -30,6 +30,7 @@ export interface NodeOptions {
   mine: boolean;
   dataDir: string;
   chain: ChainConfig;
+  recentBlocksLimit?: number;
   maxPeers?: number;
   maxKnownPeers?: number;
   maxMempoolSize?: number;
@@ -61,6 +62,10 @@ export class L1Node {
   private lastSlashHeight: Map<string, number> = new Map();
   private pendingBlocks: Map<number, BlockV1> = new Map();
   private finalizedHeight = 0;
+  private balances: Map<string, number> = new Map();
+  private balancesReady = false;
+  private recentBlocks: BlockV1[] = [];
+  private recentBlocksLimit: number;
   private voteState: Map<number, {
     prevote: Map<string, Map<string, VoteMessage>>;
     precommit: Map<string, Map<string, VoteMessage>>;
@@ -72,6 +77,7 @@ export class L1Node {
     this.opts = opts;
     this.store = new ChainStore(opts.dataDir);
     this.validatorStore = new ValidatorStateStore(opts.dataDir);
+    this.recentBlocksLimit = Math.max(1, opts.recentBlocksLimit ?? 5000);
   }
 
   private shouldLog(level: LogLevel): boolean {
@@ -118,6 +124,13 @@ export class L1Node {
     const tip = await this.store.getTip();
     await this.syncValidatorState(tip.height);
     this.finalizedHeight = tip.height;
+    try {
+      const history = await this.store.getAllBlocks();
+      this.recentBlocks = history.slice(-this.recentBlocksLimit);
+    } catch (error) {
+      this.log("warn", `[Node ${this.nodeId.slice(0, 8)}] ⚠️  Failed to load recent blocks cache`, error);
+    }
+    await this.rebuildBalances();
     this.keys = await this.loadOrCreateKeys();
     if (this.opts.validatorKeys) {
       this.log("info", `[Node ${this.nodeId.slice(0, 8)}] Using provided validator keys`);
@@ -518,6 +531,11 @@ export class L1Node {
     if (block.header.height !== tip.height + 1) return;
 
     await this.store.appendBlock(block);
+    this.recentBlocks.push(block);
+    if (this.recentBlocks.length > this.recentBlocksLimit) {
+      this.recentBlocks = this.recentBlocks.slice(-this.recentBlocksLimit);
+    }
+    this.applyBalanceBlock(block);
     await this.applyValidatorBlock(block);
     await this.validatorStore.setMetaHeight(block.header.height);
     this.finalizedHeight = Math.max(this.finalizedHeight, block.header.height);
@@ -1052,6 +1070,13 @@ export class L1Node {
     return this.store.getAllBlocks();
   }
 
+  getRecentBlocks(limit?: number): BlockV1[] {
+    if (!limit || limit <= 0) {
+      return [...this.recentBlocks];
+    }
+    return this.recentBlocks.slice(-limit);
+  }
+
   async getFeeStats(): Promise<{ totalFees: number; lastBlockFees: number }> {
     const blocks = await this.store.getAllBlocks();
     const totalFees = blocks.reduce((sum, block) => {
@@ -1220,40 +1245,66 @@ export class L1Node {
 
   // Public API: Get balance (simple implementation - scans chain)
   async getBalance(publicKeyHex: string): Promise<number> {
-    // TODO: Implement proper state/balance tracking
-    // For now, scan all blocks to calculate balance
-    const blocks = await this.store.getAllBlocks();
-    let balance = 0;
-    
-    for (const block of blocks) {
-      for (const tx of block.txs) {
-        if (tx.type === "transfer") {
-          const payload = tx.payload as { toPubKeyHex?: string; amount?: number };
-          // Received
-          if (payload.toPubKeyHex === publicKeyHex) {
-            balance += payload.amount ?? 0;
-          }
-          // Sent
-          if (tx.fromPubKey === publicKeyHex) {
-            balance -= (payload.amount ?? 0) + tx.fee;
-          }
-        }
-        if (tx.type === "stake") {
-          if (tx.fromPubKey === publicKeyHex) {
-            const payload = tx.payload as { amount?: number };
-            balance -= (payload.amount ?? 0) + tx.fee;
-          }
-        }
-        if (tx.type === "unstake") {
-          if (tx.fromPubKey === publicKeyHex) {
-            const payload = tx.payload as { amount?: number };
-            balance += (payload.amount ?? 0) - tx.fee;
-          }
-        }
+    if (this.balancesReady) {
+      return this.balances.get(publicKeyHex) ?? 0;
+    }
+    await this.rebuildBalances();
+    return this.balances.get(publicKeyHex) ?? 0;
+  }
+
+  private applyBalanceBlock(block: BlockV1): void {
+    for (const tx of block.txs) {
+      this.applyBalanceTx(tx, block.header.proposerPubKey);
+    }
+  }
+
+  private applyBalanceTx(tx: TxV1, feeRecipient: string): void {
+    if (tx.type === "transfer") {
+      const payload = tx.payload as { toPubKeyHex?: string; amount?: number };
+      if (payload.toPubKeyHex) {
+        this.incrementBalance(payload.toPubKeyHex, payload.amount ?? 0);
+      }
+      this.incrementBalance(tx.fromPubKey, -((payload.amount ?? 0) + tx.fee));
+      if (tx.fee > 0) {
+        this.incrementBalance(feeRecipient, tx.fee);
+      }
+      return;
+    }
+    if (tx.type === "stake") {
+      const payload = tx.payload as { amount?: number };
+      this.incrementBalance(tx.fromPubKey, -((payload.amount ?? 0) + tx.fee));
+      if (tx.fee > 0) {
+        this.incrementBalance(feeRecipient, tx.fee);
+      }
+      return;
+    }
+    if (tx.type === "unstake") {
+      const payload = tx.payload as { amount?: number };
+      this.incrementBalance(tx.fromPubKey, (payload.amount ?? 0) - tx.fee);
+      if (tx.fee > 0) {
+        this.incrementBalance(feeRecipient, tx.fee);
       }
     }
-    
-    return Math.max(0, balance);
+  }
+
+  private incrementBalance(publicKey: string, delta: number): void {
+    if (!publicKey) return;
+    const current = this.balances.get(publicKey) ?? 0;
+    this.balances.set(publicKey, current + delta);
+  }
+
+  private async rebuildBalances(): Promise<void> {
+    this.balances = new Map();
+    try {
+      await this.store.scanBlocks(async (block) => {
+        this.applyBalanceBlock(block);
+      }, 0);
+      this.balancesReady = true;
+      this.log("debug", `[Node ${this.nodeId.slice(0, 8)}] Balance cache rebuilt`);
+    } catch (error) {
+      this.balancesReady = false;
+      this.log("warn", `[Node ${this.nodeId.slice(0, 8)}] ⚠️  Balance cache rebuild failed`, error);
+    }
   }
 }
 

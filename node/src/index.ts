@@ -72,6 +72,7 @@ async function main() {
   const voteHistoryKeepHeights = parseNumberArg(getArg("--vote-history")) ?? (lightMode ? 20 : 50);
   const maxPendingBlocks = parseNumberArg(getArg("--max-pending-blocks")) ?? (lightMode ? 10 : 50);
   const enablePeerDiscovery = !hasFlag("--disable-peer-discovery");
+  const recentBlocksLimit = parseNumberArg(getArg("--recent-blocks")) ?? (lightMode ? 5000 : 20000);
 
   const node = new L1Node({
     listenHost: host,
@@ -88,6 +89,7 @@ async function main() {
     voteHistoryKeepHeights,
     maxPendingBlocks,
     enablePeerDiscovery,
+    recentBlocksLimit,
     chain: {
       chainId,
       genesisTime: Date.now(),
@@ -281,7 +283,7 @@ async function main() {
       const now = Date.now();
       const startTime = now - rangeMs;
 
-      const blocks = await node.getAllBlocks();
+      const blocks = node.getRecentBlocks();
       const buckets: Map<number, { blocks: number; transactions: number }> = new Map();
       for (let t = startTime; t <= now; t += intervalMs) {
         buckets.set(Math.floor(t / intervalMs) * intervalMs, { blocks: 0, transactions: 0 });
@@ -326,10 +328,9 @@ async function main() {
         ? Math.floor(parsedLimit as number)
         : undefined;
 
-      const blocks = await node.getAllBlocks();
-      const sliced = limit ? blocks.slice(-limit) : blocks;
+      const blocks = limit ? node.getRecentBlocks(limit) : await node.getAllBlocks();
       res.writeHead(200);
-      res.end(JSON.stringify({ blocks: sliced }));
+      res.end(JSON.stringify({ blocks }));
       return;
     }
 
