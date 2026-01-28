@@ -320,9 +320,16 @@ async function main() {
     }
 
     if (url.pathname === "/api/blocks" && req.method === "GET") {
+      const limitParam = url.searchParams.get("limit");
+      const parsedLimit = limitParam ? Number(limitParam) : undefined;
+      const limit = Number.isFinite(parsedLimit) && (parsedLimit as number) > 0
+        ? Math.floor(parsedLimit as number)
+        : undefined;
+
       const blocks = await node.getAllBlocks();
+      const sliced = limit ? blocks.slice(-limit) : blocks;
       res.writeHead(200);
-      res.end(JSON.stringify({ blocks }));
+      res.end(JSON.stringify({ blocks: sliced }));
       return;
     }
 

@@ -68,8 +68,10 @@ const Blockchain = () => {
         }
         
         try {
-          const res = await fetch(`${NODE_API_URL}/blocks`, {
-            signal: AbortSignal.timeout(5000), // allow slow public nodes
+          const isLocal = NODE_API_URL.includes("localhost") || NODE_API_URL.includes("127.0.0.1");
+          const timeoutMs = isLocal ? 3000 : 10000;
+          const res = await fetch(`${NODE_API_URL}/blocks?limit=500`, {
+            signal: AbortSignal.timeout(timeoutMs), // allow slow public nodes
           });
           if (res.ok) {
             const data = await res.json() as { blocks: BlockV1[] };
@@ -85,7 +87,7 @@ const Blockchain = () => {
             console.warn(`Failed to fetch from ${NODE_API_URL}, trying local ports...`, error);
             for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
               try {
-                const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks`, {
+                const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks?limit=500`, {
                   signal: AbortSignal.timeout(2000),
                 });
                 if (res.ok) {
