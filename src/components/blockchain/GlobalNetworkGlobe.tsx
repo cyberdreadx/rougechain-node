@@ -200,6 +200,8 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
   const [nodeStats, setNodeStats] = useState<NodeStats[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLive, setIsLive] = useState(false);
+  const [isWebglLost, setIsWebglLost] = useState(false);
+  const [canvasEl, setCanvasEl] = useState<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     const fetchNodes = async () => {
@@ -221,7 +223,9 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
 
         for (const url of targets) {
           try {
-            const res = await fetch(url);
+            const res = await fetch(url, {
+              signal: AbortSignal.timeout(2500),
+            });
             if (res.ok) {
               const data = await res.json() as NodeStats;
               stats.push(data);
@@ -240,9 +244,26 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
     };
 
     fetchNodes();
-    const interval = setInterval(fetchNodes, 3000);
+    const interval = setInterval(fetchNodes, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!canvasEl) return;
+    const handleLost = (event: Event) => {
+      event.preventDefault();
+      setIsWebglLost(true);
+    };
+    const handleRestored = () => {
+      setIsWebglLost(false);
+    };
+    canvasEl.addEventListener("webglcontextlost", handleLost);
+    canvasEl.addEventListener("webglcontextrestored", handleRestored);
+    return () => {
+      canvasEl.removeEventListener("webglcontextlost", handleLost);
+      canvasEl.removeEventListener("webglcontextrestored", handleRestored);
+    };
+  }, [canvasEl]);
 
   const totalPeers = nodeStats.reduce((sum, s) => sum + s.connectedPeers, 0);
   const activeNodes = nodeStats.length;
@@ -318,8 +339,23 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
           <div className="w-full h-full flex items-center justify-center">
             <Loader2 className="w-8 h-8 text-primary animate-spin" />
           </div>
+        ) : isWebglLost ? (
+          <div className="w-full h-full flex items-center justify-center text-center px-6">
+            <div>
+              <Shield className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">3D view paused to save resources.</p>
+              <p className="text-xs text-muted-foreground/70">Refresh the page to restore.</p>
+            </div>
+          </div>
         ) : (
-          <Canvas camera={{ position: [0, 0, 5], fov: 50 }}>
+          <Canvas
+            camera={{ position: [0, 0, 5], fov: 50 }}
+            dpr={[1, 1.25]}
+            gl={{ antialias: false, powerPreference: "low-power" }}
+            onCreated={(state) => {
+              setCanvasEl(state.gl.domElement);
+            }}
+          >
             <NetworkScene nodeCount={activeNodes} peerCount={totalPeers} />
           </Canvas>
         )}
