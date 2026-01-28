@@ -35,12 +35,23 @@ export async function createWalletViaNode(): Promise<NodeWallet> {
   });
 
   if (!res.ok) {
-    throw new Error(`Failed to create wallet: ${res.statusText}`);
+    throw new Error(`Failed to create wallet: ${res.status} ${res.statusText}`);
   }
 
-  const data = await res.json() as { success: boolean; publicKey: string; privateKey: string; algorithm: string };
-  if (!data.success) {
-    throw new Error("Failed to create wallet");
+  let data: { success?: boolean; publicKey?: string; privateKey?: string; algorithm?: string; error?: string } | null = null;
+  try {
+    data = await res.json();
+  } catch (jsonError) {
+    const text = await res.text();
+    throw new Error(`Invalid JSON response from wallet API: ${text.slice(0, 120)}`);
+  }
+
+  if (!data?.success) {
+    throw new Error(data?.error || "Failed to create wallet");
+  }
+
+  if (!data.publicKey || !data.privateKey) {
+    throw new Error("Wallet API response missing keys");
   }
 
   return {

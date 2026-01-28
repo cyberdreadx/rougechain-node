@@ -30,6 +30,7 @@ import {
   WalletBalance,
   WalletTransaction
 } from "@/lib/pqc-wallet";
+import { generateKeypair } from "@/lib/pqc-blockchain";
 import { createWalletViaNode } from "@/lib/node-api";
 import { NETWORK_STORAGE_KEY, getNetworkLabel, getNodeApiBaseUrl } from "@/lib/network";
 import SendTokensDialog from "@/components/wallet/SendTokensDialog";
@@ -193,11 +194,22 @@ const Wallet = () => {
       // Try to create wallet via node API first (for public deployment)
       let signingPublicKey: string;
       let signingPrivateKey: string;
-      
-      const nodeWallet = await createWalletViaNode();
-      signingPublicKey = nodeWallet.publicKey;
-      signingPrivateKey = nodeWallet.privateKey;
-      toast.info("Wallet created via node API");
+
+      try {
+        const nodeWallet = await createWalletViaNode();
+        signingPublicKey = nodeWallet.publicKey;
+        signingPrivateKey = nodeWallet.privateKey;
+        toast.info("Wallet created via node API");
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        console.warn("[Wallet] Node API wallet creation failed, falling back to local keys:", error);
+        const { keypair } = await generateKeypair();
+        signingPublicKey = keypair.publicKey;
+        signingPrivateKey = keypair.privateKey;
+        toast.info("Node API unavailable, created local wallet", {
+          description: errorMessage,
+        });
+      }
 
       // For now, create a simplified wallet (just signing keys for blockchain)
       // TODO: Add encryption keys for messaging if needed
@@ -219,7 +231,10 @@ const Wallet = () => {
       });
     } catch (error) {
       console.error("Failed to create wallet:", error);
-      toast.error("Failed to create wallet");
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      toast.error("Failed to create wallet", {
+        description: errorMessage,
+      });
     } finally {
       setLoading(false);
     }
