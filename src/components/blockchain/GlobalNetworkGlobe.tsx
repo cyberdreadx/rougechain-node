@@ -4,6 +4,7 @@ import { OrbitControls, Html } from "@react-three/drei";
 import * as THREE from "three";
 import { motion } from "framer-motion";
 import { Globe, Activity, Users, Loader2, Wifi, Shield } from "lucide-react";
+import { getNodeApiBaseUrl } from "@/lib/network";
 
 // Generate random points on a sphere based on validator count
 const generateNodePositions = (count: number, radius: number) => {
@@ -204,16 +205,29 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
     const fetchNodes = async () => {
       try {
         const stats: NodeStats[] = [];
-        // Try common API ports
-        for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
+        const envList = (import.meta.env.VITE_PUBLIC_NODE_APIS as string | undefined)
+          ?.split(",")
+          .map((entry) => entry.trim())
+          .filter(Boolean) ?? [];
+
+        const apiBases = envList.length > 0
+          ? envList
+          : [getNodeApiBaseUrl()].filter(Boolean);
+
+        const targets = apiBases.length > 0
+          ? apiBases.map((base) => `${base}/stats`)
+          // Dev-only fallback when no API is configured.
+          : [5100, 5101, 5102, 5103, 5104].map((apiPort) => `http://127.0.0.1:${apiPort}/api/stats`);
+
+        for (const url of targets) {
           try {
-            const res = await fetch(`http://127.0.0.1:${apiPort}/api/stats`);
+            const res = await fetch(url);
             if (res.ok) {
               const data = await res.json() as NodeStats;
               stats.push(data);
             }
           } catch {
-            // Node not running on this port
+            // Ignore unreachable targets
           }
         }
         setNodeStats(stats);
