@@ -66,11 +66,15 @@ export interface WalletTransaction {
   amount: string;
   symbol: string;
   address: string;
-  time: string;
+  timeLabel: string;
+  timestamp: number;
   status: "completed" | "pending";
   blockIndex: number;
   txHash: string;
   fee?: number;
+  from?: string;
+  to?: string;
+  memo?: string;
 }
 
 // Generate a token address from block hash (quantum-derived)
@@ -338,11 +342,15 @@ export async function getWalletTransactions(publicKey: string): Promise<WalletTr
       amount: tx.amount.toString(),
       symbol: tx.symbol || "XRGE",
       address: truncateAddress(counterparty),
-      time: formatTimestamp(tx.timestamp),
+      timeLabel: formatTimestamp(tx.timestamp),
+      timestamp: tx.timestamp,
       status: "completed",
       blockIndex: block.index,
       txHash: block.hash,
       fee: tx.fee,
+      from: tx.from,
+      to: tx.to,
+      memo: tx.memo,
     });
   }
 

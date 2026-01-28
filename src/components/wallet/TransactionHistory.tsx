@@ -1,6 +1,9 @@
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowUpRight, ArrowDownLeft, RefreshCw, History, Plus, Coins } from "lucide-react";
+import { ArrowUpRight, ArrowDownLeft, RefreshCw, History, Plus, Coins, ExternalLink, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { EXPLORER_URL } from "@/lib/pqc-wallet";
 
 interface Transaction {
   id: string;
@@ -8,9 +11,15 @@ interface Transaction {
   amount: string;
   symbol: string;
   address: string;
-  time: string;
+  timeLabel: string;
+  timestamp: number;
   status: "completed" | "pending";
   fee?: number;
+  blockIndex?: number;
+  txHash?: string;
+  from?: string;
+  to?: string;
+  memo?: string;
 }
 
 interface TransactionHistoryProps {
@@ -54,6 +63,27 @@ const getTypeLabel = (type: string) => {
 };
 
 const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction }: TransactionHistoryProps) => {
+  const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
+
+  const formatTimestamp = (timestamp?: number) => {
+    if (!timestamp) return "—";
+    return new Date(timestamp).toLocaleString();
+  };
+
+  const handleCopy = async (value?: string) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      // ignore clipboard errors
+    }
+  };
+
+  const explorerUrl = (txHash?: string) => {
+    if (!txHash) return "";
+    return `${EXPLORER_URL.replace(/\/+$/, "")}/tx/${txHash}`;
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -93,6 +123,7 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.4 + index * 0.05 }}
               className="flex items-center justify-between px-4 py-3 hover:bg-secondary/50 transition-colors cursor-pointer"
+              onClick={() => setSelectedTx(tx)}
             >
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center">
@@ -113,7 +144,7 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
                   {tx.type === "send" ? "-" : tx.type === "receive" ? "+" : ""}{tx.amount} {tx.symbol}
                 </p>
                 <div className="flex items-center justify-end gap-1">
-                  <p className="text-xs text-muted-foreground">{tx.time}</p>
+                  <p className="text-xs text-muted-foreground">{tx.timeLabel}</p>
                   {tx.fee && tx.fee > 0 && (
                     <span className="text-[10px] text-muted-foreground">• {tx.fee} fee</span>
                   )}
@@ -123,6 +154,83 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
           ))}
         </div>
       )}
+
+      <Dialog open={!!selectedTx} onOpenChange={(open) => !open && setSelectedTx(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Transaction Details</DialogTitle>
+            <DialogDescription>
+              {selectedTx ? `${getTypeLabel(selectedTx.type)} • ${selectedTx.timeLabel}` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedTx && (
+            <div className="space-y-4 text-sm">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">Amount</p>
+                  <p className="font-mono text-foreground">
+                    {selectedTx.type === "send" ? "-" : selectedTx.type === "receive" ? "+" : ""}{selectedTx.amount} {selectedTx.symbol}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Status</p>
+                  <p className="text-foreground capitalize">{selectedTx.status}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Timestamp</p>
+                  <p className="font-mono text-foreground">{formatTimestamp(selectedTx.timestamp)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Block</p>
+                  <p className="font-mono text-foreground">#{selectedTx.blockIndex ?? "—"}</p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">From</p>
+                  <p className="font-mono text-foreground break-all">{selectedTx.from ?? "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">To</p>
+                  <p className="font-mono text-foreground break-all">{selectedTx.to ?? "—"}</p>
+                </div>
+                {selectedTx.memo && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Memo</p>
+                    <p className="text-foreground">{selectedTx.memo}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {selectedTx.txHash && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleCopy(selectedTx.txHash)}
+                  >
+                    <Copy className="w-4 h-4 mr-2" />
+                    Copy TX Hash
+                  </Button>
+                )}
+                {selectedTx.txHash && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    asChild
+                  >
+                    <a href={explorerUrl(selectedTx.txHash)} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="w-4 h-4 mr-2" />
+                      View in Explorer
+                    </a>
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 };

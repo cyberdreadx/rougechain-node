@@ -349,8 +349,15 @@ const Wallet = () => {
     amount: tx.amount,
     symbol: tx.symbol,
     address: tx.address,
-    time: tx.time,
+    timeLabel: tx.timeLabel,
+    timestamp: tx.timestamp,
     status: tx.status,
+    blockIndex: tx.blockIndex,
+    txHash: tx.txHash,
+    fee: tx.fee,
+    from: tx.from,
+    to: tx.to,
+    memo: tx.memo,
   }));
 
   const emptyAssetActionLabel = isMainnet ? "Receive tokens" : "Claim faucet";
