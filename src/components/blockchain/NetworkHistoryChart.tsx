@@ -37,7 +37,7 @@ const NetworkHistoryChart = () => {
       
       try {
         const res = await fetch(`${NODE_API_URL}/blocks`, {
-          signal: AbortSignal.timeout(500),
+          signal: AbortSignal.timeout(2000),
         });
         if (res.ok) {
           const data = await res.json() as { blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> };
@@ -50,7 +50,7 @@ const NetworkHistoryChart = () => {
           for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
             try {
               const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks`, {
-                signal: AbortSignal.timeout(500),
+                signal: AbortSignal.timeout(2000),
               });
               if (res.ok) {
                 const data = await res.json() as { blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> };
