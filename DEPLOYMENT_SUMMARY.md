@@ -41,6 +41,11 @@ pm2 start npm --name "rougechain-node" -- run l1:node:dev -- \
   --name public-node --host 0.0.0.0 --port 4100 --apiPort 5100 --mine
 ```
 
+**Validator voting:** start your validator node with the staked keys:
+```
+--validatorPubKey YOUR_PUBLIC_KEY_HEX --validatorPrivKey YOUR_PRIVATE_KEY_HEX
+```
+
 ### 2. Deploy Frontend on Netlify (3 minutes)
 
 1. Push code to GitHub

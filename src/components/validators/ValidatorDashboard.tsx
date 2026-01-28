@@ -16,6 +16,8 @@ import {
   getValidators, 
   selectProposer, 
   getProposerSelectionInfo,
+  getFinalityStatus,
+  getVoteSummary,
   formatStake,
   STAKE_REQUIREMENTS,
 } from "@/lib/pqc-validators";
@@ -58,6 +60,19 @@ export function ValidatorDashboard({
     selectionWeight: string;
   } | null>(null);
   const [selectingProposer, setSelectingProposer] = useState(false);
+  const [finalityStatus, setFinalityStatus] = useState<{
+    finalizedHeight: number;
+    tipHeight: number;
+    totalStake: number;
+    quorumStake: number;
+  } | null>(null);
+  const [voteSummary, setVoteSummary] = useState<{
+    height: number;
+    totalStake: number;
+    quorumStake: number;
+    prevote: Array<{ blockHash: string; voters: number; stake: number }>;
+    precommit: Array<{ blockHash: string; voters: number; stake: number }>;
+  } | null>(null);
 
   useEffect(() => {
     loadData();
@@ -77,6 +92,10 @@ export function ValidatorDashboard({
       try {
         const info = await getProposerSelectionInfo();
         setSelectionInfo(info);
+        const finality = await getFinalityStatus();
+        setFinalityStatus(finality);
+        const summary = await getVoteSummary(finality.tipHeight);
+        setVoteSummary(summary);
       } catch (error) {
         console.error("Failed to load proposer selection info:", error);
       } finally {
@@ -127,6 +146,9 @@ export function ValidatorDashboard({
     acc[v.tier] = (acc[v.tier] || 0) + 1;
     return acc;
   }, {} as Record<ValidatorTier, number>);
+  const averageVoteParticipation = validators.length > 0
+    ? validators.reduce((sum, v) => sum + (v.voteParticipation ?? 0), 0) / validators.length
+    : 0;
 
   // Check if current wallet is a validator
   const myValidator = signingPublicKey
@@ -183,21 +205,18 @@ export function ValidatorDashboard({
           <CardContent className="p-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
               <Activity className="w-4 h-4" />
-              <span className="text-xs">Network Uptime</span>
+              <span className="text-xs">Validator Votes</span>
             </div>
             <div className="text-2xl font-bold">
-              {validators.length > 0 
-                ? (validators.reduce((sum, v) => sum + v.uptimePercentage, 0) / validators.length).toFixed(1)
-                : "100"
-              }%
+              {averageVoteParticipation.toFixed(1)}%
             </div>
             <Progress 
-              value={validators.length > 0 
-                ? validators.reduce((sum, v) => sum + v.uptimePercentage, 0) / validators.length
-                : 100
-              } 
+              value={averageVoteParticipation} 
               className="h-1 mt-2" 
             />
+            <div className="text-xs text-muted-foreground mt-2">
+              Precommit participation (last {voteSummary?.height ?? "—"} height)
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -309,6 +328,38 @@ export function ValidatorDashboard({
               {selectionInfo.entropySource} · {selectionInfo.entropyHex.slice(0, 32)}...
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Finality Status */}
+      <Card className="bg-card/50 backdrop-blur border-border">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Shield className="w-4 h-4 text-success" />
+            Finality Status
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-3 gap-3 text-xs text-muted-foreground">
+            <div>
+              <div>Finalized</div>
+              <div className="text-foreground font-semibold">
+                {selectionLoading ? "..." : finalityStatus?.finalizedHeight ?? "—"}
+              </div>
+            </div>
+            <div>
+              <div>Tip</div>
+              <div className="text-foreground font-semibold">
+                {selectionLoading ? "..." : finalityStatus?.tipHeight ?? "—"}
+              </div>
+            </div>
+            <div>
+              <div>Quorum</div>
+              <div className="text-foreground font-semibold">
+                {selectionLoading ? "..." : formatStake(finalityStatus?.quorumStake ?? 0)} XRGE
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -443,6 +494,16 @@ export function ValidatorDashboard({
               </Button>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Validator Onboarding */}
+      <Card className="bg-muted/30 border-border">
+        <CardContent className="p-4 text-sm text-muted-foreground space-y-2">
+          <div className="font-semibold text-foreground">New validator checklist</div>
+          <div>1) Stake XRGE from your wallet to register.</div>
+          <div>2) Run a node using your validator keys (`--validatorPubKey`, `--validatorPrivKey`).</div>
+          <div>3) Keep the node online with peers to participate in votes.</div>
         </CardContent>
       </Card>
 

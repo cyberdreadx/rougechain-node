@@ -44,6 +44,17 @@ export interface BlockV1 {
   hash: Hex; // sha256(headerBytes || proposerSigBytes)
 }
 
+export type VoteType = "prevote" | "precommit";
+
+export interface VoteMessage {
+  type: VoteType;
+  height: number;
+  round: number;
+  blockHash: Hex;
+  voterPubKey: Hex;
+  signature: Hex;
+}
+
 export type P2PMessage =
   | { type: "HELLO"; nodeId: string; chainId: string; height: number; listenHost?: string; listenPort?: number }
   | { type: "GET_TIP" }
@@ -51,5 +62,6 @@ export type P2PMessage =
   | { type: "GET_BLOCK"; height: number }
   | { type: "BLOCK"; block: BlockV1 }
   | { type: "TX"; tx: TxV1 }
-  | { type: "PEERS"; peers: Array<{ host: string; port: number }> };
+  | { type: "PEERS"; peers: Array<{ host: string; port: number }> }
+  | { type: "VOTE"; vote: VoteMessage };
 

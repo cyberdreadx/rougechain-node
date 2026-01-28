@@ -19,6 +19,8 @@ export interface Validator {
   quantumEntropyContributions: number;
   slashCount?: number;
   jailedUntil?: number;
+  voteParticipation?: number;
+  lastSeenHeight?: number | null;
 }
 
 export interface ValidatorStats {
@@ -52,6 +54,27 @@ export interface ProposerSelectionInfo {
   selectionWeight: string;
   entropySource: string;
   entropyHex: string;
+}
+
+export interface FinalityStatus {
+  finalizedHeight: number;
+  tipHeight: number;
+  totalStake: number;
+  quorumStake: number;
+}
+
+export interface VoteSummaryEntry {
+  blockHash: string;
+  voters: number;
+  stake: number;
+}
+
+export interface VoteSummary {
+  height: number;
+  totalStake: number;
+  quorumStake: number;
+  prevote: VoteSummaryEntry[];
+  precommit: VoteSummaryEntry[];
 }
 
 // Staking requirements by tier
@@ -148,10 +171,14 @@ export async function getValidators(): Promise<Validator[]> {
 
   const data = await response.json().catch(() => null);
   const validators = Array.isArray(data?.validators) ? data.validators : [];
+  const stats = await getValidatorVoteStats();
+  const statsByKey = new Map(stats.validators.map((entry) => [entry.publicKey, entry]));
 
-  return validators.map((validator: { publicKey: string; stake: string; status?: string; slashCount?: number; jailedUntil?: number }) => {
+  return validators.map((validator: { publicKey: string; stake: string; status?: string; slashCount?: number; jailedUntil?: number; entropyContributions?: number }) => {
     const stakeAmount = Number(validator.stake || 0);
     const tier = getTierFromStake(stakeAmount);
+    const voteStats = statsByKey.get(validator.publicKey);
+    const voteParticipation = voteStats?.precommitParticipation ?? 0;
     return {
       id: `validator-${validator.publicKey.slice(0, 12)}`,
       walletId: `xrge:${validator.publicKey.slice(0, 32)}`,
@@ -161,13 +188,15 @@ export async function getValidators(): Promise<Validator[]> {
       signingPublicKey: validator.publicKey,
       commissionRate: COMMISSION_BY_TIER[tier],
       blocksProposed: 0,
-      blocksValidated: 0,
-      uptimePercentage: 100,
+      blocksValidated: Math.round(voteParticipation),
+      uptimePercentage: voteParticipation || 0,
       lastSeenAt: new Date().toISOString(),
       registeredAt: new Date().toISOString(),
-      quantumEntropyContributions: 0,
+      quantumEntropyContributions: validator.entropyContributions ?? 0,
       slashCount: validator.slashCount ?? 0,
       jailedUntil: validator.jailedUntil ?? 0,
+      voteParticipation,
+      lastSeenHeight: voteStats?.lastSeenHeight ?? null,
     };
   });
 }
@@ -236,6 +265,89 @@ export async function getProposerSelectionInfo(): Promise<ProposerSelectionInfo>
   };
 }
 
+export async function getFinalityStatus(): Promise<FinalityStatus> {
+  const apiBase = getNodeApiBaseUrl();
+  if (!apiBase) {
+    throw new Error("Mainnet API is not configured");
+  }
+  const response = await fetch(`${apiBase}/finality`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch finality status");
+  }
+  const data = await response.json().catch(() => null);
+  if (!data?.success) {
+    throw new Error(data?.error || "Finality status unavailable");
+  }
+  return {
+    finalizedHeight: Number(data.finalizedHeight || 0),
+    tipHeight: Number(data.tipHeight || 0),
+    totalStake: Number(data.totalStake || 0),
+    quorumStake: Number(data.quorumStake || 0),
+  };
+}
+
+export async function getVoteSummary(height?: number): Promise<VoteSummary> {
+  const apiBase = getNodeApiBaseUrl();
+  if (!apiBase) {
+    throw new Error("Mainnet API is not configured");
+  }
+  const url = height ? `${apiBase}/votes?height=${encodeURIComponent(height)}` : `${apiBase}/votes`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error("Failed to fetch vote summary");
+  }
+  const data = await response.json().catch(() => null);
+  if (!data?.success) {
+    throw new Error(data?.error || "Vote summary unavailable");
+  }
+  return {
+    height: Number(data.height || 0),
+    totalStake: Number(data.totalStake || 0),
+    quorumStake: Number(data.quorumStake || 0),
+    prevote: Array.isArray(data.prevote)
+      ? data.prevote.map((entry: { blockHash: string; voters: number; stake: string }) => ({
+          blockHash: entry.blockHash,
+          voters: Number(entry.voters || 0),
+          stake: Number(entry.stake || 0),
+        }))
+      : [],
+    precommit: Array.isArray(data.precommit)
+      ? data.precommit.map((entry: { blockHash: string; voters: number; stake: string }) => ({
+          blockHash: entry.blockHash,
+          voters: Number(entry.voters || 0),
+          stake: Number(entry.stake || 0),
+        }))
+      : [],
+  };
+}
+
+export async function getValidatorVoteStats(): Promise<{
+  totalHeights: number;
+  validators: Array<{
+    publicKey: string;
+    prevoteParticipation: number;
+    precommitParticipation: number;
+    lastSeenHeight: number | null;
+  }>;
+}> {
+  const apiBase = getNodeApiBaseUrl();
+  if (!apiBase) {
+    return { totalHeights: 0, validators: [] };
+  }
+  const response = await fetch(`${apiBase}/validators/stats`);
+  if (!response.ok) {
+    return { totalHeights: 0, validators: [] };
+  }
+  const data = await response.json().catch(() => null);
+  if (!data?.success) {
+    return { totalHeights: 0, validators: [] };
+  }
+  return {
+    totalHeights: Number(data.totalHeights || 0),
+    validators: Array.isArray(data.validators) ? data.validators : [],
+  };
+}
+
 // Validate a block
 export async function validateBlock(
   validatorId: string,
@@ -244,20 +356,42 @@ export async function validateBlock(
   signature: string,
   isProposer: boolean = false
 ): Promise<boolean> {
-  console.warn("validateBlock is not implemented in node daemon", {
-    validatorId,
-    blockHash,
-    blockIndex,
-    signature,
-    isProposer,
+  const apiBase = getNodeApiBaseUrl();
+  if (!apiBase) {
+    throw new Error("Mainnet API is not configured");
+  }
+  const response = await fetch(`${apiBase}/votes/submit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: isProposer ? "precommit" : "prevote",
+      height: blockIndex,
+      round: 0,
+      blockHash,
+      voterPubKey: validatorId,
+      signature,
+    }),
   });
-  return false;
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    throw new Error(errorBody?.error || "Failed to submit vote");
+  }
+  return true;
 }
 
 // Get validator statistics
 export async function getValidatorStats(validatorId: string): Promise<ValidatorStats | null> {
-  console.warn("getValidatorStats is not implemented in node daemon", { validatorId });
-  return null;
+  const stats = await getValidatorVoteStats();
+  const entry = stats.validators.find((validator) => validator.publicKey === validatorId);
+  if (!entry) return null;
+  const validationsCount = Math.round((entry.precommitParticipation / 100) * stats.totalHeights);
+  return {
+    totalRewards: 0,
+    totalFeeShare: 0,
+    validationsCount,
+    proposedBlocks: 0,
+    stakingHistory: [],
+  };
 }
 
 // Unstake tokens
@@ -306,11 +440,23 @@ export async function contributeEntropy(
   validatorId: string,
   blockIndex: number
 ): Promise<string> {
-  console.warn("contributeEntropy is not implemented in node daemon", {
-    validatorId,
-    blockIndex,
+  const apiBase = getNodeApiBaseUrl();
+  if (!apiBase) {
+    throw new Error("Mainnet API is not configured");
+  }
+  const response = await fetch(`${apiBase}/entropy/submit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      publicKey: validatorId,
+      height: blockIndex,
+    }),
   });
-  return "";
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    throw new Error(errorBody?.error || "Failed to submit entropy contribution");
+  }
+  return "submitted";
 }
 
 // Calculate tier from stake amount

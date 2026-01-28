@@ -62,6 +62,23 @@ npm run l1:node:dev -- \
 - `--apiPort 5100`: HTTP API port for users
 - `--mine`: Enable block production
 
+### Validator Keys (Required for voting)
+
+To participate in validator voting/finality, start your node with the same keys you used to stake:
+
+```bash
+npm run l1:node:dev -- \
+  --name validator-node-1 \
+  --host 0.0.0.0 \
+  --port 4100 \
+  --apiPort 5100 \
+  --mine \
+  --validatorPubKey YOUR_PUBLIC_KEY_HEX \
+  --validatorPrivKey YOUR_PRIVATE_KEY_HEX
+```
+
+If you do not supply validator keys, the node will still run, but it will not cast validator votes.
+
 ### Option B: Multiple Nodes (Recommended)
 
 **Node 1 (Primary/Miner):**
@@ -81,7 +98,9 @@ npm run l1:node:dev -- \
   --host 0.0.0.0 \
   --port 4101 \
   --apiPort 5101 \
-  --peers YOUR_SERVER_IP:4100
+  --peers YOUR_SERVER_IP:4100 \
+  --validatorPubKey YOUR_PUBLIC_KEY_HEX \
+  --validatorPrivKey YOUR_PRIVATE_KEY_HEX
 ```
 
 ## Step 3: Process Management
@@ -315,6 +334,13 @@ export async function sendTransaction(
 ### Check Node Status
 ```bash
 curl http://localhost:5100/api/stats
+```
+
+### Check Finality + Votes
+```bash
+curl http://localhost:5100/api/finality
+curl http://localhost:5100/api/votes
+curl http://localhost:5100/api/validators/stats
 ```
 
 ### View Logs

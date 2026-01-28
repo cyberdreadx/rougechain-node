@@ -45,6 +45,8 @@ async function main() {
   const chainId = getArg("--chain") ?? "rougechain-devnet-1";
   const advertiseHost = getArg("--advertise") ?? undefined;
   const dataDir = defaultDataDir(name);
+  const validatorPubKey = getArg("--validatorPubKey");
+  const validatorPrivKey = getArg("--validatorPrivKey");
 
   const node = new L1Node({
     listenHost: host,
@@ -58,6 +60,13 @@ async function main() {
       genesisTime: Date.now(),
       blockTimeMs: Number(getArg("--blockTimeMs") ?? "1000"), // Default 1 second for faster devnet
     },
+    validatorKeys: validatorPubKey && validatorPrivKey
+      ? {
+          algorithm: "ML-DSA-65",
+          publicKeyHex: validatorPubKey,
+          secretKeyHex: validatorPrivKey,
+        }
+      : undefined,
   });
 
   await node.start();
@@ -90,6 +99,7 @@ async function main() {
       const height = await node.getChainHeight();
       const peerCount = node.getPeerCount();
       const feeStats = await node.getFeeStats();
+      const finality = await node.getFinalityStatus();
       res.writeHead(200);
       res.end(JSON.stringify({
         connectedPeers: peerCount,
@@ -99,6 +109,40 @@ async function main() {
         totalFeesCollected: feeStats.totalFees,
         feesInLastBlock: feeStats.lastBlockFees,
         chainId: chainId, // Include chain ID so frontend can detect mainnet
+        finalizedHeight: finality.finalizedHeight,
+      }));
+      return;
+    }
+
+    if (url.pathname === "/api/finality" && req.method === "GET") {
+      const finality = await node.getFinalityStatus();
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        success: true,
+        ...finality,
+      }));
+      return;
+    }
+
+    if (url.pathname === "/api/votes" && req.method === "GET") {
+      const heightParam = url.searchParams.get("height");
+      const height = Number(heightParam);
+      const targetHeight = Number.isFinite(height) ? height : await node.getChainHeight();
+      const summary = await node.getVoteSummary(targetHeight);
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        success: true,
+        ...summary,
+      }));
+      return;
+    }
+
+    if (url.pathname === "/api/validators/stats" && req.method === "GET") {
+      const stats = await node.getValidatorVoteStats();
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        success: true,
+        ...stats,
       }));
       return;
     }
@@ -118,6 +162,40 @@ async function main() {
       return;
     }
 
+    if (url.pathname === "/api/votes/submit" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk.toString(); });
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body) as {
+            type: "prevote" | "precommit";
+            height: number;
+            round: number;
+            blockHash: string;
+            voterPubKey: string;
+            signature: string;
+          };
+          await node.submitVote({
+            type: data.type,
+            height: data.height,
+            round: data.round,
+            blockHash: data.blockHash,
+            voterPubKey: data.voterPubKey,
+            signature: data.signature,
+          });
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: true }));
+        } catch (error) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : "Invalid vote submission",
+          }));
+        }
+      });
+      return;
+    }
+
     if (url.pathname === "/api/validators" && req.method === "GET") {
       const set = await node.getValidatorSet();
       res.writeHead(200);
@@ -126,6 +204,29 @@ async function main() {
         validators: set.validators,
         totalStake: set.totalStake,
       }));
+      return;
+    }
+
+    if (url.pathname === "/api/entropy/submit" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk.toString(); });
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body) as { publicKey: string };
+          if (!data.publicKey) {
+            throw new Error("publicKey is required");
+          }
+          await node.submitEntropyContribution(data.publicKey);
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: true }));
+        } catch (error) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : "Invalid entropy submission",
+          }));
+        }
+      });
       return;
     }
 

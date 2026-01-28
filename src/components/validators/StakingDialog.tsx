@@ -241,6 +241,10 @@ export function StakingDialog({
               </li>
             ))}
           </ul>
+          <p className="text-xs text-muted-foreground mt-3">
+            After staking, run a validator node with your keys using
+            {" "}`--validatorPubKey` and `--validatorPrivKey`.
+          </p>
         </CardContent>
       </Card>
 

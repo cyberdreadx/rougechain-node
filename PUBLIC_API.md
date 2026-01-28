@@ -174,6 +174,96 @@ curl http://your-server:5100/api/blocks
 
 ---
 
+### 6. Get Validators
+
+Get the current validator set and stake amounts.
+
+**Endpoint:** `GET /api/validators`
+
+**Response:**
+```json
+{
+  "success": true,
+  "validators": [
+    {
+      "publicKey": "...",
+      "stake": "10000",
+      "status": "active",
+      "slashCount": 0,
+      "jailedUntil": 0,
+      "entropyContributions": 0
+    }
+  ],
+  "totalStake": "10000"
+}
+```
+
+---
+
+### 7. Proposer Selection
+
+Get the current proposer selection info.
+
+**Endpoint:** `GET /api/selection`
+
+---
+
+### 8. Finality Status
+
+Get finalized height and quorum stake.
+
+**Endpoint:** `GET /api/finality`
+
+---
+
+### 9. Vote Summary
+
+Get vote quorum status for a given height.
+
+**Endpoint:** `GET /api/votes?height={height}`
+
+---
+
+### 10. Validator Vote Stats
+
+Aggregate vote participation stats.
+
+**Endpoint:** `GET /api/validators/stats`
+
+---
+
+### 11. Submit Stake
+
+Submit a validator stake transaction.
+
+**Endpoint:** `POST /api/stake/submit`
+
+---
+
+### 12. Submit Unstake
+
+Submit a validator unstake transaction.
+
+**Endpoint:** `POST /api/unstake/submit`
+
+---
+
+### 13. Submit Vote
+
+Submit a validator prevote or precommit.
+
+**Endpoint:** `POST /api/votes/submit`
+
+---
+
+### 14. Submit Entropy Contribution
+
+Submit a quantum entropy contribution (metadata only).
+
+**Endpoint:** `POST /api/entropy/submit`
+
+---
+
 ## Error Responses
 
 All endpoints return errors in this format:

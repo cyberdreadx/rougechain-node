@@ -148,8 +148,13 @@ export function ValidatorList({ onSelectValidator }: ValidatorListProps) {
                         </span>
                         <span className="flex items-center gap-1">
                           <Clock className="w-3 h-3" />
-                          {validator.uptimePercentage.toFixed(1)}%
+                          {validator.voteParticipation?.toFixed(1) ?? "0.0"}% votes
                         </span>
+                        {validator.lastSeenHeight ? (
+                          <span className="flex items-center gap-1">
+                            Seen #{validator.lastSeenHeight}
+                          </span>
+                        ) : null}
                         {validator.slashCount && validator.slashCount > 0 && (
                           <span className="flex items-center gap-1 text-red-400">
                             Slashed {validator.slashCount}x

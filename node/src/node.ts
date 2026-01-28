@@ -2,7 +2,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { BlockV1, ChainConfig, P2PMessage, TxV1, SlashPayload } from "./types";
+import type { BlockV1, ChainConfig, P2PMessage, TxV1, SlashPayload, VoteMessage, VoteType } from "./types";
 import { ChainStore } from "./storage/chain-store";
 import { TcpPeer, type PeerEndpoint } from "./p2p/tcp-peer";
 import { computeBlockHash, computeTxHash, encodeHeaderV1, encodeTxV1 } from "./codec";
@@ -27,6 +27,11 @@ export interface NodeOptions {
   mine: boolean;
   dataDir: string;
   chain: ChainConfig;
+  validatorKeys?: {
+    publicKeyHex: string;
+    secretKeyHex: string;
+    algorithm: "ML-DSA-65";
+  };
 }
 
 export class L1Node {
@@ -42,6 +47,15 @@ export class L1Node {
   private lastSelection: { height: number; result: ProposerSelectionResult } | null = null;
   private lastSelectionLogHeight: number | null = null;
   private lastSlashHeight: Map<string, number> = new Map();
+  private pendingBlocks: Map<number, BlockV1> = new Map();
+  private finalizedHeight = 0;
+  private voteState: Map<number, {
+    prevote: Map<string, Map<string, VoteMessage>>;
+    precommit: Map<string, Map<string, VoteMessage>>;
+    byVoter: Map<string, { prevote?: string; precommit?: string }>;
+  }> = new Map();
+  private voteHistory: Map<number, { prevoteVoters: Set<string>; precommitVoters: Set<string> }> = new Map();
+  private entropyContributions: Map<string, number> = new Map();
 
   constructor(opts: NodeOptions) {
     this.opts = opts;
@@ -51,7 +65,12 @@ export class L1Node {
   async start(): Promise<void> {
     console.log(`[Node ${this.nodeId.slice(0, 8)}] Initializing...`);
     await this.store.init();
+    const tip = await this.store.getTip();
+    this.finalizedHeight = tip.height;
     this.keys = await this.loadOrCreateKeys();
+    if (this.opts.validatorKeys) {
+      console.log(`[Node ${this.nodeId.slice(0, 8)}] Using provided validator keys`);
+    }
     // Validate keys after generation
     if (this.keys) {
       const secretKeyBytes = this.keys.secretKeyHex.length / 2; // Hex is 2 chars per byte
@@ -79,6 +98,21 @@ export class L1Node {
   }
 
   private async loadOrCreateKeys(): Promise<PQKeypair> {
+    if (this.opts.validatorKeys) {
+      const cleanPub = this.opts.validatorKeys.publicKeyHex.trim();
+      const cleanSecret = this.opts.validatorKeys.secretKeyHex.trim();
+      if (!/^[0-9a-fA-F]+$/.test(cleanPub) || !/^[0-9a-fA-F]+$/.test(cleanSecret)) {
+        throw new Error("Validator keys must be hex-encoded");
+      }
+      if (cleanSecret.length !== 8064) {
+        throw new Error(`Invalid validator secret key length: ${cleanSecret.length} hex chars (expected 8064)`);
+      }
+      return {
+        algorithm: "ML-DSA-65",
+        publicKeyHex: cleanPub,
+        secretKeyHex: cleanSecret,
+      };
+    }
     // Minimal: generate fresh per node start for now.
     // Production: persist encrypted keystore + support hot/cold keys.
     return pqcKeygen();
@@ -181,6 +215,10 @@ export class L1Node {
         }
         return;
       }
+      case "VOTE": {
+        await this.onVoteMessage(msg.vote);
+        return;
+      }
       case "PEERS": {
         for (const ep of msg.peers) {
           void this.connectToPeer(ep);
@@ -256,6 +294,178 @@ export class L1Node {
     return false;
   }
 
+  private getVoteState(height: number) {
+    const existing = this.voteState.get(height);
+    if (existing) return existing;
+    const created = {
+      prevote: new Map<string, Map<string, VoteMessage>>(),
+      precommit: new Map<string, Map<string, VoteMessage>>(),
+      byVoter: new Map<string, { prevote?: string; precommit?: string }>(),
+    };
+    this.voteState.set(height, created);
+    return created;
+  }
+
+  private encodeVoteData(vote: Omit<VoteMessage, "signature">): Uint8Array {
+    const payload = `${vote.type}|${vote.height}|${vote.round}|${vote.blockHash}|${vote.voterPubKey}`;
+    return new TextEncoder().encode(payload);
+  }
+
+  private async isActiveValidator(pubKey: string): Promise<boolean> {
+    const stakes = await this.getValidatorStakes();
+    return (stakes.get(pubKey) ?? 0n) > 0n;
+  }
+
+  private async getTotalStake(): Promise<bigint> {
+    const stakes = await this.getValidatorStakes();
+    let total = 0n;
+    for (const stake of stakes.values()) {
+      total += stake;
+    }
+    return total;
+  }
+
+  private async getActiveValidatorCount(): Promise<number> {
+    const stakes = await this.getValidatorStakes();
+    return stakes.size;
+  }
+
+  private async getVotePower(height: number, type: VoteType, blockHash: string): Promise<bigint> {
+    const state = this.voteState.get(height);
+    if (!state) return 0n;
+    const bucket = type === "prevote" ? state.prevote : state.precommit;
+    const votes = bucket.get(blockHash);
+    if (!votes) return 0n;
+    const stakes = await this.getValidatorStakes();
+    let power = 0n;
+    for (const voter of votes.keys()) {
+      power += stakes.get(voter) ?? 0n;
+    }
+    return power;
+  }
+
+  private hasEquivocated(state: { prevote?: string; precommit?: string }, type: VoteType, blockHash: string) {
+    if (type === "prevote" && state.prevote && state.prevote !== blockHash) return true;
+    if (type === "precommit" && state.precommit && state.precommit !== blockHash) return true;
+    return false;
+  }
+
+  private recordVoteHistory(height: number, vote: VoteMessage) {
+    const history = this.voteHistory.get(height) ?? {
+      prevoteVoters: new Set<string>(),
+      precommitVoters: new Set<string>(),
+    };
+    if (vote.type === "prevote") {
+      history.prevoteVoters.add(vote.voterPubKey);
+    } else {
+      history.precommitVoters.add(vote.voterPubKey);
+    }
+    this.voteHistory.set(height, history);
+    const pruneBefore = Math.max(0, height - 100);
+    for (const entry of this.voteHistory.keys()) {
+      if (entry < pruneBefore) {
+        this.voteHistory.delete(entry);
+      }
+    }
+  }
+
+  private async maybeCastVote(type: VoteType, block: BlockV1): Promise<void> {
+    if (!this.keys) return;
+    const isValidator = await this.isActiveValidator(this.keys.publicKeyHex);
+    if (!isValidator) return;
+    const height = block.header.height;
+    const state = this.getVoteState(height);
+    const voterState = state.byVoter.get(this.keys.publicKeyHex) ?? {};
+    if ((type === "prevote" && voterState.prevote) || (type === "precommit" && voterState.precommit)) {
+      return;
+    }
+
+    const vote: VoteMessage = {
+      type,
+      height,
+      round: 0,
+      blockHash: block.hash,
+      voterPubKey: this.keys.publicKeyHex,
+      signature: "",
+    };
+    const bytes = this.encodeVoteData({ ...vote, signature: "" });
+    vote.signature = await pqcSign(this.keys.secretKeyHex, bytes, (this.keys as any)._secretKeyBytes);
+    this.onVoteMessage(vote);
+    this.broadcast({ type: "VOTE", vote });
+  }
+
+  private async onVoteMessage(vote: VoteMessage): Promise<void> {
+    if (vote.height <= this.finalizedHeight) return;
+    if (!await this.isActiveValidator(vote.voterPubKey)) return;
+
+    const bytes = this.encodeVoteData({ ...vote, signature: "" });
+    const ok = await pqcVerify(vote.voterPubKey, bytes, vote.signature);
+    if (!ok) return;
+
+    const state = this.getVoteState(vote.height);
+    const byVoter = state.byVoter.get(vote.voterPubKey) ?? {};
+    if (this.hasEquivocated(byVoter, vote.type, vote.blockHash)) {
+      await this.maybeSlash(vote.voterPubKey, `equivocation-${vote.type}`, vote.height);
+      return;
+    }
+    if (vote.type === "prevote") {
+      byVoter.prevote = vote.blockHash;
+    } else {
+      byVoter.precommit = vote.blockHash;
+    }
+    state.byVoter.set(vote.voterPubKey, byVoter);
+
+    const bucket = vote.type === "prevote" ? state.prevote : state.precommit;
+    const entries = bucket.get(vote.blockHash) ?? new Map<string, VoteMessage>();
+    entries.set(vote.voterPubKey, vote);
+    bucket.set(vote.blockHash, entries);
+    this.recordVoteHistory(vote.height, vote);
+
+    await this.checkVoteQuorum(vote.height, vote.blockHash);
+  }
+
+  private async checkVoteQuorum(height: number, blockHash: string): Promise<void> {
+    const totalStake = await this.getTotalStake();
+    if (totalStake === 0n) return;
+    const prevotePower = await this.getVotePower(height, "prevote", blockHash);
+    const precommitPower = await this.getVotePower(height, "precommit", blockHash);
+
+    const hasPrevoteQuorum = prevotePower * 3n > totalStake * 2n;
+    if (hasPrevoteQuorum) {
+      const pending = this.pendingBlocks.get(height);
+      if (pending && pending.hash === blockHash) {
+        await this.maybeCastVote("precommit", pending);
+      }
+    }
+
+    const hasPrecommitQuorum = precommitPower * 3n > totalStake * 2n;
+    if (hasPrecommitQuorum) {
+      const pending = this.pendingBlocks.get(height);
+      if (pending && pending.hash === blockHash) {
+        await this.finalizeBlock(pending);
+      }
+    }
+  }
+
+  private async finalizeBlock(block: BlockV1): Promise<void> {
+    const tip = await this.store.getTip();
+    if (block.header.height !== tip.height + 1) return;
+
+    await this.store.appendBlock(block);
+    this.finalizedHeight = Math.max(this.finalizedHeight, block.header.height);
+    this.pendingBlocks.delete(block.header.height);
+    this.voteState.delete(block.header.height);
+
+    for (const tx of block.txs) {
+      const id = bytesToHex(sha256(encodeTxV1(tx)));
+      this.mempool.delete(id);
+    }
+    const totalFees = block.txs.reduce((sum, tx) => sum + tx.fee, 0);
+    console.log(
+      `[Node ${this.nodeId.slice(0, 8)}] ✅ Finalized block #${block.header.height} (${block.txs.length} txs, ${totalFees.toFixed(2)} XRGE fees, hash: ${block.hash.slice(0, 16)}...)`
+    );
+  }
+
   async submitTransferTx(toPubKeyHex: string, amount: number, fee?: number): Promise<TxV1> {
     if (!this.keys) throw new Error("node not started");
     const tx: TxV1 = {
@@ -296,6 +506,7 @@ export class L1Node {
     // Basic validation: header linkage + proposer signature + hash match
     if (block.version !== 1 || block.header.version !== 1) return false;
     if (block.header.chainId !== this.opts.chain.chainId) return false;
+    if (block.header.height <= this.finalizedHeight) return false;
 
     const tip = await this.store.getTip();
     if (block.header.height !== tip.height + 1) return false;
@@ -324,12 +535,25 @@ export class L1Node {
       return false;
     }
 
-    await this.store.appendBlock(block);
-    // Remove included txs from mempool
-    for (const tx of block.txs) {
-      const id = bytesToHex(sha256(encodeTxV1(tx)));
-      this.mempool.delete(id);
+    const totalStake = await this.getTotalStake();
+    if (totalStake === 0n) {
+      await this.finalizeBlock(block);
+      return true;
     }
+    const activeValidators = await this.getActiveValidatorCount();
+    if (this.peers.size === 0 || activeValidators <= 1) {
+      console.warn(`[Node ${this.nodeId.slice(0, 8)}] ⚠️  Finalizing block #${block.header.height} without quorum (devnet/testnet single-node)`);
+      await this.finalizeBlock(block);
+      return true;
+    }
+
+    const existing = this.pendingBlocks.get(block.header.height);
+    if (existing && existing.hash !== block.hash) {
+      return false;
+    }
+    this.pendingBlocks.set(block.header.height, block);
+    await this.maybeCastVote("prevote", block);
+    await this.checkVoteQuorum(block.header.height, block.hash);
     return true;
   }
 
@@ -396,7 +620,7 @@ export class L1Node {
     if (accepted) {
       const totalFees = txs.reduce((sum, tx) => sum + tx.fee, 0);
       const blockTime = Date.now() - header.time;
-      console.log(`[Node ${this.nodeId.slice(0, 8)}] ✅ Mined block #${height} (${txs.length} txs, ${totalFees.toFixed(2)} XRGE fees, ${blockTime}ms, hash: ${hash.slice(0, 16)}...)`);
+      console.log(`[Node ${this.nodeId.slice(0, 8)}] 📣 Proposed block #${height} (${txs.length} txs, ${totalFees.toFixed(2)} XRGE fees, ${blockTime}ms, hash: ${hash.slice(0, 16)}...)`);
       this.broadcast({ type: "BLOCK", block });
     } else {
       // Block rejected (shouldn't happen for self-mined, but log if it does)
@@ -557,7 +781,7 @@ export class L1Node {
   }
 
   async getValidatorSet(): Promise<{
-    validators: { publicKey: string; stake: string; status: string; slashCount: number; jailedUntil: number }[];
+    validators: { publicKey: string; stake: string; status: string; slashCount: number; jailedUntil: number; entropyContributions: number }[];
     totalStake: string;
   }> {
     const tip = await this.store.getTip();
@@ -576,6 +800,7 @@ export class L1Node {
           status,
           slashCount: info.slashCount,
           jailedUntil: info.jailedUntil,
+          entropyContributions: this.entropyContributions.get(publicKey) ?? 0,
         };
       });
     const totalStake = validators.reduce((sum, v) => sum + BigInt(v.stake), 0n);
@@ -587,6 +812,98 @@ export class L1Node {
     const height = tip.height + 1;
     const result = await this.getProposerSelection(height, tip.hash);
     return { height, result };
+  }
+
+  async getFinalityStatus(): Promise<{
+    finalizedHeight: number;
+    tipHeight: number;
+    totalStake: string;
+    quorumStake: string;
+  }> {
+    const tip = await this.store.getTip();
+    const totalStake = await this.getTotalStake();
+    const quorumStake = totalStake === 0n ? 0n : (totalStake * 2n) / 3n + 1n;
+    return {
+      finalizedHeight: this.finalizedHeight,
+      tipHeight: tip.height,
+      totalStake: totalStake.toString(),
+      quorumStake: quorumStake.toString(),
+    };
+  }
+
+  async getVoteSummary(height: number): Promise<{
+    height: number;
+    totalStake: string;
+    quorumStake: string;
+    prevote: Array<{ blockHash: string; voters: number; stake: string }>;
+    precommit: Array<{ blockHash: string; voters: number; stake: string }>;
+  }> {
+    const totalStake = await this.getTotalStake();
+    const quorumStake = totalStake === 0n ? 0n : (totalStake * 2n) / 3n + 1n;
+    const state = this.voteState.get(height);
+    const stakes = await this.getValidatorStakes();
+
+    const summarize = (bucket: Map<string, Map<string, VoteMessage>>) => {
+      return Array.from(bucket.entries()).map(([blockHash, votes]) => {
+        let stake = 0n;
+        for (const voter of votes.keys()) {
+          stake += stakes.get(voter) ?? 0n;
+        }
+        return {
+          blockHash,
+          voters: votes.size,
+          stake: stake.toString(),
+        };
+      });
+    };
+
+    return {
+      height,
+      totalStake: totalStake.toString(),
+      quorumStake: quorumStake.toString(),
+      prevote: summarize(state?.prevote ?? new Map()),
+      precommit: summarize(state?.precommit ?? new Map()),
+    };
+  }
+
+  async getValidatorVoteStats(): Promise<{
+    totalHeights: number;
+    validators: Array<{
+      publicKey: string;
+      prevoteParticipation: number;
+      precommitParticipation: number;
+      lastSeenHeight: number | null;
+    }>;
+  }> {
+    const heights = Array.from(this.voteHistory.keys()).sort((a, b) => a - b);
+    const totalHeights = heights.length;
+    const stats = new Map<string, { prevotes: number; precommits: number; lastSeen: number | null }>();
+
+    for (const height of heights) {
+      const entry = this.voteHistory.get(height);
+      if (!entry) continue;
+      for (const voter of entry.prevoteVoters) {
+        const current = stats.get(voter) ?? { prevotes: 0, precommits: 0, lastSeen: null };
+        current.prevotes += 1;
+        current.lastSeen = height;
+        stats.set(voter, current);
+      }
+      for (const voter of entry.precommitVoters) {
+        const current = stats.get(voter) ?? { prevotes: 0, precommits: 0, lastSeen: null };
+        current.precommits += 1;
+        current.lastSeen = height;
+        stats.set(voter, current);
+      }
+    }
+
+    const validators = Array.from(stats.entries()).map(([publicKey, value]) => ({
+      publicKey,
+      prevoteParticipation: totalHeights > 0 ? (value.prevotes / totalHeights) * 100 : 0,
+      precommitParticipation: totalHeights > 0 ? (value.precommits / totalHeights) * 100 : 0,
+      lastSeenHeight: value.lastSeen,
+    }));
+
+    return { totalHeights, validators };
   }
 
   getPeerCount(): number {
@@ -626,6 +943,18 @@ export class L1Node {
   // Public API: Create wallet (generate keypair)
   async createWallet(): Promise<PQKeypair> {
     return pqcKeygen();
+  }
+
+  // Public API: Submit validator vote (optional HTTP entrypoint)
+  async submitVote(vote: VoteMessage): Promise<void> {
+    await this.onVoteMessage(vote);
+    this.broadcast({ type: "VOTE", vote });
+  }
+
+  // Public API: Submit entropy contribution (metadata only)
+  async submitEntropyContribution(publicKey: string): Promise<void> {
+    const current = this.entropyContributions.get(publicKey) ?? 0;
+    this.entropyContributions.set(publicKey, current + 1);
   }
 
   // Public API: Submit transaction from user
