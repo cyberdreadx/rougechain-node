@@ -20,6 +20,12 @@ interface ChartDataPoint {
   timestamp: number;
 }
 
+interface SummaryPoint {
+  timestamp: number;
+  blocks: number;
+  transactions: number;
+}
+
 const NetworkHistoryChart = () => {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -33,10 +39,64 @@ const NetworkHistoryChart = () => {
         setChartData([]);
         return;
       }
-      let blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> = [];
-      
       const isLocal = NODE_API_URL.includes("localhost") || NODE_API_URL.includes("127.0.0.1");
       const timeoutMs = isLocal ? 2000 : 8000;
+      let summaryPoints: SummaryPoint[] = [];
+      let blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> = [];
+      
+      try {
+        const res = await fetch(`${NODE_API_URL}/blocks/summary?range=${timeRange}`, {
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (res.ok) {
+          const data = await res.json() as { success: boolean; points: SummaryPoint[] };
+          if (data.success && Array.isArray(data.points)) {
+            summaryPoints = data.points;
+          }
+        }
+      } catch (error) {
+        if (isLocal) {
+          // Fallback: Try to fetch from any running local node
+          for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
+            try {
+              const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks/summary?range=${timeRange}`, {
+                signal: AbortSignal.timeout(2000),
+              });
+              if (res.ok) {
+                const data = await res.json() as { success: boolean; points: SummaryPoint[] };
+                if (data.success && Array.isArray(data.points)) {
+                  summaryPoints = data.points;
+                }
+                break;
+              }
+            } catch {
+              // Try next port
+            }
+          }
+        } else {
+          console.warn(`Failed to fetch from ${NODE_API_URL}:`, error);
+        }
+      }
+
+      if (summaryPoints.length > 0) {
+        const data: ChartDataPoint[] = summaryPoints.map((point) => {
+          const date = new Date(point.timestamp);
+          const timeLabel = timeRange === "1h"
+            ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+            : timeRange === "24h"
+            ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+            : date.toLocaleDateString([], { month: "short", day: "numeric" });
+          return {
+            time: timeLabel,
+            blocks: point.blocks,
+            transactions: point.transactions,
+            timestamp: point.timestamp,
+          };
+        });
+        setChartData(data);
+        return;
+      }
+
       try {
         const res = await fetch(`${NODE_API_URL}/blocks`, {
           signal: AbortSignal.timeout(timeoutMs),

@@ -265,6 +265,60 @@ async function main() {
       return;
     }
 
+    if (url.pathname === "/api/blocks/summary" && req.method === "GET") {
+      const rangeParam = url.searchParams.get("range") ?? "24h";
+      const range = rangeParam === "1h" || rangeParam === "7d" ? rangeParam : "24h";
+      const intervalMs = range === "1h"
+        ? 5 * 60 * 1000
+        : range === "24h"
+        ? 60 * 60 * 1000
+        : 24 * 60 * 60 * 1000;
+      const rangeMs = range === "1h"
+        ? 60 * 60 * 1000
+        : range === "24h"
+        ? 24 * 60 * 60 * 1000
+        : 7 * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      const startTime = now - rangeMs;
+
+      const blocks = await node.getAllBlocks();
+      const buckets: Map<number, { blocks: number; transactions: number }> = new Map();
+      for (let t = startTime; t <= now; t += intervalMs) {
+        buckets.set(Math.floor(t / intervalMs) * intervalMs, { blocks: 0, transactions: 0 });
+      }
+
+      for (const block of blocks) {
+        const blockTime = block.header.time;
+        if (blockTime >= startTime) {
+          const bucketKey = Math.floor(blockTime / intervalMs) * intervalMs;
+          const bucket = buckets.get(bucketKey);
+          if (bucket) {
+            bucket.blocks += 1;
+            bucket.transactions += block.txs.length;
+          }
+        }
+      }
+
+      const points = Array.from(buckets.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([timestamp, values]) => ({
+          timestamp,
+          blocks: values.blocks,
+          transactions: values.transactions,
+        }));
+
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        success: true,
+        range,
+        intervalMs,
+        startTime,
+        endTime: now,
+        points,
+      }));
+      return;
+    }
+
     if (url.pathname === "/api/blocks" && req.method === "GET") {
       const blocks = await node.getAllBlocks();
       res.writeHead(200);
