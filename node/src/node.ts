@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { BlockV1, ChainConfig, P2PMessage, TxV1, SlashPayload, VoteMessage, VoteType } from "./types";
 import { ChainStore } from "./storage/chain-store";
+import { ValidatorStateStore, type ValidatorState } from "./storage/validator-store";
 import { TcpPeer, type PeerEndpoint } from "./p2p/tcp-peer";
 import { computeBlockHash, computeTxHash, encodeHeaderV1, encodeTxV1 } from "./codec";
 import { pqcKeygen, pqcSign, pqcVerify, type PQKeypair } from "./crypto/pqc";
@@ -38,6 +39,7 @@ export class L1Node {
   private opts: NodeOptions;
   private nodeId = randomUUID();
   private store: ChainStore;
+  private validatorStore: ValidatorStateStore;
   private peers: Set<TcpPeer> = new Set();
   private peerEndpoints: Map<TcpPeer, PeerEndpoint> = new Map();
   private knownPeers: Set<string> = new Set();
@@ -55,17 +57,19 @@ export class L1Node {
     byVoter: Map<string, { prevote?: string; precommit?: string }>;
   }> = new Map();
   private voteHistory: Map<number, { prevoteVoters: Set<string>; precommitVoters: Set<string> }> = new Map();
-  private entropyContributions: Map<string, number> = new Map();
 
   constructor(opts: NodeOptions) {
     this.opts = opts;
     this.store = new ChainStore(opts.dataDir);
+    this.validatorStore = new ValidatorStateStore(opts.dataDir);
   }
 
   async start(): Promise<void> {
     console.log(`[Node ${this.nodeId.slice(0, 8)}] Initializing...`);
     await this.store.init();
+    await this.validatorStore.init();
     const tip = await this.store.getTip();
+    await this.syncValidatorState(tip.height);
     this.finalizedHeight = tip.height;
     this.keys = await this.loadOrCreateKeys();
     if (this.opts.validatorKeys) {
@@ -452,6 +456,8 @@ export class L1Node {
     if (block.header.height !== tip.height + 1) return;
 
     await this.store.appendBlock(block);
+    await this.applyValidatorBlock(block);
+    await this.validatorStore.setMetaHeight(block.header.height);
     this.finalizedHeight = Math.max(this.finalizedHeight, block.header.height);
     this.pendingBlocks.delete(block.header.height);
     this.voteState.delete(block.header.height);
@@ -702,42 +708,82 @@ export class L1Node {
   }
 
   private async buildValidatorState(): Promise<Map<string, { stake: bigint; slashCount: number; jailedUntil: number }>> {
-    const blocks = await this.store.getAllBlocks();
     const state = new Map<string, { stake: bigint; slashCount: number; jailedUntil: number }>();
-    const ensure = (pubKey: string) => {
-      const current = state.get(pubKey);
-      if (current) return current;
-      const fresh = { stake: 0n, slashCount: 0, jailedUntil: 0 };
-      state.set(pubKey, fresh);
-      return fresh;
-    };
-
-    for (const block of blocks) {
-      for (const tx of block.txs) {
-        if (tx.type === "stake" || tx.type === "unstake") {
-          const amount = parseStakeAmount(tx.payload);
-          if (!amount) continue;
-          const entry = ensure(tx.fromPubKey);
-          if (tx.type === "stake") {
-            entry.stake += amount;
-          } else {
-            entry.stake = entry.stake - amount;
-            if (entry.stake < 0n) entry.stake = 0n;
-          }
-          continue;
-        }
-        if (tx.type === "slash") {
-          const payload = this.parseSlashPayload(tx.payload);
-          if (!payload) continue;
-          const entry = ensure(payload.targetPubKey);
-          entry.stake = entry.stake - BigInt(Math.floor(payload.amount));
-          if (entry.stake < 0n) entry.stake = 0n;
-          entry.slashCount += 1;
-          entry.jailedUntil = Math.max(entry.jailedUntil, block.header.height + JAIL_BLOCKS);
-        }
-      }
+    const entries = await this.validatorStore.listValidators();
+    for (const entry of entries) {
+      state.set(entry.publicKey, {
+        stake: entry.state.stake,
+        slashCount: entry.state.slashCount,
+        jailedUntil: entry.state.jailedUntil,
+      });
     }
     return state;
+  }
+
+  private async syncValidatorState(tipHeight: number): Promise<void> {
+    const lastHeight = await this.validatorStore.getMetaHeight();
+    if (lastHeight > tipHeight) {
+      await this.validatorStore.reset();
+      await this.validatorStore.setMetaHeight(-1);
+    }
+    const startHeight = Math.max(0, (await this.validatorStore.getMetaHeight()) + 1);
+    if (startHeight > tipHeight) return;
+    await this.store.scanBlocks(async (block) => {
+      if (block.header.height < startHeight) return;
+      await this.applyValidatorBlock(block);
+      await this.validatorStore.setMetaHeight(block.header.height);
+    }, startHeight);
+  }
+
+  private async applyValidatorBlock(block: BlockV1): Promise<void> {
+    for (const tx of block.txs) {
+      await this.applyValidatorTx(tx, block.header.height);
+    }
+  }
+
+  private async applyValidatorTx(tx: TxV1, height: number): Promise<void> {
+    const ensure = async (publicKey: string): Promise<ValidatorState> => {
+      return (await this.validatorStore.getValidator(publicKey)) ?? {
+        stake: 0n,
+        slashCount: 0,
+        jailedUntil: 0,
+        entropyContributions: 0,
+      };
+    };
+
+    if (tx.type === "stake" || tx.type === "unstake") {
+      const amount = parseStakeAmount(tx.payload);
+      if (!amount) return;
+      const entry = await ensure(tx.fromPubKey);
+      if (tx.type === "stake") {
+        entry.stake += amount;
+      } else {
+        entry.stake = entry.stake - amount;
+        if (entry.stake < 0n) entry.stake = 0n;
+      }
+      await this.persistValidatorState(tx.fromPubKey, entry, height);
+      return;
+    }
+
+    if (tx.type === "slash") {
+      const payload = this.parseSlashPayload(tx.payload);
+      if (!payload) return;
+      const entry = await ensure(payload.targetPubKey);
+      entry.stake = entry.stake - BigInt(Math.floor(payload.amount));
+      if (entry.stake < 0n) entry.stake = 0n;
+      entry.slashCount += 1;
+      entry.jailedUntil = Math.max(entry.jailedUntil, height + JAIL_BLOCKS);
+      await this.persistValidatorState(payload.targetPubKey, entry, height);
+    }
+  }
+
+  private async persistValidatorState(publicKey: string, state: ValidatorState, height: number): Promise<void> {
+    const shouldKeep = state.stake > 0n || state.slashCount > 0 || state.jailedUntil > height;
+    if (!shouldKeep) {
+      await this.validatorStore.deleteValidator(publicKey);
+      return;
+    }
+    await this.validatorStore.setValidator(publicKey, state);
   }
 
   private async maybeSlash(targetPubKey: string, reason: string, height: number): Promise<void> {
@@ -785,22 +831,22 @@ export class L1Node {
     totalStake: string;
   }> {
     const tip = await this.store.getTip();
-    const state = await this.buildValidatorState();
-    const validators = Array.from(state.entries())
-      .filter(([, info]) => info.stake > 0n || info.slashCount > 0)
-      .map(([publicKey, info]) => {
-        const status = info.jailedUntil > tip.height
+    const entries = await this.validatorStore.listValidators();
+    const validators = entries
+      .filter((entry) => entry.state.stake > 0n || entry.state.slashCount > 0)
+      .map(({ publicKey, state }) => {
+        const status = state.jailedUntil > tip.height
           ? "jailed"
-          : info.stake > 0n
+          : state.stake > 0n
           ? "active"
           : "inactive";
         return {
           publicKey,
-          stake: info.stake.toString(),
+          stake: state.stake.toString(),
           status,
-          slashCount: info.slashCount,
-          jailedUntil: info.jailedUntil,
-          entropyContributions: this.entropyContributions.get(publicKey) ?? 0,
+          slashCount: state.slashCount,
+          jailedUntil: state.jailedUntil,
+          entropyContributions: state.entropyContributions ?? 0,
         };
       });
     const totalStake = validators.reduce((sum, v) => sum + BigInt(v.stake), 0n);
@@ -953,8 +999,14 @@ export class L1Node {
 
   // Public API: Submit entropy contribution (metadata only)
   async submitEntropyContribution(publicKey: string): Promise<void> {
-    const current = this.entropyContributions.get(publicKey) ?? 0;
-    this.entropyContributions.set(publicKey, current + 1);
+    const current = (await this.validatorStore.getValidator(publicKey)) ?? {
+      stake: 0n,
+      slashCount: 0,
+      jailedUntil: 0,
+      entropyContributions: 0,
+    };
+    current.entropyContributions += 1;
+    await this.validatorStore.setValidator(publicKey, current);
   }
 
   // Public API: Submit transaction from user

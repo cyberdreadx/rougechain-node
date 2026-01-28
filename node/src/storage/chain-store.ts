@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile, appendFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
+import readline from "node:readline";
 import path from "node:path";
 import type { BlockV1 } from "../types";
 
@@ -59,6 +60,21 @@ export class ChainStore {
     const raw = await readFile(this.chainPath, "utf8");
     const lines = raw.split("\n").filter(Boolean);
     return lines.map(line => JSON.parse(line) as BlockV1).sort((a, b) => a.header.height - b.header.height);
+  }
+
+  async scanBlocks(
+    onBlock: (block: BlockV1) => Promise<void> | void,
+    fromHeight: number = 0
+  ): Promise<void> {
+    const stream = createReadStream(this.chainPath, { encoding: "utf8" });
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const block = JSON.parse(trimmed) as BlockV1;
+      if (block.header.height < fromHeight) continue;
+      await onBlock(block);
+    }
   }
 }
 
