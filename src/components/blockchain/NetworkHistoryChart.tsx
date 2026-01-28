@@ -35,16 +35,17 @@ const NetworkHistoryChart = () => {
       }
       let blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> = [];
       
+      const isLocal = NODE_API_URL.includes("localhost") || NODE_API_URL.includes("127.0.0.1");
+      const timeoutMs = isLocal ? 2000 : 8000;
       try {
         const res = await fetch(`${NODE_API_URL}/blocks`, {
-          signal: AbortSignal.timeout(2000),
+          signal: AbortSignal.timeout(timeoutMs),
         });
         if (res.ok) {
           const data = await res.json() as { blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> };
           blocks = data.blocks;
         }
       } catch (error) {
-        const isLocal = NODE_API_URL.includes("localhost") || NODE_API_URL.includes("127.0.0.1");
         if (isLocal) {
           // Fallback: Try to fetch from any running local node
           for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
@@ -136,6 +137,8 @@ const NetworkHistoryChart = () => {
         } else {
           setChartData(data);
         }
+      } else {
+        setChartData([]);
       }
     } catch (error) {
       console.error("Failed to fetch chart data:", error);
