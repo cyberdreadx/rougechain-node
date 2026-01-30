@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Blocks, Wallet, MessageSquareLock, Shield, Lock } from "lucide-react";
+import { Network, Wallet, MessageSquareLock, Shield, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MainNav } from "@/components/MainNav";
 import xrgeLogo from "@/assets/xrge-logo.webp";
@@ -14,10 +14,10 @@ const features = [
     color: "primary",
   },
   {
-    icon: Blocks,
-    title: "Blockchain Explorer",
-    description: "Mine blocks and explore RougeChain with post-quantum CRYSTALS-Dilithium signatures.",
-    link: "/blockchain",
+    icon: Network,
+    title: "Core Node",
+    description: "Monitor the Rust core daemon, health checks, and live chain stats.",
+    link: "/node",
     color: "accent",
   },
   {
@@ -61,8 +61,7 @@ const Index = () => {
           </h1>
           
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
-            The quantum-safe blockchain powered by NIST-approved post-quantum cryptography.
-            to protect against quantum computing threats.
+            A post-quantum chain with a Rust core daemon and a modern UI for wallets, validators, and messaging.
           </p>
 
           <div className="flex items-center justify-center gap-3 flex-wrap">
@@ -72,10 +71,10 @@ const Index = () => {
                 Open Wallet
               </Button>
             </Link>
-            <Link to="/blockchain">
+            <Link to="/node">
               <Button size="lg" variant="outline" className="gap-2">
-                <Blocks className="w-5 h-5" />
-                Explore Chain
+                <Network className="w-5 h-5" />
+                View Core Node
               </Button>
             </Link>
           </div>
@@ -130,8 +129,8 @@ const Index = () => {
             </div>
             <div className="p-4 rounded-xl bg-background/50 border border-border">
               <Lock className="w-5 h-5 text-success mb-2" />
-              <h4 className="font-semibold text-foreground text-sm">SHA-3</h4>
-              <p className="text-xs text-muted-foreground">Quantum-resistant hashing</p>
+              <h4 className="font-semibold text-foreground text-sm">SHA-256</h4>
+              <p className="text-xs text-muted-foreground">Hashing for blocks and transactions</p>
             </div>
           </div>
 

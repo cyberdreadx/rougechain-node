@@ -1,0 +1,271 @@
+syntax = "proto3";
+
+package quantumvault;
+
+message Empty {}
+
+message KeyPair {
+  string algorithm = 1;
+  string public_key_hex = 2;
+  string secret_key_hex = 3;
+}
+
+message TxPayload {
+  string to_pub_key_hex = 1;
+  uint64 amount = 2;
+  bool faucet = 3;
+  string target_pub_key = 4;
+  string reason = 5;
+}
+
+message Tx {
+  uint32 version = 1;
+  string tx_type = 2;
+  string from_pub_key = 3;
+  uint64 nonce = 4;
+  TxPayload payload = 5;
+  double fee = 6;
+  string sig = 7;
+}
+
+message BlockHeader {
+  uint32 version = 1;
+  string chain_id = 2;
+  uint64 height = 3;
+  uint64 time = 4;
+  string prev_hash = 5;
+  string tx_hash = 6;
+  string proposer_pub_key = 7;
+}
+
+message Block {
+  uint32 version = 1;
+  BlockHeader header = 2;
+  repeated Tx txs = 3;
+  string proposer_sig = 4;
+  string hash = 5;
+}
+
+message NodeStats {
+  string node_id = 1;
+  uint64 network_height = 2;
+  uint32 connected_peers = 3;
+  bool is_mining = 4;
+  string chain_id = 5;
+  uint64 finalized_height = 6;
+  double total_fees_collected = 7;
+  double fees_in_last_block = 8;
+}
+
+message SelectionInfo {
+  uint64 height = 1;
+  string proposer = 2;
+  string total_stake = 3;
+  string selection_weight = 4;
+  string entropy_source = 5;
+  string entropy_hex = 6;
+}
+
+message FinalityStatus {
+  uint64 finalized_height = 1;
+  uint64 tip_height = 2;
+  string total_stake = 3;
+  string quorum_stake = 4;
+}
+
+message VoteSummary {
+  uint64 height = 1;
+  string total_stake = 2;
+  string quorum_stake = 3;
+  repeated VoteBucket prevote = 4;
+  repeated VoteBucket precommit = 5;
+}
+
+message VoteBucket {
+  string block_hash = 1;
+  uint32 voters = 2;
+  string stake = 3;
+}
+
+message ValidatorInfo {
+  string public_key = 1;
+  string stake = 2;
+  string status = 3;
+  uint32 slash_count = 4;
+  uint64 jailed_until = 5;
+  uint64 entropy_contributions = 6;
+}
+
+message ValidatorSet {
+  repeated ValidatorInfo validators = 1;
+  string total_stake = 2;
+}
+
+message VoteStats {
+  uint32 total_heights = 1;
+  repeated ValidatorVoteStats validators = 2;
+}
+
+message ValidatorVoteStats {
+  string public_key = 1;
+  double prevote_participation = 2;
+  double precommit_participation = 3;
+  uint64 last_seen_height = 4;
+}
+
+message BalanceRequest {
+  string public_key = 1;
+}
+
+message BalanceResponse {
+  double balance = 1;
+}
+
+message SubmitTxRequest {
+  string from_private_key = 1;
+  string from_public_key = 2;
+  string to_public_key = 3;
+  uint64 amount = 4;
+  double fee = 5;
+}
+
+message SubmitTxResponse {
+  string tx_id = 1;
+  Tx tx = 2;
+}
+
+message FaucetRequest {
+  string recipient_public_key = 1;
+  uint64 amount = 2;
+}
+
+message BlocksRequest {
+  uint32 limit = 1;
+}
+
+message BlocksResponse {
+  repeated Block blocks = 1;
+}
+
+message Wallet {
+  string id = 1;
+  string display_name = 2;
+  string signing_public_key = 3;
+  string encryption_public_key = 4;
+  string created_at = 5;
+}
+
+message MessengerWallets {
+  repeated Wallet wallets = 1;
+}
+
+message RegisterWalletRequest {
+  Wallet wallet = 1;
+}
+
+message Conversation {
+  string id = 1;
+  string created_by = 2;
+  repeated string participant_ids = 3;
+  string name = 4;
+  bool is_group = 5;
+  string created_at = 6;
+}
+
+message ConversationList {
+  repeated Conversation conversations = 1;
+}
+
+message CreateConversationRequest {
+  string created_by = 1;
+  repeated string participant_ids = 2;
+  string name = 3;
+  bool is_group = 4;
+}
+
+message MessengerMessage {
+  string id = 1;
+  string conversation_id = 2;
+  string sender_wallet_id = 3;
+  string encrypted_content = 4;
+  string signature = 5;
+  bool self_destruct = 6;
+  uint64 destruct_after_seconds = 7;
+  string created_at = 8;
+  bool is_read = 9;
+}
+
+message MessageList {
+  repeated MessengerMessage messages = 1;
+}
+
+message SendMessageRequest {
+  string conversation_id = 1;
+  string sender_wallet_id = 2;
+  string encrypted_content = 3;
+  string signature = 4;
+  bool self_destruct = 5;
+  uint64 destruct_after_seconds = 6;
+}
+
+message ReadMessageRequest {
+  string message_id = 1;
+}
+
+message ReadMessageResponse {
+  MessengerMessage message = 1;
+}
+
+message VoteRequest {
+  string vote_type = 1;
+  uint64 height = 2;
+  uint32 round = 3;
+  string block_hash = 4;
+  string voter_pub_key = 5;
+  string signature = 6;
+}
+
+message EntropyRequest {
+  string public_key = 1;
+}
+
+message StakeRequest {
+  string from_private_key = 1;
+  string from_public_key = 2;
+  uint64 amount = 3;
+  double fee = 4;
+}
+
+service ChainService {
+  rpc GetStats(Empty) returns (NodeStats);
+  rpc GetBlocks(BlocksRequest) returns (BlocksResponse);
+  rpc GetBalance(BalanceRequest) returns (BalanceResponse);
+  rpc SubmitTx(SubmitTxRequest) returns (SubmitTxResponse);
+  rpc Faucet(FaucetRequest) returns (SubmitTxResponse);
+}
+
+service WalletService {
+  rpc CreateWallet(Empty) returns (KeyPair);
+}
+
+service ValidatorService {
+  rpc GetValidatorSet(Empty) returns (ValidatorSet);
+  rpc GetSelectionInfo(Empty) returns (SelectionInfo);
+  rpc GetFinality(Empty) returns (FinalityStatus);
+  rpc GetVoteSummary(BalanceRequest) returns (VoteSummary);
+  rpc GetVoteStats(Empty) returns (VoteStats);
+  rpc SubmitVote(VoteRequest) returns (Empty);
+  rpc SubmitEntropy(EntropyRequest) returns (Empty);
+  rpc SubmitStake(StakeRequest) returns (SubmitTxResponse);
+  rpc SubmitUnstake(StakeRequest) returns (SubmitTxResponse);
+}
+
+service MessengerService {
+  rpc ListWallets(Empty) returns (MessengerWallets);
+  rpc RegisterWallet(RegisterWalletRequest) returns (Wallet);
+  rpc ListConversations(BalanceRequest) returns (ConversationList);
+  rpc CreateConversation(CreateConversationRequest) returns (Conversation);
+  rpc ListMessages(BalanceRequest) returns (MessageList);
+  rpc SendMessage(SendMessageRequest) returns (MessengerMessage);
+  rpc MarkRead(ReadMessageRequest) returns (ReadMessageResponse);
+}

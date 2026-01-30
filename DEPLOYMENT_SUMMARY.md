@@ -2,7 +2,7 @@
 
 ## ✅ Yes, you can deploy on both!
 
-- **Node Daemon**: Hostinger VPS ✅
+- **Core Node**: Hostinger VPS ✅
 - **Frontend**: Netlify ✅ (or same VPS)
 
 ## Architecture
@@ -10,7 +10,7 @@
 ```
 ┌─────────────────┐         ┌──────────────────┐
 │   Netlify       │         │  Hostinger VPS   │
-│   (Frontend)    │────────▶│  (Node Daemon)   │
+│   (Frontend)    │────────▶│  (Core Node)     │
 │   - React UI    │  API    │  - Blockchain    │
 │   - Free SSL    │  Calls  │  - Mining        │
 │   - CDN         │         │  - P2P Network   │
@@ -19,7 +19,7 @@
 
 ## Quick Steps
 
-### 1. Deploy Node on Hostinger VPS (5 minutes)
+### 1. Deploy Core Node on Hostinger VPS (5 minutes)
 
 ```bash
 # SSH into your VPS
@@ -31,19 +31,13 @@ chmod +x QUICK_START_VPS.sh
 ./QUICK_START_VPS.sh
 
 # Or manually:
-npm install -g pm2
-cd /var/www/quantum-vault
-npm install
-npm install --save @noble/post-quantum
-npm install --save-dev tsx
+cd /var/www/quantum-vault/core
+curl https://sh.rustup.rs -sSf | sh -s -- -y
+source "$HOME/.cargo/env"
+cargo build --release
 
-pm2 start npm --name "rougechain-node" -- run l1:node:dev -- \
-  --name public-node --host 0.0.0.0 --port 4100 --apiPort 5100 --mine
-```
-
-**Validator voting:** start your validator node with the staked keys:
-```
---validatorPubKey YOUR_PUBLIC_KEY_HEX --validatorPrivKey YOUR_PRIVATE_KEY_HEX
+# Run the daemon
+./target/release/quantum-vault-daemon --host 0.0.0.0 --port 4100 --api-port 5100 --mine
 ```
 
 ### 2. Deploy Frontend on Netlify (3 minutes)
@@ -63,7 +57,7 @@ pm2 start npm --name "rougechain-node" -- run l1:node:dev -- \
 
 ### Hostinger VPS
 - Open ports: 4100 (P2P), 5100 (API)
-- Node runs 24/7 with PM2
+- Core node runs 24/7 via systemd (recommended)
 - Auto-restarts on reboot
 
 ### Netlify
@@ -74,7 +68,7 @@ pm2 start npm --name "rougechain-node" -- run l1:node:dev -- \
 ## Test Your Setup
 
 ```bash
-# Test node API
+# Test core node API
 curl http://your-vps-ip:5100/api/stats
 
 # Should return JSON with node stats
@@ -88,7 +82,7 @@ curl http://your-vps-ip:5100/api/stats
 
 ## Benefits
 
-✅ **Node on VPS**: Always running, full control  
+✅ **Core node on VPS**: Always running, full control  
 ✅ **Frontend on Netlify**: Free, fast CDN, auto-deploy  
 ✅ **Separation**: Frontend can update without touching node  
 ✅ **Scalability**: Easy to add more nodes later
@@ -103,7 +97,7 @@ curl http://your-vps-ip:5100/api/stats
 
 Common issues:
 - **Can't access API**: Check firewall, use `--host 0.0.0.0`
-- **Build fails**: Check Node.js version (need 18+)
-- **CORS errors**: Node already has CORS enabled
+- **Build fails**: Check Rust toolchain installation
+- **CORS errors**: Core node allows any origin by default
 
 Your blockchain will be live in ~10 minutes! 🚀

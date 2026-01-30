@@ -50,6 +50,7 @@ const Wallet = () => {
   const [circulatingSupply, setCirculatingSupply] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [minting, setMinting] = useState(false);
   const [showSend, setShowSend] = useState(false);
   const [showReceive, setShowReceive] = useState(false);
@@ -114,13 +115,14 @@ const Wallet = () => {
             signal: AbortSignal.timeout(2000), // 2 second timeout
           });
           if (res.ok) {
-            const data = await res.json() as { chainId?: string };
-            if (data.chainId) {
+            const data = await res.json() as { chainId?: string; chain_id?: string };
+            const detected = data.chainId || data.chain_id;
+            if (detected) {
               // Hide faucet on mainnet (chainId doesn't contain "devnet" or "testnet")
-              const isMainnetNetwork = !data.chainId.includes("devnet") && !data.chainId.includes("testnet");
+              const isMainnetNetwork = !detected.includes("devnet") && !detected.includes("testnet");
               setIsMainnet(isMainnetNetwork);
-              setChainIdLabel(data.chainId);
-              console.log(`[Wallet] No UI selection, using node chainId: ${data.chainId} (${isMainnetNetwork ? 'mainnet' : 'devnet/testnet'})`);
+              setChainIdLabel(detected);
+              console.log(`[Wallet] No UI selection, using node chainId: ${detected} (${isMainnetNetwork ? 'mainnet' : 'devnet/testnet'})`);
             } else {
               // No chainId in response - default to testnet (show faucet)
               setIsMainnet(false);
@@ -168,6 +170,7 @@ const Wallet = () => {
   const refreshWalletData = async () => {
     if (!wallet) return;
     setRefreshing(true);
+    setSyncError(null);
     
     try {
       const [newBalances, newTxs, supply] = await Promise.all([
@@ -182,6 +185,8 @@ const Wallet = () => {
       setLastUpdated(Date.now());
     } catch (error) {
       console.error("Failed to refresh wallet data:", error);
+      const message = error instanceof Error ? error.message : "Failed to load wallet data";
+      setSyncError(message);
       toast.error("Failed to load wallet data");
     } finally {
       setRefreshing(false);
@@ -321,6 +326,7 @@ const Wallet = () => {
   const networkLabel = getNetworkLabel(chainIdLabel);
 
   const formatLastUpdated = (timestamp: number | null) => {
+    if (!timestamp && syncError) return "Sync failed";
     if (!timestamp) return "Not synced yet";
     const seconds = Math.floor((Date.now() - timestamp) / 1000);
     if (seconds < 5) return "Updated just now";

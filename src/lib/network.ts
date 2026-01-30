@@ -10,11 +10,18 @@ export function getActiveNetwork(): NetworkType {
   return "testnet";
 }
 
-export function getNodeApiBaseUrl(): string {
+export function getCoreApiBaseUrl(): string {
   const network = getActiveNetwork();
-  const defaultUrl = import.meta.env.VITE_NODE_API_URL || "http://localhost:5100/api";
-  const mainnetUrl = import.meta.env.VITE_NODE_API_URL_MAINNET as string | undefined;
-  const testnetUrl = import.meta.env.VITE_NODE_API_URL_TESTNET as string | undefined;
+  const defaultUrl =
+    import.meta.env.VITE_CORE_API_URL ||
+    import.meta.env.VITE_NODE_API_URL ||
+    "http://localhost:5100/api";
+  const mainnetUrl =
+    (import.meta.env.VITE_CORE_API_URL_MAINNET as string | undefined) ||
+    (import.meta.env.VITE_NODE_API_URL_MAINNET as string | undefined);
+  const testnetUrl =
+    (import.meta.env.VITE_CORE_API_URL_TESTNET as string | undefined) ||
+    (import.meta.env.VITE_NODE_API_URL_TESTNET as string | undefined);
 
   if (network === "mainnet") {
     if (!mainnetUrl) {
@@ -24,6 +31,10 @@ export function getNodeApiBaseUrl(): string {
   }
 
   return normalizeApiBaseUrl(testnetUrl || defaultUrl);
+}
+
+export function getNodeApiBaseUrl(): string {
+  return getCoreApiBaseUrl();
 }
 
 export function getNetworkLabel(chainId?: string): string {

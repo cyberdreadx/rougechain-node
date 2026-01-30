@@ -5,7 +5,7 @@ RougeChain is a production-ready L1 blockchain powered by NIST-approved post-qua
 ## Features
 
 - **Post-Quantum Cryptography**: ML-DSA-65 signatures and ML-KEM-768 key exchange
-- **L1 Node Daemon**: Standalone Node.js blockchain node with TCP P2P networking
+- **L1 Node Daemon**: Rust core node with HTTP + gRPC APIs
 - **Web Wallet**: Create wallets, send tokens, and view transaction history
 - **Blockchain Explorer**: Visualize blocks, transactions, and network stats
 - **Secure Messenger**: End-to-end encrypted messaging with quantum-safe encryption
@@ -15,8 +15,8 @@ RougeChain is a production-ready L1 blockchain powered by NIST-approved post-qua
 
 ### Prerequisites
 
-- Node.js 18+ installed
-- npm or yarn
+- Node.js 18+ (frontend)
+- Rust toolchain (core node)
 
 ### Installation
 
@@ -25,34 +25,30 @@ RougeChain is a production-ready L1 blockchain powered by NIST-approved post-qua
 git clone <YOUR_GIT_URL>
 cd quantum-vault
 
-# Install dependencies
+# Install frontend dependencies
 npm install
-npm install --save @noble/post-quantum
-npm install --save-dev tsx
 
 # Start development server
 npm run dev
 ```
 
-### Running a Node
+### Running the Core Node (Rust)
 
 ```sh
+cd core
 # Start a mining node
-npm run l1:node:dev -- --name my-node --host 0.0.0.0 --port 4100 --apiPort 5100 --mine
-
-# Or connect to peers
-npm run l1:node:dev -- --peers "127.0.0.1:4101,127.0.0.1:4102" --mine
+cargo run -p quantum-vault-daemon -- --host 0.0.0.0 --port 4100 --api-port 5100 --mine
 ```
 
 ## Project Structure
 
-- `node/` - L1 blockchain node daemon (Node.js)
+- `core/` - Rust L1 node daemon
 - `src/` - React frontend application
 
 ## Technologies
 
 - **Frontend**: Vite, React, TypeScript, Tailwind CSS, shadcn-ui
-- **Backend**: Node.js, TypeScript
+- **Backend**: Rust (axum + tonic)
 - **Cryptography**: @noble/post-quantum (ML-DSA-65, ML-KEM-768)
 - **Storage**: File-based JSONL storage for blockchain data
 
@@ -66,9 +62,7 @@ See deployment guides:
 
 ## Documentation
 
-- `node/README.md` - Node daemon documentation
-- `node/FEES.md` - Transaction fee mechanism
-- `node/PERFORMANCE.md` - Performance optimizations
+- `core/README.md` - Rust core node documentation
 - `PUBLIC_API.md` - Public API documentation
 - `TROUBLESHOOTING_TRANSACTIONS.md` - Transaction debugging guide
 

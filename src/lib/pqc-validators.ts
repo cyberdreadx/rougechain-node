@@ -1,4 +1,4 @@
-import { getNodeApiBaseUrl } from "@/lib/network";
+import { getCoreApiBaseUrl } from "@/lib/network";
 
 export type ValidatorTier = "standard" | "operator" | "genesis";
 export type ValidatorStatus = "pending" | "active" | "jailed" | "unbonding" | "inactive";
@@ -121,7 +121,7 @@ export async function registerValidator(
   stakeAmount: number,
   tier: ValidatorTier = "standard"
 ): Promise<Validator> {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }
@@ -160,7 +160,7 @@ export async function registerValidator(
 
 // Get all validators
 export async function getValidators(): Promise<Validator[]> {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   if (!apiBase) {
     return [];
   }
@@ -203,7 +203,7 @@ export async function getValidators(): Promise<Validator[]> {
 
 // Select next block proposer (quantum-weighted random)
 export async function selectProposer(): Promise<ProposerSelection> {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }
@@ -243,7 +243,7 @@ export async function selectProposer(): Promise<ProposerSelection> {
 }
 
 export async function getProposerSelectionInfo(): Promise<ProposerSelectionInfo> {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }
@@ -266,7 +266,7 @@ export async function getProposerSelectionInfo(): Promise<ProposerSelectionInfo>
 }
 
 export async function getFinalityStatus(): Promise<FinalityStatus> {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }
@@ -287,7 +287,7 @@ export async function getFinalityStatus(): Promise<FinalityStatus> {
 }
 
 export async function getVoteSummary(height?: number): Promise<VoteSummary> {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }
@@ -330,7 +330,7 @@ export async function getValidatorVoteStats(): Promise<{
     lastSeenHeight: number | null;
   }>;
 }> {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   if (!apiBase) {
     return { totalHeights: 0, validators: [] };
   }
@@ -356,7 +356,7 @@ export async function validateBlock(
   signature: string,
   isProposer: boolean = false
 ): Promise<boolean> {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }
@@ -405,7 +405,7 @@ export async function unstake(
   newStatus: ValidatorStatus;
   newTier: ValidatorTier;
 }> {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }
@@ -440,7 +440,7 @@ export async function contributeEntropy(
   validatorId: string,
   blockIndex: number
 ): Promise<string> {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }

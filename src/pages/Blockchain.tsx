@@ -54,7 +54,7 @@ const Blockchain = () => {
     signerPublicKey: b.header.proposerPubKey,
   });
 
-  // Load chain from node daemon(s)
+  // Load chain from core node(s)
   useEffect(() => {
     const fetchChain = async () => {
       try {
@@ -108,7 +108,7 @@ const Blockchain = () => {
         // No nodes found
         setChain([]);
         setNodeConnected(false);
-        console.warn("No node daemon found. Make sure a node is running with --mine flag.");
+        console.warn("No core node found. Make sure a node is running with --mine flag.");
       } catch (error) {
         console.error("Failed to load chain:", error);
       } finally {
@@ -356,14 +356,14 @@ const Blockchain = () => {
                 {!nodeConnected && chain.length === 0 && !isLoading && (
                   <div className="text-center py-12 px-4">
                     <Blocks className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
-                    <h3 className="text-lg font-semibold text-foreground mb-2">Node Not Connected</h3>
+                    <h3 className="text-lg font-semibold text-foreground mb-2">Core Node Not Connected</h3>
                     <p className="text-sm text-muted-foreground mb-4">
-                      No node daemon detected. Start a mining node to see blocks.
+                      No core node detected. Start a mining node to see blocks.
                     </p>
                     <div className="text-xs text-muted-foreground space-y-1 bg-secondary/50 p-4 rounded-lg text-left max-w-md mx-auto">
                       <p className="font-semibold mb-2">To start a node:</p>
                       <code className="block bg-background p-2 rounded mb-2">
-                        npm run l1:node:dev -- --name my-node --host 0.0.0.0 --port 4100 --apiPort 5100 --mine
+                        cargo run -p quantum-vault-daemon -- --host 0.0.0.0 --port 4100 --api-port 5100 --mine
                       </code>
                       <p className="text-xs">Or set <code className="bg-background px-1 rounded">VITE_NODE_API_URL_TESTNET</code> or <code className="bg-background px-1 rounded">VITE_NODE_API_URL_MAINNET</code> in your <code className="bg-background px-1 rounded">.env</code> file</p>
                     </div>

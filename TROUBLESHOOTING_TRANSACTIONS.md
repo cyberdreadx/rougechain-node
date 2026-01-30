@@ -14,11 +14,7 @@ Transactions are submitted but not appearing in the UI transaction history.
 **Check**:
 ```bash
 # Check node logs
-pm2 logs rougechain-node
-
-# Look for:
-# "📨 Transaction accepted (mempool size: X)"
-# "📦 Including X transaction(s) in block #Y"
+sudo journalctl -u quantum-vault-daemon -f
 ```
 
 ### 2. Empty Blocks (No Transactions)
@@ -31,18 +27,18 @@ pm2 logs rougechain-node
 
 **Check**:
 ```bash
-# View node console - should see:
-# "📦 Including X transaction(s) in block #Y"
-# If X is always 0, transactions aren't reaching mempool
+# Confirm blocks are being produced
+curl http://localhost:5100/api/blocks?limit=5
 ```
 
 ### 3. Transaction Format Mismatch
 
 **Symptom**: Transactions submitted but rejected.
 
-**Check node logs for**:
-- `⚠️ Rejected tx: invalid version`
-- `⚠️ Rejected tx: invalid signature`
+**Check node logs for errors**:
+```bash
+sudo journalctl -u quantum-vault-daemon -f
+```
 
 **Solution**: Ensure transaction is properly signed before submission.
 
@@ -84,17 +80,15 @@ curl -X POST http://localhost:5100/api/tx/submit \
 
 ### Step 2: Check Mempool
 
-Look in node logs:
+Check node logs for request errors:
 ```
-[Node abc12345] ✅ Added tx to mempool (id: def67890..., mempool: 1)
+sudo journalctl -u quantum-vault-daemon -f
 ```
 
 ### Step 3: Check Block Inclusion
 
-Look in node logs:
-```
-[Node abc12345] 📦 Including 1 transaction(s) in block #42
-[Node abc12345] ✅ Mined block #42 (1 txs, 0.1 XRGE fees, ...)
+```bash
+curl http://localhost:5100/api/blocks?limit=5
 ```
 
 ### Step 4: Verify Blocks API
@@ -120,7 +114,7 @@ Open browser DevTools → Console:
 
 ### Check Node is Mining
 ```bash
-pm2 logs rougechain-node | grep "Mined block"
+curl http://localhost:5100/api/health
 ```
 
 ### Verify API is Accessible
@@ -140,7 +134,7 @@ curl http://localhost:5100/api/blocks
 
 ## If Still Not Working
 
-1. **Check node logs**: `pm2 logs rougechain-node`
+1. **Check node logs**: `sudo journalctl -u quantum-vault-daemon -f`
 2. **Check browser console**: Look for errors
 3. **Verify API URL**: Ensure `VITE_NODE_API_URL_TESTNET` / `VITE_NODE_API_URL_MAINNET` point to your node
 4. **Test API directly**: `curl http://your-node:5100/api/blocks`

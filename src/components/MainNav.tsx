@@ -3,22 +3,20 @@ import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { 
   Home, 
-  Blocks, 
   Wallet, 
   MessageSquare, 
   Shield, 
   Network 
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
-import { getActiveNetwork, getNetworkLabel, getNodeApiBaseUrl, NETWORK_STORAGE_KEY } from "@/lib/network";
+import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, NETWORK_STORAGE_KEY } from "@/lib/network";
 
 const navItems = [
   { to: "/", label: "Home", icon: Home },
-  { to: "/blockchain", label: "Blockchain", icon: Blocks },
   { to: "/wallet", label: "Wallet", icon: Wallet },
   { to: "/messenger", label: "Messenger", icon: MessageSquare },
   { to: "/validators", label: "Validators", icon: Shield },
-  { to: "/node", label: "P2P Node", icon: Network },
+  { to: "/node", label: "Core Node", icon: Network },
 ];
 
 export function MainNav() {
@@ -40,16 +38,17 @@ export function MainNav() {
 
     const fetchChainId = async () => {
       try {
-        const apiBase = getNodeApiBaseUrl();
+        const apiBase = getCoreApiBaseUrl();
         if (!apiBase) {
           return;
         }
         const response = await fetch(`${apiBase}/stats`);
         if (!response.ok) return;
-        const data = await response.json().catch(() => null);
-        if (data?.chainId) {
-          setChainId(data.chainId);
-          setNetworkLabel(getNetworkLabel(data.chainId));
+        const data = await response.json().catch(() => null) as { chain_id?: string; chainId?: string } | null;
+        const detected = data?.chain_id || data?.chainId;
+        if (detected) {
+          setChainId(detected);
+          setNetworkLabel(getNetworkLabel(detected));
         }
       } catch {
         updateFromSelection();

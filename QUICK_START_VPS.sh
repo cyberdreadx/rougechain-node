@@ -1,14 +1,14 @@
 #!/bin/bash
-# Quick setup script for RougeChain node on Hostinger VPS
+# Quick setup script for Quantum Vault core node on Hostinger VPS
 # Run this on your VPS after SSH connection
 
 set -e
 
-echo "🚀 RougeChain L1 Node Setup for Hostinger VPS"
-echo "=============================================="
+echo "🚀 Quantum Vault Core Node Setup for Hostinger VPS"
+echo "=================================================="
 
 # Check if running as root
-if [ "$EUID" -eq 0 ]; then 
+if [ "$EUID" -eq 0 ]; then
    echo "⚠️  Running as root. Consider using a non-root user."
 fi
 
@@ -16,21 +16,17 @@ fi
 echo "📦 Updating system packages..."
 sudo apt update && sudo apt upgrade -y
 
-# Install Node.js if not installed
-if ! command -v node &> /dev/null; then
-    echo "📦 Installing Node.js..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-    sudo apt install -y nodejs
-else
-    echo "✅ Node.js already installed: $(node --version)"
-fi
+# Install build dependencies
+echo "📦 Installing build dependencies..."
+sudo apt install -y build-essential pkg-config libssl-dev curl
 
-# Install PM2 if not installed
-if ! command -v pm2 &> /dev/null; then
-    echo "📦 Installing PM2..."
-    sudo npm install -g pm2
+# Install Rust if not installed
+if ! command -v cargo &> /dev/null; then
+    echo "📦 Installing Rust..."
+    curl https://sh.rustup.rs -sSf | sh -s -- -y
+    source "$HOME/.cargo/env"
 else
-    echo "✅ PM2 already installed"
+    echo "✅ Rust already installed: $(cargo --version)"
 fi
 
 # Install Nginx if not installed
@@ -60,69 +56,50 @@ if [ ! -d "$PROJECT_DIR" ]; then
     exit 1
 fi
 
-cd "$PROJECT_DIR"
+# Build the core daemon
+echo "📦 Building core node..."
+cd "$PROJECT_DIR/core"
+cargo build --release
 
-# Install dependencies
-echo "📦 Installing dependencies..."
-npm install
-npm install --save @noble/post-quantum
-npm install --save-dev tsx
+# Configure systemd service
+USER_NAME=$(whoami)
+SERVICE_PATH="/etc/systemd/system/quantum-vault-daemon.service"
 
-# Get configuration
-read -p "Enter node name (default: public-node): " NODE_NAME
-NODE_NAME=${NODE_NAME:-public-node}
+echo "⚙️  Creating systemd service..."
+sudo tee "$SERVICE_PATH" > /dev/null <<EOF
+[Unit]
+Description=Quantum Vault Core Node
+After=network.target
 
-read -p "Enter P2P port (default: 4100): " P2P_PORT
-P2P_PORT=${P2P_PORT:-4100}
+[Service]
+Type=simple
+User=$USER_NAME
+WorkingDirectory=$PROJECT_DIR/core
+ExecStart=$PROJECT_DIR/core/target/release/quantum-vault-daemon --host 0.0.0.0 --port 4100 --api-port 5100 --mine
+Restart=always
+RestartSec=3
 
-read -p "Enter API port (default: 5100): " API_PORT
-API_PORT=${API_PORT:-5100}
+[Install]
+WantedBy=multi-user.target
+EOF
 
-read -p "Enable mining? (y/n, default: y): " ENABLE_MINE
-ENABLE_MINE=${ENABLE_MINE:-y}
-
-MINE_FLAG=""
-if [ "$ENABLE_MINE" = "y" ]; then
-    MINE_FLAG="--mine"
-fi
-
-# Stop existing PM2 process if running
-pm2 delete rougechain-node 2>/dev/null || true
-
-# Start node with PM2
-echo "🚀 Starting RougeChain node..."
-pm2 start npm --name "rougechain-node" -- run l1:node:dev -- \
-  --name "$NODE_NAME" \
-  --host 0.0.0.0 \
-  --port "$P2P_PORT" \
-  --apiPort "$API_PORT" \
-  $MINE_FLAG \
-  --blockTimeMs 1000
-
-# Save PM2 config
-pm2 save
-
-# Setup auto-start
-echo "⚙️  Setting up auto-start..."
-STARTUP_CMD=$(pm2 startup | grep -o 'sudo.*')
-if [ ! -z "$STARTUP_CMD" ]; then
-    echo "Run this command to enable auto-start:"
-    echo "$STARTUP_CMD"
-fi
+sudo systemctl daemon-reload
+sudo systemctl enable quantum-vault-daemon
+sudo systemctl restart quantum-vault-daemon
 
 # Test API
 echo "🧪 Testing API..."
 sleep 2
-curl -s http://localhost:$API_PORT/api/stats | head -20
+curl -s http://localhost:5100/api/stats | head -20
 
 echo ""
 echo "✅ Setup complete!"
 echo ""
-echo "Node is running with PM2"
-echo "View logs: pm2 logs rougechain-node"
-echo "View status: pm2 status"
+echo "Node is running with systemd"
+echo "View logs: sudo journalctl -u quantum-vault-daemon -f"
+echo "View status: sudo systemctl status quantum-vault-daemon --no-pager"
 echo ""
-echo "API accessible at: http://$(hostname -I | awk '{print $1}'):$API_PORT/api/stats"
+echo "API accessible at: http://$(hostname -I | awk '{print $1}'):5100/api/stats"
 echo ""
 echo "Next steps:"
 echo "1. Configure Nginx reverse proxy (optional)"

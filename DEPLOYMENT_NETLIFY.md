@@ -129,12 +129,8 @@ Check build logs in Netlify dashboard:
 
 ### CORS Errors
 
-If you see CORS errors, your node already has:
-```typescript
-res.setHeader("Access-Control-Allow-Origin", "*");
-```
-
-This should work, but if issues persist, update node to allow your Netlify domain specifically.
+The core node allows any origin by default. If you still see CORS errors,
+restrict and reconfigure origins in the Rust daemon.
 
 ## Alternative: Vercel
 

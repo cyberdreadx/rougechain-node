@@ -10,9 +10,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "l1:node": "node ./node/dist/index.js",
-    "l1:node:dev": "node --enable-source-maps --import tsx ./node/src/index.ts"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

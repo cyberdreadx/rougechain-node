@@ -1,0 +1,25 @@
+[package]
+name = "quantum-vault-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+tonic = "0.11"
+tonic-reflection = "0.11"
+prost = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+axum = "0.6"
+tower-http = { version = "0.4", features = ["cors"] }
+quantum-vault-types = { path = "../types" }
+quantum-vault-crypto = { path = "../crypto" }
+quantum-vault-consensus = { path = "../consensus" }
+quantum-vault-storage = { path = "../storage" }
+
+[build-dependencies]
+tonic-build = "0.11"
+protoc-bin-vendored = "3"

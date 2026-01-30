@@ -4,7 +4,7 @@ import { OrbitControls, Html } from "@react-three/drei";
 import * as THREE from "three";
 import { motion } from "framer-motion";
 import { Globe, Activity, Users, Loader2, Wifi, Shield } from "lucide-react";
-import { getNodeApiBaseUrl } from "@/lib/network";
+import { getCoreApiBaseUrl } from "@/lib/network";
 
 // Generate random points on a sphere based on validator count
 const generateNodePositions = (count: number, radius: number) => {
@@ -190,62 +190,73 @@ interface GlobalNetworkGlobeProps {
 }
 
 interface NodeStats {
-  connectedPeers: number;
-  networkHeight: number;
-  isMining: boolean;
-  nodeId: string;
+  connected_peers: number;
+  network_height: number;
+  is_mining: boolean;
+  node_id: string;
 }
+
+const normalizeStats = (data: Record<string, unknown>): NodeStats => ({
+  connected_peers: Number(data.connected_peers ?? data.connectedPeers ?? 0),
+  network_height: Number(data.network_height ?? data.networkHeight ?? 0),
+  is_mining: Boolean(data.is_mining ?? data.isMining ?? false),
+  node_id: String(data.node_id ?? data.nodeId ?? ""),
+});
 
 const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
   const [nodeStats, setNodeStats] = useState<NodeStats[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [isLive, setIsLive] = useState(false);
   const [isWebglLost, setIsWebglLost] = useState(false);
   const [canvasEl, setCanvasEl] = useState<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const fetchNodes = async () => {
       try {
+        setIsLoading(true);
         const stats: NodeStats[] = [];
-        const envList = (import.meta.env.VITE_PUBLIC_NODE_APIS as string | undefined)
-          ?.split(",")
-          .map((entry) => entry.trim())
-          .filter(Boolean) ?? [];
+        const configuredBase = getCoreApiBaseUrl();
+        const configuredUrl = configuredBase ? configuredBase.replace(/\/api$/, "") : "";
+        const apiBases = [
+          configuredUrl,
+          ...[5100, 5101, 5102, 5103, 5104].map((apiPort) => `http://127.0.0.1:${apiPort}`),
+        ].filter(Boolean);
 
-        const apiBases = envList.length > 0
-          ? envList
-          : [getNodeApiBaseUrl()].filter(Boolean);
-
-        const targets = apiBases.length > 0
-          ? apiBases.map((base) => `${base}/stats`)
-          // Dev-only fallback when no API is configured.
-          : [5100, 5101, 5102, 5103, 5104].map((apiPort) => `http://127.0.0.1:${apiPort}/api/stats`);
+        const targets = apiBases.map((base) => `${base}/api/stats`);
 
         for (const url of targets) {
           try {
             const res = await fetch(url, {
-              signal: AbortSignal.timeout(2500),
+              signal: AbortSignal.timeout(800),
             });
             if (res.ok) {
-              const data = await res.json() as NodeStats;
-              stats.push(data);
+              const data = await res.json() as Record<string, unknown>;
+              stats.push(normalizeStats(data));
             }
           } catch {
             // Ignore unreachable targets
           }
         }
-        setNodeStats(stats);
-        setIsLive(stats.length > 0);
+        if (!cancelled) {
+          setNodeStats(stats);
+          setIsLive(stats.length > 0);
+        }
       } catch (error) {
         console.error("Failed to fetch nodes:", error);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     };
 
     fetchNodes();
-    const interval = setInterval(fetchNodes, 5000);
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchNodes, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -265,8 +276,10 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
     };
   }, [canvasEl]);
 
-  const totalPeers = nodeStats.reduce((sum, s) => sum + s.connectedPeers, 0);
+  const totalPeers = nodeStats.reduce((sum, s) => sum + s.connected_peers, 0);
   const activeNodes = nodeStats.length;
+  const displayNodes = activeNodes > 0 ? activeNodes : 1;
+  const displayPeers = totalPeers;
 
   return (
     <div className={`relative ${className}`}>
@@ -310,7 +323,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
           <div>
             <p className="text-xs text-muted-foreground">Nodes</p>
             <p className="text-sm font-semibold text-foreground">
-              {isLoading ? "..." : activeNodes}
+              {isLoading ? "..." : displayNodes}
             </p>
           </div>
         </div>
@@ -319,7 +332,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
           <div>
             <p className="text-xs text-muted-foreground">Peers</p>
             <p className="text-sm font-semibold text-foreground">
-              {isLoading ? "..." : totalPeers}
+              {isLoading ? "..." : displayPeers}
             </p>
           </div>
         </div>
@@ -327,7 +340,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
           <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg px-3 py-2">
             <p className="text-xs text-muted-foreground">Mining</p>
             <p className="text-sm font-semibold text-foreground">
-              {nodeStats.filter(s => s.isMining).length} / {activeNodes}
+              {nodeStats.filter(s => s.is_mining).length} / {displayNodes}
             </p>
           </div>
         )}
@@ -335,11 +348,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
 
       {/* 3D Canvas */}
       <div className="w-full h-full min-h-[400px] bg-gradient-to-b from-background to-card rounded-xl border border-border overflow-hidden">
-        {isLoading ? (
-          <div className="w-full h-full flex items-center justify-center">
-            <Loader2 className="w-8 h-8 text-primary animate-spin" />
-          </div>
-        ) : isWebglLost ? (
+        {isWebglLost ? (
           <div className="w-full h-full flex items-center justify-center text-center px-6">
             <div>
               <Shield className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
@@ -356,7 +365,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
               setCanvasEl(state.gl.domElement);
             }}
           >
-            <NetworkScene nodeCount={activeNodes} peerCount={totalPeers} />
+            <NetworkScene nodeCount={displayNodes} peerCount={displayPeers} />
           </Canvas>
         )}
       </div>

@@ -1,6 +1,6 @@
 // Node API client for RougeChain L1
-// This connects to the public node daemon API
-import { getNodeApiBaseUrl } from "./network";
+// This connects to the Rust core node API
+import { getCoreApiBaseUrl } from "./network";
 
 export interface NodeWallet {
   publicKey: string;
@@ -25,7 +25,7 @@ export interface NodeBalance {
  * Note: In production, generate keys client-side instead!
  */
 export async function createWalletViaNode(): Promise<NodeWallet> {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }
@@ -71,7 +71,7 @@ export async function submitTransactionViaNode(
   amount: number,
   fee?: number
 ): Promise<NodeTxResponse> {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }
@@ -95,7 +95,7 @@ export async function submitTransactionViaNode(
  * Get balance for a public key
  */
 export async function getBalanceViaNode(publicKey: string): Promise<number> {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   if (!apiBase) {
     return 0;
   }
@@ -113,7 +113,7 @@ export async function getBalanceViaNode(publicKey: string): Promise<number> {
  * Get node stats
  */
 export async function getNodeStats() {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }

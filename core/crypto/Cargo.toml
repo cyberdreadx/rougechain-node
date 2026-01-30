@@ -1,0 +1,12 @@
+[package]
+name = "quantum-vault-crypto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hex = "0.4"
+sha2 = "0.10"
+rand = "0.8"
+pqcrypto-dilithium = "0.5"
+pqcrypto-traits = "0.3"
+quantum-vault-types = { path = "../types" }

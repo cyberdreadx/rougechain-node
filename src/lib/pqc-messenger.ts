@@ -1,4 +1,4 @@
-import { getNodeApiBaseUrl } from "@/lib/network";
+import { getCoreApiBaseUrl } from "@/lib/network";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 
@@ -157,7 +157,7 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 function getMessengerApiBase(): string | null {
-  const apiBase = getNodeApiBaseUrl();
+  const apiBase = getCoreApiBaseUrl();
   return apiBase || null;
 }
 

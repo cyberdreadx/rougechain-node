@@ -1,0 +1,14 @@
+[package]
+name = "quantum-vault-storage"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sled = "0.34"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+hex = "0.4"
+quantum-vault-types = { path = "../types" }
+quantum-vault-crypto = { path = "../crypto" }

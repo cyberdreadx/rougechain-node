@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = [
+  "types",
+  "crypto",
+  "consensus",
+  "storage",
+  "p2p",
+  "daemon",
+]

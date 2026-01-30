@@ -1,5 +1,5 @@
 import { Block } from "./pqc-blockchain";
-import { getActiveNetwork, getNodeApiBaseUrl } from "./network";
+import { getActiveNetwork, getCoreApiBaseUrl } from "./network";
 
 // RougeChain constants
 export const TOTAL_SUPPLY = 36_000_000_000; // 36 Billion XRGE
@@ -102,7 +102,7 @@ export function parseBlockTransaction(block: Block): Transaction | null {
 // Get all transactions from the chain
 // Now supports both node API (for public deployment) and local Supabase (for dev)
 export async function getAllTransactions(): Promise<{ tx: Transaction; block: Block }[]> {
-  const NODE_API_URL = getNodeApiBaseUrl();
+  const NODE_API_URL = getCoreApiBaseUrl();
   if (!NODE_API_URL) {
     return [];
   }
@@ -220,7 +220,7 @@ export async function getTokenBySymbol(symbol: string): Promise<TokenInfo | null
 // Now supports both node API (for public deployment) and local Supabase (for dev)
 export async function getWalletBalance(publicKey: string): Promise<WalletBalance[]> {
   // Try node API first (for public deployment)
-  const NODE_API_URL = getNodeApiBaseUrl();
+  const NODE_API_URL = getCoreApiBaseUrl();
   if (!NODE_API_URL) {
     return [{
       symbol: "XRGE",
@@ -382,7 +382,7 @@ export async function sendTransaction(
   memo?: string
 ): Promise<Block> {
   // Try node API first (for public deployment)
-  const NODE_API_URL = getNodeApiBaseUrl();
+  const NODE_API_URL = getCoreApiBaseUrl();
   
   try {
     const res = await fetch(`${NODE_API_URL}/tx/submit`, {
@@ -442,7 +442,7 @@ export async function mintTokens(
   symbol: string = "XRGE"
 ): Promise<Block> {
   // Try node API first (for public deployment)
-  const NODE_API_URL = getNodeApiBaseUrl();
+  const NODE_API_URL = getCoreApiBaseUrl();
   if (!NODE_API_URL) {
     throw new Error("Mainnet API is not configured");
   }

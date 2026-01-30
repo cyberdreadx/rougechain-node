@@ -2,15 +2,15 @@
 
 ## Overview
 
-- **Node Daemon**: Deploy on Hostinger VPS (runs 24/7)
+- **Core Node**: Deploy on Hostinger VPS (runs 24/7)
 - **Frontend**: Deploy on Netlify (or Vercel, or same VPS)
 
-## Part 1: Node Daemon on Hostinger VPS
+## Part 1: Core Node on Hostinger VPS
 
 ### Prerequisites
 
 1. SSH access to your Hostinger VPS
-2. Node.js 18+ installed
+2. Rust toolchain installed
 3. Public IP or domain name
 
 ### Step 1: Connect to VPS
@@ -21,19 +21,19 @@ ssh root@your-vps-ip
 ssh username@your-vps-ip
 ```
 
-### Step 2: Install Node.js (if not installed)
+### Step 2: Install Rust (if not installed)
 
 ```bash
 # Update system
 sudo apt update && sudo apt upgrade -y
 
-# Install Node.js 20.x
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
+# Install Rust
+curl https://sh.rustup.rs -sSf | sh -s -- -y
+source "$HOME/.cargo/env"
 
 # Verify
-node --version
-npm --version
+rustc --version
+cargo --version
 ```
 
 ### Step 3: Clone/Upload Your Project
@@ -49,13 +49,11 @@ cd quantum-vault
 - Use FileZilla or similar
 - Upload entire project to `/var/www/quantum-vault` (or your preferred location)
 
-### Step 4: Install Dependencies
+### Step 4: Build the Core Node
 
 ```bash
-cd /var/www/quantum-vault
-npm install
-npm install --save @noble/post-quantum
-npm install --save-dev tsx
+cd /var/www/quantum-vault/core
+cargo build --release
 ```
 
 ### Step 5: Configure Firewall
@@ -74,42 +72,39 @@ sudo ufw allow 22/tcp
 sudo ufw enable
 ```
 
-### Step 6: Install PM2 (Process Manager)
+### Step 6: Create systemd Service
 
 ```bash
-npm install -g pm2
+sudo tee /etc/systemd/system/quantum-vault-daemon.service > /dev/null <<'EOF'
+[Unit]
+Description=Quantum Vault Core Node
+After=network.target
+
+[Service]
+Type=simple
+User=your-user
+WorkingDirectory=/var/www/quantum-vault/core
+ExecStart=/var/www/quantum-vault/core/target/release/quantum-vault-daemon --host 0.0.0.0 --port 4100 --api-port 5100 --mine
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable quantum-vault-daemon
+sudo systemctl start quantum-vault-daemon
 ```
 
-### Step 7: Start the Node
-
-```bash
-cd /var/www/quantum-vault
-
-# Start node with PM2
-pm2 start npm --name "rougechain-node" -- run l1:node:dev -- \
-  --name public-node \
-  --host 0.0.0.0 \
-  --port 4100 \
-  --apiPort 5100 \
-  --mine \
-  --blockTimeMs 1000
-
-# Save PM2 config
-pm2 save
-
-# Setup auto-start on reboot
-pm2 startup
-# Follow the command it outputs (usually involves sudo)
-```
-
-### Step 8: Verify Node is Running
+### Step 7: Verify Node is Running
 
 ```bash
 # Check status
-pm2 status
+sudo systemctl status quantum-vault-daemon --no-pager
 
 # View logs
-pm2 logs rougechain-node
+sudo journalctl -u quantum-vault-daemon -f
 
 # Test API
 curl http://localhost:5100/api/stats
@@ -252,23 +247,17 @@ VITE_NODE_API_URL_MAINNET=http://your-vps-ip:5100/api
 ### Check Node Status
 
 ```bash
-# PM2 commands
-pm2 status
-pm2 logs rougechain-node
-pm2 monit
+sudo systemctl status quantum-vault-daemon --no-pager
+sudo journalctl -u quantum-vault-daemon -f
 
 # Check if API is accessible
 curl http://your-vps-ip:5100/api/stats
 ```
 
-### View Logs
+### Restart
 
 ```bash
-# Real-time logs
-pm2 logs rougechain-node --lines 100
-
-# Restart if needed
-pm2 restart rougechain-node
+sudo systemctl restart quantum-vault-daemon
 ```
 
 ## Troubleshooting
@@ -276,7 +265,7 @@ pm2 restart rougechain-node
 ### Node won't start
 ```bash
 # Check logs
-pm2 logs rougechain-node
+sudo journalctl -u quantum-vault-daemon -f
 
 # Check if port is in use
 sudo netstat -tulpn | grep 4100
@@ -291,11 +280,9 @@ sudo kill -9 <PID>
 - Check if node is listening on `0.0.0.0`: `--host 0.0.0.0`
 - Check Hostinger firewall rules in control panel
 
-### PM2 not starting on reboot
+### systemd not starting on reboot
 ```bash
-# Re-run startup command
-pm2 startup
-# Follow the sudo command it outputs
+sudo systemctl enable quantum-vault-daemon
 ```
 
 ## Quick Start Script
@@ -304,14 +291,8 @@ Create `/var/www/quantum-vault/start-node.sh`:
 
 ```bash
 #!/bin/bash
-cd /var/www/quantum-vault
-pm2 start npm --name "rougechain-node" -- run l1:node:dev -- \
-  --name public-node \
-  --host 0.0.0.0 \
-  --port 4100 \
-  --apiPort 5100 \
-  --mine \
-  --blockTimeMs 1000
+cd /var/www/quantum-vault/core
+./target/release/quantum-vault-daemon --host 0.0.0.0 --port 4100 --api-port 5100 --mine
 ```
 
 Make executable:
@@ -324,7 +305,7 @@ chmod +x start-node.sh
 - [ ] Firewall configured (ports 4100, 5100)
 - [ ] Node running as non-root user (recommended)
 - [ ] SSL/HTTPS enabled (Let's Encrypt)
-- [ ] PM2 auto-restart configured
+- [ ] systemd auto-restart configured
 - [ ] Regular backups of chain data
 - [ ] Monitor disk space (chain grows over time)
 
@@ -332,8 +313,8 @@ chmod +x start-node.sh
 
 ```bash
 # Backup chain files
-tar -czf rougechain-backup-$(date +%Y%m%d).tar.gz \
-  ~/.rougechain-devnet/public-node/
+tar -czf quantum-vault-backup-$(date +%Y%m%d).tar.gz \
+  ~/.quantum-vault/core-node/
 
 # Restore
 tar -xzf rougechain-backup-YYYYMMDD.tar.gz -C ~/
