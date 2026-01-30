@@ -17,15 +17,20 @@ interface BlockV1 {
   version: 1;
   header: {
     version: 1;
-    chainId: string;
+    chainId?: string;
+    chain_id?: string;
     height: number;
     time: number;
-    prevHash: string;
-    txHash: string;
-    proposerPubKey: string;
+    prevHash?: string;
+    prev_hash?: string;
+    txHash?: string;
+    tx_hash?: string;
+    proposerPubKey?: string;
+    proposer_pub_key?: string;
   };
   txs: unknown[];
-  proposerSig: string;
+  proposerSig?: string;
+  proposer_sig?: string;
   hash: string;
 }
 
@@ -47,11 +52,11 @@ const Blockchain = () => {
     index: b.header.height,
     timestamp: b.header.time,
     data: JSON.stringify(b.txs),
-    previousHash: b.header.prevHash,
+    previousHash: b.header.prevHash ?? b.header.prev_hash ?? "",
     hash: b.hash,
     nonce: 0, // Not used in new format
-    signature: b.proposerSig,
-    signerPublicKey: b.header.proposerPubKey,
+    signature: b.proposerSig ?? b.proposer_sig ?? "",
+    signerPublicKey: b.header.proposerPubKey ?? b.header.proposer_pub_key ?? "",
   });
 
   // Load chain from core node(s)

@@ -112,48 +112,64 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
     if (res.ok) {
       const data = await res.json() as { blocks: Array<{
         version: 1;
-        header: { height: number; time: number; prevHash: string; proposerPubKey: string };
+        header: {
+          height: number;
+          time: number;
+          prevHash?: string;
+          prev_hash?: string;
+          proposerPubKey?: string;
+          proposer_pub_key?: string;
+        };
         txs: Array<{
           version: 1;
-          type: "transfer" | "stake" | "unstake";
-          fromPubKey: string;
+          type?: "transfer" | "stake" | "unstake";
+          tx_type?: "transfer" | "stake" | "unstake";
+          fromPubKey?: string;
+          from_pub_key?: string;
           nonce: number;
-          payload: { toPubKeyHex?: string; amount?: number };
+          payload: { toPubKeyHex?: string; to_pub_key_hex?: string; amount?: number; faucet?: boolean };
           fee: number;
           sig: string;
         }>;
-        proposerSig: string;
+        proposerSig?: string;
+        proposer_sig?: string;
         hash: string;
       }> };
 
       const transactions: { tx: Transaction; block: Block }[] = [];
 
       for (const blockV1 of data.blocks) {
+        const header = blockV1.header;
+        const prevHash = header.prevHash ?? header.prev_hash ?? "";
+        const proposerPubKey = header.proposerPubKey ?? header.proposer_pub_key ?? "";
+        const proposerSig = blockV1.proposerSig ?? blockV1.proposer_sig ?? "";
         for (const txV1 of blockV1.txs) {
-          if (txV1.type === "transfer") {
-            const payload = txV1.payload as { toPubKeyHex?: string; amount?: number; faucet?: boolean };
+          const txType = txV1.type ?? txV1.tx_type;
+          if (txType === "transfer") {
+            const payload = txV1.payload as { toPubKeyHex?: string; to_pub_key_hex?: string; amount?: number; faucet?: boolean };
             const isFaucet = payload.faucet === true;
+            const fromPubKey = txV1.fromPubKey ?? txV1.from_pub_key ?? "";
             const tx: Transaction = {
               type: isFaucet ? "mint" : "transfer",
-              from: isFaucet ? "FAUCET" : txV1.fromPubKey,
-              to: payload.toPubKeyHex || "",
+              from: isFaucet ? "FAUCET" : fromPubKey,
+              to: payload.toPubKeyHex || payload.to_pub_key_hex || "",
               amount: payload.amount || 0,
               symbol: "XRGE",
               timestamp: blockV1.header.time,
               memo: isFaucet ? "Faucet" : undefined,
               fee: txV1.fee,
-              feeRecipient: blockV1.header.proposerPubKey,
+              feeRecipient: proposerPubKey,
             };
 
             const block: Block = {
               index: blockV1.header.height,
               timestamp: blockV1.header.time,
               data: JSON.stringify(tx),
-              previousHash: blockV1.header.prevHash,
+              previousHash: prevHash,
               hash: blockV1.hash,
               nonce: 0,
-              signature: blockV1.proposerSig,
-              signerPublicKey: blockV1.header.proposerPubKey,
+              signature: proposerSig,
+              signerPublicKey: proposerPubKey,
             };
 
             transactions.push({ tx, block });
