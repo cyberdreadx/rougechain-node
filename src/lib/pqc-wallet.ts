@@ -338,13 +338,19 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
   }
   
   try {
-    // Get XRGE balance
+    // Get XRGE balance AND token balances from API
     const res = await fetch(`${NODE_API_URL}/balance/${publicKey}`, {
       headers: getCoreApiHeaders(),
     });
     if (res.ok) {
-      const data = await res.json() as { success: boolean; balance: number };
+      const data = await res.json() as { 
+        success: boolean; 
+        balance: number;
+        token_balances?: Record<string, number>;
+      };
+      
       if (data.success) {
+        // Add XRGE balance
         balances.push({
           symbol: "XRGE",
           balance: data.balance,
@@ -352,67 +358,25 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
           icon: "🔴",
           tokenAddress: "",
         });
-      }
-    }
-    
-    // Get custom token balances by scanning transactions
-    try {
-      const transactions = await getAllTransactions();
-      const tokenBalances: Record<string, { balance: number; name: string; symbol: string; address: string }> = {};
-      
-      for (const { tx } of transactions) {
-        const symbol = tx.symbol;
         
-        // Skip XRGE - we get that from the API
-        if (symbol === "XRGE") continue;
-        
-        // Initialize token balance entry if needed
-        if (symbol && !tokenBalances[symbol]) {
-          tokenBalances[symbol] = {
-            balance: 0,
-            name: tx.tokenData?.name || symbol,
-            symbol: symbol,
-            address: tx.tokenData?.tokenAddress || `token:${symbol.toLowerCase()}`,
-          };
-        }
-        
-        // Token creation - creator gets the full supply
-        if (tx.type === "create_token" && tx.tokenData && tx.from === publicKey) {
-          tokenBalances[symbol].balance += tx.tokenData.totalSupply;
-        }
-        
-        // Token transfers - track sent and received
-        if (tx.type === "transfer" && symbol && symbol !== "XRGE") {
-          // Received tokens
-          if (tx.to === publicKey) {
-            tokenBalances[symbol].balance += tx.amount;
-          }
-          // Sent tokens
-          if (tx.from === publicKey) {
-            tokenBalances[symbol].balance -= tx.amount;
+        // Add custom token balances from API (this includes swap results!)
+        if (data.token_balances) {
+          for (const [symbol, balance] of Object.entries(data.token_balances)) {
+            if (balance > 0) {
+              balances.push({
+                symbol,
+                balance,
+                name: symbol, // We could fetch token metadata if needed
+                icon: symbol.charAt(0)?.toUpperCase() || "T",
+                tokenAddress: `token:${symbol.toLowerCase()}`,
+              });
+            }
           }
         }
       }
-      
-      // Add token balances to result
-      for (const symbol of Object.keys(tokenBalances)) {
-        const token = tokenBalances[symbol];
-        if (token.balance > 0) {
-          balances.push({
-            symbol: token.symbol,
-            balance: token.balance,
-            name: token.name,
-            icon: token.symbol.charAt(0)?.toUpperCase() || "T",
-            tokenAddress: token.address,
-          });
-        }
-      }
-    } catch (tokenError) {
-      console.error("Error fetching token balances:", tokenError);
-      // Continue with just XRGE balance
     }
     
-    // If we got XRGE balance, return all balances
+    // If we got balances from API, return them
     if (balances.length > 0) {
       return balances;
     }

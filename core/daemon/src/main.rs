@@ -617,7 +617,6 @@ async fn get_burned_tokens(State(state): State<AppState>) -> Result<Json<BurnedT
 
 /// XRGE token address on Base chain
 const XRGE_TOKEN_ADDRESS: &str = "0x147120faec9277ec02d957584cfcd92b56a24317";
-const GECKO_API_BASE: &str = "https://api.geckoterminal.com/api/v2";
 
 #[derive(Serialize)]
 struct XRGEPriceResponse {
@@ -632,10 +631,10 @@ struct XRGEPriceResponse {
 }
 
 async fn get_xrge_price() -> Json<XRGEPriceResponse> {
-    // Use the simple token price endpoint
+    // Use DexScreener API - more reliable and no auth needed
     let url = format!(
-        "{}/simple/networks/base/token_price/{}",
-        GECKO_API_BASE, XRGE_TOKEN_ADDRESS
+        "https://api.dexscreener.com/latest/dex/tokens/{}",
+        XRGE_TOKEN_ADDRESS
     );
     
     let client = match reqwest::Client::builder()
@@ -650,18 +649,13 @@ async fn get_xrge_price() -> Json<XRGEPriceResponse> {
                 price_change_24h: 0.0,
                 volume_24h: 0.0,
                 liquidity: 0.0,
-                source: "GeckoTerminal".to_string(),
+                source: "DexScreener".to_string(),
                 error: Some(format!("Failed to create client: {}", e)),
             });
         }
     };
     
-    // First try simple price endpoint
-    let response = client
-        .get(&url)
-        .header("Accept", "application/json;version=20230203")
-        .send()
-        .await;
+    let response = client.get(&url).send().await;
     
     match response {
         Ok(res) => {
@@ -672,29 +666,52 @@ async fn get_xrge_price() -> Json<XRGEPriceResponse> {
                     price_change_24h: 0.0,
                     volume_24h: 0.0,
                     liquidity: 0.0,
-                    source: "GeckoTerminal".to_string(),
+                    source: "DexScreener".to_string(),
                     error: Some(format!("API returned status: {}", res.status())),
                 });
             }
             
             match res.json::<serde_json::Value>().await {
                 Ok(data) => {
-                    // Simple price endpoint returns: {"data":{"id":"...","type":"simple_token_price","attributes":{"token_prices":{"0x...":"0.00001234"}}}}
-                    let token_prices = &data["data"]["attributes"]["token_prices"];
-                    let price_usd = token_prices[XRGE_TOKEN_ADDRESS.to_lowercase()]
-                        .as_str()
-                        .and_then(|s| s.parse::<f64>().ok())
-                        .unwrap_or(0.0);
+                    // DexScreener returns: {"pairs":[{"priceUsd":"0.00001234","priceChange":{"h24":-5.2},"volume":{"h24":1234},"liquidity":{"usd":5678}}]}
+                    let pairs = &data["pairs"];
                     
-                    Json(XRGEPriceResponse {
-                        success: price_usd > 0.0,
-                        price_usd,
-                        price_change_24h: 0.0, // Not available in simple endpoint
-                        volume_24h: 0.0,       // Not available in simple endpoint
-                        liquidity: 0.0,        // Not available in simple endpoint
-                        source: "GeckoTerminal".to_string(),
-                        error: if price_usd > 0.0 { None } else { Some("Price not found".to_string()) },
-                    })
+                    // Get the first pair (usually the most liquid)
+                    if let Some(pair) = pairs.as_array().and_then(|arr| arr.first()) {
+                        let price_usd = pair["priceUsd"]
+                            .as_str()
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        let price_change_24h = pair["priceChange"]["h24"]
+                            .as_f64()
+                            .unwrap_or(0.0);
+                        let volume_24h = pair["volume"]["h24"]
+                            .as_f64()
+                            .unwrap_or(0.0);
+                        let liquidity = pair["liquidity"]["usd"]
+                            .as_f64()
+                            .unwrap_or(0.0);
+                        
+                        Json(XRGEPriceResponse {
+                            success: true,
+                            price_usd,
+                            price_change_24h,
+                            volume_24h,
+                            liquidity,
+                            source: "DexScreener".to_string(),
+                            error: None,
+                        })
+                    } else {
+                        Json(XRGEPriceResponse {
+                            success: false,
+                            price_usd: 0.0,
+                            price_change_24h: 0.0,
+                            volume_24h: 0.0,
+                            liquidity: 0.0,
+                            source: "DexScreener".to_string(),
+                            error: Some("No pairs found".to_string()),
+                        })
+                    }
                 }
                 Err(e) => Json(XRGEPriceResponse {
                     success: false,
@@ -702,7 +719,7 @@ async fn get_xrge_price() -> Json<XRGEPriceResponse> {
                     price_change_24h: 0.0,
                     volume_24h: 0.0,
                     liquidity: 0.0,
-                    source: "GeckoTerminal".to_string(),
+                    source: "DexScreener".to_string(),
                     error: Some(format!("Failed to parse response: {}", e)),
                 }),
             }
@@ -713,7 +730,7 @@ async fn get_xrge_price() -> Json<XRGEPriceResponse> {
             price_change_24h: 0.0,
             volume_24h: 0.0,
             liquidity: 0.0,
-            source: "GeckoTerminal".to_string(),
+            source: "DexScreener".to_string(),
             error: Some(format!("Request failed: {}", e)),
         }),
     }
