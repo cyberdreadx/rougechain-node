@@ -615,8 +615,8 @@ async fn get_burned_tokens(State(state): State<AppState>) -> Result<Json<BurnedT
     }))
 }
 
-/// XRGE price from GeckoTerminal (Base chain pool)
-const XRGE_POOL_ADDRESS: &str = "0x5eddf6676d04dae63947d8ee488f1583ab0b2c89";
+/// XRGE token address on Base chain
+const XRGE_TOKEN_ADDRESS: &str = "0x147120faec9277ec02d957584cfcd92b56a24317";
 const GECKO_API_BASE: &str = "https://api.geckoterminal.com/api/v2";
 
 #[derive(Serialize)]
@@ -632,13 +632,16 @@ struct XRGEPriceResponse {
 }
 
 async fn get_xrge_price() -> Json<XRGEPriceResponse> {
-    let url = format!("{}/networks/base/pools/{}", GECKO_API_BASE, XRGE_POOL_ADDRESS);
+    // Use the simple token price endpoint
+    let url = format!(
+        "{}/simple/networks/base/token_price/{}",
+        GECKO_API_BASE, XRGE_TOKEN_ADDRESS
+    );
     
-    let client = reqwest::Client::builder()
+    let client = match reqwest::Client::builder()
         .timeout(StdDuration::from_secs(10))
-        .build();
-    
-    let client = match client {
+        .build()
+    {
         Ok(c) => c,
         Err(e) => {
             return Json(XRGEPriceResponse {
@@ -653,6 +656,7 @@ async fn get_xrge_price() -> Json<XRGEPriceResponse> {
         }
     };
     
+    // First try simple price endpoint
     let response = client
         .get(&url)
         .header("Accept", "application/json;version=20230203")
@@ -675,32 +679,21 @@ async fn get_xrge_price() -> Json<XRGEPriceResponse> {
             
             match res.json::<serde_json::Value>().await {
                 Ok(data) => {
-                    let attrs = &data["data"]["attributes"];
-                    let price_usd = attrs["base_token_price_usd"]
-                        .as_str()
-                        .and_then(|s| s.parse::<f64>().ok())
-                        .unwrap_or(0.0);
-                    let price_change_24h = attrs["price_change_percentage"]["h24"]
-                        .as_str()
-                        .and_then(|s| s.parse::<f64>().ok())
-                        .unwrap_or(0.0);
-                    let volume_24h = attrs["volume_usd"]["h24"]
-                        .as_str()
-                        .and_then(|s| s.parse::<f64>().ok())
-                        .unwrap_or(0.0);
-                    let liquidity = attrs["reserve_in_usd"]
+                    // Simple price endpoint returns: {"data":{"id":"...","type":"simple_token_price","attributes":{"token_prices":{"0x...":"0.00001234"}}}}
+                    let token_prices = &data["data"]["attributes"]["token_prices"];
+                    let price_usd = token_prices[XRGE_TOKEN_ADDRESS.to_lowercase()]
                         .as_str()
                         .and_then(|s| s.parse::<f64>().ok())
                         .unwrap_or(0.0);
                     
                     Json(XRGEPriceResponse {
-                        success: true,
+                        success: price_usd > 0.0,
                         price_usd,
-                        price_change_24h,
-                        volume_24h,
-                        liquidity,
+                        price_change_24h: 0.0, // Not available in simple endpoint
+                        volume_24h: 0.0,       // Not available in simple endpoint
+                        liquidity: 0.0,        // Not available in simple endpoint
                         source: "GeckoTerminal".to_string(),
-                        error: None,
+                        error: if price_usd > 0.0 { None } else { Some("Price not found".to_string()) },
                     })
                 }
                 Err(e) => Json(XRGEPriceResponse {
