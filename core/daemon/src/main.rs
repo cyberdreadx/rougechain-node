@@ -916,8 +916,15 @@ async fn get_token_transactions(
                     tx.payload.amount.unwrap_or(0) as f64
                 };
                 
+                // Use signature as unique tx identifier (truncated for display)
+                let tx_hash = if tx.sig.len() > 32 {
+                    format!("{}...", &tx.sig[..32])
+                } else {
+                    tx.sig.clone()
+                };
+                
                 TokenTransaction {
-                    tx_hash: tx.hash.clone(),
+                    tx_hash,
                     tx_type: tx.tx_type.clone(),
                     from: tx.from_pub_key.clone(),
                     to: tx.payload.to_pub_key_hex.clone(),

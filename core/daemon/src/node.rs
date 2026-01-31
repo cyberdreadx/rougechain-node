@@ -308,12 +308,6 @@ impl L1Node {
         Ok(total_reserves)
     }
     
-    /// Get the burned amount for a specific token
-    pub fn get_burned_amount(&self, token_symbol: &str) -> Result<f64, String> {
-        let burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
-        Ok(*burned_tokens.get(token_symbol).unwrap_or(&0.0))
-    }
-    
     /// Get all transactions involving a specific token
     pub fn get_token_transactions(&self, token_symbol: &str, limit: usize, offset: usize) -> Result<(Vec<(TxV1, u64, i64)>, usize), String> {
         let blocks = self.store.get_all_blocks()?;
@@ -356,7 +350,7 @@ impl L1Node {
                 };
                 
                 if matches {
-                    transactions.push((tx.clone(), block.header.height, block.header.timestamp));
+                    transactions.push((tx.clone(), block.header.height, block.header.time as i64));
                 }
             }
         }
