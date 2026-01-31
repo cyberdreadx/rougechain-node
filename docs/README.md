@@ -17,6 +17,9 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | Feature | Description |
 |---------|-------------|
 | **Post-Quantum Security** | Protected against both classical and quantum attacks |
+| **Client-Side Signing** | Private keys never leave your browser |
+| **AMM/DEX** | Uniswap V2-style liquidity pools and token swaps |
+| **Token Burning** | Official burn address with on-chain tracking |
 | **Proof of Stake** | Energy-efficient consensus with validator staking |
 | **P2P Network** | Decentralized peer-to-peer block and transaction propagation |
 | **Custom Tokens** | Create your own tokens on the network |
@@ -42,6 +45,35 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 
 The native token of RougeChain is **XRGE** (pronounced "rouge").
 
-- **Transfer Fee**: 0.1 XRGE
-- **Token Creation Fee**: 100 XRGE
-- **Minimum Stake**: 1,000 XRGE
+### Fees
+
+| Action | Fee |
+|--------|-----|
+| Transfer | 0.1 XRGE |
+| Token Creation | 100 XRGE |
+| Pool Creation | 10 XRGE |
+| Swap | 0.3% (to LPs) |
+| Minimum Stake | 1,000 XRGE |
+
+### Burn Address
+
+Tokens can be permanently burned by sending to the official burn address:
+
+```
+XRGE_BURN_0x000000000000000000000000000000000000000000000000000000000000DEAD
+```
+
+Burned tokens are tracked on-chain and can be queried via the `/api/burned` endpoint.
+
+## Security
+
+### Client-Side Signing
+
+RougeChain uses a secure v2 API where all transactions are signed client-side:
+
+1. Your wallet creates a transaction payload
+2. The payload is signed locally using ML-DSA-65
+3. Only the signature and public key are sent to the server
+4. **Your private key never leaves your browser**
+
+This ensures maximum security even when interacting with untrusted nodes.

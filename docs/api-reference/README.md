@@ -52,6 +52,39 @@ https://testnet.rougechain.io/api
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/token/create` | POST | Create custom token |
+| `/api/burn-address` | GET | Get official burn address |
+| `/api/burned` | GET | Get burned token stats |
+
+### AMM/DEX
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/pools` | GET | List liquidity pools |
+| `/api/pool/:pool_id` | GET | Get pool details |
+| `/api/pool/:pool_id/prices` | GET | Get price history |
+| `/api/pool/:pool_id/events` | GET | Get pool events |
+| `/api/pool/:pool_id/stats` | GET | Get pool statistics |
+| `/api/pool/create` | POST | Create liquidity pool |
+| `/api/pool/add-liquidity` | POST | Add liquidity |
+| `/api/pool/remove-liquidity` | POST | Remove liquidity |
+| `/api/swap/quote` | POST | Get swap quote |
+| `/api/swap/execute` | POST | Execute swap |
+
+### Secure v2 API (Client-Side Signing)
+
+All v2 endpoints accept pre-signed transactions. Private keys never leave the client.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v2/transfer` | POST | Transfer tokens |
+| `/api/v2/token/create` | POST | Create token |
+| `/api/v2/pool/create` | POST | Create pool |
+| `/api/v2/pool/add-liquidity` | POST | Add liquidity |
+| `/api/v2/pool/remove-liquidity` | POST | Remove liquidity |
+| `/api/v2/swap/execute` | POST | Execute swap |
+| `/api/v2/stake` | POST | Stake tokens |
+| `/api/v2/unstake` | POST | Unstake tokens |
+| `/api/v2/faucet` | POST | Request faucet |
 
 ### P2P
 

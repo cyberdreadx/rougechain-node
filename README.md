@@ -4,12 +4,28 @@ RougeChain is a production-ready L1 blockchain powered by NIST-approved post-qua
 
 ## Features
 
+### Core
 - **Post-Quantum Cryptography**: ML-DSA-65 signatures and ML-KEM-768 key exchange
 - **L1 Node Daemon**: Rust core node with HTTP + gRPC APIs
+- **Client-Side Signing**: Private keys never leave your browser - all transactions signed locally
+- **Token Burning**: Official on-chain burn address with transparent burn tracking
+
+### DeFi (AMM/DEX)
+- **Liquidity Pools**: Uniswap V2-style constant product AMM
+- **Token Swaps**: Swap between any tokens with 0.3% fee
+- **LP Tokens**: Earn fees by providing liquidity
+- **Price Charts**: Real-time price history and pool analytics
+
+### Apps
 - **Web Wallet**: Create wallets, send tokens, and view transaction history
 - **Blockchain Explorer**: Visualize blocks, transactions, and network stats
 - **Secure Messenger**: End-to-end encrypted messaging with quantum-safe encryption
-- **Public API**: RESTful API for wallet creation, transaction submission, and balance queries
+- **Quick Swap Widget**: Trade tokens from anywhere in the app
+
+### API
+- **Secure v2 API**: Client-side signed transactions (private keys never sent)
+- **Legacy API**: Full RESTful API for wallet creation and transaction submission
+- **WebSocket**: Real-time updates for blocks and transactions
 
 ## Quick Start
 
