@@ -40,6 +40,7 @@ import {
   WalletTransaction
 } from "@/lib/pqc-wallet";
 import { generateKeypair } from "@/lib/pqc-blockchain";
+import { generateEncryptionKeypair } from "@/lib/pqc-messenger";
 import { createWalletViaNode } from "@/lib/node-api";
 import { NETWORK_STORAGE_KEY, getCoreApiHeaders, getNetworkLabel, getNodeApiBaseUrl } from "@/lib/network";
 import SendTokensDialog from "@/components/wallet/SendTokensDialog";
@@ -313,16 +314,17 @@ const Wallet = () => {
         });
       }
 
-      // For now, create a simplified wallet (just signing keys for blockchain)
-      // TODO: Add encryption keys for messaging if needed
+      // Generate encryption keys for messenger E2EE (ML-KEM-768)
+      const encryptionKeys = generateEncryptionKeypair();
+      
       const newWallet: UnifiedWallet = {
         id: `wallet-${Date.now()}`,
         displayName: "My Wallet",
         createdAt: Date.now(),
         signingPublicKey,
         signingPrivateKey,
-        encryptionPublicKey: "", // Can be added later
-        encryptionPrivateKey: "", // Can be added later
+        encryptionPublicKey: encryptionKeys.publicKey,
+        encryptionPrivateKey: encryptionKeys.privateKey,
         version: 2,
       };
       

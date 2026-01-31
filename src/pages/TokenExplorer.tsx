@@ -330,11 +330,17 @@ const TokenExplorer = () => {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex items-start gap-4"
+          className="flex flex-col sm:flex-row items-start gap-4"
         >
-          {renderIcon()}
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4 w-full sm:w-auto">
+            {renderIcon()}
+            <div className="flex-1 sm:hidden">
+              <h2 className="text-xl font-bold">{metadata?.name || symbol}</h2>
+              <span className="text-sm text-muted-foreground">({symbol})</span>
+            </div>
+          </div>
+          <div className="flex-1 w-full">
+            <div className="hidden sm:flex items-center gap-2">
               <h2 className="text-2xl font-bold">{metadata?.name || symbol}</h2>
               <span className="text-lg text-muted-foreground">({symbol})</span>
             </div>
@@ -343,7 +349,7 @@ const TokenExplorer = () => {
             )}
             
             {/* Social Links */}
-            <div className="flex items-center gap-3 mt-2">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-2">
               {metadata?.website && (
                 <a
                   href={metadata.website}
@@ -413,8 +419,8 @@ const TokenExplorer = () => {
           
           {/* Price Badge */}
           {tokenPrice && (
-            <div className="text-right">
-              <p className="text-2xl font-bold font-mono">{formatTokenPrice(tokenPrice.priceUsd)}</p>
+            <div className="text-left sm:text-right mt-3 sm:mt-0 w-full sm:w-auto">
+              <p className="text-xl sm:text-2xl font-bold font-mono">{formatTokenPrice(tokenPrice.priceUsd)}</p>
               {tokenPrice.priceUsd && xrgeUsdPrice && (
                 <p className="text-sm text-muted-foreground">
                   {(tokenPrice.priceUsd / xrgeUsdPrice).toFixed(4)} XRGE
@@ -556,17 +562,17 @@ const TokenExplorer = () => {
                 {holders.slice(0, 10).map((holder, index) => (
                   <div
                     key={holder.address}
-                    className="flex items-center justify-between p-2 rounded-lg hover:bg-secondary/50 transition-colors"
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-2 rounded-lg hover:bg-secondary/50 transition-colors gap-1 sm:gap-3"
                   >
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs text-muted-foreground w-6">#{index + 1}</span>
-                      <div>
-                        <p className="font-mono text-xs truncate max-w-[200px] md:max-w-[400px]">
-                          {holder.address}
-                        </p>
-                      </div>
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                      <span className="text-xs text-muted-foreground w-5 flex-shrink-0">#{index + 1}</span>
+                      <p className="font-mono text-xs truncate">
+                        {holder.address.startsWith("Liquidity") 
+                          ? holder.address 
+                          : `${holder.address.substring(0, 20)}...`}
+                      </p>
                     </div>
-                    <div className="text-right">
+                    <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-4 pl-7 sm:pl-0">
                       <p className="font-mono text-sm">{holder.balance.toLocaleString()}</p>
                       <p className="text-xs text-muted-foreground">{holder.percentage.toFixed(2)}%</p>
                     </div>
@@ -596,10 +602,10 @@ const TokenExplorer = () => {
                 {transactionList.slice(0, 20).map((tx) => (
                   <div
                     key={tx.tx_hash}
-                    className="flex items-center justify-between p-2 rounded-lg hover:bg-secondary/50 transition-colors"
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-2 rounded-lg hover:bg-secondary/50 transition-colors gap-2"
                   >
-                    <div className="flex items-center gap-3">
-                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                    <div className="flex items-start sm:items-center gap-2 sm:gap-3">
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium whitespace-nowrap flex-shrink-0 ${
                         tx.tx_type === 'create_token' ? 'bg-purple-500/20 text-purple-400' :
                         tx.tx_type === 'transfer' ? 'bg-blue-500/20 text-blue-400' :
                         tx.tx_type === 'swap' ? 'bg-green-500/20 text-green-400' :
@@ -610,17 +616,17 @@ const TokenExplorer = () => {
                       }`}>
                         {tx.tx_type.replace(/_/g, ' ')}
                       </span>
-                      <div>
-                        <p className="font-mono text-xs truncate max-w-[150px] md:max-w-[300px]">
-                          {tx.from.substring(0, 20)}...
+                      <div className="min-w-0">
+                        <p className="font-mono text-xs truncate">
+                          {tx.from.substring(0, 16)}...
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          Block #{tx.block_height} • {new Date(tx.timestamp * 1000).toLocaleString()}
+                          #{tx.block_height} • {new Date(tx.timestamp * 1000).toLocaleDateString()}
                         </p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className="font-mono text-sm">{tx.amount.toLocaleString()}</p>
+                    <div className="flex items-center justify-between sm:justify-end gap-2 pl-0 sm:pl-4">
+                      <p className="font-mono text-sm font-semibold">{tx.amount.toLocaleString()}</p>
                       <p className="text-xs text-muted-foreground">{symbol}</p>
                     </div>
                   </div>

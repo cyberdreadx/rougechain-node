@@ -61,7 +61,8 @@ async function saveChain(chain: Block[]): Promise<void> {
 
 // Generate a new PQC keypair (ML-DSA-65)
 export async function generateKeypair(): Promise<{ keypair: Keypair; info: CryptoInfo }> {
-  const seed = crypto.getRandomValues(new Uint8Array(32));
+  // ML-DSA-65 requires 64-byte seed
+  const seed = crypto.getRandomValues(new Uint8Array(64));
   const keypair = ml_dsa65.keygen(seed);
   return {
     keypair: {

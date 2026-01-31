@@ -3,6 +3,29 @@
  * Combines messenger and blockchain wallet functionality with shared backup
  */
 import { getActiveNetwork } from "./network";
+import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
+
+// Helper to convert bytes to hex
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Generate encryption keys if missing (for wallet upgrade)
+function ensureEncryptionKeys(wallet: UnifiedWallet): UnifiedWallet {
+  if (wallet.encryptionPublicKey && wallet.encryptionPrivateKey) {
+    return wallet; // Already has encryption keys
+  }
+  
+  // Generate new ML-KEM-768 encryption keys (64-byte seed)
+  const encryptionSeed = crypto.getRandomValues(new Uint8Array(64));
+  const encryptionKeypair = ml_kem768.keygen(encryptionSeed);
+  
+  return {
+    ...wallet,
+    encryptionPublicKey: bytesToHex(encryptionKeypair.publicKey),
+    encryptionPrivateKey: bytesToHex(encryptionKeypair.secretKey),
+  };
+}
 
 // Storage keys
 export const UNIFIED_WALLET_KEY = "pqc-unified-wallet";
@@ -256,11 +279,24 @@ export function loadUnifiedWallet(): UnifiedWallet | null {
   const unifiedKey = getScopedKey(UNIFIED_WALLET_KEY);
   const messengerKey = getScopedKey(MESSENGER_WALLET_KEY);
   const blockchainKey = getScopedKey(BLOCKCHAIN_WALLET_KEY);
+  
+  // Helper to upgrade wallet with encryption keys if missing
+  const upgradeAndSave = (wallet: UnifiedWallet): UnifiedWallet => {
+    const upgraded = ensureEncryptionKeys(wallet);
+    if (upgraded !== wallet) {
+      // Save the upgraded wallet
+      saveUnifiedWallet(upgraded);
+      console.log("[Wallet] Upgraded wallet with encryption keys for messenger");
+    }
+    return upgraded;
+  };
+  
   // Try unified storage first
   const unified = localStorage.getItem(unifiedKey);
   if (unified) {
     try {
-      return JSON.parse(unified);
+      const wallet = JSON.parse(unified) as UnifiedWallet;
+      return upgradeAndSave(wallet);
     } catch {
       // Continue to legacy formats
     }
@@ -271,29 +307,39 @@ export function loadUnifiedWallet(): UnifiedWallet | null {
   if (messenger) {
     try {
       const parsed: LegacyMessengerWallet = JSON.parse(messenger);
-      return {
+      const wallet: UnifiedWallet = {
         id: parsed.id,
         displayName: parsed.displayName,
         createdAt: parsed.createdAt ? new Date(parsed.createdAt).getTime() : Date.now(),
         signingPublicKey: parsed.signingPublicKey,
         signingPrivateKey: parsed.signingPrivateKey,
-        encryptionPublicKey: parsed.encryptionPublicKey,
-        encryptionPrivateKey: parsed.encryptionPrivateKey,
+        encryptionPublicKey: parsed.encryptionPublicKey || "",
+        encryptionPrivateKey: parsed.encryptionPrivateKey || "",
         version: 2,
       };
+      return upgradeAndSave(wallet);
     } catch {
       // Continue to blockchain format
     }
   }
   
-  // Try blockchain format (limited - no encryption keys)
+  // Try blockchain format (limited - no encryption keys, will be generated)
   const blockchain = localStorage.getItem(blockchainKey);
   if (blockchain) {
     try {
       const parsed: LegacyBlockchainWallet = JSON.parse(blockchain);
-      // Blockchain-only wallet doesn't have encryption keys
-      // Return null to prompt full wallet creation
-      return null;
+      // Create wallet and generate encryption keys
+      const wallet: UnifiedWallet = {
+        id: `wallet-${Date.now()}`,
+        displayName: "My Wallet",
+        createdAt: parsed.createdAt || Date.now(),
+        signingPublicKey: parsed.publicKey,
+        signingPrivateKey: parsed.privateKey,
+        encryptionPublicKey: "",
+        encryptionPrivateKey: "",
+        version: 2,
+      };
+      return upgradeAndSave(wallet);
     } catch {
       return null;
     }

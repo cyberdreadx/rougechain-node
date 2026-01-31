@@ -275,11 +275,22 @@ async function decryptMessage(
   return { plaintext, signatureValid };
 }
 
+// Generate only encryption keypair (ML-KEM-768)
+export function generateEncryptionKeypair(): { publicKey: string; privateKey: string } {
+  const encryptionSeed = crypto.getRandomValues(new Uint8Array(32));
+  const encryptionKeypair = ml_kem768.keygen(encryptionSeed);
+  return {
+    publicKey: bytesToHex(encryptionKeypair.publicKey),
+    privateKey: bytesToHex(encryptionKeypair.secretKey),
+  };
+}
+
 // Create a new wallet with ML-DSA-65 + ML-KEM-768 keypairs
 export async function createWallet(displayName: string): Promise<WalletWithPrivateKeys> {
-  const signingSeed = crypto.getRandomValues(new Uint8Array(32));
+  // ML-DSA-65 requires 64-byte seed, ML-KEM-768 uses 64-byte seed
+  const signingSeed = crypto.getRandomValues(new Uint8Array(64));
   const signingKeypair = ml_dsa65.keygen(signingSeed);
-  const encryptionSeed = crypto.getRandomValues(new Uint8Array(32));
+  const encryptionSeed = crypto.getRandomValues(new Uint8Array(64));
   const encryptionKeypair = ml_kem768.keygen(encryptionSeed);
 
   const wallet: WalletWithPrivateKeys = {
@@ -344,9 +355,9 @@ export async function getOrCreateDemoBot(): Promise<WalletWithPrivateKeys> {
     }
   }
 
-  const signingSeed = crypto.getRandomValues(new Uint8Array(32));
+  const signingSeed = crypto.getRandomValues(new Uint8Array(64));
   const signingKeypair = ml_dsa65.keygen(signingSeed);
-  const encryptionSeed = crypto.getRandomValues(new Uint8Array(32));
+  const encryptionSeed = crypto.getRandomValues(new Uint8Array(64));
   const encryptionKeypair = ml_kem768.keygen(encryptionSeed);
 
   const saved: WalletWithPrivateKeys = {
