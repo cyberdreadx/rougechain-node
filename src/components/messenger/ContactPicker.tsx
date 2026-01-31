@@ -300,15 +300,27 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
 
         {/* Contact list */}
         <div className="max-h-64 overflow-y-auto">
-          {contacts.length === 0 ? (
-            <div className="p-6 text-center text-muted-foreground">
-              <User className="w-10 h-10 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">No registered users yet</p>
-              <p className="text-xs mt-1">Add a contact manually above</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-border">
-              {contacts.map((contact) => (
+          {/* Filter out current user's wallet from contacts */}
+          {(() => {
+            const filteredContacts = contacts.filter(contact => 
+              contact.id !== wallet.id &&
+              contact.signingPublicKey !== wallet.signingPublicKey &&
+              contact.encryptionPublicKey !== wallet.encryptionPublicKey
+            );
+            
+            if (filteredContacts.length === 0) {
+              return (
+                <div className="p-6 text-center text-muted-foreground">
+                  <User className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No other users registered yet</p>
+                  <p className="text-xs mt-1">Add a contact manually above</p>
+                </div>
+              );
+            }
+            
+            return (
+              <div className="divide-y divide-border">
+                {filteredContacts.map((contact) => (
                 <button
                   key={contact.id}
                   onClick={() => handleSelectContact(contact)}
@@ -318,10 +330,18 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
                   <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center">
                     <User className="w-5 h-5 text-primary" />
                   </div>
-                  <div className="flex-1 text-left">
-                    <p className="font-medium text-foreground">{contact.displayName || "Unknown"}</p>
+                  <div className="flex-1 text-left min-w-0">
+                    <p className="font-medium text-foreground">
+                      {contact.displayName || "Unknown"}
+                      {/* Show unique identifier if name is generic */}
+                      {(contact.displayName === "My Wallet" || !contact.displayName) && (
+                        <span className="text-xs text-muted-foreground ml-2">
+                          ({(contact.signingPublicKey || contact.id || "").slice(0, 8)})
+                        </span>
+                      )}
+                    </p>
                     <p className="text-xs text-muted-foreground font-mono truncate">
-                      {(contact.encryptionPublicKey || contact.signingPublicKey || contact.id || "").slice(0, 16)}...
+                      {(contact.signingPublicKey || contact.encryptionPublicKey || contact.id || "").slice(0, 24)}...
                     </p>
                   </div>
                   {isCreating === contact.id ? (
@@ -331,8 +351,9 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
                   )}
                 </button>
               ))}
-            </div>
-          )}
+              </div>
+            );
+          })()}
         </div>
       </motion.div>
     </motion.div>

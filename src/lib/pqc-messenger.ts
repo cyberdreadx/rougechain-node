@@ -606,12 +606,34 @@ export async function getMessages(
   const decryptedMessages: Message[] = [];
 
   for (const msg of messages) {
-    const sender = participants.find(p => p.id === msg.senderWalletId);
+    // Try multiple ways to find sender (handles old wallet-XXX format and new key-based IDs)
+    let sender = participants.find(p => 
+      p.id === msg.senderWalletId ||
+      p.signingPublicKey === msg.senderWalletId ||
+      p.encryptionPublicKey === msg.senderWalletId
+    );
+    
+    // If not found in participants, try fetching from server
+    if (!sender && msg.senderWalletId) {
+      try {
+        const allWallets = await getWallets();
+        sender = allWallets.find(w => 
+          w.id === msg.senderWalletId ||
+          w.signingPublicKey === msg.senderWalletId
+        );
+      } catch {
+        // Ignore fetch errors
+      }
+    }
 
     let plaintext = "[Unable to decrypt]";
     let signatureValid = false;
 
-    if (msg.senderWalletId === recipientWallet.id) {
+    // Check if this is our own message
+    const isOwnMessage = msg.senderWalletId === recipientWallet.id ||
+                         msg.senderWalletId === recipientWallet.signingPublicKey;
+
+    if (isOwnMessage) {
       const storedPlaintext = getSentMessage(msg.id);
       plaintext = storedPlaintext || "[Your encrypted message]";
       signatureValid = true;
@@ -650,7 +672,7 @@ export async function getMessages(
       createdAt: msg.createdAt,
       plaintext,
       signatureValid,
-      senderDisplayName: sender?.displayName || "Unknown",
+      senderDisplayName: sender?.displayName || (isOwnMessage ? "You" : "Unknown"),
     });
   }
 

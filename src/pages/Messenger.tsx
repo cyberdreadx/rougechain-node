@@ -79,8 +79,13 @@ const Messenger = () => {
   const loadContacts = async () => {
     try {
       const wallets = await getWallets();
-      // Filter out our own wallet
-      setContacts(wallets.filter(w => w.id !== wallet?.id));
+      // Filter out our own wallet by checking all identifiers
+      setContacts(wallets.filter(w => 
+        w.id !== wallet?.id &&
+        w.id !== wallet?.signingPublicKey &&
+        w.signingPublicKey !== wallet?.signingPublicKey &&
+        w.encryptionPublicKey !== wallet?.encryptionPublicKey
+      ));
     } catch (error) {
       console.error("Failed to load contacts:", error);
     }
@@ -349,7 +354,16 @@ const Messenger = () => {
       {/* Privacy settings modal */}
       <AnimatePresence>
         {showPrivacySettings && (
-          <PrivacySettings onClose={() => setShowPrivacySettings(false)} />
+          <PrivacySettings 
+            onClose={() => setShowPrivacySettings(false)} 
+            onProfileUpdated={() => {
+              // Refresh wallet state
+              const updated = loadUnifiedWallet();
+              if (updated) {
+                setWallet(updated);
+              }
+            }}
+          />
         )}
       </AnimatePresence>
 

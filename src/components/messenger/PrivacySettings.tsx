@@ -1,26 +1,119 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Shield, Eye, EyeOff, Trash2, X, AlertTriangle } from "lucide-react";
+import { Shield, Eye, EyeOff, Trash2, X, AlertTriangle, User, Save, Loader2, RefreshCw, Key } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { 
   getPrivacySettings, 
   savePrivacySettings, 
   clearStoredSentMessages,
+  registerWalletOnNode,
+  generateEncryptionKeypair,
   type PrivacySettings as PrivacySettingsType 
 } from "@/lib/pqc-messenger";
+import { loadUnifiedWallet, saveUnifiedWallet } from "@/lib/unified-wallet";
 import { toast } from "sonner";
 
 interface PrivacySettingsProps {
   onClose: () => void;
+  onProfileUpdated?: () => void;
 }
 
-const PrivacySettings = ({ onClose }: PrivacySettingsProps) => {
+const PrivacySettings = ({ onClose, onProfileUpdated }: PrivacySettingsProps) => {
   const [settings, setSettings] = useState<PrivacySettingsType>({ storeSentMessages: true });
+  const [displayName, setDisplayName] = useState("");
+  const [originalName, setOriginalName] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
 
   useEffect(() => {
     setSettings(getPrivacySettings());
+    const wallet = loadUnifiedWallet();
+    if (wallet) {
+      setDisplayName(wallet.displayName || "");
+      setOriginalName(wallet.displayName || "");
+    }
   }, []);
+
+  const handleSaveProfile = async () => {
+    if (!displayName.trim() || displayName === originalName) return;
+    
+    setIsSaving(true);
+    try {
+      const wallet = loadUnifiedWallet();
+      if (!wallet) throw new Error("No wallet found");
+      
+      // Update local wallet
+      wallet.displayName = displayName.trim();
+      saveUnifiedWallet(wallet);
+      
+      // Re-register with server to update name
+      await registerWalletOnNode({
+        id: wallet.signingPublicKey,
+        displayName: wallet.displayName,
+        signingPublicKey: wallet.signingPublicKey,
+        encryptionPublicKey: wallet.encryptionPublicKey || "",
+      });
+      
+      setOriginalName(displayName.trim());
+      toast.success("Profile updated");
+      onProfileUpdated?.();
+    } catch (error) {
+      console.error("Failed to update profile:", error);
+      toast.error("Failed to update profile");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleResetEncryptionKeys = async () => {
+    if (!confirm(
+      "⚠️ Reset Encryption Keys?\n\n" +
+      "This will:\n" +
+      "• Generate new ML-KEM-768 encryption keys\n" +
+      "• Re-register your wallet with the network\n" +
+      "• Make all OLD messages permanently unreadable\n\n" +
+      "New messages will work correctly.\n\n" +
+      "Are you sure?"
+    )) return;
+
+    setIsResetting(true);
+    try {
+      const wallet = loadUnifiedWallet();
+      if (!wallet) throw new Error("No wallet found");
+
+      // Generate new encryption keys
+      const newKeys = generateEncryptionKeypair();
+      wallet.encryptionPublicKey = newKeys.publicKey;
+      wallet.encryptionPrivateKey = newKeys.privateKey;
+      
+      // Save locally
+      saveUnifiedWallet(wallet);
+
+      // Re-register with server
+      await registerWalletOnNode({
+        id: wallet.signingPublicKey,
+        displayName: wallet.displayName || "My Wallet",
+        signingPublicKey: wallet.signingPublicKey,
+        encryptionPublicKey: wallet.encryptionPublicKey,
+      });
+
+      // Clear stored sent messages (they reference old keys)
+      clearStoredSentMessages();
+
+      toast.success("Encryption keys reset", {
+        description: "New keys generated. Old messages are now unreadable.",
+      });
+      onProfileUpdated?.();
+    } catch (error) {
+      console.error("Failed to reset keys:", error);
+      toast.error("Failed to reset encryption keys");
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   const handleToggleStorage = (enabled: boolean) => {
     const newSettings = { ...settings, storeSentMessages: enabled };
@@ -77,6 +170,44 @@ const PrivacySettings = ({ onClose }: PrivacySettingsProps) => {
         </div>
 
         <div className="p-4 space-y-4">
+          {/* Profile section */}
+          <div className="p-4 rounded-lg bg-muted/30 border border-border">
+            <div className="flex items-center gap-2 mb-3">
+              <User className="w-4 h-4 text-primary" />
+              <span className="font-medium text-foreground">Profile</span>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <Label htmlFor="displayName" className="text-xs text-muted-foreground">Display Name</Label>
+                <Input
+                  id="displayName"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="Enter your display name"
+                  className="mt-1"
+                />
+              </div>
+              <Button
+                size="sm"
+                onClick={handleSaveProfile}
+                disabled={isSaving || !displayName.trim() || displayName === originalName}
+                className="w-full"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4 mr-2" />
+                    Save Profile
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+
           {/* Store sent messages toggle */}
           <div className="p-4 rounded-lg bg-muted/30 border border-border">
             <div className="flex items-start justify-between gap-4">
@@ -118,15 +249,46 @@ const PrivacySettings = ({ onClose }: PrivacySettingsProps) => {
             </div>
           </div>
 
+          {/* Reset encryption keys */}
+          <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20">
+            <div className="flex items-center gap-2 mb-2">
+              <Key className="w-4 h-4 text-destructive" />
+              <span className="font-medium text-foreground">Reset Encryption Keys</span>
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              If you're having decryption issues, resetting your encryption keys will fix future messages.
+              <strong className="text-destructive"> Warning: All old messages will become permanently unreadable.</strong>
+            </p>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="w-full"
+              onClick={handleResetEncryptionKeys}
+              disabled={isResetting}
+            >
+              {isResetting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Resetting...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Reset Encryption Keys
+                </>
+              )}
+            </Button>
+          </div>
+
           {/* Clear stored messages */}
           <Button
-            variant="destructive"
+            variant="outline"
             size="sm"
             className="w-full"
             onClick={handleClearMessages}
           >
             <Trash2 className="w-4 h-4 mr-2" />
-            Clear All Stored Sent Messages
+            Clear Stored Sent Messages
           </Button>
         </div>
       </motion.div>
