@@ -20,6 +20,27 @@ interface EncryptedPackage {
   encryptedContent: string;
 }
 
+// Safe date formatter to handle invalid dates
+const formatMessageTime = (dateInput: string | number | Date): string => {
+  try {
+    const date = new Date(dateInput);
+    if (isNaN(date.getTime())) return "";
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+};
+
+const formatMessageDate = (dateInput: string | number | Date): string => {
+  try {
+    const date = new Date(dateInput);
+    if (isNaN(date.getTime())) return "Unknown date";
+    return date.toLocaleString();
+  } catch {
+    return "Unknown date";
+  }
+};
+
 // Encryption details panel component
 const EncryptionDetailsPanel = ({
   message,
@@ -105,7 +126,7 @@ const EncryptionDetailsPanel = ({
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-muted-foreground">Timestamp</span>
                 <span className="text-xs text-foreground">
-                  {new Date(message.createdAt).toLocaleString()}
+                  {formatMessageDate(message.createdAt)}
                 </span>
               </div>
             </div>
@@ -811,7 +832,7 @@ const DecryptionAnimation = ({
           {/* Lock icon animation */}
           <motion.div className="flex items-center gap-1 mt-1 text-xs">
             <span className="opacity-60">
-              {new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              {formatMessageTime(message.createdAt)}
             </span>
             <motion.div
               animate={{
@@ -911,10 +932,14 @@ const MessageBubble = ({
             {message.senderDisplayName}
           </p>
         )}
-        <p className="text-sm whitespace-pre-wrap">{message.plaintext}</p>
+        <p className="text-sm whitespace-pre-wrap">
+          {message.plaintext?.startsWith("[Unable") ? (
+            <span className="text-muted-foreground italic">{message.plaintext}</span>
+          ) : message.plaintext}
+        </p>
         <div className={`flex items-center gap-1 mt-1 text-xs ${isOwn ? "justify-end" : ""}`}>
           <span className="opacity-60">
-            {new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            {formatMessageTime(message.createdAt)}
           </span>
           {message.selfDestruct && (
             <Timer className="w-3 h-3 text-destructive" />
