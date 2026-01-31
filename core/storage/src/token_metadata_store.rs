@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::Arc;
 
 /// Token metadata stored on-chain
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,15 +18,16 @@ pub struct TokenMetadata {
 }
 
 /// Persistent store for token metadata
+#[derive(Clone)]
 pub struct TokenMetadataStore {
-    db: sled::Db,
+    db: Arc<sled::Db>,
 }
 
 impl TokenMetadataStore {
     pub fn new(data_dir: &str) -> Result<Self, String> {
         let path = Path::new(data_dir).join("token-metadata-db");
         let db = sled::open(&path).map_err(|e| format!("Failed to open token metadata db: {}", e))?;
-        Ok(Self { db })
+        Ok(Self { db: Arc::new(db) })
     }
 
     /// Create or update token metadata (only creator can update)

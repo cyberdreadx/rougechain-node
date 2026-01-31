@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { sendTransaction, WalletBalance, BASE_TRANSFER_FEE } from "@/lib/pqc-wallet";
+import { sendTransaction, getWalletBalance, WalletBalance, BASE_TRANSFER_FEE } from "@/lib/pqc-wallet";
 
 interface SendTokensDialogProps {
   wallet: {
@@ -56,6 +56,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
   const [memo, setMemo] = useState("");
   const [selectedToken, setSelectedToken] = useState("XRGE");
   const [sending, setSending] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
 
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
@@ -112,13 +113,50 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
         memo || undefined
       );
       
-      toast.success(`Sent ${amountNum} ${selectedToken} successfully!`);
+      // Transaction submitted - now wait for it to be mined
+      setSending(false);
+      setConfirming(true);
+      
+      // Poll for balance change (up to 30 seconds)
+      const startBalance = selectedTokenBalance;
+      const maxAttempts = 15;
+      let confirmed = false;
+      
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+        
+        try {
+          const newBalances = await getWalletBalance(wallet.signingPublicKey);
+          const newBalance = newBalances.find(b => b.symbol === selectedToken)?.balance || 0;
+          
+          // Check if balance changed (decreased by approximately the sent amount)
+          if (newBalance < startBalance - (amountNum * 0.9)) {
+            confirmed = true;
+            break;
+          }
+        } catch {
+          // Ignore polling errors
+        }
+      }
+      
+      setConfirming(false);
+      
+      if (confirmed) {
+        toast.success(`Sent ${amountNum} ${selectedToken} successfully!`, {
+          description: "Transaction confirmed on-chain"
+        });
+      } else {
+        toast.success(`Sent ${amountNum} ${selectedToken}`, {
+          description: "Transaction submitted - may take a moment to confirm"
+        });
+      }
+      
       onSuccess();
     } catch (err) {
       console.error("Send error:", err);
       setError(err instanceof Error ? err.message : "Transaction failed");
-    } finally {
       setSending(false);
+      setConfirming(false);
     }
   };
 
@@ -128,7 +166,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4"
-      onClick={onClose}
+      onClick={sending || confirming ? undefined : onClose}
     >
       <motion.div
         initial={{ scale: 0.95, opacity: 0 }}
@@ -139,7 +177,12 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
       >
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold text-foreground">Send Tokens</h2>
-          <Button variant="ghost" size="icon" onClick={onClose}>
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={onClose}
+            disabled={sending || confirming}
+          >
             <X className="w-5 h-5" />
           </Button>
         </div>
@@ -260,13 +303,18 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
 
           <Button
             onClick={handleSend}
-            disabled={sending || !recipient || !amount}
+            disabled={sending || confirming || !recipient || !amount}
             className="w-full"
           >
             {sending ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Mining Transaction...
+                Submitting...
+              </>
+            ) : confirming ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Waiting for confirmation...
               </>
             ) : (
               <>

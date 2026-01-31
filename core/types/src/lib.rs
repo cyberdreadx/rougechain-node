@@ -8,7 +8,7 @@ pub struct ChainConfig {
     pub block_time_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TxPayload {
     pub to_pub_key_hex: Option<String>,
     pub amount: Option<u64>,

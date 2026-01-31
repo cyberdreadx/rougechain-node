@@ -68,8 +68,8 @@ impl L1Node {
         let store = ChainStore::new(&opts.data_dir, opts.chain.clone());
         let validator_store = ValidatorStore::new(&data_dir_str)?;
         let messenger_store = MessengerStore::new(&data_dir_str);
-        let pool_store = PoolStore::new(&data_dir_str)?;
-        let pool_event_store = PoolEventStore::new(&data_dir_str)?;
+        let pool_store = PoolStore::new(&opts.data_dir)?;
+        let pool_event_store = PoolEventStore::new(&opts.data_dir)?;
         let token_metadata_store = TokenMetadataStore::new(&data_dir_str)?;
         let keys = pqc_keygen();
         Ok(Self {
@@ -257,10 +257,10 @@ impl L1Node {
         
         // Scan all blocks for the create_token transaction
         for height in 1..=tip.height {
-            if let Ok(block) = self.store.get_block(height) {
+            if let Ok(Some(block)) = self.store.get_block(height) {
                 for tx in &block.txs {
                     if tx.tx_type == "create_token" {
-                        if let Some(symbol) = &tx.payload.token_symbol {
+                        if let Some(ref symbol) = tx.payload.token_symbol {
                             if symbol.to_uppercase() == token_symbol.to_uppercase() {
                                 return Ok(Some(tx.from_pub_key.clone()));
                             }
@@ -512,21 +512,8 @@ impl L1Node {
             payload: TxPayload {
                 to_pub_key_hex: Some(to_public_key.to_string()),
                 amount: Some(amount_u64),
-                faucet: None,
-                target_pub_key: None,
-                reason: None,
-                token_name: None,
                 token_symbol: token_symbol.map(|s| s.to_string()),
-                token_decimals: None,
-                token_total_supply: None,
-                pool_id: None,
-                token_a_symbol: None,
-                token_b_symbol: None,
-                amount_a: None,
-                amount_b: None,
-                min_amount_out: None,
-                swap_path: None,
-                lp_amount: None,
+                ..Default::default()
             },
             fee: tx_fee,
             sig: String::new(),
@@ -570,23 +557,12 @@ impl L1Node {
             from_pub_key: from_public_key.to_string(),
             nonce: Utc::now().timestamp_millis() as u64,
             payload: TxPayload {
-                to_pub_key_hex: None,
                 amount: Some(total_supply),
-                faucet: None,
-                target_pub_key: None,
-                reason: None,
                 token_name: Some(token_name.to_string()),
                 token_symbol: Some(token_symbol.to_string()),
                 token_decimals: Some(decimals),
                 token_total_supply: Some(total_supply),
-                pool_id: None,
-                token_a_symbol: None,
-                token_b_symbol: None,
-                amount_a: None,
-                amount_b: None,
-                min_amount_out: None,
-                swap_path: None,
-                lp_amount: None,
+                ..Default::default()
             },
             fee: tx_fee,
             sig: String::new(),
@@ -616,20 +592,7 @@ impl L1Node {
                 to_pub_key_hex: Some(recipient_public_key.to_string()),
                 amount: Some(amount),
                 faucet: Some(true),
-                target_pub_key: None,
-                reason: None,
-                token_name: None,
-                token_symbol: None,
-                token_decimals: None,
-                token_total_supply: None,
-                pool_id: None,
-                token_a_symbol: None,
-                token_b_symbol: None,
-                amount_a: None,
-                amount_b: None,
-                min_amount_out: None,
-                swap_path: None,
-                lp_amount: None,
+                ..Default::default()
             },
             fee: 0.0,
             sig: String::new(),
@@ -668,23 +631,8 @@ impl L1Node {
             from_pub_key: from_public_key.to_string(),
             nonce: Utc::now().timestamp_millis() as u64,
             payload: TxPayload {
-                to_pub_key_hex: None,
                 amount: Some(amount_u64),
-                faucet: None,
-                target_pub_key: None,
-                reason: None,
-                token_name: None,
-                token_symbol: None,
-                token_decimals: None,
-                token_total_supply: None,
-                pool_id: None,
-                token_a_symbol: None,
-                token_b_symbol: None,
-                amount_a: None,
-                amount_b: None,
-                min_amount_out: None,
-                swap_path: None,
-                lp_amount: None,
+                ..Default::default()
             },
             fee: tx_fee,
             sig: String::new(),
@@ -715,23 +663,8 @@ impl L1Node {
             from_pub_key: from_public_key.to_string(),
             nonce: Utc::now().timestamp_millis() as u64,
             payload: TxPayload {
-                to_pub_key_hex: None,
                 amount: Some(amount_u64),
-                faucet: None,
-                target_pub_key: None,
-                reason: None,
-                token_name: None,
-                token_symbol: None,
-                token_decimals: None,
-                token_total_supply: None,
-                pool_id: None,
-                token_a_symbol: None,
-                token_b_symbol: None,
-                amount_a: None,
-                amount_b: None,
-                min_amount_out: None,
-                swap_path: None,
-                lp_amount: None,
+                ..Default::default()
             },
             fee: fee.unwrap_or(BASE_TRANSFER_FEE),
             sig: String::new(),
