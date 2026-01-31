@@ -110,6 +110,7 @@ const Transactions = () => {
   const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedTx, setSelectedTx] = useState<TxItem | null>(null);
+  const [lastKnownHeight, setLastKnownHeight] = useState<number>(0);
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -199,16 +200,52 @@ const Transactions = () => {
     }
   };
 
+  // Smart polling - check for new blocks, only fetch full data when height changes
+  const checkForNewBlocks = async () => {
+    try {
+      const apiBase = getCoreApiBaseUrl();
+      if (!apiBase) return;
+      
+      const res = await fetch(`${apiBase}/stats`, {
+        signal: AbortSignal.timeout(3000),
+        headers: getCoreApiHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const currentHeight = data.network_height ?? data.networkHeight ?? 0;
+        const peers = data.connected_peers ?? data.connectedPeers ?? 0;
+        
+        setNetworkStats(prev => ({
+          ...prev,
+          blockHeight: currentHeight,
+          connectedPeers: peers,
+          tps: data.tps ?? prev.tps,
+          avgBlockTime: data.avg_block_time ?? data.avgBlockTime ?? prev.avgBlockTime,
+        }));
+        
+        // Only fetch full transaction list if block height changed
+        if (currentHeight > lastKnownHeight) {
+          setLastKnownHeight(currentHeight);
+          fetchTxs();
+        }
+      }
+    } catch {
+      // Silent fail for polling
+    }
+  };
+
   useEffect(() => {
+    // Initial fetch
     fetchTxs();
     fetchNetworkStats();
-    const txInterval = setInterval(fetchTxs, 5000); // 5 seconds
-    const statsInterval = setInterval(fetchNetworkStats, 10000); // 10 seconds
+    
+    // Smart polling: check stats every 2s (lightweight), only fetch txs when new block
+    const pollInterval = setInterval(checkForNewBlocks, 2000);
+    
     return () => {
-      clearInterval(txInterval);
-      clearInterval(statsInterval);
+      clearInterval(pollInterval);
     };
-  }, []);
+  }, [lastKnownHeight]);
 
   const filteredTxs = useMemo(() => {
     const q = query.trim().toLowerCase();

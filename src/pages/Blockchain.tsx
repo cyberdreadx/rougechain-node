@@ -41,6 +41,7 @@ const Blockchain = () => {
   const [nodeConnected, setNodeConnected] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [lastKnownHeight, setLastKnownHeight] = useState(0);
   const [viewMode, setViewMode] = useState<"table" | "grid">(() => {
     const saved = localStorage.getItem("blockchain-view-mode");
     return saved === "grid" ? "grid" : "table";
@@ -123,9 +124,57 @@ const Blockchain = () => {
     };
 
     fetchChain();
-    const interval = setInterval(fetchChain, 5000); // Refresh every 5s
-    return () => clearInterval(interval);
   }, []);
+
+  // Smart polling - only fetch when block height changes
+  useEffect(() => {
+    const checkForNewBlocks = async () => {
+      try {
+        const NODE_API_URL = getNodeApiBaseUrl();
+        if (!NODE_API_URL) return;
+        
+        const res = await fetch(`${NODE_API_URL}/stats`, {
+          signal: AbortSignal.timeout(3000),
+          headers: getCoreApiHeaders(),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const currentHeight = data.network_height ?? data.networkHeight ?? 0;
+          if (currentHeight > lastKnownHeight) {
+            setLastKnownHeight(currentHeight);
+          }
+        }
+      } catch {
+        // Silent fail
+      }
+    };
+    
+    const interval = setInterval(checkForNewBlocks, 2000);
+    return () => clearInterval(interval);
+  }, [lastKnownHeight]);
+
+  // Refetch chain when height changes
+  useEffect(() => {
+    if (lastKnownHeight > 0) {
+      const fetchChain = async () => {
+        const NODE_API_URL = getNodeApiBaseUrl();
+        if (!NODE_API_URL) return;
+        try {
+          const res = await fetch(`${NODE_API_URL}/blocks?limit=500`, {
+            signal: AbortSignal.timeout(10000),
+            headers: getCoreApiHeaders(),
+          });
+          if (res.ok) {
+            const data = await res.json() as { blocks: BlockV1[] };
+            setChain(data.blocks.map(convertBlock));
+          }
+        } catch {
+          // Silent fail
+        }
+      };
+      fetchChain();
+    }
+  }, [lastKnownHeight]);
 
   const sortedChain = [...chain].sort((a, b) => b.index - a.index);
   const totalPages = Math.max(1, Math.ceil(sortedChain.length / pageSize));
