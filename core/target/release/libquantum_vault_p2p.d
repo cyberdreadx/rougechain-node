@@ -1,0 +1,1 @@
+C:\Users\brand\Documents\GitHub\quantum-vault\core\target\release\libquantum_vault_p2p.rlib: C:\Users\brand\Documents\GitHub\quantum-vault\core\p2p\src\lib.rs C:\Users\brand\Documents\GitHub\quantum-vault\core\types\src\lib.rs

@@ -1,0 +1,1 @@
+C:\Users\brand\Documents\GitHub\quantum-vault\core\target\release\libquantum_vault_crypto.rlib: C:\Users\brand\Documents\GitHub\quantum-vault\core\crypto\src\lib.rs C:\Users\brand\Documents\GitHub\quantum-vault\core\types\src\lib.rs

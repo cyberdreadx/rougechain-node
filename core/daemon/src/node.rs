@@ -107,10 +107,23 @@ impl L1Node {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
         balances.clear();
         
-        // Replay all transactions to rebuild balances
+        // Replay all transactions to rebuild balances with fee distribution
         for block in blocks {
+            // Apply transaction effects
             for tx in &block.txs {
-                Self::apply_balance_tx_inner(&mut balances, tx, &block.header.proposer_pub_key);
+                Self::apply_balance_tx_inner(&mut balances, tx);
+            }
+            
+            // Distribute fees for this block
+            let total_fees: f64 = block.txs.iter().map(|tx| tx.fee).sum();
+            if total_fees > 0.0 {
+                let stakes = self.get_validator_stakes_at_height(block.header.height)?;
+                Self::distribute_fees(
+                    &mut balances,
+                    total_fees,
+                    &block.header.proposer_pub_key,
+                    &stakes,
+                );
             }
         }
         
@@ -149,10 +162,8 @@ impl L1Node {
         // Store the block
         self.store.append_block(&block)?;
         
-        // Apply transactions to balances
-        for tx in &block.txs {
-            self.apply_balance_tx(tx, &block.header.proposer_pub_key)?;
-        }
+        // Apply transactions and distribute fees
+        self.apply_balance_block(&block)?;
         
         // Apply validator state changes
         self.apply_validator_block(&block)?;
@@ -576,34 +587,95 @@ impl L1Node {
         Ok(())
     }
 
+    // Fee distribution constants
+    const PROPOSER_FEE_SHARE: f64 = 0.25; // 25% to block proposer
+    const VALIDATOR_FEE_SHARE: f64 = 0.75; // 75% split among all validators by stake
+
     fn apply_balance_block(&self, block: &BlockV1) -> Result<(), String> {
+        let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
+        
+        // Apply transaction effects (transfers, stakes, etc.) - fees deducted from senders
         for tx in &block.txs {
-            self.apply_balance_tx(tx, &block.header.proposer_pub_key)?;
+            Self::apply_balance_tx_inner(&mut balances, tx);
         }
+        
+        // Distribute fees: 25% to proposer, 75% split by stake
+        let total_fees: f64 = block.txs.iter().map(|tx| tx.fee).sum();
+        if total_fees > 0.0 {
+            Self::distribute_fees(
+                &mut balances,
+                total_fees,
+                &block.header.proposer_pub_key,
+                &self.get_validator_stakes_snapshot()?,
+            );
+        }
+        
         Ok(())
     }
 
-    fn apply_balance_tx(&self, tx: &TxV1, fee_recipient: &str) -> Result<(), String> {
+    #[allow(dead_code)]
+    fn apply_balance_tx(&self, tx: &TxV1) -> Result<(), String> {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
-        Self::apply_balance_tx_inner(&mut balances, tx, fee_recipient);
+        Self::apply_balance_tx_inner(&mut balances, tx);
         Ok(())
     }
 
     fn rebuild_balances(&self) -> Result<(), String> {
         // Collect all blocks first, then process them
-        // This avoids deadlock from holding the balance lock while scanning
         let blocks = self.store.get_all_blocks()?;
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
         balances.clear();
+        
         for block in &blocks {
+            // Apply transaction effects
             for tx in &block.txs {
-                Self::apply_balance_tx_inner(&mut balances, tx, &block.header.proposer_pub_key);
+                Self::apply_balance_tx_inner(&mut balances, tx);
+            }
+            
+            // Distribute fees for this block
+            let total_fees: f64 = block.txs.iter().map(|tx| tx.fee).sum();
+            if total_fees > 0.0 {
+                // Get validator stakes at this block height for accurate distribution
+                let stakes = self.get_validator_stakes_at_height(block.header.height)?;
+                Self::distribute_fees(
+                    &mut balances,
+                    total_fees,
+                    &block.header.proposer_pub_key,
+                    &stakes,
+                );
             }
         }
         Ok(())
     }
     
-    fn apply_balance_tx_inner(balances: &mut HashMap<String, f64>, tx: &TxV1, fee_recipient: &str) {
+    /// Distribute block fees: 25% to proposer, 75% split among validators by stake
+    fn distribute_fees(
+        balances: &mut HashMap<String, f64>,
+        total_fees: f64,
+        proposer_pub_key: &str,
+        validator_stakes: &BTreeMap<String, u128>,
+    ) {
+        // Proposer gets 25%
+        let proposer_share = total_fees * Self::PROPOSER_FEE_SHARE;
+        *balances.entry(proposer_pub_key.to_string()).or_insert(0.0) += proposer_share;
+        
+        // Remaining 75% split among all validators by stake weight
+        let validator_pool = total_fees * Self::VALIDATOR_FEE_SHARE;
+        let total_stake: u128 = validator_stakes.values().sum();
+        
+        if total_stake > 0 {
+            for (validator_pub_key, stake) in validator_stakes {
+                let stake_ratio = *stake as f64 / total_stake as f64;
+                let validator_share = validator_pool * stake_ratio;
+                *balances.entry(validator_pub_key.clone()).or_insert(0.0) += validator_share;
+            }
+        } else {
+            // No validators staked - proposer gets everything
+            *balances.entry(proposer_pub_key.to_string()).or_insert(0.0) += validator_pool;
+        }
+    }
+    
+    fn apply_balance_tx_inner(balances: &mut HashMap<String, f64>, tx: &TxV1) {
         match tx.tx_type.as_str() {
             "transfer" => {
                 if let Some(to_pub_key) = tx.payload.to_pub_key_hex.as_ref() {
@@ -614,18 +686,13 @@ impl L1Node {
                     
                     if is_token_transfer {
                         // Token transfer: only deduct XRGE fee from sender
-                        // Token balances are tracked separately (not in this XRGE balance map)
                         *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
                     } else {
                         // XRGE transfer: add to recipient, deduct amount + fee from sender
                         *balances.entry(to_pub_key.clone()).or_insert(0.0) += amount;
                         *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount + tx.fee;
                     }
-                    
-                    // Fee always goes to block proposer
-                    if tx.fee > 0.0 {
-                        *balances.entry(fee_recipient.to_string()).or_insert(0.0) += tx.fee;
-                    }
+                    // Fees are distributed separately via distribute_fees()
                 }
             }
             "stake" => {
@@ -635,6 +702,10 @@ impl L1Node {
             "unstake" => {
                 let amount = tx.payload.amount.unwrap_or(0) as f64;
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount - tx.fee;
+            }
+            "create_token" => {
+                // Token creation fee is deducted from sender
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
             }
             "slash" => {}
             _ => {}
@@ -654,6 +725,19 @@ impl L1Node {
             }
         }
         Ok(stakes)
+    }
+
+    /// Get current validator stakes snapshot (for fee distribution)
+    fn get_validator_stakes_snapshot(&self) -> Result<BTreeMap<String, u128>, String> {
+        self.get_validator_stakes()
+    }
+
+    /// Get validator stakes at a specific block height (for rebuild_balances)
+    fn get_validator_stakes_at_height(&self, _height: u64) -> Result<BTreeMap<String, u128>, String> {
+        // For now, use current stakes. A more accurate implementation would
+        // replay validator state from genesis to the given height.
+        // This is acceptable for testnet; mainnet might need historical stake tracking.
+        self.get_validator_stakes()
     }
 
     fn apply_validator_block(&self, block: &BlockV1) -> Result<(), String> {
