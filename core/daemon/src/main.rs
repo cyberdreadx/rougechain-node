@@ -292,6 +292,10 @@ async fn auth_middleware<B>(
     if path == "/api/faucet" || path == "/api/tx/submit" || path == "/api/stake/submit" || path == "/api/unstake/submit" {
         return Ok(next.run(request).await);
     }
+    // Bypass rate limiting for messenger endpoints
+    if path.starts_with("/api/messenger/") {
+        return Ok(next.run(request).await);
+    }
 
     if state.auth.is_enabled() {
         let api_key = extract_api_key(request.headers());
@@ -578,7 +582,7 @@ struct SubmitTxRequest {
     from_private_key: String,
     from_public_key: String,
     to_public_key: String,
-    amount: u64,
+    amount: f64,
     fee: Option<f64>,
 }
 
@@ -616,7 +620,7 @@ async fn submit_tx(
 struct StakeRequest {
     from_private_key: String,
     from_public_key: String,
-    amount: u64,
+    amount: f64,
     fee: Option<f64>,
 }
 

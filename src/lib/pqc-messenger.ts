@@ -37,6 +37,7 @@ export interface Conversation {
   isGroup: boolean;
   createdBy?: string;
   createdAt: string;
+  participantIds?: string[];
   participants?: Wallet[];
   lastMessage?: Message;
 }
@@ -172,7 +173,7 @@ function getMessengerApiBase(): string | null {
   return apiBase || null;
 }
 
-async function registerWalletOnNode(wallet: Wallet): Promise<void> {
+export async function registerWalletOnNode(wallet: Wallet): Promise<void> {
   const apiBase = getMessengerApiBase();
   if (!apiBase) return;
   await fetch(`${apiBase}${MESSENGER_API_PREFIX}/wallets/register`, {
@@ -310,7 +311,25 @@ export async function getWallets(): Promise<Wallet[]> {
   });
   if (!response.ok) return [];
   const data = await response.json().catch(() => null);
-  return data?.wallets || [];
+  const rawWallets = data?.wallets || [];
+  
+  // Convert snake_case from server to camelCase
+  return rawWallets.map((w: {
+    id?: string;
+    display_name?: string;
+    displayName?: string;
+    signing_public_key?: string;
+    signingPublicKey?: string;
+    encryption_public_key?: string;
+    encryptionPublicKey?: string;
+    created_at?: string;
+    createdAt?: string;
+  }): Wallet => ({
+    id: w.id || "",
+    displayName: w.display_name || w.displayName || "",
+    signingPublicKey: w.signing_public_key || w.signingPublicKey || "",
+    encryptionPublicKey: w.encryption_public_key || w.encryptionPublicKey || "",
+  }));
 }
 
 // Create or get demo bot wallet
@@ -425,7 +444,9 @@ export async function createConversation(
     }),
   });
   if (!response.ok) {
-    throw new Error("Failed to create conversation");
+    const errorText = await response.text().catch(() => "");
+    console.error("Create conversation failed:", response.status, errorText);
+    throw new Error(`Failed to create conversation: ${response.status} ${errorText}`);
   }
   const data = await response.json().catch(() => null);
   return data?.conversation as Conversation;
@@ -440,7 +461,43 @@ export async function getConversations(walletId: string): Promise<Conversation[]
   });
   if (!response.ok) return [];
   const data = await response.json().catch(() => null);
-  return data?.conversations || [];
+  const rawConversations = data?.conversations || [];
+  
+  // Fetch all wallets to populate participant details
+  const allWallets = await getWallets();
+  const walletMap = new Map(allWallets.map(w => [w.id, w]));
+  
+  // Populate participants with full wallet data
+  // Server returns participant_ids (snake_case), convert to participants array
+  const conversations: Conversation[] = rawConversations.map((conv: { 
+    id: string; 
+    name?: string; 
+    is_group?: boolean;
+    isGroup?: boolean;
+    created_by?: string;
+    createdBy?: string;
+    created_at?: string;
+    createdAt?: string;
+    participant_ids?: string[];
+    participantIds?: string[];
+  }) => {
+    const participantIds = conv.participant_ids || conv.participantIds || [];
+    const participants = participantIds
+      .map((id: string) => walletMap.get(id))
+      .filter((w): w is Wallet => w !== undefined);
+    
+    return {
+      id: conv.id,
+      name: conv.name,
+      isGroup: conv.is_group ?? conv.isGroup ?? false,
+      createdBy: conv.created_by || conv.createdBy,
+      createdAt: conv.created_at || conv.createdAt || new Date().toISOString(),
+      participantIds,
+      participants,
+    };
+  });
+  
+  return conversations;
 }
 
 // Send an encrypted message

@@ -111,9 +111,24 @@ impl L1Node {
         from_private_key: &str,
         from_public_key: &str,
         to_public_key: &str,
-        amount: u64,
+        amount: f64,
         fee: Option<f64>,
     ) -> Result<TxV1, String> {
+        let tx_fee = fee.unwrap_or(BASE_TRANSFER_FEE);
+        let total_required = amount + tx_fee;
+        
+        // Check sender has sufficient balance
+        let sender_balance = self.get_balance(from_public_key)?;
+        if sender_balance < total_required {
+            return Err(format!(
+                "insufficient balance: have {:.4} XRGE, need {:.4} XRGE ({:.4} + {:.4} fee)",
+                sender_balance, total_required, amount, tx_fee
+            ));
+        }
+        
+        // Convert f64 to u64 (round to nearest integer for on-chain storage)
+        let amount_u64 = amount.round() as u64;
+        
         let mut tx = TxV1 {
             version: 1,
             tx_type: "transfer".to_string(),
@@ -121,12 +136,12 @@ impl L1Node {
             nonce: Utc::now().timestamp_millis() as u64,
             payload: TxPayload {
                 to_pub_key_hex: Some(to_public_key.to_string()),
-                amount: Some(amount),
+                amount: Some(amount_u64),
                 faucet: None,
                 target_pub_key: None,
                 reason: None,
             },
-            fee: fee.unwrap_or(BASE_TRANSFER_FEE),
+            fee: tx_fee,
             sig: String::new(),
         };
         let bytes = encode_tx_v1(&tx);
@@ -170,9 +185,24 @@ impl L1Node {
         &self,
         from_private_key: &str,
         from_public_key: &str,
-        amount: u64,
+        amount: f64,
         fee: Option<f64>,
     ) -> Result<TxV1, String> {
+        let tx_fee = fee.unwrap_or(BASE_TRANSFER_FEE);
+        let total_required = amount + tx_fee;
+        
+        // Check sender has sufficient balance
+        let sender_balance = self.get_balance(from_public_key)?;
+        if sender_balance < total_required {
+            return Err(format!(
+                "insufficient balance: have {:.4} XRGE, need {:.4} XRGE ({:.4} + {:.4} fee)",
+                sender_balance, total_required, amount, tx_fee
+            ));
+        }
+        
+        // Convert f64 to u64 (round to nearest integer for on-chain storage)
+        let amount_u64 = amount.round() as u64;
+        
         let mut tx = TxV1 {
             version: 1,
             tx_type: "stake".to_string(),
@@ -180,12 +210,12 @@ impl L1Node {
             nonce: Utc::now().timestamp_millis() as u64,
             payload: TxPayload {
                 to_pub_key_hex: None,
-                amount: Some(amount),
+                amount: Some(amount_u64),
                 faucet: None,
                 target_pub_key: None,
                 reason: None,
             },
-            fee: fee.unwrap_or(BASE_TRANSFER_FEE),
+            fee: tx_fee,
             sig: String::new(),
         };
         let bytes = encode_tx_v1(&tx);
@@ -202,9 +232,12 @@ impl L1Node {
         &self,
         from_private_key: &str,
         from_public_key: &str,
-        amount: u64,
+        amount: f64,
         fee: Option<f64>,
     ) -> Result<TxV1, String> {
+        // Convert f64 to u64 (round to nearest integer for on-chain storage)
+        let amount_u64 = amount.round() as u64;
+        
         let mut tx = TxV1 {
             version: 1,
             tx_type: "unstake".to_string(),
@@ -212,7 +245,7 @@ impl L1Node {
             nonce: Utc::now().timestamp_millis() as u64,
             payload: TxPayload {
                 to_pub_key_hex: None,
-                amount: Some(amount),
+                amount: Some(amount_u64),
                 faucet: None,
                 target_pub_key: None,
                 reason: None,

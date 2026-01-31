@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { sendTransaction, WalletBalance } from "@/lib/pqc-wallet";
+import { sendTransaction, WalletBalance, BASE_TRANSFER_FEE } from "@/lib/pqc-wallet";
 
 interface SendTokensDialogProps {
   wallet: {
@@ -71,8 +71,9 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
       return;
     }
 
-    if (amountNum > xrgeBalance) {
-      setError("Insufficient balance");
+    const totalRequired = amountNum + BASE_TRANSFER_FEE;
+    if (totalRequired > xrgeBalance) {
+      setError(`Insufficient balance. Need ${totalRequired} XRGE (${amountNum} + ${BASE_TRANSFER_FEE} fee)`);
       return;
     }
 
@@ -157,7 +158,21 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
           </div>
 
           <div>
-            <Label htmlFor="amount">Amount</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="amount">Amount</Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs text-primary"
+                onClick={() => {
+                  const maxAmount = Math.max(0, xrgeBalance - BASE_TRANSFER_FEE);
+                  setAmount(maxAmount.toString());
+                }}
+              >
+                Max
+              </Button>
+            </div>
             <div className="relative mt-1.5">
               <Input
                 id="amount"
@@ -171,9 +186,10 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
                 XRGE
               </span>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Available: {xrgeBalance.toLocaleString()} XRGE
-            </p>
+            <div className="flex justify-between text-xs text-muted-foreground mt-1">
+              <span>Available: {xrgeBalance.toLocaleString()} XRGE</span>
+              <span>Fee: {BASE_TRANSFER_FEE} XRGE</span>
+            </div>
           </div>
 
           <div>

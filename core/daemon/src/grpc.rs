@@ -86,7 +86,7 @@ impl ChainService for GrpcNode {
             &req.from_private_key,
             &req.from_public_key,
             &req.to_public_key,
-            req.amount,
+            req.amount as f64,
             Some(req.fee),
         ).map_err(|e| Status::invalid_argument(e))?;
         let tx_id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
@@ -245,7 +245,7 @@ impl ValidatorService for GrpcNode {
         let tx = self.node.submit_stake_tx(
             &req.from_private_key,
             &req.from_public_key,
-            req.amount,
+            req.amount as f64,
             Some(req.fee),
         ).map_err(|e| Status::invalid_argument(e))?;
         let tx_id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
@@ -257,7 +257,7 @@ impl ValidatorService for GrpcNode {
         let tx = self.node.submit_unstake_tx(
             &req.from_private_key,
             &req.from_public_key,
-            req.amount,
+            req.amount as f64,
             Some(req.fee),
         ).map_err(|e| Status::invalid_argument(e))?;
         let tx_id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));

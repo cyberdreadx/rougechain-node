@@ -492,6 +492,15 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
     const messageText = encryptingMessage;
     setEncryptingMessage(null);
     
+    // Validate recipient has encryption key
+    if (!recipient.encryptionPublicKey) {
+      console.error("Recipient has no encryption key. Recipient:", recipient);
+      // Show error to user
+      alert("Cannot send message: recipient's encryption key is not available. Ask them to re-register their wallet.");
+      setIsSending(false);
+      return;
+    }
+    
     try {
       const msg = await sendMessage(
         conversation.id,

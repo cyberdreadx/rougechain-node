@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, Plus, Lock, Key, Settings, Download } from "lucide-react";
+import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -12,7 +12,7 @@ import ContactPicker from "@/components/messenger/ContactPicker";
 import PrivacySettings from "@/components/messenger/PrivacySettings";
 import WalletBackup from "@/components/wallet/WalletBackup";
 import type { Conversation, Wallet, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
-import { getConversations, getWallets, saveWalletLocally } from "@/lib/pqc-messenger";
+import { getConversations, getWallets, saveWalletLocally, registerWalletOnNode } from "@/lib/pqc-messenger";
 import { 
   UnifiedWallet,
   VaultSettings,
@@ -36,6 +36,7 @@ const Messenger = () => {
   const [showPrivacySettings, setShowPrivacySettings] = useState(false);
   const [showWalletBackup, setShowWalletBackup] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isReregistering, setIsReregistering] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [unlockPassword, setUnlockPassword] = useState("");
   const [unlocking, setUnlocking] = useState(false);
@@ -140,6 +141,40 @@ const Messenger = () => {
     setVaultSettings(settings);
   };
 
+  const handleReregister = async () => {
+    if (!wallet || isReregistering) return;
+    setIsReregistering(true);
+    try {
+      // Check if wallet has encryption key
+      if (!wallet.encryptionPublicKey) {
+        toast.error("Wallet missing encryption key", {
+          description: "Please create a new wallet to use encrypted messaging",
+        });
+        setIsReregistering(false);
+        return;
+      }
+      console.log("Registering wallet with encryption key:", wallet.encryptionPublicKey.slice(0, 32) + "...");
+      await registerWalletOnNode({
+        id: wallet.id,
+        displayName: wallet.displayName,
+        signingPublicKey: wallet.signingPublicKey,
+        encryptionPublicKey: wallet.encryptionPublicKey,
+      });
+      toast.success("Wallet registered!", {
+        description: "Your wallet is now visible to other users",
+      });
+      // Refresh contacts after re-registration
+      loadContacts();
+    } catch (error) {
+      console.error("Re-registration failed:", error);
+      toast.error("Registration failed", {
+        description: "Make sure the node is running",
+      });
+    } finally {
+      setIsReregistering(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -202,6 +237,15 @@ const Messenger = () => {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleReregister}
+            disabled={isReregistering}
+            title="Re-register wallet with network"
+          >
+            <RefreshCw className={`w-4 h-4 ${isReregistering ? "animate-spin" : ""}`} />
+          </Button>
           <Button
             variant="ghost"
             size="icon"
