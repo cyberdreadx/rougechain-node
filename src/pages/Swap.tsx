@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
+import { loadUnifiedWallet } from "@/lib/unified-wallet";
 
 interface Token {
   symbol: string;
@@ -63,19 +64,12 @@ const Swap = () => {
 
   // Load wallet from localStorage
   useEffect(() => {
-    const savedWallet = localStorage.getItem("quantum_vault_wallet");
-    if (savedWallet) {
-      try {
-        const parsed = JSON.parse(savedWallet);
-        if (parsed.signingPublicKey && parsed.signingPrivateKey) {
-          setWallet({
-            publicKey: parsed.signingPublicKey,
-            privateKey: parsed.signingPrivateKey,
-          });
-        }
-      } catch (e) {
-        console.error("Failed to parse wallet:", e);
-      }
+    const savedWallet = loadUnifiedWallet();
+    if (savedWallet && savedWallet.signingPublicKey && savedWallet.signingPrivateKey) {
+      setWallet({
+        publicKey: savedWallet.signingPublicKey,
+        privateKey: savedWallet.signingPrivateKey,
+      });
     }
   }, []);
 
