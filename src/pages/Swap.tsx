@@ -81,49 +81,60 @@ const Swap = () => {
       const baseUrl = getNodeApiBaseUrl();
       if (!baseUrl) return;
       
-      // Get pools to find available tokens
-      const poolsRes = await fetch(`${baseUrl}/pools`, {
+      // Start with tokens the user owns
+      const tokenSet = new Set<string>(["XRGE"]);
+      let xrgeBalance = 0;
+      let tokenBalances: Record<string, number> = {};
+      
+      // Get user balances first
+      const balanceRes = await fetch(`${baseUrl}/balance/${wallet.publicKey}`, {
         headers: getCoreApiHeaders(),
       });
       
-      if (poolsRes.ok) {
-        const data = await poolsRes.json();
-        const pools: Pool[] = data.pools || [];
+      if (balanceRes.ok) {
+        const balData = await balanceRes.json();
+        xrgeBalance = balData.balance || 0;
+        tokenBalances = balData.token_balances || {};
         
-        // Extract unique tokens from pools
-        const tokenSet = new Set<string>(["XRGE"]);
-        pools.forEach(pool => {
-          tokenSet.add(pool.token_a);
-          tokenSet.add(pool.token_b);
+        // Add all tokens the user owns
+        Object.keys(tokenBalances).forEach(symbol => {
+          if (tokenBalances[symbol] > 0) {
+            tokenSet.add(symbol);
+          }
         });
-        
-        // Get balances for each token
-        const balanceRes = await fetch(`${baseUrl}/balance/${wallet.publicKey}`, {
+      }
+      
+      // Also get tokens from pools
+      try {
+        const poolsRes = await fetch(`${baseUrl}/pools`, {
           headers: getCoreApiHeaders(),
         });
         
-        let xrgeBalance = 0;
-        let tokenBalances: Record<string, number> = {};
-        
-        if (balanceRes.ok) {
-          const balData = await balanceRes.json();
-          xrgeBalance = balData.balance || 0;
-          tokenBalances = balData.token_balances || {};
+        if (poolsRes.ok) {
+          const data = await poolsRes.json();
+          const pools: Pool[] = data.pools || [];
+          
+          pools.forEach(pool => {
+            tokenSet.add(pool.token_a);
+            tokenSet.add(pool.token_b);
+          });
         }
-        
-        const tokenList: Token[] = Array.from(tokenSet).map(symbol => ({
-          symbol,
-          name: symbol,
-          balance: symbol === "XRGE" ? xrgeBalance : (tokenBalances[symbol] || 0),
-        }));
-        
-        setTokens(tokenList);
-        
-        // Set default tokenOut if not set
-        if (!tokenOut && tokenList.length > 1) {
-          const other = tokenList.find(t => t.symbol !== "XRGE");
-          if (other) setTokenOut(other.symbol);
-        }
+      } catch {
+        // Pools endpoint may not exist yet, continue
+      }
+      
+      const tokenList: Token[] = Array.from(tokenSet).map(symbol => ({
+        symbol,
+        name: symbol,
+        balance: symbol === "XRGE" ? xrgeBalance : (tokenBalances[symbol] || 0),
+      }));
+      
+      setTokens(tokenList);
+      
+      // Set default tokenOut if not set
+      if (!tokenOut && tokenList.length > 1) {
+        const other = tokenList.find(t => t.symbol !== "XRGE");
+        if (other) setTokenOut(other.symbol);
       }
     } catch (e) {
       console.error("Failed to fetch tokens:", e);
