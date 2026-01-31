@@ -48,6 +48,12 @@ struct Args {
     rate_limit_read_per_minute: u32,
     #[arg(long, default_value_t = 30)]
     rate_limit_write_per_minute: u32,
+    /// Rate limit for validators (Tier 1) - 0 = unlimited
+    #[arg(long, default_value_t = 0)]
+    rate_limit_validator: u32,
+    /// Rate limit for registered peers (Tier 2)
+    #[arg(long, default_value_t = 300)]
+    rate_limit_peer: u32,
     #[arg(long, env = "QV_FAUCET_WHITELIST")]
     faucet_whitelist: Option<String>,
     /// Comma-separated list of peer URLs to connect to (e.g., "http://node1.example.com:5100,http://node2.example.com:5100")
@@ -65,6 +71,8 @@ struct AppState {
     limiter: Arc<tokio::sync::Mutex<RateLimiter>>,
     read_limit: u32,
     write_limit: u32,
+    validator_limit: u32,  // Tier 1: validators (0 = unlimited)
+    peer_limit: u32,       // Tier 2: registered peers
     faucet_whitelist: Vec<String>,
     peer_manager: Arc<peer::PeerManager>,
 }
@@ -214,6 +222,8 @@ async fn main() -> Result<(), String> {
         limiter,
         read_limit: args.rate_limit_read_per_minute,
         write_limit: args.rate_limit_write_per_minute,
+        validator_limit: args.rate_limit_validator,
+        peer_limit: args.rate_limit_peer,
         faucet_whitelist: parse_whitelist(args.faucet_whitelist),
         peer_manager: peer_manager.clone(),
     };
@@ -342,16 +352,59 @@ async fn auth_middleware<B>(
     }
 
     let client_key = client_key(&request);
-    let limit = match request.method() {
-        &Method::GET => state.read_limit,
-        _ => state.write_limit,
-    };
-    let mut limiter = state.limiter.lock().await;
-    if !limiter.allow(&client_key, limit) {
-        return Err(StatusCode::TOO_MANY_REQUESTS);
+    
+    // Determine rate limit tier
+    let limit = determine_rate_limit_tier(&state, &request).await;
+    
+    // 0 = unlimited (skip rate limiting)
+    if limit > 0 {
+        let mut limiter = state.limiter.lock().await;
+        if !limiter.allow(&client_key, limit) {
+            return Err(StatusCode::TOO_MANY_REQUESTS);
+        }
     }
 
     Ok(next.run(request).await)
+}
+
+/// Determine rate limit based on caller tier:
+/// - Tier 1 (validator_limit): Active staked validators (X-Validator-Key header)
+/// - Tier 2 (peer_limit): Registered peers
+/// - Tier 3 (read/write_limit): Unknown clients
+async fn determine_rate_limit_tier<B>(state: &AppState, request: &Request<B>) -> u32 {
+    // Check for validator header (Tier 1)
+    if let Some(validator_key) = request.headers().get("x-validator-key") {
+        if let Ok(key_str) = validator_key.to_str() {
+            // Verify this is an active staked validator
+            if is_active_validator(&state.node, key_str) {
+                return state.validator_limit; // Tier 1
+            }
+        }
+    }
+    
+    // Check if client IP is a registered peer (Tier 2)
+    let client_ip = client_key(request);
+    if state.peer_manager.is_known_peer_ip(&client_ip).await {
+        return state.peer_limit; // Tier 2
+    }
+    
+    // Default: Tier 3
+    match request.method() {
+        &Method::GET => state.read_limit,
+        _ => state.write_limit,
+    }
+}
+
+/// Check if a public key is an active staked validator
+fn is_active_validator(node: &Arc<L1Node>, public_key: &str) -> bool {
+    if let Ok(validators) = node.list_validators() {
+        for (pk, validator_state) in validators {
+            if pk == public_key && validator_state.stake > 0 {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn extract_api_key(headers: &HeaderMap) -> Option<String> {

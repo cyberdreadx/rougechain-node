@@ -459,6 +459,11 @@ impl L1Node {
         Ok((validators, total))
     }
 
+    /// List all validators (for rate limiting tier checks)
+    pub fn list_validators(&self) -> Result<Vec<(String, ValidatorState)>, String> {
+        self.validator_store.list_validators()
+    }
+
     pub fn get_selection_info(&self) -> Result<Option<ProposerSelectionResult>, String> {
         let tip = self.store.get_tip()?;
         let stakes = self.get_validator_stakes()?;

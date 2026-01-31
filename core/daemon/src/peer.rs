@@ -43,7 +43,42 @@ impl PeerManager {
     pub async fn peer_count(&self) -> usize {
         self.peers.read().await.len()
     }
+    
+    /// Check if an IP address belongs to a known peer
+    /// Extracts hostnames from peer URLs and checks for IP match
+    pub async fn is_known_peer_ip(&self, client_ip: &str) -> bool {
+        let peers = self.peers.read().await;
+        for peer_url in peers.iter() {
+            // Extract hostname/IP from URL
+            if let Some(host) = extract_host_from_url(peer_url) {
+                if host == client_ip {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
+
+/// Extract hostname or IP from a URL (e.g., "https://example.com:5100" -> "example.com")
+fn extract_host_from_url(url: &str) -> Option<String> {
+    // Remove protocol
+    let without_protocol = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    
+    // Remove path
+    let without_path = without_protocol.split('/').next()?;
+    
+    // Remove port
+    let host = without_path.split(':').next()?;
+    
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
 
 fn normalize_peer_url(url: &str) -> String {
     let url = url.trim().to_string();

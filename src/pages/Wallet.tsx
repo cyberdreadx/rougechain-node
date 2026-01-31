@@ -505,7 +505,7 @@ const Wallet = () => {
   return (
     <div className="min-h-screen bg-background">
       {/* Action Bar */}
-      <div className="sticky top-[60px] z-40 bg-background/80 backdrop-blur-sm border-b border-border">
+      <div className="sticky top-0 z-40 bg-background/80 backdrop-blur-sm border-b border-border">
         <div className="max-w-lg mx-auto px-4 py-2 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <NetworkBadge 
