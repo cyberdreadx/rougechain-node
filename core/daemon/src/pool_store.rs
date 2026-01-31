@@ -1,8 +1,9 @@
-//! Pool Store - RocksDB persistence for AMM liquidity pools
+//! Pool Store - Sled persistence for AMM liquidity pools
 
-use rocksdb::{DB, Options};
 use serde::{Deserialize, Serialize};
+use sled::Db;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Represents a liquidity pool with two tokens
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,21 +100,19 @@ impl LiquidityPool {
     }
 }
 
-/// Persistent storage for liquidity pools
+/// Persistent storage for liquidity pools using sled
 #[derive(Clone)]
 pub struct PoolStore {
-    db: std::sync::Arc<DB>,
+    db: Arc<Db>,
 }
 
 impl PoolStore {
     /// Create a new pool store at the given path
     pub fn new(data_dir: &Path) -> Result<Self, String> {
         let db_path = data_dir.join("pools-db");
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        let db = DB::open(&opts, db_path).map_err(|e| format!("Failed to open pool DB: {}", e))?;
+        let db = sled::open(db_path).map_err(|e| format!("Failed to open pool DB: {}", e))?;
         Ok(Self {
-            db: std::sync::Arc::new(db),
+            db: Arc::new(db),
         })
     }
     
@@ -121,7 +120,8 @@ impl PoolStore {
     pub fn save_pool(&self, pool: &LiquidityPool) -> Result<(), String> {
         let key = pool.pool_id.as_bytes();
         let value = serde_json::to_vec(pool).map_err(|e| format!("Failed to serialize pool: {}", e))?;
-        self.db.put(key, value).map_err(|e| format!("Failed to save pool: {}", e))?;
+        self.db.insert(key, value).map_err(|e| format!("Failed to save pool: {}", e))?;
+        self.db.flush().map_err(|e| format!("Failed to flush: {}", e))?;
         Ok(())
     }
     
@@ -147,8 +147,7 @@ impl PoolStore {
     /// List all pools
     pub fn list_pools(&self) -> Result<Vec<LiquidityPool>, String> {
         let mut pools = Vec::new();
-        let iter = self.db.iterator(rocksdb::IteratorMode::Start);
-        for item in iter {
+        for item in self.db.iter() {
             match item {
                 Ok((_, value)) => {
                     if let Ok(pool) = serde_json::from_slice::<LiquidityPool>(&value) {
@@ -163,7 +162,8 @@ impl PoolStore {
     
     /// Delete a pool
     pub fn delete_pool(&self, pool_id: &str) -> Result<(), String> {
-        self.db.delete(pool_id.as_bytes()).map_err(|e| format!("Failed to delete pool: {}", e))?;
+        self.db.remove(pool_id.as_bytes()).map_err(|e| format!("Failed to delete pool: {}", e))?;
+        self.db.flush().map_err(|e| format!("Failed to flush: {}", e))?;
         Ok(())
     }
     
@@ -186,7 +186,6 @@ impl PoolStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     
     #[test]
     fn test_pool_creation() {

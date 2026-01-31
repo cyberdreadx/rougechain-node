@@ -22,7 +22,7 @@ quantum-vault-types = { path = "../types" }
 quantum-vault-crypto = { path = "../crypto" }
 quantum-vault-consensus = { path = "../consensus" }
 quantum-vault-storage = { path = "../storage" }
-rocksdb = "0.21"
+sled = "0.34"
 
 [build-dependencies]
 tonic-build = "0.11"
