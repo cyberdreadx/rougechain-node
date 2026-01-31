@@ -5,16 +5,20 @@ import {
   Home, 
   Wallet, 
   MessageSquare, 
+  Globe2,
   Shield, 
-  Network 
+  Network,
+  Activity
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
-import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, NETWORK_STORAGE_KEY } from "@/lib/network";
+import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY } from "@/lib/network";
 
 const navItems = [
   { to: "/", label: "Home", icon: Home },
   { to: "/wallet", label: "Wallet", icon: Wallet },
+  { to: "/blockchain", label: "Blockchain", icon: Globe2 },
   { to: "/messenger", label: "Messenger", icon: MessageSquare },
+  { to: "/transactions", label: "Tx Feed", icon: Activity },
   { to: "/validators", label: "Validators", icon: Shield },
   { to: "/node", label: "Core Node", icon: Network },
 ];
@@ -42,7 +46,9 @@ export function MainNav() {
         if (!apiBase) {
           return;
         }
-        const response = await fetch(`${apiBase}/stats`);
+        const response = await fetch(`${apiBase}/stats`, {
+          headers: getCoreApiHeaders(),
+        });
         if (!response.ok) return;
         const data = await response.json().catch(() => null) as { chain_id?: string; chainId?: string } | null;
         const detected = data?.chain_id || data?.chainId;

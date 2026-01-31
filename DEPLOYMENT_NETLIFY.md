@@ -80,6 +80,7 @@ netlify deploy --prod
 **Required:**
 - `VITE_NODE_API_URL_TESTNET` - Your testnet node API endpoint
 - `VITE_NODE_API_URL_MAINNET` - Your mainnet node API endpoint
+- `VITE_CORE_API_KEY` - API key for the core node (if enabled)
 
 **Example values:**
 ```

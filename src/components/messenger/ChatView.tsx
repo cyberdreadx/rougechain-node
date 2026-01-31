@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Conversation, WalletWithPrivateKeys, Message, Wallet } from "@/lib/pqc-messenger";
-import { getMessages, sendMessage, isDemoBot, loadDemoBotWallet, getDemoBotResponse } from "@/lib/pqc-messenger";
+import { getBotReply, getMessages, sendMessage, isDemoBot, loadDemoBotWallet } from "@/lib/pqc-messenger";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -513,7 +513,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
           const botWallet = loadDemoBotWallet();
           if (botWallet) {
             try {
-              const botResponse = getDemoBotResponse();
+              const botResponse = await getBotReply(messageText);
               
               const botMsg = await sendMessage(
                 conversation.id,
@@ -567,7 +567,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
             <p className="font-medium text-foreground">{getConversationName()}</p>
             {isRecipientBot && (
               <span className="px-1.5 py-0.5 text-[10px] rounded bg-primary/20 text-primary">
-                Demo
+                Local AI
               </span>
             )}
           </div>

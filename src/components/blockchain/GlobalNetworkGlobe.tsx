@@ -1,10 +1,10 @@
 import { useRef, useMemo, useState, useEffect } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, Html } from "@react-three/drei";
+import { OrbitControls, Html, useTexture } from "@react-three/drei";
 import * as THREE from "three";
 import { motion } from "framer-motion";
 import { Globe, Activity, Users, Loader2, Wifi, Shield } from "lucide-react";
-import { getCoreApiBaseUrl } from "@/lib/network";
+import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 
 // Generate random points on a sphere based on validator count
 const generateNodePositions = (count: number, radius: number) => {
@@ -21,16 +21,37 @@ const generateNodePositions = (count: number, radius: number) => {
   return positions;
 };
 
-// Generate connections between nodes
+// Generate connections between nodes (stable + ensures minimum links)
 const generateConnections = (
   nodes: [number, number, number][],
-  connectionProbability: number = 0.15
+  connectionProbability: number = 0.12
 ) => {
   const connections: [[number, number, number], [number, number, number]][] = [];
-  for (let i = 0; i < nodes.length; i++) {
-    for (let j = i + 1; j < nodes.length; j++) {
-      if (Math.random() < connectionProbability) {
-        connections.push([nodes[i], nodes[j]]);
+  const seen = new Set<string>();
+  const add = (a: number, b: number) => {
+    if (a === b) return;
+    const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    connections.push([nodes[a], nodes[b]]);
+  };
+  const total = nodes.length;
+  if (total < 2) return connections;
+  for (let i = 0; i < total; i++) {
+    add(i, (i + 1) % total);
+    if (total > 3) {
+      add(i, (i + 2) % total);
+    }
+  }
+  let seed = total * 9301 + 49297;
+  const rand = () => {
+    seed = (seed * 9301 + 49297) % 233280;
+    return seed / 233280;
+  };
+  for (let i = 0; i < total; i++) {
+    for (let j = i + 1; j < total; j++) {
+      if (rand() < connectionProbability) {
+        add(i, j);
       }
     }
   }
@@ -87,21 +108,15 @@ interface ConnectionLineProps {
 
 const ConnectionLine = ({ start, end }: ConnectionLineProps) => {
   const geometry = useMemo(() => {
-    const geo = new THREE.BufferGeometry();
-    const positions = new Float32Array([...start, ...end]);
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    return geo;
+    const points = [new THREE.Vector3(...start), new THREE.Vector3(...end)];
+    return new THREE.BufferGeometry().setFromPoints(points);
   }, [start, end]);
 
-  const material = useMemo(() => {
-    return new THREE.LineBasicMaterial({ 
-      color: "#6366f1", 
-      transparent: true, 
-      opacity: 0.3 
-    });
-  }, []);
-
-  return <primitive object={new THREE.Line(geometry, material)} />
+  return (
+    <line geometry={geometry} frustumCulled={false}>
+      <lineBasicMaterial color="#6366f1" transparent opacity={0.35} />
+    </line>
+  );
 };
 
 const GlobeWireframe = () => {
@@ -122,6 +137,23 @@ const GlobeWireframe = () => {
         transparent
         opacity={0.08}
       />
+    </mesh>
+  );
+};
+
+const EARTH_TEXTURE_URL =
+  "https://threejs.org/examples/textures/land_ocean_ice_cloud_2048.jpg";
+
+const EarthSurface = () => {
+  const texture = useTexture(EARTH_TEXTURE_URL);
+  useEffect(() => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+  }, [texture]);
+  return (
+    <mesh>
+      <sphereGeometry args={[1.9, 64, 64]} />
+      <meshStandardMaterial map={texture} roughness={0.9} metalness={0.05} />
     </mesh>
   );
 };
@@ -154,6 +186,7 @@ const NetworkScene = ({ nodeCount, peerCount }: NetworkSceneProps) => {
       <pointLight position={[10, 10, 10]} intensity={0.5} />
       <pointLight position={[-10, -10, -10]} intensity={0.3} color="#a855f7" />
 
+      <EarthSurface />
       <GlobeWireframe />
 
       <RotatingGroup>
@@ -229,6 +262,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
           try {
             const res = await fetch(url, {
               signal: AbortSignal.timeout(800),
+              headers: getCoreApiHeaders(),
             });
             if (res.ok) {
               const data = await res.json() as Record<string, unknown>;

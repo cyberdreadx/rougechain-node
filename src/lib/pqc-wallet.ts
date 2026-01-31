@@ -1,5 +1,5 @@
 import { Block } from "./pqc-blockchain";
-import { getActiveNetwork, getCoreApiBaseUrl } from "./network";
+import { getActiveNetwork, getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
 
 // RougeChain constants
 export const TOTAL_SUPPLY = 36_000_000_000; // 36 Billion XRGE
@@ -108,7 +108,9 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
   }
 
   try {
-    const res = await fetch(`${NODE_API_URL}/blocks`);
+    const res = await fetch(`${NODE_API_URL}/blocks`, {
+      headers: getCoreApiHeaders(),
+    });
     if (res.ok) {
       const data = await res.json() as { blocks: Array<{
         version: 1;
@@ -248,7 +250,9 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
   }
   
   try {
-    const res = await fetch(`${NODE_API_URL}/balance/${publicKey}`);
+    const res = await fetch(`${NODE_API_URL}/balance/${publicKey}`, {
+      headers: getCoreApiHeaders(),
+    });
     if (res.ok) {
       const data = await res.json() as { success: boolean; balance: number };
       if (data.success) {
@@ -403,7 +407,7 @@ export async function sendTransaction(
   try {
     const res = await fetch(`${NODE_API_URL}/tx/submit`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
       body: JSON.stringify({
         fromPrivateKey,
         fromPublicKey,
@@ -413,27 +417,48 @@ export async function sendTransaction(
       }),
     });
 
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success) {
-        // Return a mock Block object for compatibility
-        return {
-          index: 0, // Will be updated when block is mined
-          timestamp: Date.now(),
-          data: JSON.stringify({ type: "transfer", from: fromPublicKey, to: toPublicKey, amount }),
-          previousHash: "",
-          hash: data.txId || "",
-          nonce: 0,
-          signature: "",
-          signerPublicKey: fromPublicKey,
-        };
-      }
+    // Check for empty response
+    const text = await res.text();
+    if (!text) {
+      console.error("Empty response from tx/submit, status:", res.status);
+      throw new Error(`Server returned empty response (status ${res.status})`);
     }
+    
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (parseErr) {
+      console.error("Failed to parse response:", text);
+      throw new Error(`Invalid JSON response: ${text.substring(0, 100)}`);
+    }
+    
+    if (res.ok && data.success) {
+      // Return a mock Block object for compatibility
+      return {
+        index: 0, // Will be updated when block is mined
+        timestamp: Date.now(),
+        data: JSON.stringify({ type: "transfer", from: fromPublicKey, to: toPublicKey, amount }),
+        previousHash: "",
+        hash: data.txId || "",
+        nonce: 0,
+        signature: "",
+        signerPublicKey: fromPublicKey,
+      };
+    }
+    
+    // Backend returned an error
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    
+    throw new Error(`Transaction failed: ${res.status} ${res.statusText}`);
   } catch (nodeError) {
+    if (nodeError instanceof Error && !nodeError.message.includes("Node API")) {
+      throw nodeError; // Re-throw backend errors
+    }
     console.log("Node API unavailable.", nodeError);
+    throw new Error("Node API is unavailable. Start a node with --mine to submit transactions.");
   }
-
-  throw new Error("Node API is unavailable. Start a node with --mine to submit transactions.");
 }
 
 // Create a new token
@@ -467,7 +492,7 @@ export async function mintTokens(
     // Use the faucet endpoint which handles minting properly
     const res = await fetch(`${NODE_API_URL}/faucet`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
       body: JSON.stringify({
         recipientPublicKey,
         amount,

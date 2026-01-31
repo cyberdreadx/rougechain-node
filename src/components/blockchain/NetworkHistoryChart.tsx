@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { BarChart3, TrendingUp } from "lucide-react";
-import { getNodeApiBaseUrl } from "@/lib/network";
+import { getCoreApiHeaders, getNodeApiBaseUrl } from "@/lib/network";
 import {
   AreaChart,
   Area,
@@ -47,6 +47,7 @@ const NetworkHistoryChart = () => {
       try {
         const res = await fetch(`${NODE_API_URL}/blocks/summary?range=${timeRange}`, {
           signal: AbortSignal.timeout(timeoutMs),
+          headers: getCoreApiHeaders(),
         });
         if (res.ok) {
           const data = await res.json() as { success: boolean; points: SummaryPoint[] };
@@ -61,6 +62,7 @@ const NetworkHistoryChart = () => {
             try {
               const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks/summary?range=${timeRange}`, {
                 signal: AbortSignal.timeout(2000),
+                headers: getCoreApiHeaders(),
               });
               if (res.ok) {
                 const data = await res.json() as { success: boolean; points: SummaryPoint[] };
@@ -100,6 +102,7 @@ const NetworkHistoryChart = () => {
       try {
         const res = await fetch(`${NODE_API_URL}/blocks`, {
           signal: AbortSignal.timeout(timeoutMs),
+          headers: getCoreApiHeaders(),
         });
         if (res.ok) {
           const data = await res.json() as { blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> };
@@ -112,6 +115,7 @@ const NetworkHistoryChart = () => {
             try {
               const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks`, {
                 signal: AbortSignal.timeout(2000),
+                headers: getCoreApiHeaders(),
               });
               if (res.ok) {
                 const data = await res.json() as { blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> };

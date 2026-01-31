@@ -11,7 +11,7 @@ import GlobalNetworkGlobe from "@/components/blockchain/GlobalNetworkGlobe";
 import NetworkStatsBar from "@/components/blockchain/NetworkStatsBar";
 import NetworkHistoryChart from "@/components/blockchain/NetworkHistoryChart";
 import type { Block } from "@/lib/pqc-blockchain";
-import { getNodeApiBaseUrl } from "@/lib/network";
+import { getCoreApiHeaders, getNodeApiBaseUrl } from "@/lib/network";
 
 interface BlockV1 {
   version: 1;
@@ -77,6 +77,7 @@ const Blockchain = () => {
           const timeoutMs = isLocal ? 3000 : 10000;
           const res = await fetch(`${NODE_API_URL}/blocks?limit=500`, {
             signal: AbortSignal.timeout(timeoutMs), // allow slow public nodes
+            headers: getCoreApiHeaders(),
           });
           if (res.ok) {
             const data = await res.json() as { blocks: BlockV1[] };
@@ -94,6 +95,7 @@ const Blockchain = () => {
               try {
                 const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks?limit=500`, {
                   signal: AbortSignal.timeout(2000),
+                  headers: getCoreApiHeaders(),
                 });
                 if (res.ok) {
                   const data = await res.json() as { blocks: BlockV1[] };

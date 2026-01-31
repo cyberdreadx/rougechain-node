@@ -8,6 +8,14 @@ http://YOUR_SERVER_IP:5100/api
 https://your-domain.com/api
 ```
 
+## Authentication
+
+All endpoints (except `/api/health`) require an API key when enabled on the core node.
+Send one of the following:
+
+- Header: `X-API-Key: YOUR_API_KEY`
+- Header: `Authorization: Bearer YOUR_API_KEY`
+
 ## Endpoints
 
 ### 1. Create Wallet
@@ -174,7 +182,47 @@ curl http://your-server:5100/api/blocks
 
 ---
 
-### 6. Get Validators
+### 6. Get Transactions
+
+Get recent transactions (newest first).
+
+**Endpoint:** `GET /api/txs?limit=200&offset=0`
+
+**Response:**
+```json
+{
+  "txs": [
+    {
+      "txId": "transaction-hash-hex",
+      "blockHeight": 42,
+      "blockHash": "block-hash-hex",
+      "blockTime": 1712345678,
+      "tx": {
+        "version": 1,
+        "tx_type": "transfer",
+        "from_pub_key": "...",
+        "nonce": 1234567890,
+        "payload": {
+          "to_pub_key_hex": "...",
+          "amount": 100
+        },
+        "fee": 0.1,
+        "sig": "..."
+      }
+    }
+  ],
+  "total": 100
+}
+```
+
+**Example:**
+```bash
+curl http://your-server:5100/api/txs?limit=50
+```
+
+---
+
+### 7. Get Validators
 
 Get the current validator set and stake amounts.
 
@@ -264,6 +312,7 @@ Submit a quantum entropy contribution (metadata only).
 
 ---
 
+
 ## Error Responses
 
 All endpoints return errors in this format:
@@ -280,6 +329,7 @@ All endpoints return errors in this format:
 - `400`: Bad Request (invalid parameters)
 - `404`: Not Found
 - `500`: Internal Server Error
+- `429`: Too Many Requests (rate limited)
 
 ---
 

@@ -1,6 +1,6 @@
 // Node API client for RougeChain L1
 // This connects to the Rust core node API
-import { getCoreApiBaseUrl } from "./network";
+import { getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
 
 export interface NodeWallet {
   publicKey: string;
@@ -31,7 +31,7 @@ export async function createWalletViaNode(): Promise<NodeWallet> {
   }
   const res = await fetch(`${apiBase}/wallet/create`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
   });
 
   if (!res.ok) {
@@ -39,11 +39,11 @@ export async function createWalletViaNode(): Promise<NodeWallet> {
   }
 
   let data: { success?: boolean; publicKey?: string; privateKey?: string; algorithm?: string; error?: string } | null = null;
+  const rawText = await res.text();
   try {
-    data = await res.json();
+    data = rawText ? JSON.parse(rawText) : null;
   } catch (jsonError) {
-    const text = await res.text();
-    throw new Error(`Invalid JSON response from wallet API: ${text.slice(0, 120)}`);
+    throw new Error(`Invalid JSON response from wallet API: ${rawText.slice(0, 120)}`);
   }
 
   if (!data?.success) {
@@ -77,7 +77,7 @@ export async function submitTransactionViaNode(
   }
   const res = await fetch(`${apiBase}/tx/submit`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
     body: JSON.stringify({
       fromPrivateKey,
       fromPublicKey,
@@ -99,7 +99,9 @@ export async function getBalanceViaNode(publicKey: string): Promise<number> {
   if (!apiBase) {
     return 0;
   }
-  const res = await fetch(`${apiBase}/balance/${publicKey}`);
+  const res = await fetch(`${apiBase}/balance/${publicKey}`, {
+    headers: getCoreApiHeaders(),
+  });
   
   if (!res.ok) {
     return 0; // Return 0 if error (account doesn't exist yet)
@@ -117,7 +119,9 @@ export async function getNodeStats() {
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }
-  const res = await fetch(`${apiBase}/stats`);
+  const res = await fetch(`${apiBase}/stats`, {
+    headers: getCoreApiHeaders(),
+  });
   if (!res.ok) {
     throw new Error("Failed to fetch node stats");
   }

@@ -8,6 +8,10 @@ import { getActiveNetwork } from "./network";
 export const UNIFIED_WALLET_KEY = "pqc-unified-wallet";
 export const MESSENGER_WALLET_KEY = "pqc_messenger_wallet";
 export const BLOCKCHAIN_WALLET_KEY = "pqc-blockchain-wallet";
+export const ENCRYPTED_WALLET_KEY = "pqc-unified-wallet-encrypted";
+export const WALLET_LOCKED_KEY = "pqc-unified-wallet-locked";
+export const WALLET_METADATA_KEY = "pqc-unified-wallet-metadata";
+export const VAULT_SETTINGS_KEY = "pqc-unified-wallet-vault-settings";
 
 // Unified wallet structure that works for both messenger and blockchain
 export interface UnifiedWallet {
@@ -26,6 +30,10 @@ export interface UnifiedWallet {
   
   // Metadata
   version: number;
+}
+
+export interface VaultSettings {
+  autoLockMinutes: number;
 }
 
 // Legacy wallet types for migration
@@ -126,6 +134,79 @@ export async function decryptWallet(encryptedData: string, password: string): Pr
   }
   
   return walletData as UnifiedWallet;
+}
+
+export function getVaultSettings(): VaultSettings {
+  const raw = localStorage.getItem(getScopedKey(VAULT_SETTINGS_KEY));
+  if (!raw) {
+    return { autoLockMinutes: 0 };
+  }
+  try {
+    const parsed = JSON.parse(raw) as VaultSettings;
+    return {
+      autoLockMinutes: Number(parsed.autoLockMinutes || 0),
+    };
+  } catch {
+    return { autoLockMinutes: 0 };
+  }
+}
+
+export function saveVaultSettings(settings: VaultSettings): void {
+  localStorage.setItem(getScopedKey(VAULT_SETTINGS_KEY), JSON.stringify(settings));
+}
+
+export function isWalletLocked(): boolean {
+  return localStorage.getItem(getScopedKey(WALLET_LOCKED_KEY)) === "true";
+}
+
+export function hasEncryptedWallet(): boolean {
+  return !!localStorage.getItem(getScopedKey(ENCRYPTED_WALLET_KEY));
+}
+
+export function getLockedWalletMetadata(): { displayName?: string; signingPublicKey?: string } | null {
+  const raw = localStorage.getItem(getScopedKey(WALLET_METADATA_KEY));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as { displayName?: string; signingPublicKey?: string };
+  } catch {
+    return null;
+  }
+}
+
+export async function lockUnifiedWallet(password: string): Promise<void> {
+  const wallet = loadUnifiedWallet();
+  if (!wallet) {
+    throw new Error("No wallet to lock");
+  }
+  const encrypted = await encryptWallet(wallet, password);
+  localStorage.setItem(getScopedKey(ENCRYPTED_WALLET_KEY), encrypted);
+  localStorage.setItem(getScopedKey(WALLET_LOCKED_KEY), "true");
+  localStorage.setItem(getScopedKey(WALLET_METADATA_KEY), JSON.stringify({
+    displayName: wallet.displayName,
+    signingPublicKey: wallet.signingPublicKey,
+  }));
+  localStorage.removeItem(getScopedKey(UNIFIED_WALLET_KEY));
+  localStorage.removeItem(getScopedKey(MESSENGER_WALLET_KEY));
+  localStorage.removeItem(getScopedKey(BLOCKCHAIN_WALLET_KEY));
+}
+
+export async function unlockUnifiedWallet(password: string): Promise<UnifiedWallet> {
+  const encrypted = localStorage.getItem(getScopedKey(ENCRYPTED_WALLET_KEY));
+  if (!encrypted) {
+    throw new Error("No encrypted wallet found");
+  }
+  const wallet = await decryptWallet(encrypted, password);
+  saveUnifiedWallet(wallet);
+  localStorage.setItem(getScopedKey(WALLET_LOCKED_KEY), "false");
+  return wallet;
+}
+
+export function autoLockWallet(): void {
+  if (!hasEncryptedWallet()) return;
+  localStorage.removeItem(getScopedKey(UNIFIED_WALLET_KEY));
+  localStorage.removeItem(getScopedKey(MESSENGER_WALLET_KEY));
+  localStorage.removeItem(getScopedKey(BLOCKCHAIN_WALLET_KEY));
+  localStorage.setItem(getScopedKey(WALLET_LOCKED_KEY), "true");
 }
 
 // Migrate from v1 (messenger-only) format
@@ -272,6 +353,9 @@ export function clearUnifiedWallet(): void {
   localStorage.removeItem(getScopedKey(UNIFIED_WALLET_KEY));
   localStorage.removeItem(getScopedKey(MESSENGER_WALLET_KEY));
   localStorage.removeItem(getScopedKey(BLOCKCHAIN_WALLET_KEY));
+  localStorage.removeItem(getScopedKey(ENCRYPTED_WALLET_KEY));
+  localStorage.removeItem(getScopedKey(WALLET_LOCKED_KEY));
+  localStorage.removeItem(getScopedKey(WALLET_METADATA_KEY));
   clearLegacyWallets();
 }
 
@@ -281,6 +365,7 @@ export function hasWallet(): boolean {
     localStorage.getItem(getScopedKey(UNIFIED_WALLET_KEY)) ||
     localStorage.getItem(getScopedKey(MESSENGER_WALLET_KEY)) ||
     localStorage.getItem(getScopedKey(BLOCKCHAIN_WALLET_KEY)) ||
+    localStorage.getItem(getScopedKey(ENCRYPTED_WALLET_KEY)) ||
     localStorage.getItem(UNIFIED_WALLET_KEY) ||
     localStorage.getItem(MESSENGER_WALLET_KEY) ||
     localStorage.getItem(BLOCKCHAIN_WALLET_KEY)

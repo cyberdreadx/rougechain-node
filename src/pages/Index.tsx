@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Network, Wallet, MessageSquareLock, Shield, Lock } from "lucide-react";
+import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MainNav } from "@/components/MainNav";
 import xrgeLogo from "@/assets/xrge-logo.webp";
@@ -12,6 +12,13 @@ const features = [
     description: "Create a quantum-safe wallet, claim XRGE tokens, and send transactions on RougeChain.",
     link: "/wallet",
     color: "primary",
+  },
+  {
+    icon: Activity,
+    title: "Transaction Feed",
+    description: "Track live transactions and block inclusion in real time.",
+    link: "/transactions",
+    color: "accent",
   },
   {
     icon: Network,

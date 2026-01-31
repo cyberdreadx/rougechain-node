@@ -1,4 +1,4 @@
-import { getCoreApiBaseUrl } from "@/lib/network";
+import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 
 export type ValidatorTier = "standard" | "operator" | "genesis";
 export type ValidatorStatus = "pending" | "active" | "jailed" | "unbonding" | "inactive";
@@ -127,7 +127,7 @@ export async function registerValidator(
   }
   const response = await fetch(`${apiBase}/stake/submit`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
     body: JSON.stringify({
       fromPrivateKey: signingPrivateKey,
       fromPublicKey: signingPublicKey,
@@ -164,7 +164,9 @@ export async function getValidators(): Promise<Validator[]> {
   if (!apiBase) {
     return [];
   }
-  const response = await fetch(`${apiBase}/validators`);
+  const response = await fetch(`${apiBase}/validators`, {
+    headers: getCoreApiHeaders(),
+  });
   if (!response.ok) {
     return [];
   }
@@ -207,7 +209,9 @@ export async function selectProposer(): Promise<ProposerSelection> {
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }
-  const response = await fetch(`${apiBase}/selection`);
+  const response = await fetch(`${apiBase}/selection`, {
+    headers: getCoreApiHeaders(),
+  });
   if (!response.ok) {
     throw new Error("Failed to fetch proposer selection");
   }
@@ -247,7 +251,9 @@ export async function getProposerSelectionInfo(): Promise<ProposerSelectionInfo>
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }
-  const response = await fetch(`${apiBase}/selection`);
+  const response = await fetch(`${apiBase}/selection`, {
+    headers: getCoreApiHeaders(),
+  });
   if (!response.ok) {
     throw new Error("Failed to fetch proposer selection");
   }
@@ -270,7 +276,9 @@ export async function getFinalityStatus(): Promise<FinalityStatus> {
   if (!apiBase) {
     throw new Error("Mainnet API is not configured");
   }
-  const response = await fetch(`${apiBase}/finality`);
+  const response = await fetch(`${apiBase}/finality`, {
+    headers: getCoreApiHeaders(),
+  });
   if (!response.ok) {
     throw new Error("Failed to fetch finality status");
   }
@@ -292,7 +300,9 @@ export async function getVoteSummary(height?: number): Promise<VoteSummary> {
     throw new Error("Mainnet API is not configured");
   }
   const url = height ? `${apiBase}/votes?height=${encodeURIComponent(height)}` : `${apiBase}/votes`;
-  const response = await fetch(url);
+  const response = await fetch(url, {
+    headers: getCoreApiHeaders(),
+  });
   if (!response.ok) {
     throw new Error("Failed to fetch vote summary");
   }
@@ -334,7 +344,9 @@ export async function getValidatorVoteStats(): Promise<{
   if (!apiBase) {
     return { totalHeights: 0, validators: [] };
   }
-  const response = await fetch(`${apiBase}/validators/stats`);
+  const response = await fetch(`${apiBase}/validators/stats`, {
+    headers: getCoreApiHeaders(),
+  });
   if (!response.ok) {
     return { totalHeights: 0, validators: [] };
   }
@@ -362,7 +374,7 @@ export async function validateBlock(
   }
   const response = await fetch(`${apiBase}/votes/submit`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
     body: JSON.stringify({
       type: isProposer ? "precommit" : "prevote",
       height: blockIndex,
@@ -411,7 +423,7 @@ export async function unstake(
   }
   const response = await fetch(`${apiBase}/unstake/submit`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
     body: JSON.stringify({
       fromPrivateKey: signingPrivateKey,
       fromPublicKey: signingPublicKey,
@@ -446,7 +458,7 @@ export async function contributeEntropy(
   }
   const response = await fetch(`${apiBase}/entropy/submit`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
     body: JSON.stringify({
       publicKey: validatorId,
       height: blockIndex,

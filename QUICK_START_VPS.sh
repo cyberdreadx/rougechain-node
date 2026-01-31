@@ -61,6 +61,13 @@ echo "📦 Building core node..."
 cd "$PROJECT_DIR/core"
 cargo build --release
 
+# Optional API key auth
+read -p "Enter API key for node auth (leave blank to disable): " API_KEY
+API_ENV_LINE=""
+if [ -n "$API_KEY" ]; then
+  API_ENV_LINE="Environment=QV_API_KEYS=$API_KEY"
+fi
+
 # Configure systemd service
 USER_NAME=$(whoami)
 SERVICE_PATH="/etc/systemd/system/quantum-vault-daemon.service"
@@ -76,6 +83,7 @@ Type=simple
 User=$USER_NAME
 WorkingDirectory=$PROJECT_DIR/core
 ExecStart=$PROJECT_DIR/core/target/release/quantum-vault-daemon --host 0.0.0.0 --port 4100 --api-port 5100 --mine
+$API_ENV_LINE
 Restart=always
 RestartSec=3
 

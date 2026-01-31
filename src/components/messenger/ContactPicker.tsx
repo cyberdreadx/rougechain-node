@@ -110,11 +110,11 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
                 <p className="font-semibold text-foreground">🤖 Quantum Bot</p>
                 <span className="px-2 py-0.5 text-xs rounded-full bg-primary/20 text-primary flex items-center gap-1">
                   <Sparkles className="w-3 h-3" />
-                  Demo
+                  Local AI
                 </span>
               </div>
               <p className="text-sm text-muted-foreground">
-                Test encryption with an auto-responding bot
+                Test encryption with a local AI bot
               </p>
             </div>
           </button>

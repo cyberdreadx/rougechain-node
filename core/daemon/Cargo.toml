@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tonic = "0.11"
 tonic-reflection = "0.11"
@@ -13,7 +13,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-axum = "0.6"
+axum = { version = "0.6", features = ["headers"] }
+hyper = { version = "0.14", features = ["server", "tcp", "http1", "http2"] }
 tower-http = { version = "0.4", features = ["cors"] }
 quantum-vault-types = { path = "../types" }
 quantum-vault-crypto = { path = "../crypto" }

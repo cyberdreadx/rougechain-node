@@ -137,6 +137,7 @@ impl MessengerStore {
         Err("message not found".to_string())
     }
 
+
     fn load_state(&self) -> Result<MessengerState, String> {
         let raw = fs::read_to_string(&self.path).map_err(|e| e.to_string())?;
         serde_json::from_str::<MessengerState>(&raw).map_err(|e| e.to_string())

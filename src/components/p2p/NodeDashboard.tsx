@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import GlobalNetworkGlobe from "@/components/blockchain/GlobalNetworkGlobe";
-import { getCoreApiBaseUrl } from "@/lib/network";
+import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import {
   Activity,
   CheckCircle2,
@@ -95,9 +95,11 @@ export function NodeDashboard() {
           
           const statsRes = await fetch(`${baseUrl}/api/stats`, {
             signal: controller.signal,
+            headers: getCoreApiHeaders(),
           });
           const healthRes = await fetch(`${baseUrl}/api/health`, {
             signal: controller.signal,
+            headers: getCoreApiHeaders(),
           });
           clearTimeout(timeoutId);
           

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Shield, Plus, Lock, Key, Settings, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { MainNav } from "@/components/MainNav";
 import WalletSetup from "@/components/messenger/WalletSetup";
@@ -13,7 +14,13 @@ import WalletBackup from "@/components/wallet/WalletBackup";
 import type { Conversation, Wallet, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
 import { getConversations, getWallets, saveWalletLocally } from "@/lib/pqc-messenger";
 import { 
-  UnifiedWallet, 
+  UnifiedWallet,
+  VaultSettings,
+  getVaultSettings,
+  saveVaultSettings,
+  unlockUnifiedWallet,
+  isWalletLocked,
+  getLockedWalletMetadata,
   loadUnifiedWallet, 
   saveUnifiedWallet, 
   toMessengerWallet, 
@@ -29,10 +36,16 @@ const Messenger = () => {
   const [showPrivacySettings, setShowPrivacySettings] = useState(false);
   const [showWalletBackup, setShowWalletBackup] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLocked, setIsLocked] = useState(false);
+  const [unlockPassword, setUnlockPassword] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
+  const [vaultSettings, setVaultSettings] = useState<VaultSettings>(() => getVaultSettings());
 
   // Load wallet from localStorage on mount
   useEffect(() => {
-    const savedWallet = loadUnifiedWallet();
+    const locked = isWalletLocked();
+    setIsLocked(locked);
+    const savedWallet = locked ? null : loadUnifiedWallet();
     if (savedWallet) {
       setWallet(savedWallet);
     }
@@ -46,6 +59,10 @@ const Messenger = () => {
       loadContacts();
     }
   }, [wallet]);
+
+  useEffect(() => {
+    setVaultSettings(getVaultSettings());
+  }, []);
 
   const loadConversations = async () => {
     if (!wallet) return;
@@ -96,6 +113,33 @@ const Messenger = () => {
     loadConversations();
   };
 
+  const handleUnlock = async () => {
+    if (!unlockPassword.trim()) {
+      toast.error("Enter your vault password");
+      return;
+    }
+    setUnlocking(true);
+    try {
+      const unlocked = await unlockUnifiedWallet(unlockPassword.trim());
+      setWallet(unlocked);
+      setIsLocked(false);
+      setUnlockPassword("");
+      toast.success("Wallet unlocked");
+    } catch (error) {
+      console.error("Unlock failed:", error);
+      toast.error("Unlock failed", {
+        description: "Invalid password or missing vault data",
+      });
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
+  const handleVaultSettings = (settings: VaultSettings) => {
+    saveVaultSettings(settings);
+    setVaultSettings(settings);
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -111,6 +155,33 @@ const Messenger = () => {
 
   // Show wallet setup if no wallet
   if (!wallet) {
+    if (isLocked) {
+      const meta = getLockedWalletMetadata();
+      return (
+        <div className="min-h-screen bg-background flex items-center justify-center p-4">
+          <div className="max-w-md w-full bg-card border border-border rounded-xl p-6 space-y-4">
+            <h2 className="text-lg font-semibold">Wallet Locked</h2>
+            <p className="text-sm text-muted-foreground">
+              {meta?.displayName ? `${meta.displayName} is locked.` : "Your wallet is locked."}
+            </p>
+            {meta?.signingPublicKey && (
+              <p className="text-xs font-mono text-muted-foreground break-all">
+                {meta.signingPublicKey}
+              </p>
+            )}
+            <Input
+              type="password"
+              placeholder="Enter vault password"
+              value={unlockPassword}
+              onChange={(e) => setUnlockPassword(e.target.value)}
+            />
+            <Button className="w-full" onClick={handleUnlock} disabled={unlocking}>
+              {unlocking ? "Unlocking..." : "Unlock Wallet"}
+            </Button>
+          </div>
+        </div>
+      );
+    }
     return <WalletSetup onWalletCreated={handleWalletCreated} />;
   }
 
@@ -216,6 +287,12 @@ const Messenger = () => {
             wallet={wallet}
             onClose={() => setShowWalletBackup(false)}
             onImport={handleWalletImport}
+            onLocked={() => {
+              setWallet(null);
+              setIsLocked(true);
+            }}
+            vaultSettings={vaultSettings}
+            onUpdateVaultSettings={handleVaultSettings}
           />
         )}
       </AnimatePresence>

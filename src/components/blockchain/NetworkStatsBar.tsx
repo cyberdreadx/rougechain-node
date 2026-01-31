@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Blocks, Clock, Zap, Activity, TrendingUp } from "lucide-react";
-import { getNodeApiBaseUrl } from "@/lib/network";
+import { getCoreApiHeaders, getNodeApiBaseUrl } from "@/lib/network";
 
 interface NetworkStats {
   blocksPerMinute: number;
@@ -9,6 +9,8 @@ interface NetworkStats {
   avgBlockTime: number;
   currentGasFee: number;
   totalBlocks: number;
+  txsPerSecond: number;
+  lastBlockAge: number;
 }
 
 const NetworkStatsBar = () => {
@@ -18,6 +20,8 @@ const NetworkStatsBar = () => {
     avgBlockTime: 0,
     currentGasFee: 0.001, // Base fee in XRGE
     totalBlocks: 0,
+    txsPerSecond: 0,
+    lastBlockAge: 0,
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -31,13 +35,17 @@ const NetworkStatsBar = () => {
           avgBlockTime: 0,
           currentGasFee: 0.001,
           totalBlocks: 0,
+          txsPerSecond: 0,
+          lastBlockAge: 0,
         });
         setIsLoading(false);
         return;
       }
       const isLocal = NODE_API_URL.includes("localhost") || NODE_API_URL.includes("127.0.0.1");
       const fetchBlocks = async (url: string) => {
-        const res = await fetch(`${url}/blocks`);
+        const res = await fetch(`${url}/blocks`, {
+          headers: getCoreApiHeaders(),
+        });
         if (!res.ok) return null;
         const data = await res.json() as { blocks: Array<{ header: { height: number; time: number }; txs: unknown[] }> };
         return data.blocks;
@@ -61,7 +69,8 @@ const NetworkStatsBar = () => {
         // Calculate time span in minutes
         const firstBlockTime = blocks[0].header.time;
         const lastBlockTime = blocks[blocks.length - 1].header.time;
-        const timeSpanMinutes = Math.max((lastBlockTime - firstBlockTime) / 60000, 1);
+        const timeSpanMs = Math.max(lastBlockTime - firstBlockTime, 1000);
+        const timeSpanMinutes = timeSpanMs / 60000;
         
         // Blocks per minute (only if more than 1 block)
         const blocksPerMinute = totalBlocks > 1 
@@ -75,6 +84,8 @@ const NetworkStatsBar = () => {
 
         // Count transactions across all blocks
         const totalTransactions = blocks.reduce((sum, b) => sum + b.txs.length, 0);
+        const txsPerSecond = Math.round((totalTransactions / (timeSpanMs / 1000)) * 100) / 100;
+        const lastBlockAge = Math.max(Math.round((Date.now() - lastBlockTime) / 1000), 0);
 
         // Dynamic gas fee based on network activity (simple model)
         const baseFee = 0.001;
@@ -87,6 +98,8 @@ const NetworkStatsBar = () => {
           avgBlockTime,
           currentGasFee,
           totalBlocks,
+          txsPerSecond,
+          lastBlockAge,
         });
         setIsLoading(false);
         return;
@@ -98,6 +111,8 @@ const NetworkStatsBar = () => {
         avgBlockTime: 0,
         currentGasFee: 0.001,
         totalBlocks: 0,
+        txsPerSecond: 0,
+        lastBlockAge: 0,
       });
     } catch (error) {
       console.error("Failed to fetch network stats:", error);
@@ -111,6 +126,15 @@ const NetworkStatsBar = () => {
     const interval = setInterval(fetchStats, 3000); // Refresh every 3s
     return () => clearInterval(interval);
   }, []);
+
+  const formatAge = (seconds: number) => {
+    if (!seconds || seconds <= 0) return "—";
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours}h`;
+  };
 
   const statItems = [
     {
@@ -132,9 +156,21 @@ const NetworkStatsBar = () => {
       color: "text-success",
     },
     {
+      icon: Activity,
+      label: "TPS",
+      value: stats.txsPerSecond > 0 ? stats.txsPerSecond.toFixed(2) : "0.00",
+      color: "text-success",
+    },
+    {
       icon: Clock,
       label: "Avg Block Time",
       value: stats.avgBlockTime > 0 ? `${stats.avgBlockTime}s` : "—",
+      color: "text-muted-foreground",
+    },
+    {
+      icon: Clock,
+      label: "Last Block",
+      value: formatAge(stats.lastBlockAge),
       color: "text-muted-foreground",
     },
     {

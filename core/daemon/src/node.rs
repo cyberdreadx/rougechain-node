@@ -387,6 +387,25 @@ impl L1Node {
 
     fn apply_balance_tx(&self, tx: &TxV1, fee_recipient: &str) -> Result<(), String> {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
+        Self::apply_balance_tx_inner(&mut balances, tx, fee_recipient);
+        Ok(())
+    }
+
+    fn rebuild_balances(&self) -> Result<(), String> {
+        // Collect all blocks first, then process them
+        // This avoids deadlock from holding the balance lock while scanning
+        let blocks = self.store.get_all_blocks()?;
+        let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
+        balances.clear();
+        for block in &blocks {
+            for tx in &block.txs {
+                Self::apply_balance_tx_inner(&mut balances, tx, &block.header.proposer_pub_key);
+            }
+        }
+        Ok(())
+    }
+    
+    fn apply_balance_tx_inner(balances: &mut HashMap<String, f64>, tx: &TxV1, fee_recipient: &str) {
         match tx.tx_type.as_str() {
             "transfer" => {
                 if let Some(to_pub_key) = tx.payload.to_pub_key_hex.as_ref() {
@@ -409,19 +428,6 @@ impl L1Node {
             "slash" => {}
             _ => {}
         }
-        Ok(())
-    }
-
-    fn rebuild_balances(&self) -> Result<(), String> {
-        let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
-        balances.clear();
-        self.store.scan_blocks(|block| {
-            for tx in &block.txs {
-                self.apply_balance_tx(tx, &block.header.proposer_pub_key)?;
-            }
-            Ok(())
-        }, 0)?;
-        Ok(())
     }
 
     fn get_validator_stakes(&self) -> Result<BTreeMap<String, u128>, String> {
@@ -527,4 +533,5 @@ impl L1Node {
     pub fn mark_message_read(&self, message_id: &str) -> Result<MessengerMessage, String> {
         self.messenger_store.mark_message_read(message_id)
     }
+
 }

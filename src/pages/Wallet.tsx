@@ -11,6 +11,8 @@ import {
   FileKey2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { MainNav } from "@/components/MainNav";
 import WalletCard from "@/components/wallet/WalletCard";
@@ -32,14 +34,22 @@ import {
 } from "@/lib/pqc-wallet";
 import { generateKeypair } from "@/lib/pqc-blockchain";
 import { createWalletViaNode } from "@/lib/node-api";
-import { NETWORK_STORAGE_KEY, getNetworkLabel, getNodeApiBaseUrl } from "@/lib/network";
+import { NETWORK_STORAGE_KEY, getCoreApiHeaders, getNetworkLabel, getNodeApiBaseUrl } from "@/lib/network";
 import SendTokensDialog from "@/components/wallet/SendTokensDialog";
 import ReceiveDialog from "@/components/wallet/ReceiveDialog";
 import CreateTokenDialog from "@/components/wallet/CreateTokenDialog";
 import { 
-  UnifiedWallet, 
-  loadUnifiedWallet, 
-  saveUnifiedWallet, 
+  UnifiedWallet,
+  VaultSettings,
+  autoLockWallet,
+  getLockedWalletMetadata,
+  getVaultSettings,
+  hasEncryptedWallet,
+  isWalletLocked,
+  loadUnifiedWallet,
+  saveUnifiedWallet,
+  saveVaultSettings,
+  unlockUnifiedWallet,
   clearUnifiedWallet 
 } from "@/lib/unified-wallet";
 
@@ -62,14 +72,30 @@ const Wallet = () => {
   const [activeNetwork, setActiveNetwork] = useState<"testnet" | "mainnet">(
     (localStorage.getItem(NETWORK_STORAGE_KEY) as "testnet" | "mainnet" | null) || "testnet"
   );
+  const [isLocked, setIsLocked] = useState(false);
+  const [unlockPassword, setUnlockPassword] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
+  const [vaultSettings, setVaultSettings] = useState<VaultSettings>(() => getVaultSettings());
+  const [lastActivity, setLastActivity] = useState(Date.now());
 
   // Load wallet from storage
   useEffect(() => {
+    const locked = isWalletLocked();
+    setIsLocked(locked);
+    if (locked) {
+      setWallet(null);
+      setLoading(false);
+      return;
+    }
     const unified = loadUnifiedWallet();
     if (unified) {
       setWallet(unified);
     }
     setLoading(false);
+  }, [activeNetwork]);
+
+  useEffect(() => {
+    setVaultSettings(getVaultSettings());
   }, [activeNetwork]);
 
   // Check network selection from NetworkBadge (localStorage) - prioritize UI selection
@@ -113,6 +139,7 @@ const Wallet = () => {
           }
           const res = await fetch(`${NODE_API_URL}/stats`, {
             signal: AbortSignal.timeout(2000), // 2 second timeout
+            headers: getCoreApiHeaders(),
           });
           if (res.ok) {
             const data = await res.json() as { chainId?: string; chain_id?: string };
@@ -166,6 +193,34 @@ const Wallet = () => {
       return () => clearInterval(interval);
     }
   }, [wallet?.signingPublicKey]);
+
+  useEffect(() => {
+    const handleActivity = () => setLastActivity(Date.now());
+    window.addEventListener("mousemove", handleActivity);
+    window.addEventListener("keydown", handleActivity);
+    window.addEventListener("touchstart", handleActivity);
+    return () => {
+      window.removeEventListener("mousemove", handleActivity);
+      window.removeEventListener("keydown", handleActivity);
+      window.removeEventListener("touchstart", handleActivity);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!wallet) return;
+    if (!hasEncryptedWallet()) return;
+    const minutes = vaultSettings.autoLockMinutes;
+    if (!minutes || minutes <= 0) return;
+    const timeout = window.setTimeout(() => {
+      autoLockWallet();
+      setWallet(null);
+      setIsLocked(true);
+      toast.info("Wallet locked", {
+        description: "Unlock to continue",
+      });
+    }, minutes * 60 * 1000);
+    return () => window.clearTimeout(timeout);
+  }, [wallet, lastActivity, vaultSettings.autoLockMinutes]);
 
   const refreshWalletData = async () => {
     if (!wallet) return;
@@ -248,9 +303,37 @@ const Wallet = () => {
   const disconnectWallet = () => {
     clearUnifiedWallet();
     setWallet(null);
+    setIsLocked(false);
     setBalances([]);
     setTransactions([]);
     toast.info("Wallet disconnected");
+  };
+
+  const handleUnlock = async () => {
+    if (!unlockPassword.trim()) {
+      toast.error("Enter your vault password");
+      return;
+    }
+    setUnlocking(true);
+    try {
+      const unlocked = await unlockUnifiedWallet(unlockPassword.trim());
+      setWallet(unlocked);
+      setIsLocked(false);
+      setUnlockPassword("");
+      toast.success("Wallet unlocked");
+    } catch (error) {
+      console.error("Unlock failed:", error);
+      toast.error("Unlock failed", {
+        description: "Invalid password or missing vault data",
+      });
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
+  const handleVaultSettings = (settings: VaultSettings) => {
+    saveVaultSettings(settings);
+    setVaultSettings(settings);
   };
 
   const handleWalletImport = (importedWallet: UnifiedWallet) => {
@@ -271,20 +354,20 @@ const Wallet = () => {
       try {
         const res = await fetch(faucetUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
           body: JSON.stringify({
             recipientPublicKey: wallet.signingPublicKey,
             amount: 10000,
           }),
         });
 
+        const rawText = await res.text();
         let data;
         try {
-          data = await res.json();
+          data = rawText ? JSON.parse(rawText) : null;
         } catch (jsonError) {
-          const text = await res.text();
-          console.error(`[Faucet] Failed to parse JSON response:`, text);
-          throw new Error(`Server returned invalid JSON: ${text.substring(0, 100)}`);
+          console.error(`[Faucet] Failed to parse JSON response:`, rawText);
+          throw new Error(`Server returned invalid JSON: ${rawText.substring(0, 100)}`);
         }
 
         if (!res.ok) {
@@ -382,6 +465,41 @@ const Wallet = () => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (isLocked) {
+    const meta = getLockedWalletMetadata();
+    return (
+      <div className="min-h-screen bg-background">
+        <MainNav />
+        <div className="max-w-md mx-auto px-4 py-12">
+          <Card className="border-border">
+            <CardHeader>
+              <CardTitle>Wallet Locked</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                {meta?.displayName ? `${meta.displayName} is locked.` : "Your wallet is locked."}
+              </p>
+              {meta?.signingPublicKey && (
+                <p className="text-xs font-mono text-muted-foreground break-all">
+                  {meta.signingPublicKey}
+                </p>
+              )}
+              <Input
+                type="password"
+                placeholder="Enter vault password"
+                value={unlockPassword}
+                onChange={(e) => setUnlockPassword(e.target.value)}
+              />
+              <Button className="w-full" onClick={handleUnlock} disabled={unlocking}>
+                {unlocking ? "Unlocking..." : "Unlock Wallet"}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
@@ -673,6 +791,12 @@ const Wallet = () => {
             wallet={wallet}
             onClose={() => setShowBackup(false)}
             onImport={handleWalletImport}
+            onLocked={() => {
+              setWallet(null);
+              setIsLocked(true);
+            }}
+            vaultSettings={vaultSettings}
+            onUpdateVaultSettings={handleVaultSettings}
           />
         )}
       </AnimatePresence>

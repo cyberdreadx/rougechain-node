@@ -1,4 +1,4 @@
-import { getCoreApiBaseUrl } from "@/lib/network";
+import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 
@@ -123,6 +123,17 @@ const DEMO_BOT_RESPONSES = [
   "💬 Echo: I received your quantum-encrypted message loud and clear!",
 ];
 
+const DEFAULT_LLM_URL = "http://localhost:1234";
+const DEFAULT_LLM_MODEL = "local-model";
+
+function getLocalLlmUrl(): string {
+  return (import.meta.env.VITE_LOCAL_LLM_URL as string | undefined) || DEFAULT_LLM_URL;
+}
+
+function getLocalLlmModel(): string {
+  return (import.meta.env.VITE_LOCAL_LLM_MODEL as string | undefined) || DEFAULT_LLM_MODEL;
+}
+
 // Store wallet in localStorage (private keys stay local)
 export function saveWalletLocally(wallet: WalletWithPrivateKeys): void {
   localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(wallet));
@@ -166,7 +177,7 @@ async function registerWalletOnNode(wallet: Wallet): Promise<void> {
   if (!apiBase) return;
   await fetch(`${apiBase}${MESSENGER_API_PREFIX}/wallets/register`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
     body: JSON.stringify({
       id: wallet.id,
       displayName: wallet.displayName,
@@ -294,7 +305,9 @@ export async function createWallet(displayName: string): Promise<WalletWithPriva
 export async function getWallets(): Promise<Wallet[]> {
   const apiBase = getMessengerApiBase();
   if (!apiBase) return [];
-  const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/wallets`);
+  const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/wallets`, {
+    headers: getCoreApiHeaders(),
+  });
   if (!response.ok) return [];
   const data = await response.json().catch(() => null);
   return data?.wallets || [];
@@ -358,6 +371,41 @@ export function getDemoBotResponse(): string {
   return DEMO_BOT_RESPONSES[Math.floor(Math.random() * DEMO_BOT_RESPONSES.length)];
 }
 
+export async function getBotReply(userMessage: string): Promise<string> {
+  try {
+    const baseUrl = getLocalLlmUrl().replace(/\/+$/, "");
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: getLocalLlmModel(),
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are Quantum Bot, a friendly assistant inside a post-quantum messenger. Reply briefly.",
+          },
+          { role: "user", content: userMessage },
+        ],
+        temperature: 0.7,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`LLM error: ${res.status}`);
+    }
+    const data = await res.json() as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = data.choices?.[0]?.message?.content?.trim();
+    if (content) {
+      return content;
+    }
+  } catch (error) {
+    console.warn("[Messenger] Local LLM unavailable, using fallback:", error);
+  }
+  return getDemoBotResponse();
+}
+
 // Create a 1:1 conversation
 export async function createConversation(
   myWalletId: string,
@@ -369,7 +417,7 @@ export async function createConversation(
   }
   const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/conversations`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
     body: JSON.stringify({
       createdBy: myWalletId,
       participantIds: [myWalletId, recipientWalletId],
@@ -387,7 +435,9 @@ export async function createConversation(
 export async function getConversations(walletId: string): Promise<Conversation[]> {
   const apiBase = getMessengerApiBase();
   if (!apiBase) return [];
-  const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/conversations?walletId=${encodeURIComponent(walletId)}`);
+  const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/conversations?walletId=${encodeURIComponent(walletId)}`, {
+    headers: getCoreApiHeaders(),
+  });
   if (!response.ok) return [];
   const data = await response.json().catch(() => null);
   return data?.conversations || [];
@@ -415,7 +465,7 @@ export async function sendMessage(
 
   const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/messages`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
     body: JSON.stringify({
       conversationId,
       senderWalletId: senderWallet.id,
@@ -461,7 +511,9 @@ export async function getMessages(
 ): Promise<Message[]> {
   const apiBase = getMessengerApiBase();
   if (!apiBase) return [];
-  const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/messages?conversationId=${encodeURIComponent(conversationId)}`);
+  const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/messages?conversationId=${encodeURIComponent(conversationId)}`, {
+    headers: getCoreApiHeaders(),
+  });
   if (!response.ok) return [];
 
   const data = await response.json().catch(() => null);
@@ -492,7 +544,7 @@ export async function getMessages(
         if (msg.selfDestruct && !msg.readAt) {
           await fetch(`${apiBase}${MESSENGER_API_PREFIX}/messages/read`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
             body: JSON.stringify({ messageId: msg.id }),
           });
         }

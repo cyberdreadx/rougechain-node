@@ -37,6 +37,14 @@ export function getNodeApiBaseUrl(): string {
   return getCoreApiBaseUrl();
 }
 
+export function getCoreApiHeaders(): HeadersInit {
+  const apiKey = (import.meta.env.VITE_CORE_API_KEY as string | undefined) || "";
+  if (!apiKey) {
+    return {};
+  }
+  return { "x-api-key": apiKey };
+}
+
 export function getNetworkLabel(chainId?: string): string {
   if (chainId) {
     if (chainId.includes("devnet")) return "Devnet";

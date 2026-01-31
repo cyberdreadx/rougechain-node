@@ -59,11 +59,13 @@ cargo build --release
 - Open ports: 4100 (P2P), 5100 (API)
 - Core node runs 24/7 via systemd (recommended)
 - Auto-restarts on reboot
+- Optional API keys via `QV_API_KEYS` (comma-separated)
 
 ### Netlify
 - Environment variables: `VITE_NODE_API_URL_TESTNET`, `VITE_NODE_API_URL_MAINNET`
 - Auto-deploys on git push
 - Free SSL included
+- If API keys are enabled, set `VITE_CORE_API_KEY` for frontend calls
 
 ## Test Your Setup
 

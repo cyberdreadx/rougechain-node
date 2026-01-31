@@ -80,6 +80,26 @@ export default function Validators() {
 
           {/* Sidebar */}
           <div className="space-y-6">
+            {/* Simple Explanation */}
+            <Card className="bg-card/50 backdrop-blur border-border">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Info className="w-4 h-4 text-primary" />
+                  What Is a Validator?
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm text-muted-foreground space-y-2">
+                <p>
+                  Validators are the people running the network. They help confirm transactions and
+                  create new blocks.
+                </p>
+                <p>
+                  To become one, you lock up (stake) XRGE. In return, you earn rewards. If you misbehave,
+                  you can lose some of your stake.
+                </p>
+              </CardContent>
+            </Card>
+
             {/* Wallet Balance Card */}
             <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/30">
               <CardHeader className="pb-3">

@@ -1,12 +1,16 @@
 mod grpc;
 mod node;
 
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration as StdDuration, Instant};
 
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, Method, Request, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
@@ -35,6 +39,102 @@ struct Args {
     mine: bool,
     #[arg(long)]
     data_dir: Option<String>,
+    #[arg(long, env = "QV_API_KEYS")]
+    api_keys: Option<String>,
+    #[arg(long, default_value_t = 120)]
+    rate_limit_per_minute: u32,
+    #[arg(long, default_value_t = 120)]
+    rate_limit_read_per_minute: u32,
+    #[arg(long, default_value_t = 30)]
+    rate_limit_write_per_minute: u32,
+    #[arg(long, env = "QV_FAUCET_WHITELIST")]
+    faucet_whitelist: Option<String>,
+}
+
+#[derive(Clone)]
+struct AppState {
+    node: Arc<L1Node>,
+    auth: AuthConfig,
+    limiter: Arc<tokio::sync::Mutex<RateLimiter>>,
+    read_limit: u32,
+    write_limit: u32,
+    faucet_whitelist: Vec<String>,
+}
+
+#[derive(Clone)]
+struct AuthConfig {
+    api_keys: Vec<String>,
+}
+
+impl AuthConfig {
+    fn new(raw: Option<String>) -> Self {
+        let keys = raw
+            .unwrap_or_default()
+            .split(',')
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty())
+            .collect();
+        Self { api_keys: keys }
+    }
+
+    fn is_enabled(&self) -> bool {
+        !self.api_keys.is_empty()
+    }
+
+    fn is_valid(&self, candidate: Option<&str>) -> bool {
+        match candidate {
+            Some(value) => self.api_keys.iter().any(|k| k == value),
+            None => false,
+        }
+    }
+}
+
+struct RateLimiter {
+    window: StdDuration,
+    buckets: HashMap<String, VecDeque<Instant>>,
+}
+
+impl RateLimiter {
+    fn new(_max_requests: u32, window: StdDuration) -> Self {
+        Self {
+            window,
+            buckets: HashMap::new(),
+        }
+    }
+
+    fn allow(&mut self, key: &str, limit: u32) -> bool {
+        if limit == 0 {
+            return true;
+        }
+        let now = Instant::now();
+        let bucket = self.buckets.entry(key.to_string()).or_insert_with(VecDeque::new);
+        while let Some(front) = bucket.front() {
+            if now.duration_since(*front) > self.window {
+                bucket.pop_front();
+            } else {
+                break;
+            }
+        }
+        if bucket.len() as u32 >= limit {
+            return false;
+        }
+        bucket.push_back(now);
+        true
+    }
+}
+
+fn parse_whitelist(raw: Option<String>) -> Vec<String> {
+    raw.unwrap_or_default()
+        .split(',')
+        .map(|entry| normalize_recipient(entry.trim()))
+        .filter(|entry| !entry.is_empty())
+        .collect()
+}
+
+fn normalize_recipient(value: &str) -> String {
+    let trimmed = value.trim();
+    let stripped = trimmed.strip_prefix("xrge:").unwrap_or(trimmed);
+    stripped.to_lowercase()
 }
 
 #[tokio::main]
@@ -42,6 +142,7 @@ async fn main() -> Result<(), String> {
     let args = Args::parse();
     let data_dir = args
         .data_dir
+        .as_ref()
         .map(PathBuf::from)
         .unwrap_or_else(|| default_data_dir("core-node"));
     let chain = ChainConfig {
@@ -64,11 +165,20 @@ async fn main() -> Result<(), String> {
         .parse()
         .map_err(|e: std::net::AddrParseError| e.to_string())?;
 
+    eprintln!(
+        "[core-daemon] binding grpc={} api={} data_dir={}",
+        grpc_addr,
+        api_addr,
+        args.data_dir.clone().unwrap_or_else(|| "default".to_string())
+    );
+
+    eprintln!("[core-daemon] setting up gRPC...");
     let grpc_node = GrpcNode::new(node.clone());
     let reflection = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(grpc::FILE_DESCRIPTOR_SET)
         .build()
         .map_err(|e| e.to_string())?;
+    eprintln!("[core-daemon] gRPC reflection ready");
 
     let grpc_server = tonic::transport::Server::builder()
         .add_service(grpc_node.clone().chain_service())
@@ -77,9 +187,31 @@ async fn main() -> Result<(), String> {
         .add_service(grpc_node.clone().messenger_service())
         .add_service(reflection)
         .serve(grpc_addr);
+    eprintln!("[core-daemon] gRPC server created");
 
-    let api_router = build_http_router(node.clone());
-    let api_server = axum::Server::bind(&api_addr).serve(api_router.into_make_service());
+    let auth = AuthConfig::new(args.api_keys);
+    let limiter = Arc::new(tokio::sync::Mutex::new(RateLimiter::new(
+        args.rate_limit_per_minute,
+        StdDuration::from_secs(60),
+    )));
+    let app_state = AppState {
+        node: node.clone(),
+        auth,
+        limiter,
+        read_limit: args.rate_limit_read_per_minute,
+        write_limit: args.rate_limit_write_per_minute,
+        faucet_whitelist: parse_whitelist(args.faucet_whitelist),
+    };
+
+    eprintln!("[core-daemon] building API router...");
+    let api_router = build_http_router(app_state.clone());
+    eprintln!("[core-daemon] binding API server...");
+    let api_server = hyper::Server::bind(&api_addr)
+        .serve(api_router.into_make_service_with_connect_info::<SocketAddr>())
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        });
+    eprintln!("[core-daemon] API server ready");
 
     if node.is_mining() {
         let miner = node.clone();
@@ -91,20 +223,29 @@ async fn main() -> Result<(), String> {
         });
     }
 
+    eprintln!("[core-daemon] starting servers...");
     tokio::select! {
-        _ = grpc_server => {},
-        _ = api_server => {},
-        _ = tokio::signal::ctrl_c() => {},
+        result = grpc_server => {
+            eprintln!("[core-daemon] gRPC server exited: {:?}", result);
+        },
+        result = api_server => {
+            eprintln!("[core-daemon] API server exited: {:?}", result);
+        },
+        _ = tokio::signal::ctrl_c() => {
+            eprintln!("[core-daemon] received Ctrl+C");
+        },
     }
+    eprintln!("[core-daemon] shutting down");
 
     Ok(())
 }
 
-fn build_http_router(node: Arc<L1Node>) -> Router {
+fn build_http_router(state: AppState) -> Router {
     Router::new()
         .route("/api/stats", get(get_stats))
         .route("/api/health", get(get_health))
         .route("/api/blocks", get(get_blocks))
+        .route("/api/txs", get(get_txs))
         .route("/api/blocks/summary", get(get_blocks_summary))
         .route("/api/balance/:public_key", get(get_balance))
         .route("/api/wallet/create", post(create_wallet))
@@ -126,13 +267,92 @@ fn build_http_router(node: Arc<L1Node>) -> Router {
         .route("/api/messenger/messages", get(get_messenger_messages))
         .route("/api/messenger/messages", post(send_messenger_message))
         .route("/api/messenger/messages/read", post(mark_messenger_read))
+        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(
             CorsLayer::new()
                 .allow_methods(Any)
                 .allow_origin(Any)
                 .allow_headers(Any),
         )
-        .with_state(node)
+        .with_state(state)
+}
+
+async fn auth_middleware<B>(
+    State(state): State<AppState>,
+    request: Request<B>,
+    next: Next<B>,
+) -> Result<Response, StatusCode> {
+    if request.method() == Method::OPTIONS {
+        return Ok(next.run(request).await);
+    }
+    let path = request.uri().path();
+    if path == "/api/health" || path == "/api/stats" {
+        return Ok(next.run(request).await);
+    }
+    if path == "/api/faucet" || path == "/api/tx/submit" || path == "/api/stake/submit" || path == "/api/unstake/submit" {
+        return Ok(next.run(request).await);
+    }
+
+    if state.auth.is_enabled() {
+        let api_key = extract_api_key(request.headers());
+        if !state.auth.is_valid(api_key.as_deref()) {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+    }
+
+    let client_key = client_key(&request);
+    let limit = match request.method() {
+        &Method::GET => state.read_limit,
+        _ => state.write_limit,
+    };
+    let mut limiter = state.limiter.lock().await;
+    if !limiter.allow(&client_key, limit) {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    Ok(next.run(request).await)
+}
+
+fn extract_api_key(headers: &HeaderMap) -> Option<String> {
+    if let Some(value) = headers.get("x-api-key") {
+        if let Ok(value) = value.to_str() {
+            return Some(value.to_string());
+        }
+    }
+    if let Some(value) = headers.get("authorization") {
+        if let Ok(value) = value.to_str() {
+            let trimmed = value.trim();
+            if let Some(token) = trimmed.strip_prefix("Bearer ") {
+                return Some(token.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn client_key<B>(request: &Request<B>) -> String {
+    if let Some(value) = request.headers().get("x-forwarded-for") {
+        if let Ok(value) = value.to_str() {
+            if let Some(first) = value.split(',').next() {
+                let trimmed = first.trim();
+                if !trimmed.is_empty() {
+                    return trimmed.to_string();
+                }
+            }
+        }
+    }
+    if let Some(value) = request.headers().get("x-real-ip") {
+        if let Ok(value) = value.to_str() {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+    if let Some(info) = request.extensions().get::<axum::extract::ConnectInfo<SocketAddr>>() {
+        return info.0.ip().to_string();
+    }
+    "unknown".to_string()
 }
 
 #[derive(Serialize)]
@@ -147,7 +367,8 @@ struct StatsResponse {
     finalized_height: u64,
 }
 
-async fn get_stats(State(node): State<Arc<L1Node>>) -> Result<Json<StatsResponse>, StatusCode> {
+async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, StatusCode> {
+    let node = &state.node;
     let height = node.get_tip_height().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let (total_fees, last_fees) = node.get_fee_stats().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let (finalized, _, _, _) = node.get_finality_status().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -163,6 +384,7 @@ async fn get_stats(State(node): State<Arc<L1Node>>) -> Result<Json<StatsResponse
     }))
 }
 
+
 #[derive(Serialize)]
 struct HealthResponse {
     status: String,
@@ -170,7 +392,8 @@ struct HealthResponse {
     height: u64,
 }
 
-async fn get_health(State(node): State<Arc<L1Node>>) -> Result<Json<HealthResponse>, StatusCode> {
+async fn get_health(State(state): State<AppState>) -> Result<Json<HealthResponse>, StatusCode> {
+    let node = &state.node;
     let height = node.get_tip_height().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(HealthResponse {
         status: "ok".to_string(),
@@ -190,15 +413,66 @@ struct BlocksResponse {
 }
 
 async fn get_blocks(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Query(query): Query<BlocksQuery>,
 ) -> Result<Json<BlocksResponse>, StatusCode> {
+    let node = &state.node;
     let blocks = if let Some(limit) = query.limit {
         node.get_recent_blocks(limit).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     } else {
         node.get_all_blocks().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     };
     Ok(Json(BlocksResponse { blocks }))
+}
+
+#[derive(Deserialize)]
+struct TxsQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TxItem {
+    tx_id: String,
+    block_height: u64,
+    block_hash: String,
+    block_time: u64,
+    tx: quantum_vault_types::TxV1,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TxsResponse {
+    txs: Vec<TxItem>,
+    total: usize,
+}
+
+async fn get_txs(
+    State(state): State<AppState>,
+    Query(query): Query<TxsQuery>,
+) -> Result<Json<TxsResponse>, StatusCode> {
+    let node = &state.node;
+    let blocks = node.get_all_blocks().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut items = Vec::new();
+    for block in blocks {
+        for tx in block.txs.iter() {
+            let tx_id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)));
+            items.push(TxItem {
+                tx_id,
+                block_height: block.header.height,
+                block_hash: block.hash.clone(),
+                block_time: block.header.time,
+                tx: tx.clone(),
+            });
+        }
+    }
+    items.sort_by(|a, b| b.block_time.cmp(&a.block_time).then_with(|| b.block_height.cmp(&a.block_height)));
+    let total = items.len();
+    let limit = query.limit.unwrap_or(200).min(1000);
+    let offset = query.offset.unwrap_or(0);
+    let paged = items.into_iter().skip(offset).take(limit).collect();
+    Ok(Json(TxsResponse { txs: paged, total }))
 }
 
 #[derive(Serialize)]
@@ -220,9 +494,10 @@ struct BlocksSummaryPoint {
 }
 
 async fn get_blocks_summary(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<BlocksSummaryResponse>, StatusCode> {
+    let node = &state.node;
     let range = query.get("range").map(|s| s.as_str()).unwrap_or("24h");
     let range = if range == "1h" || range == "7d" { range } else { "24h" };
     let (interval_ms, range_ms) = match range {
@@ -270,9 +545,10 @@ struct BalanceResponse {
 }
 
 async fn get_balance(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Path(public_key): Path<String>,
 ) -> Result<Json<BalanceResponse>, StatusCode> {
+    let node = &state.node;
     let balance = node.get_balance(&public_key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(BalanceResponse { success: true, balance }))
 }
@@ -285,7 +561,8 @@ struct WalletResponse {
     algorithm: String,
 }
 
-async fn create_wallet(State(node): State<Arc<L1Node>>) -> Result<Json<WalletResponse>, StatusCode> {
+async fn create_wallet(State(state): State<AppState>) -> Result<Json<WalletResponse>, StatusCode> {
+    let node = &state.node;
     let wallet = node.create_wallet();
     Ok(Json(WalletResponse {
         success: true,
@@ -315,9 +592,10 @@ struct TxResponse {
 }
 
 async fn submit_tx(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Json(body): Json<SubmitTxRequest>,
 ) -> Result<Json<TxResponse>, StatusCode> {
+    let node = &state.node;
     match node.submit_user_tx(
         &body.from_private_key,
         &body.from_public_key,
@@ -343,9 +621,10 @@ struct StakeRequest {
 }
 
 async fn submit_stake(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Json(body): Json<StakeRequest>,
 ) -> Result<Json<TxResponse>, StatusCode> {
+    let node = &state.node;
     match node.submit_stake_tx(&body.from_private_key, &body.from_public_key, body.amount, body.fee) {
         Ok(tx) => {
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
@@ -356,9 +635,10 @@ async fn submit_stake(
 }
 
 async fn submit_unstake(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Json(body): Json<StakeRequest>,
 ) -> Result<Json<TxResponse>, StatusCode> {
+    let node = &state.node;
     match node.submit_unstake_tx(&body.from_private_key, &body.from_public_key, body.amount, body.fee) {
         Ok(tx) => {
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
@@ -376,9 +656,16 @@ struct FaucetRequest {
 }
 
 async fn faucet(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Json(body): Json<FaucetRequest>,
 ) -> Result<Json<TxResponse>, StatusCode> {
+    let node = &state.node;
+    if !state.faucet_whitelist.is_empty() {
+        let recipient = normalize_recipient(&body.recipient_public_key);
+        if !state.faucet_whitelist.iter().any(|item| item == &recipient) {
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
     match node.submit_faucet_tx(&body.recipient_public_key, body.amount.unwrap_or(10000)) {
         Ok(tx) => {
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
@@ -407,7 +694,8 @@ struct ValidatorInfo {
     entropy_contributions: u64,
 }
 
-async fn get_validators(State(node): State<Arc<L1Node>>) -> Result<Json<ValidatorsResponse>, StatusCode> {
+async fn get_validators(State(state): State<AppState>) -> Result<Json<ValidatorsResponse>, StatusCode> {
+    let node = &state.node;
     let (validators, total) = node.get_validator_set().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let tip = node.get_tip_height().unwrap_or(0);
     let mapped = validators.into_iter().map(|(public_key, state)| {
@@ -446,7 +734,8 @@ struct SelectionResponse {
     entropy_hex: Option<String>,
 }
 
-async fn get_selection(State(node): State<Arc<L1Node>>) -> Result<Json<SelectionResponse>, StatusCode> {
+async fn get_selection(State(state): State<AppState>) -> Result<Json<SelectionResponse>, StatusCode> {
+    let node = &state.node;
     let height = node.get_tip_height().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? + 1;
     let selection = node.get_selection_info().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(SelectionResponse {
@@ -470,7 +759,8 @@ struct FinalityResponse {
     quorum_stake: String,
 }
 
-async fn get_finality(State(node): State<Arc<L1Node>>) -> Result<Json<FinalityResponse>, StatusCode> {
+async fn get_finality(State(state): State<AppState>) -> Result<Json<FinalityResponse>, StatusCode> {
+    let node = &state.node;
     let (finalized, tip, total, quorum) = node.get_finality_status().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(FinalityResponse {
         success: true,
@@ -506,9 +796,10 @@ struct VotesResponse {
 }
 
 async fn get_votes(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Query(query): Query<VotesQuery>,
 ) -> Result<Json<VotesResponse>, StatusCode> {
+    let node = &state.node;
     let height = query.height.unwrap_or(node.get_tip_height().unwrap_or(0));
     let (total, quorum, votes) = node.get_vote_summary(height).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut buckets: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
@@ -547,7 +838,8 @@ struct ValidatorVoteStat {
     last_seen_height: u64,
 }
 
-async fn get_vote_stats(State(node): State<Arc<L1Node>>) -> Result<Json<VoteStatsResponse>, StatusCode> {
+async fn get_vote_stats(State(state): State<AppState>) -> Result<Json<VoteStatsResponse>, StatusCode> {
+    let node = &state.node;
     let stats = node.get_vote_stats().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(VoteStatsResponse {
         success: true,
@@ -573,9 +865,10 @@ struct SubmitVoteRequest {
 }
 
 async fn submit_vote(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Json(body): Json<SubmitVoteRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
     node.submit_vote(quantum_vault_types::VoteMessage {
         vote_type: body.r#type,
         height: body.height,
@@ -594,22 +887,25 @@ struct EntropyRequest {
 }
 
 async fn submit_entropy(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Json(body): Json<EntropyRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
     node.submit_entropy(&body.public_key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-async fn get_messenger_wallets(State(node): State<Arc<L1Node>>) -> Result<Json<serde_json::Value>, StatusCode> {
+async fn get_messenger_wallets(State(state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
     let wallets = node.list_wallets().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "success": true, "wallets": wallets })))
 }
 
 async fn register_messenger_wallet(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
     let wallet = quantum_vault_storage::messenger_store::MessengerWallet {
         id: body.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
         display_name: body.get("displayName").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
@@ -622,18 +918,20 @@ async fn register_messenger_wallet(
 }
 
 async fn get_messenger_conversations(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
     let wallet_id = query.get("walletId").cloned().unwrap_or_default();
     let conversations = node.list_conversations(&wallet_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "success": true, "conversations": conversations })))
 }
 
 async fn create_messenger_conversation(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
     let created_by = body.get("createdBy").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     let participant_ids = body.get("participantIds")
         .and_then(|v| v.as_array())
@@ -647,18 +945,20 @@ async fn create_messenger_conversation(
 }
 
 async fn get_messenger_messages(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
     let conversation_id = query.get("conversationId").cloned().unwrap_or_default();
     let messages = node.list_messages(&conversation_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "success": true, "messages": messages })))
 }
 
 async fn send_messenger_message(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
     let message = quantum_vault_storage::messenger_store::MessengerMessage {
         id: uuid::Uuid::new_v4().to_string(),
         conversation_id: body.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
@@ -675,9 +975,10 @@ async fn send_messenger_message(
 }
 
 async fn mark_messenger_read(
-    State(node): State<Arc<L1Node>>,
+    State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
     let message_id = body.get("messageId").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     let message = node.mark_message_read(&message_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "success": true, "message": message })))

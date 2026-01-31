@@ -85,6 +85,7 @@ Type=simple
 User=your-user
 WorkingDirectory=/var/www/quantum-vault/core
 ExecStart=/var/www/quantum-vault/core/target/release/quantum-vault-daemon --host 0.0.0.0 --port 4100 --api-port 5100 --mine
+Environment=QV_API_KEYS=your_api_key_here
 Restart=always
 RestartSec=3
 
@@ -224,9 +225,10 @@ npm run build
 **On Netlify:**
 - `VITE_NODE_API_URL_TESTNET` = `https://your-testnet-domain.com/api` (or your VPS IP)
 - `VITE_NODE_API_URL_MAINNET` = `https://your-mainnet-domain.com/api` (or your VPS IP)
+- `VITE_CORE_API_KEY` = `your_api_key_here` (if API key auth enabled)
 
 **On VPS (for node):**
-- No env vars needed, all via command-line args
+- `QV_API_KEYS` = `key1,key2` (optional, enables API key auth)
 
 ### Update Frontend to Point to Your Node
 
