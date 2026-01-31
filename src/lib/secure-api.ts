@@ -368,8 +368,23 @@ export async function claimTokenMetadata(
       }),
     });
     
-    const data = await res.json();
-    return data;
+    // Handle non-OK responses
+    if (!res.ok) {
+      const text = await res.text();
+      return { success: false, error: `Server error (${res.status}): ${text || 'No response'}` };
+    }
+    
+    const text = await res.text();
+    if (!text) {
+      return { success: false, error: "Empty response from server" };
+    }
+    
+    try {
+      const data = JSON.parse(text);
+      return data;
+    } catch {
+      return { success: false, error: `Invalid JSON response: ${text.substring(0, 100)}` };
+    }
   } catch (e) {
     return { success: false, error: `Request failed: ${e}` };
   }

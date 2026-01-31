@@ -316,6 +316,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/tokens", get(get_all_tokens))
         .route("/api/token/:symbol/metadata", get(get_token_metadata))
         .route("/api/token/:symbol/holders", get(get_token_holders))
+        .route("/api/token/:symbol/transactions", get(get_token_transactions))
         .route("/api/token/metadata/update", post(update_token_metadata))
         .route("/api/token/metadata/claim", post(claim_token_metadata))
         .route("/api/health", get(get_health))
@@ -829,34 +830,113 @@ async fn get_token_holders(
 ) -> Json<TokenHoldersResponse> {
     let node = &state.node;
     
-    // Get all token balances for this symbol
-    match node.get_all_token_balances_for_symbol(&symbol) {
-        Ok(balances) => {
-            let total: f64 = balances.values().sum();
-            let mut holders: Vec<TokenHolder> = balances
-                .into_iter()
-                .filter(|(_, balance)| *balance > 0.0)
-                .map(|(address, balance)| {
-                    let percentage = if total > 0.0 { (balance / total) * 100.0 } else { 0.0 };
-                    TokenHolder { address, balance, percentage }
-                })
-                .collect();
+    // Get the original total supply from the create_token transaction
+    let original_supply = node.get_token_original_supply(&symbol).unwrap_or(0);
+    
+    // Get all wallet balances for this symbol
+    let wallet_balances = node.get_all_token_balances_for_symbol(&symbol).unwrap_or_default();
+    let wallet_total: f64 = wallet_balances.values().sum();
+    
+    // Get pool reserves for this token (tokens locked in liquidity)
+    let pool_reserves = node.get_token_pool_reserves(&symbol).unwrap_or(0);
+    
+    // Get burned amount
+    let burned = node.get_burned_amount(&symbol).unwrap_or(0.0);
+    
+    // Total supply is the original minted amount
+    let total_supply = original_supply as f64;
+    
+    // Circulating supply = total - burned
+    let circulating_supply = total_supply - burned;
+    
+    // Build holders list from wallet balances
+    let mut holders: Vec<TokenHolder> = wallet_balances
+        .into_iter()
+        .filter(|(_, balance)| *balance > 0.0)
+        .map(|(address, balance)| {
+            let percentage = if total_supply > 0.0 { (balance / total_supply) * 100.0 } else { 0.0 };
+            TokenHolder { address, balance, percentage }
+        })
+        .collect();
+    
+    // Add liquidity pool as a special holder if there are pool reserves
+    if pool_reserves > 0 {
+        let percentage = if total_supply > 0.0 { (pool_reserves as f64 / total_supply) * 100.0 } else { 0.0 };
+        holders.push(TokenHolder {
+            address: format!("Liquidity Pool ({})", symbol),
+            balance: pool_reserves as f64,
+            percentage,
+        });
+    }
+    
+    // Sort by balance descending
+    holders.sort_by(|a, b| b.balance.partial_cmp(&a.balance).unwrap_or(std::cmp::Ordering::Equal));
+    
+    Json(TokenHoldersResponse {
+        success: true,
+        holders,
+        total_supply,
+        circulating_supply,
+    })
+}
+
+#[derive(Serialize)]
+struct TokenTransaction {
+    tx_hash: String,
+    tx_type: String,
+    from: String,
+    to: Option<String>,
+    amount: f64,
+    timestamp: i64,
+    block_height: u64,
+}
+
+#[derive(Serialize)]
+struct TokenTransactionsResponse {
+    success: bool,
+    transactions: Vec<TokenTransaction>,
+    total_count: usize,
+}
+
+async fn get_token_transactions(
+    State(state): State<AppState>,
+    Path(symbol): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Json<TokenTransactionsResponse> {
+    let node = &state.node;
+    let limit: usize = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
+    let offset: usize = params.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
+    
+    match node.get_token_transactions(&symbol, limit, offset) {
+        Ok((transactions, total_count)) => {
+            let txs: Vec<TokenTransaction> = transactions.into_iter().map(|(tx, height, timestamp)| {
+                let amount = if tx.tx_type == "create_token" {
+                    tx.payload.token_total_supply.unwrap_or(0) as f64
+                } else {
+                    tx.payload.amount.unwrap_or(0) as f64
+                };
+                
+                TokenTransaction {
+                    tx_hash: tx.hash.clone(),
+                    tx_type: tx.tx_type.clone(),
+                    from: tx.from_pub_key.clone(),
+                    to: tx.payload.to_pub_key_hex.clone(),
+                    amount,
+                    timestamp,
+                    block_height: height,
+                }
+            }).collect();
             
-            // Sort by balance descending
-            holders.sort_by(|a, b| b.balance.partial_cmp(&a.balance).unwrap_or(std::cmp::Ordering::Equal));
-            
-            Json(TokenHoldersResponse {
+            Json(TokenTransactionsResponse {
                 success: true,
-                holders,
-                total_supply: total,
-                circulating_supply: total,
+                transactions: txs,
+                total_count,
             })
         }
-        Err(_) => Json(TokenHoldersResponse {
+        Err(_) => Json(TokenTransactionsResponse {
             success: false,
-            holders: vec![],
-            total_supply: 0.0,
-            circulating_supply: 0.0,
+            transactions: vec![],
+            total_count: 0,
         }),
     }
 }

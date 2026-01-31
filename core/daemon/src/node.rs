@@ -272,6 +272,110 @@ impl L1Node {
         Ok(None)
     }
     
+    /// Get the original total supply of a token from its create_token transaction
+    pub fn get_token_original_supply(&self, token_symbol: &str) -> Result<u64, String> {
+        let tip = self.store.get_tip()?;
+        
+        for height in 1..=tip.height {
+            if let Ok(Some(block)) = self.store.get_block(height) {
+                for tx in &block.txs {
+                    if tx.tx_type == "create_token" {
+                        if let Some(ref symbol) = tx.payload.token_symbol {
+                            if symbol.to_uppercase() == token_symbol.to_uppercase() {
+                                return Ok(tx.payload.token_total_supply.unwrap_or(0));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(0)
+    }
+    
+    /// Get the total reserves of a token locked in liquidity pools
+    pub fn get_token_pool_reserves(&self, token_symbol: &str) -> Result<u64, String> {
+        let pools = self.pool_store.list_pools()?;
+        let mut total_reserves: u64 = 0;
+        
+        for pool in pools {
+            if pool.token_a.to_uppercase() == token_symbol.to_uppercase() {
+                total_reserves += pool.reserve_a;
+            } else if pool.token_b.to_uppercase() == token_symbol.to_uppercase() {
+                total_reserves += pool.reserve_b;
+            }
+        }
+        
+        Ok(total_reserves)
+    }
+    
+    /// Get the burned amount for a specific token
+    pub fn get_burned_amount(&self, token_symbol: &str) -> Result<f64, String> {
+        let burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
+        Ok(*burned_tokens.get(token_symbol).unwrap_or(&0.0))
+    }
+    
+    /// Get all transactions involving a specific token
+    pub fn get_token_transactions(&self, token_symbol: &str, limit: usize, offset: usize) -> Result<(Vec<(TxV1, u64, i64)>, usize), String> {
+        let blocks = self.store.get_all_blocks()?;
+        let mut transactions: Vec<(TxV1, u64, i64)> = Vec::new();
+        
+        let symbol_upper = token_symbol.to_uppercase();
+        
+        for block in blocks {
+            for tx in &block.txs {
+                let matches = match tx.tx_type.as_str() {
+                    "create_token" => {
+                        tx.payload.token_symbol.as_ref()
+                            .map(|s| s.to_uppercase() == symbol_upper)
+                            .unwrap_or(false)
+                    }
+                    "transfer" => {
+                        tx.payload.token_symbol.as_ref()
+                            .map(|s| s.to_uppercase() == symbol_upper)
+                            .unwrap_or(false)
+                    }
+                    "create_pool" | "add_liquidity" | "remove_liquidity" => {
+                        let token_a_match = tx.payload.token_a_symbol.as_ref()
+                            .map(|s| s.to_uppercase() == symbol_upper)
+                            .unwrap_or(false);
+                        let token_b_match = tx.payload.token_b_symbol.as_ref()
+                            .map(|s| s.to_uppercase() == symbol_upper)
+                            .unwrap_or(false);
+                        token_a_match || token_b_match
+                    }
+                    "swap" => {
+                        let token_in_match = tx.payload.token_a_symbol.as_ref()
+                            .map(|s| s.to_uppercase() == symbol_upper)
+                            .unwrap_or(false);
+                        let token_out_match = tx.payload.token_b_symbol.as_ref()
+                            .map(|s| s.to_uppercase() == symbol_upper)
+                            .unwrap_or(false);
+                        token_in_match || token_out_match
+                    }
+                    _ => false,
+                };
+                
+                if matches {
+                    transactions.push((tx.clone(), block.header.height, block.header.timestamp));
+                }
+            }
+        }
+        
+        // Sort by timestamp descending (most recent first)
+        transactions.sort_by(|a, b| b.2.cmp(&a.2));
+        
+        let total_count = transactions.len();
+        
+        // Apply pagination
+        let paginated: Vec<(TxV1, u64, i64)> = transactions
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .collect();
+        
+        Ok((paginated, total_count))
+    }
+    
     /// Claim token metadata (for tokens created before metadata system)
     pub fn claim_token_metadata(
         &self,

@@ -76,6 +76,16 @@ interface PriceSnapshot {
   price_b_in_a: number;
 }
 
+interface TokenTransaction {
+  tx_hash: string;
+  tx_type: string;
+  from: string;
+  to?: string;
+  amount: number;
+  timestamp: number;
+  block_height: number;
+}
+
 const TokenExplorer = () => {
   const { symbol } = useParams<{ symbol: string }>();
   const navigate = useNavigate();
@@ -86,7 +96,8 @@ const TokenExplorer = () => {
   const [circulatingSupply, setCirculatingSupply] = useState<number>(0);
   const [pool, setPool] = useState<PoolInfo | null>(null);
   const [priceHistory, setPriceHistory] = useState<PriceSnapshot[]>([]);
-  const [transactions, setTransactions] = useState<number>(0);
+  const [transactionCount, setTransactionCount] = useState<number>(0);
+  const [transactionList, setTransactionList] = useState<TokenTransaction[]>([]);
   const [showEditMetadata, setShowEditMetadata] = useState(false);
   const [claiming, setClaiming] = useState(false);
 
@@ -182,14 +193,18 @@ const TokenExplorer = () => {
             setPriceHistory(pricesData.prices || []);
           }
 
-          // Fetch transaction count from events
-          const eventsRes = await fetch(`${baseUrl}/pool/${tokenPool.pool_id}/events`, {
-            headers: getCoreApiHeaders(),
-          });
-          if (eventsRes.ok) {
-            const eventsData = await eventsRes.json();
-            setTransactions((eventsData.events || []).length);
           }
+      }
+
+      // Fetch token transactions (all tx types involving this token)
+      const txRes = await fetch(`${baseUrl}/token/${symbol}/transactions?limit=50`, {
+        headers: getCoreApiHeaders(),
+      });
+      if (txRes.ok) {
+        const txData = await txRes.json();
+        if (txData.success) {
+          setTransactionList(txData.transactions || []);
+          setTransactionCount(txData.total_count || 0);
         }
       }
     } catch (e) {
@@ -442,7 +457,7 @@ const TokenExplorer = () => {
                 <span className="text-xs">Transactions</span>
               </div>
               <p className="text-lg font-mono font-semibold">
-                {transactions}
+                {transactionCount}
               </p>
             </CardContent>
           </Card>
@@ -554,6 +569,59 @@ const TokenExplorer = () => {
                     <div className="text-right">
                       <p className="font-mono text-sm">{holder.balance.toLocaleString()}</p>
                       <p className="text-xs text-muted-foreground">{holder.percentage.toFixed(2)}%</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Token Transactions */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center gap-2">
+              <BarChart3 className="w-4 h-4" />
+              Recent Transactions
+              {transactionCount > 0 && (
+                <span className="text-xs text-muted-foreground font-normal">({transactionCount} total)</span>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {transactionList.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No transactions found</p>
+            ) : (
+              <div className="space-y-2">
+                {transactionList.slice(0, 20).map((tx) => (
+                  <div
+                    key={tx.tx_hash}
+                    className="flex items-center justify-between p-2 rounded-lg hover:bg-secondary/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                        tx.tx_type === 'create_token' ? 'bg-purple-500/20 text-purple-400' :
+                        tx.tx_type === 'transfer' ? 'bg-blue-500/20 text-blue-400' :
+                        tx.tx_type === 'swap' ? 'bg-green-500/20 text-green-400' :
+                        tx.tx_type === 'create_pool' ? 'bg-yellow-500/20 text-yellow-400' :
+                        tx.tx_type === 'add_liquidity' ? 'bg-cyan-500/20 text-cyan-400' :
+                        tx.tx_type === 'remove_liquidity' ? 'bg-red-500/20 text-red-400' :
+                        'bg-gray-500/20 text-gray-400'
+                      }`}>
+                        {tx.tx_type.replace(/_/g, ' ')}
+                      </span>
+                      <div>
+                        <p className="font-mono text-xs truncate max-w-[150px] md:max-w-[300px]">
+                          {tx.from.substring(0, 20)}...
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Block #{tx.block_height} • {new Date(tx.timestamp * 1000).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-mono text-sm">{tx.amount.toLocaleString()}</p>
+                      <p className="text-xs text-muted-foreground">{symbol}</p>
                     </div>
                   </div>
                 ))}
