@@ -1,0 +1,11 @@
+C:\Users\brand\Documents\GitHub\quantum-vault\core\target\release\deps\socket2-678c88df41fb4121.d: C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\lib.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\sockaddr.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\socket.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\sockref.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\sys\windows.rs
+
+C:\Users\brand\Documents\GitHub\quantum-vault\core\target\release\deps\libsocket2-678c88df41fb4121.rlib: C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\lib.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\sockaddr.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\socket.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\sockref.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\sys\windows.rs
+
+C:\Users\brand\Documents\GitHub\quantum-vault\core\target\release\deps\libsocket2-678c88df41fb4121.rmeta: C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\lib.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\sockaddr.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\socket.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\sockref.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\sys\windows.rs
+
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\lib.rs:
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\sockaddr.rs:
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\socket.rs:
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\sockref.rs:
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.5.10\src\sys\windows.rs:

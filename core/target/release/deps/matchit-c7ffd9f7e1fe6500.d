@@ -1,0 +1,11 @@
+C:\Users\brand\Documents\GitHub\quantum-vault\core\target\release\deps\matchit-c7ffd9f7e1fe6500.d: C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\lib.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\error.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\params.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\router.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\tree.rs
+
+C:\Users\brand\Documents\GitHub\quantum-vault\core\target\release\deps\libmatchit-c7ffd9f7e1fe6500.rlib: C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\lib.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\error.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\params.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\router.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\tree.rs
+
+C:\Users\brand\Documents\GitHub\quantum-vault\core\target\release\deps\libmatchit-c7ffd9f7e1fe6500.rmeta: C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\lib.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\error.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\params.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\router.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\tree.rs
+
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\lib.rs:
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\error.rs:
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\params.rs:
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\router.rs:
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\matchit-0.7.3\src\tree.rs:

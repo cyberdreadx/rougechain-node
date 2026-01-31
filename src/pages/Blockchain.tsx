@@ -219,16 +219,25 @@ const Blockchain = () => {
       <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
       <div className="fixed bottom-0 right-0 w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />
 
-      {/* Action Bar */}
-      <div className="sticky top-[60px] z-40 flex items-center justify-end gap-2 px-4 py-2 bg-background/80 backdrop-blur-sm border-b border-border">
+      {/* Main content */}
+      <main className="relative z-10 max-w-7xl mx-auto px-4 py-6">
+        {/* Global Network Globe - First thing visible */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-4"
+        >
+          <GlobalNetworkGlobe className="h-[500px]" />
+        </motion.div>
+        
+        {/* Verify Chain Button - below globe */}
         {chain.length > 0 && (
-          <>
+          <div className="flex justify-end mb-4">
             <Button
               variant="outline"
               size="sm"
               onClick={handleValidateChain}
               disabled={isValidating}
-              className="hidden sm:flex"
             >
               {chainValidity.checked ? (
                 chainValidity.valid ? (
@@ -241,24 +250,8 @@ const Blockchain = () => {
               )}
               {isValidating ? "Verifying..." : "Verify Chain"}
             </Button>
-          </>
+          </div>
         )}
-        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-secondary border border-border">
-          <Shield className="w-4 h-4 text-primary" />
-          <span className="text-xs text-muted-foreground">ML-DSA-65</span>
-        </div>
-      </div>
-
-      {/* Main content */}
-      <main className="relative z-10 max-w-7xl mx-auto px-4 py-6">
-        {/* Global Network Globe - First thing visible */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-4"
-        >
-          <GlobalNetworkGlobe className="h-[500px]" />
-        </motion.div>
 
         {/* Network Stats Bar */}
         <motion.div

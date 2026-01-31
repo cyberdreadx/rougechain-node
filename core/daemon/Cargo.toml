@@ -16,6 +16,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 axum = { version = "0.6", features = ["headers"] }
 hyper = { version = "0.14", features = ["server", "tcp", "http1", "http2"] }
 tower-http = { version = "0.4", features = ["cors"] }
+reqwest = { version = "0.11", features = ["json"] }
 quantum-vault-types = { path = "../types" }
 quantum-vault-crypto = { path = "../crypto" }
 quantum-vault-consensus = { path = "../consensus" }

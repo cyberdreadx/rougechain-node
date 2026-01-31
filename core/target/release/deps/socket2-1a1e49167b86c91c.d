@@ -1,0 +1,11 @@
+C:\Users\brand\Documents\GitHub\quantum-vault\core\target\release\deps\socket2-1a1e49167b86c91c.d: C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\lib.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockaddr.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\socket.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockref.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sys\windows.rs
+
+C:\Users\brand\Documents\GitHub\quantum-vault\core\target\release\deps\libsocket2-1a1e49167b86c91c.rlib: C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\lib.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockaddr.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\socket.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockref.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sys\windows.rs
+
+C:\Users\brand\Documents\GitHub\quantum-vault\core\target\release\deps\libsocket2-1a1e49167b86c91c.rmeta: C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\lib.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockaddr.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\socket.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockref.rs C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sys\windows.rs
+
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\lib.rs:
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockaddr.rs:
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\socket.rs:
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sockref.rs:
+C:\Users\brand\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\socket2-0.6.2\src\sys\windows.rs:

@@ -15,6 +15,7 @@ use quantum_vault_types::{
 };
 
 const BASE_TRANSFER_FEE: f64 = 0.1;
+const TOKEN_CREATION_FEE: f64 = 100.0;
 const JAIL_BLOCKS: u64 = 20;
 const SLASH_DIVISOR: u128 = 10;
 const MAX_MEMPOOL: usize = 2000;
@@ -97,6 +98,41 @@ impl L1Node {
         Ok(blocks[blocks.len() - limit..].to_vec())
     }
 
+    /// Import a block from a peer (for P2P sync)
+    pub fn import_block(&self, block: BlockV1) -> Result<(), String> {
+        let tip = self.store.get_tip()?;
+        
+        // Only accept blocks that extend our chain
+        if block.header.height != tip.height + 1 {
+            return Err(format!(
+                "Block height {} doesn't extend tip height {}",
+                block.header.height, tip.height
+            ));
+        }
+        
+        // Verify previous hash matches our tip
+        if block.header.prev_hash != tip.hash {
+            return Err("Block prev_hash doesn't match our tip".to_string());
+        }
+        
+        // TODO: Verify proposer signature
+        // TODO: Verify all transaction signatures
+        
+        // Store the block
+        self.store.append_block(&block)?;
+        
+        // Apply transactions to balances
+        for tx in &block.txs {
+            self.apply_balance_tx(tx, &block.header.proposer_pub_key)?;
+        }
+        
+        // Apply validator state changes
+        self.apply_validator_block(&block)?;
+        
+        eprintln!("[node] Imported block {} from peer", block.header.height);
+        Ok(())
+    }
+
     pub fn get_balance(&self, public_key: &str) -> Result<f64, String> {
         let balances = self.balances.lock().map_err(|_| "balance lock")?;
         Ok(*balances.get(public_key).unwrap_or(&0.0))
@@ -140,6 +176,10 @@ impl L1Node {
                 faucet: None,
                 target_pub_key: None,
                 reason: None,
+                token_name: None,
+                token_symbol: None,
+                token_decimals: None,
+                token_total_supply: None,
             },
             fee: tx_fee,
             sig: String::new(),
@@ -152,6 +192,58 @@ impl L1Node {
         }
         self.accept_tx(tx.clone())?;
         Ok(tx)
+    }
+
+    pub fn submit_create_token_tx(
+        &self,
+        from_private_key: &str,
+        from_public_key: &str,
+        token_name: &str,
+        token_symbol: &str,
+        total_supply: u64,
+        decimals: u8,
+    ) -> Result<(TxV1, String), String> {
+        let tx_fee = TOKEN_CREATION_FEE;
+        
+        // Check sender has sufficient balance for fee
+        let sender_balance = self.get_balance(from_public_key)?;
+        if sender_balance < tx_fee {
+            return Err(format!(
+                "insufficient balance for token creation fee: have {:.4} XRGE, need {:.4} XRGE",
+                sender_balance, tx_fee
+            ));
+        }
+        
+        // Generate token address from creator's public key and symbol
+        let token_address = format!("token:{}:{}", &from_public_key[..16], token_symbol.to_lowercase());
+        
+        let mut tx = TxV1 {
+            version: 1,
+            tx_type: "create_token".to_string(),
+            from_pub_key: from_public_key.to_string(),
+            nonce: Utc::now().timestamp_millis() as u64,
+            payload: TxPayload {
+                to_pub_key_hex: None,
+                amount: Some(total_supply),
+                faucet: None,
+                target_pub_key: None,
+                reason: None,
+                token_name: Some(token_name.to_string()),
+                token_symbol: Some(token_symbol.to_string()),
+                token_decimals: Some(decimals),
+                token_total_supply: Some(total_supply),
+            },
+            fee: tx_fee,
+            sig: String::new(),
+        };
+        let bytes = encode_tx_v1(&tx);
+        tx.sig = pqc_sign(from_private_key, &bytes)?;
+        let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
+        if !ok {
+            return Err("invalid signature".to_string());
+        }
+        self.accept_tx(tx.clone())?;
+        Ok((tx, token_address))
     }
 
     pub fn submit_faucet_tx(
@@ -171,6 +263,10 @@ impl L1Node {
                 faucet: Some(true),
                 target_pub_key: None,
                 reason: None,
+                token_name: None,
+                token_symbol: None,
+                token_decimals: None,
+                token_total_supply: None,
             },
             fee: 0.0,
             sig: String::new(),
@@ -214,6 +310,10 @@ impl L1Node {
                 faucet: None,
                 target_pub_key: None,
                 reason: None,
+                token_name: None,
+                token_symbol: None,
+                token_decimals: None,
+                token_total_supply: None,
             },
             fee: tx_fee,
             sig: String::new(),
@@ -249,6 +349,10 @@ impl L1Node {
                 faucet: None,
                 target_pub_key: None,
                 reason: None,
+                token_name: None,
+                token_symbol: None,
+                token_decimals: None,
+                token_total_supply: None,
             },
             fee: fee.unwrap_or(BASE_TRANSFER_FEE),
             sig: String::new(),

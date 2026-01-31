@@ -317,71 +317,8 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
 
   return (
     <div className={`relative ${className}`}>
-      {/* Header */}
-      <div className="absolute top-4 left-4 z-10">
-        <div className="flex items-center gap-2 mb-2">
-          <Globe className="w-5 h-5 text-primary" />
-          <h3 className="text-sm font-semibold text-foreground">Global Network</h3>
-          {isLive && (
-            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-success/20 border border-success/30">
-              <Wifi className="w-3 h-3 text-success" />
-              <span className="text-[10px] text-success font-medium">LIVE</span>
-            </div>
-          )}
-        </div>
-        <p className="text-xs text-muted-foreground max-w-[200px]">
-          Real-time RougeChain L1 node network
-        </p>
-      </div>
-
-      {/* Legend */}
-      <div className="absolute bottom-4 left-4 z-10 flex flex-col gap-2">
-        <div className="flex items-center gap-2 text-xs">
-          <div className="w-3 h-3 rounded-full bg-success" />
-          <span className="text-muted-foreground">L1 Nodes</span>
-        </div>
-        <div className="flex items-center gap-2 text-xs">
-          <div className="w-3 h-3 rounded-full bg-primary" />
-          <span className="text-muted-foreground">Network Peers</span>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <motion.div
-        initial={{ opacity: 0, x: 20 }}
-        animate={{ opacity: 1, x: 0 }}
-        className="absolute top-4 right-4 z-10 flex flex-col gap-2"
-      >
-        <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg px-3 py-2 flex items-center gap-2">
-          <Users className="w-4 h-4 text-primary" />
-          <div>
-            <p className="text-xs text-muted-foreground">Nodes</p>
-            <p className="text-sm font-semibold text-foreground">
-              {isLoading ? "..." : displayNodes}
-            </p>
-          </div>
-        </div>
-        <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg px-3 py-2 flex items-center gap-2">
-          <Activity className="w-4 h-4 text-success" />
-          <div>
-            <p className="text-xs text-muted-foreground">Peers</p>
-            <p className="text-sm font-semibold text-foreground">
-              {isLoading ? "..." : displayPeers}
-            </p>
-          </div>
-        </div>
-        {nodeStats.length > 0 && (
-          <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg px-3 py-2">
-            <p className="text-xs text-muted-foreground">Mining</p>
-            <p className="text-sm font-semibold text-foreground">
-              {nodeStats.filter(s => s.is_mining).length} / {displayNodes}
-            </p>
-          </div>
-        )}
-      </motion.div>
-
-      {/* 3D Canvas */}
-      <div className="w-full h-full min-h-[400px] bg-gradient-to-b from-background to-card rounded-xl border border-border overflow-hidden">
+      {/* 3D Canvas - behind everything */}
+      <div className="absolute inset-0 bg-gradient-to-b from-background to-card rounded-xl border border-border overflow-hidden">
         {isWebglLost ? (
           <div className="w-full h-full flex items-center justify-center text-center px-6">
             <div>
@@ -404,12 +341,78 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
         )}
       </div>
 
-      {/* Bottom right actions */}
-      <div className="absolute bottom-4 right-4 z-10 flex flex-col items-end gap-2">
-        <p className="text-xs text-muted-foreground bg-card/60 backdrop-blur-sm px-2 py-1 rounded">
+      {/* Header - top left */}
+      <div className="absolute top-4 left-4 z-20 pointer-events-none">
+        <div className="flex items-center gap-2 mb-2">
+          <Globe className="w-5 h-5 text-primary" />
+          <h3 className="text-sm font-semibold text-foreground">Global Network</h3>
+          {isLive && (
+            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-success/20 border border-success/30">
+              <Wifi className="w-3 h-3 text-success" />
+              <span className="text-[10px] text-success font-medium">LIVE</span>
+            </div>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground max-w-[200px]">
+          Real-time RougeChain L1 node network
+        </p>
+      </div>
+
+      {/* Legend - bottom left */}
+      <div className="absolute bottom-4 left-4 z-20 pointer-events-none flex flex-col gap-2">
+        <div className="flex items-center gap-2 text-xs">
+          <div className="w-3 h-3 rounded-full bg-success shrink-0" />
+          <span className="text-muted-foreground">L1 Nodes</span>
+        </div>
+        <div className="flex items-center gap-2 text-xs">
+          <div className="w-3 h-3 rounded-full bg-primary shrink-0" />
+          <span className="text-muted-foreground">Network Peers</span>
+        </div>
+      </div>
+
+      {/* Stats - top right */}
+      <motion.div
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        className="absolute top-4 right-4 z-20 pointer-events-none flex flex-col gap-2"
+      >
+        <div className="bg-card/90 backdrop-blur-md border border-border rounded-lg px-3 py-2 flex items-center gap-3 shadow-lg">
+          <Users className="w-4 h-4 text-primary shrink-0" />
+          <div className="text-right">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Nodes</p>
+            <p className="text-lg font-bold text-foreground leading-none">
+              {isLoading ? "..." : displayNodes}
+            </p>
+          </div>
+        </div>
+        <div className="bg-card/90 backdrop-blur-md border border-border rounded-lg px-3 py-2 flex items-center gap-3 shadow-lg">
+          <Activity className="w-4 h-4 text-success shrink-0" />
+          <div className="text-right">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Peers</p>
+            <p className="text-lg font-bold text-foreground leading-none">
+              {isLoading ? "..." : displayPeers}
+            </p>
+          </div>
+        </div>
+        {nodeStats.length > 0 && (
+          <div className="bg-card/90 backdrop-blur-md border border-border rounded-lg px-3 py-2 shadow-lg">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Mining</p>
+            <p className="text-lg font-bold text-foreground leading-none">
+              {nodeStats.filter(s => s.is_mining).length} / {displayNodes}
+            </p>
+          </div>
+        )}
+      </motion.div>
+
+      {/* Bottom right hint */}
+      <div className="absolute bottom-4 right-4 z-20 pointer-events-none">
+        <p className="text-[10px] text-muted-foreground/70 bg-card/60 backdrop-blur-sm px-2 py-1 rounded">
           Drag to rotate • Scroll to zoom
         </p>
       </div>
+
+      {/* Spacer for min-height */}
+      <div className="min-h-[400px]" />
     </div>
   );
 };

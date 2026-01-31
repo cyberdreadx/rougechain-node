@@ -1,5 +1,6 @@
 mod grpc;
 mod node;
+mod peer;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -49,6 +50,9 @@ struct Args {
     rate_limit_write_per_minute: u32,
     #[arg(long, env = "QV_FAUCET_WHITELIST")]
     faucet_whitelist: Option<String>,
+    /// Comma-separated list of peer URLs to connect to (e.g., "http://node1.example.com:5100,http://node2.example.com:5100")
+    #[arg(long, env = "QV_PEERS")]
+    peers: Option<String>,
 }
 
 #[derive(Clone)]
@@ -59,6 +63,7 @@ struct AppState {
     read_limit: u32,
     write_limit: u32,
     faucet_whitelist: Vec<String>,
+    peers: Arc<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -189,11 +194,17 @@ async fn main() -> Result<(), String> {
         .serve(grpc_addr);
     eprintln!("[core-daemon] gRPC server created");
 
-    let auth = AuthConfig::new(args.api_keys);
+    let auth = AuthConfig::new(args.api_keys.clone());
     let limiter = Arc::new(tokio::sync::Mutex::new(RateLimiter::new(
         args.rate_limit_per_minute,
         StdDuration::from_secs(60),
     )));
+    let peers: Vec<String> = args.peers
+        .as_ref()
+        .map(|p| peer::parse_peers(p))
+        .unwrap_or_default();
+    let peers = Arc::new(peers);
+    
     let app_state = AppState {
         node: node.clone(),
         auth,
@@ -201,7 +212,17 @@ async fn main() -> Result<(), String> {
         read_limit: args.rate_limit_read_per_minute,
         write_limit: args.rate_limit_write_per_minute,
         faucet_whitelist: parse_whitelist(args.faucet_whitelist),
+        peers: peers.clone(),
     };
+
+    // Start peer sync if peers are configured
+    if !peers.is_empty() {
+        let peer_node = node.clone();
+        let peer_list = (*peers).clone();
+        tokio::spawn(async move {
+            peer::start_peer_sync(peer_list, peer_node).await;
+        });
+    }
 
     eprintln!("[core-daemon] building API router...");
     let api_router = build_http_router(app_state.clone());
@@ -215,9 +236,16 @@ async fn main() -> Result<(), String> {
 
     if node.is_mining() {
         let miner = node.clone();
+        let broadcast_peers = peers.clone();
         tokio::spawn(async move {
             loop {
-                let _ = miner.mine_pending();
+                if let Ok(Some(block)) = miner.mine_pending() {
+                    eprintln!("[miner] Mined block {}", block.header.height);
+                    // Broadcast to peers
+                    if !broadcast_peers.is_empty() {
+                        peer::broadcast_block(&broadcast_peers, &block).await;
+                    }
+                }
                 sleep(Duration::from_millis(1000)).await;
             }
         });
@@ -245,11 +273,13 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/stats", get(get_stats))
         .route("/api/health", get(get_health))
         .route("/api/blocks", get(get_blocks))
+        .route("/api/blocks/import", post(import_block))
         .route("/api/txs", get(get_txs))
         .route("/api/blocks/summary", get(get_blocks_summary))
         .route("/api/balance/:public_key", get(get_balance))
         .route("/api/wallet/create", post(create_wallet))
         .route("/api/tx/submit", post(submit_tx))
+        .route("/api/token/create", post(create_token))
         .route("/api/stake/submit", post(submit_stake))
         .route("/api/unstake/submit", post(submit_unstake))
         .route("/api/faucet", post(faucet))
@@ -289,7 +319,7 @@ async fn auth_middleware<B>(
     if path == "/api/health" || path == "/api/stats" {
         return Ok(next.run(request).await);
     }
-    if path == "/api/faucet" || path == "/api/tx/submit" || path == "/api/stake/submit" || path == "/api/unstake/submit" {
+    if path == "/api/faucet" || path == "/api/tx/submit" || path == "/api/stake/submit" || path == "/api/unstake/submit" || path == "/api/token/create" {
         return Ok(next.run(request).await);
     }
     // Bypass rate limiting for messenger endpoints
@@ -377,7 +407,7 @@ async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>,
     let (total_fees, last_fees) = node.get_fee_stats().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let (finalized, _, _, _) = node.get_finality_status().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(StatsResponse {
-        connected_peers: 0,
+        connected_peers: state.peers.len() as u32,
         network_height: height,
         is_mining: node.is_mining(),
         node_id: node.node_id(),
@@ -427,6 +457,23 @@ async fn get_blocks(
         node.get_all_blocks().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     };
     Ok(Json(BlocksResponse { blocks }))
+}
+
+#[derive(Serialize)]
+struct ImportBlockResponse {
+    success: bool,
+    error: Option<String>,
+}
+
+async fn import_block(
+    State(state): State<AppState>,
+    Json(block): Json<quantum_vault_types::BlockV1>,
+) -> Result<Json<ImportBlockResponse>, StatusCode> {
+    let node = &state.node;
+    match node.import_block(block) {
+        Ok(()) => Ok(Json(ImportBlockResponse { success: true, error: None })),
+        Err(e) => Ok(Json(ImportBlockResponse { success: false, error: Some(e) })),
+    }
 }
 
 #[derive(Deserialize)]
@@ -612,6 +659,57 @@ async fn submit_tx(
             Ok(Json(TxResponse { success: true, tx_id: Some(id), tx: Some(tx), error: None }))
         }
         Err(err) => Ok(Json(TxResponse { success: false, tx_id: None, tx: None, error: Some(err) })),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateTokenRequest {
+    from_private_key: String,
+    from_public_key: String,
+    token_name: String,
+    token_symbol: String,
+    total_supply: u64,
+    decimals: Option<u8>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateTokenResponse {
+    success: bool,
+    tx_id: Option<String>,
+    token_address: Option<String>,
+    error: Option<String>,
+}
+
+async fn create_token(
+    State(state): State<AppState>,
+    Json(body): Json<CreateTokenRequest>,
+) -> Result<Json<CreateTokenResponse>, StatusCode> {
+    let node = &state.node;
+    match node.submit_create_token_tx(
+        &body.from_private_key,
+        &body.from_public_key,
+        &body.token_name,
+        &body.token_symbol,
+        body.total_supply,
+        body.decimals.unwrap_or(18),
+    ) {
+        Ok((tx, token_address)) => {
+            let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
+            Ok(Json(CreateTokenResponse { 
+                success: true, 
+                tx_id: Some(id), 
+                token_address: Some(token_address),
+                error: None 
+            }))
+        }
+        Err(err) => Ok(Json(CreateTokenResponse { 
+            success: false, 
+            tx_id: None, 
+            token_address: None,
+            error: Some(err) 
+        })),
     }
 }
 

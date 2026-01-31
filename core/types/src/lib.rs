@@ -15,6 +15,11 @@ pub struct TxPayload {
     pub faucet: Option<bool>,
     pub target_pub_key: Option<String>,
     pub reason: Option<String>,
+    // Token creation fields
+    pub token_name: Option<String>,
+    pub token_symbol: Option<String>,
+    pub token_decimals: Option<u8>,
+    pub token_total_supply: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

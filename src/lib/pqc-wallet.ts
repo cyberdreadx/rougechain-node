@@ -470,7 +470,54 @@ export async function createToken(
   totalSupply: number,
   decimals: number = 18
 ): Promise<{ block: Block; tokenAddress: string }> {
-  throw new Error("Token creation is not supported on the node yet.");
+  const NODE_API_URL = getCoreApiBaseUrl();
+  if (!NODE_API_URL) {
+    throw new Error("Node API is not configured");
+  }
+  
+  try {
+    const res = await fetch(`${NODE_API_URL}/token/create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
+      body: JSON.stringify({
+        fromPrivateKey: creatorPrivateKey,
+        fromPublicKey: creatorPublicKey,
+        tokenName,
+        tokenSymbol,
+        totalSupply,
+        decimals,
+      }),
+    });
+
+    const data = await res.json();
+    
+    if (res.ok && data.success) {
+      return {
+        block: {
+          index: 0,
+          timestamp: Date.now(),
+          data: JSON.stringify({ type: "create_token", tokenName, tokenSymbol, totalSupply }),
+          previousHash: "",
+          hash: data.txId || "",
+          nonce: 0,
+          signature: "",
+          signerPublicKey: creatorPublicKey,
+        },
+        tokenAddress: data.tokenAddress,
+      };
+    }
+    
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    
+    throw new Error(`Token creation failed: ${res.status}`);
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error("Failed to create token");
+  }
 }
 
 // Mint new tokens (faucet functionality) - with fee
