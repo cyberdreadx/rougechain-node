@@ -1,10 +1,12 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity, Zap, ExternalLink, TrendingUp } from "lucide-react";
+import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity, Zap, ExternalLink, TrendingUp, TrendingDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState, useCallback } from "react";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
+import { useXRGEPrice } from "@/hooks/use-xrge-price";
+import { formatUsd } from "@/lib/price-service";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 
 const features = [
@@ -143,6 +145,9 @@ const LiveNetworkStatus = () => {
 };
 
 const Index = () => {
+  // Fetch live XRGE price
+  const { priceUsd, priceChange24h, volume24h, liquidity, loading: priceLoading } = useXRGEPrice(60_000);
+
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">
       
@@ -276,6 +281,53 @@ const Index = () => {
               <ExternalLink className="w-3 h-3" />
             </a>
           </div>
+          
+          {/* Live Price Stats */}
+          {priceUsd !== null && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4"
+            >
+              <div className="p-3 rounded-xl bg-black/40 border border-red-500/20">
+                <p className="text-xs text-muted-foreground mb-1">Price (Base)</p>
+                <div className="flex items-center gap-2">
+                  <span className="text-lg font-bold text-foreground">
+                    ${priceUsd < 0.0001 ? priceUsd.toExponential(4) : priceUsd.toFixed(6)}
+                  </span>
+                </div>
+              </div>
+              <div className="p-3 rounded-xl bg-black/40 border border-red-500/20">
+                <p className="text-xs text-muted-foreground mb-1">24h Change</p>
+                <div className="flex items-center gap-1">
+                  {priceChange24h !== null && (
+                    <>
+                      {priceChange24h >= 0 ? (
+                        <TrendingUp className="w-4 h-4 text-green-500" />
+                      ) : (
+                        <TrendingDown className="w-4 h-4 text-red-500" />
+                      )}
+                      <span className={`text-lg font-bold ${priceChange24h >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                        {priceChange24h >= 0 ? '+' : ''}{priceChange24h.toFixed(2)}%
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="p-3 rounded-xl bg-black/40 border border-red-500/20">
+                <p className="text-xs text-muted-foreground mb-1">24h Volume</p>
+                <span className="text-lg font-bold text-foreground">
+                  {volume24h !== null ? formatUsd(volume24h) : '--'}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-black/40 border border-red-500/20">
+                <p className="text-xs text-muted-foreground mb-1">Liquidity</p>
+                <span className="text-lg font-bold text-foreground">
+                  {liquidity !== null ? formatUsd(liquidity) : '--'}
+                </span>
+              </div>
+            </motion.div>
+          )}
           
           <div className="rounded-2xl border border-red-500/20 overflow-hidden bg-black/40">
             <iframe

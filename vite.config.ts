@@ -11,6 +11,15 @@ export default defineConfig(({ mode }) => ({
     hmr: {
       overlay: false,
     },
+    proxy: {
+      // Proxy GeckoTerminal API to avoid CORS issues
+      "/gecko-api": {
+        target: "https://api.geckoterminal.com",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/gecko-api/, "/api/v2"),
+        secure: true,
+      },
+    },
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {

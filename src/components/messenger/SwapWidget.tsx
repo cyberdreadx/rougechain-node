@@ -15,6 +15,8 @@ import { toast } from "sonner";
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { secureSwap } from "@/lib/secure-api";
 import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
+import { useXRGEPrice } from "@/hooks/use-xrge-price";
+import { formatUsd } from "@/lib/price-service";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 
 interface Token {
@@ -58,6 +60,9 @@ const SwapWidget = ({ walletPublicKey, walletPrivateKey, onClose }: SwapWidgetPr
   const [loading, setLoading] = useState(false);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [slippage, setSlippage] = useState(0.5);
+  
+  // Fetch XRGE price for USD display
+  const { priceUsd: xrgePrice } = useXRGEPrice(60_000);
 
   // Fetch tokens
   const fetchTokens = useCallback(async () => {
@@ -291,11 +296,18 @@ const SwapWidget = ({ walletPublicKey, walletPrivateKey, onClose }: SwapWidgetPr
                 </SelectContent>
               </Select>
             </div>
-            {insufficientBalance && (
-              <p className="text-xs text-destructive flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" /> Insufficient balance
-              </p>
-            )}
+            <div className="flex justify-between items-center">
+              {tokenIn === "XRGE" && xrgePrice && amountIn && parseFloat(amountIn) > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  ≈ {formatUsd(parseFloat(amountIn) * xrgePrice)}
+                </span>
+              )}
+              {insufficientBalance && (
+                <p className="text-xs text-destructive flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" /> Insufficient balance
+                </p>
+              )}
+            </div>
           </div>
 
           {/* Swap direction */}
@@ -334,6 +346,11 @@ const SwapWidget = ({ walletPublicKey, walletPrivateKey, onClose }: SwapWidgetPr
                 </SelectContent>
               </Select>
             </div>
+            {tokenOut === "XRGE" && xrgePrice && quote && quote.amount_out > 0 && (
+              <span className="text-xs text-muted-foreground">
+                ≈ {formatUsd(quote.amount_out * xrgePrice)}
+              </span>
+            )}
           </div>
 
           {/* Quote info */}

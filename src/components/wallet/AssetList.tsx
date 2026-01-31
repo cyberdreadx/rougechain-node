@@ -9,6 +9,7 @@ interface Asset {
   symbol: string;
   balance: string;
   value: string;
+  usdValue?: string | null;
   change: number;
   icon: string;
 }
@@ -88,7 +89,11 @@ const AssetList = ({ assets = [], emptyActionLabel, onEmptyAction, emptyHint }: 
               <div className="text-right">
                 <p className="text-sm font-medium text-foreground">{asset.balance}</p>
                 <div className="flex items-center justify-end gap-1">
-                  <span className="text-xs text-muted-foreground">{asset.value}</span>
+                  {asset.usdValue ? (
+                    <span className="text-xs text-foreground font-medium">{asset.usdValue}</span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">{asset.value}</span>
+                  )}
                   {asset.change !== 0 && (
                     <span className={`flex items-center text-xs ${asset.change >= 0 ? 'text-success' : 'text-destructive'}`}>
                       {asset.change >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}

@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { useXRGEPrice } from "@/hooks/use-xrge-price";
+import { formatUsd } from "@/lib/price-service";
 import {
   Select,
   SelectContent,
@@ -78,6 +80,9 @@ const Swap = () => {
   
   // Wallet state (simplified - would come from wallet context)
   const [wallet, setWallet] = useState<{ publicKey: string; privateKey: string } | null>(null);
+  
+  // Fetch XRGE price for USD display
+  const { priceUsd: xrgePrice } = useXRGEPrice(60_000);
 
   // Load wallet from localStorage
   useEffect(() => {
@@ -364,9 +369,18 @@ const Swap = () => {
                     </SelectContent>
                   </Select>
                 </div>
-                {tokenInData && parseFloat(amountIn) > tokenInData.balance && (
-                  <p className="text-xs text-destructive">Insufficient balance</p>
-                )}
+                <div className="flex justify-between items-center">
+                  {tokenIn === "XRGE" && xrgePrice && amountIn && parseFloat(amountIn) > 0 ? (
+                    <span className="text-xs text-muted-foreground">
+                      ≈ {formatUsd(parseFloat(amountIn) * xrgePrice)}
+                    </span>
+                  ) : (
+                    <span />
+                  )}
+                  {tokenInData && parseFloat(amountIn) > tokenInData.balance && (
+                    <p className="text-xs text-destructive">Insufficient balance</p>
+                  )}
+                </div>
               </div>
 
               {/* Swap Button */}
@@ -411,6 +425,11 @@ const Swap = () => {
                     </SelectContent>
                   </Select>
                 </div>
+                {tokenOut === "XRGE" && xrgePrice && quote && quote.amount_out > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    ≈ {formatUsd(quote.amount_out * xrgePrice)}
+                  </span>
+                )}
               </div>
 
               {/* Quote Info */}

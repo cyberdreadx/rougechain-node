@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Shield, Copy, ExternalLink, Wallet } from "lucide-react";
+import { Shield, Copy, ExternalLink, Wallet, TrendingUp, TrendingDown } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
@@ -7,11 +7,12 @@ interface WalletCardProps {
   address?: string | null;
   balance?: string | null;
   usdValue?: string | null;
+  priceChange24h?: number | null;
   isConnected?: boolean;
   onConnect?: () => void;
 }
 
-const WalletCard = ({ address, balance, usdValue, isConnected = false, onConnect }: WalletCardProps) => {
+const WalletCard = ({ address, balance, usdValue, priceChange24h, isConnected = false, onConnect }: WalletCardProps) => {
   const [copied, setCopied] = useState(false);
 
   const copyAddress = () => {
@@ -59,7 +60,19 @@ const WalletCard = ({ address, balance, usdValue, isConnected = false, onConnect
             >
               {balance || "0"} XRGE
             </motion.h2>
-            <p className="text-lg text-muted-foreground mt-1">RougeChain</p>
+            <div className="flex items-center gap-3 mt-1">
+              {usdValue && usdValue !== "N/A" ? (
+                <p className="text-lg text-foreground font-medium">{usdValue}</p>
+              ) : (
+                <p className="text-lg text-muted-foreground">RougeChain</p>
+              )}
+              {priceChange24h !== null && priceChange24h !== undefined && (
+                <span className={`flex items-center gap-1 text-sm ${priceChange24h >= 0 ? 'text-success' : 'text-destructive'}`}>
+                  {priceChange24h >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                  {priceChange24h >= 0 ? '+' : ''}{priceChange24h.toFixed(2)}%
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Address section */}

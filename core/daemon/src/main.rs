@@ -311,6 +311,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/stats", get(get_stats))
         .route("/api/burn-address", get(get_burn_address))
         .route("/api/burned", get(get_burned_tokens))
+        .route("/api/price/xrge", get(get_xrge_price))
         .route("/api/health", get(get_health))
         .route("/api/blocks", get(get_blocks))
         .route("/api/blocks/import", post(import_block))
@@ -612,6 +613,117 @@ async fn get_burned_tokens(State(state): State<AppState>) -> Result<Json<BurnedT
         burned,
         total_xrge_burned: total_xrge,
     }))
+}
+
+/// XRGE price from GeckoTerminal (Base chain pool)
+const XRGE_POOL_ADDRESS: &str = "0x059e10d26c64a63d04e1814f46305210edcc447d";
+const GECKO_API_BASE: &str = "https://api.geckoterminal.com/api/v2";
+
+#[derive(Serialize)]
+struct XRGEPriceResponse {
+    success: bool,
+    price_usd: f64,
+    price_change_24h: f64,
+    volume_24h: f64,
+    liquidity: f64,
+    source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+async fn get_xrge_price() -> Json<XRGEPriceResponse> {
+    let url = format!("{}/networks/base/pools/{}", GECKO_API_BASE, XRGE_POOL_ADDRESS);
+    
+    let client = reqwest::Client::builder()
+        .timeout(StdDuration::from_secs(10))
+        .build();
+    
+    let client = match client {
+        Ok(c) => c,
+        Err(e) => {
+            return Json(XRGEPriceResponse {
+                success: false,
+                price_usd: 0.0,
+                price_change_24h: 0.0,
+                volume_24h: 0.0,
+                liquidity: 0.0,
+                source: "GeckoTerminal".to_string(),
+                error: Some(format!("Failed to create client: {}", e)),
+            });
+        }
+    };
+    
+    let response = client
+        .get(&url)
+        .header("Accept", "application/json;version=20230203")
+        .send()
+        .await;
+    
+    match response {
+        Ok(res) => {
+            if !res.status().is_success() {
+                return Json(XRGEPriceResponse {
+                    success: false,
+                    price_usd: 0.0,
+                    price_change_24h: 0.0,
+                    volume_24h: 0.0,
+                    liquidity: 0.0,
+                    source: "GeckoTerminal".to_string(),
+                    error: Some(format!("API returned status: {}", res.status())),
+                });
+            }
+            
+            match res.json::<serde_json::Value>().await {
+                Ok(data) => {
+                    let attrs = &data["data"]["attributes"];
+                    let price_usd = attrs["base_token_price_usd"]
+                        .as_str()
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let price_change_24h = attrs["price_change_percentage"]["h24"]
+                        .as_str()
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let volume_24h = attrs["volume_usd"]["h24"]
+                        .as_str()
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let liquidity = attrs["reserve_in_usd"]
+                        .as_str()
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    
+                    Json(XRGEPriceResponse {
+                        success: true,
+                        price_usd,
+                        price_change_24h,
+                        volume_24h,
+                        liquidity,
+                        source: "GeckoTerminal".to_string(),
+                        error: None,
+                    })
+                }
+                Err(e) => Json(XRGEPriceResponse {
+                    success: false,
+                    price_usd: 0.0,
+                    price_change_24h: 0.0,
+                    volume_24h: 0.0,
+                    liquidity: 0.0,
+                    source: "GeckoTerminal".to_string(),
+                    error: Some(format!("Failed to parse response: {}", e)),
+                }),
+            }
+        }
+        Err(e) => Json(XRGEPriceResponse {
+            success: false,
+            price_usd: 0.0,
+            price_change_24h: 0.0,
+            volume_24h: 0.0,
+            liquidity: 0.0,
+            source: "GeckoTerminal".to_string(),
+            error: Some(format!("Request failed: {}", e)),
+        }),
+    }
 }
 
 #[derive(Serialize)]

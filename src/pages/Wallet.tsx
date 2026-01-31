@@ -10,9 +10,13 @@ import {
   Plus,
   FileKey2,
   Wifi,
-  WifiOff
+  WifiOff,
+  TrendingUp,
+  TrendingDown
 } from "lucide-react";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
+import { useXRGEPrice } from "@/hooks/use-xrge-price";
+import { formatUsd } from "@/lib/price-service";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -194,6 +198,9 @@ const Wallet = () => {
       window.removeEventListener("storage", handleStorageChange);
     };
   }, []);
+
+  // Fetch XRGE price from GeckoTerminal
+  const { priceUsd, priceChange24h, loading: priceLoading } = useXRGEPrice(60_000);
 
   // WebSocket for real-time updates
   const handleNewBlock = useCallback(() => {
@@ -425,6 +432,9 @@ const Wallet = () => {
 
   // Get XRGE balance specifically for the main display (native token)
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
+  
+  // Calculate USD value for wallet display
+  const walletUsdValue = priceUsd && xrgeBalance ? formatUsd(xrgeBalance * priceUsd) : null;
 
   const networkLabel = getNetworkLabel(chainIdLabel);
 
@@ -440,16 +450,24 @@ const Wallet = () => {
     return `Updated ${hours}h ago`;
   };
 
-  // Convert balances to asset format
-  const assets = balances.map(b => ({
-    id: b.symbol,
-    name: b.name,
-    symbol: b.symbol,
-    balance: b.balance.toLocaleString(),
-    value: `${b.balance} ${b.symbol}`,
-    change: 0,
-    icon: b.icon,
-  }));
+  // Convert balances to asset format with USD values
+  const assets = balances.map(b => {
+    // Only XRGE has USD price (native token with market data)
+    const usdValue = b.symbol === "XRGE" && priceUsd 
+      ? formatUsd(b.balance * priceUsd)
+      : null;
+    
+    return {
+      id: b.symbol,
+      name: b.name,
+      symbol: b.symbol,
+      balance: b.balance.toLocaleString(),
+      value: `${b.balance} ${b.symbol}`,
+      usdValue,
+      change: b.symbol === "XRGE" && priceChange24h ? priceChange24h : 0,
+      icon: b.icon,
+    };
+  });
 
   // Convert transactions to history format
   const txHistory = transactions.map(tx => ({
@@ -604,7 +622,8 @@ const Wallet = () => {
           <WalletCard
               address={wallet.signingPublicKey}
               balance={xrgeBalance.toLocaleString()}
-              usdValue="N/A"
+              usdValue={walletUsdValue}
+              priceChange24h={priceChange24h}
               isConnected={true}
             />
 
@@ -730,6 +749,23 @@ const Wallet = () => {
               </div>
 
               <div className="space-y-2">
+                {/* Live Price from GeckoTerminal */}
+                {priceUsd !== null && (
+                  <div className="flex justify-between items-center p-2 rounded-lg bg-primary/10 border border-primary/20">
+                    <span className="text-xs font-medium text-primary">Live Price (Base)</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-mono font-bold text-primary">
+                        ${priceUsd < 0.0001 ? priceUsd.toExponential(4) : priceUsd.toFixed(6)}
+                      </span>
+                      {priceChange24h !== null && (
+                        <span className={`flex items-center gap-0.5 text-xs ${priceChange24h >= 0 ? 'text-success' : 'text-destructive'}`}>
+                          {priceChange24h >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                          {priceChange24h >= 0 ? '+' : ''}{priceChange24h.toFixed(2)}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-muted-foreground">Total Supply</span>
                   <span className="text-sm font-mono text-foreground">{TOTAL_SUPPLY.toLocaleString()}</span>
