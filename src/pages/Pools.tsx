@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Plus, Droplets, TrendingUp, Loader2, Info, Minus } from "lucide-react";
+import { Plus, Droplets, TrendingUp, Loader2, Info, Minus, BarChart3 } from "lucide-react";
+import xrgeLogo from "@/assets/xrge-logo.webp";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -311,6 +313,20 @@ const Pools = () => {
     return n.toLocaleString();
   };
 
+  const TokenIcon = ({ symbol, size = 32 }: { symbol: string; size?: number }) => {
+    if (symbol === "XRGE") {
+      return <img src={xrgeLogo} alt="XRGE" className="rounded-full" style={{ width: size, height: size }} />;
+    }
+    return (
+      <div 
+        className="rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold"
+        style={{ width: size, height: size }}
+      >
+        {symbol.charAt(0)}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <div className="container max-w-4xl mx-auto px-4 py-8 flex-grow">
@@ -425,12 +441,8 @@ const Pools = () => {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div className="flex -space-x-2">
-                          <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold">
-                            {pool.token_a.charAt(0)}
-                          </div>
-                          <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-xs font-bold">
-                            {pool.token_b.charAt(0)}
-                          </div>
+                          <TokenIcon symbol={pool.token_a} size={32} />
+                          <TokenIcon symbol={pool.token_b} size={32} />
                         </div>
                         <div>
                           <CardTitle className="text-lg">{pool.token_a}/{pool.token_b}</CardTitle>
@@ -462,33 +474,41 @@ const Pools = () => {
                       </div>
                     </div>
                     
-                    {wallet && (
-                      <div className="flex gap-2 mt-4">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setSelectedPool(pool);
-                            setShowAddLiquidity(true);
-                          }}
-                        >
-                          <Plus className="w-3 h-3 mr-1" />
-                          Add
+                    <div className="flex gap-2 mt-4">
+                      <Link to={`/pool/${pool.pool_id}`}>
+                        <Button size="sm" variant="secondary">
+                          <BarChart3 className="w-3 h-3 mr-1" />
+                          Chart
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setSelectedPool(pool);
-                            setShowRemoveLiquidity(true);
-                          }}
-                          disabled={!lpBalances[pool.pool_id]}
-                        >
-                          <Minus className="w-3 h-3 mr-1" />
-                          Remove
-                        </Button>
-                      </div>
-                    )}
+                      </Link>
+                      {wallet && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setSelectedPool(pool);
+                              setShowAddLiquidity(true);
+                            }}
+                          >
+                            <Plus className="w-3 h-3 mr-1" />
+                            Add
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setSelectedPool(pool);
+                              setShowRemoveLiquidity(true);
+                            }}
+                            disabled={!lpBalances[pool.pool_id]}
+                          >
+                            <Minus className="w-3 h-3 mr-1" />
+                            Remove
+                          </Button>
+                        </>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               ))}

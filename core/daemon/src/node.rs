@@ -16,6 +16,7 @@ use quantum_vault_types::{
 
 use crate::amm;
 use crate::pool_store::{LiquidityPool, PoolStore};
+use crate::pool_events::{PoolEvent, PoolEventStore, PoolEventType, PriceSnapshot};
 
 const BASE_TRANSFER_FEE: f64 = 0.1;
 const TOKEN_CREATION_FEE: f64 = 100.0;
@@ -43,6 +44,7 @@ pub struct L1Node {
     validator_store: ValidatorStore,
     messenger_store: MessengerStore,
     pool_store: PoolStore,
+    pool_event_store: PoolEventStore,
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
     balances: Arc<Mutex<HashMap<String, f64>>>,
@@ -58,6 +60,7 @@ impl L1Node {
         let validator_store = ValidatorStore::new(&opts.data_dir)?;
         let messenger_store = MessengerStore::new(&opts.data_dir);
         let pool_store = PoolStore::new(&opts.data_dir)?;
+        let pool_event_store = PoolEventStore::new(&opts.data_dir)?;
         let keys = pqc_keygen();
         Ok(Self {
             node_id: uuid::Uuid::new_v4().to_string(),
@@ -66,6 +69,7 @@ impl L1Node {
             validator_store,
             messenger_store,
             pool_store,
+            pool_event_store,
             keys: Arc::new(Mutex::new(keys)),
             mempool: Arc::new(Mutex::new(HashMap::new())),
             balances: Arc::new(Mutex::new(HashMap::new())),
@@ -250,6 +254,22 @@ impl L1Node {
 
     pub fn list_pools(&self) -> Result<Vec<LiquidityPool>, String> {
         self.pool_store.list_pools()
+    }
+
+    pub fn get_pool_events(&self, pool_id: &str, limit: usize) -> Result<Vec<PoolEvent>, String> {
+        self.pool_event_store.get_pool_events(pool_id, limit)
+    }
+
+    pub fn get_all_pool_events(&self, limit: usize) -> Result<Vec<PoolEvent>, String> {
+        self.pool_event_store.get_all_events(limit)
+    }
+
+    pub fn get_pool_price_history(&self, pool_id: &str, limit: usize) -> Result<Vec<PriceSnapshot>, String> {
+        self.pool_event_store.get_price_history(pool_id, limit)
+    }
+
+    pub fn get_pool_stats(&self, pool_id: &str) -> Result<crate::pool_events::PoolStats, String> {
+        self.pool_event_store.get_pool_stats(pool_id)
     }
 
     pub fn get_swap_quote(
@@ -732,6 +752,7 @@ impl L1Node {
                 &mut lp_balances,
                 tx,
                 block.header.time,
+                block.header.height,
             )?;
         }
         
@@ -757,7 +778,10 @@ impl L1Node {
         lp_balances: &mut HashMap<TokenBalanceKey, f64>,
         tx: &TxV1,
         block_time: u64,
+        block_height: u64,
     ) -> Result<(), String> {
+        let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
+        
         match tx.tx_type.as_str() {
             "create_pool" => {
                 let token_a = tx.payload.token_a_symbol.as_ref().ok_or("missing token_a")?;
@@ -798,6 +822,41 @@ impl L1Node {
                 *lp_balances.entry(lp_key).or_insert(0.0) += pool.total_lp_supply as f64;
                 
                 self.pool_store.save_pool(&pool)?;
+                
+                // Save event
+                let event = PoolEvent {
+                    id: format!("{}-create", tx_hash),
+                    pool_id: pool.pool_id.clone(),
+                    event_type: PoolEventType::CreatePool,
+                    user_pub_key: tx.from_pub_key.clone(),
+                    timestamp: block_time,
+                    block_height,
+                    tx_hash: tx_hash.clone(),
+                    token_in: None,
+                    token_out: None,
+                    amount_in: None,
+                    amount_out: None,
+                    amount_a: Some(amount_a),
+                    amount_b: Some(amount_b),
+                    lp_amount: Some(pool.total_lp_supply),
+                    reserve_a_after: pool.reserve_a,
+                    reserve_b_after: pool.reserve_b,
+                };
+                let _ = self.pool_event_store.save_event(&event);
+                
+                // Save price snapshot
+                let price_a_in_b = if pool.reserve_a > 0 { pool.reserve_b as f64 / pool.reserve_a as f64 } else { 0.0 };
+                let price_b_in_a = if pool.reserve_b > 0 { pool.reserve_a as f64 / pool.reserve_b as f64 } else { 0.0 };
+                let snapshot = PriceSnapshot {
+                    pool_id: pool.pool_id.clone(),
+                    timestamp: block_time,
+                    block_height,
+                    reserve_a: pool.reserve_a,
+                    reserve_b: pool.reserve_b,
+                    price_a_in_b,
+                    price_b_in_a,
+                };
+                let _ = self.pool_event_store.save_price_snapshot(&snapshot);
             }
             "add_liquidity" => {
                 let pool_id = tx.payload.pool_id.as_ref().ok_or("missing pool_id")?;
@@ -843,6 +902,41 @@ impl L1Node {
                 // Mint LP tokens
                 let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
                 *lp_balances.entry(lp_key).or_insert(0.0) += lp_amount as f64;
+                
+                // Save event
+                let event = PoolEvent {
+                    id: format!("{}-add", tx_hash),
+                    pool_id: pool_id.clone(),
+                    event_type: PoolEventType::AddLiquidity,
+                    user_pub_key: tx.from_pub_key.clone(),
+                    timestamp: block_time,
+                    block_height,
+                    tx_hash: tx_hash.clone(),
+                    token_in: None,
+                    token_out: None,
+                    amount_in: None,
+                    amount_out: None,
+                    amount_a: Some(amount_a),
+                    amount_b: Some(amount_b),
+                    lp_amount: Some(lp_amount),
+                    reserve_a_after: pool.reserve_a,
+                    reserve_b_after: pool.reserve_b,
+                };
+                let _ = self.pool_event_store.save_event(&event);
+                
+                // Save price snapshot
+                let price_a_in_b = if pool.reserve_a > 0 { pool.reserve_b as f64 / pool.reserve_a as f64 } else { 0.0 };
+                let price_b_in_a = if pool.reserve_b > 0 { pool.reserve_a as f64 / pool.reserve_b as f64 } else { 0.0 };
+                let snapshot = PriceSnapshot {
+                    pool_id: pool_id.clone(),
+                    timestamp: block_time,
+                    block_height,
+                    reserve_a: pool.reserve_a,
+                    reserve_b: pool.reserve_b,
+                    price_a_in_b,
+                    price_b_in_a,
+                };
+                let _ = self.pool_event_store.save_price_snapshot(&snapshot);
             }
             "remove_liquidity" => {
                 let pool_id = tx.payload.pool_id.as_ref().ok_or("missing pool_id")?;
@@ -886,6 +980,41 @@ impl L1Node {
                 pool.reserve_b -= amount_b;
                 pool.total_lp_supply -= lp_amount;
                 self.pool_store.save_pool(&pool)?;
+                
+                // Save event
+                let event = PoolEvent {
+                    id: format!("{}-remove", tx_hash),
+                    pool_id: pool_id.clone(),
+                    event_type: PoolEventType::RemoveLiquidity,
+                    user_pub_key: tx.from_pub_key.clone(),
+                    timestamp: block_time,
+                    block_height,
+                    tx_hash: tx_hash.clone(),
+                    token_in: None,
+                    token_out: None,
+                    amount_in: None,
+                    amount_out: None,
+                    amount_a: Some(amount_a),
+                    amount_b: Some(amount_b),
+                    lp_amount: Some(lp_amount),
+                    reserve_a_after: pool.reserve_a,
+                    reserve_b_after: pool.reserve_b,
+                };
+                let _ = self.pool_event_store.save_event(&event);
+                
+                // Save price snapshot
+                let price_a_in_b = if pool.reserve_a > 0 { pool.reserve_b as f64 / pool.reserve_a as f64 } else { 0.0 };
+                let price_b_in_a = if pool.reserve_b > 0 { pool.reserve_a as f64 / pool.reserve_b as f64 } else { 0.0 };
+                let snapshot = PriceSnapshot {
+                    pool_id: pool_id.clone(),
+                    timestamp: block_time,
+                    block_height,
+                    reserve_a: pool.reserve_a,
+                    reserve_b: pool.reserve_b,
+                    price_a_in_b,
+                    price_b_in_a,
+                };
+                let _ = self.pool_event_store.save_price_snapshot(&snapshot);
             }
             "swap" => {
                 let token_in = tx.payload.token_a_symbol.as_ref().ok_or("missing token_a_symbol (token_in)")?;
@@ -950,6 +1079,44 @@ impl L1Node {
                 } else {
                     let key = (tx.from_pub_key.clone(), final_token.clone());
                     *token_balances.entry(key).or_insert(0.0) += current_amount as f64;
+                }
+                
+                // Save swap event for the primary pool (direct swap) or first hop
+                let primary_pool_id = LiquidityPool::make_pool_id(token_in, token_out);
+                if let Ok(Some(pool)) = self.pool_store.get_pool(&primary_pool_id) {
+                    let event = PoolEvent {
+                        id: format!("{}-swap", tx_hash),
+                        pool_id: primary_pool_id.clone(),
+                        event_type: PoolEventType::Swap,
+                        user_pub_key: tx.from_pub_key.clone(),
+                        timestamp: block_time,
+                        block_height,
+                        tx_hash: tx_hash.clone(),
+                        token_in: Some(token_in.clone()),
+                        token_out: Some(token_out.clone()),
+                        amount_in: Some(amount_in),
+                        amount_out: Some(current_amount),
+                        amount_a: None,
+                        amount_b: None,
+                        lp_amount: None,
+                        reserve_a_after: pool.reserve_a,
+                        reserve_b_after: pool.reserve_b,
+                    };
+                    let _ = self.pool_event_store.save_event(&event);
+                    
+                    // Save price snapshot
+                    let price_a_in_b = if pool.reserve_a > 0 { pool.reserve_b as f64 / pool.reserve_a as f64 } else { 0.0 };
+                    let price_b_in_a = if pool.reserve_b > 0 { pool.reserve_a as f64 / pool.reserve_b as f64 } else { 0.0 };
+                    let snapshot = PriceSnapshot {
+                        pool_id: primary_pool_id,
+                        timestamp: block_time,
+                        block_height,
+                        reserve_a: pool.reserve_a,
+                        reserve_b: pool.reserve_b,
+                        price_a_in_b,
+                        price_b_in_a,
+                    };
+                    let _ = self.pool_event_store.save_price_snapshot(&snapshot);
                 }
             }
             _ => {} // Non-AMM transactions handled elsewhere

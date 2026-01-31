@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { ArrowDownUp, Settings, Info, Loader2, RefreshCw, ChevronDown, AlertTriangle } from "lucide-react";
+import xrgeLogo from "@/assets/xrge-logo.webp";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,6 +48,20 @@ interface Pool {
   total_lp_supply: number;
   fee_rate: number;
 }
+
+const TokenIcon = ({ symbol, size = 20 }: { symbol: string; size?: number }) => {
+  if (symbol === "XRGE") {
+    return <img src={xrgeLogo} alt="XRGE" className="rounded-full" style={{ width: size, height: size }} />;
+  }
+  return (
+    <div 
+      className="rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold"
+      style={{ width: size, height: size }}
+    >
+      {symbol.charAt(0)}
+    </div>
+  );
+};
 
 const Swap = () => {
   const [tokens, setTokens] = useState<Token[]>([]);
@@ -331,7 +346,10 @@ const Swap = () => {
                     <SelectContent>
                       {tokens.map(t => (
                         <SelectItem key={t.symbol} value={t.symbol} disabled={t.symbol === tokenOut}>
-                          {t.symbol}
+                          <div className="flex items-center gap-2">
+                            <TokenIcon symbol={t.symbol} size={16} />
+                            <span>{t.symbol}</span>
+                          </div>
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -375,7 +393,10 @@ const Swap = () => {
                     <SelectContent>
                       {tokens.map(t => (
                         <SelectItem key={t.symbol} value={t.symbol} disabled={t.symbol === tokenIn}>
-                          {t.symbol}
+                          <div className="flex items-center gap-2">
+                            <TokenIcon symbol={t.symbol} size={16} />
+                            <span>{t.symbol}</span>
+                          </div>
                         </SelectItem>
                       ))}
                     </SelectContent>

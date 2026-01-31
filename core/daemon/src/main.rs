@@ -1,5 +1,6 @@
 mod amm;
 mod grpc;
+mod pool_events;
 mod node;
 mod peer;
 mod pool_store;
@@ -29,6 +30,7 @@ use crate::websocket::WsBroadcaster;
 use crate::grpc::GrpcNode;
 use crate::node::{L1Node, NodeOptions};
 use crate::pool_store::LiquidityPool;
+use crate::pool_events::{PoolEvent, PoolStats, PriceSnapshot};
 use quantum_vault_types::ChainConfig;
 
 #[derive(Parser, Debug)]
@@ -340,11 +342,15 @@ fn build_http_router(state: AppState) -> Router {
         // AMM/DEX endpoints
         .route("/api/pools", get(get_pools))
         .route("/api/pool/:pool_id", get(get_pool))
+        .route("/api/pool/:pool_id/events", get(get_pool_events))
+        .route("/api/pool/:pool_id/prices", get(get_pool_price_history))
+        .route("/api/pool/:pool_id/stats", get(get_pool_stats))
         .route("/api/pool/create", post(create_pool))
         .route("/api/pool/add-liquidity", post(add_liquidity))
         .route("/api/pool/remove-liquidity", post(remove_liquidity))
         .route("/api/swap/quote", post(get_swap_quote))
         .route("/api/swap/execute", post(execute_swap))
+        .route("/api/events", get(get_all_events))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(
             CorsLayer::new()
@@ -1114,6 +1120,71 @@ async fn execute_swap(
         "success": true,
         "message": "Swap transaction submitted"
     })))
+}
+
+// ===== Pool History Endpoints =====
+
+#[derive(Serialize)]
+struct PoolEventsResponse {
+    success: bool,
+    events: Vec<PoolEvent>,
+}
+
+async fn get_pool_events(
+    State(state): State<AppState>,
+    Path(pool_id): Path<String>,
+) -> Result<Json<PoolEventsResponse>, StatusCode> {
+    let node = &state.node;
+    let events = node.get_pool_events(&pool_id, 100)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(PoolEventsResponse { success: true, events }))
+}
+
+#[derive(Serialize)]
+struct PriceHistoryResponse {
+    success: bool,
+    prices: Vec<PriceSnapshot>,
+}
+
+async fn get_pool_price_history(
+    State(state): State<AppState>,
+    Path(pool_id): Path<String>,
+) -> Result<Json<PriceHistoryResponse>, StatusCode> {
+    let node = &state.node;
+    let prices = node.get_pool_price_history(&pool_id, 500)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(PriceHistoryResponse { success: true, prices }))
+}
+
+#[derive(Serialize)]
+struct PoolStatsResponse {
+    success: bool,
+    stats: PoolStats,
+}
+
+async fn get_pool_stats(
+    State(state): State<AppState>,
+    Path(pool_id): Path<String>,
+) -> Result<Json<PoolStatsResponse>, StatusCode> {
+    let node = &state.node;
+    let stats = node.get_pool_stats(&pool_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(PoolStatsResponse { success: true, stats }))
+}
+
+#[derive(Serialize)]
+struct AllEventsResponse {
+    success: bool,
+    events: Vec<PoolEvent>,
+}
+
+async fn get_all_events(
+    State(state): State<AppState>,
+) -> Result<Json<AllEventsResponse>, StatusCode> {
+    let node = &state.node;
+    let events = node.get_all_pool_events(100)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(AllEventsResponse { success: true, events }))
 }
 
 #[derive(Serialize)]

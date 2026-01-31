@@ -21,13 +21,14 @@ const networks: NetworkConfig[] = [
     color: "text-amber-500",
     dotColor: "bg-amber-500",
   },
-  {
-    id: "mainnet",
-    name: "Mainnet",
-    chainName: "RougeChain",
-    color: "text-success",
-    dotColor: "bg-success",
-  },
+  // Mainnet disabled until launch
+  // {
+  //   id: "mainnet",
+  //   name: "Mainnet",
+  //   chainName: "RougeChain",
+  //   color: "text-success",
+  //   dotColor: "bg-success",
+  // },
 ];
 
 interface NetworkBadgeProps {
@@ -40,12 +41,11 @@ const NetworkBadge = ({ isConnected = true, blockNumber, onNetworkChange }: Netw
   const [showDropdown, setShowDropdown] = useState(false);
   const [currentNetwork, setCurrentNetwork] = useState<NetworkType>("testnet");
 
-  // Load saved network preference
+  // Load saved network preference - force testnet for now
   useEffect(() => {
-    const saved = localStorage.getItem(NETWORK_STORAGE_KEY) as NetworkType;
-    if (saved && (saved === "testnet" || saved === "mainnet")) {
-      setCurrentNetwork(saved);
-    }
+    // Always force testnet until mainnet launch
+    setCurrentNetwork("testnet");
+    localStorage.setItem(NETWORK_STORAGE_KEY, "testnet");
   }, []);
 
   const handleNetworkChange = (networkId: NetworkType) => {
@@ -57,14 +57,17 @@ const NetworkBadge = ({ isConnected = true, blockNumber, onNetworkChange }: Netw
 
   const activeNetwork = networks.find(n => n.id === currentNetwork) || networks[0];
 
+  // Only show dropdown if more than one network available
+  const showNetworkSelector = networks.length > 1;
+
   return (
     <div className="relative">
-      <motion.button
+      <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ delay: 0.5 }}
-        onClick={() => setShowDropdown(!showDropdown)}
-        className="flex items-center gap-2 px-3 py-2 rounded-full bg-card border border-border shadow-lg hover:border-primary/50 transition-colors"
+        onClick={() => showNetworkSelector && setShowDropdown(!showDropdown)}
+        className={`flex items-center gap-2 px-3 py-2 rounded-full bg-card border border-border shadow-lg ${showNetworkSelector ? 'cursor-pointer hover:border-primary/50' : 'cursor-default'} transition-colors`}
       >
         <div className="relative">
           <div className={`w-3 h-3 rounded-full ${activeNetwork.dotColor}`} />
@@ -82,11 +85,13 @@ const NetworkBadge = ({ isConnected = true, blockNumber, onNetworkChange }: Netw
         {blockNumber && (
           <span className="text-xs text-muted-foreground">#{blockNumber}</span>
         )}
-        <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
-      </motion.button>
+        {showNetworkSelector && (
+          <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
+        )}
+      </motion.div>
 
       <AnimatePresence>
-        {showDropdown && (
+        {showDropdown && showNetworkSelector && (
           <>
             {/* Backdrop */}
             <div 
@@ -131,14 +136,6 @@ const NetworkBadge = ({ isConnected = true, blockNumber, onNetworkChange }: Netw
                   </button>
                 ))}
               </div>
-
-              {currentNetwork === "mainnet" && (
-                <div className="p-2 border-t border-border bg-destructive/5">
-                  <p className="text-[10px] text-destructive text-center">
-                    ⚠️ Mainnet uses real XRGE tokens
-                  </p>
-                </div>
-              )}
             </motion.div>
           </>
         )}

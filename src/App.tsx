@@ -14,6 +14,7 @@ import Node from "./pages/Node";
 import Transactions from "./pages/Transactions";
 import Swap from "./pages/Swap";
 import Pools from "./pages/Pools";
+import PoolDetail from "./pages/PoolDetail";
 import NotFound from "./pages/NotFound";
 const queryClient = new QueryClient();
 
@@ -36,6 +37,7 @@ const App = () => (
                 <Route path="/transactions" element={<Transactions />} />
                 <Route path="/swap" element={<Swap />} />
                 <Route path="/pools" element={<Pools />} />
+                <Route path="/pool/:poolId" element={<PoolDetail />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
