@@ -88,6 +88,7 @@ impl ChainService for GrpcNode {
             &req.to_public_key,
             req.amount as f64,
             Some(req.fee),
+            None, // token_symbol - gRPC doesn't support custom tokens yet
         ).map_err(|e| Status::invalid_argument(e))?;
         let tx_id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
         Ok(Response::new(SubmitTxResponse {
