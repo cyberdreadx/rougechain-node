@@ -236,29 +236,50 @@ pub async fn start_peer_sync(peer_manager: Arc<PeerManager>, node: Arc<L1Node>) 
     }
     
     let mut discovery_counter = 0u32;
+    let mut backoff_secs = 10u64; // Start with 10 second interval
+    const MIN_SYNC_INTERVAL: u64 = 10;
+    const MAX_SYNC_INTERVAL: u64 = 60;
     
     // Continuous sync loop
     loop {
-        sleep(Duration::from_secs(5)).await;
+        sleep(Duration::from_secs(backoff_secs)).await;
         
         let peers = peer_manager.get_peers().await;
+        let mut had_rate_limit = false;
         
         for peer in &peers {
             // Sync blocks
             match sync_from_peer(peer, &node, false).await {
                 Ok(count) if count > 0 => {
                     eprintln!("[peer] Synced {} new blocks from {}", count, peer);
+                    // Successful sync with new blocks - reset to normal interval
+                    backoff_secs = MIN_SYNC_INTERVAL;
                 }
-                Ok(_) => {} // No new blocks
+                Ok(_) => {
+                    // No new blocks - can slow down a bit
+                    backoff_secs = std::cmp::min(backoff_secs + 5, MAX_SYNC_INTERVAL);
+                }
                 Err(e) => {
-                    eprintln!("[peer] Sync error from {}: {}", peer, e);
+                    if e.contains("429") || e.contains("Too Many Requests") {
+                        had_rate_limit = true;
+                        // Don't log every rate limit, just increase backoff
+                    } else {
+                        eprintln!("[peer] Sync error from {}: {}", peer, e);
+                    }
                 }
             }
         }
         
-        // Peer discovery every 30 seconds (6 iterations)
+        // If rate limited, increase backoff significantly
+        if had_rate_limit {
+            backoff_secs = std::cmp::min(backoff_secs * 2, MAX_SYNC_INTERVAL);
+            eprintln!("[peer] Rate limited, backing off to {}s", backoff_secs);
+        }
+        
+        // Peer discovery every ~60 seconds
         discovery_counter += 1;
-        if discovery_counter >= 6 {
+        let discovery_threshold = (60 / backoff_secs).max(1) as u32;
+        if discovery_counter >= discovery_threshold {
             discovery_counter = 0;
             
             for peer in &peers {
