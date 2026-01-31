@@ -277,7 +277,8 @@ async function decryptMessage(
 
 // Generate only encryption keypair (ML-KEM-768)
 export function generateEncryptionKeypair(): { publicKey: string; privateKey: string } {
-  const encryptionSeed = crypto.getRandomValues(new Uint8Array(32));
+  // ML-KEM-768 requires 64-byte seed
+  const encryptionSeed = crypto.getRandomValues(new Uint8Array(64));
   const encryptionKeypair = ml_kem768.keygen(encryptionSeed);
   return {
     publicKey: bytesToHex(encryptionKeypair.publicKey),
