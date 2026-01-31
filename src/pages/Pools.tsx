@@ -91,6 +91,7 @@ const Pools = () => {
       let tokenBalances: Record<string, number> = {};
       
       // Get user balances first (if wallet connected)
+      let userLpBalances: Record<string, number> = {};
       if (wallet) {
         const balRes = await fetch(`${baseUrl}/balance/${wallet.publicKey}`, {
           headers: getCoreApiHeaders(),
@@ -100,6 +101,7 @@ const Pools = () => {
           const balData = await balRes.json();
           xrgeBalance = balData.balance || 0;
           tokenBalances = balData.token_balances || {};
+          userLpBalances = balData.lp_balances || {};
           
           // Add all tokens the user owns
           Object.keys(tokenBalances).forEach(symbol => {
@@ -136,8 +138,8 @@ const Pools = () => {
         balance: symbol === "XRGE" ? xrgeBalance : (tokenBalances[symbol] || 0),
       })));
       
-      // TODO: Fetch LP balances when API supports it
-      setLpBalances({});
+      // Set LP balances from API
+      setLpBalances(userLpBalances);
     } catch (e) {
       console.error("Failed to fetch pools:", e);
     } finally {

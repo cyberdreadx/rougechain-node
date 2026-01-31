@@ -744,6 +744,7 @@ struct BalanceResponse {
     success: bool,
     balance: f64,
     token_balances: std::collections::HashMap<String, f64>,
+    lp_balances: std::collections::HashMap<String, f64>,
 }
 
 async fn get_balance(
@@ -753,7 +754,8 @@ async fn get_balance(
     let node = &state.node;
     let balance = node.get_balance(&public_key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let token_balances = node.get_all_token_balances(&public_key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(BalanceResponse { success: true, balance, token_balances }))
+    let lp_balances = node.get_all_lp_balances(&public_key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(BalanceResponse { success: true, balance, token_balances, lp_balances }))
 }
 
 #[derive(Serialize)]
