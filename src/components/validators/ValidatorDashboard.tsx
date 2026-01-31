@@ -104,7 +104,7 @@ export function ValidatorDashboard({
     };
 
     loadSelection();
-    const interval = setInterval(loadSelection, 5000);
+    const interval = setInterval(loadSelection, 10000); // 10s
     return () => clearInterval(interval);
   }, []);
 

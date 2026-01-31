@@ -75,7 +75,7 @@ const LiveNetworkStatus = () => {
     };
 
     fetchStats();
-    const interval = setInterval(fetchStats, 2000);
+    const interval = setInterval(fetchStats, 5000); // 5 seconds
     return () => clearInterval(interval);
   }, [stats?.height]);
 

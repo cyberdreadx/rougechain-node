@@ -123,7 +123,7 @@ const Blockchain = () => {
     };
 
     fetchChain();
-    const interval = setInterval(fetchChain, 3000); // Refresh every 3s
+    const interval = setInterval(fetchChain, 5000); // Refresh every 5s
     return () => clearInterval(interval);
   }, []);
 

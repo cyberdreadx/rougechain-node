@@ -142,7 +142,7 @@ const NetworkStatsBar = () => {
 
   useEffect(() => {
     fetchStats();
-    const interval = setInterval(fetchStats, 3000); // Refresh every 3s
+    const interval = setInterval(fetchStats, 5000); // Refresh every 5s
     return () => clearInterval(interval);
   }, []);
 

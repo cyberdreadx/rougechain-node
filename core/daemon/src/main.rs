@@ -42,17 +42,20 @@ struct Args {
     data_dir: Option<String>,
     #[arg(long, env = "QV_API_KEYS")]
     api_keys: Option<String>,
-    #[arg(long, default_value_t = 120)]
+    /// Rate limit per minute (0 = unlimited, recommended for public testnets)
+    #[arg(long, default_value_t = 0)]
     rate_limit_per_minute: u32,
-    #[arg(long, default_value_t = 120)]
+    /// Rate limit for read operations (0 = unlimited)
+    #[arg(long, default_value_t = 0)]
     rate_limit_read_per_minute: u32,
-    #[arg(long, default_value_t = 30)]
+    /// Rate limit for write operations (0 = unlimited)
+    #[arg(long, default_value_t = 0)]
     rate_limit_write_per_minute: u32,
     /// Rate limit for validators (Tier 1) - 0 = unlimited
     #[arg(long, default_value_t = 0)]
     rate_limit_validator: u32,
-    /// Rate limit for registered peers (Tier 2)
-    #[arg(long, default_value_t = 300)]
+    /// Rate limit for registered peers (Tier 2) - 0 = unlimited
+    #[arg(long, default_value_t = 0)]
     rate_limit_peer: u32,
     #[arg(long, env = "QV_FAUCET_WHITELIST")]
     faucet_whitelist: Option<String>,

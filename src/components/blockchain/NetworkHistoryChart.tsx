@@ -213,7 +213,7 @@ const NetworkHistoryChart = () => {
 
   useEffect(() => {
     fetchChartData();
-    const interval = setInterval(fetchChartData, 3000); // Refresh every 3s
+    const interval = setInterval(fetchChartData, 10000); // Refresh every 10s
     return () => clearInterval(interval);
   }, [timeRange]);
 

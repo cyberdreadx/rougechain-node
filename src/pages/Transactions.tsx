@@ -202,8 +202,8 @@ const Transactions = () => {
   useEffect(() => {
     fetchTxs();
     fetchNetworkStats();
-    const txInterval = setInterval(fetchTxs, 3000);
-    const statsInterval = setInterval(fetchNetworkStats, 5000);
+    const txInterval = setInterval(fetchTxs, 5000); // 5 seconds
+    const statsInterval = setInterval(fetchNetworkStats, 10000); // 10 seconds
     return () => {
       clearInterval(txInterval);
       clearInterval(statsInterval);
