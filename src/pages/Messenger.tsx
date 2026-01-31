@@ -80,12 +80,27 @@ const Messenger = () => {
     try {
       const wallets = await getWallets();
       // Filter out our own wallet by checking all identifiers
-      setContacts(wallets.filter(w => 
+      const filtered = wallets.filter(w => 
         w.id !== wallet?.id &&
         w.id !== wallet?.signingPublicKey &&
         w.signingPublicKey !== wallet?.signingPublicKey &&
         w.encryptionPublicKey !== wallet?.encryptionPublicKey
-      ));
+      );
+      
+      // Remove duplicates - keep the one with a non-generic name, or the latest
+      const uniqueMap = new Map<string, typeof filtered[0]>();
+      for (const w of filtered) {
+        const key = w.signingPublicKey || w.encryptionPublicKey || w.id;
+        const existing = uniqueMap.get(key);
+        // Prefer wallet with custom name over "My Wallet" or empty
+        if (!existing || 
+            (existing.displayName === "My Wallet" && w.displayName !== "My Wallet") ||
+            (!existing.displayName && w.displayName)) {
+          uniqueMap.set(key, w);
+        }
+      }
+      
+      setContacts(Array.from(uniqueMap.values()));
     } catch (error) {
       console.error("Failed to load contacts:", error);
     }

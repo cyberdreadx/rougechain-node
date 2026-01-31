@@ -68,7 +68,12 @@ impl MessengerStore {
 
     pub fn register_wallet(&self, wallet: MessengerWallet) -> Result<MessengerWallet, String> {
         let mut state = self.load_state()?;
-        state.wallets.retain(|w| w.id != wallet.id);
+        // Remove any existing wallet with same id OR same signing key (prevents duplicates)
+        state.wallets.retain(|w| {
+            w.id != wallet.id && 
+            (wallet.signing_public_key.is_empty() || w.signing_public_key != wallet.signing_public_key) &&
+            (wallet.encryption_public_key.is_empty() || w.encryption_public_key != wallet.encryption_public_key)
+        });
         state.wallets.push(wallet.clone());
         self.save_state(&state)?;
         Ok(wallet)

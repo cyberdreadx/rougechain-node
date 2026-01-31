@@ -41,8 +41,43 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
   const [manualName, setManualName] = useState("");
   const [isAddingManual, setIsAddingManual] = useState(false);
   const [manualError, setManualError] = useState("");
+  const [detectedWallet, setDetectedWallet] = useState<Wallet | null>(null);
+  const [isLookingUp, setIsLookingUp] = useState(false);
 
   const addressValidation = manualAddress ? parseAddress(manualAddress) : null;
+
+  // Live lookup when address changes
+  const handleAddressChange = async (value: string) => {
+    setManualAddress(value);
+    setDetectedWallet(null);
+    setManualError("");
+
+    const parsed = parseAddress(value);
+    if (!parsed.valid || parsed.publicKey.length < 100) return;
+
+    // Check if it's own wallet
+    if (parsed.publicKey === wallet.signingPublicKey || parsed.publicKey === wallet.encryptionPublicKey) {
+      setManualError("Cannot chat with yourself");
+      return;
+    }
+
+    setIsLookingUp(true);
+    try {
+      const allWallets = await getWallets();
+      const match = allWallets.find(
+        w => w.signingPublicKey === parsed.publicKey || 
+             w.encryptionPublicKey === parsed.publicKey ||
+             w.id === parsed.publicKey
+      );
+      if (match) {
+        setDetectedWallet(match);
+      }
+    } catch {
+      // Ignore lookup errors
+    } finally {
+      setIsLookingUp(false);
+    }
+  };
 
   const handleSelectContact = async (contact: Wallet) => {
     setIsCreating(contact.id);
@@ -97,57 +132,15 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
   };
 
   const handleAddManualContact = async () => {
-    setManualError("");
-    
-    const parsed = parseAddress(manualAddress);
-    if (!parsed.valid) {
-      setManualError(parsed.error || "Invalid address");
-      return;
-    }
-
-    // Check it's not our own wallet
-    if (parsed.publicKey === wallet.signingPublicKey || parsed.publicKey === wallet.encryptionPublicKey) {
-      setManualError("Cannot chat with yourself");
+    if (!detectedWallet) {
+      setManualError("Wallet not found on network");
       return;
     }
 
     setIsAddingManual(true);
     try {
-      // First, try to find if this wallet is registered (by signing key)
-      // This would give us their encryption key for E2EE
-      let contactWallet: Wallet | null = null;
-      
-      // Fetch fresh list from server to find their encryption key
-      const allWallets = await getWallets();
-      const matchingWallet = allWallets.find(
-        w => w.signingPublicKey === parsed.publicKey || 
-             w.encryptionPublicKey === parsed.publicKey ||
-             w.id === parsed.publicKey
-      );
-      
-      if (matchingWallet) {
-        contactWallet = matchingWallet;
-      } else {
-        // Also check local contacts (might have been loaded earlier)
-        const matchingContact = contacts.find(
-          c => c.signingPublicKey === parsed.publicKey || c.encryptionPublicKey === parsed.publicKey
-        );
-        
-        if (matchingContact) {
-          contactWallet = matchingContact;
-        } else {
-          // Not registered - they need to open Messenger first
-          setManualError(
-            "This user hasn't registered their messenger wallet yet. " +
-            "Ask them to open the Messenger page to enable encrypted chat."
-          );
-          setIsAddingManual(false);
-          return;
-        }
-      }
-
-      // Create conversation with the found/created contact
-      const conversation = await createConversation(wallet.id, contactWallet.id);
+      // Create conversation with the detected wallet
+      const conversation = await createConversation(wallet.id, detectedWallet.id);
       conversation.participants = [
         {
           id: wallet.id,
@@ -155,7 +148,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
           signingPublicKey: wallet.signingPublicKey,
           encryptionPublicKey: wallet.encryptionPublicKey,
         },
-        contactWallet,
+        detectedWallet,
       ];
       onConversationCreated(conversation);
     } catch (error) {
@@ -254,7 +247,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
                   <Input
                     id="manual-address"
                     value={manualAddress}
-                    onChange={(e) => setManualAddress(e.target.value)}
+                    onChange={(e) => handleAddressChange(e.target.value)}
                     placeholder="xrge:... or paste public key"
                     className={`font-mono text-xs pr-8 ${
                       manualAddress && !addressValidation?.valid ? "border-destructive" : ""
@@ -262,7 +255,9 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
                   />
                   {manualAddress && (
                     <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                      {addressValidation?.valid ? (
+                      {isLookingUp ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                      ) : addressValidation?.valid ? (
                         <CheckCircle2 className="w-4 h-4 text-success" />
                       ) : (
                         <AlertCircle className="w-4 h-4 text-destructive" />
@@ -272,13 +267,32 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
                 </div>
               </div>
 
+              {/* Show detected wallet info */}
+              {detectedWallet && (
+                <div className="p-2 rounded-lg bg-success/10 border border-success/30 flex items-center gap-2">
+                  <User className="w-4 h-4 text-success flex-shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">
+                      {detectedWallet.displayName || "Unknown"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Wallet found on network</p>
+                  </div>
+                </div>
+              )}
+
               {manualError && (
                 <p className="text-xs text-destructive">{manualError}</p>
+              )}
+              
+              {addressValidation?.valid && !detectedWallet && !isLookingUp && !manualError && (
+                <p className="text-xs text-amber-500">
+                  Wallet not registered yet. They need to open Messenger first.
+                </p>
               )}
 
               <Button
                 onClick={handleAddManualContact}
-                disabled={isAddingManual || !manualAddress || !addressValidation?.valid}
+                disabled={isAddingManual || !manualAddress || !addressValidation?.valid || !detectedWallet}
                 className="w-full"
                 size="sm"
               >
