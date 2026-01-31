@@ -1,6 +1,7 @@
 mod grpc;
 mod node;
 mod peer;
+mod websocket;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -9,15 +10,19 @@ use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 
 use axum::extract::{Path, Query, State};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
+use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::time::{sleep, Duration};
 use tower_http::cors::{Any, CorsLayer};
+
+use crate::websocket::WsBroadcaster;
 
 use crate::grpc::GrpcNode;
 use crate::node::{L1Node, NodeOptions};
@@ -78,6 +83,7 @@ struct AppState {
     peer_limit: u32,       // Tier 2: registered peers
     faucet_whitelist: Vec<String>,
     peer_manager: Arc<peer::PeerManager>,
+    ws_broadcaster: Arc<WsBroadcaster>,
 }
 
 #[derive(Clone)]
@@ -218,6 +224,7 @@ async fn main() -> Result<(), String> {
         .map(|p| peer::parse_peers(p))
         .unwrap_or_default();
     let peer_manager = Arc::new(peer::PeerManager::new(initial_peers.clone(), args.public_url.clone()));
+    let ws_broadcaster = Arc::new(WsBroadcaster::new());
     
     let app_state = AppState {
         node: node.clone(),
@@ -229,7 +236,10 @@ async fn main() -> Result<(), String> {
         peer_limit: args.rate_limit_peer,
         faucet_whitelist: parse_whitelist(args.faucet_whitelist),
         peer_manager: peer_manager.clone(),
+        ws_broadcaster: ws_broadcaster.clone(),
     };
+    
+    eprintln!("[core-daemon] WebSocket broadcaster initialized");
 
     // Start peer sync
     {
@@ -253,11 +263,16 @@ async fn main() -> Result<(), String> {
     if node.is_mining() {
         let miner = node.clone();
         let broadcast_pm = peer_manager.clone();
+        let ws_bc = ws_broadcaster.clone();
         tokio::spawn(async move {
             loop {
                 if let Ok(Some(block)) = miner.mine_pending() {
                     eprintln!("[miner] Mined block {}", block.header.height);
-                    // Broadcast to peers
+                    
+                    // Broadcast to WebSocket clients
+                    ws_bc.broadcast_new_block(&block);
+                    
+                    // Broadcast to P2P peers
                     let peers = broadcast_pm.get_peers().await;
                     if !peers.is_empty() {
                         peer::broadcast_block(&peers, &block).await;
@@ -287,6 +302,7 @@ async fn main() -> Result<(), String> {
 
 fn build_http_router(state: AppState) -> Router {
     Router::new()
+        .route("/api/ws", get(ws_handler))
         .route("/api/stats", get(get_stats))
         .route("/api/health", get(get_health))
         .route("/api/blocks", get(get_blocks))
@@ -452,6 +468,56 @@ fn client_key<B>(request: &Request<B>) -> String {
     "unknown".to_string()
 }
 
+// WebSocket handler for real-time updates
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_ws_connection(socket, state))
+}
+
+async fn handle_ws_connection(socket: WebSocket, state: AppState) {
+    let (mut sender, mut receiver) = socket.split();
+    let broadcaster = state.ws_broadcaster.clone();
+    
+    // Track connection
+    broadcaster.client_connected().await;
+    
+    // Subscribe to broadcast channel
+    let mut rx = broadcaster.subscribe();
+    
+    // Send initial stats
+    let height = state.node.get_tip_height().unwrap_or(0);
+    let peer_count = state.peer_manager.peer_count().await;
+    let mempool_size = 0; // TODO: expose mempool size
+    broadcaster.broadcast_stats(height, peer_count, mempool_size);
+    
+    // Spawn task to forward broadcasts to this client
+    let send_task = tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            if sender.send(Message::Text(msg)).await.is_err() {
+                break;
+            }
+        }
+    });
+    
+    // Handle incoming messages (ping/pong, close)
+    while let Some(msg) = receiver.next().await {
+        match msg {
+            Ok(Message::Ping(data)) => {
+                // Pong is handled automatically by axum
+            }
+            Ok(Message::Close(_)) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+    
+    // Client disconnected
+    broadcaster.client_disconnected().await;
+    send_task.abort();
+}
+
 #[derive(Serialize)]
 struct StatsResponse {
     connected_peers: u32,
@@ -462,6 +528,7 @@ struct StatsResponse {
     fees_in_last_block: f64,
     chain_id: String,
     finalized_height: u64,
+    ws_clients: usize,
 }
 
 async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, StatusCode> {
@@ -470,6 +537,7 @@ async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>,
     let (total_fees, last_fees) = node.get_fee_stats().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let (finalized, _, _, _) = node.get_finality_status().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let peer_count = state.peer_manager.peer_count().await as u32;
+    let ws_clients = state.ws_broadcaster.client_count().await;
     Ok(Json(StatsResponse {
         connected_peers: peer_count,
         network_height: height,
@@ -479,6 +547,7 @@ async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>,
         fees_in_last_block: last_fees,
         chain_id: node.chain_id(),
         finalized_height: finalized,
+        ws_clients,
     }))
 }
 
@@ -534,8 +603,13 @@ async fn import_block(
     Json(block): Json<quantum_vault_types::BlockV1>,
 ) -> Result<Json<ImportBlockResponse>, StatusCode> {
     let node = &state.node;
+    let block_clone = block.clone();
     match node.import_block(block) {
-        Ok(()) => Ok(Json(ImportBlockResponse { success: true, error: None })),
+        Ok(()) => {
+            // Broadcast to WebSocket clients
+            state.ws_broadcaster.broadcast_new_block(&block_clone);
+            Ok(Json(ImportBlockResponse { success: true, error: None }))
+        }
         Err(e) => Ok(Json(ImportBlockResponse { success: false, error: Some(e) })),
     }
 }
@@ -722,7 +796,17 @@ async fn submit_tx(
     ) {
         Ok(tx) => {
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
-            // Broadcast tx to peers
+            
+            // Broadcast to WebSocket clients
+            state.ws_broadcaster.broadcast_new_tx(
+                &id,
+                &tx.tx_type,
+                &tx.from_pub_key,
+                tx.payload.to_pub_key_hex.as_deref(),
+                tx.payload.amount.map(|a| a as u64),
+            );
+            
+            // Broadcast tx to P2P peers
             let peers = state.peer_manager.get_peers().await;
             if !peers.is_empty() {
                 peer::broadcast_tx(&peers, &tx);

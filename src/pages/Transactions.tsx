@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Activity, RefreshCw, Copy, Check, Zap, Box, Users, Clock, ChevronLeft, ChevronRight, ExternalLink, ArrowUpRight, ArrowDownLeft } from "lucide-react";
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { Activity, RefreshCw, Copy, Check, Zap, Box, Users, Clock, ChevronLeft, ChevronRight, ExternalLink, ArrowUpRight, ArrowDownLeft, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/network";
 import { toast } from "sonner";
+import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 
 const ITEMS_PER_PAGE = 20;
 
@@ -200,52 +201,39 @@ const Transactions = () => {
     }
   };
 
-  // Smart polling - check for new blocks, only fetch full data when height changes
-  const checkForNewBlocks = async () => {
-    try {
-      const apiBase = getCoreApiBaseUrl();
-      if (!apiBase) return;
-      
-      const res = await fetch(`${apiBase}/stats`, {
-        signal: AbortSignal.timeout(3000),
-        headers: getCoreApiHeaders(),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const currentHeight = data.network_height ?? data.networkHeight ?? 0;
-        const peers = data.connected_peers ?? data.connectedPeers ?? 0;
-        
-        setNetworkStats(prev => ({
-          ...prev,
-          blockHeight: currentHeight,
-          connectedPeers: peers,
-          tps: data.tps ?? prev.tps,
-          avgBlockTime: data.avg_block_time ?? data.avgBlockTime ?? prev.avgBlockTime,
-        }));
-        
-        // Only fetch full transaction list if block height changed
-        if (currentHeight > lastKnownHeight) {
-          setLastKnownHeight(currentHeight);
-          fetchTxs();
-        }
-      }
-    } catch {
-      // Silent fail for polling
-    }
-  };
-
-  useEffect(() => {
-    // Initial fetch
+  // WebSocket hook for real-time updates
+  const handleNewBlock = useCallback(() => {
     fetchTxs();
     fetchNetworkStats();
-    
-    // Smart polling: check stats every 2s (lightweight), only fetch txs when new block
-    const pollInterval = setInterval(checkForNewBlocks, 2000);
-    
-    return () => {
-      clearInterval(pollInterval);
-    };
-  }, [lastKnownHeight]);
+  }, []);
+
+  const handleStats = useCallback((event: { block_height: number; peer_count: number }) => {
+    setNetworkStats(prev => ({
+      ...prev,
+      blockHeight: event.block_height,
+      connectedPeers: event.peer_count,
+    }));
+  }, []);
+
+  const { isConnected, connectionType, lastBlockHeight } = useBlockchainWs({
+    onNewBlock: handleNewBlock,
+    onStats: handleStats,
+    fallbackPollInterval: 5000,
+  });
+
+  // Initial fetch on mount
+  useEffect(() => {
+    fetchTxs();
+    fetchNetworkStats();
+  }, []);
+
+  // Refetch when block height changes (from WebSocket)
+  useEffect(() => {
+    if (lastBlockHeight > 0 && lastBlockHeight > lastKnownHeight) {
+      setLastKnownHeight(lastBlockHeight);
+      fetchTxs();
+    }
+  }, [lastBlockHeight, lastKnownHeight]);
 
   const filteredTxs = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -331,9 +319,24 @@ const Transactions = () => {
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold text-foreground">Transaction Feed</h1>
               <Badge variant="outline">{getNetworkLabel()}</Badge>
+              {/* WebSocket connection status */}
+              <div className="flex items-center gap-1.5" title={`Connection: ${connectionType}`}>
+                {connectionType === "websocket" ? (
+                  <Wifi className="w-4 h-4 text-green-500" />
+                ) : connectionType === "polling" ? (
+                  <RefreshCw className="w-4 h-4 text-amber-500" />
+                ) : (
+                  <WifiOff className="w-4 h-4 text-destructive" />
+                )}
+                <span className="text-xs text-muted-foreground hidden sm:inline">
+                  {connectionType === "websocket" ? "Live" : connectionType === "polling" ? "Polling" : "Offline"}
+                </span>
+              </div>
             </div>
             <p className="text-sm text-muted-foreground">
-              Live stream of recent transactions from the core node.
+              {connectionType === "websocket" 
+                ? "Real-time updates via WebSocket" 
+                : "Live stream of recent transactions from the core node."}
             </p>
           </div>
           <div className="flex items-center gap-2">

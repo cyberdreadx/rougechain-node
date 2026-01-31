@@ -112,20 +112,25 @@ const Wallet = () => {
         setTransactions([]);
         setCirculatingSupply(0);
         setLastUpdated(null);
+        
+        // Only log on actual network change
+        if (savedNetwork === "mainnet") {
+          console.log(`[Wallet] Network changed to mainnet`);
+        } else if (savedNetwork === "testnet") {
+          console.log(`[Wallet] Network changed to testnet`);
+        }
       }
       
       // Prioritize UI selection: if user selected testnet, show faucet; if mainnet, hide it
       if (savedNetwork === "mainnet") {
         setIsMainnet(true);
         setChainIdLabel("rougechain-mainnet");
-        console.log(`[Wallet] Using UI network selection: mainnet (faucet hidden)`);
         return;
       }
       
       if (savedNetwork === "testnet") {
         setIsMainnet(false);
         setChainIdLabel("rougechain-testnet");
-        console.log(`[Wallet] Using UI network selection: testnet (faucet shown)`);
         return;
       }
       
@@ -147,8 +152,13 @@ const Wallet = () => {
               // Hide faucet on mainnet (chainId doesn't contain "devnet" or "testnet")
               const isMainnetNetwork = !detected.includes("devnet") && !detected.includes("testnet");
               setIsMainnet(isMainnetNetwork);
-              setChainIdLabel(detected);
-              console.log(`[Wallet] No UI selection, using node chainId: ${detected} (${isMainnetNetwork ? 'mainnet' : 'devnet/testnet'})`);
+              // Only update and log if chainId actually changed
+              setChainIdLabel(prev => {
+                if (prev !== detected) {
+                  console.log(`[Wallet] Using node chainId: ${detected}`);
+                }
+                return detected;
+              });
             } else {
               // No chainId in response - default to testnet (show faucet)
               setIsMainnet(false);
@@ -157,10 +167,9 @@ const Wallet = () => {
             // API error - default to testnet (show faucet)
             setIsMainnet(false);
           }
-        } catch (error) {
+        } catch {
           // If can't reach node, default to testnet (show faucet)
           setIsMainnet(false);
-          console.warn("[Wallet] Could not reach node, defaulting to testnet (faucet shown)");
         }
       };
       
@@ -176,7 +185,7 @@ const Wallet = () => {
     };
     window.addEventListener("storage", handleStorageChange);
     // Check periodically in case localStorage changed in same tab (storage event doesn't fire in same tab)
-    const interval = setInterval(checkNetwork, 1000);
+    const interval = setInterval(checkNetwork, 5000); // Check every 5s, not 1s
     return () => {
       clearInterval(interval);
       window.removeEventListener("storage", handleStorageChange);
@@ -187,8 +196,8 @@ const Wallet = () => {
   useEffect(() => {
     if (wallet) {
       refreshWalletData();
-      // Auto-refresh every 3 seconds to see new transactions
-      const interval = setInterval(refreshWalletData, 3000);
+      // Auto-refresh every 15 seconds (will be replaced by WebSocket when available)
+      const interval = setInterval(refreshWalletData, 15000);
       return () => clearInterval(interval);
     }
   }, [wallet?.signingPublicKey]);

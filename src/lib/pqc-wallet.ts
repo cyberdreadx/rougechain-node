@@ -262,7 +262,10 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
         }
       }
 
-      console.log(`[Wallet] Loaded ${transactions.length} transactions from ${data.blocks.length} blocks`);
+      // Debug logging (only in development)
+      if (import.meta.env.DEV) {
+        console.log(`[Wallet] Loaded ${transactions.length} transactions from ${data.blocks.length} blocks`);
+      }
 
       return transactions;
     }
