@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity, Zap, ExternalLink } from "lucide-react";
+import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity, Zap, ExternalLink, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
@@ -238,6 +238,45 @@ const Index = () => {
             </motion.div>
           ))}
         </div>
+
+        {/* XRGE Chart Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="mb-16"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center">
+                <TrendingUp className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-foreground">XRGE Price</h2>
+                <p className="text-xs text-muted-foreground">Live chart from GeckoTerminal</p>
+              </div>
+            </div>
+            <a 
+              href="https://www.geckoterminal.com/base/pools/0x059e10d26c64a63d04e1814f46305210eddc447d" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
+            >
+              View on GeckoTerminal
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
+          
+          <div className="rounded-2xl border border-red-500/20 overflow-hidden bg-black/40">
+            <iframe
+              src="https://www.geckoterminal.com/base/pools/0x059e10d26c64a63d04e1814f46305210eddc447d?embed=1&info=0&swaps=0&grayscale=0&light_chart=0"
+              title="XRGE Price Chart"
+              className="w-full h-[400px] border-0"
+              allow="clipboard-write"
+              allowFullScreen
+            />
+          </div>
+        </motion.div>
 
         {/* Security Section */}
         <motion.div
