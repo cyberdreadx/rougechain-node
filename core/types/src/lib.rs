@@ -20,6 +20,15 @@ pub struct TxPayload {
     pub token_symbol: Option<String>,
     pub token_decimals: Option<u8>,
     pub token_total_supply: Option<u64>,
+    // AMM/DEX fields
+    pub pool_id: Option<String>,           // Pool identifier (sorted token pair)
+    pub token_a_symbol: Option<String>,    // First token in pair
+    pub token_b_symbol: Option<String>,    // Second token in pair
+    pub amount_a: Option<u64>,             // Amount of token A
+    pub amount_b: Option<u64>,             // Amount of token B
+    pub min_amount_out: Option<u64>,       // Minimum output (slippage protection)
+    pub swap_path: Option<Vec<String>>,    // Multi-hop path [TOKENA, XRGE, TOKENB]
+    pub lp_amount: Option<u64>,            // LP token amount for remove_liquidity
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

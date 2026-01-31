@@ -14,8 +14,13 @@ use quantum_vault_types::{
     ChainConfig, PQKeypair, SlashPayload, TxPayload, TxV1, VoteMessage,
 };
 
+use crate::amm;
+use crate::pool_store::{LiquidityPool, PoolStore};
+
 const BASE_TRANSFER_FEE: f64 = 0.1;
 const TOKEN_CREATION_FEE: f64 = 100.0;
+const POOL_CREATION_FEE: f64 = 10.0;
+const SWAP_FEE: f64 = 0.1;
 const JAIL_BLOCKS: u64 = 20;
 const SLASH_DIVISOR: u128 = 10;
 const MAX_MEMPOOL: usize = 2000;
@@ -27,6 +32,9 @@ pub struct NodeOptions {
     pub mine: bool,
 }
 
+/// Key for token balances: (public_key, token_symbol)
+type TokenBalanceKey = (String, String);
+
 #[derive(Clone)]
 pub struct L1Node {
     node_id: String,
@@ -34,9 +42,12 @@ pub struct L1Node {
     store: ChainStore,
     validator_store: ValidatorStore,
     messenger_store: MessengerStore,
+    pool_store: PoolStore,
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
     balances: Arc<Mutex<HashMap<String, f64>>>,
+    token_balances: Arc<Mutex<HashMap<TokenBalanceKey, f64>>>,
+    lp_balances: Arc<Mutex<HashMap<TokenBalanceKey, f64>>>,  // LP token balances
     votes: Arc<Mutex<Vec<VoteMessage>>>,
     finalized_height: Arc<Mutex<u64>>,
 }
@@ -46,6 +57,7 @@ impl L1Node {
         let store = ChainStore::new(&opts.data_dir, opts.chain.clone());
         let validator_store = ValidatorStore::new(&opts.data_dir)?;
         let messenger_store = MessengerStore::new(&opts.data_dir);
+        let pool_store = PoolStore::new(&opts.data_dir)?;
         let keys = pqc_keygen();
         Ok(Self {
             node_id: uuid::Uuid::new_v4().to_string(),
@@ -53,9 +65,12 @@ impl L1Node {
             store,
             validator_store,
             messenger_store,
+            pool_store,
             keys: Arc::new(Mutex::new(keys)),
             mempool: Arc::new(Mutex::new(HashMap::new())),
             balances: Arc::new(Mutex::new(HashMap::new())),
+            token_balances: Arc::new(Mutex::new(HashMap::new())),
+            lp_balances: Arc::new(Mutex::new(HashMap::new())),
             votes: Arc::new(Mutex::new(Vec::new())),
             finalized_height: Arc::new(Mutex::new(0)),
         })
@@ -65,6 +80,7 @@ impl L1Node {
         self.store.init()?;
         self.messenger_store.init()?;
         self.rebuild_balances()?;
+        self.rebuild_token_balances()?;
         let tip = self.store.get_tip()?;
         *self.finalized_height.lock().map_err(|_| "finality lock")? = tip.height;
         Ok(())
@@ -105,13 +121,24 @@ impl L1Node {
         
         // Reset balances
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
+        let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        let mut lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
         balances.clear();
+        token_balances.clear();
+        lp_balances.clear();
         
         // Replay all transactions to rebuild balances with fee distribution
         for block in blocks {
             // Apply transaction effects
             for tx in &block.txs {
-                Self::apply_balance_tx_inner(&mut balances, tx);
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, tx);
+                Self::apply_amm_balance_effects(
+                    &mut balances,
+                    &mut token_balances,
+                    &mut lp_balances,
+                    tx,
+                    &self.pool_store,
+                );
             }
             
             // Distribute fees for this block
@@ -175,6 +202,64 @@ impl L1Node {
     pub fn get_balance(&self, public_key: &str) -> Result<f64, String> {
         let balances = self.balances.lock().map_err(|_| "balance lock")?;
         Ok(*balances.get(public_key).unwrap_or(&0.0))
+    }
+
+    pub fn get_token_balance(&self, public_key: &str, token_symbol: &str) -> Result<f64, String> {
+        let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        let key = (public_key.to_string(), token_symbol.to_string());
+        Ok(*token_balances.get(&key).unwrap_or(&0.0))
+    }
+
+    pub fn get_all_token_balances(&self, public_key: &str) -> Result<HashMap<String, f64>, String> {
+        let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        let mut result = HashMap::new();
+        for ((pubkey, symbol), balance) in token_balances.iter() {
+            if pubkey == public_key && *balance > 0.0 {
+                result.insert(symbol.clone(), *balance);
+            }
+        }
+        Ok(result)
+    }
+
+    // ===== AMM/DEX Methods =====
+    
+    pub fn get_lp_balance(&self, public_key: &str, pool_id: &str) -> Result<f64, String> {
+        let lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+        let key = (public_key.to_string(), pool_id.to_string());
+        Ok(*lp_balances.get(&key).unwrap_or(&0.0))
+    }
+
+    pub fn get_all_lp_balances(&self, public_key: &str) -> Result<HashMap<String, f64>, String> {
+        let lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+        let mut result = HashMap::new();
+        for ((pubkey, pool_id), balance) in lp_balances.iter() {
+            if pubkey == public_key && *balance > 0.0 {
+                result.insert(pool_id.clone(), *balance);
+            }
+        }
+        Ok(result)
+    }
+
+    pub fn get_pool(&self, pool_id: &str) -> Result<Option<LiquidityPool>, String> {
+        self.pool_store.get_pool(pool_id)
+    }
+
+    pub fn get_pool_by_tokens(&self, token_a: &str, token_b: &str) -> Result<Option<LiquidityPool>, String> {
+        self.pool_store.get_pool_by_tokens(token_a, token_b)
+    }
+
+    pub fn list_pools(&self) -> Result<Vec<LiquidityPool>, String> {
+        self.pool_store.list_pools()
+    }
+
+    pub fn get_swap_quote(
+        &self,
+        token_in: &str,
+        token_out: &str,
+        amount_in: u64,
+    ) -> Result<Option<amm::SwapRoute>, String> {
+        let pools = self.pool_store.list_pools()?;
+        Ok(amm::find_best_route(token_in, token_out, amount_in, &pools, 3))
     }
 
     pub fn create_wallet(&self) -> PQKeypair {
@@ -593,10 +678,21 @@ impl L1Node {
 
     fn apply_balance_block(&self, block: &BlockV1) -> Result<(), String> {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
+        let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        let mut lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
         
         // Apply transaction effects (transfers, stakes, etc.) - fees deducted from senders
         for tx in &block.txs {
-            Self::apply_balance_tx_inner(&mut balances, tx);
+            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, tx);
+            
+            // Handle AMM transactions
+            self.apply_amm_tx_inner(
+                &mut balances,
+                &mut token_balances,
+                &mut lp_balances,
+                tx,
+                block.header.time,
+            )?;
         }
         
         // Distribute fees: 25% to proposer, 75% split by stake
@@ -612,11 +708,220 @@ impl L1Node {
         
         Ok(())
     }
+    
+    /// Apply AMM-specific transaction effects
+    fn apply_amm_tx_inner(
+        &self,
+        balances: &mut HashMap<String, f64>,
+        token_balances: &mut HashMap<TokenBalanceKey, f64>,
+        lp_balances: &mut HashMap<TokenBalanceKey, f64>,
+        tx: &TxV1,
+        block_time: u64,
+    ) -> Result<(), String> {
+        match tx.tx_type.as_str() {
+            "create_pool" => {
+                let token_a = tx.payload.token_a_symbol.as_ref().ok_or("missing token_a")?;
+                let token_b = tx.payload.token_b_symbol.as_ref().ok_or("missing token_b")?;
+                let amount_a = tx.payload.amount_a.ok_or("missing amount_a")?;
+                let amount_b = tx.payload.amount_b.ok_or("missing amount_b")?;
+                
+                // Deduct XRGE fee
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                
+                // Deduct tokens from creator
+                if token_a == "XRGE" {
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_a as f64;
+                } else {
+                    let key = (tx.from_pub_key.clone(), token_a.clone());
+                    *token_balances.entry(key).or_insert(0.0) -= amount_a as f64;
+                }
+                
+                if token_b == "XRGE" {
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_b as f64;
+                } else {
+                    let key = (tx.from_pub_key.clone(), token_b.clone());
+                    *token_balances.entry(key).or_insert(0.0) -= amount_b as f64;
+                }
+                
+                // Create pool
+                let pool = LiquidityPool::new(
+                    token_a.clone(),
+                    token_b.clone(),
+                    amount_a,
+                    amount_b,
+                    tx.from_pub_key.clone(),
+                    block_time,
+                );
+                
+                // Mint LP tokens to creator
+                let lp_key = (tx.from_pub_key.clone(), pool.pool_id.clone());
+                *lp_balances.entry(lp_key).or_insert(0.0) += pool.total_lp_supply as f64;
+                
+                self.pool_store.save_pool(&pool)?;
+            }
+            "add_liquidity" => {
+                let pool_id = tx.payload.pool_id.as_ref().ok_or("missing pool_id")?;
+                let amount_a = tx.payload.amount_a.ok_or("missing amount_a")?;
+                let amount_b = tx.payload.amount_b.ok_or("missing amount_b")?;
+                
+                let mut pool = self.pool_store.get_pool(pool_id)?
+                    .ok_or_else(|| format!("Pool not found: {}", pool_id))?;
+                
+                // Deduct fee
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                
+                // Deduct tokens
+                if pool.token_a == "XRGE" {
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_a as f64;
+                } else {
+                    let key = (tx.from_pub_key.clone(), pool.token_a.clone());
+                    *token_balances.entry(key).or_insert(0.0) -= amount_a as f64;
+                }
+                
+                if pool.token_b == "XRGE" {
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_b as f64;
+                } else {
+                    let key = (tx.from_pub_key.clone(), pool.token_b.clone());
+                    *token_balances.entry(key).or_insert(0.0) -= amount_b as f64;
+                }
+                
+                // Calculate LP tokens to mint
+                let lp_amount = amm::calculate_lp_mint(
+                    amount_a,
+                    amount_b,
+                    pool.reserve_a,
+                    pool.reserve_b,
+                    pool.total_lp_supply,
+                ).ok_or("Failed to calculate LP mint")?;
+                
+                // Update pool
+                pool.reserve_a += amount_a;
+                pool.reserve_b += amount_b;
+                pool.total_lp_supply += lp_amount;
+                self.pool_store.save_pool(&pool)?;
+                
+                // Mint LP tokens
+                let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
+                *lp_balances.entry(lp_key).or_insert(0.0) += lp_amount as f64;
+            }
+            "remove_liquidity" => {
+                let pool_id = tx.payload.pool_id.as_ref().ok_or("missing pool_id")?;
+                let lp_amount = tx.payload.lp_amount.ok_or("missing lp_amount")?;
+                
+                let mut pool = self.pool_store.get_pool(pool_id)?
+                    .ok_or_else(|| format!("Pool not found: {}", pool_id))?;
+                
+                // Deduct fee
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                
+                // Calculate tokens to return
+                let (amount_a, amount_b) = amm::calculate_remove_liquidity(
+                    lp_amount,
+                    pool.reserve_a,
+                    pool.reserve_b,
+                    pool.total_lp_supply,
+                ).ok_or("Failed to calculate remove liquidity")?;
+                
+                // Burn LP tokens
+                let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
+                *lp_balances.entry(lp_key).or_insert(0.0) -= lp_amount as f64;
+                
+                // Return tokens
+                if pool.token_a == "XRGE" {
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount_a as f64;
+                } else {
+                    let key = (tx.from_pub_key.clone(), pool.token_a.clone());
+                    *token_balances.entry(key).or_insert(0.0) += amount_a as f64;
+                }
+                
+                if pool.token_b == "XRGE" {
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount_b as f64;
+                } else {
+                    let key = (tx.from_pub_key.clone(), pool.token_b.clone());
+                    *token_balances.entry(key).or_insert(0.0) += amount_b as f64;
+                }
+                
+                // Update pool
+                pool.reserve_a -= amount_a;
+                pool.reserve_b -= amount_b;
+                pool.total_lp_supply -= lp_amount;
+                self.pool_store.save_pool(&pool)?;
+            }
+            "swap" => {
+                let token_in = tx.payload.token_a_symbol.as_ref().ok_or("missing token_a_symbol (token_in)")?;
+                let token_out = tx.payload.token_b_symbol.as_ref().ok_or("missing token_b_symbol (token_out)")?;
+                let amount_in = tx.payload.amount_a.ok_or("missing amount_a (amount_in)")?;
+                let min_amount_out = tx.payload.min_amount_out.unwrap_or(0);
+                
+                // Deduct fee
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                
+                // Get swap path (direct or multi-hop)
+                let path = tx.payload.swap_path.clone().unwrap_or_else(|| vec![token_in.clone(), token_out.clone()]);
+                
+                // Execute swap through the path
+                let mut current_amount = amount_in;
+                for i in 0..(path.len() - 1) {
+                    let t_in = &path[i];
+                    let t_out = &path[i + 1];
+                    
+                    let pool_id = LiquidityPool::make_pool_id(t_in, t_out);
+                    let mut pool = self.pool_store.get_pool(&pool_id)?
+                        .ok_or_else(|| format!("Pool not found: {}", pool_id))?;
+                    
+                    let (reserve_in, reserve_out) = pool.get_reserves(t_in)
+                        .ok_or("Invalid token for pool")?;
+                    
+                    let amount_out = amm::get_amount_out(current_amount, reserve_in, reserve_out)
+                        .ok_or("Insufficient liquidity")?;
+                    
+                    // Deduct input token (only on first hop)
+                    if i == 0 {
+                        if t_in == "XRGE" {
+                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= current_amount as f64;
+                        } else {
+                            let key = (tx.from_pub_key.clone(), t_in.clone());
+                            *token_balances.entry(key).or_insert(0.0) -= current_amount as f64;
+                        }
+                    }
+                    
+                    // Update pool reserves
+                    if pool.token_a == *t_in {
+                        pool.reserve_a += current_amount;
+                        pool.reserve_b -= amount_out;
+                    } else {
+                        pool.reserve_b += current_amount;
+                        pool.reserve_a -= amount_out;
+                    }
+                    self.pool_store.save_pool(&pool)?;
+                    
+                    current_amount = amount_out;
+                }
+                
+                // Check slippage
+                if current_amount < min_amount_out {
+                    return Err(format!("Slippage exceeded: got {} but minimum was {}", current_amount, min_amount_out));
+                }
+                
+                // Credit output token
+                let final_token = path.last().unwrap();
+                if final_token == "XRGE" {
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += current_amount as f64;
+                } else {
+                    let key = (tx.from_pub_key.clone(), final_token.clone());
+                    *token_balances.entry(key).or_insert(0.0) += current_amount as f64;
+                }
+            }
+            _ => {} // Non-AMM transactions handled elsewhere
+        }
+        Ok(())
+    }
 
     #[allow(dead_code)]
     fn apply_balance_tx(&self, tx: &TxV1) -> Result<(), String> {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
-        Self::apply_balance_tx_inner(&mut balances, tx);
+        let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, tx);
         Ok(())
     }
 
@@ -624,12 +929,25 @@ impl L1Node {
         // Collect all blocks first, then process them
         let blocks = self.store.get_all_blocks()?;
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
+        let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        let mut lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
         balances.clear();
+        token_balances.clear();
+        lp_balances.clear();
         
         for block in &blocks {
             // Apply transaction effects
             for tx in &block.txs {
-                Self::apply_balance_tx_inner(&mut balances, tx);
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, tx);
+                
+                // Apply AMM transaction balance effects (but don't update pool_store - already persisted)
+                Self::apply_amm_balance_effects(
+                    &mut balances,
+                    &mut token_balances,
+                    &mut lp_balances,
+                    tx,
+                    &self.pool_store,
+                );
             }
             
             // Distribute fees for this block
@@ -645,6 +963,163 @@ impl L1Node {
                 );
             }
         }
+        Ok(())
+    }
+    
+    /// Apply AMM balance effects during rebuild (doesn't modify pool_store)
+    fn apply_amm_balance_effects(
+        balances: &mut HashMap<String, f64>,
+        token_balances: &mut HashMap<TokenBalanceKey, f64>,
+        lp_balances: &mut HashMap<TokenBalanceKey, f64>,
+        tx: &TxV1,
+        pool_store: &PoolStore,
+    ) {
+        match tx.tx_type.as_str() {
+            "create_pool" => {
+                if let (Some(token_a), Some(token_b), Some(amount_a), Some(amount_b)) = (
+                    tx.payload.token_a_symbol.as_ref(),
+                    tx.payload.token_b_symbol.as_ref(),
+                    tx.payload.amount_a,
+                    tx.payload.amount_b,
+                ) {
+                    // Deduct fee
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                    
+                    // Deduct tokens
+                    if token_a == "XRGE" {
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_a as f64;
+                    } else {
+                        let key = (tx.from_pub_key.clone(), token_a.clone());
+                        *token_balances.entry(key).or_insert(0.0) -= amount_a as f64;
+                    }
+                    if token_b == "XRGE" {
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_b as f64;
+                    } else {
+                        let key = (tx.from_pub_key.clone(), token_b.clone());
+                        *token_balances.entry(key).or_insert(0.0) -= amount_b as f64;
+                    }
+                    
+                    // Get pool to find LP amount
+                    let pool_id = LiquidityPool::make_pool_id(token_a, token_b);
+                    if let Ok(Some(pool)) = pool_store.get_pool(&pool_id) {
+                        // Initial LP (approximate - pool already has current state)
+                        let initial_lp = ((amount_a as f64 * amount_b as f64).sqrt() as u64).saturating_sub(1000);
+                        let lp_key = (tx.from_pub_key.clone(), pool_id);
+                        *lp_balances.entry(lp_key).or_insert(0.0) += initial_lp as f64;
+                    }
+                }
+            }
+            "add_liquidity" => {
+                if let (Some(pool_id), Some(amount_a), Some(amount_b)) = (
+                    tx.payload.pool_id.as_ref(),
+                    tx.payload.amount_a,
+                    tx.payload.amount_b,
+                ) {
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                    
+                    if let Ok(Some(pool)) = pool_store.get_pool(pool_id) {
+                        if pool.token_a == "XRGE" {
+                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_a as f64;
+                        } else {
+                            let key = (tx.from_pub_key.clone(), pool.token_a.clone());
+                            *token_balances.entry(key).or_insert(0.0) -= amount_a as f64;
+                        }
+                        if pool.token_b == "XRGE" {
+                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_b as f64;
+                        } else {
+                            let key = (tx.from_pub_key.clone(), pool.token_b.clone());
+                            *token_balances.entry(key).or_insert(0.0) -= amount_b as f64;
+                        }
+                        
+                        // LP calculation would need historical reserve data - simplified here
+                        if let Some(lp_amount) = amm::calculate_lp_mint(amount_a, amount_b, pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
+                            let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
+                            *lp_balances.entry(lp_key).or_insert(0.0) += lp_amount as f64;
+                        }
+                    }
+                }
+            }
+            "remove_liquidity" => {
+                if let (Some(pool_id), Some(lp_amount)) = (
+                    tx.payload.pool_id.as_ref(),
+                    tx.payload.lp_amount,
+                ) {
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                    
+                    if let Ok(Some(pool)) = pool_store.get_pool(pool_id) {
+                        // Burn LP
+                        let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
+                        *lp_balances.entry(lp_key).or_insert(0.0) -= lp_amount as f64;
+                        
+                        // Return tokens (simplified - uses current reserves)
+                        if let Some((amount_a, amount_b)) = amm::calculate_remove_liquidity(lp_amount, pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
+                            if pool.token_a == "XRGE" {
+                                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount_a as f64;
+                            } else {
+                                let key = (tx.from_pub_key.clone(), pool.token_a.clone());
+                                *token_balances.entry(key).or_insert(0.0) += amount_a as f64;
+                            }
+                            if pool.token_b == "XRGE" {
+                                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount_b as f64;
+                            } else {
+                                let key = (tx.from_pub_key.clone(), pool.token_b.clone());
+                                *token_balances.entry(key).or_insert(0.0) += amount_b as f64;
+                            }
+                        }
+                    }
+                }
+            }
+            "swap" => {
+                if let (Some(token_in), Some(token_out), Some(amount_in)) = (
+                    tx.payload.token_a_symbol.as_ref(),
+                    tx.payload.token_b_symbol.as_ref(),
+                    tx.payload.amount_a,
+                ) {
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                    
+                    let path = tx.payload.swap_path.clone().unwrap_or_else(|| vec![token_in.clone(), token_out.clone()]);
+                    
+                    // Deduct input
+                    if token_in == "XRGE" {
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_in as f64;
+                    } else {
+                        let key = (tx.from_pub_key.clone(), token_in.clone());
+                        *token_balances.entry(key).or_insert(0.0) -= amount_in as f64;
+                    }
+                    
+                    // Calculate output through path
+                    let mut current_amount = amount_in;
+                    for i in 0..(path.len() - 1) {
+                        let t_in = &path[i];
+                        let t_out = &path[i + 1];
+                        let pool_id = LiquidityPool::make_pool_id(t_in, t_out);
+                        
+                        if let Ok(Some(pool)) = pool_store.get_pool(&pool_id) {
+                            if let Some((reserve_in, reserve_out)) = pool.get_reserves(t_in) {
+                                if let Some(out) = amm::get_amount_out(current_amount, reserve_in, reserve_out) {
+                                    current_amount = out;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Credit output
+                    let final_token = path.last().unwrap_or(token_out);
+                    if final_token == "XRGE" {
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += current_amount as f64;
+                    } else {
+                        let key = (tx.from_pub_key.clone(), final_token.clone());
+                        *token_balances.entry(key).or_insert(0.0) += current_amount as f64;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    fn rebuild_token_balances(&self) -> Result<(), String> {
+        // Token balances are rebuilt as part of rebuild_balances
+        // This is a separate call for clarity but the work is done in rebuild_balances
         Ok(())
     }
     
@@ -675,18 +1150,26 @@ impl L1Node {
         }
     }
     
-    fn apply_balance_tx_inner(balances: &mut HashMap<String, f64>, tx: &TxV1) {
+    fn apply_balance_tx_inner(
+        balances: &mut HashMap<String, f64>,
+        token_balances: &mut HashMap<TokenBalanceKey, f64>,
+        tx: &TxV1,
+    ) {
         match tx.tx_type.as_str() {
             "transfer" => {
                 if let Some(to_pub_key) = tx.payload.to_pub_key_hex.as_ref() {
                     let amount = tx.payload.amount.unwrap_or(0) as f64;
                     
                     // Check if this is a token transfer (has token_symbol)
-                    let is_token_transfer = tx.payload.token_symbol.is_some();
-                    
-                    if is_token_transfer {
-                        // Token transfer: only deduct XRGE fee from sender
+                    if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
+                        // Token transfer: deduct XRGE fee from sender
                         *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                        
+                        // Track token balance changes
+                        let sender_key = (tx.from_pub_key.clone(), token_symbol.clone());
+                        let recipient_key = (to_pub_key.clone(), token_symbol.clone());
+                        *token_balances.entry(sender_key).or_insert(0.0) -= amount;
+                        *token_balances.entry(recipient_key).or_insert(0.0) += amount;
                     } else {
                         // XRGE transfer: add to recipient, deduct amount + fee from sender
                         *balances.entry(to_pub_key.clone()).or_insert(0.0) += amount;
@@ -704,8 +1187,15 @@ impl L1Node {
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount - tx.fee;
             }
             "create_token" => {
-                // Token creation fee is deducted from sender
+                // Token creation fee is deducted from sender (XRGE)
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                
+                // Mint token supply to creator
+                if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
+                    let total_supply = tx.payload.token_total_supply.unwrap_or(0) as f64;
+                    let creator_key = (tx.from_pub_key.clone(), token_symbol.clone());
+                    *token_balances.entry(creator_key).or_insert(0.0) += total_supply;
+                }
             }
             "slash" => {}
             _ => {}

@@ -12,6 +12,8 @@ import Wallet from "./pages/Wallet";
 import Validators from "./pages/Validators";
 import Node from "./pages/Node";
 import Transactions from "./pages/Transactions";
+import Swap from "./pages/Swap";
+import Pools from "./pages/Pools";
 import NotFound from "./pages/NotFound";
 const queryClient = new QueryClient();
 
@@ -32,6 +34,8 @@ const App = () => (
                 <Route path="/validators" element={<Validators />} />
                 <Route path="/node" element={<Node />} />
                 <Route path="/transactions" element={<Transactions />} />
+                <Route path="/swap" element={<Swap />} />
+                <Route path="/pools" element={<Pools />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

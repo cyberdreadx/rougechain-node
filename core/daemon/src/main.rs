@@ -1,6 +1,8 @@
+mod amm;
 mod grpc;
 mod node;
 mod peer;
+mod pool_store;
 mod websocket;
 
 use std::collections::{HashMap, VecDeque};
@@ -26,6 +28,7 @@ use crate::websocket::WsBroadcaster;
 
 use crate::grpc::GrpcNode;
 use crate::node::{L1Node, NodeOptions};
+use crate::pool_store::LiquidityPool;
 use quantum_vault_types::ChainConfig;
 
 #[derive(Parser, Debug)]
@@ -310,6 +313,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/txs", get(get_txs))
         .route("/api/blocks/summary", get(get_blocks_summary))
         .route("/api/balance/:public_key", get(get_balance))
+        .route("/api/balance/:public_key/:token_symbol", get(get_token_balance))
         .route("/api/wallet/create", post(create_wallet))
         .route("/api/tx/submit", post(submit_tx))
         .route("/api/tx/broadcast", post(receive_broadcast_tx))
@@ -333,6 +337,14 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/messenger/messages/read", post(mark_messenger_read))
         .route("/api/peers", get(get_peers))
         .route("/api/peers/register", post(register_peer))
+        // AMM/DEX endpoints
+        .route("/api/pools", get(get_pools))
+        .route("/api/pool/:pool_id", get(get_pool))
+        .route("/api/pool/create", post(create_pool))
+        .route("/api/pool/add-liquidity", post(add_liquidity))
+        .route("/api/pool/remove-liquidity", post(remove_liquidity))
+        .route("/api/swap/quote", post(get_swap_quote))
+        .route("/api/swap/execute", post(execute_swap))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(
             CorsLayer::new()
@@ -731,6 +743,7 @@ async fn get_blocks_summary(
 struct BalanceResponse {
     success: bool,
     balance: f64,
+    token_balances: std::collections::HashMap<String, f64>,
 }
 
 async fn get_balance(
@@ -739,7 +752,366 @@ async fn get_balance(
 ) -> Result<Json<BalanceResponse>, StatusCode> {
     let node = &state.node;
     let balance = node.get_balance(&public_key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(BalanceResponse { success: true, balance }))
+    let token_balances = node.get_all_token_balances(&public_key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(BalanceResponse { success: true, balance, token_balances }))
+}
+
+#[derive(Serialize)]
+struct TokenBalanceResponse {
+    success: bool,
+    token_symbol: String,
+    balance: f64,
+}
+
+async fn get_token_balance(
+    State(state): State<AppState>,
+    Path((public_key, token_symbol)): Path<(String, String)>,
+) -> Result<Json<TokenBalanceResponse>, StatusCode> {
+    let node = &state.node;
+    let balance = node.get_token_balance(&public_key, &token_symbol).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(TokenBalanceResponse { success: true, token_symbol, balance }))
+}
+
+// ===== AMM/DEX Endpoints =====
+
+#[derive(Serialize)]
+struct PoolsResponse {
+    success: bool,
+    pools: Vec<LiquidityPool>,
+}
+
+async fn get_pools(
+    State(state): State<AppState>,
+) -> Result<Json<PoolsResponse>, StatusCode> {
+    let node = &state.node;
+    let pools = node.list_pools().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(PoolsResponse { success: true, pools }))
+}
+
+#[derive(Serialize)]
+struct PoolResponse {
+    success: bool,
+    pool: Option<LiquidityPool>,
+}
+
+async fn get_pool(
+    State(state): State<AppState>,
+    Path(pool_id): Path<String>,
+) -> Result<Json<PoolResponse>, StatusCode> {
+    let node = &state.node;
+    let pool = node.get_pool(&pool_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(PoolResponse { success: true, pool }))
+}
+
+#[derive(Deserialize)]
+struct CreatePoolRequest {
+    from_private_key: String,
+    from_public_key: String,
+    token_a: String,
+    token_b: String,
+    amount_a: u64,
+    amount_b: u64,
+}
+
+#[derive(Serialize)]
+struct CreatePoolResponse {
+    success: bool,
+    pool_id: String,
+    message: String,
+}
+
+async fn create_pool(
+    State(state): State<AppState>,
+    Json(body): Json<CreatePoolRequest>,
+) -> Result<Json<CreatePoolResponse>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_crypto::{pqc_sign, sha256, bytes_to_hex};
+    use quantum_vault_types::{TxPayload, TxV1, encode_tx_v1};
+    
+    let node = &state.node;
+    let pool_id = LiquidityPool::make_pool_id(&body.token_a, &body.token_b);
+    
+    // Check pool doesn't already exist
+    if let Ok(Some(_)) = node.get_pool(&pool_id) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false,
+            "error": format!("Pool {} already exists", pool_id)
+        }))));
+    }
+    
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "create_pool".to_string(),
+        from_pub_key: body.from_public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            to_pub_key_hex: None,
+            amount: None,
+            faucet: None,
+            target_pub_key: None,
+            reason: None,
+            token_name: None,
+            token_symbol: None,
+            token_decimals: None,
+            token_total_supply: None,
+            pool_id: Some(pool_id.clone()),
+            token_a_symbol: Some(body.token_a.clone()),
+            token_b_symbol: Some(body.token_b.clone()),
+            amount_a: Some(body.amount_a),
+            amount_b: Some(body.amount_b),
+            min_amount_out: None,
+            swap_path: None,
+            lp_amount: None,
+        },
+        fee: 10.0, // Pool creation fee
+        sig: String::new(),
+    };
+    
+    let tx_bytes = encode_tx_v1(&tx);
+    let sig = pqc_sign(&body.from_private_key, &tx_bytes)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    let signed_tx = TxV1 { sig, ..tx };
+    
+    node.add_tx_to_mempool(signed_tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    Ok(Json(CreatePoolResponse {
+        success: true,
+        pool_id,
+        message: "Pool creation transaction submitted".to_string(),
+    }))
+}
+
+#[derive(Deserialize)]
+struct AddLiquidityRequest {
+    from_private_key: String,
+    from_public_key: String,
+    pool_id: String,
+    amount_a: u64,
+    amount_b: u64,
+}
+
+async fn add_liquidity(
+    State(state): State<AppState>,
+    Json(body): Json<AddLiquidityRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_crypto::pqc_sign;
+    use quantum_vault_types::{TxPayload, TxV1, encode_tx_v1};
+    
+    let node = &state.node;
+    
+    // Check pool exists
+    if node.get_pool(&body.pool_id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?.is_none() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false,
+            "error": format!("Pool {} not found", body.pool_id)
+        }))));
+    }
+    
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "add_liquidity".to_string(),
+        from_pub_key: body.from_public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            to_pub_key_hex: None,
+            amount: None,
+            faucet: None,
+            target_pub_key: None,
+            reason: None,
+            token_name: None,
+            token_symbol: None,
+            token_decimals: None,
+            token_total_supply: None,
+            pool_id: Some(body.pool_id.clone()),
+            token_a_symbol: None,
+            token_b_symbol: None,
+            amount_a: Some(body.amount_a),
+            amount_b: Some(body.amount_b),
+            min_amount_out: None,
+            swap_path: None,
+            lp_amount: None,
+        },
+        fee: 0.1,
+        sig: String::new(),
+    };
+    
+    let tx_bytes = encode_tx_v1(&tx);
+    let sig = pqc_sign(&body.from_private_key, &tx_bytes)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    let signed_tx = TxV1 { sig, ..tx };
+    
+    node.add_tx_to_mempool(signed_tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Add liquidity transaction submitted"
+    })))
+}
+
+#[derive(Deserialize)]
+struct RemoveLiquidityRequest {
+    from_private_key: String,
+    from_public_key: String,
+    pool_id: String,
+    lp_amount: u64,
+}
+
+async fn remove_liquidity(
+    State(state): State<AppState>,
+    Json(body): Json<RemoveLiquidityRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_crypto::pqc_sign;
+    use quantum_vault_types::{TxPayload, TxV1, encode_tx_v1};
+    
+    let node = &state.node;
+    
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "remove_liquidity".to_string(),
+        from_pub_key: body.from_public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            to_pub_key_hex: None,
+            amount: None,
+            faucet: None,
+            target_pub_key: None,
+            reason: None,
+            token_name: None,
+            token_symbol: None,
+            token_decimals: None,
+            token_total_supply: None,
+            pool_id: Some(body.pool_id.clone()),
+            token_a_symbol: None,
+            token_b_symbol: None,
+            amount_a: None,
+            amount_b: None,
+            min_amount_out: None,
+            swap_path: None,
+            lp_amount: Some(body.lp_amount),
+        },
+        fee: 0.1,
+        sig: String::new(),
+    };
+    
+    let tx_bytes = encode_tx_v1(&tx);
+    let sig = pqc_sign(&body.from_private_key, &tx_bytes)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    let signed_tx = TxV1 { sig, ..tx };
+    
+    node.add_tx_to_mempool(signed_tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Remove liquidity transaction submitted"
+    })))
+}
+
+#[derive(Deserialize)]
+struct SwapQuoteRequest {
+    token_in: String,
+    token_out: String,
+    amount_in: u64,
+}
+
+#[derive(Serialize)]
+struct SwapQuoteResponse {
+    success: bool,
+    amount_out: u64,
+    price_impact: f64,
+    path: Vec<String>,
+    pools: Vec<String>,
+}
+
+async fn get_swap_quote(
+    State(state): State<AppState>,
+    Json(body): Json<SwapQuoteRequest>,
+) -> Result<Json<SwapQuoteResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let node = &state.node;
+    
+    let route = node.get_swap_quote(&body.token_in, &body.token_out, body.amount_in)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
+    
+    match route {
+        Some(r) => Ok(Json(SwapQuoteResponse {
+            success: true,
+            amount_out: r.total_amount_out,
+            price_impact: r.price_impact,
+            path: r.path,
+            pools: r.pools,
+        })),
+        None => Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false,
+            "error": "No route found for swap"
+        }))))
+    }
+}
+
+#[derive(Deserialize)]
+struct ExecuteSwapRequest {
+    from_private_key: String,
+    from_public_key: String,
+    token_in: String,
+    token_out: String,
+    amount_in: u64,
+    min_amount_out: u64,
+    path: Option<Vec<String>>,
+}
+
+async fn execute_swap(
+    State(state): State<AppState>,
+    Json(body): Json<ExecuteSwapRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_crypto::pqc_sign;
+    use quantum_vault_types::{TxPayload, TxV1, encode_tx_v1};
+    
+    let node = &state.node;
+    
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "swap".to_string(),
+        from_pub_key: body.from_public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            to_pub_key_hex: None,
+            amount: None,
+            faucet: None,
+            target_pub_key: None,
+            reason: None,
+            token_name: None,
+            token_symbol: None,
+            token_decimals: None,
+            token_total_supply: None,
+            pool_id: None,
+            token_a_symbol: Some(body.token_in.clone()),
+            token_b_symbol: Some(body.token_out.clone()),
+            amount_a: Some(body.amount_in),
+            amount_b: None,
+            min_amount_out: Some(body.min_amount_out),
+            swap_path: body.path,
+            lp_amount: None,
+        },
+        fee: 0.1,
+        sig: String::new(),
+    };
+    
+    let tx_bytes = encode_tx_v1(&tx);
+    let sig = pqc_sign(&body.from_private_key, &tx_bytes)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    let signed_tx = TxV1 { sig, ..tx };
+    
+    node.add_tx_to_mempool(signed_tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Swap transaction submitted"
+    })))
 }
 
 #[derive(Serialize)]
