@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw } from "lucide-react";
+import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw, ArrowDownUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import ConversationList from "@/components/messenger/ConversationList";
 import ChatView from "@/components/messenger/ChatView";
 import ContactPicker from "@/components/messenger/ContactPicker";
 import PrivacySettings from "@/components/messenger/PrivacySettings";
+import SwapWidget from "@/components/messenger/SwapWidget";
 import WalletBackup from "@/components/wallet/WalletBackup";
 import type { Conversation, Wallet, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
 import { getConversations, getWallets, saveWalletLocally, registerWalletOnNode } from "@/lib/pqc-messenger";
@@ -34,6 +35,7 @@ const Messenger = () => {
   const [showContactPicker, setShowContactPicker] = useState(false);
   const [showPrivacySettings, setShowPrivacySettings] = useState(false);
   const [showWalletBackup, setShowWalletBackup] = useState(false);
+  const [showSwapWidget, setShowSwapWidget] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isReregistering, setIsReregistering] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
@@ -238,6 +240,14 @@ const Messenger = () => {
           <Button
             variant="ghost"
             size="icon"
+            onClick={() => setShowSwapWidget(true)}
+            title="Quick Swap"
+          >
+            <ArrowDownUp className="w-4 h-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={handleReregister}
             disabled={isReregistering}
             title="Re-register wallet with network"
@@ -335,6 +345,17 @@ const Messenger = () => {
             }}
             vaultSettings={vaultSettings}
             onUpdateVaultSettings={handleVaultSettings}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Swap widget modal */}
+      <AnimatePresence>
+        {showSwapWidget && wallet?.signingPrivateKey && (
+          <SwapWidget
+            walletPublicKey={wallet.signingPublicKey}
+            walletPrivateKey={wallet.signingPrivateKey}
+            onClose={() => setShowSwapWidget(false)}
           />
         )}
       </AnimatePresence>

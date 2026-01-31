@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
+import { AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, TrendingUp, ArrowUpDown, Plus, Minus, Activity } from "lucide-react";
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { loadUnifiedWallet } from "@/lib/unified-wallet";
+import SwapWidget from "@/components/messenger/SwapWidget";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 
 interface Pool {
@@ -131,6 +134,9 @@ const PoolDetail = () => {
   const [stats, setStats] = useState<PoolStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [chartToken, setChartToken] = useState<"a" | "b">("a");
+  const [showSwapWidget, setShowSwapWidget] = useState(false);
+  
+  const wallet = loadUnifiedWallet();
 
   const fetchData = useCallback(async () => {
     if (!poolId) return;
@@ -246,7 +252,18 @@ const PoolDetail = () => {
               </div>
             </div>
           </div>
-          <Badge variant="secondary">Fee: {(pool.fee_rate * 100).toFixed(1)}%</Badge>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setShowSwapWidget(true)}
+              disabled={!wallet?.signingPrivateKey}
+            >
+              <ArrowUpDown className="w-4 h-4 mr-2" />
+              Swap
+            </Button>
+            <Badge variant="secondary">Fee: {(pool.fee_rate * 100).toFixed(1)}%</Badge>
+          </div>
         </div>
 
         {/* Stats Cards */}
@@ -394,6 +411,17 @@ const PoolDetail = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Swap widget modal */}
+      <AnimatePresence>
+        {showSwapWidget && wallet?.signingPrivateKey && (
+          <SwapWidget
+            walletPublicKey={wallet.signingPublicKey}
+            walletPrivateKey={wallet.signingPrivateKey}
+            onClose={() => setShowSwapWidget(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 };

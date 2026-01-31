@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
-import { Plus, Droplets, TrendingUp, Loader2, Info, Minus, BarChart3 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Plus, Droplets, TrendingUp, Loader2, Info, Minus, BarChart3, ArrowDownUp, Shield } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +26,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
+import { secureCreatePool, secureAddLiquidity, secureRemoveLiquidity } from "@/lib/secure-api";
+import SwapWidget from "@/components/messenger/SwapWidget";
 
 interface Pool {
   pool_id: string;
@@ -67,6 +69,9 @@ const Pools = () => {
   // Remove liquidity dialog
   const [showRemoveLiquidity, setShowRemoveLiquidity] = useState(false);
   const [removeAmount, setRemoveAmount] = useState("");
+  
+  // Swap widget
+  const [showSwapWidget, setShowSwapWidget] = useState(false);
   
   // Wallet state
   const [wallet, setWallet] = useState<{ publicKey: string; privateKey: string } | null>(null);
@@ -169,35 +174,26 @@ const Pools = () => {
     
     setActionLoading(true);
     try {
-      const baseUrl = getNodeApiBaseUrl();
-      if (!baseUrl) throw new Error("API not configured");
+      // Use secure client-side signing
+      const result = await secureCreatePool(
+        wallet.publicKey,
+        wallet.privateKey,
+        newTokenA,
+        newTokenB,
+        Math.floor(parseFloat(newAmountA)),
+        Math.floor(parseFloat(newAmountB))
+      );
       
-      const res = await fetch(`${baseUrl}/pool/create`, {
-        method: "POST",
-        headers: {
-          ...getCoreApiHeaders(),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from_private_key: wallet.privateKey,
-          from_public_key: wallet.publicKey,
-          token_a: newTokenA,
-          token_b: newTokenB,
-          amount_a: Math.floor(parseFloat(newAmountA)),
-          amount_b: Math.floor(parseFloat(newAmountB)),
-        }),
-      });
-      
-      const data = await res.json();
-      
-      if (data.success) {
-        toast.success(`Pool created: ${data.pool_id}`);
+      if (result.success) {
+        toast.success(`Pool created: ${result.data?.pool_id}`, {
+          description: "Signed securely on your device",
+        });
         setShowCreatePool(false);
         setNewAmountA("");
         setNewAmountB("");
         fetchData();
       } else {
-        toast.error(data.error || "Failed to create pool");
+        toast.error(result.error || "Failed to create pool");
       }
     } catch (e) {
       toast.error("Failed to create pool");
@@ -216,34 +212,25 @@ const Pools = () => {
     
     setActionLoading(true);
     try {
-      const baseUrl = getNodeApiBaseUrl();
-      if (!baseUrl) throw new Error("API not configured");
+      // Use secure client-side signing
+      const result = await secureAddLiquidity(
+        wallet.publicKey,
+        wallet.privateKey,
+        selectedPool.pool_id,
+        Math.floor(parseFloat(addAmountA)),
+        Math.floor(parseFloat(addAmountB))
+      );
       
-      const res = await fetch(`${baseUrl}/pool/add-liquidity`, {
-        method: "POST",
-        headers: {
-          ...getCoreApiHeaders(),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from_private_key: wallet.privateKey,
-          from_public_key: wallet.publicKey,
-          pool_id: selectedPool.pool_id,
-          amount_a: Math.floor(parseFloat(addAmountA)),
-          amount_b: Math.floor(parseFloat(addAmountB)),
-        }),
-      });
-      
-      const data = await res.json();
-      
-      if (data.success) {
-        toast.success("Liquidity added successfully");
+      if (result.success) {
+        toast.success("Liquidity added successfully", {
+          description: "Signed securely on your device",
+        });
         setShowAddLiquidity(false);
         setAddAmountA("");
         setAddAmountB("");
         fetchData();
       } else {
-        toast.error(data.error || "Failed to add liquidity");
+        toast.error(result.error || "Failed to add liquidity");
       }
     } catch (e) {
       toast.error("Failed to add liquidity");
@@ -262,32 +249,23 @@ const Pools = () => {
     
     setActionLoading(true);
     try {
-      const baseUrl = getNodeApiBaseUrl();
-      if (!baseUrl) throw new Error("API not configured");
+      // Use secure client-side signing
+      const result = await secureRemoveLiquidity(
+        wallet.publicKey,
+        wallet.privateKey,
+        selectedPool.pool_id,
+        Math.floor(parseFloat(removeAmount))
+      );
       
-      const res = await fetch(`${baseUrl}/pool/remove-liquidity`, {
-        method: "POST",
-        headers: {
-          ...getCoreApiHeaders(),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from_private_key: wallet.privateKey,
-          from_public_key: wallet.publicKey,
-          pool_id: selectedPool.pool_id,
-          lp_amount: Math.floor(parseFloat(removeAmount)),
-        }),
-      });
-      
-      const data = await res.json();
-      
-      if (data.success) {
-        toast.success("Liquidity removed successfully");
+      if (result.success) {
+        toast.success("Liquidity removed successfully", {
+          description: "Signed securely on your device",
+        });
         setShowRemoveLiquidity(false);
         setRemoveAmount("");
         fetchData();
       } else {
-        toast.error(data.error || "Failed to remove liquidity");
+        toast.error(result.error || "Failed to remove liquidity");
       }
     } catch (e) {
       toast.error("Failed to remove liquidity");
@@ -337,16 +315,31 @@ const Pools = () => {
         >
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold">Liquidity Pools</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold">Liquidity Pools</h1>
+                <div className="flex items-center gap-1 text-xs text-green-500 bg-green-500/10 px-2 py-0.5 rounded-full">
+                  <Shield className="w-3 h-3" />
+                  <span>Secure</span>
+                </div>
+              </div>
               <p className="text-muted-foreground">Provide liquidity and earn fees</p>
             </div>
-            <Dialog open={showCreatePool} onOpenChange={setShowCreatePool}>
-              <DialogTrigger asChild>
-                <Button disabled={!wallet}>
-                  <Plus className="w-4 h-4 mr-2" />
-                  New Pool
-                </Button>
-              </DialogTrigger>
+            <div className="flex gap-2">
+              <Button
+                variant="default"
+                onClick={() => setShowSwapWidget(true)}
+                disabled={!wallet}
+              >
+                <ArrowDownUp className="w-4 h-4 mr-2" />
+                Swap
+              </Button>
+              <Dialog open={showCreatePool} onOpenChange={setShowCreatePool}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" disabled={!wallet}>
+                    <Plus className="w-4 h-4 mr-2" />
+                    New Pool
+                  </Button>
+                </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Create New Pool</DialogTitle>
@@ -411,7 +404,8 @@ const Pools = () => {
                   </Button>
                 </DialogFooter>
               </DialogContent>
-            </Dialog>
+              </Dialog>
+            </div>
           </div>
 
           {/* Pool List */}
@@ -641,6 +635,17 @@ const Pools = () => {
           </Card>
         </motion.div>
       </div>
+
+      {/* Swap widget modal */}
+      <AnimatePresence>
+        {showSwapWidget && wallet && (
+          <SwapWidget
+            walletPublicKey={wallet.publicKey}
+            walletPrivateKey={wallet.privateKey}
+            onClose={() => setShowSwapWidget(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 };

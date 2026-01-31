@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { ArrowDownUp, Settings, Info, Loader2, RefreshCw, ChevronDown, AlertTriangle } from "lucide-react";
+import { ArrowDownUp, Settings, Info, Loader2, RefreshCw, ChevronDown, AlertTriangle, Shield } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +24,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
+import { secureSwap } from "@/lib/secure-api";
 
 interface Token {
   symbol: string;
@@ -233,35 +234,25 @@ const Swap = () => {
     
     setLoading(true);
     try {
-      const baseUrl = getNodeApiBaseUrl();
-      if (!baseUrl) throw new Error("API not configured");
+      // Use secure client-side signing - private key never leaves the browser
+      const result = await secureSwap(
+        wallet.publicKey,
+        wallet.privateKey,
+        tokenIn,
+        tokenOut,
+        Math.floor(amount),
+        minOut
+      );
       
-      const res = await fetch(`${baseUrl}/swap/execute`, {
-        method: "POST",
-        headers: {
-          ...getCoreApiHeaders(),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from_private_key: wallet.privateKey,
-          from_public_key: wallet.publicKey,
-          token_in: tokenIn,
-          token_out: tokenOut,
-          amount_in: Math.floor(amount),
-          min_amount_out: minOut,
-          path: quote.path,
-        }),
-      });
-      
-      const data = await res.json();
-      
-      if (data.success) {
-        toast.success(`Swap submitted: ${amount} ${tokenIn} → ~${quote.amount_out} ${tokenOut}`);
+      if (result.success) {
+        toast.success(`Swap submitted: ${amount} ${tokenIn} → ~${quote.amount_out} ${tokenOut}`, {
+          description: "Signed securely on your device",
+        });
         setAmountIn("");
         setQuote(null);
         fetchTokens();
       } else {
-        toast.error(data.error || "Swap failed");
+        toast.error(result.error || "Swap failed");
       }
     } catch (e) {
       toast.error("Failed to execute swap");
@@ -283,7 +274,13 @@ const Swap = () => {
           className="space-y-6"
         >
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold">Swap</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold">Swap</h1>
+              <div className="flex items-center gap-1 text-xs text-green-500 bg-green-500/10 px-2 py-0.5 rounded-full">
+                <Shield className="w-3 h-3" />
+                <span>Secure</span>
+              </div>
+            </div>
             <Dialog open={showSettings} onOpenChange={setShowSettings}>
               <DialogTrigger asChild>
                 <Button variant="ghost" size="icon">

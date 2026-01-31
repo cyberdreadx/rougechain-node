@@ -351,6 +351,16 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/swap/quote", post(get_swap_quote))
         .route("/api/swap/execute", post(execute_swap))
         .route("/api/events", get(get_all_events))
+        // Secure v2 endpoints (client-side signing)
+        .route("/api/v2/transfer", post(v2_transfer))
+        .route("/api/v2/token/create", post(v2_create_token))
+        .route("/api/v2/pool/create", post(v2_create_pool))
+        .route("/api/v2/pool/add-liquidity", post(v2_add_liquidity))
+        .route("/api/v2/pool/remove-liquidity", post(v2_remove_liquidity))
+        .route("/api/v2/swap/execute", post(v2_execute_swap))
+        .route("/api/v2/stake", post(v2_stake))
+        .route("/api/v2/unstake", post(v2_unstake))
+        .route("/api/v2/faucet", post(v2_faucet))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(
             CorsLayer::new()
@@ -374,6 +384,10 @@ async fn auth_middleware<B>(
         return Ok(next.run(request).await);
     }
     if path == "/api/faucet" || path == "/api/tx/submit" || path == "/api/stake/submit" || path == "/api/unstake/submit" || path == "/api/token/create" {
+        return Ok(next.run(request).await);
+    }
+    // Bypass rate limiting for secure v2 endpoints
+    if path.starts_with("/api/v2/") {
         return Ok(next.run(request).await);
     }
     // Bypass rate limiting for messenger endpoints
@@ -1745,6 +1759,535 @@ async fn mark_messenger_read(
     let message_id = body.get("messageId").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     let message = node.mark_message_read(&message_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "success": true, "message": message })))
+}
+
+// ============================================
+// Secure v2 API endpoints (client-side signing)
+// ============================================
+
+/// Signed transaction payload from frontend
+#[derive(Deserialize)]
+struct SignedTransactionRequest {
+    payload: serde_json::Value,
+    signature: String,
+    public_key: String,
+}
+
+/// Verify a signed transaction from the frontend
+fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<(), String> {
+    use quantum_vault_crypto::pqc_verify;
+    
+    // Serialize payload deterministically (sorted keys)
+    let payload_json = serde_json::to_string(&req.payload)
+        .map_err(|e| format!("Failed to serialize payload: {}", e))?;
+    let payload_bytes = payload_json.as_bytes();
+    
+    // Verify signature
+    let valid = pqc_verify(&req.public_key, payload_bytes, &req.signature)
+        .map_err(|e| format!("Signature verification failed: {}", e))?;
+    
+    if !valid {
+        return Err("Invalid signature".to_string());
+    }
+    
+    // Check timestamp is within acceptable range (5 minutes)
+    if let Some(timestamp) = req.payload.get("timestamp").and_then(|v| v.as_i64()) {
+        let now = chrono::Utc::now().timestamp_millis();
+        let diff = (now - timestamp).abs();
+        if diff > 5 * 60 * 1000 {
+            return Err("Transaction expired (timestamp too old)".to_string());
+        }
+    }
+    
+    // Check 'from' matches public key
+    if let Some(from) = req.payload.get("from").and_then(|v| v.as_str()) {
+        if from != req.public_key {
+            return Err("Payload 'from' does not match signing public key".to_string());
+        }
+    }
+    
+    Ok(())
+}
+
+async fn v2_transfer(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1, encode_tx_v1};
+    use quantum_vault_crypto::pqc_sign;
+    
+    // Verify the signature
+    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    let node = &state.node;
+    let payload = &body.payload;
+    
+    let to = payload.get("to").and_then(|v| v.as_str()).unwrap_or_default();
+    let amount = payload.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let fee = payload.get("fee").and_then(|v| v.as_f64()).unwrap_or(1.0);
+    let token = payload.get("token").and_then(|v| v.as_str()).unwrap_or("XRGE");
+    
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "transfer".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            to_pub_key_hex: Some(to.to_string()),
+            amount: Some(amount as u64),
+            faucet: None,
+            target_pub_key: None,
+            reason: None,
+            token_name: Some(token.to_string()),
+            token_symbol: None,
+            token_decimals: None,
+            token_total_supply: None,
+            pool_id: None,
+            token_a_symbol: None,
+            token_b_symbol: None,
+            amount_a: None,
+            amount_b: None,
+            min_amount_out: None,
+            swap_path: None,
+            lp_amount: None,
+        },
+        fee,
+        sig: body.signature.clone(), // Use client signature
+    };
+    
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Transfer transaction submitted"
+    })))
+}
+
+async fn v2_create_token(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+    
+    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    let node = &state.node;
+    let payload = &body.payload;
+    
+    let token_name = payload.get("token_name").and_then(|v| v.as_str()).unwrap_or_default();
+    let token_symbol = payload.get("token_symbol").and_then(|v| v.as_str()).unwrap_or_default();
+    let initial_supply = payload.get("initial_supply").and_then(|v| v.as_u64()).unwrap_or(0);
+    let fee = payload.get("fee").and_then(|v| v.as_f64()).unwrap_or(10.0);
+    
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "create_token".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            to_pub_key_hex: None,
+            amount: None,
+            faucet: None,
+            target_pub_key: None,
+            reason: None,
+            token_name: Some(token_name.to_string()),
+            token_symbol: Some(token_symbol.to_string()),
+            token_decimals: Some(18),
+            token_total_supply: Some(initial_supply),
+            pool_id: None,
+            token_a_symbol: None,
+            token_b_symbol: None,
+            amount_a: None,
+            amount_b: None,
+            min_amount_out: None,
+            swap_path: None,
+            lp_amount: None,
+        },
+        fee,
+        sig: body.signature.clone(),
+    };
+    
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "token_symbol": token_symbol,
+        "message": "Token creation transaction submitted"
+    })))
+}
+
+async fn v2_create_pool(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+    
+    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    let node = &state.node;
+    let payload = &body.payload;
+    
+    let token_a = payload.get("token_a").and_then(|v| v.as_str()).unwrap_or_default();
+    let token_b = payload.get("token_b").and_then(|v| v.as_str()).unwrap_or_default();
+    let amount_a = payload.get("amount_a").and_then(|v| v.as_u64()).unwrap_or(0);
+    let amount_b = payload.get("amount_b").and_then(|v| v.as_u64()).unwrap_or(0);
+    
+    let pool_id = LiquidityPool::make_pool_id(token_a, token_b);
+    
+    // Check pool doesn't already exist
+    if let Ok(Some(_)) = node.get_pool(&pool_id) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false,
+            "error": format!("Pool {} already exists", pool_id)
+        }))));
+    }
+    
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "create_pool".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            to_pub_key_hex: None,
+            amount: None,
+            faucet: None,
+            target_pub_key: None,
+            reason: None,
+            token_name: None,
+            token_symbol: None,
+            token_decimals: None,
+            token_total_supply: None,
+            pool_id: Some(pool_id.clone()),
+            token_a_symbol: Some(token_a.to_string()),
+            token_b_symbol: Some(token_b.to_string()),
+            amount_a: Some(amount_a),
+            amount_b: Some(amount_b),
+            min_amount_out: None,
+            swap_path: None,
+            lp_amount: None,
+        },
+        fee: 10.0,
+        sig: body.signature.clone(),
+    };
+    
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "pool_id": pool_id,
+        "message": "Pool creation transaction submitted"
+    })))
+}
+
+async fn v2_add_liquidity(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+    
+    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    let node = &state.node;
+    let payload = &body.payload;
+    
+    let pool_id = payload.get("pool_id").and_then(|v| v.as_str()).unwrap_or_default();
+    let amount_a = payload.get("amount_a").and_then(|v| v.as_u64()).unwrap_or(0);
+    let amount_b = payload.get("amount_b").and_then(|v| v.as_u64()).unwrap_or(0);
+    
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "add_liquidity".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            to_pub_key_hex: None,
+            amount: None,
+            faucet: None,
+            target_pub_key: None,
+            reason: None,
+            token_name: None,
+            token_symbol: None,
+            token_decimals: None,
+            token_total_supply: None,
+            pool_id: Some(pool_id.to_string()),
+            token_a_symbol: None,
+            token_b_symbol: None,
+            amount_a: Some(amount_a),
+            amount_b: Some(amount_b),
+            min_amount_out: None,
+            swap_path: None,
+            lp_amount: None,
+        },
+        fee: 1.0,
+        sig: body.signature.clone(),
+    };
+    
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Add liquidity transaction submitted"
+    })))
+}
+
+async fn v2_remove_liquidity(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+    
+    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    let node = &state.node;
+    let payload = &body.payload;
+    
+    let pool_id = payload.get("pool_id").and_then(|v| v.as_str()).unwrap_or_default();
+    let lp_amount = payload.get("lp_amount").and_then(|v| v.as_u64()).unwrap_or(0);
+    
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "remove_liquidity".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            to_pub_key_hex: None,
+            amount: None,
+            faucet: None,
+            target_pub_key: None,
+            reason: None,
+            token_name: None,
+            token_symbol: None,
+            token_decimals: None,
+            token_total_supply: None,
+            pool_id: Some(pool_id.to_string()),
+            token_a_symbol: None,
+            token_b_symbol: None,
+            amount_a: None,
+            amount_b: None,
+            min_amount_out: None,
+            swap_path: None,
+            lp_amount: Some(lp_amount),
+        },
+        fee: 1.0,
+        sig: body.signature.clone(),
+    };
+    
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Remove liquidity transaction submitted"
+    })))
+}
+
+async fn v2_execute_swap(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+    
+    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    let node = &state.node;
+    let payload = &body.payload;
+    
+    let token_in = payload.get("token_in").and_then(|v| v.as_str()).unwrap_or_default();
+    let token_out = payload.get("token_out").and_then(|v| v.as_str()).unwrap_or_default();
+    let amount_in = payload.get("amount_in").and_then(|v| v.as_u64()).unwrap_or(0);
+    let min_amount_out = payload.get("min_amount_out").and_then(|v| v.as_u64()).unwrap_or(0);
+    
+    // Get pool for swap
+    let pool_id = LiquidityPool::make_pool_id(token_in, token_out);
+    
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "swap".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            to_pub_key_hex: None,
+            amount: Some(amount_in),
+            faucet: None,
+            target_pub_key: None,
+            reason: None,
+            token_name: None,
+            token_symbol: None,
+            token_decimals: None,
+            token_total_supply: None,
+            pool_id: Some(pool_id),
+            token_a_symbol: Some(token_in.to_string()),
+            token_b_symbol: Some(token_out.to_string()),
+            amount_a: Some(amount_in),
+            amount_b: None,
+            min_amount_out: Some(min_amount_out),
+            swap_path: None,
+            lp_amount: None,
+        },
+        fee: 1.0,
+        sig: body.signature.clone(),
+    };
+    
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Swap transaction submitted"
+    })))
+}
+
+async fn v2_stake(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+    
+    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    let node = &state.node;
+    let payload = &body.payload;
+    
+    let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
+    let fee = payload.get("fee").and_then(|v| v.as_f64()).unwrap_or(1.0);
+    
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "stake".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            to_pub_key_hex: None,
+            amount: Some(amount),
+            faucet: None,
+            target_pub_key: None,
+            reason: None,
+            token_name: None,
+            token_symbol: None,
+            token_decimals: None,
+            token_total_supply: None,
+            pool_id: None,
+            token_a_symbol: None,
+            token_b_symbol: None,
+            amount_a: None,
+            amount_b: None,
+            min_amount_out: None,
+            swap_path: None,
+            lp_amount: None,
+        },
+        fee,
+        sig: body.signature.clone(),
+    };
+    
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Stake transaction submitted"
+    })))
+}
+
+async fn v2_unstake(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+    
+    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    let node = &state.node;
+    let payload = &body.payload;
+    
+    let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
+    let fee = payload.get("fee").and_then(|v| v.as_f64()).unwrap_or(1.0);
+    
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "unstake".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            to_pub_key_hex: None,
+            amount: Some(amount),
+            faucet: None,
+            target_pub_key: None,
+            reason: None,
+            token_name: None,
+            token_symbol: None,
+            token_decimals: None,
+            token_total_supply: None,
+            pool_id: None,
+            token_a_symbol: None,
+            token_b_symbol: None,
+            amount_a: None,
+            amount_b: None,
+            min_amount_out: None,
+            swap_path: None,
+            lp_amount: None,
+        },
+        fee,
+        sig: body.signature.clone(),
+    };
+    
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Unstake transaction submitted"
+    })))
+}
+
+async fn v2_faucet(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+    
+    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    let node = &state.node;
+    
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "faucet".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            to_pub_key_hex: None,
+            amount: None,
+            faucet: Some(true),
+            target_pub_key: None,
+            reason: None,
+            token_name: None,
+            token_symbol: None,
+            token_decimals: None,
+            token_total_supply: None,
+            pool_id: None,
+            token_a_symbol: None,
+            token_b_symbol: None,
+            amount_a: None,
+            amount_b: None,
+            min_amount_out: None,
+            swap_path: None,
+            lp_amount: None,
+        },
+        fee: 0.0,
+        sig: body.signature.clone(),
+    };
+    
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Faucet request submitted"
+    })))
 }
 
 fn default_data_dir(node_name: &str) -> PathBuf {
