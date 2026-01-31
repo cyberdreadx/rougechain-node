@@ -6,7 +6,7 @@
 //! - Multi-hop routing
 
 use crate::pool_store::LiquidityPool;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 /// Minimum liquidity burned when creating a pool (prevents first LP manipulation)
 pub const MINIMUM_LIQUIDITY: u64 = 1000;

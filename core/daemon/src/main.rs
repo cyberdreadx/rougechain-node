@@ -824,7 +824,7 @@ async fn create_pool(
     State(state): State<AppState>,
     Json(body): Json<CreatePoolRequest>,
 ) -> Result<Json<CreatePoolResponse>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_crypto::{pqc_sign, sha256, bytes_to_hex};
+    use quantum_vault_crypto::pqc_sign;
     use quantum_vault_types::{TxPayload, TxV1, encode_tx_v1};
     
     let node = &state.node;
