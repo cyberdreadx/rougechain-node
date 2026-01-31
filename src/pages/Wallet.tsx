@@ -15,8 +15,9 @@ import {
   TrendingDown
 } from "lucide-react";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
-import { useXRGEPrice } from "@/hooks/use-xrge-price";
-import { formatUsd } from "@/lib/price-service";
+import { useTokenPrices } from "@/hooks/use-token-prices";
+import { useTokenMetadata } from "@/hooks/use-token-metadata";
+import { formatUsd, formatTokenPrice } from "@/lib/price-service";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,6 +45,7 @@ import { NETWORK_STORAGE_KEY, getCoreApiHeaders, getNetworkLabel, getNodeApiBase
 import SendTokensDialog from "@/components/wallet/SendTokensDialog";
 import ReceiveDialog from "@/components/wallet/ReceiveDialog";
 import CreateTokenDialog from "@/components/wallet/CreateTokenDialog";
+import TokenDetailDialog from "@/components/wallet/TokenDetailDialog";
 import { 
   UnifiedWallet,
   VaultSettings,
@@ -72,6 +74,15 @@ const Wallet = () => {
   const [showReceive, setShowReceive] = useState(false);
   const [showCreateToken, setShowCreateToken] = useState(false);
   const [showBackup, setShowBackup] = useState(false);
+  const [selectedAsset, setSelectedAsset] = useState<{
+    symbol: string;
+    name: string;
+    balance: string;
+    usdValue?: string | null;
+    pricePerToken?: string | null;
+    change: number;
+    imageUrl?: string | null;
+  } | null>(null);
   const [isMainnet, setIsMainnet] = useState(false); // Default to false (show faucet) - safer for devnet/testnet
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [chainIdLabel, setChainIdLabel] = useState<string>(CHAIN_ID);
@@ -199,8 +210,12 @@ const Wallet = () => {
     };
   }, []);
 
-  // Fetch XRGE price from GeckoTerminal
-  const { priceUsd, priceChange24h, loading: priceLoading } = useXRGEPrice(60_000);
+  // Fetch token prices (XRGE from DexScreener, others from pool reserves)
+  const { tokenPrices, getTokenValue, xrgeUsdPrice: priceUsd, loading: priceLoading } = useTokenPrices(60_000);
+  const priceChange24h = null; // TODO: Track 24h change for custom tokens
+  
+  // Fetch token metadata (for images, descriptions, etc.)
+  const { getTokenImage, getMetadata } = useTokenMetadata(60_000);
 
   // WebSocket for real-time updates
   const handleNewBlock = useCallback(() => {
@@ -433,8 +448,15 @@ const Wallet = () => {
   // Get XRGE balance specifically for the main display (native token)
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
   
-  // Calculate USD value for wallet display
-  const walletUsdValue = priceUsd && xrgeBalance ? formatUsd(xrgeBalance * priceUsd) : null;
+  // Calculate total USD value for wallet display (all tokens)
+  const totalUsdValue = balances.reduce((total, b) => {
+    const tokenPrice = tokenPrices[b.symbol];
+    if (tokenPrice) {
+      return total + (b.balance * tokenPrice.priceUsd);
+    }
+    return total;
+  }, 0);
+  const walletUsdValue = totalUsdValue > 0 ? formatUsd(totalUsdValue) : null;
 
   const networkLabel = getNetworkLabel(chainIdLabel);
 
@@ -450,12 +472,23 @@ const Wallet = () => {
     return `Updated ${hours}h ago`;
   };
 
-  // Convert balances to asset format with USD values
+  // Convert balances to asset format with USD values (from pools + DexScreener)
   const assets = balances.map(b => {
-    // Only XRGE has USD price (native token with market data)
-    const usdValue = b.symbol === "XRGE" && priceUsd 
-      ? formatUsd(b.balance * priceUsd)
+    // Get USD value from token prices (includes XRGE from DexScreener + pool-derived prices)
+    const tokenPrice = tokenPrices[b.symbol];
+    const usdValue = tokenPrice 
+      ? (tokenPrice.priceUsd < 0.01 
+          ? formatTokenPrice(b.balance * tokenPrice.priceUsd)
+          : formatUsd(b.balance * tokenPrice.priceUsd))
       : null;
+    
+    // Format per-token price
+    const pricePerToken = tokenPrice
+      ? formatTokenPrice(tokenPrice.priceUsd)
+      : null;
+    
+    // Get token image from on-chain metadata
+    const imageUrl = getTokenImage(b.symbol);
     
     return {
       id: b.symbol,
@@ -464,8 +497,10 @@ const Wallet = () => {
       balance: b.balance.toLocaleString(),
       value: `${b.balance} ${b.symbol}`,
       usdValue,
-      change: b.symbol === "XRGE" && priceChange24h ? priceChange24h : 0,
+      pricePerToken,
+      change: 0, // TODO: Track price changes
       icon: b.icon,
+      imageUrl,
     };
   });
 
@@ -749,13 +784,13 @@ const Wallet = () => {
               </div>
 
               <div className="space-y-2">
-                {/* Live Price from GeckoTerminal */}
+                {/* Live Price from DexScreener */}
                 {priceUsd !== null && (
                   <div className="flex justify-between items-center p-2 rounded-lg bg-primary/10 border border-primary/20">
                     <span className="text-xs font-medium text-primary">Live Price (Base)</span>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-mono font-bold text-primary">
-                        ${priceUsd < 0.0001 ? priceUsd.toExponential(4) : priceUsd.toFixed(6)}
+                        ${priceUsd.toFixed(8)}
                       </span>
                       {priceChange24h !== null && (
                         <span className={`flex items-center gap-0.5 text-xs ${priceChange24h >= 0 ? 'text-success' : 'text-destructive'}`}>
@@ -795,6 +830,7 @@ const Wallet = () => {
               emptyActionLabel={emptyAssetActionLabel}
               onEmptyAction={handleEmptyAssetAction}
               emptyHint={emptyAssetHint}
+              onAssetClick={(asset) => setSelectedAsset(asset)}
             />
             <TransactionHistory
               transactions={txHistory}
@@ -859,6 +895,28 @@ const Wallet = () => {
             }}
             vaultSettings={vaultSettings}
             onUpdateVaultSettings={handleVaultSettings}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Token Detail Dialog */}
+      <AnimatePresence>
+        {selectedAsset && wallet && (
+          <TokenDetailDialog
+            symbol={selectedAsset.symbol}
+            name={selectedAsset.name}
+            balance={selectedAsset.balance}
+            usdValue={selectedAsset.usdValue}
+            pricePerToken={selectedAsset.pricePerToken}
+            change={selectedAsset.change}
+            imageUrl={selectedAsset.imageUrl}
+            walletPublicKey={wallet.signingPublicKey}
+            walletPrivateKey={wallet.signingPrivateKey}
+            isCreator={getMetadata(selectedAsset.symbol)?.creator === wallet.signingPublicKey}
+            onClose={() => setSelectedAsset(null)}
+            onSend={() => setShowSend(true)}
+            onReceive={() => setShowReceive(true)}
+            onSwap={() => window.location.href = `/swap?token=${selectedAsset.symbol}`}
           />
         )}
       </AnimatePresence>

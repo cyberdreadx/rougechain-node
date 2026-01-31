@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { fetchXRGEPrice, XRGEPriceData } from "@/lib/price-service";
 
 /**
- * React hook to fetch and poll XRGE price from GeckoTerminal
+ * React hook to fetch and poll XRGE price from DexScreener
  * 
  * @param pollInterval - Interval in ms to refresh price (default: 60s)
  * @returns Price data, loading state, and refresh function

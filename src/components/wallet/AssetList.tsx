@@ -10,8 +10,10 @@ interface Asset {
   balance: string;
   value: string;
   usdValue?: string | null;
+  pricePerToken?: string | null;
   change: number;
   icon: string;
+  imageUrl?: string | null;  // Token image from on-chain metadata
 }
 
 interface AssetListProps {
@@ -19,10 +21,12 @@ interface AssetListProps {
   emptyActionLabel?: string;
   onEmptyAction?: () => void;
   emptyHint?: string;
+  onAssetClick?: (asset: Asset) => void;
 }
 
-const AssetList = ({ assets = [], emptyActionLabel, onEmptyAction, emptyHint }: AssetListProps) => {
+const AssetList = ({ assets = [], emptyActionLabel, onEmptyAction, emptyHint, onAssetClick }: AssetListProps) => {
   const renderIcon = (asset: Asset) => {
+    // XRGE always uses the built-in logo
     if (asset.symbol === "XRGE") {
       return (
         <img 
@@ -32,6 +36,24 @@ const AssetList = ({ assets = [], emptyActionLabel, onEmptyAction, emptyHint }: 
         />
       );
     }
+    
+    // Use token's on-chain image if available
+    if (asset.imageUrl) {
+      return (
+        <img 
+          src={asset.imageUrl} 
+          alt={asset.symbol}
+          className="w-10 h-10 rounded-full object-cover bg-secondary"
+          onError={(e) => {
+            // Fallback to letter icon on image load error
+            e.currentTarget.style.display = 'none';
+            e.currentTarget.nextElementSibling?.classList.remove('hidden');
+          }}
+        />
+      );
+    }
+    
+    // Default: letter icon
     return (
       <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center text-lg font-bold text-primary group-hover:bg-primary/20 transition-colors">
         {asset.icon}
@@ -77,6 +99,7 @@ const AssetList = ({ assets = [], emptyActionLabel, onEmptyAction, emptyHint }: 
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.3 + index * 0.05 }}
               className="flex items-center justify-between px-4 py-3 hover:bg-secondary/50 transition-colors cursor-pointer group"
+              onClick={() => onAssetClick?.(asset)}
             >
               <div className="flex items-center gap-3">
                 {renderIcon(asset)}
@@ -88,11 +111,16 @@ const AssetList = ({ assets = [], emptyActionLabel, onEmptyAction, emptyHint }: 
               
               <div className="text-right">
                 <p className="text-sm font-medium text-foreground">{asset.balance}</p>
-                <div className="flex items-center justify-end gap-1">
+                <div className="flex flex-col items-end gap-0.5">
                   {asset.usdValue ? (
                     <span className="text-xs text-foreground font-medium">{asset.usdValue}</span>
                   ) : (
                     <span className="text-xs text-muted-foreground">{asset.value}</span>
+                  )}
+                  {asset.pricePerToken && (
+                    <span className="text-[10px] text-muted-foreground">
+                      @ {asset.pricePerToken}
+                    </span>
                   )}
                   {asset.change !== 0 && (
                     <span className={`flex items-center text-xs ${asset.change >= 0 ? 'text-success' : 'text-destructive'}`}>

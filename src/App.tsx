@@ -15,6 +15,7 @@ import Transactions from "./pages/Transactions";
 import Swap from "./pages/Swap";
 import Pools from "./pages/Pools";
 import PoolDetail from "./pages/PoolDetail";
+import TokenExplorer from "./pages/TokenExplorer";
 import NotFound from "./pages/NotFound";
 const queryClient = new QueryClient();
 
@@ -38,6 +39,7 @@ const App = () => (
                 <Route path="/swap" element={<Swap />} />
                 <Route path="/pools" element={<Pools />} />
                 <Route path="/pool/:poolId" element={<PoolDetail />} />
+                <Route path="/token/:symbol" element={<TokenExplorer />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

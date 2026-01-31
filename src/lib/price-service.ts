@@ -1,5 +1,5 @@
 /**
- * Price Service - Fetches real XRGE price from backend (which proxies GeckoTerminal)
+ * Price Service - Fetches real XRGE price from backend (which proxies DexScreener)
  * 
  * Uses the XRGE/WETH pool on Base network to get live pricing
  */
@@ -28,7 +28,7 @@ export interface XRGEPriceData {
 }
 
 /**
- * Fetch XRGE price from backend (which fetches from GeckoTerminal)
+ * Fetch XRGE price from backend (which fetches from DexScreener)
  */
 export async function fetchXRGEPrice(): Promise<XRGEPriceData | null> {
   // Check cache
@@ -39,7 +39,7 @@ export async function fetchXRGEPrice(): Promise<XRGEPriceData | null> {
       volume24h: priceCache.volume24h,
       liquidity: priceCache.liquidity,
       lastUpdated: new Date(priceCache.timestamp),
-      source: "GeckoTerminal (cached)",
+      source: "DexScreener (cached)",
     };
   }
 
@@ -87,7 +87,7 @@ export async function fetchXRGEPrice(): Promise<XRGEPriceData | null> {
       volume24h,
       liquidity,
       lastUpdated: new Date(),
-      source: data.source || "GeckoTerminal",
+      source: data.source || "DexScreener",
     };
   } catch (error) {
     console.error("Failed to fetch XRGE price:", error);
@@ -100,7 +100,7 @@ export async function fetchXRGEPrice(): Promise<XRGEPriceData | null> {
         volume24h: priceCache.volume24h,
         liquidity: priceCache.liquidity,
         lastUpdated: new Date(priceCache.timestamp),
-        source: "GeckoTerminal (stale cache)",
+        source: "DexScreener (stale cache)",
       };
     }
     
@@ -131,7 +131,9 @@ export async function usdToXrge(usdAmount: number): Promise<number | null> {
  */
 export function formatUsd(value: number | null | undefined): string {
   if (value === null || value === undefined) return "--";
-  if (value < 0.01) return "<$0.01";
+  if (value === 0) return "$0.00";
+  if (value < 0.0001) return `$${value.toFixed(6)}`;
+  if (value < 0.01) return `$${value.toFixed(4)}`;
   if (value < 1) return `$${value.toFixed(4)}`;
   if (value < 1000) return `$${value.toFixed(2)}`;
   if (value < 1_000_000) return `$${(value / 1000).toFixed(2)}K`;
@@ -157,4 +159,52 @@ export function usePricePolling(intervalMs: number = 60_000) {
     fetch: fetchXRGEPrice,
     interval: intervalMs,
   };
+}
+
+/**
+ * Calculate token price from pool reserves (AMM constant product formula)
+ * 
+ * @param tokenReserve - Amount of the token in the pool
+ * @param xrgeReserve - Amount of XRGE in the pool  
+ * @param xrgeUsdPrice - Current XRGE price in USD
+ * @returns Token price in USD
+ */
+export function calculateTokenPriceFromPool(
+  tokenReserve: number,
+  xrgeReserve: number,
+  xrgeUsdPrice: number
+): number {
+  if (tokenReserve <= 0 || xrgeReserve <= 0) return 0;
+  
+  // Price in XRGE = xrgeReserve / tokenReserve
+  const priceInXrge = xrgeReserve / tokenReserve;
+  
+  // Price in USD = priceInXrge * xrgeUsdPrice
+  return priceInXrge * xrgeUsdPrice;
+}
+
+/**
+ * Calculate token value in USD based on pool liquidity
+ */
+export function calculateTokenValueFromPool(
+  amount: number,
+  tokenReserve: number,
+  xrgeReserve: number,
+  xrgeUsdPrice: number
+): number {
+  const priceUsd = calculateTokenPriceFromPool(tokenReserve, xrgeReserve, xrgeUsdPrice);
+  return amount * priceUsd;
+}
+
+/**
+ * Format token price with appropriate precision
+ */
+export function formatTokenPrice(price: number): string {
+  if (price === 0) return "$0.00";
+  if (price < 0.00000001) return `$${price.toExponential(2)}`;
+  if (price < 0.0001) return `$${price.toFixed(10)}`;
+  if (price < 0.01) return `$${price.toFixed(8)}`;
+  if (price < 1) return `$${price.toFixed(6)}`;
+  if (price < 1000) return `$${price.toFixed(4)}`;
+  return formatUsd(price);
 }

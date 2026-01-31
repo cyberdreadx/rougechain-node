@@ -156,7 +156,7 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
       )}
 
       <Dialog open={!!selectedTx} onOpenChange={(open) => !open && setSelectedTx(null)}>
-        <DialogContent>
+        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Transaction Details</DialogTitle>
             <DialogDescription>
@@ -178,7 +178,7 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Timestamp</p>
-                  <p className="font-mono text-foreground">{formatTimestamp(selectedTx.timestamp)}</p>
+                  <p className="font-mono text-foreground text-xs">{formatTimestamp(selectedTx.timestamp)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Block</p>
@@ -189,11 +189,11 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
               <div className="space-y-2">
                 <div>
                   <p className="text-xs text-muted-foreground">From</p>
-                  <p className="font-mono text-foreground break-all">{selectedTx.from ?? "—"}</p>
+                  <p className="font-mono text-foreground text-xs break-all">{selectedTx.from ?? "—"}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">To</p>
-                  <p className="font-mono text-foreground break-all">{selectedTx.to ?? "—"}</p>
+                  <p className="font-mono text-foreground text-xs break-all">{selectedTx.to ?? "—"}</p>
                 </div>
                 {selectedTx.memo && (
                   <div>

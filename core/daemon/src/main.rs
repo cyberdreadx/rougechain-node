@@ -312,6 +312,12 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/burn-address", get(get_burn_address))
         .route("/api/burned", get(get_burned_tokens))
         .route("/api/price/xrge", get(get_xrge_price))
+        // Token metadata endpoints
+        .route("/api/tokens", get(get_all_tokens))
+        .route("/api/token/:symbol/metadata", get(get_token_metadata))
+        .route("/api/token/:symbol/holders", get(get_token_holders))
+        .route("/api/token/metadata/update", post(update_token_metadata))
+        .route("/api/token/metadata/claim", post(claim_token_metadata))
         .route("/api/health", get(get_health))
         .route("/api/blocks", get(get_blocks))
         .route("/api/blocks/import", post(import_block))
@@ -613,6 +619,246 @@ async fn get_burned_tokens(State(state): State<AppState>) -> Result<Json<BurnedT
         burned,
         total_xrge_burned: total_xrge,
     }))
+}
+
+// ===== Token Metadata Endpoints =====
+
+#[derive(Serialize)]
+struct TokenMetadataResponse {
+    success: bool,
+    symbol: String,
+    name: String,
+    creator: String,
+    image: Option<String>,
+    description: Option<String>,
+    website: Option<String>,
+    twitter: Option<String>,
+    discord: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+}
+
+#[derive(Serialize)]
+struct AllTokensResponse {
+    success: bool,
+    tokens: Vec<TokenMetadataResponse>,
+}
+
+async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensResponse>, StatusCode> {
+    let node = &state.node;
+    match node.get_all_token_metadata() {
+        Ok(tokens) => {
+            let token_list: Vec<TokenMetadataResponse> = tokens
+                .into_iter()
+                .map(|t| TokenMetadataResponse {
+                    success: true,
+                    symbol: t.symbol,
+                    name: t.name,
+                    creator: t.creator,
+                    image: t.image,
+                    description: t.description,
+                    website: t.website,
+                    twitter: t.twitter,
+                    discord: t.discord,
+                    created_at: t.created_at,
+                    updated_at: t.updated_at,
+                })
+                .collect();
+            Ok(Json(AllTokensResponse {
+                success: true,
+                tokens: token_list,
+            }))
+        }
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+async fn get_token_metadata(
+    State(state): State<AppState>,
+    Path(symbol): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
+    match node.get_token_metadata(&symbol) {
+        Ok(Some(meta)) => Ok(Json(serde_json::json!({
+            "success": true,
+            "symbol": meta.symbol,
+            "name": meta.name,
+            "creator": meta.creator,
+            "image": meta.image,
+            "description": meta.description,
+            "website": meta.website,
+            "twitter": meta.twitter,
+            "discord": meta.discord,
+            "created_at": meta.created_at,
+            "updated_at": meta.updated_at,
+        }))),
+        Ok(None) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": format!("Token {} not found", symbol),
+        }))),
+        Err(e) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": e,
+        }))),
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateTokenMetadataRequest {
+    pub token_symbol: String,
+    pub from_public_key: String,
+    pub from_private_key: String,  // Used to verify ownership via signature
+    pub image: Option<String>,
+    pub description: Option<String>,
+    pub website: Option<String>,
+    pub twitter: Option<String>,
+    pub discord: Option<String>,
+}
+
+async fn update_token_metadata(
+    State(state): State<AppState>,
+    Json(body): Json<UpdateTokenMetadataRequest>,
+) -> Json<serde_json::Value> {
+    let node = &state.node;
+    
+    // Verify the caller is the token creator
+    match node.is_token_creator(&body.token_symbol, &body.from_public_key) {
+        Ok(true) => {
+            // Verify signature by checking the private key matches the public key
+            // This is a simple check - in production, you'd want proper signature verification
+            match quantum_vault_crypto::pqc_verify_keypair(&body.from_public_key, &body.from_private_key) {
+                Ok(true) => {
+                    // Update the metadata
+                    match node.update_token_metadata(
+                        &body.token_symbol,
+                        &body.from_public_key,
+                        body.image,
+                        body.description,
+                        body.website,
+                        body.twitter,
+                        body.discord,
+                    ) {
+                        Ok(()) => Json(serde_json::json!({
+                            "success": true,
+                            "message": "Token metadata updated successfully",
+                        })),
+                        Err(e) => Json(serde_json::json!({
+                            "success": false,
+                            "error": e,
+                        })),
+                    }
+                }
+                Ok(false) => Json(serde_json::json!({
+                    "success": false,
+                    "error": "Invalid private key - does not match public key",
+                })),
+                Err(e) => Json(serde_json::json!({
+                    "success": false,
+                    "error": format!("Key verification failed: {}", e),
+                })),
+            }
+        }
+        Ok(false) => Json(serde_json::json!({
+            "success": false,
+            "error": "Only the token creator can update metadata",
+        })),
+        Err(e) => Json(serde_json::json!({
+            "success": false,
+            "error": e,
+        })),
+    }
+}
+
+#[derive(Serialize)]
+struct TokenHolder {
+    address: String,
+    balance: f64,
+    percentage: f64,
+}
+
+#[derive(Serialize)]
+struct TokenHoldersResponse {
+    success: bool,
+    holders: Vec<TokenHolder>,
+    total_supply: f64,
+    circulating_supply: f64,
+}
+
+#[derive(Deserialize)]
+struct ClaimTokenMetadataRequest {
+    pub token_symbol: String,
+    pub from_public_key: String,
+    pub from_private_key: String,
+}
+
+async fn claim_token_metadata(
+    State(state): State<AppState>,
+    Json(body): Json<ClaimTokenMetadataRequest>,
+) -> Json<serde_json::Value> {
+    let node = &state.node;
+    
+    // Verify the caller owns the private key
+    match quantum_vault_crypto::pqc_verify_keypair(&body.from_public_key, &body.from_private_key) {
+        Ok(true) => {
+            // Try to claim the metadata
+            match node.claim_token_metadata(&body.token_symbol, &body.from_public_key) {
+                Ok(()) => Json(serde_json::json!({
+                    "success": true,
+                    "message": "Token metadata claimed successfully. You can now update it.",
+                })),
+                Err(e) => Json(serde_json::json!({
+                    "success": false,
+                    "error": e,
+                })),
+            }
+        }
+        Ok(false) => Json(serde_json::json!({
+            "success": false,
+            "error": "Invalid private key - does not match public key",
+        })),
+        Err(e) => Json(serde_json::json!({
+            "success": false,
+            "error": format!("Key verification failed: {}", e),
+        })),
+    }
+}
+
+async fn get_token_holders(
+    State(state): State<AppState>,
+    Path(symbol): Path<String>,
+) -> Json<TokenHoldersResponse> {
+    let node = &state.node;
+    
+    // Get all token balances for this symbol
+    match node.get_all_token_balances_for_symbol(&symbol) {
+        Ok(balances) => {
+            let total: f64 = balances.values().sum();
+            let mut holders: Vec<TokenHolder> = balances
+                .into_iter()
+                .filter(|(_, balance)| *balance > 0.0)
+                .map(|(address, balance)| {
+                    let percentage = if total > 0.0 { (balance / total) * 100.0 } else { 0.0 };
+                    TokenHolder { address, balance, percentage }
+                })
+                .collect();
+            
+            // Sort by balance descending
+            holders.sort_by(|a, b| b.balance.partial_cmp(&a.balance).unwrap_or(std::cmp::Ordering::Equal));
+            
+            Json(TokenHoldersResponse {
+                success: true,
+                holders,
+                total_supply: total,
+                circulating_supply: total,
+            })
+        }
+        Err(_) => Json(TokenHoldersResponse {
+            success: false,
+            holders: vec![],
+            total_supply: 0.0,
+            circulating_supply: 0.0,
+        }),
+    }
 }
 
 /// XRGE token address on Base chain
@@ -1524,6 +1770,16 @@ async fn create_token(
     ) {
         Ok((tx, token_address)) => {
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
+            
+            // Register initial token metadata
+            let _ = node.register_token_metadata(
+                &body.token_symbol,
+                &body.token_name,
+                &body.from_public_key,
+                None, // image
+                None, // description
+            );
+            
             Ok(Json(CreateTokenResponse { 
                 success: true, 
                 tx_id: Some(id), 

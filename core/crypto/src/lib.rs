@@ -66,3 +66,14 @@ pub fn random_hex(bytes: usize) -> String {
     rand::thread_rng().fill_bytes(&mut buf);
     bytes_to_hex(&buf)
 }
+
+/// Verify that a private key matches a public key
+/// This signs a test message with the private key and verifies it with the public key
+pub fn pqc_verify_keypair(public_key_hex: &str, private_key_hex: &str) -> Result<bool, String> {
+    // Sign a test message with the private key
+    let test_message = b"keypair_verification_test";
+    let signature = pqc_sign(private_key_hex, test_message)?;
+    
+    // Verify with the public key
+    pqc_verify(public_key_hex, test_message, &signature)
+}

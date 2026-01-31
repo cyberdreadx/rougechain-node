@@ -278,3 +278,146 @@ export async function getBurnedTokens(): Promise<ApiResponse<{
     return { success: false, error: `Request failed: ${e}` };
   }
 }
+
+// ===== Token Metadata API =====
+
+export interface TokenMetadata {
+  symbol: string;
+  name: string;
+  creator: string;
+  image?: string;
+  description?: string;
+  website?: string;
+  twitter?: string;
+  discord?: string;
+  created_at: number;
+  updated_at: number;
+}
+
+/**
+ * Get all token metadata
+ */
+export async function getAllTokenMetadata(): Promise<ApiResponse<TokenMetadata[]>> {
+  const baseUrl = getNodeApiBaseUrl();
+  if (!baseUrl) {
+    return { success: false, error: "API not configured" };
+  }
+
+  try {
+    const res = await fetch(`${baseUrl}/tokens`, {
+      headers: getCoreApiHeaders(),
+    });
+    const data = await res.json();
+    if (data.success) {
+      return { success: true, data: data.tokens };
+    }
+    return { success: false, error: data.error || "Failed to fetch tokens" };
+  } catch (e) {
+    return { success: false, error: `Request failed: ${e}` };
+  }
+}
+
+/**
+ * Get metadata for a specific token
+ */
+export async function getTokenMetadata(symbol: string): Promise<ApiResponse<TokenMetadata>> {
+  const baseUrl = getNodeApiBaseUrl();
+  if (!baseUrl) {
+    return { success: false, error: "API not configured" };
+  }
+
+  try {
+    const res = await fetch(`${baseUrl}/token/${symbol}/metadata`, {
+      headers: getCoreApiHeaders(),
+    });
+    const data = await res.json();
+    if (data.success) {
+      return { success: true, data };
+    }
+    return { success: false, error: data.error || "Token not found" };
+  } catch (e) {
+    return { success: false, error: `Request failed: ${e}` };
+  }
+}
+
+/**
+ * Claim token metadata (for tokens created before metadata system)
+ * Only the original creator (verified on-chain) can claim
+ */
+export async function claimTokenMetadata(
+  publicKey: string,
+  privateKey: string,
+  tokenSymbol: string
+): Promise<ApiResponse> {
+  const baseUrl = getNodeApiBaseUrl();
+  if (!baseUrl) {
+    return { success: false, error: "API not configured" };
+  }
+
+  try {
+    const res = await fetch(`${baseUrl}/token/metadata/claim`, {
+      method: "POST",
+      headers: {
+        ...getCoreApiHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        token_symbol: tokenSymbol,
+        from_public_key: publicKey,
+        from_private_key: privateKey,
+      }),
+    });
+    
+    const data = await res.json();
+    return data;
+  } catch (e) {
+    return { success: false, error: `Request failed: ${e}` };
+  }
+}
+
+/**
+ * Update token metadata (only token creator can do this)
+ * Note: This requires the private key to prove ownership
+ */
+export async function updateTokenMetadata(
+  publicKey: string,
+  privateKey: string,
+  tokenSymbol: string,
+  metadata: {
+    image?: string;
+    description?: string;
+    website?: string;
+    twitter?: string;
+    discord?: string;
+  }
+): Promise<ApiResponse> {
+  const baseUrl = getNodeApiBaseUrl();
+  if (!baseUrl) {
+    return { success: false, error: "API not configured" };
+  }
+
+  try {
+    const res = await fetch(`${baseUrl}/token/metadata/update`, {
+      method: "POST",
+      headers: {
+        ...getCoreApiHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        token_symbol: tokenSymbol,
+        from_public_key: publicKey,
+        from_private_key: privateKey,
+        image: metadata.image,
+        description: metadata.description,
+        website: metadata.website,
+        twitter: metadata.twitter,
+        discord: metadata.discord,
+      }),
+    });
+    
+    const data = await res.json();
+    return data;
+  } catch (e) {
+    return { success: false, error: `Request failed: ${e}` };
+  }
+}

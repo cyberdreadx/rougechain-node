@@ -8,6 +8,7 @@ use quantum_vault_consensus::{compute_selection_seed, fetch_entropy, select_prop
 use quantum_vault_crypto::{bytes_to_hex, pqc_keygen, pqc_sign, pqc_verify, sha256};
 use quantum_vault_storage::chain_store::ChainStore;
 use quantum_vault_storage::messenger_store::{Conversation, MessengerMessage, MessengerStore, MessengerWallet};
+use quantum_vault_storage::token_metadata_store::{TokenMetadata, TokenMetadataStore};
 use quantum_vault_storage::validator_store::{ValidatorState, ValidatorStore};
 use quantum_vault_types::{
     compute_block_hash, compute_tx_hash, encode_header_v1, encode_tx_v1, BlockHeaderV1, BlockV1,
@@ -50,6 +51,7 @@ pub struct L1Node {
     messenger_store: MessengerStore,
     pool_store: PoolStore,
     pool_event_store: PoolEventStore,
+    token_metadata_store: TokenMetadataStore,
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
     balances: Arc<Mutex<HashMap<String, f64>>>,
@@ -62,11 +64,13 @@ pub struct L1Node {
 
 impl L1Node {
     pub fn new(opts: NodeOptions) -> Result<Self, String> {
+        let data_dir_str = opts.data_dir.to_string_lossy().to_string();
         let store = ChainStore::new(&opts.data_dir, opts.chain.clone());
-        let validator_store = ValidatorStore::new(&opts.data_dir)?;
-        let messenger_store = MessengerStore::new(&opts.data_dir);
-        let pool_store = PoolStore::new(&opts.data_dir)?;
-        let pool_event_store = PoolEventStore::new(&opts.data_dir)?;
+        let validator_store = ValidatorStore::new(&data_dir_str)?;
+        let messenger_store = MessengerStore::new(&data_dir_str);
+        let pool_store = PoolStore::new(&data_dir_str)?;
+        let pool_event_store = PoolEventStore::new(&data_dir_str)?;
+        let token_metadata_store = TokenMetadataStore::new(&data_dir_str)?;
         let keys = pqc_keygen();
         Ok(Self {
             node_id: uuid::Uuid::new_v4().to_string(),
@@ -76,6 +80,7 @@ impl L1Node {
             messenger_store,
             pool_store,
             pool_event_store,
+            token_metadata_store,
             keys: Arc::new(Mutex::new(keys)),
             mempool: Arc::new(Mutex::new(HashMap::new())),
             balances: Arc::new(Mutex::new(HashMap::new())),
@@ -234,6 +239,63 @@ impl L1Node {
         Ok(result)
     }
 
+    /// Get all holders and their balances for a specific token symbol
+    pub fn get_all_token_balances_for_symbol(&self, token_symbol: &str) -> Result<HashMap<String, f64>, String> {
+        let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        let mut result = HashMap::new();
+        for ((pubkey, symbol), balance) in token_balances.iter() {
+            if symbol == token_symbol && *balance > 0.0 {
+                result.insert(pubkey.clone(), *balance);
+            }
+        }
+        Ok(result)
+    }
+
+    /// Find the original creator of a token by scanning blockchain history
+    pub fn find_token_creator(&self, token_symbol: &str) -> Result<Option<String>, String> {
+        let tip = self.store.get_tip()?;
+        
+        // Scan all blocks for the create_token transaction
+        for height in 1..=tip.height {
+            if let Ok(block) = self.store.get_block(height) {
+                for tx in &block.txs {
+                    if tx.tx_type == "create_token" {
+                        if let Some(symbol) = &tx.payload.token_symbol {
+                            if symbol.to_uppercase() == token_symbol.to_uppercase() {
+                                return Ok(Some(tx.from_pub_key.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+    
+    /// Claim token metadata (for tokens created before metadata system)
+    pub fn claim_token_metadata(
+        &self,
+        symbol: &str,
+        claimer_public_key: &str,
+    ) -> Result<(), String> {
+        // First check if metadata already exists
+        if let Ok(Some(_)) = self.token_metadata_store.get_metadata(symbol) {
+            return Err("Metadata already exists for this token. Use update instead.".to_string());
+        }
+        
+        // Find the original creator from blockchain
+        let creator = self.find_token_creator(symbol)?
+            .ok_or_else(|| format!("Token {} not found on blockchain", symbol))?;
+        
+        // Verify claimer is the original creator
+        if creator != claimer_public_key {
+            return Err("Only the original token creator can claim metadata".to_string());
+        }
+        
+        // Register the metadata
+        self.register_token_metadata(symbol, symbol, &creator, None, None)
+    }
+
     // ===== Burn Methods =====
     
     /// Get the official burn address
@@ -251,6 +313,83 @@ impl L1Node {
     pub fn get_all_burned_tokens(&self) -> Result<HashMap<String, f64>, String> {
         let burned = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
         Ok(burned.clone())
+    }
+
+    // ===== Token Metadata Methods =====
+    
+    /// Get metadata for a token
+    pub fn get_token_metadata(&self, symbol: &str) -> Result<Option<TokenMetadata>, String> {
+        self.token_metadata_store.get_metadata(symbol)
+    }
+    
+    /// Get all token metadata
+    pub fn get_all_token_metadata(&self) -> Result<Vec<TokenMetadata>, String> {
+        self.token_metadata_store.get_all()
+    }
+    
+    /// Check if a public key is the creator of a token
+    pub fn is_token_creator(&self, symbol: &str, public_key: &str) -> Result<bool, String> {
+        self.token_metadata_store.is_creator(symbol, public_key)
+    }
+    
+    /// Register token metadata (called when token is created)
+    pub fn register_token_metadata(
+        &self,
+        symbol: &str,
+        name: &str,
+        creator: &str,
+        image: Option<String>,
+        description: Option<String>,
+    ) -> Result<(), String> {
+        let now = Utc::now().timestamp_millis();
+        let metadata = TokenMetadata {
+            symbol: symbol.to_uppercase(),
+            name: name.to_string(),
+            creator: creator.to_string(),
+            image,
+            description,
+            website: None,
+            twitter: None,
+            discord: None,
+            created_at: now,
+            updated_at: now,
+        };
+        self.token_metadata_store.set_metadata(&metadata)
+    }
+    
+    /// Update token metadata (only creator can update)
+    pub fn update_token_metadata(
+        &self,
+        symbol: &str,
+        updater_public_key: &str,
+        image: Option<String>,
+        description: Option<String>,
+        website: Option<String>,
+        twitter: Option<String>,
+        discord: Option<String>,
+    ) -> Result<(), String> {
+        // Check if updater is the creator
+        let existing = self.token_metadata_store.get_metadata(symbol)?
+            .ok_or_else(|| format!("Token {} not found", symbol))?;
+        
+        if existing.creator != updater_public_key {
+            return Err("Only the token creator can update metadata".to_string());
+        }
+        
+        let now = Utc::now().timestamp_millis();
+        let updated = TokenMetadata {
+            symbol: existing.symbol,
+            name: existing.name,
+            creator: existing.creator,
+            image: image.or(existing.image),
+            description: description.or(existing.description),
+            website: website.or(existing.website),
+            twitter: twitter.or(existing.twitter),
+            discord: discord.or(existing.discord),
+            created_at: existing.created_at,
+            updated_at: now,
+        };
+        self.token_metadata_store.set_metadata(&updated)
     }
 
     // ===== AMM/DEX Methods =====

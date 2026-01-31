@@ -20,6 +20,12 @@ pub struct TxPayload {
     pub token_symbol: Option<String>,
     pub token_decimals: Option<u8>,
     pub token_total_supply: Option<u64>,
+    // Token metadata fields (for update_token_metadata tx)
+    pub metadata_image: Option<String>,       // Image URL (IPFS, HTTP, or data URI)
+    pub metadata_description: Option<String>, // Token description
+    pub metadata_website: Option<String>,     // Project website
+    pub metadata_twitter: Option<String>,     // X (formerly Twitter) handle
+    pub metadata_discord: Option<String>,     // Discord server
     // AMM/DEX fields
     pub pool_id: Option<String>,           // Pool identifier (sorted token pair)
     pub token_a_symbol: Option<String>,    // First token in pair

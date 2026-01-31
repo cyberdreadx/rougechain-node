@@ -268,7 +268,7 @@ const Index = () => {
               </div>
               <div>
                 <h2 className="text-xl font-bold text-foreground">XRGE Price</h2>
-                <p className="text-xs text-muted-foreground">Live chart from GeckoTerminal</p>
+                <p className="text-xs text-muted-foreground">Live chart from DexScreener</p>
               </div>
             </div>
             <a 
