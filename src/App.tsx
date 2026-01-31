@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
+import { Footer } from "@/components/Footer";
 import Index from "./pages/Index";
 import Blockchain from "./pages/Blockchain";
 import Messenger from "./pages/Messenger";
@@ -20,19 +21,24 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <Sidebar>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/blockchain" element={<Blockchain />} />
-            <Route path="/messenger" element={<Messenger />} />
-            <Route path="/wallet" element={<Wallet />} />
-            <Route path="/validators" element={<Validators />} />
-            <Route path="/node" element={<Node />} />
-            <Route path="/transactions" element={<Transactions />} />
-            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </Sidebar>
+        <div className="min-h-screen flex flex-col">
+          <Sidebar>
+            <div className="flex-1">
+              <Routes>
+                <Route path="/" element={<Index />} />
+                <Route path="/blockchain" element={<Blockchain />} />
+                <Route path="/messenger" element={<Messenger />} />
+                <Route path="/wallet" element={<Wallet />} />
+                <Route path="/validators" element={<Validators />} />
+                <Route path="/node" element={<Node />} />
+                <Route path="/transactions" element={<Transactions />} />
+                {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </div>
+            <Footer />
+          </Sidebar>
+        </div>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

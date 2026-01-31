@@ -11,6 +11,8 @@ import {
   Activity,
   Menu,
   X,
+  BookOpen,
+  ExternalLink,
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY } from "@/lib/network";
@@ -142,6 +144,23 @@ export function Sidebar({ children }: SidebarProps) {
             </NavLink>
           );
         })}
+        
+        {/* External Docs Link */}
+        <a
+          href="https://ai-integrations.gitbook.io/rougechain-post-quantum/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted"
+        >
+          <BookOpen className="w-5 h-5 flex-shrink-0" />
+          <span className={cn(
+            "whitespace-nowrap overflow-hidden transition-all duration-300 flex items-center gap-1",
+            (expanded || isMobile) ? "opacity-100 w-auto" : "opacity-0 w-0"
+          )}>
+            Docs
+            <ExternalLink className="w-3 h-3 opacity-50" />
+          </span>
+        </a>
       </nav>
     </>
   );

@@ -8,7 +8,9 @@ import {
   Globe2,
   Shield, 
   Network,
-  Activity
+  Activity,
+  BookOpen,
+  ExternalLink
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY } from "@/lib/network";
@@ -105,6 +107,18 @@ export function MainNav() {
                 </NavLink>
               );
             })}
+            
+            {/* External Docs Link */}
+            <a
+              href="https://ai-integrations.gitbook.io/rougechain-post-quantum/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap text-muted-foreground hover:text-foreground hover:bg-muted"
+            >
+              <BookOpen className="w-4 h-4" />
+              <span className="hidden md:inline">Docs</span>
+              <ExternalLink className="w-3 h-3 opacity-50" />
+            </a>
           </div>
         </div>
       </div>

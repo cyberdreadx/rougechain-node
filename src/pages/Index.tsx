@@ -346,10 +346,6 @@ const Index = () => {
               </Link>
             </div>
           </div>
-          
-          <p className="text-xs text-muted-foreground/60 mt-8 font-mono">
-            RougeChain Testnet v0.1 • Post-Quantum Secured
-          </p>
         </motion.div>
       </main>
     </div>
