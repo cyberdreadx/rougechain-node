@@ -3,7 +3,6 @@ import { motion } from "framer-motion";
 import { Shield, Info, Zap, TrendingUp, Lock, Wallet, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MainNav } from "@/components/MainNav";
 import { ValidatorDashboard } from "@/components/validators/ValidatorDashboard";
 import { STAKE_REQUIREMENTS, TIER_BENEFITS, formatStake, ValidatorTier } from "@/lib/pqc-validators";
 import { loadUnifiedWallet, UnifiedWallet } from "@/lib/unified-wallet";
@@ -57,7 +56,6 @@ export default function Validators() {
 
   return (
     <div className="min-h-screen bg-background text-foreground relative overflow-hidden">
-      <MainNav />
       
       {/* Background Effects */}
       <div className="fixed inset-0 pointer-events-none">
@@ -66,10 +64,46 @@ export default function Validators() {
       </div>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-8 relative z-10">
-        <div className="grid lg:grid-cols-3 gap-8">
+      <main className="container mx-auto px-4 py-6 md:py-8 relative z-10">
+        {/* Mobile: Wallet balance first */}
+        <div className="lg:hidden mb-6">
+          <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/30">
+            <CardContent className="p-4">
+              {wallet ? (
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs text-muted-foreground mb-1">Available to Stake</div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-2xl font-bold">
+                        {isLoadingBalance ? "..." : formatStake(availableBalance)}
+                      </span>
+                      <span className="text-muted-foreground text-sm">XRGE</span>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={refreshBalance}
+                    disabled={isLoadingBalance}
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isLoadingBalance ? "animate-spin" : ""}`} />
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">No wallet connected</span>
+                  <Button asChild size="sm">
+                    <Link to="/wallet">Open Wallet</Link>
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid lg:grid-cols-3 gap-6 md:gap-8">
           {/* Main Dashboard */}
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-2 order-2 lg:order-1">
             <ValidatorDashboard
               walletId={walletId}
               signingPublicKey={signingPublicKey}
@@ -78,8 +112,8 @@ export default function Validators() {
             />
           </div>
 
-          {/* Sidebar */}
-          <div className="space-y-6">
+          {/* Sidebar - hidden on mobile, cards shown inline above */}
+          <div className="space-y-6 order-1 lg:order-2 hidden lg:block">
             {/* Simple Explanation */}
             <Card className="bg-card/50 backdrop-blur border-border">
               <CardHeader className="pb-3">

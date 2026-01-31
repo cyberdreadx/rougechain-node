@@ -2,7 +2,6 @@ import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { MainNav } from "@/components/MainNav";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 
 const features = [
@@ -39,7 +38,6 @@ const features = [
 const Index = () => {
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">
-      <MainNav />
       
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />

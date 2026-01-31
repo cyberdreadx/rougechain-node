@@ -4,7 +4,6 @@ import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw } from "lucide-r
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { MainNav } from "@/components/MainNav";
 import WalletSetup from "@/components/messenger/WalletSetup";
 import ConversationList from "@/components/messenger/ConversationList";
 import ChatView from "@/components/messenger/ChatView";
@@ -222,7 +221,6 @@ const Messenger = () => {
 
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">
-      <MainNav />
       
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />

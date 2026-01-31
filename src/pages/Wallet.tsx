@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { MainNav } from "@/components/MainNav";
 import WalletCard from "@/components/wallet/WalletCard";
 import AssetList from "@/components/wallet/AssetList";
 import TransactionHistory from "@/components/wallet/TransactionHistory";
@@ -473,7 +472,6 @@ const Wallet = () => {
     const meta = getLockedWalletMetadata();
     return (
       <div className="min-h-screen bg-background">
-        <MainNav />
         <div className="max-w-md mx-auto px-4 py-12">
           <Card className="border-border">
             <CardHeader>
@@ -506,8 +504,6 @@ const Wallet = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      <MainNav />
-      
       {/* Action Bar */}
       <div className="sticky top-[60px] z-40 bg-background/80 backdrop-blur-sm border-b border-border">
         <div className="max-w-lg mx-auto px-4 py-2 flex items-center justify-between">

@@ -3,7 +3,6 @@ import { motion } from "framer-motion";
 import { Shield, Blocks, RotateCcw, CheckCircle2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { MainNav } from "@/components/MainNav";
 import PQCInfo from "@/components/blockchain/PQCInfo";
 import { QuantumThreatPanel } from "@/components/blockchain/QuantumThreatPanel";
 import { TamperDemo } from "@/components/blockchain/TamperDemo";
@@ -214,7 +213,6 @@ const Blockchain = () => {
 
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">
-      <MainNav />
       
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />

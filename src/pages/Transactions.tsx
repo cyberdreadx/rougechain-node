@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { MainNav } from "@/components/MainNav";
 import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/network";
 
 interface CoreTxResponse {
@@ -155,7 +154,6 @@ const Transactions = () => {
 
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">
-      <MainNav />
 
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
