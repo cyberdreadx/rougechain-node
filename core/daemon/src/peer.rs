@@ -1,9 +1,60 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 use tokio::time::sleep;
 
 use crate::node::L1Node;
 use quantum_vault_types::BlockV1;
+
+/// Manages dynamic peer list
+#[derive(Clone)]
+pub struct PeerManager {
+    peers: Arc<RwLock<HashSet<String>>>,
+    self_url: Option<String>,
+}
+
+impl PeerManager {
+    pub fn new(initial_peers: Vec<String>, self_url: Option<String>) -> Self {
+        let peers: HashSet<String> = initial_peers.into_iter().collect();
+        Self {
+            peers: Arc::new(RwLock::new(peers)),
+            self_url,
+        }
+    }
+
+    pub async fn get_peers(&self) -> Vec<String> {
+        self.peers.read().await.iter().cloned().collect()
+    }
+
+    pub async fn add_peer(&self, peer_url: String) -> bool {
+        // Don't add ourselves
+        if let Some(ref self_url) = self.self_url {
+            if peer_url == *self_url {
+                return false;
+            }
+        }
+        
+        let normalized = normalize_peer_url(&peer_url);
+        let mut peers = self.peers.write().await;
+        peers.insert(normalized)
+    }
+
+    pub async fn peer_count(&self) -> usize {
+        self.peers.read().await.len()
+    }
+}
+
+fn normalize_peer_url(url: &str) -> String {
+    let url = url.trim().to_string();
+    if url.ends_with("/api") {
+        url
+    } else if url.ends_with('/') {
+        format!("{}api", url)
+    } else {
+        format!("{}/api", url)
+    }
+}
 
 /// Parse comma-separated peer URLs
 pub fn parse_peers(peers_str: &str) -> Vec<String> {
@@ -100,17 +151,68 @@ async fn sync_from_peer(peer_url: &str, node: &L1Node, allow_genesis_reset: bool
     Ok(synced_count)
 }
 
-/// Start the peer sync background task
-pub async fn start_peer_sync(peers: Vec<String>, node: Arc<L1Node>) {
-    if peers.is_empty() {
-        eprintln!("[peer] No peers configured, skipping sync");
-        return;
+/// Discover peers from a known peer
+async fn discover_peers(peer_url: &str) -> Result<Vec<String>, String> {
+    let url = format!("{}/peers", peer_url);
+    let response = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("Failed to fetch peers from {}: {}", peer_url, e))?;
+    
+    if !response.status().is_success() {
+        return Err(format!("Peer {} returned status {}", peer_url, response.status()));
     }
     
-    eprintln!("[peer] Starting peer sync with {} peers", peers.len());
+    let data: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse peers from {}: {}", peer_url, e))?;
+    
+    let peers = data.get("peers")
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    
+    Ok(peers)
+}
+
+/// Register ourselves with a peer
+async fn register_with_peer(peer_url: &str, our_url: &str) -> Result<(), String> {
+    let url = format!("{}/peers/register", peer_url);
+    let client = reqwest::Client::new();
+    
+    let body = serde_json::json!({ "peerUrl": our_url });
+    
+    let response = client
+        .post(&url)
+        .json(&body)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to register with {}: {}", peer_url, e))?;
+    
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Registration failed with status {}", response.status()))
+    }
+}
+
+/// Start the peer sync background task with discovery
+pub async fn start_peer_sync(peer_manager: Arc<PeerManager>, node: Arc<L1Node>) {
+    let initial_peers = peer_manager.get_peers().await;
+    
+    if initial_peers.is_empty() {
+        eprintln!("[peer] No peers configured, waiting for incoming connections");
+    } else {
+        eprintln!("[peer] Starting peer sync with {} peers", initial_peers.len());
+    }
     
     // Initial sync - try each peer until one succeeds (allow genesis reset on first sync)
-    for peer in &peers {
+    for peer in &initial_peers {
         eprintln!("[peer] Attempting initial sync from {}", peer);
         match sync_from_peer(peer, &node, true).await {
             Ok(count) => {
@@ -123,11 +225,26 @@ pub async fn start_peer_sync(peers: Vec<String>, node: Arc<L1Node>) {
         }
     }
     
-    // Continuous sync loop - check peers every 5 seconds (no genesis reset after initial sync)
+    // Register ourselves with known peers
+    if let Some(ref self_url) = peer_manager.self_url {
+        for peer in &initial_peers {
+            match register_with_peer(peer, self_url).await {
+                Ok(()) => eprintln!("[peer] Registered with {}", peer),
+                Err(e) => eprintln!("[peer] Failed to register with {}: {}", peer, e),
+            }
+        }
+    }
+    
+    let mut discovery_counter = 0u32;
+    
+    // Continuous sync loop
     loop {
         sleep(Duration::from_secs(5)).await;
         
+        let peers = peer_manager.get_peers().await;
+        
         for peer in &peers {
+            // Sync blocks
             match sync_from_peer(peer, &node, false).await {
                 Ok(count) if count > 0 => {
                     eprintln!("[peer] Synced {} new blocks from {}", count, peer);
@@ -135,6 +252,25 @@ pub async fn start_peer_sync(peers: Vec<String>, node: Arc<L1Node>) {
                 Ok(_) => {} // No new blocks
                 Err(e) => {
                     eprintln!("[peer] Sync error from {}: {}", peer, e);
+                }
+            }
+        }
+        
+        // Peer discovery every 30 seconds (6 iterations)
+        discovery_counter += 1;
+        if discovery_counter >= 6 {
+            discovery_counter = 0;
+            
+            for peer in &peers {
+                match discover_peers(peer).await {
+                    Ok(new_peers) => {
+                        for new_peer in new_peers {
+                            if peer_manager.add_peer(new_peer.clone()).await {
+                                eprintln!("[peer] Discovered new peer: {}", new_peer);
+                            }
+                        }
+                    }
+                    Err(_) => {} // Ignore discovery errors
                 }
             }
         }

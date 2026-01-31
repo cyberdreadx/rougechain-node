@@ -53,6 +53,9 @@ struct Args {
     /// Comma-separated list of peer URLs to connect to (e.g., "http://node1.example.com:5100,http://node2.example.com:5100")
     #[arg(long, env = "QV_PEERS")]
     peers: Option<String>,
+    /// Public URL of this node for peer discovery (e.g., "https://mynode.example.com")
+    #[arg(long, env = "QV_PUBLIC_URL")]
+    public_url: Option<String>,
 }
 
 #[derive(Clone)]
@@ -63,7 +66,7 @@ struct AppState {
     read_limit: u32,
     write_limit: u32,
     faucet_whitelist: Vec<String>,
-    peers: Arc<Vec<String>>,
+    peer_manager: Arc<peer::PeerManager>,
 }
 
 #[derive(Clone)]
@@ -199,11 +202,11 @@ async fn main() -> Result<(), String> {
         args.rate_limit_per_minute,
         StdDuration::from_secs(60),
     )));
-    let peers: Vec<String> = args.peers
+    let initial_peers: Vec<String> = args.peers
         .as_ref()
         .map(|p| peer::parse_peers(p))
         .unwrap_or_default();
-    let peers = Arc::new(peers);
+    let peer_manager = Arc::new(peer::PeerManager::new(initial_peers.clone(), args.public_url.clone()));
     
     let app_state = AppState {
         node: node.clone(),
@@ -212,15 +215,15 @@ async fn main() -> Result<(), String> {
         read_limit: args.rate_limit_read_per_minute,
         write_limit: args.rate_limit_write_per_minute,
         faucet_whitelist: parse_whitelist(args.faucet_whitelist),
-        peers: peers.clone(),
+        peer_manager: peer_manager.clone(),
     };
 
-    // Start peer sync if peers are configured
-    if !peers.is_empty() {
+    // Start peer sync
+    {
         let peer_node = node.clone();
-        let peer_list = (*peers).clone();
+        let pm = peer_manager.clone();
         tokio::spawn(async move {
-            peer::start_peer_sync(peer_list, peer_node).await;
+            peer::start_peer_sync(pm, peer_node).await;
         });
     }
 
@@ -236,14 +239,15 @@ async fn main() -> Result<(), String> {
 
     if node.is_mining() {
         let miner = node.clone();
-        let broadcast_peers = peers.clone();
+        let broadcast_pm = peer_manager.clone();
         tokio::spawn(async move {
             loop {
                 if let Ok(Some(block)) = miner.mine_pending() {
                     eprintln!("[miner] Mined block {}", block.header.height);
                     // Broadcast to peers
-                    if !broadcast_peers.is_empty() {
-                        peer::broadcast_block(&broadcast_peers, &block).await;
+                    let peers = broadcast_pm.get_peers().await;
+                    if !peers.is_empty() {
+                        peer::broadcast_block(&peers, &block).await;
                     }
                 }
                 sleep(Duration::from_millis(1000)).await;
@@ -298,6 +302,8 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/messenger/messages", get(get_messenger_messages))
         .route("/api/messenger/messages", post(send_messenger_message))
         .route("/api/messenger/messages/read", post(mark_messenger_read))
+        .route("/api/peers", get(get_peers))
+        .route("/api/peers/register", post(register_peer))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(
             CorsLayer::new()
@@ -407,8 +413,9 @@ async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>,
     let height = node.get_tip_height().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let (total_fees, last_fees) = node.get_fee_stats().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let (finalized, _, _, _) = node.get_finality_status().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let peer_count = state.peer_manager.peer_count().await as u32;
     Ok(Json(StatsResponse {
-        connected_peers: state.peers.len() as u32,
+        connected_peers: peer_count,
         network_height: height,
         is_mining: node.is_mining(),
         node_id: node.node_id(),
@@ -658,8 +665,9 @@ async fn submit_tx(
         Ok(tx) => {
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
             // Broadcast tx to peers
-            if !state.peers.is_empty() {
-                peer::broadcast_tx(&state.peers, &tx);
+            let peers = state.peer_manager.get_peers().await;
+            if !peers.is_empty() {
+                peer::broadcast_tx(&peers, &tx);
             }
             Ok(Json(TxResponse { success: true, tx_id: Some(id), tx: Some(tx), error: None }))
         }
@@ -682,6 +690,49 @@ async fn receive_broadcast_tx(
     match node.add_tx_to_mempool(tx) {
         Ok(()) => Ok(Json(BroadcastTxResponse { success: true, error: None })),
         Err(e) => Ok(Json(BroadcastTxResponse { success: false, error: Some(e) })),
+    }
+}
+
+#[derive(Serialize)]
+struct PeersResponse {
+    peers: Vec<String>,
+    count: usize,
+}
+
+async fn get_peers(State(state): State<AppState>) -> Result<Json<PeersResponse>, StatusCode> {
+    let peers = state.peer_manager.get_peers().await;
+    let count = peers.len();
+    Ok(Json(PeersResponse { peers, count }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegisterPeerRequest {
+    peer_url: String,
+}
+
+#[derive(Serialize)]
+struct RegisterPeerResponse {
+    success: bool,
+    message: String,
+}
+
+async fn register_peer(
+    State(state): State<AppState>,
+    Json(body): Json<RegisterPeerRequest>,
+) -> Result<Json<RegisterPeerResponse>, StatusCode> {
+    let added = state.peer_manager.add_peer(body.peer_url.clone()).await;
+    if added {
+        eprintln!("[peer] New peer registered: {}", body.peer_url);
+        Ok(Json(RegisterPeerResponse {
+            success: true,
+            message: "Peer registered".to_string(),
+        }))
+    } else {
+        Ok(Json(RegisterPeerResponse {
+            success: true,
+            message: "Peer already known".to_string(),
+        }))
     }
 }
 
