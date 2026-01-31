@@ -1,7 +1,9 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity } from "lucide-react";
+import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity, Zap, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useEffect, useState } from "react";
+import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 
 const features = [
@@ -35,16 +37,132 @@ const features = [
   },
 ];
 
+// Live Network Status Component
+const LiveNetworkStatus = () => {
+  const [stats, setStats] = useState<{ height: number; peers: number; isLive: boolean } | null>(null);
+  const [pulseKey, setPulseKey] = useState(0);
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const baseUrl = getCoreApiBaseUrl();
+        if (!baseUrl) return;
+        
+        const res = await fetch(`${baseUrl}/stats`, {
+          headers: getCoreApiHeaders(),
+          signal: AbortSignal.timeout(3000),
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          const newHeight = data.network_height || data.networkHeight || 0;
+          const currentHeight = stats?.height || 0;
+          
+          setStats({
+            height: newHeight,
+            peers: data.connected_peers || data.connectedPeers || 0,
+            isLive: true,
+          });
+          
+          // Trigger pulse animation on new block
+          if (newHeight > currentHeight && currentHeight > 0) {
+            setPulseKey(prev => prev + 1);
+          }
+        }
+      } catch {
+        setStats(prev => prev ? { ...prev, isLive: false } : null);
+      }
+    };
+
+    fetchStats();
+    const interval = setInterval(fetchStats, 2000);
+    return () => clearInterval(interval);
+  }, [stats?.height]);
+
+  if (!stats) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex items-center justify-center gap-6 mb-8"
+    >
+      <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-black/40 border border-red-500/30 backdrop-blur-sm">
+        {/* Animated pulse ring */}
+        <div className="relative">
+          <motion.div
+            key={pulseKey}
+            initial={{ scale: 1, opacity: 0.8 }}
+            animate={{ scale: 2.5, opacity: 0 }}
+            transition={{ duration: 1, ease: "easeOut" }}
+            className="absolute inset-0 rounded-full bg-red-500"
+          />
+          <div className={`w-3 h-3 rounded-full ${stats.isLive ? 'bg-red-500 animate-pulse' : 'bg-gray-500'}`} />
+        </div>
+        
+        <div className="flex items-center gap-4 text-sm font-mono">
+          <div className="flex items-center gap-1.5">
+            <Zap className="w-3.5 h-3.5 text-red-400" />
+            <span className="text-red-400/80">TESTNET</span>
+          </div>
+          
+          <div className="h-4 w-px bg-red-500/30" />
+          
+          <div className="flex items-center gap-1.5">
+            <span className="text-muted-foreground text-xs">BLOCK</span>
+            <motion.span 
+              key={stats.height}
+              initial={{ opacity: 0, y: -5 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-white font-bold"
+            >
+              #{stats.height.toLocaleString()}
+            </motion.span>
+          </div>
+          
+          <div className="h-4 w-px bg-red-500/30" />
+          
+          <div className="flex items-center gap-1.5">
+            <span className="text-muted-foreground text-xs">PEERS</span>
+            <span className="text-fuchsia-400 font-bold">{stats.peers}</span>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+};
+
 const Index = () => {
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">
       
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
-      <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
-      <div className="fixed bottom-0 right-0 w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-red-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="fixed bottom-0 right-0 w-[600px] h-[600px] bg-fuchsia-500/5 rounded-full blur-3xl pointer-events-none" />
 
       <main className="relative z-10 max-w-4xl mx-auto px-4 py-12">
+        
+        {/* Testnet Banner */}
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex justify-center mb-6"
+        >
+          <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full bg-gradient-to-r from-red-500/10 via-fuchsia-500/10 to-red-500/10 border border-red-500/30">
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-red-500/20 text-red-400 text-xs font-bold font-mono">
+              TESTNET LIVE
+            </span>
+            <span className="text-sm text-muted-foreground">
+              Mainnet launch coming soon
+            </span>
+            <span className="text-fuchsia-400 animate-pulse">→</span>
+          </div>
+        </motion.div>
+        
+        {/* Live Network Status */}
+        <LiveNetworkStatus />
+        
         {/* Hero */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -57,7 +175,7 @@ const Index = () => {
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ delay: 0.1 }}
-            className="w-24 h-24 mx-auto mb-6 rounded-full shadow-lg shadow-primary/20"
+            className="w-24 h-24 mx-auto mb-6 rounded-full shadow-lg shadow-red-500/20 ring-2 ring-red-500/20"
           />
 
           <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-4">
@@ -65,8 +183,12 @@ const Index = () => {
             <span className="text-gradient-quantum">RougeChain</span>
           </h1>
           
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
-            A post-quantum chain with a Rust core daemon and a modern UI for wallets, validators, and messaging.
+          <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-4">
+            A post-quantum Layer 1 blockchain with ML-DSA signatures, Rust core, and modern UI.
+          </p>
+          
+          <p className="text-sm text-red-400/80 max-w-xl mx-auto mb-8 font-mono">
+            Join the testnet now - create a wallet, claim XRGE, and help stress-test the network before mainnet.
           </p>
 
           <div className="flex items-center justify-center gap-3 flex-wrap">
@@ -76,6 +198,16 @@ const Index = () => {
                 Open Wallet
               </Button>
             </Link>
+            <a 
+              href="https://aerodrome.finance/swap?from=0x833589fcd6edb6e08f4c7c32d4f71b54bda02913&to=0x147120faec9277ec02d957584cfcd92b56a24317&chain0=8453&chain1=8453" 
+              target="_blank" 
+              rel="noopener noreferrer"
+            >
+              <Button size="lg" variant="outline" className="gap-2 border-red-500/50 text-red-400 hover:bg-red-500/10 hover:text-red-300">
+                <ExternalLink className="w-5 h-5" />
+                Buy XRGE
+              </Button>
+            </a>
             <Link to="/node">
               <Button size="lg" variant="outline" className="gap-2">
                 <Network className="w-5 h-5" />
@@ -141,6 +273,43 @@ const Index = () => {
 
           <p className="text-xs text-muted-foreground mt-4 text-center">
             All algorithms are NIST FIPS 203/204 approved standards
+          </p>
+        </motion.div>
+
+        {/* Footer CTA */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.6 }}
+          className="mt-16 text-center"
+        >
+          <div className="inline-flex flex-col items-center gap-3 p-6 rounded-2xl bg-gradient-to-r from-red-500/5 via-transparent to-fuchsia-500/5 border border-red-500/20">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-sm font-mono text-red-400">TESTNET IS LIVE</span>
+            </div>
+            <p className="text-muted-foreground text-sm max-w-md">
+              RougeChain testnet is open for testing. Create a wallet, request tokens from the faucet, 
+              and help us battle-test the network before mainnet launch.
+            </p>
+            <div className="flex items-center gap-2 mt-2">
+              <Link to="/wallet">
+                <Button size="sm" className="gap-2 bg-red-500 hover:bg-red-600">
+                  <Wallet className="w-4 h-4" />
+                  Get Started
+                </Button>
+              </Link>
+              <Link to="/blockchain">
+                <Button size="sm" variant="outline" className="gap-2 border-red-500/30 text-red-400 hover:bg-red-500/10">
+                  <Activity className="w-4 h-4" />
+                  Explore Blocks
+                </Button>
+              </Link>
+            </div>
+          </div>
+          
+          <p className="text-xs text-muted-foreground/60 mt-8 font-mono">
+            RougeChain Testnet v0.1 • Post-Quantum Secured
           </p>
         </motion.div>
       </main>
