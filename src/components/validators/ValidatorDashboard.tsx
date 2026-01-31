@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Shield, ShieldCheck, Crown, Zap, TrendingUp, Clock, 
@@ -21,6 +21,7 @@ import {
   formatStake,
   STAKE_REQUIREMENTS,
 } from "@/lib/pqc-validators";
+import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 
 interface ValidatorDashboardProps {
   walletId?: string;
@@ -86,27 +87,36 @@ export function ValidatorDashboard({
     return () => clearInterval(interval);
   }, [pendingStake]);
 
-  useEffect(() => {
-    const loadSelection = async () => {
-      setSelectionLoading(true);
-      try {
-        const info = await getProposerSelectionInfo();
-        setSelectionInfo(info);
-        const finality = await getFinalityStatus();
-        setFinalityStatus(finality);
-        const summary = await getVoteSummary(finality.tipHeight);
-        setVoteSummary(summary);
-      } catch (error) {
-        console.error("Failed to load proposer selection info:", error);
-      } finally {
-        setSelectionLoading(false);
-      }
-    };
-
-    loadSelection();
-    const interval = setInterval(loadSelection, 10000); // 10s
-    return () => clearInterval(interval);
+  const loadSelection = useCallback(async () => {
+    setSelectionLoading(true);
+    try {
+      const info = await getProposerSelectionInfo();
+      setSelectionInfo(info);
+      const finality = await getFinalityStatus();
+      setFinalityStatus(finality);
+      const summary = await getVoteSummary(finality.tipHeight);
+      setVoteSummary(summary);
+    } catch (error) {
+      console.error("Failed to load proposer selection info:", error);
+    } finally {
+      setSelectionLoading(false);
+    }
   }, []);
+
+  // WebSocket for real-time updates
+  const handleNewBlock = useCallback(() => {
+    loadSelection();
+    loadData();
+  }, [loadSelection]);
+
+  useBlockchainWs({
+    onNewBlock: handleNewBlock,
+    fallbackPollInterval: 15000,
+  });
+
+  useEffect(() => {
+    loadSelection();
+  }, [loadSelection]);
 
   const loadData = async () => {
     setLoading(true);

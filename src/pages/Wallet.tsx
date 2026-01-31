@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Loader2, 
@@ -8,8 +8,11 @@ import {
   Send,
   Download,
   Plus,
-  FileKey2
+  FileKey2,
+  Wifi,
+  WifiOff
 } from "lucide-react";
+import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -192,13 +195,22 @@ const Wallet = () => {
     };
   }, []);
 
+  // WebSocket for real-time updates
+  const handleNewBlock = useCallback(() => {
+    if (wallet) {
+      refreshWalletData();
+    }
+  }, [wallet?.signingPublicKey]);
+
+  const { isConnected: wsConnected, connectionType: wsConnectionType } = useBlockchainWs({
+    onNewBlock: handleNewBlock,
+    fallbackPollInterval: 15000,
+  });
+
   // Load balance and transactions when wallet is set
   useEffect(() => {
     if (wallet) {
       refreshWalletData();
-      // Auto-refresh every 15 seconds (will be replaced by WebSocket when available)
-      const interval = setInterval(refreshWalletData, 15000);
-      return () => clearInterval(interval);
     }
   }, [wallet?.signingPublicKey]);
 
@@ -550,9 +562,18 @@ const Wallet = () => {
               </>
             )}
             {wallet && (
-              <span className="text-[11px] text-muted-foreground hidden sm:inline">
-                {formatLastUpdated(lastUpdated)}
-              </span>
+              <div className="flex items-center gap-2">
+                {wsConnectionType === "websocket" ? (
+                  <Wifi className="w-3 h-3 text-green-500" title="Live updates via WebSocket" />
+                ) : wsConnectionType === "polling" ? (
+                  <RefreshCw className="w-3 h-3 text-amber-500" title="Polling for updates" />
+                ) : (
+                  <WifiOff className="w-3 h-3 text-destructive" title="Disconnected" />
+                )}
+                <span className="text-[11px] text-muted-foreground hidden sm:inline">
+                  {formatLastUpdated(lastUpdated)}
+                </span>
+              </div>
             )}
           </div>
         </div>

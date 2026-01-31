@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Blocks, Clock, Zap, Activity, TrendingUp } from "lucide-react";
 import { getCoreApiHeaders, getNodeApiBaseUrl } from "@/lib/network";
+import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 
 interface NetworkStats {
   blocksPerMinute: number;
@@ -140,10 +141,18 @@ const NetworkStatsBar = () => {
     }
   };
 
+  // WebSocket for real-time updates
+  const handleNewBlock = useCallback(() => {
+    fetchStats();
+  }, []);
+
+  useBlockchainWs({
+    onNewBlock: handleNewBlock,
+    fallbackPollInterval: 10000,
+  });
+
   useEffect(() => {
     fetchStats();
-    const interval = setInterval(fetchStats, 5000); // Refresh every 5s
-    return () => clearInterval(interval);
   }, []);
 
   const formatAge = (seconds: number) => {

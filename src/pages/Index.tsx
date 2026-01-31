@@ -2,8 +2,9 @@ import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity, Zap, ExternalLink, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
+import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 
 const features = [
@@ -42,42 +43,51 @@ const LiveNetworkStatus = () => {
   const [stats, setStats] = useState<{ height: number; peers: number; isLive: boolean } | null>(null);
   const [pulseKey, setPulseKey] = useState(0);
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const baseUrl = getCoreApiBaseUrl();
-        if (!baseUrl) return;
+  const fetchStats = useCallback(async () => {
+    try {
+      const baseUrl = getCoreApiBaseUrl();
+      if (!baseUrl) return;
+      
+      const res = await fetch(`${baseUrl}/stats`, {
+        headers: getCoreApiHeaders(),
+        signal: AbortSignal.timeout(3000),
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        const newHeight = data.network_height || data.networkHeight || 0;
         
-        const res = await fetch(`${baseUrl}/stats`, {
-          headers: getCoreApiHeaders(),
-          signal: AbortSignal.timeout(3000),
-        });
-        
-        if (res.ok) {
-          const data = await res.json();
-          const newHeight = data.network_height || data.networkHeight || 0;
-          const currentHeight = stats?.height || 0;
-          
-          setStats({
+        setStats(prev => {
+          // Trigger pulse animation on new block
+          if (prev && newHeight > prev.height && prev.height > 0) {
+            setPulseKey(k => k + 1);
+          }
+          return {
             height: newHeight,
             peers: data.connected_peers || data.connectedPeers || 0,
             isLive: true,
-          });
-          
-          // Trigger pulse animation on new block
-          if (newHeight > currentHeight && currentHeight > 0) {
-            setPulseKey(prev => prev + 1);
-          }
-        }
-      } catch {
-        setStats(prev => prev ? { ...prev, isLive: false } : null);
+          };
+        });
       }
-    };
+    } catch {
+      setStats(prev => prev ? { ...prev, isLive: false } : null);
+    }
+  }, []);
 
+  // WebSocket for real-time updates
+  const handleNewBlock = useCallback(() => {
     fetchStats();
-    const interval = setInterval(fetchStats, 5000); // 5 seconds
-    return () => clearInterval(interval);
-  }, [stats?.height]);
+    setPulseKey(k => k + 1);
+  }, [fetchStats]);
+
+  const { connectionType } = useBlockchainWs({
+    onNewBlock: handleNewBlock,
+    fallbackPollInterval: 10000,
+  });
+
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
 
   if (!stats) return null;
 

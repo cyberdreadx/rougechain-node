@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Shield, Blocks, RotateCcw, CheckCircle2, XCircle } from "lucide-react";
+import { Shield, Blocks, RotateCcw, CheckCircle2, XCircle, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import PQCInfo from "@/components/blockchain/PQCInfo";
@@ -11,6 +11,7 @@ import NetworkStatsBar from "@/components/blockchain/NetworkStatsBar";
 import NetworkHistoryChart from "@/components/blockchain/NetworkHistoryChart";
 import type { Block } from "@/lib/pqc-blockchain";
 import { getCoreApiHeaders, getNodeApiBaseUrl } from "@/lib/network";
+import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 
 interface BlockV1 {
   version: 1;
@@ -126,55 +127,37 @@ const Blockchain = () => {
     fetchChain();
   }, []);
 
-  // Smart polling - only fetch when block height changes
-  useEffect(() => {
-    const checkForNewBlocks = async () => {
-      try {
-        const NODE_API_URL = getNodeApiBaseUrl();
-        if (!NODE_API_URL) return;
-        
-        const res = await fetch(`${NODE_API_URL}/stats`, {
-          signal: AbortSignal.timeout(3000),
-          headers: getCoreApiHeaders(),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const currentHeight = data.network_height ?? data.networkHeight ?? 0;
-          if (currentHeight > lastKnownHeight) {
-            setLastKnownHeight(currentHeight);
-          }
-        }
-      } catch {
-        // Silent fail
+  // Fetch chain data
+  const fetchChainData = useCallback(async () => {
+    const NODE_API_URL = getNodeApiBaseUrl();
+    if (!NODE_API_URL) return;
+    try {
+      const res = await fetch(`${NODE_API_URL}/blocks?limit=500`, {
+        signal: AbortSignal.timeout(10000),
+        headers: getCoreApiHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json() as { blocks: BlockV1[] };
+        setChain(data.blocks.map(convertBlock));
+        setNodeConnected(true);
       }
-    };
-    
-    const interval = setInterval(checkForNewBlocks, 2000);
-    return () => clearInterval(interval);
-  }, [lastKnownHeight]);
-
-  // Refetch chain when height changes
-  useEffect(() => {
-    if (lastKnownHeight > 0) {
-      const fetchChain = async () => {
-        const NODE_API_URL = getNodeApiBaseUrl();
-        if (!NODE_API_URL) return;
-        try {
-          const res = await fetch(`${NODE_API_URL}/blocks?limit=500`, {
-            signal: AbortSignal.timeout(10000),
-            headers: getCoreApiHeaders(),
-          });
-          if (res.ok) {
-            const data = await res.json() as { blocks: BlockV1[] };
-            setChain(data.blocks.map(convertBlock));
-          }
-        } catch {
-          // Silent fail
-        }
-      };
-      fetchChain();
+    } catch {
+      // Silent fail
     }
-  }, [lastKnownHeight]);
+  }, []);
+
+  // WebSocket for real-time updates
+  const handleNewBlock = useCallback((event: { height: number }) => {
+    if (event.height > lastKnownHeight) {
+      setLastKnownHeight(event.height);
+      fetchChainData();
+    }
+  }, [lastKnownHeight, fetchChainData]);
+
+  const { isConnected: wsConnected, connectionType: wsConnectionType } = useBlockchainWs({
+    onNewBlock: handleNewBlock,
+    fallbackPollInterval: 10000,
+  });
 
   const sortedChain = [...chain].sort((a, b) => b.index - a.index);
   const totalPages = Math.max(1, Math.ceil(sortedChain.length / pageSize));
