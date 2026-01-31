@@ -79,6 +79,7 @@ fn extract_host_from_url(url: &str) -> Option<String> {
     } else {
         Some(host.to_string())
     }
+}
 
 fn normalize_peer_url(url: &str) -> String {
     let url = url.trim().to_string();
