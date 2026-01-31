@@ -24,10 +24,8 @@ pub fn parse_peers(peers_str: &str) -> Vec<String> {
         .collect()
 }
 
-/// Sync blocks from a peer
-async fn sync_from_peer(peer_url: &str, node: &L1Node) -> Result<u64, String> {
-    let local_height = node.get_tip_height()?;
-    
+/// Sync blocks from a peer (with genesis reset if needed)
+async fn sync_from_peer(peer_url: &str, node: &L1Node, allow_genesis_reset: bool) -> Result<u64, String> {
     // Fetch peer's blocks
     let url = format!("{}/blocks?limit=1000", peer_url);
     let response = reqwest::get(&url)
@@ -47,12 +45,44 @@ async fn sync_from_peer(peer_url: &str, node: &L1Node) -> Result<u64, String> {
         .and_then(|b| b.as_array())
         .ok_or_else(|| "Invalid response format".to_string())?;
     
-    let mut synced_count = 0u64;
+    if blocks.is_empty() {
+        return Ok(0);
+    }
     
+    // Parse all blocks
+    let mut peer_blocks: Vec<BlockV1> = Vec::new();
     for block_json in blocks {
         let block: BlockV1 = serde_json::from_value(block_json.clone())
             .map_err(|e| format!("Failed to parse block: {}", e))?;
-        
+        peer_blocks.push(block);
+    }
+    
+    // Sort by height
+    peer_blocks.sort_by_key(|b| b.header.height);
+    
+    let local_height = node.get_tip_height()?;
+    let peer_height = peer_blocks.last().map(|b| b.header.height).unwrap_or(0);
+    
+    // Check if we need to reset from genesis (peer has longer chain and our genesis differs)
+    if allow_genesis_reset && peer_height > local_height {
+        if let Some(peer_genesis) = peer_blocks.first() {
+            if peer_genesis.header.height == 0 {
+                let our_genesis = node.get_block(0)?;
+                if let Some(our_gen) = our_genesis {
+                    if our_gen.hash != peer_genesis.hash {
+                        eprintln!("[peer] Genesis mismatch - resetting chain from peer");
+                        // Replace our chain with peer's chain
+                        node.reset_chain(&peer_blocks)?;
+                        return Ok(peer_blocks.len() as u64);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Normal incremental sync
+    let mut synced_count = 0u64;
+    for block in peer_blocks {
         // Skip blocks we already have
         if block.header.height <= local_height {
             continue;
@@ -61,7 +91,7 @@ async fn sync_from_peer(peer_url: &str, node: &L1Node) -> Result<u64, String> {
         // Import the block
         if let Err(e) = node.import_block(block.clone()) {
             eprintln!("[peer] Failed to import block {}: {}", block.header.height, e);
-            continue;
+            break; // Stop on first error - chain is invalid
         }
         
         synced_count += 1;
@@ -79,10 +109,10 @@ pub async fn start_peer_sync(peers: Vec<String>, node: Arc<L1Node>) {
     
     eprintln!("[peer] Starting peer sync with {} peers", peers.len());
     
-    // Initial sync - try each peer until one succeeds
+    // Initial sync - try each peer until one succeeds (allow genesis reset on first sync)
     for peer in &peers {
         eprintln!("[peer] Attempting initial sync from {}", peer);
-        match sync_from_peer(peer, &node).await {
+        match sync_from_peer(peer, &node, true).await {
             Ok(count) => {
                 eprintln!("[peer] Synced {} blocks from {}", count, peer);
                 break;
@@ -93,12 +123,12 @@ pub async fn start_peer_sync(peers: Vec<String>, node: Arc<L1Node>) {
         }
     }
     
-    // Continuous sync loop - check peers every 5 seconds
+    // Continuous sync loop - check peers every 5 seconds (no genesis reset after initial sync)
     loop {
         sleep(Duration::from_secs(5)).await;
         
         for peer in &peers {
-            match sync_from_peer(peer, &node).await {
+            match sync_from_peer(peer, &node, false).await {
                 Ok(count) if count > 0 => {
                     eprintln!("[peer] Synced {} new blocks from {}", count, peer);
                 }

@@ -90,6 +90,34 @@ impl L1Node {
         self.store.get_all_blocks()
     }
 
+    pub fn get_block(&self, height: u64) -> Result<Option<BlockV1>, String> {
+        self.store.get_block(height)
+    }
+
+    /// Reset the chain with blocks from a peer (used for initial sync when genesis differs)
+    pub fn reset_chain(&self, blocks: &[BlockV1]) -> Result<(), String> {
+        if blocks.is_empty() {
+            return Err("Cannot reset with empty chain".to_string());
+        }
+        
+        // Clear and replace the chain file
+        self.store.reset_chain(blocks)?;
+        
+        // Reset balances
+        let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
+        balances.clear();
+        
+        // Replay all transactions to rebuild balances
+        for block in blocks {
+            for tx in &block.txs {
+                Self::apply_balance_tx_inner(&mut balances, tx, &block.header.proposer_pub_key);
+            }
+        }
+        
+        eprintln!("[node] Chain reset complete - now at height {}", blocks.last().map(|b| b.header.height).unwrap_or(0));
+        Ok(())
+    }
+
     pub fn get_recent_blocks(&self, limit: usize) -> Result<Vec<BlockV1>, String> {
         let blocks = self.store.get_all_blocks()?;
         if limit == 0 || blocks.len() <= limit {

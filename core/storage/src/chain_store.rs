@@ -129,4 +129,35 @@ impl ChainStore {
         let raw = serde_json::to_string(tip).map_err(|e| e.to_string())?;
         fs::write(&self.tip_path, raw).map_err(|e| e.to_string())
     }
+
+    /// Reset the chain with a new set of blocks (used for P2P sync when genesis differs)
+    pub fn reset_chain(&self, blocks: &[BlockV1]) -> Result<(), String> {
+        if blocks.is_empty() {
+            return Err("Cannot reset with empty blocks".to_string());
+        }
+        
+        // Remove existing chain file
+        if self.chain_path.exists() {
+            fs::remove_file(&self.chain_path).map_err(|e| e.to_string())?;
+        }
+        
+        // Write all blocks
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&self.chain_path)
+            .map_err(|e| e.to_string())?;
+        
+        for block in blocks {
+            let line = serde_json::to_string(block).map_err(|e| e.to_string())?;
+            writeln!(file, "{line}").map_err(|e| e.to_string())?;
+        }
+        
+        // Update tip
+        if let Some(last) = blocks.last() {
+            self.write_tip(&Tip { height: last.header.height, hash: last.hash.clone() })?;
+        }
+        
+        Ok(())
+    }
 }
