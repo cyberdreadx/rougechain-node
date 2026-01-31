@@ -66,11 +66,13 @@ const NetworkStatsBar = () => {
       if (blocks && blocks.length > 0) {
         const totalBlocks = blocks.length;
         
-        // Calculate time span in minutes
-        const firstBlockTime = blocks[0].header.time;
-        const lastBlockTime = blocks[blocks.length - 1].header.time;
-        const timeSpanMs = Math.max(lastBlockTime - firstBlockTime, 1000);
+        // Get timestamps and handle both ascending and descending order
+        const timestamps = blocks.map(b => b.header.time).sort((a, b) => a - b);
+        const oldestBlockTime = timestamps[0];
+        const newestBlockTime = timestamps[timestamps.length - 1];
+        const timeSpanMs = Math.max(newestBlockTime - oldestBlockTime, 1000);
         const timeSpanMinutes = timeSpanMs / 60000;
+        const timeSpanSeconds = timeSpanMs / 1000;
         
         // Blocks per minute (only if more than 1 block)
         const blocksPerMinute = totalBlocks > 1 
@@ -79,13 +81,30 @@ const NetworkStatsBar = () => {
 
         // Average block time in seconds
         const avgBlockTime = totalBlocks > 1 
-          ? Math.round((lastBlockTime - firstBlockTime) / (totalBlocks - 1) / 1000)
+          ? Math.round(timeSpanMs / (totalBlocks - 1) / 1000)
           : 0;
 
         // Count transactions across all blocks
         const totalTransactions = blocks.reduce((sum, b) => sum + b.txs.length, 0);
-        const txsPerSecond = Math.round((totalTransactions / (timeSpanMs / 1000)) * 100) / 100;
-        const lastBlockAge = Math.max(Math.round((Date.now() - lastBlockTime) / 1000), 0);
+        
+        // TPS: Calculate based on recent blocks (last 60 seconds) for more accurate real-time TPS
+        const now = Date.now();
+        const recentWindow = 60000; // 60 seconds
+        const recentBlocks = blocks.filter(b => (now - b.header.time) <= recentWindow);
+        const recentTxs = recentBlocks.reduce((sum, b) => sum + b.txs.length, 0);
+        
+        let txsPerSecond = 0;
+        if (recentBlocks.length > 0 && recentTxs > 0) {
+          // Calculate TPS over the actual time span of recent blocks
+          const recentTimestamps = recentBlocks.map(b => b.header.time).sort((a, b) => a - b);
+          const recentSpan = Math.max(now - recentTimestamps[0], 1000) / 1000;
+          txsPerSecond = Math.round((recentTxs / recentSpan) * 100) / 100;
+        } else if (totalTransactions > 0 && timeSpanSeconds > 0) {
+          // Fallback to overall TPS if no recent activity
+          txsPerSecond = Math.round((totalTransactions / timeSpanSeconds) * 100) / 100;
+        }
+        
+        const lastBlockAge = Math.max(Math.round((Date.now() - newestBlockTime) / 1000), 0);
 
         // Dynamic gas fee based on network activity (simple model)
         const baseFee = 0.001;
