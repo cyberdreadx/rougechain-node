@@ -616,7 +616,7 @@ async fn get_burned_tokens(State(state): State<AppState>) -> Result<Json<BurnedT
 }
 
 /// XRGE price from GeckoTerminal (Base chain pool)
-const XRGE_POOL_ADDRESS: &str = "0x059e10d26c64a63d04e1814f46305210edcc447d";
+const XRGE_POOL_ADDRESS: &str = "0x059e10d26c64a63d04e1814f46305210eddc447d";
 const GECKO_API_BASE: &str = "https://api.geckoterminal.com/api/v2";
 
 #[derive(Serialize)]
