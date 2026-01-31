@@ -17,7 +17,12 @@ import {
   createSignedStake,
   createSignedUnstake,
   createSignedFaucetRequest,
+  createSignedBurn,
+  BURN_ADDRESS,
 } from "./pqc-signer";
+
+// Re-export burn address for convenience
+export { BURN_ADDRESS };
 
 /**
  * API response type
@@ -228,4 +233,48 @@ export async function secureFaucet(
 ): Promise<ApiResponse> {
   const signedTx = createSignedFaucetRequest(publicKey, privateKey);
   return submitSignedTx("/v2/faucet", signedTx);
+}
+
+/**
+ * Burn tokens securely (client-side signing)
+ * Tokens are sent to the official burn address and permanently destroyed
+ */
+export async function secureBurn(
+  fromPublicKey: string,
+  fromPrivateKey: string,
+  amount: number,
+  fee: number = 1,
+  token: string = "XRGE"
+): Promise<ApiResponse> {
+  const signedTx = createSignedBurn(
+    fromPublicKey,
+    fromPrivateKey,
+    amount,
+    fee,
+    token
+  );
+  return submitSignedTx("/v2/transfer", signedTx);
+}
+
+/**
+ * Get burned tokens stats from the chain
+ */
+export async function getBurnedTokens(): Promise<ApiResponse<{
+  burned: Record<string, number>;
+  total_xrge_burned: number;
+}>> {
+  const baseUrl = getNodeApiBaseUrl();
+  if (!baseUrl) {
+    return { success: false, error: "API not configured" };
+  }
+
+  try {
+    const res = await fetch(`${baseUrl}/burned`, {
+      headers: getCoreApiHeaders(),
+    });
+    const data = await res.json();
+    return { success: true, data };
+  } catch (e) {
+    return { success: false, error: `Request failed: ${e}` };
+  }
 }

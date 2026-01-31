@@ -7,6 +7,12 @@
 
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 
+/**
+ * The official burn address - tokens sent here are permanently destroyed
+ * This address has no private key and cannot be spent from
+ */
+export const BURN_ADDRESS = "XRGE_BURN_0x000000000000000000000000000000000000000000000000000000000000DEAD";
+
 // Utility functions
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
@@ -325,4 +331,36 @@ export function createSignedFaucetRequest(
   };
   
   return signTransaction(payload, privateKey, publicKey);
+}
+
+/**
+ * Create a signed burn transaction
+ * Sends tokens to the official burn address where they are permanently destroyed
+ */
+export function createSignedBurn(
+  fromPublicKey: string,
+  fromPrivateKey: string,
+  amount: number,
+  fee: number = 1,
+  token: string = "XRGE"
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "transfer",
+    from: fromPublicKey,
+    to: BURN_ADDRESS,
+    amount,
+    fee,
+    token,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  
+  return signTransaction(payload, fromPrivateKey, fromPublicKey);
+}
+
+/**
+ * Check if an address is the burn address
+ */
+export function isBurnAddress(address: string): boolean {
+  return address === BURN_ADDRESS;
 }

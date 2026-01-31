@@ -309,6 +309,8 @@ fn build_http_router(state: AppState) -> Router {
     Router::new()
         .route("/api/ws", get(ws_handler))
         .route("/api/stats", get(get_stats))
+        .route("/api/burn-address", get(get_burn_address))
+        .route("/api/burned", get(get_burned_tokens))
         .route("/api/health", get(get_health))
         .route("/api/blocks", get(get_blocks))
         .route("/api/blocks/import", post(import_block))
@@ -583,6 +585,34 @@ async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>,
     }))
 }
 
+#[derive(Serialize)]
+struct BurnAddressResponse {
+    burn_address: String,
+    description: String,
+}
+
+async fn get_burn_address() -> Json<BurnAddressResponse> {
+    Json(BurnAddressResponse {
+        burn_address: crate::node::L1Node::get_burn_address().to_string(),
+        description: "Official burn address. Tokens sent here are permanently destroyed and tracked on-chain.".to_string(),
+    })
+}
+
+#[derive(Serialize)]
+struct BurnedTokensResponse {
+    burned: std::collections::HashMap<String, f64>,
+    total_xrge_burned: f64,
+}
+
+async fn get_burned_tokens(State(state): State<AppState>) -> Result<Json<BurnedTokensResponse>, StatusCode> {
+    let node = &state.node;
+    let burned = node.get_all_burned_tokens().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let total_xrge = node.get_burned_amount("XRGE").unwrap_or(0.0);
+    Ok(Json(BurnedTokensResponse {
+        burned,
+        total_xrge_burned: total_xrge,
+    }))
+}
 
 #[derive(Serialize)]
 struct HealthResponse {

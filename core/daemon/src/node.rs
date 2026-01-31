@@ -26,6 +26,11 @@ const JAIL_BLOCKS: u64 = 20;
 const SLASH_DIVISOR: u128 = 10;
 const MAX_MEMPOOL: usize = 2000;
 
+/// The official burn address - tokens sent here are permanently destroyed
+/// This is a deterministic address derived from "QUANTUM_VAULT_BURN_ADDRESS_V1"
+/// No private key can ever be derived for this address
+pub const BURN_ADDRESS: &str = "XRGE_BURN_0x000000000000000000000000000000000000000000000000000000000000DEAD";
+
 #[derive(Clone)]
 pub struct NodeOptions {
     pub data_dir: PathBuf,
@@ -50,6 +55,7 @@ pub struct L1Node {
     balances: Arc<Mutex<HashMap<String, f64>>>,
     token_balances: Arc<Mutex<HashMap<TokenBalanceKey, f64>>>,
     lp_balances: Arc<Mutex<HashMap<TokenBalanceKey, f64>>>,  // LP token balances
+    burned_tokens: Arc<Mutex<HashMap<String, f64>>>,  // Total burned per token symbol
     votes: Arc<Mutex<Vec<VoteMessage>>>,
     finalized_height: Arc<Mutex<u64>>,
 }
@@ -75,6 +81,7 @@ impl L1Node {
             balances: Arc::new(Mutex::new(HashMap::new())),
             token_balances: Arc::new(Mutex::new(HashMap::new())),
             lp_balances: Arc::new(Mutex::new(HashMap::new())),
+            burned_tokens: Arc::new(Mutex::new(HashMap::new())),
             votes: Arc::new(Mutex::new(Vec::new())),
             finalized_height: Arc::new(Mutex::new(0)),
         })
@@ -127,15 +134,17 @@ impl L1Node {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
         let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let mut lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+        let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
         balances.clear();
         token_balances.clear();
         lp_balances.clear();
+        burned_tokens.clear();
         
         // Replay all transactions to rebuild balances with fee distribution
         for block in blocks {
             // Apply transaction effects
             for tx in &block.txs {
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, tx);
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx);
                 Self::apply_amm_balance_effects(
                     &mut balances,
                     &mut token_balances,
@@ -223,6 +232,25 @@ impl L1Node {
             }
         }
         Ok(result)
+    }
+
+    // ===== Burn Methods =====
+    
+    /// Get the official burn address
+    pub fn get_burn_address() -> &'static str {
+        BURN_ADDRESS
+    }
+    
+    /// Get total burned amount for a specific token
+    pub fn get_burned_amount(&self, token_symbol: &str) -> Result<f64, String> {
+        let burned = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
+        Ok(*burned.get(token_symbol).unwrap_or(&0.0))
+    }
+    
+    /// Get all burned token amounts
+    pub fn get_all_burned_tokens(&self) -> Result<HashMap<String, f64>, String> {
+        let burned = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
+        Ok(burned.clone())
     }
 
     // ===== AMM/DEX Methods =====
@@ -740,10 +768,11 @@ impl L1Node {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
         let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let mut lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+        let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
         
         // Apply transaction effects (transfers, stakes, etc.) - fees deducted from senders
         for tx in &block.txs {
-            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, tx);
+            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx);
             
             // Handle AMM transactions
             self.apply_amm_tx_inner(
@@ -1128,7 +1157,8 @@ impl L1Node {
     fn apply_balance_tx(&self, tx: &TxV1) -> Result<(), String> {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
         let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
-        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, tx);
+        let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
+        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx);
         Ok(())
     }
 
@@ -1138,14 +1168,16 @@ impl L1Node {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
         let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let mut lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+        let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
         balances.clear();
         token_balances.clear();
         lp_balances.clear();
+        burned_tokens.clear();
         
         for block in &blocks {
             // Apply transaction effects
             for tx in &block.txs {
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, tx);
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx);
                 
                 // Apply AMM transaction balance effects (but don't update pool_store - already persisted)
                 Self::apply_amm_balance_effects(
@@ -1360,12 +1392,14 @@ impl L1Node {
     fn apply_balance_tx_inner(
         balances: &mut HashMap<String, f64>,
         token_balances: &mut HashMap<TokenBalanceKey, f64>,
+        burned_tokens: &mut HashMap<String, f64>,
         tx: &TxV1,
     ) {
         match tx.tx_type.as_str() {
             "transfer" => {
                 if let Some(to_pub_key) = tx.payload.to_pub_key_hex.as_ref() {
                     let amount = tx.payload.amount.unwrap_or(0) as f64;
+                    let is_burn = to_pub_key == BURN_ADDRESS;
                     
                     // Check if this is a token transfer (has token_symbol)
                     if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
@@ -1374,13 +1408,25 @@ impl L1Node {
                         
                         // Track token balance changes
                         let sender_key = (tx.from_pub_key.clone(), token_symbol.clone());
-                        let recipient_key = (to_pub_key.clone(), token_symbol.clone());
                         *token_balances.entry(sender_key).or_insert(0.0) -= amount;
-                        *token_balances.entry(recipient_key).or_insert(0.0) += amount;
+                        
+                        if is_burn {
+                            // Burn: add to burned_tokens tracker instead of recipient
+                            *burned_tokens.entry(token_symbol.clone()).or_insert(0.0) += amount;
+                        } else {
+                            let recipient_key = (to_pub_key.clone(), token_symbol.clone());
+                            *token_balances.entry(recipient_key).or_insert(0.0) += amount;
+                        }
                     } else {
-                        // XRGE transfer: add to recipient, deduct amount + fee from sender
-                        *balances.entry(to_pub_key.clone()).or_insert(0.0) += amount;
+                        // XRGE transfer
                         *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount + tx.fee;
+                        
+                        if is_burn {
+                            // Burn XRGE: add to burned_tokens tracker
+                            *burned_tokens.entry("XRGE".to_string()).or_insert(0.0) += amount;
+                        } else {
+                            *balances.entry(to_pub_key.clone()).or_insert(0.0) += amount;
+                        }
                     }
                     // Fees are distributed separately via distribute_fees()
                 }
