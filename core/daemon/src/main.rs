@@ -504,7 +504,7 @@ async fn handle_ws_connection(socket: WebSocket, state: AppState) {
     // Handle incoming messages (ping/pong, close)
     while let Some(msg) = receiver.next().await {
         match msg {
-            Ok(Message::Ping(data)) => {
+            Ok(Message::Ping(_)) => {
                 // Pong is handled automatically by axum
             }
             Ok(Message::Close(_)) => break,
