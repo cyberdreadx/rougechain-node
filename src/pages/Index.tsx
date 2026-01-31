@@ -272,7 +272,7 @@ const Index = () => {
               </div>
             </div>
             <a 
-              href="https://www.geckoterminal.com/base/pools/0x059e10d26c64a63d04e1814f46305210eddc447d" 
+              href="https://www.geckoterminal.com/base/pools/0x5eddf6676d04dae63947d8ee488f1583ab0b2c89" 
               target="_blank" 
               rel="noopener noreferrer"
               className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
@@ -331,7 +331,7 @@ const Index = () => {
           
           <div className="rounded-2xl border border-red-500/20 overflow-hidden bg-black/40">
             <iframe
-              src="https://www.geckoterminal.com/base/pools/0x059e10d26c64a63d04e1814f46305210eddc447d?embed=1&info=0&swaps=0&grayscale=0&light_chart=0"
+              src="https://www.geckoterminal.com/base/pools/0x5eddf6676d04dae63947d8ee488f1583ab0b2c89?embed=1&info=0&swaps=0&grayscale=0&light_chart=0"
               title="XRGE Price Chart"
               className="w-full h-[400px] border-0"
               allow="clipboard-write"
