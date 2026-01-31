@@ -344,6 +344,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/messenger/wallets/register", post(register_messenger_wallet))
         .route("/api/messenger/conversations", get(get_messenger_conversations))
         .route("/api/messenger/conversations", post(create_messenger_conversation))
+        .route("/api/messenger/conversations/:id", delete(delete_messenger_conversation))
         .route("/api/messenger/messages", get(get_messenger_messages))
         .route("/api/messenger/messages", post(send_messenger_message))
         .route("/api/messenger/messages/read", post(mark_messenger_read))
@@ -2165,6 +2166,16 @@ async fn create_messenger_conversation(
     let conversation = node.create_conversation(&created_by, participant_ids, name, is_group)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "success": true, "conversation": conversation })))
+}
+
+async fn delete_messenger_conversation(
+    State(state): State<AppState>,
+    Path(conversation_id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
+    node.delete_conversation(&conversation_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "success": true })))
 }
 
 async fn get_messenger_messages(

@@ -1730,6 +1730,10 @@ impl L1Node {
         self.messenger_store.create_conversation(created_by, participant_ids, name, is_group)
     }
 
+    pub fn delete_conversation(&self, conversation_id: &str) -> Result<(), String> {
+        self.messenger_store.delete_conversation(conversation_id)
+    }
+
     pub fn list_messages(&self, conversation_id: &str) -> Result<Vec<MessengerMessage>, String> {
         self.messenger_store.list_messages(conversation_id)
     }

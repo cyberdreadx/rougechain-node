@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw, ArrowDownUp } from "lucide-react";
+import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw, ArrowDownUp, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -230,11 +230,26 @@ const Messenger = () => {
 
       {/* Action Bar */}
       <div className="sticky top-0 z-40 flex items-center justify-between px-4 py-2 bg-background/80 backdrop-blur-sm border-b border-border">
-        <div className="flex items-center gap-2">
-          <Key className="w-4 h-4 text-primary" />
-          <span className="text-sm text-muted-foreground truncate max-w-[150px]">
-            {wallet.displayName}
-          </span>
+        <div className="flex items-center gap-2 min-w-0">
+          <Key className="w-4 h-4 text-primary flex-shrink-0" />
+          <div className="flex flex-col min-w-0">
+            <span className="text-sm font-medium text-foreground truncate">
+              {wallet.displayName}
+            </span>
+            <button 
+              className="flex items-center gap-1 text-xs text-muted-foreground font-mono hover:text-foreground transition-colors"
+              onClick={() => {
+                navigator.clipboard.writeText(wallet.signingPublicKey);
+                toast.success("Address copied!");
+              }}
+              title="Click to copy full address"
+            >
+              <span className="truncate max-w-[100px] sm:max-w-[180px]">
+                {wallet.signingPublicKey.substring(0, 12)}...
+              </span>
+              <Copy className="w-3 h-3 flex-shrink-0" />
+            </button>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -282,7 +297,7 @@ const Messenger = () => {
       </div>
 
       {/* Main content */}
-      <main className="relative z-10 h-[calc(100vh-73px)] flex">
+      <main className="relative z-10 h-[calc(100vh-73px)] flex overflow-hidden">
         {/* Conversation list */}
         <div className={`w-full sm:w-80 border-r border-border ${selectedConversation ? 'hidden sm:block' : ''}`}>
           <ConversationList
@@ -290,11 +305,17 @@ const Messenger = () => {
             selectedId={selectedConversation?.id}
             currentWalletId={wallet.id}
             onSelect={setSelectedConversation}
+            onDelete={(id) => {
+              setConversations(prev => prev.filter(c => c.id !== id));
+              if (selectedConversation?.id === id) {
+                setSelectedConversation(null);
+              }
+            }}
           />
         </div>
 
         {/* Chat view */}
-        <div className={`flex-1 ${!selectedConversation ? 'hidden sm:flex' : 'flex'}`}>
+        <div className={`flex-1 overflow-hidden ${!selectedConversation ? 'hidden sm:flex' : 'flex'}`}>
           {selectedConversation && messengerWallet ? (
             <ChatView
               conversation={selectedConversation}

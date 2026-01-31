@@ -104,6 +104,16 @@ impl MessengerStore {
         Ok(conversation)
     }
 
+    pub fn delete_conversation(&self, conversation_id: &str) -> Result<(), String> {
+        let mut state = self.load_state()?;
+        // Remove conversation
+        state.conversations.retain(|c| c.id != conversation_id);
+        // Also remove all messages in this conversation
+        state.messages.retain(|m| m.conversation_id != conversation_id);
+        self.save_state(&state)?;
+        Ok(())
+    }
+
     pub fn list_messages(&self, conversation_id: &str) -> Result<Vec<MessengerMessage>, String> {
         let state = self.load_state()?;
         Ok(state

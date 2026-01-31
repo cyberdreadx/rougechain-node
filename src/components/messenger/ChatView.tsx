@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -451,6 +452,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
   useEffect(() => {
     // Reset seen messages on conversation change
     seenMessageIdsRef.current = new Set();
+    prevMessageCountRef.current = 0;
     setNewMessageIds(new Set());
     loadMessages(true);
 
@@ -461,10 +463,17 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
     return () => clearInterval(interval);
   }, [conversation.id]);
 
-  // Scroll to bottom on new messages
+  // Track previous message count to detect new messages
+  const prevMessageCountRef = useRef<number>(0);
+  
+  // Scroll to bottom only on initial load or when new messages arrive
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    // Only scroll if message count increased (new message arrived)
+    if (messages.length > prevMessageCountRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+    prevMessageCountRef.current = messages.length;
+  }, [messages.length]);
 
   const loadMessages = async (isInitialLoad = false) => {
     try {
@@ -570,7 +579,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full">
+    <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Chat header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-card/50">
         <Button
@@ -592,7 +601,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
             <Shield className="w-5 h-5 text-primary" />
           )}
         </div>
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <p className="font-medium text-foreground">{getConversationName()}</p>
             {isRecipientBot && (
@@ -601,6 +610,22 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
               </span>
             )}
           </div>
+          {recipient && !isRecipientBot && (
+            <button
+              className="text-xs text-muted-foreground font-mono hover:text-foreground transition-colors flex items-center gap-1"
+              onClick={() => {
+                const address = recipient.signingPublicKey || recipient.encryptionPublicKey || "";
+                navigator.clipboard.writeText(address);
+                toast.success("Recipient address copied!");
+              }}
+              title="Click to copy recipient address"
+            >
+              <span className="truncate max-w-[150px] sm:max-w-[250px]">
+                {(recipient.signingPublicKey || recipient.encryptionPublicKey || "").substring(0, 16)}...
+              </span>
+              <Copy className="w-3 h-3 flex-shrink-0" />
+            </button>
+          )}
           <p className="text-xs text-muted-foreground flex items-center gap-1">
             <Lock className="w-3 h-3" />
             ML-KEM-768 + ML-DSA-65
@@ -609,7 +634,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
         {isLoading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />

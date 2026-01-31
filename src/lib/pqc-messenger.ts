@@ -463,6 +463,23 @@ export async function createConversation(
   return data?.conversation as Conversation;
 }
 
+// Delete a conversation
+export async function deleteConversation(conversationId: string): Promise<void> {
+  const apiBase = getMessengerApiBase();
+  if (!apiBase) {
+    throw new Error("Node API is not configured");
+  }
+  const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/conversations/${encodeURIComponent(conversationId)}`, {
+    method: "DELETE",
+    headers: getCoreApiHeaders(),
+  });
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    console.error("Delete conversation failed:", response.status, errorText);
+    throw new Error(`Failed to delete conversation: ${response.status}`);
+  }
+}
+
 // Get conversations for a wallet
 export async function getConversations(walletId: string): Promise<Conversation[]> {
   const apiBase = getMessengerApiBase();
