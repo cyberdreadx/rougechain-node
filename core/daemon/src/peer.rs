@@ -169,3 +169,31 @@ pub async fn broadcast_block(peers: &[String], block: &BlockV1) {
         });
     }
 }
+
+use quantum_vault_types::TxV1;
+
+/// Broadcast a transaction to all peers
+pub fn broadcast_tx(peers: &[String], tx: &TxV1) {
+    for peer in peers {
+        let url = format!("{}/tx/broadcast", peer);
+        let tx_clone = tx.clone();
+        let tx_type = tx.tx_type.clone();
+        
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            match client
+                .post(&url)
+                .json(&tx_clone)
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await
+            {
+                Ok(res) if res.status().is_success() => {
+                    eprintln!("[peer] Broadcast tx ({}) to {}", tx_type, url);
+                }
+                Ok(_) => {} // Peer may already have it
+                Err(_) => {} // Peer offline
+            }
+        });
+    }
+}

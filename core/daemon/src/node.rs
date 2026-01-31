@@ -170,6 +170,26 @@ impl L1Node {
         pqc_keygen()
     }
 
+    /// Add a transaction to mempool (used for P2P broadcast)
+    pub fn add_tx_to_mempool(&self, tx: TxV1) -> Result<(), String> {
+        use quantum_vault_crypto::{sha256, bytes_to_hex};
+        use quantum_vault_types::encode_tx_v1;
+        
+        let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
+        
+        let mut mempool = self.mempool.lock().map_err(|_| "mempool lock")?;
+        
+        // Skip if already in mempool
+        if mempool.contains_key(&tx_hash) {
+            return Ok(());
+        }
+        
+        // TODO: Verify signature before adding
+        
+        mempool.insert(tx_hash, tx);
+        Ok(())
+    }
+
     pub fn submit_user_tx(
         &self,
         from_private_key: &str,

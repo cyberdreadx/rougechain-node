@@ -279,6 +279,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/balance/:public_key", get(get_balance))
         .route("/api/wallet/create", post(create_wallet))
         .route("/api/tx/submit", post(submit_tx))
+        .route("/api/tx/broadcast", post(receive_broadcast_tx))
         .route("/api/token/create", post(create_token))
         .route("/api/stake/submit", post(submit_stake))
         .route("/api/unstake/submit", post(submit_unstake))
@@ -656,9 +657,31 @@ async fn submit_tx(
     ) {
         Ok(tx) => {
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
+            // Broadcast tx to peers
+            if !state.peers.is_empty() {
+                peer::broadcast_tx(&state.peers, &tx);
+            }
             Ok(Json(TxResponse { success: true, tx_id: Some(id), tx: Some(tx), error: None }))
         }
         Err(err) => Ok(Json(TxResponse { success: false, tx_id: None, tx: None, error: Some(err) })),
+    }
+}
+
+#[derive(Serialize)]
+struct BroadcastTxResponse {
+    success: bool,
+    error: Option<String>,
+}
+
+/// Receive a transaction broadcast from a peer
+async fn receive_broadcast_tx(
+    State(state): State<AppState>,
+    Json(tx): Json<quantum_vault_types::TxV1>,
+) -> Result<Json<BroadcastTxResponse>, StatusCode> {
+    let node = &state.node;
+    match node.add_tx_to_mempool(tx) {
+        Ok(()) => Ok(Json(BroadcastTxResponse { success: true, error: None })),
+        Err(e) => Ok(Json(BroadcastTxResponse { success: false, error: Some(e) })),
     }
 }
 
