@@ -375,7 +375,7 @@ fn build_http_router(state: AppState) -> Router {
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(
             CorsLayer::new()
-                .allow_methods(Any)
+                .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS, Method::PATCH])
                 .allow_origin(Any)
                 .allow_headers(Any),
         )
