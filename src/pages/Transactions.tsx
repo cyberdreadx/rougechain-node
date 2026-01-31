@@ -1,10 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, RefreshCw } from "lucide-react";
+import { Activity, RefreshCw, Copy, Check, Zap, Box, Users, Clock, ChevronLeft, ChevronRight, ExternalLink, ArrowUpRight, ArrowDownLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/network";
+import { toast } from "sonner";
+
+const ITEMS_PER_PAGE = 20;
+
+interface NetworkStats {
+  blockHeight: number;
+  connectedPeers: number;
+  tps: number;
+  avgBlockTime: number;
+}
 
 interface CoreTxResponse {
   txs: Array<{
@@ -27,6 +38,10 @@ interface CoreTxResponse {
         amount?: number;
         faucet?: boolean;
         target_pub_key?: string;
+        token_symbol?: string;
+        tokenSymbol?: string;
+        token_name?: string;
+        tokenName?: string;
       };
       fee?: number;
     };
@@ -39,6 +54,7 @@ interface TxItem {
   from: string;
   to: string;
   amount: number;
+  symbol: string;
   fee: number;
   blockHeight: number;
   blockHash: string;
@@ -72,6 +88,8 @@ const labelForType = (type: string) => {
       return "Stake";
     case "unstake":
       return "Unstake";
+    case "create_token":
+      return "Token Created";
     default:
       return type;
   }
@@ -83,6 +101,48 @@ const Transactions = () => {
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [networkStats, setNetworkStats] = useState<NetworkStats>({
+    blockHeight: 0,
+    connectedPeers: 0,
+    tps: 0,
+    avgBlockTime: 0,
+  });
+  const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedTx, setSelectedTx] = useState<TxItem | null>(null);
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedAddress(text);
+      toast.success("Copied to clipboard");
+      setTimeout(() => setCopiedAddress(null), 2000);
+    } catch {
+      toast.error("Failed to copy");
+    }
+  };
+
+  const fetchNetworkStats = async () => {
+    try {
+      const apiBase = getCoreApiBaseUrl();
+      if (!apiBase) return;
+      const res = await fetch(`${apiBase}/stats`, {
+        signal: AbortSignal.timeout(5000),
+        headers: getCoreApiHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNetworkStats({
+          blockHeight: data.network_height ?? data.networkHeight ?? 0,
+          connectedPeers: data.connected_peers ?? data.connectedPeers ?? 0,
+          tps: data.tps ?? 0,
+          avgBlockTime: data.avg_block_time ?? data.avgBlockTime ?? 10,
+        });
+      }
+    } catch {
+      // Silently fail for stats
+    }
+  };
 
   const fetchTxs = async () => {
     try {
@@ -112,12 +172,15 @@ const Transactions = () => {
         const blockHash = entry.blockHash ?? entry.block_hash ?? "";
         const time = entry.blockTime ?? entry.block_time ?? Date.now();
         const txId = entry.txId ?? entry.tx_id ?? "";
+        // Extract token symbol (defaults to XRGE for native transfers)
+        const tokenSymbol = payload.token_symbol || payload.tokenSymbol || "XRGE";
         parsed.push({
           id: txId || `${blockHash}:${blockHeight}`,
           type: isFaucet ? "faucet" : type,
           from,
           to,
           amount: payload.amount ?? 0,
+          symbol: tokenSymbol,
           fee: tx.fee ?? 0,
           blockHeight,
           blockHash,
@@ -138,19 +201,44 @@ const Transactions = () => {
 
   useEffect(() => {
     fetchTxs();
-    const interval = setInterval(fetchTxs, 3000);
-    return () => clearInterval(interval);
+    fetchNetworkStats();
+    const txInterval = setInterval(fetchTxs, 3000);
+    const statsInterval = setInterval(fetchNetworkStats, 5000);
+    return () => {
+      clearInterval(txInterval);
+      clearInterval(statsInterval);
+    };
   }, []);
 
   const filteredTxs = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return txs;
     return txs.filter((tx) =>
-      [tx.from, tx.to, tx.blockHash, String(tx.blockHeight)]
+      [tx.from, tx.to, tx.blockHash, String(tx.blockHeight), tx.id]
         .filter(Boolean)
         .some((value) => value.toLowerCase().includes(q))
     );
   }, [query, txs]);
+
+  // Reset to page 1 when search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [query]);
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredTxs.length / ITEMS_PER_PAGE);
+  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+  const paginatedTxs = filteredTxs.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
+  const goToPage = (page: number) => {
+    if (page >= 1 && page <= totalPages) {
+      setCurrentPage(page);
+    }
+  };
+
+  const formatFullDate = (timestamp: number) => {
+    return new Date(timestamp).toLocaleString();
+  };
 
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">
@@ -161,6 +249,46 @@ const Transactions = () => {
       <div className="fixed bottom-0 right-0 w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />
 
       <main className="relative z-10 max-w-6xl mx-auto px-4 py-10">
+        {/* Network Stats Bar */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg p-3 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+              <Box className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Block Height</p>
+              <p className="text-lg font-bold font-mono text-foreground">#{networkStats.blockHeight.toLocaleString()}</p>
+            </div>
+          </div>
+          <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg p-3 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center">
+              <Users className="w-5 h-5 text-green-500" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Connected Peers</p>
+              <p className="text-lg font-bold font-mono text-foreground">{networkStats.connectedPeers}</p>
+            </div>
+          </div>
+          <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg p-3 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center">
+              <Zap className="w-5 h-5 text-amber-500" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">TPS</p>
+              <p className="text-lg font-bold font-mono text-foreground">{networkStats.tps.toFixed(2)}</p>
+            </div>
+          </div>
+          <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg p-3 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center">
+              <Clock className="w-5 h-5 text-blue-500" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Avg Block Time</p>
+              <p className="text-lg font-bold font-mono text-foreground">{networkStats.avgBlockTime.toFixed(1)}s</p>
+            </div>
+          </div>
+        </div>
+
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
           <div className="space-y-2">
             <div className="flex items-center gap-3">
@@ -206,33 +334,78 @@ const Transactions = () => {
             )}
 
             <div className="md:hidden space-y-3">
-              {filteredTxs.length === 0 && !isLoading && (
+              {paginatedTxs.length === 0 && !isLoading && (
                 <div className="py-6 text-center text-muted-foreground">
                   No transactions yet.
                 </div>
               )}
-              {filteredTxs.map((tx) => (
-                <div key={tx.id} className="rounded-lg border border-border bg-background/60 p-3 space-y-2">
+              {paginatedTxs.map((tx) => (
+                <div 
+                  key={tx.id} 
+                  className="rounded-lg border border-border bg-background/60 p-3 space-y-2 cursor-pointer hover:border-primary/50 transition-colors"
+                  onClick={() => setSelectedTx(tx)}
+                >
                   <div className="flex items-center justify-between">
                     <Badge variant="secondary">{labelForType(tx.type)}</Badge>
                     <span className="text-xs text-muted-foreground">{formatAge(tx.time)}</span>
                   </div>
-                  <div className="text-sm font-mono break-all">
-                    <div className="text-xs text-muted-foreground">From</div>
-                    <div>{tx.from || "—"}</div>
+                  <div className="text-sm font-mono">
+                    <div className="text-xs text-muted-foreground">TX Hash</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setSelectedTx(tx); }}
+                        className="text-primary hover:underline"
+                        title="View transaction details"
+                      >
+                        {truncateHash(tx.id || tx.blockHash, 10, 8)}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); copyToClipboard(tx.id || tx.blockHash); }}
+                        className="p-1 hover:bg-secondary rounded transition-colors"
+                        title="Copy TX hash"
+                      >
+                        {copiedAddress === (tx.id || tx.blockHash) ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+                      </button>
+                    </div>
                   </div>
-                  <div className="text-sm font-mono break-all">
+                  <div className="text-sm font-mono">
+                    <div className="text-xs text-muted-foreground">From</div>
+                    <div className="flex items-center gap-2">
+                      <span title={tx.from}>{truncateHash(tx.from || "—", 10, 8)}</span>
+                      {tx.from && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); copyToClipboard(tx.from); }}
+                          className="p-1 hover:bg-secondary rounded transition-colors"
+                          title="Copy address"
+                        >
+                          {copiedAddress === tx.from ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-sm font-mono">
                     <div className="text-xs text-muted-foreground">To</div>
-                    <div>{tx.to || "—"}</div>
+                    <div className="flex items-center gap-2">
+                      <span title={tx.to}>{truncateHash(tx.to || "—", 10, 8)}</span>
+                      {tx.to && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); copyToClipboard(tx.to); }}
+                          className="p-1 hover:bg-secondary rounded transition-colors"
+                          title="Copy address"
+                        >
+                          {copiedAddress === tx.to ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div>
                       <div className="text-xs text-muted-foreground">Amount</div>
-                      <div className="font-mono">{tx.amount ? tx.amount.toLocaleString() : "—"}</div>
+                      <div className="font-mono">{tx.amount ? tx.amount.toLocaleString() : "—"} <span className="text-primary">{tx.symbol}</span></div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Fee</div>
-                      <div className="font-mono">{tx.fee ? tx.fee.toFixed(2) : "0.00"}</div>
+                      <div className="font-mono">{tx.fee ? tx.fee.toFixed(2) : "0.00"} <span className="text-muted-foreground">XRGE</span></div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Block</div>
@@ -251,6 +424,7 @@ const Transactions = () => {
               <table className="w-full text-sm">
                 <thead className="text-xs text-muted-foreground border-b border-border">
                   <tr>
+                    <th className="text-left py-2 px-2 font-medium">TX Hash</th>
                     <th className="text-left py-2 px-2 font-medium">Age</th>
                     <th className="text-left py-2 px-2 font-medium">Type</th>
                     <th className="text-left py-2 px-2 font-medium">From</th>
@@ -258,47 +432,228 @@ const Transactions = () => {
                     <th className="text-right py-2 px-2 font-medium">Amount</th>
                     <th className="text-right py-2 px-2 font-medium">Fee</th>
                     <th className="text-left py-2 px-2 font-medium">Block</th>
-                    <th className="text-left py-2 px-2 font-medium">Block Hash</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {filteredTxs.length === 0 && !isLoading && (
+                  {paginatedTxs.length === 0 && !isLoading && (
                     <tr>
                       <td colSpan={8} className="py-6 text-center text-muted-foreground">
                         No transactions yet.
                       </td>
                     </tr>
                   )}
-                  {filteredTxs.map((tx) => (
-                    <tr key={tx.id} className="hover:bg-secondary/40 transition-colors">
+                  {paginatedTxs.map((tx) => (
+                    <tr key={tx.id} className="hover:bg-secondary/40 transition-colors cursor-pointer" onClick={() => setSelectedTx(tx)}>
+                      <td className="py-2 px-2 font-mono">
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setSelectedTx(tx); }}
+                            className="text-primary hover:underline"
+                            title="View transaction details"
+                          >
+                            {truncateHash(tx.id || tx.blockHash, 8, 6)}
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); copyToClipboard(tx.id || tx.blockHash); }}
+                            className="p-1 hover:bg-secondary rounded transition-colors"
+                            title="Copy TX hash"
+                          >
+                            {copiedAddress === (tx.id || tx.blockHash) ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+                          </button>
+                        </div>
+                      </td>
                       <td className="py-2 px-2 text-muted-foreground">{formatAge(tx.time)}</td>
                       <td className="py-2 px-2">
                         <Badge variant="secondary">{labelForType(tx.type)}</Badge>
                       </td>
-                      <td className="py-2 px-2 font-mono" title={tx.from || "—"}>
-                        {truncateHash(tx.from || "—")}
+                      <td className="py-2 px-2 font-mono">
+                        <div className="flex items-center gap-1">
+                          <span title={tx.from || "—"}>{truncateHash(tx.from || "—")}</span>
+                          {tx.from && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); copyToClipboard(tx.from); }}
+                              className="p-1 hover:bg-secondary rounded transition-colors"
+                              title="Copy address"
+                            >
+                              {copiedAddress === tx.from ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+                            </button>
+                          )}
+                        </div>
                       </td>
-                      <td className="py-2 px-2 font-mono" title={tx.to || "—"}>
-                        {truncateHash(tx.to || "—")}
+                      <td className="py-2 px-2 font-mono">
+                        <div className="flex items-center gap-1">
+                          <span title={tx.to || "—"}>{truncateHash(tx.to || "—")}</span>
+                          {tx.to && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); copyToClipboard(tx.to); }}
+                              className="p-1 hover:bg-secondary rounded transition-colors"
+                              title="Copy address"
+                            >
+                              {copiedAddress === tx.to ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2 px-2 text-right font-mono">
-                        {tx.amount ? tx.amount.toLocaleString() : "—"}
+                        {tx.amount ? tx.amount.toLocaleString() : "—"} <span className="text-primary">{tx.symbol}</span>
                       </td>
                       <td className="py-2 px-2 text-right font-mono">
-                        {tx.fee ? tx.fee.toFixed(2) : "0.00"}
+                        {tx.fee ? tx.fee.toFixed(2) : "0.00"} <span className="text-muted-foreground">XRGE</span>
                       </td>
                       <td className="py-2 px-2 font-mono">#{tx.blockHeight}</td>
-                      <td className="py-2 px-2 font-mono" title={tx.blockHash}>
-                        {truncateHash(tx.blockHash, 10, 8)}
-                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between pt-4 border-t border-border">
+                <div className="text-sm text-muted-foreground">
+                  Showing {startIndex + 1}-{Math.min(startIndex + ITEMS_PER_PAGE, filteredTxs.length)} of {filteredTxs.length} transactions
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => goToPage(currentPage - 1)}
+                    disabled={currentPage === 1}
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      let pageNum;
+                      if (totalPages <= 5) {
+                        pageNum = i + 1;
+                      } else if (currentPage <= 3) {
+                        pageNum = i + 1;
+                      } else if (currentPage >= totalPages - 2) {
+                        pageNum = totalPages - 4 + i;
+                      } else {
+                        pageNum = currentPage - 2 + i;
+                      }
+                      return (
+                        <Button
+                          key={pageNum}
+                          variant={currentPage === pageNum ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => goToPage(pageNum)}
+                          className="w-8 h-8 p-0"
+                        >
+                          {pageNum}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => goToPage(currentPage + 1)}
+                    disabled={currentPage === totalPages}
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </main>
+
+      {/* Transaction Detail Dialog */}
+      <Dialog open={!!selectedTx} onOpenChange={(open) => !open && setSelectedTx(null)}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Activity className="w-5 h-5 text-primary" />
+              Transaction Details
+            </DialogTitle>
+            <DialogDescription>
+              {selectedTx && labelForType(selectedTx.type)} • {selectedTx && formatAge(selectedTx.time)}
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedTx && (
+            <div className="space-y-4">
+              {/* Amount */}
+              <div className="bg-secondary/50 rounded-lg p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Amount</p>
+                    <p className="text-xl font-bold font-mono">
+                      {selectedTx.amount ? selectedTx.amount.toLocaleString() : "0"} <span className="text-primary">{selectedTx.symbol}</span>
+                    </p>
+                  </div>
+                  <Badge variant="secondary">{labelForType(selectedTx.type)}</Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">Fee: {selectedTx.fee?.toFixed(4) || "0.0000"} XRGE</p>
+              </div>
+
+              {/* Block & Time Info */}
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground">Block</p>
+                  <p className="font-mono">#{selectedTx.blockHeight}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Time</p>
+                  <p className="font-mono text-xs">{formatFullDate(selectedTx.time)}</p>
+                </div>
+              </div>
+
+              {/* TX Hash */}
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">TX Hash</p>
+                <div className="flex items-center gap-2 bg-background rounded border border-border p-2">
+                  <code className="text-xs font-mono flex-1 break-all">{selectedTx.id || selectedTx.blockHash}</code>
+                  <button onClick={() => copyToClipboard(selectedTx.id || selectedTx.blockHash)} className="p-1 hover:bg-secondary rounded">
+                    {copiedAddress === (selectedTx.id || selectedTx.blockHash) ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* From */}
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">From</p>
+                <div className="flex items-center gap-2 bg-background rounded border border-border p-2">
+                  <code className="text-xs font-mono flex-1 break-all">{selectedTx.from || "—"}</code>
+                  {selectedTx.from && (
+                    <button onClick={() => copyToClipboard(selectedTx.from)} className="p-1 hover:bg-secondary rounded">
+                      {copiedAddress === selectedTx.from ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* To */}
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">To</p>
+                <div className="flex items-center gap-2 bg-background rounded border border-border p-2">
+                  <code className="text-xs font-mono flex-1 break-all">{selectedTx.to || "—"}</code>
+                  {selectedTx.to && (
+                    <button onClick={() => copyToClipboard(selectedTx.to)} className="p-1 hover:bg-secondary rounded">
+                      {copiedAddress === selectedTx.to ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Block Hash */}
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Block Hash</p>
+                <div className="flex items-center gap-2 bg-background rounded border border-border p-2">
+                  <code className="text-xs font-mono flex-1 break-all">{selectedTx.blockHash}</code>
+                  <button onClick={() => copyToClipboard(selectedTx.blockHash)} className="p-1 hover:bg-secondary rounded">
+                    {copiedAddress === selectedTx.blockHash ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
