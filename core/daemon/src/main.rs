@@ -639,6 +639,7 @@ struct SubmitTxRequest {
     to_public_key: String,
     amount: f64,
     fee: Option<f64>,
+    token_symbol: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -661,6 +662,7 @@ async fn submit_tx(
         &body.to_public_key,
         body.amount,
         body.fee,
+        body.token_symbol.as_deref(),
     ) {
         Ok(tx) => {
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));

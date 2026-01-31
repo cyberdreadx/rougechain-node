@@ -1,9 +1,16 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { X, Send, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
+import { X, Send, Loader2, AlertCircle, CheckCircle2, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import { sendTransaction, WalletBalance, BASE_TRANSFER_FEE } from "@/lib/pqc-wallet";
 
@@ -47,10 +54,13 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
   const [memo, setMemo] = useState("");
+  const [selectedToken, setSelectedToken] = useState("XRGE");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
 
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
+  const selectedTokenBalance = balances.find(b => b.symbol === selectedToken)?.balance || 0;
+  const selectedTokenInfo = balances.find(b => b.symbol === selectedToken);
 
   // Live address validation
   const addressValidation = recipient ? parseXrgeAddress(recipient) : null;
@@ -71,9 +81,17 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
       return;
     }
 
-    const totalRequired = amountNum + BASE_TRANSFER_FEE;
-    if (totalRequired > xrgeBalance) {
-      setError(`Insufficient balance. Need ${totalRequired} XRGE (${amountNum} + ${BASE_TRANSFER_FEE} fee)`);
+    // Check token balance
+    if (amountNum > selectedTokenBalance) {
+      setError(`Insufficient ${selectedToken} balance. You have ${selectedTokenBalance.toLocaleString()} ${selectedToken}`);
+      return;
+    }
+
+    // Check XRGE balance for fee (fee is always in XRGE)
+    const feeRequired = BASE_TRANSFER_FEE;
+    const xrgeNeeded = selectedToken === "XRGE" ? amountNum + feeRequired : feeRequired;
+    if (xrgeNeeded > xrgeBalance) {
+      setError(`Insufficient XRGE for fee. Need ${feeRequired} XRGE for transaction fee`);
       return;
     }
 
@@ -90,11 +108,11 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
         wallet.signingPublicKey,
         parsed.address, // Use parsed address without prefix
         amountNum,
-        "XRGE",
+        selectedToken,
         memo || undefined
       );
       
-      toast.success(`Sent ${amountNum} XRGE successfully!`);
+      toast.success(`Sent ${amountNum} ${selectedToken} successfully!`);
       onSuccess();
     } catch (err) {
       console.error("Send error:", err);
@@ -120,13 +138,40 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
         className="w-full max-w-md bg-card rounded-2xl border border-border p-6 shadow-xl"
       >
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold text-foreground">Send XRGE</h2>
+          <h2 className="text-xl font-bold text-foreground">Send Tokens</h2>
           <Button variant="ghost" size="icon" onClick={onClose}>
             <X className="w-5 h-5" />
           </Button>
         </div>
 
         <div className="space-y-4">
+          {/* Token Selection */}
+          {balances.length > 1 && (
+            <div>
+              <Label>Select Token</Label>
+              <Select value={selectedToken} onValueChange={setSelectedToken}>
+                <SelectTrigger className="mt-1.5">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {balances.map((token) => (
+                    <SelectItem key={token.symbol} value={token.symbol}>
+                      <div className="flex items-center gap-2">
+                        <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs font-bold">
+                          {token.icon || token.symbol.charAt(0)}
+                        </span>
+                        <span>{token.symbol}</span>
+                        <span className="text-muted-foreground text-xs">
+                          ({token.balance.toLocaleString()})
+                        </span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <div>
             <Label htmlFor="recipient">Recipient Address</Label>
             <div className="relative mt-1.5">
@@ -166,7 +211,10 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
                 size="sm"
                 className="h-6 px-2 text-xs text-primary"
                 onClick={() => {
-                  const maxAmount = Math.max(0, xrgeBalance - BASE_TRANSFER_FEE);
+                  // For XRGE, leave room for fee. For other tokens, use full balance
+                  const maxAmount = selectedToken === "XRGE" 
+                    ? Math.max(0, selectedTokenBalance - BASE_TRANSFER_FEE)
+                    : selectedTokenBalance;
                   setAmount(maxAmount.toString());
                 }}
               >
@@ -180,14 +228,14 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="0"
-                className="pr-16"
+                className="pr-20"
               />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                XRGE
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-medium">
+                {selectedToken}
               </span>
             </div>
             <div className="flex justify-between text-xs text-muted-foreground mt-1">
-              <span>Available: {xrgeBalance.toLocaleString()} XRGE</span>
+              <span>Available: {selectedTokenBalance.toLocaleString()} {selectedToken}</span>
               <span>Fee: {BASE_TRANSFER_FEE} XRGE</span>
             </div>
           </div>
@@ -223,7 +271,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
             ) : (
               <>
                 <Send className="w-4 h-4 mr-2" />
-                Send XRGE
+                Send {selectedToken}
               </>
             )}
           </Button>

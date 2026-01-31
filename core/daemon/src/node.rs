@@ -197,18 +197,26 @@ impl L1Node {
         to_public_key: &str,
         amount: f64,
         fee: Option<f64>,
+        token_symbol: Option<&str>,
     ) -> Result<TxV1, String> {
         let tx_fee = fee.unwrap_or(BASE_TRANSFER_FEE);
-        let total_required = amount + tx_fee;
         
-        // Check sender has sufficient balance
+        // For XRGE transfers, check XRGE balance for amount + fee
+        // For token transfers, check XRGE balance for fee only (token balance check is done separately)
+        let is_token_transfer = token_symbol.is_some();
+        let xrge_required = if is_token_transfer { tx_fee } else { amount + tx_fee };
+        
+        // Check sender has sufficient XRGE balance for fee
         let sender_balance = self.get_balance(from_public_key)?;
-        if sender_balance < total_required {
+        if sender_balance < xrge_required {
             return Err(format!(
-                "insufficient balance: have {:.4} XRGE, need {:.4} XRGE ({:.4} + {:.4} fee)",
-                sender_balance, total_required, amount, tx_fee
+                "insufficient XRGE balance: have {:.4} XRGE, need {:.4} XRGE for {}",
+                sender_balance, xrge_required, if is_token_transfer { "fee" } else { "transfer + fee" }
             ));
         }
+        
+        // TODO: For token transfers, verify sender has sufficient token balance
+        // This requires tracking token balances separately
         
         // Convert f64 to u64 (round to nearest integer for on-chain storage)
         let amount_u64 = amount.round() as u64;
@@ -225,7 +233,7 @@ impl L1Node {
                 target_pub_key: None,
                 reason: None,
                 token_name: None,
-                token_symbol: None,
+                token_symbol: token_symbol.map(|s| s.to_string()),
                 token_decimals: None,
                 token_total_supply: None,
             },

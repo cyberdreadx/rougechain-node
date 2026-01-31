@@ -124,12 +124,25 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
         };
         txs: Array<{
           version: 1;
-          type?: "transfer" | "stake" | "unstake";
-          tx_type?: "transfer" | "stake" | "unstake";
+          type?: "transfer" | "stake" | "unstake" | "create_token";
+          tx_type?: "transfer" | "stake" | "unstake" | "create_token";
           fromPubKey?: string;
           from_pub_key?: string;
           nonce: number;
-          payload: { toPubKeyHex?: string; to_pub_key_hex?: string; amount?: number; faucet?: boolean };
+          payload: { 
+            toPubKeyHex?: string; 
+            to_pub_key_hex?: string; 
+            amount?: number; 
+            faucet?: boolean;
+            token_name?: string;
+            tokenName?: string;
+            token_symbol?: string;
+            tokenSymbol?: string;
+            token_decimals?: number;
+            tokenDecimals?: number;
+            token_total_supply?: number;
+            tokenTotalSupply?: number;
+          };
           fee: number;
           sig: string;
         }>;
@@ -147,10 +160,11 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
         const proposerSig = blockV1.proposerSig ?? blockV1.proposer_sig ?? "";
         for (const txV1 of blockV1.txs) {
           const txType = txV1.type ?? txV1.tx_type;
+          const fromPubKey = txV1.fromPubKey ?? txV1.from_pub_key ?? "";
+          
           if (txType === "transfer") {
             const payload = txV1.payload as { toPubKeyHex?: string; to_pub_key_hex?: string; amount?: number; faucet?: boolean };
             const isFaucet = payload.faucet === true;
-            const fromPubKey = txV1.fromPubKey ?? txV1.from_pub_key ?? "";
             const tx: Transaction = {
               type: isFaucet ? "mint" : "transfer",
               from: isFaucet ? "FAUCET" : fromPubKey,
@@ -175,6 +189,66 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
             };
 
             transactions.push({ tx, block });
+          } else if (txType === "create_token") {
+            // Parse create_token transactions
+            try {
+              const payload = txV1.payload as { 
+                amount?: number; 
+                token_name?: string; 
+                tokenName?: string;
+                token_symbol?: string;
+                tokenSymbol?: string;
+                token_decimals?: number;
+                tokenDecimals?: number;
+                token_total_supply?: number;
+                tokenTotalSupply?: number;
+              };
+              
+              const tokenName = payload?.token_name || payload?.tokenName || "Unknown Token";
+              const tokenSymbol = payload?.token_symbol || payload?.tokenSymbol || "TOKEN";
+              const tokenDecimals = payload?.token_decimals ?? payload?.tokenDecimals ?? 18;
+              const totalSupply = payload?.token_total_supply || payload?.tokenTotalSupply || payload?.amount || 0;
+              const safeFromPubKey = fromPubKey || "";
+              const tokenAddress = safeFromPubKey.length >= 16 
+                ? `token:${safeFromPubKey.slice(0, 16)}:${tokenSymbol.toLowerCase()}`
+                : `token:unknown:${tokenSymbol.toLowerCase()}`;
+              
+              const tx: Transaction = {
+                type: "create_token",
+                from: fromPubKey,
+                to: fromPubKey, // Creator receives the tokens
+                amount: totalSupply,
+                symbol: tokenSymbol,
+                timestamp: blockV1.header.time,
+                memo: `Created ${tokenName} (${tokenSymbol})`,
+                fee: txV1.fee,
+                feeRecipient: proposerPubKey,
+                tokenData: {
+                  name: tokenName,
+                  symbol: tokenSymbol,
+                  decimals: tokenDecimals,
+                  totalSupply: totalSupply,
+                  tokenAddress: tokenAddress,
+                  creatorAddress: fromPubKey,
+                },
+              };
+
+              const block: Block = {
+                index: blockV1.header.height,
+                timestamp: blockV1.header.time,
+                data: JSON.stringify(tx),
+                previousHash: prevHash,
+                hash: blockV1.hash,
+                nonce: 0,
+                signature: proposerSig,
+                signerPublicKey: proposerPubKey,
+              };
+
+              transactions.push({ tx, block });
+            } catch (tokenParseError) {
+              console.error("Error parsing create_token tx:", tokenParseError);
+              // Skip this transaction
+            }
           }
         }
       }
@@ -237,6 +311,8 @@ export async function getTokenBySymbol(symbol: string): Promise<TokenInfo | null
 // Calculate balance for a specific wallet (by public key)
 // Now supports both node API (for public deployment) and local Supabase (for dev)
 export async function getWalletBalance(publicKey: string): Promise<WalletBalance[]> {
+  const balances: WalletBalance[] = [];
+  
   // Try node API first (for public deployment)
   const NODE_API_URL = getCoreApiBaseUrl();
   if (!NODE_API_URL) {
@@ -250,21 +326,68 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
   }
   
   try {
+    // Get XRGE balance
     const res = await fetch(`${NODE_API_URL}/balance/${publicKey}`, {
       headers: getCoreApiHeaders(),
     });
     if (res.ok) {
       const data = await res.json() as { success: boolean; balance: number };
       if (data.success) {
-        // Return in WalletBalance format
-        return [{
+        balances.push({
           symbol: "XRGE",
           balance: data.balance,
           name: "RougeCoin",
           icon: "🔴",
           tokenAddress: "",
-        }];
+        });
       }
+    }
+    
+    // Get custom token balances by scanning transactions
+    try {
+      const transactions = await getAllTransactions();
+      const tokenBalances: Record<string, { balance: number; name: string; symbol: string; address: string }> = {};
+      
+      for (const { tx } of transactions) {
+        // Token creation - creator gets the full supply
+        if (tx.type === "create_token" && tx.tokenData && tx.from === publicKey) {
+          const symbol = tx.tokenData.symbol;
+          if (!tokenBalances[symbol]) {
+            tokenBalances[symbol] = {
+              balance: 0,
+              name: tx.tokenData.name,
+              symbol: symbol,
+              address: tx.tokenData.tokenAddress,
+            };
+          }
+          tokenBalances[symbol].balance += tx.tokenData.totalSupply;
+        }
+        
+        // Token transfers (if we add this tx type later)
+        // For now, tokens stay with their creator until transfer is implemented
+      }
+      
+      // Add token balances to result
+      for (const symbol of Object.keys(tokenBalances)) {
+        const token = tokenBalances[symbol];
+        if (token.balance > 0) {
+          balances.push({
+            symbol: token.symbol,
+            balance: token.balance,
+            name: token.name,
+            icon: token.symbol.charAt(0)?.toUpperCase() || "T",
+            tokenAddress: token.address,
+          });
+        }
+      }
+    } catch (tokenError) {
+      console.error("Error fetching token balances:", tokenError);
+      // Continue with just XRGE balance
+    }
+    
+    // If we got XRGE balance, return all balances
+    if (balances.length > 0) {
+      return balances;
     }
   } catch (nodeError) {
     if (getActiveNetwork() === "mainnet") {
@@ -280,52 +403,52 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
   }
 
   // Fallback to local Supabase method (for dev)
-  const transactions = await getAllTransactions();
+  const fallbackTxs = await getAllTransactions();
   const tokens = await getAllTokens();
-  const balances: Record<string, number> = {};
+  const fallbackBalances: Record<string, number> = {};
 
-  for (const { tx } of transactions) {
+  for (const { tx } of fallbackTxs) {
     const symbol = tx.symbol || "XRGE";
     
-    if (!balances[symbol]) {
-      balances[symbol] = 0;
+    if (!fallbackBalances[symbol]) {
+      fallbackBalances[symbol] = 0;
     }
 
     // For token creation, creator receives the full supply (don't double-count)
     if (tx.type === "create_token" && tx.from === publicKey) {
-      balances[symbol] += tx.amount;
+      fallbackBalances[symbol] += tx.amount;
       // Deduct the creation fee
       if (tx.fee && tx.fee > 0) {
-        if (!balances["XRGE"]) balances["XRGE"] = 0;
-        balances["XRGE"] -= tx.fee;
+        if (!fallbackBalances["XRGE"]) fallbackBalances["XRGE"] = 0;
+        fallbackBalances["XRGE"] -= tx.fee;
       }
       continue;
     }
 
     // Received tokens
     if (tx.to === publicKey && tx.type !== "fee") {
-      balances[symbol] += tx.amount;
+      fallbackBalances[symbol] += tx.amount;
     }
 
     // Sent tokens (including fees)
     if (tx.from === publicKey) {
-      balances[symbol] -= tx.amount;
+      fallbackBalances[symbol] -= tx.amount;
       // Deduct fee if present
       if (tx.fee && tx.fee > 0) {
-        if (!balances["XRGE"]) balances["XRGE"] = 0;
-        balances["XRGE"] -= tx.fee;
+        if (!fallbackBalances["XRGE"]) fallbackBalances["XRGE"] = 0;
+        fallbackBalances["XRGE"] -= tx.fee;
       }
     }
 
     // Fee recipient receives the fee
     if (tx.feeRecipient === publicKey && tx.fee) {
-      if (!balances["XRGE"]) balances["XRGE"] = 0;
-      balances["XRGE"] += tx.fee;
+      if (!fallbackBalances["XRGE"]) fallbackBalances["XRGE"] = 0;
+      fallbackBalances["XRGE"] += tx.fee;
     }
   }
 
   // Convert to array format with token info
-  return Object.entries(balances)
+  return Object.entries(fallbackBalances)
     .filter(([_, balance]) => balance !== 0)
     .map(([symbol, balance]) => {
       const token = tokens.find(t => t.symbol === symbol);
@@ -414,6 +537,7 @@ export async function sendTransaction(
         toPublicKey,
         amount,
         fee: BASE_TRANSFER_FEE,
+        tokenSymbol: symbol !== "XRGE" ? symbol : undefined, // Include token symbol for non-XRGE transfers
       }),
     });
 
