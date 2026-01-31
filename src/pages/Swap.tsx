@@ -25,6 +25,7 @@ import { Slider } from "@/components/ui/slider";
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { secureSwap } from "@/lib/secure-api";
+import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
 
 interface Token {
   symbol: string;
@@ -264,6 +265,17 @@ const Swap = () => {
 
   const tokenInData = tokens.find(t => t.symbol === tokenIn);
   const tokenOutData = tokens.find(t => t.symbol === tokenOut);
+
+  // Show cyberpunk loader when swapping
+  if (loading) {
+    return (
+      <CyberpunkLoader
+        message="Executing Quantum Swap"
+        tokenIn={tokenIn}
+        tokenOut={tokenOut}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col">

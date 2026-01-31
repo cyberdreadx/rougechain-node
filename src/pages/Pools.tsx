@@ -27,6 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { secureCreatePool, secureAddLiquidity, secureRemoveLiquidity } from "@/lib/secure-api";
+import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
 import SwapWidget from "@/components/messenger/SwapWidget";
 
 interface Pool {
@@ -304,6 +305,15 @@ const Pools = () => {
       </div>
     );
   };
+
+  // Show cyberpunk loader during pool operations
+  if (actionLoading) {
+    return (
+      <CyberpunkLoader
+        message="Processing Pool Transaction"
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col">

@@ -14,6 +14,7 @@ import {
 import { toast } from "sonner";
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { secureSwap } from "@/lib/secure-api";
+import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 
 interface Token {
@@ -212,6 +213,17 @@ const SwapWidget = ({ walletPublicKey, walletPrivateKey, onClose }: SwapWidgetPr
 
   const tokenInData = tokens.find(t => t.symbol === tokenIn);
   const insufficientBalance = tokenInData && parseFloat(amountIn || "0") > tokenInData.balance;
+
+  // Show cyberpunk loader when swapping
+  if (loading) {
+    return (
+      <CyberpunkLoader
+        message="Executing Quantum Swap"
+        tokenIn={tokenIn}
+        tokenOut={tokenOut}
+      />
+    );
+  }
 
   return (
     <motion.div
