@@ -603,8 +603,21 @@ impl L1Node {
             "transfer" => {
                 if let Some(to_pub_key) = tx.payload.to_pub_key_hex.as_ref() {
                     let amount = tx.payload.amount.unwrap_or(0) as f64;
-                    *balances.entry(to_pub_key.clone()).or_insert(0.0) += amount;
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount + tx.fee;
+                    
+                    // Check if this is a token transfer (has token_symbol)
+                    let is_token_transfer = tx.payload.token_symbol.is_some();
+                    
+                    if is_token_transfer {
+                        // Token transfer: only deduct XRGE fee from sender
+                        // Token balances are tracked separately (not in this XRGE balance map)
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                    } else {
+                        // XRGE transfer: add to recipient, deduct amount + fee from sender
+                        *balances.entry(to_pub_key.clone()).or_insert(0.0) += amount;
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount + tx.fee;
+                    }
+                    
+                    // Fee always goes to block proposer
                     if tx.fee > 0.0 {
                         *balances.entry(fee_recipient.to_string()).or_insert(0.0) += tx.fee;
                     }

@@ -163,16 +163,25 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
           const fromPubKey = txV1.fromPubKey ?? txV1.from_pub_key ?? "";
           
           if (txType === "transfer") {
-            const payload = txV1.payload as { toPubKeyHex?: string; to_pub_key_hex?: string; amount?: number; faucet?: boolean };
+            const payload = txV1.payload as { 
+              toPubKeyHex?: string; 
+              to_pub_key_hex?: string; 
+              amount?: number; 
+              faucet?: boolean;
+              token_symbol?: string;
+              tokenSymbol?: string;
+            };
             const isFaucet = payload.faucet === true;
+            // Check for token symbol - if present, this is a token transfer
+            const tokenSymbol = payload.token_symbol || payload.tokenSymbol;
             const tx: Transaction = {
               type: isFaucet ? "mint" : "transfer",
               from: isFaucet ? "FAUCET" : fromPubKey,
               to: payload.toPubKeyHex || payload.to_pub_key_hex || "",
               amount: payload.amount || 0,
-              symbol: "XRGE",
+              symbol: tokenSymbol || "XRGE", // Use token symbol if present, otherwise XRGE
               timestamp: blockV1.header.time,
-              memo: isFaucet ? "Faucet" : undefined,
+              memo: isFaucet ? "Faucet" : (tokenSymbol ? `${tokenSymbol} transfer` : undefined),
               fee: txV1.fee,
               feeRecipient: proposerPubKey,
             };
@@ -349,22 +358,37 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
       const tokenBalances: Record<string, { balance: number; name: string; symbol: string; address: string }> = {};
       
       for (const { tx } of transactions) {
+        const symbol = tx.symbol;
+        
+        // Skip XRGE - we get that from the API
+        if (symbol === "XRGE") continue;
+        
+        // Initialize token balance entry if needed
+        if (symbol && !tokenBalances[symbol]) {
+          tokenBalances[symbol] = {
+            balance: 0,
+            name: tx.tokenData?.name || symbol,
+            symbol: symbol,
+            address: tx.tokenData?.tokenAddress || `token:${symbol.toLowerCase()}`,
+          };
+        }
+        
         // Token creation - creator gets the full supply
         if (tx.type === "create_token" && tx.tokenData && tx.from === publicKey) {
-          const symbol = tx.tokenData.symbol;
-          if (!tokenBalances[symbol]) {
-            tokenBalances[symbol] = {
-              balance: 0,
-              name: tx.tokenData.name,
-              symbol: symbol,
-              address: tx.tokenData.tokenAddress,
-            };
-          }
           tokenBalances[symbol].balance += tx.tokenData.totalSupply;
         }
         
-        // Token transfers (if we add this tx type later)
-        // For now, tokens stay with their creator until transfer is implemented
+        // Token transfers - track sent and received
+        if (tx.type === "transfer" && symbol && symbol !== "XRGE") {
+          // Received tokens
+          if (tx.to === publicKey) {
+            tokenBalances[symbol].balance += tx.amount;
+          }
+          // Sent tokens
+          if (tx.from === publicKey) {
+            tokenBalances[symbol].balance -= tx.amount;
+          }
+        }
       }
       
       // Add token balances to result
