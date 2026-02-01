@@ -1,20 +1,28 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Shield, Key, Lock, Fingerprint, ArrowRight, Loader2 } from "lucide-react";
+import { Shield, Key, Lock, Fingerprint, ArrowRight, Loader2, Upload, FileKey2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { WalletWithPrivateKeys } from "@/lib/pqc-messenger";
 import { createWallet } from "@/lib/pqc-messenger";
+import type { UnifiedWallet } from "@/lib/unified-wallet";
+import { decryptWallet } from "@/lib/unified-wallet";
 
 interface WalletSetupProps {
   onWalletCreated: (wallet: WalletWithPrivateKeys) => void;
+  onWalletImported?: (wallet: UnifiedWallet) => void;
 }
 
-const WalletSetup = ({ onWalletCreated }: WalletSetupProps) => {
+const WalletSetup = ({ onWalletCreated, onWalletImported }: WalletSetupProps) => {
   const [displayName, setDisplayName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [stage, setStage] = useState<"input" | "generating">("input");
+  const [showImport, setShowImport] = useState(false);
+  const [importData, setImportData] = useState("");
+  const [importPassword, setImportPassword] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
 
   const handleCreate = async () => {
     if (!displayName.trim()) return;
@@ -30,6 +38,28 @@ const WalletSetup = ({ onWalletCreated }: WalletSetupProps) => {
       setStage("input");
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!importData.trim() || !importPassword) return;
+    setIsImporting(true);
+    try {
+      const wallet = await decryptWallet(importData.trim(), importPassword);
+      onWalletImported?.(wallet);
+    } catch (error) {
+      console.error("Failed to import wallet:", error);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleImportFile = async (file: File) => {
+    try {
+      const text = await file.text();
+      setImportData(text);
+    } catch (error) {
+      console.error("Failed to read file:", error);
     }
   };
 
@@ -117,6 +147,52 @@ const WalletSetup = ({ onWalletCreated }: WalletSetupProps) => {
                   Create Wallet
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
+
+                {/* Import toggle */}
+                <Button
+                  variant="outline"
+                  className="w-full h-12"
+                  onClick={() => setShowImport((prev) => !prev)}
+                >
+                  <Upload className="w-4 h-4 mr-2" />
+                  {showImport ? "Hide Import" : "Import Existing Wallet"}
+                </Button>
+
+                {showImport && (
+                  <div className="space-y-3 p-3 rounded-lg border border-border bg-muted/30">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <FileKey2 className="w-4 h-4 text-primary" />
+                      Import Wallet Backup
+                    </div>
+                    <Input
+                      type="file"
+                      accept=".pqcbackup,.txt"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void handleImportFile(file);
+                      }}
+                    />
+                    <Textarea
+                      value={importData}
+                      onChange={(e) => setImportData(e.target.value)}
+                      placeholder="Paste your backup data here..."
+                      className="min-h-[120px] font-mono text-xs"
+                    />
+                    <Input
+                      type="password"
+                      value={importPassword}
+                      onChange={(e) => setImportPassword(e.target.value)}
+                      placeholder="Backup password"
+                    />
+                    <Button
+                      onClick={handleImport}
+                      disabled={!importData.trim() || !importPassword || isImporting}
+                      className="w-full"
+                    >
+                      {isImporting ? "Importing..." : "Import Wallet"}
+                    </Button>
+                  </div>
+                )}
               </>
             ) : (
               <div className="py-8 space-y-6">

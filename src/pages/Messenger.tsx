@@ -238,7 +238,7 @@ const Messenger = () => {
         </div>
       );
     }
-    return <WalletSetup onWalletCreated={handleWalletCreated} />;
+    return <WalletSetup onWalletCreated={handleWalletCreated} onWalletImported={handleWalletImport} />;
   }
 
   return (
