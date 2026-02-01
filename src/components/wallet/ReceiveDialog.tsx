@@ -193,7 +193,7 @@ const ReceiveDialog = ({ publicKey, onClose }: ReceiveDialogProps) => {
             /* PQC-QR Mode */
             <div className="relative">
               {/* QR Code Display */}
-              <div className="bg-white rounded-xl p-3 mx-auto max-w-[220px] relative">
+              <div className="bg-white rounded-xl p-3 mx-auto max-w-[220px]">
                 <AnimatePresence mode="wait">
                   <motion.img
                     key={currentQrIndex}
@@ -206,11 +206,13 @@ const ReceiveDialog = ({ publicKey, onClose }: ReceiveDialogProps) => {
                     transition={{ duration: 0.2 }}
                   />
                 </AnimatePresence>
-                
-                {/* Part indicator overlay */}
-                <div className="absolute bottom-1 left-1/2 -translate-x-1/2 bg-black/70 text-white text-[10px] px-2 py-0.5 rounded-full">
+              </div>
+              
+              {/* Part indicator - below QR */}
+              <div className="text-center mt-2">
+                <span className="bg-primary/10 text-primary text-xs px-3 py-1 rounded-full">
                   Part {currentQrIndex + 1} of {qrCodes.length}
-                </div>
+                </span>
               </div>
 
               {/* Navigation arrows */}

@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
-import { X, Camera, CheckCircle2, AlertCircle, QrCode, Loader2 } from "lucide-react";
+import { X, Camera, CheckCircle2, AlertCircle, QrCode, Clipboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Html5Qrcode } from "html5-qrcode";
 
@@ -10,186 +11,222 @@ interface PqcQrScannerProps {
   onClose: () => void;
 }
 
-interface ScannedPart {
-  part: number;
-  total: number;
-  data: string;
-}
-
 // Convert base64 back to hex
 const base64ToHex = (base64: string): string => {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
+  try {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  } catch {
+    return "";
   }
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-};
-
-// Parse XRGE QR format: "XRGE:1/3:base64data" or simple URL format
-const parseXrgeQr = (data: string): ScannedPart | { simpleAddress: string } | null => {
-  // Check for simple URL format
-  if (data.startsWith("https://rougechain.io/wallet?addr=")) {
-    const addr = data.split("addr=")[1];
-    return { simpleAddress: addr };
-  }
-  
-  // Check for PQC-QR format: XRGE:1/3:data
-  const match = data.match(/^XRGE:(\d+)\/(\d+):(.+)$/);
-  if (match) {
-    return {
-      part: parseInt(match[1], 10),
-      total: parseInt(match[2], 10),
-      data: match[3],
-    };
-  }
-  
-  // Check for raw hex public key (if someone just has the key)
-  if (/^[a-fA-F0-9]{100,}$/.test(data)) {
-    return { simpleAddress: data };
-  }
-  
-  // Check for xrge: prefix format
-  if (data.startsWith("xrge:")) {
-    return { simpleAddress: data.slice(5) };
-  }
-  
-  return null;
 };
 
 const PqcQrScanner = ({ onScan, onClose }: PqcQrScannerProps) => {
-  const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [showManualInput, setShowManualInput] = useState(false);
+  const [manualInput, setManualInput] = useState("");
+  const [lastScanned, setLastScanned] = useState<string | null>(null);
   const [scannedParts, setScannedParts] = useState<Map<number, string>>(new Map());
   const [totalParts, setTotalParts] = useState<number | null>(null);
-  const [cameraReady, setCameraReady] = useState(false);
+  
   const scannerRef = useRef<Html5Qrcode | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(true);
+  const processingRef = useRef(false);
+
+  // Handle successful scan completion
+  const completeWithKey = useCallback((key: string) => {
+    if (scannerRef.current) {
+      scannerRef.current.stop().catch(() => {});
+    }
+    onScan(key);
+  }, [onScan]);
+
+  // Process scanned QR data
+  const processQrData = useCallback((data: string) => {
+    if (processingRef.current) return;
+    if (data === lastScanned) return; // Prevent duplicate processing
+    
+    setLastScanned(data);
+    console.log("QR Scanned:", data.substring(0, 50) + "...");
+
+    // 1. Check for standard URL format
+    if (data.includes("rougechain.io/wallet?addr=")) {
+      const match = data.match(/addr=([a-fA-F0-9]+)/);
+      if (match) {
+        toast.success("Standard QR scanned - address preview found");
+        // This is just a preview, show manual input for full key
+        setShowManualInput(true);
+        toast.info("Paste full address to continue", { duration: 3000 });
+        return;
+      }
+    }
+
+    // 2. Check for PQC-QR format: XRGE:1/3:base64data
+    const pqcMatch = data.match(/^XRGE:(\d+)\/(\d+):(.+)$/);
+    if (pqcMatch) {
+      const part = parseInt(pqcMatch[1], 10);
+      const total = parseInt(pqcMatch[2], 10);
+      const partData = pqcMatch[3];
+      
+      processingRef.current = true;
+      
+      setTotalParts(total);
+      setScannedParts(prev => {
+        if (prev.has(part)) {
+          processingRef.current = false;
+          return prev;
+        }
+        
+        const newParts = new Map(prev);
+        newParts.set(part, partData);
+        
+        toast.success(`Part ${part}/${total} scanned!`, { duration: 1500 });
+        
+        // Check if complete
+        if (newParts.size === total) {
+          const sorted = Array.from(newParts.entries())
+            .sort((a, b) => a[0] - b[0])
+            .map(([, d]) => d);
+          const fullBase64 = sorted.join("");
+          const hexKey = base64ToHex(fullBase64);
+          
+          if (hexKey) {
+            toast.success("Full address assembled!");
+            setTimeout(() => completeWithKey(hexKey), 500);
+          } else {
+            toast.error("Failed to decode address");
+          }
+        }
+        
+        processingRef.current = false;
+        return newParts;
+      });
+      return;
+    }
+
+    // 3. Check for raw hex (full public key)
+    if (/^[a-fA-F0-9]{500,}$/.test(data)) {
+      toast.success("Full address scanned!");
+      completeWithKey(data);
+      return;
+    }
+
+    // 4. Check for xrge: prefix
+    if (data.toLowerCase().startsWith("xrge:")) {
+      const key = data.slice(5);
+      if (key.length >= 100) {
+        toast.success("XRGE address scanned!");
+        completeWithKey(key);
+        return;
+      }
+    }
+
+    // Unknown format - just show what we got
+    console.log("Unknown QR format:", data);
+  }, [lastScanned, completeWithKey]);
 
   useEffect(() => {
-    let mounted = true;
+    mountedRef.current = true;
+    let scanner: Html5Qrcode | null = null;
     
     const initScanner = async () => {
       try {
-        const scanner = new Html5Qrcode("pqc-qr-reader");
-        scannerRef.current = scanner;
+        // Get available cameras
+        const devices = await Html5Qrcode.getCameras();
+        console.log("Cameras found:", devices.length, devices);
         
+        if (!devices || devices.length === 0) {
+          throw new Error("No cameras found");
+        }
+
+        scanner = new Html5Qrcode("pqc-qr-reader", { verbose: true });
+        scannerRef.current = scanner;
+
+        // Use back camera if available, otherwise use facingMode
+        const backCamera = devices.find(d => 
+          d.label.toLowerCase().includes("back") || 
+          d.label.toLowerCase().includes("rear") ||
+          d.label.toLowerCase().includes("environment")
+        );
+
+        const cameraConfig = backCamera 
+          ? backCamera.id 
+          : { facingMode: "environment" };
+
+        console.log("Using camera:", cameraConfig);
+
         await scanner.start(
-          { facingMode: "environment" },
+          cameraConfig,
           {
-            fps: 10,
-            qrbox: { width: 250, height: 250 },
+            fps: 15,
+            qrbox: { width: 200, height: 200 },
+            aspectRatio: 1,
+            disableFlip: false,
           },
           (decodedText) => {
-            handleScan(decodedText);
+            console.log("✓ QR DECODED:", decodedText.substring(0, 80));
+            processQrData(decodedText);
           },
-          () => {
-            // QR code not found in frame - this is normal
+          (errorMessage) => {
+            // Only log occasionally to avoid spam
+            if (Math.random() < 0.01) {
+              console.log("Scanning...", errorMessage.substring(0, 30));
+            }
           }
         );
-        
-        if (mounted) {
-          setScanning(true);
+
+        if (mountedRef.current) {
           setCameraReady(true);
+          console.log("Scanner started successfully");
         }
       } catch (err) {
         console.error("Scanner init error:", err);
-        if (mounted) {
-          setError("Camera access denied or not available");
+        if (mountedRef.current) {
+          setError(err instanceof Error ? err.message : "Camera not available");
+          setShowManualInput(true);
         }
       }
     };
 
-    initScanner();
+    // Delay to ensure DOM element exists
+    const timer = setTimeout(initScanner, 300);
 
     return () => {
-      mounted = false;
-      if (scannerRef.current) {
-        scannerRef.current.stop().catch(console.error);
+      mountedRef.current = false;
+      clearTimeout(timer);
+      if (scanner) {
+        scanner.stop().catch(() => {});
       }
     };
-  }, []);
+  }, [processQrData]);
 
-  const handleScan = (data: string) => {
-    const parsed = parseXrgeQr(data);
-    
-    if (!parsed) {
-      // Unknown format
-      return;
-    }
-    
-    // Simple address format (URL or raw key)
-    if ("simpleAddress" in parsed) {
-      toast.success("Address scanned!");
-      stopAndReturn(parsed.simpleAddress);
-      return;
-    }
-    
-    // PQC-QR multi-part format
-    const { part, total, data: partData } = parsed;
-    
-    // Set total parts if not set
-    if (totalParts === null) {
-      setTotalParts(total);
-    } else if (totalParts !== total) {
-      toast.error("Mixed QR codes detected", {
-        description: "Please scan QR codes from the same address",
-      });
-      return;
-    }
-    
-    // Add this part if not already scanned
-    if (!scannedParts.has(part)) {
-      const newParts = new Map(scannedParts);
-      newParts.set(part, partData);
-      setScannedParts(newParts);
-      
-      toast.success(`Part ${part}/${total} scanned!`, {
-        duration: 1500,
-      });
-      
-      // Check if we have all parts
-      if (newParts.size === total) {
-        // Assemble the full key
-        const sortedParts = Array.from(newParts.entries())
-          .sort((a, b) => a[0] - b[0])
-          .map(([, d]) => d);
-        const fullBase64 = sortedParts.join("");
-        
-        try {
-          const hexKey = base64ToHex(fullBase64);
-          toast.success("Full address assembled!");
-          stopAndReturn(hexKey);
-        } catch (err) {
-          toast.error("Failed to decode address");
-          console.error("Base64 decode error:", err);
-        }
-      }
-    }
-  };
-
-  const stopAndReturn = async (publicKey: string) => {
+  const handleClose = () => {
     if (scannerRef.current) {
-      try {
-        await scannerRef.current.stop();
-      } catch (err) {
-        console.error("Scanner stop error:", err);
-      }
-    }
-    onScan(publicKey);
-  };
-
-  const handleClose = async () => {
-    if (scannerRef.current) {
-      try {
-        await scannerRef.current.stop();
-      } catch (err) {
-        console.error("Scanner stop error:", err);
-      }
+      scannerRef.current.stop().catch(() => {});
     }
     onClose();
+  };
+
+  const handleManualSubmit = () => {
+    const input = manualInput.trim();
+    if (!input) {
+      toast.error("Please enter an address");
+      return;
+    }
+    
+    const key = input.replace(/^xrge:/i, "");
+    if (key.length >= 100) {
+      completeWithKey(key);
+    } else {
+      toast.error("Address too short - please enter the full public key");
+    }
   };
 
   const partsArray = totalParts
@@ -204,6 +241,7 @@ const PqcQrScanner = ({ onScan, onClose }: PqcQrScannerProps) => {
       className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex flex-col"
       onClick={handleClose}
     >
+      {/* Header */}
       <motion.div
         initial={{ y: -20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
@@ -212,7 +250,7 @@ const PqcQrScanner = ({ onScan, onClose }: PqcQrScannerProps) => {
       >
         <div className="flex items-center gap-2">
           <QrCode className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold">PQC-QR Scanner</h2>
+          <h2 className="text-lg font-semibold">Scan QR Code</h2>
         </div>
         <Button variant="ghost" size="icon" onClick={handleClose}>
           <X className="w-5 h-5" />
@@ -220,25 +258,49 @@ const PqcQrScanner = ({ onScan, onClose }: PqcQrScannerProps) => {
       </motion.div>
 
       <div
-        className="flex-1 flex flex-col items-center justify-center p-4"
+        className="flex-1 flex flex-col items-center justify-center p-4 overflow-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        {error ? (
+        {/* Manual Input (shown as fallback or alongside camera) */}
+        {showManualInput && (
+          <div className="w-full max-w-[320px] mb-4 p-4 rounded-xl bg-card border border-border">
+            <p className="text-sm font-medium mb-2">Or paste address manually:</p>
+            <div className="flex gap-2">
+              <Input
+                value={manualInput}
+                onChange={(e) => setManualInput(e.target.value)}
+                placeholder="xrge:... or full public key"
+                className="text-xs font-mono flex-1"
+              />
+              <Button size="sm" onClick={handleManualSubmit}>
+                <Clipboard className="w-4 h-4" />
+              </Button>
+            </div>
+            {error && (
+              <p className="text-xs text-amber-600 mt-2">Camera: {error}</p>
+            )}
+          </div>
+        )}
+
+        {/* Error state without camera */}
+        {error && !showManualInput ? (
           <div className="text-center space-y-4">
             <AlertCircle className="w-16 h-16 mx-auto text-destructive" />
             <p className="text-destructive font-medium">{error}</p>
-            <Button onClick={handleClose}>Close</Button>
+            <div className="flex gap-2 justify-center">
+              <Button onClick={() => setShowManualInput(true)} variant="outline">
+                Enter Manually
+              </Button>
+              <Button onClick={handleClose}>Close</Button>
+            </div>
           </div>
         ) : (
           <>
             {/* Camera View */}
-            <div
-              ref={containerRef}
-              className="relative w-full max-w-[300px] aspect-square rounded-xl overflow-hidden bg-black"
-            >
+            <div className="relative w-full max-w-[320px] aspect-square rounded-xl overflow-hidden bg-black">
               <div id="pqc-qr-reader" className="w-full h-full" />
               
-              {!cameraReady && (
+              {!cameraReady && !error && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black">
                   <div className="text-center text-white">
                     <Camera className="w-12 h-12 mx-auto mb-2 animate-pulse" />
@@ -247,23 +309,24 @@ const PqcQrScanner = ({ onScan, onClose }: PqcQrScannerProps) => {
                 </div>
               )}
               
-              {/* Scanning overlay */}
-              <div className="absolute inset-0 pointer-events-none">
-                <div className="absolute inset-4 border-2 border-primary/50 rounded-lg" />
-                <div className="absolute top-4 left-4 w-8 h-8 border-t-2 border-l-2 border-primary rounded-tl-lg" />
-                <div className="absolute top-4 right-4 w-8 h-8 border-t-2 border-r-2 border-primary rounded-tr-lg" />
-                <div className="absolute bottom-4 left-4 w-8 h-8 border-b-2 border-l-2 border-primary rounded-bl-lg" />
-                <div className="absolute bottom-4 right-4 w-8 h-8 border-b-2 border-r-2 border-primary rounded-br-lg" />
-              </div>
+              {/* Corner brackets overlay */}
+              {cameraReady && (
+                <div className="absolute inset-0 pointer-events-none">
+                  <div className="absolute top-8 left-8 w-10 h-10 border-t-3 border-l-3 border-primary rounded-tl-lg" style={{ borderWidth: '3px' }} />
+                  <div className="absolute top-8 right-8 w-10 h-10 border-t-3 border-r-3 border-primary rounded-tr-lg" style={{ borderWidth: '3px' }} />
+                  <div className="absolute bottom-8 left-8 w-10 h-10 border-b-3 border-l-3 border-primary rounded-bl-lg" style={{ borderWidth: '3px' }} />
+                  <div className="absolute bottom-8 right-8 w-10 h-10 border-b-3 border-r-3 border-primary rounded-br-lg" style={{ borderWidth: '3px' }} />
+                </div>
+              )}
             </div>
 
-            {/* Progress for multi-part scan */}
+            {/* Multi-part progress */}
             {totalParts && totalParts > 1 && (
-              <div className="mt-4 w-full max-w-[300px]">
+              <div className="mt-4 w-full max-w-[320px]">
                 <p className="text-sm text-center text-muted-foreground mb-2">
                   Scanning multi-part PQC-QR...
                 </p>
-                <div className="flex justify-center gap-2">
+                <div className="flex justify-center gap-2 flex-wrap">
                   {partsArray.map((part) => (
                     <div
                       key={part}
@@ -291,12 +354,19 @@ const PqcQrScanner = ({ onScan, onClose }: PqcQrScannerProps) => {
             <div className="mt-4 text-center">
               <p className="text-sm text-muted-foreground">
                 {totalParts
-                  ? "Point camera at the next QR code"
-                  : "Point camera at XRGE QR code"}
+                  ? "Point at next QR code"
+                  : "Point camera at QR code"}
               </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Supports standard QR and multi-part PQC-QR
-              </p>
+              {!showManualInput && (
+                <Button
+                  variant="link"
+                  size="sm"
+                  onClick={() => setShowManualInput(true)}
+                  className="text-xs mt-1"
+                >
+                  Or paste address manually
+                </Button>
+              )}
             </div>
           </>
         )}
