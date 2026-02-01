@@ -634,6 +634,9 @@ export async function getMessages(
 
     let plaintext = "[Unable to decrypt]";
     let signatureValid = false;
+    const senderSigningPublicKey =
+      sender?.signingPublicKey ||
+      (msg.senderWalletId && msg.senderWalletId.length > 100 ? msg.senderWalletId : undefined);
 
     // Check if this is our own message (check all possible ID formats)
     const isOwnMessage = msg.senderWalletId === recipientWallet.id ||
@@ -647,12 +650,12 @@ export async function getMessages(
       const storedPlaintext = getSentMessage(msg.id);
       plaintext = storedPlaintext || "[Your encrypted message]";
       signatureValid = true;
-    } else if (sender) {
+    } else if (senderSigningPublicKey) {
       try {
         const decryptData = await decryptMessage(
           msg.encryptedContent,
           recipientWallet.encryptionPrivateKey,
-          sender.signingPublicKey,
+          senderSigningPublicKey,
           msg.signature
         );
         plaintext = decryptData.plaintext;

@@ -683,7 +683,11 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
               <MessageBubble
                 key={msg.id}
                 message={msg}
-                isOwn={msg.senderWalletId === wallet.id}
+                isOwn={
+                  msg.senderWalletId === wallet.id ||
+                  msg.senderWalletId === wallet.signingPublicKey ||
+                  msg.senderWalletId === wallet.encryptionPublicKey
+                }
                 index={index}
                 onTap={() => setSelectedMessage(msg)}
                 isNew={newMessageIds.has(msg.id)}
