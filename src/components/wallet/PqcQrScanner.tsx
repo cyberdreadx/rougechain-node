@@ -41,9 +41,17 @@ const PqcQrScanner = ({ onScan, onClose }: PqcQrScannerProps) => {
   const processingRef = useRef(false);
 
   // Handle successful scan completion
-  const completeWithKey = useCallback((key: string) => {
+  const completeWithKey = useCallback(async (key: string) => {
     if (scannerRef.current) {
-      scannerRef.current.stop().catch(() => {});
+      try {
+        const state = scannerRef.current.getState();
+        if (state === 2 || state === 3) {
+          await scannerRef.current.stop();
+        }
+      } catch (err) {
+        console.log("Scanner stop error:", err);
+      }
+      scannerRef.current = null;
     }
     onScan(key);
   }, [onScan]);
@@ -202,14 +210,31 @@ const PqcQrScanner = ({ onScan, onClose }: PqcQrScannerProps) => {
       mountedRef.current = false;
       clearTimeout(timer);
       if (scanner) {
-        scanner.stop().catch(() => {});
+        try {
+          const state = scanner.getState();
+          if (state === 2 || state === 3) {
+            scanner.stop().catch(() => {});
+          }
+        } catch {
+          // Scanner may not be initialized yet
+        }
       }
     };
   }, [processQrData]);
 
-  const handleClose = () => {
+  const handleClose = async () => {
+    // Stop the scanner first before closing
     if (scannerRef.current) {
-      scannerRef.current.stop().catch(() => {});
+      try {
+        const state = scannerRef.current.getState();
+        // Only stop if scanning or paused
+        if (state === 2 || state === 3) { // 2 = SCANNING, 3 = PAUSED
+          await scannerRef.current.stop();
+        }
+      } catch (err) {
+        console.log("Scanner stop error:", err);
+      }
+      scannerRef.current = null;
     }
     onClose();
   };
