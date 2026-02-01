@@ -25,15 +25,17 @@ import {
 } from "@/lib/unified-wallet";
 
 interface WalletBackupProps {
-  wallet: UnifiedWallet;
+  wallet?: UnifiedWallet | null;
   onClose: () => void;
   onImport: (wallet: UnifiedWallet) => void;
-  onLocked: () => void;
-  vaultSettings: VaultSettings;
-  onUpdateVaultSettings: (settings: VaultSettings) => void;
+  onLocked?: () => void;
+  vaultSettings?: VaultSettings;
+  onUpdateVaultSettings?: (settings: VaultSettings) => void;
 }
 
 const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUpdateVaultSettings }: WalletBackupProps) => {
+  // Import-only mode when wallet is null
+  const importOnly = !wallet;
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -46,6 +48,8 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
   const [vaultProcessing, setVaultProcessing] = useState(false);
 
   const handleExport = async () => {
+    if (!wallet) return;
+    
     if (password.length < 8) {
       toast.error("Password too short", {
         description: "Password must be at least 8 characters"
@@ -203,37 +207,48 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
           </Button>
         </div>
 
-        <Tabs defaultValue="export" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 m-4 mb-0" style={{ width: "calc(100% - 2rem)" }}>
-            <TabsTrigger value="export" className="gap-2">
-              <Download className="w-4 h-4" />
-              Export
-            </TabsTrigger>
-            <TabsTrigger value="import" className="gap-2">
-              <Upload className="w-4 h-4" />
-              Import
-            </TabsTrigger>
-            <TabsTrigger value="vault" className="gap-2">
-              <Shield className="w-4 h-4" />
-              Vault
-            </TabsTrigger>
-          </TabsList>
+        <Tabs defaultValue={importOnly ? "import" : "export"} className="w-full">
+          {!importOnly ? (
+            <TabsList className="grid w-full grid-cols-3 m-4 mb-0" style={{ width: "calc(100% - 2rem)" }}>
+              <TabsTrigger value="export" className="gap-2">
+                <Download className="w-4 h-4" />
+                Export
+              </TabsTrigger>
+              <TabsTrigger value="import" className="gap-2">
+                <Upload className="w-4 h-4" />
+                Import
+              </TabsTrigger>
+              <TabsTrigger value="vault" className="gap-2">
+                <Shield className="w-4 h-4" />
+                Vault
+              </TabsTrigger>
+            </TabsList>
+          ) : (
+            <div className="p-4 pb-2">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Upload className="w-4 h-4" />
+                <span className="text-sm font-medium">Import Existing Wallet</span>
+              </div>
+            </div>
+          )}
 
           <TabsContent value="export" className="p-4 pt-2 space-y-4">
             {/* Current wallet info */}
-            <div className="p-3 rounded-lg bg-muted/30 border border-border">
-              <div className="flex items-center gap-2 mb-1">
-                <Key className="w-4 h-4 text-primary" />
-                <span className="text-sm font-medium text-foreground">{wallet.displayName}</span>
+            {wallet && (
+              <div className="p-3 rounded-lg bg-muted/30 border border-border">
+                <div className="flex items-center gap-2 mb-1">
+                  <Key className="w-4 h-4 text-primary" />
+                  <span className="text-sm font-medium text-foreground">{wallet.displayName}</span>
+                </div>
+                <p className="text-xs text-muted-foreground font-mono truncate">
+                  {wallet.signingPublicKey.slice(0, 20)}...
+                </p>
+                <div className="flex gap-2 mt-2">
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-primary/20 text-primary">ML-DSA-65</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-accent/20 text-accent">ML-KEM-768</span>
+                </div>
               </div>
-              <p className="text-xs text-muted-foreground font-mono truncate">
-                {wallet.signingPublicKey.slice(0, 20)}...
-              </p>
-              <div className="flex gap-2 mt-2">
-                <span className="text-[10px] px-2 py-0.5 rounded bg-primary/20 text-primary">ML-DSA-65</span>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-accent/20 text-accent">ML-KEM-768</span>
-              </div>
-            </div>
+            )}
 
             {/* Password input */}
             <div className="space-y-2">
@@ -307,19 +322,34 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
           </TabsContent>
 
           <TabsContent value="import" className="p-4 pt-2 space-y-4">
-            {/* Warning */}
-            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
-                <div className="text-xs text-muted-foreground">
-                  <p className="font-medium text-destructive mb-1">Warning</p>
-                  <p>
-                    Importing a wallet will replace your current wallet. Make sure you have 
-                    a backup of your current wallet first.
-                  </p>
+            {/* Warning - only show if there's an existing wallet */}
+            {!importOnly ? (
+              <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+                  <div className="text-xs text-muted-foreground">
+                    <p className="font-medium text-destructive mb-1">Warning</p>
+                    <p>
+                      Importing a wallet will replace your current wallet. Make sure you have 
+                      a backup of your current wallet first.
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="p-3 rounded-lg bg-primary/10 border border-primary/20">
+                <div className="flex items-start gap-2">
+                  <Upload className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                  <div className="text-xs text-muted-foreground">
+                    <p className="font-medium text-foreground mb-1">Restore Your Wallet</p>
+                    <p>
+                      Upload your encrypted backup file and enter the password you used 
+                      when creating the backup.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* File input */}
             <div className="space-y-2">

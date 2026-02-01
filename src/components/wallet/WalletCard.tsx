@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Shield, Copy, ExternalLink, Wallet, TrendingUp, TrendingDown } from "lucide-react";
+import { Shield, Copy, ExternalLink, Wallet, TrendingUp, TrendingDown, Upload } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
@@ -10,9 +10,10 @@ interface WalletCardProps {
   priceChange24h?: number | null;
   isConnected?: boolean;
   onConnect?: () => void;
+  onImport?: () => void;
 }
 
-const WalletCard = ({ address, balance, usdValue, priceChange24h, isConnected = false, onConnect }: WalletCardProps) => {
+const WalletCard = ({ address, balance, usdValue, priceChange24h, isConnected = false, onConnect, onImport }: WalletCardProps) => {
   const [copied, setCopied] = useState(false);
 
   const copyAddress = () => {
@@ -125,11 +126,19 @@ const WalletCard = ({ address, balance, usdValue, priceChange24h, isConnected = 
           <p className="text-sm text-muted-foreground mb-4">
             Connect your wallet to view balance and transact with quantum-safe security
           </p>
-          {onConnect && (
-            <Button onClick={onConnect} className="bg-primary hover:bg-primary/90">
-              Connect Wallet
-            </Button>
-          )}
+          <div className="flex items-center justify-center gap-3">
+            {onConnect && (
+              <Button onClick={onConnect} className="bg-primary hover:bg-primary/90">
+                Create Wallet
+              </Button>
+            )}
+            {onImport && (
+              <Button onClick={onImport} variant="outline" className="gap-2">
+                <Upload className="w-4 h-4" />
+                Import Wallet
+              </Button>
+            )}
+          </div>
         </div>
       )}
 

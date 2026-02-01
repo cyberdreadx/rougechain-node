@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
-import { X, User, MessageSquare, Loader2, Bot, Sparkles, UserPlus, CheckCircle2, AlertCircle } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { X, User, MessageSquare, Loader2, Bot, Sparkles, UserPlus, CheckCircle2, AlertCircle, QrCode } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { Wallet, WalletWithPrivateKeys, Conversation } from "@/lib/pqc-messenger";
 import { createConversation, getOrCreateDemoBot, getWallets } from "@/lib/pqc-messenger";
+import PqcQrScanner from "@/components/wallet/PqcQrScanner";
 
 interface ContactPickerProps {
   contacts: Wallet[];
@@ -43,6 +44,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
   const [manualError, setManualError] = useState("");
   const [detectedWallet, setDetectedWallet] = useState<Wallet | null>(null);
   const [isLookingUp, setIsLookingUp] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
 
   const addressValidation = manualAddress ? parseAddress(manualAddress) : null;
 
@@ -242,7 +244,19 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
               </div>
 
               <div>
-                <Label htmlFor="manual-address" className="text-xs text-muted-foreground">Public Key or xrge: Address</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="manual-address" className="text-xs text-muted-foreground">Public Key or xrge: Address</Label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowScanner(true)}
+                    className="h-6 px-2 text-[10px] gap-1"
+                  >
+                    <QrCode className="w-3 h-3" />
+                    Scan
+                  </Button>
+                </div>
                 <div className="relative mt-1">
                   <Input
                     id="manual-address"
@@ -370,6 +384,19 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
           })()}
         </div>
       </motion.div>
+
+      {/* QR Scanner */}
+      <AnimatePresence>
+        {showScanner && (
+          <PqcQrScanner
+            onScan={(publicKey) => {
+              handleAddressChange(publicKey);
+              setShowScanner(false);
+            }}
+            onClose={() => setShowScanner(false)}
+          />
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 };

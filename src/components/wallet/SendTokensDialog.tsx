@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
-import { X, Send, Loader2, AlertCircle, CheckCircle2, ChevronDown } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { X, Send, Loader2, AlertCircle, CheckCircle2, ChevronDown, QrCode } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { sendTransaction, getWalletBalance, WalletBalance, BASE_TRANSFER_FEE } from "@/lib/pqc-wallet";
+import PqcQrScanner from "./PqcQrScanner";
 
 interface SendTokensDialogProps {
   wallet: {
@@ -58,6 +59,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
   const [sending, setSending] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
+  const [showScanner, setShowScanner] = useState(false);
 
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
   const selectedTokenBalance = balances.find(b => b.symbol === selectedToken)?.balance || 0;
@@ -216,7 +218,19 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
           )}
 
           <div>
-            <Label htmlFor="recipient">Recipient Address</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="recipient">Recipient Address</Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowScanner(true)}
+                className="h-7 px-2 text-xs gap-1"
+              >
+                <QrCode className="w-3 h-3" />
+                Scan QR
+              </Button>
+            </div>
             <div className="relative mt-1.5">
               <Input
                 id="recipient"
@@ -329,6 +343,20 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
           </p>
         </div>
       </motion.div>
+
+      {/* QR Scanner */}
+      <AnimatePresence>
+        {showScanner && (
+          <PqcQrScanner
+            onScan={(publicKey) => {
+              setRecipient(publicKey);
+              setShowScanner(false);
+              toast.success("Address scanned successfully!");
+            }}
+            onClose={() => setShowScanner(false)}
+          />
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 };

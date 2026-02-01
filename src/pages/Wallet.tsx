@@ -645,6 +645,7 @@ const Wallet = () => {
             <WalletCard 
               isConnected={false}
               onConnect={createNewWallet}
+              onImport={() => setShowBackup(true)}
             />
 
             <SecurityStatus />
@@ -886,7 +887,7 @@ const Wallet = () => {
 
       {/* Backup Dialog */}
       <AnimatePresence>
-        {showBackup && wallet && (
+        {showBackup && (
           <WalletBackup
             wallet={wallet}
             onClose={() => setShowBackup(false)}
