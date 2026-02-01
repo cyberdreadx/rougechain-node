@@ -275,25 +275,10 @@ async function decryptMessage(
   return { plaintext, signatureValid };
 }
 
-const keygenWithSeedLengths = <T>(
-  keygen: (seed: Uint8Array) => T,
-  lengths: number[] = [64, 32]
-): T => {
-  let lastError: unknown;
-  for (const length of lengths) {
-    try {
-      const seed = crypto.getRandomValues(new Uint8Array(length));
-      return keygen(seed);
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError;
-};
-
 // Generate only encryption keypair (ML-KEM-768)
 export function generateEncryptionKeypair(): { publicKey: string; privateKey: string } {
-  const encryptionKeypair = keygenWithSeedLengths(ml_kem768.keygen);
+  // Let the library generate its own secure random seed
+  const encryptionKeypair = ml_kem768.keygen();
   return {
     publicKey: bytesToHex(encryptionKeypair.publicKey),
     privateKey: bytesToHex(encryptionKeypair.secretKey),
@@ -302,8 +287,9 @@ export function generateEncryptionKeypair(): { publicKey: string; privateKey: st
 
 // Create a new wallet with ML-DSA-65 + ML-KEM-768 keypairs
 export async function createWallet(displayName: string): Promise<WalletWithPrivateKeys> {
-  const signingKeypair = keygenWithSeedLengths(ml_dsa65.keygen);
-  const encryptionKeypair = keygenWithSeedLengths(ml_kem768.keygen);
+  // Let the libraries generate their own secure random seeds
+  const signingKeypair = ml_dsa65.keygen();
+  const encryptionKeypair = ml_kem768.keygen();
 
   const wallet: WalletWithPrivateKeys = {
     id: crypto.randomUUID(),
@@ -367,8 +353,9 @@ export async function getOrCreateDemoBot(): Promise<WalletWithPrivateKeys> {
     }
   }
 
-  const signingKeypair = keygenWithSeedLengths(ml_dsa65.keygen);
-  const encryptionKeypair = keygenWithSeedLengths(ml_kem768.keygen);
+  // Let the libraries generate their own secure random seeds
+  const signingKeypair = ml_dsa65.keygen();
+  const encryptionKeypair = ml_kem768.keygen();
 
   const saved: WalletWithPrivateKeys = {
     id: "demo-bot",
