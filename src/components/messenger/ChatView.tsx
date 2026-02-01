@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Conversation, WalletWithPrivateKeys, Message, Wallet } from "@/lib/pqc-messenger";
-import { getBotReply, getMessages, sendMessage, isDemoBot, loadDemoBotWallet } from "@/lib/pqc-messenger";
+import { getBotReply, getMessages, sendMessage, isDemoBot, loadDemoBotWallet, getWallets } from "@/lib/pqc-messenger";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -539,10 +539,23 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
     const messageText = encryptingMessage;
     setEncryptingMessage(null);
     
-    // Validate recipient has encryption key
-    if (!recipient.encryptionPublicKey) {
+    // Ensure recipient has the latest encryption key (fetch from server)
+    let recipientEncryptionKey = recipient.encryptionPublicKey;
+    if (!recipientEncryptionKey) {
+      try {
+        const wallets = await getWallets();
+        const match = wallets.find(w =>
+          w.id === recipient.id ||
+          w.signingPublicKey === recipient.signingPublicKey ||
+          w.encryptionPublicKey === recipient.encryptionPublicKey
+        );
+        recipientEncryptionKey = match?.encryptionPublicKey;
+      } catch (error) {
+        console.warn("Failed to refresh recipient keys:", error);
+      }
+    }
+    if (!recipientEncryptionKey) {
       console.error("Recipient has no encryption key. Recipient:", recipient);
-      // Show error to user
       alert("Cannot send message: recipient's encryption key is not available. Ask them to re-register their wallet.");
       setIsSending(false);
       return;
@@ -553,7 +566,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
         conversation.id,
         messageText,
         wallet,
-        recipient.encryptionPublicKey,
+        recipientEncryptionKey,
         selfDestruct,
         selfDestruct ? destructSeconds : undefined
       );

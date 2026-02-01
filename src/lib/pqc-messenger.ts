@@ -494,7 +494,12 @@ export async function getConversations(walletId: string): Promise<Conversation[]
   
   // Fetch all wallets to populate participant details
   const allWallets = await getWallets();
-  const walletMap = new Map(allWallets.map(w => [w.id, w]));
+  const walletMap = new Map<string, Wallet>();
+  for (const w of allWallets) {
+    if (w.id) walletMap.set(w.id, w);
+    if (w.signingPublicKey) walletMap.set(w.signingPublicKey, w);
+    if (w.encryptionPublicKey) walletMap.set(w.encryptionPublicKey, w);
+  }
   
   // Populate participants with full wallet data
   // Server returns participant_ids (snake_case), convert to participants array
