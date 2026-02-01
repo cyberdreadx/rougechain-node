@@ -10,15 +10,29 @@ function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+function keygenWithSeedLengths<T>(
+  keygen: (seed: Uint8Array) => T,
+  lengths: number[] = [64, 32]
+): T {
+  let lastError: unknown;
+  for (const length of lengths) {
+    try {
+      const seed = crypto.getRandomValues(new Uint8Array(length));
+      return keygen(seed);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 // Generate encryption keys if missing (for wallet upgrade)
 function ensureEncryptionKeys(wallet: UnifiedWallet): UnifiedWallet {
   if (wallet.encryptionPublicKey && wallet.encryptionPrivateKey) {
     return wallet; // Already has encryption keys
   }
   
-  // Generate new ML-KEM-768 encryption keys (64-byte seed)
-  const encryptionSeed = crypto.getRandomValues(new Uint8Array(64));
-  const encryptionKeypair = ml_kem768.keygen(encryptionSeed);
+  const encryptionKeypair = keygenWithSeedLengths(ml_kem768.keygen);
   
   return {
     ...wallet,

@@ -36,6 +36,22 @@ function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
+function keygenWithSeedLengths<T>(
+  keygen: (seed: Uint8Array) => T,
+  lengths: number[] = [64, 32]
+): T {
+  let lastError: unknown;
+  for (const length of lengths) {
+    try {
+      const seed = crypto.getRandomValues(new Uint8Array(length));
+      return keygen(seed);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) {
@@ -61,9 +77,7 @@ async function saveChain(chain: Block[]): Promise<void> {
 
 // Generate a new PQC keypair (ML-DSA-65)
 export async function generateKeypair(): Promise<{ keypair: Keypair; info: CryptoInfo }> {
-  // ML-DSA-65 requires 64-byte seed
-  const seed = crypto.getRandomValues(new Uint8Array(64));
-  const keypair = ml_dsa65.keygen(seed);
+  const keypair = keygenWithSeedLengths(ml_dsa65.keygen);
   return {
     keypair: {
       publicKey: bytesToHex(keypair.publicKey),
