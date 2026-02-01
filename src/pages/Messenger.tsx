@@ -176,7 +176,7 @@ const Messenger = () => {
       }
       console.log("Registering wallet with encryption key:", wallet.encryptionPublicKey.slice(0, 32) + "...");
       await registerWalletOnNode({
-        id: wallet.id,
+        id: wallet.signingPublicKey, // Always use signingPublicKey as ID for consistency
         displayName: wallet.displayName,
         signingPublicKey: wallet.signingPublicKey,
         encryptionPublicKey: wallet.encryptionPublicKey,

@@ -554,7 +554,7 @@ export async function sendMessage(
     headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
     body: JSON.stringify({
       conversationId,
-      senderWalletId: senderWallet.id,
+      senderWalletId: senderWallet.signingPublicKey || senderWallet.id, // Prefer signingPublicKey for consistency
       encryptedContent: encryptData.encryptedPackage,
       signature: encryptData.signature,
       selfDestruct,
@@ -630,9 +630,13 @@ export async function getMessages(
     let plaintext = "[Unable to decrypt]";
     let signatureValid = false;
 
-    // Check if this is our own message
+    // Check if this is our own message (check all possible ID formats)
     const isOwnMessage = msg.senderWalletId === recipientWallet.id ||
-                         msg.senderWalletId === recipientWallet.signingPublicKey;
+                         msg.senderWalletId === recipientWallet.signingPublicKey ||
+                         msg.senderWalletId === recipientWallet.encryptionPublicKey ||
+                         // Also check if sender starts with recipient's key prefix
+                         (recipientWallet.signingPublicKey && 
+                          msg.senderWalletId?.startsWith(recipientWallet.signingPublicKey.substring(0, 20)));
 
     if (isOwnMessage) {
       const storedPlaintext = getSentMessage(msg.id);

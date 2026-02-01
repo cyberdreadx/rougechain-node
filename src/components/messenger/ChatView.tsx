@@ -32,9 +32,17 @@ const formatMessageTime = (dateInput: string | number | Date): string => {
   }
 };
 
-const formatMessageDate = (dateInput: string | number | Date): string => {
+const formatMessageDate = (dateInput: string | number | Date | undefined): string => {
+  if (!dateInput) return "Unknown date";
   try {
-    const date = new Date(dateInput);
+    // Handle Unix timestamps (seconds)
+    let date: Date;
+    if (typeof dateInput === "number") {
+      // If it's a small number, treat as seconds; otherwise milliseconds
+      date = dateInput < 10000000000 ? new Date(dateInput * 1000) : new Date(dateInput);
+    } else {
+      date = new Date(dateInput);
+    }
     if (isNaN(date.getTime())) return "Unknown date";
     return date.toLocaleString();
   } catch {
@@ -140,13 +148,13 @@ const EncryptionDetailsPanel = ({
                     <Key className="w-4 h-4 text-primary" />
                     <span className="text-sm font-medium text-foreground">KEM Ciphertext</span>
                     <span className="text-xs text-muted-foreground">
-                      ({parsedPackage.kemCipherText.length / 2} bytes)
+                      ({(parsedPackage.kemCipherText?.length || 0) / 2} bytes)
                     </span>
-                    <CopyButton text={parsedPackage.kemCipherText} field="kem" />
+                    <CopyButton text={parsedPackage.kemCipherText || ""} field="kem" />
                   </div>
                   <div className="p-3 rounded-lg bg-background border border-border overflow-hidden">
                     <p className="text-xs font-mono text-muted-foreground break-all leading-relaxed">
-                      {formatHex(parsedPackage.kemCipherText, 128)}
+                      {formatHex(parsedPackage.kemCipherText || "", 128)}
                     </p>
                   </div>
                   <p className="text-xs text-muted-foreground">
@@ -160,13 +168,13 @@ const EncryptionDetailsPanel = ({
                     <Binary className="w-4 h-4 text-accent" />
                     <span className="text-sm font-medium text-foreground">Initialization Vector</span>
                     <span className="text-xs text-muted-foreground">
-                      ({parsedPackage.iv.length / 2} bytes)
+                      ({(parsedPackage.iv?.length || 0) / 2} bytes)
                     </span>
-                    <CopyButton text={parsedPackage.iv} field="iv" />
+                    <CopyButton text={parsedPackage.iv || ""} field="iv" />
                   </div>
                   <div className="p-3 rounded-lg bg-background border border-border">
                     <p className="text-xs font-mono text-foreground break-all">
-                      {parsedPackage.iv}
+                      {parsedPackage.iv || ""}
                     </p>
                   </div>
                   <p className="text-xs text-muted-foreground">
@@ -180,13 +188,13 @@ const EncryptionDetailsPanel = ({
                     <Lock className="w-4 h-4 text-destructive" />
                     <span className="text-sm font-medium text-foreground">Encrypted Content</span>
                     <span className="text-xs text-muted-foreground">
-                      ({parsedPackage.encryptedContent.length / 2} bytes)
+                      ({(parsedPackage.encryptedContent?.length || 0) / 2} bytes)
                     </span>
-                    <CopyButton text={parsedPackage.encryptedContent} field="content" />
+                    <CopyButton text={parsedPackage.encryptedContent || ""} field="content" />
                   </div>
                   <div className="p-3 rounded-lg bg-background border border-border overflow-hidden">
                     <p className="text-xs font-mono text-muted-foreground break-all leading-relaxed">
-                      {formatHex(parsedPackage.encryptedContent, 128)}
+                      {formatHex(parsedPackage.encryptedContent || "", 128)}
                     </p>
                   </div>
                   <p className="text-xs text-muted-foreground">
@@ -199,12 +207,21 @@ const EncryptionDetailsPanel = ({
                 <div className="flex items-center gap-2">
                   <Lock className="w-4 h-4 text-primary" />
                   <span className="text-sm font-medium text-foreground">Raw Encrypted Package</span>
-                  <CopyButton text={message.encryptedContent} field="raw" />
+                  {message.encryptedContent && (
+                    <span className="text-xs text-muted-foreground">
+                      ({message.encryptedContent.length} chars)
+                    </span>
+                  )}
+                  <CopyButton text={message.encryptedContent || ""} field="raw" />
                 </div>
-                <div className="p-3 rounded-lg bg-background border border-border overflow-hidden">
-                  <p className="text-xs font-mono text-muted-foreground break-all leading-relaxed">
-                    {formatHex(message.encryptedContent, 128)}
-                  </p>
+                <div className="p-3 rounded-lg bg-background border border-border overflow-hidden min-h-[60px]">
+                  {message.encryptedContent ? (
+                    <p className="text-xs font-mono text-muted-foreground break-all leading-relaxed">
+                      {formatHex(message.encryptedContent, 256)}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground italic">No encrypted content available</p>
+                  )}
                 </div>
               </div>
             )}
@@ -215,7 +232,7 @@ const EncryptionDetailsPanel = ({
                 <Fingerprint className="w-4 h-4 text-success" />
                 <span className="text-sm font-medium text-foreground">Digital Signature</span>
                 <span className="text-xs text-muted-foreground">
-                  ({message.signature.length / 2} bytes)
+                  ({(message.signature?.length || 0) / 2} bytes)
                 </span>
                 {message.signatureValid ? (
                   <span className="flex items-center gap-1 text-xs text-success">
@@ -226,11 +243,11 @@ const EncryptionDetailsPanel = ({
                     <XCircle className="w-3 h-3" /> Invalid
                   </span>
                 )}
-                <CopyButton text={message.signature} field="sig" />
+                <CopyButton text={message.signature || ""} field="sig" />
               </div>
               <div className="p-3 rounded-lg bg-background border border-border overflow-hidden">
                 <p className="text-xs font-mono text-muted-foreground break-all leading-relaxed">
-                  {formatHex(message.signature, 128)}
+                  {formatHex(message.signature || "", 128)}
                 </p>
               </div>
               <p className="text-xs text-muted-foreground">
