@@ -573,18 +573,28 @@ export async function sendMessage(
     throw new Error("Message was not stored");
   }
 
-  storeSentMessage(msg.id, plaintext);
+  // Server returns snake_case, normalize to camelCase
+  const msgId = msg.id;
+  const msgConversationId = msg.conversation_id || msg.conversationId || conversationId;
+  const msgSenderWalletId = msg.sender_wallet_id || msg.senderWalletId || senderWallet.id;
+  const msgEncryptedContent = msg.encrypted_content || msg.encryptedContent || "";
+  const msgSignature = msg.signature || "";
+  const msgSelfDestruct = msg.self_destruct ?? msg.selfDestruct ?? selfDestruct;
+  const msgDestructAfterSeconds = msg.destruct_after_seconds ?? msg.destructAfterSeconds ?? destructAfterSeconds;
+  const msgCreatedAt = msg.created_at || msg.createdAt || new Date().toISOString();
+
+  storeSentMessage(msgId, plaintext);
 
   return {
-    id: msg.id,
-    conversationId: msg.conversationId,
-    senderWalletId: msg.senderWalletId,
-    encryptedContent: msg.encryptedContent,
-    signature: msg.signature,
-    selfDestruct: msg.selfDestruct,
-    destructAfterSeconds: msg.destructAfterSeconds,
-    readAt: msg.readAt,
-    createdAt: msg.createdAt,
+    id: msgId,
+    conversationId: msgConversationId,
+    senderWalletId: msgSenderWalletId,
+    encryptedContent: msgEncryptedContent,
+    signature: msgSignature,
+    selfDestruct: msgSelfDestruct,
+    destructAfterSeconds: msgDestructAfterSeconds,
+    readAt: msg.read_at || msg.readAt,
+    createdAt: msgCreatedAt,
     plaintext,
     signatureValid: true,
   };
@@ -604,10 +614,24 @@ export async function getMessages(
   if (!response.ok) return [];
 
   const data = await response.json().catch(() => null);
-  const messages = Array.isArray(data?.messages) ? data.messages : [];
+  const rawMessages = Array.isArray(data?.messages) ? data.messages : [];
   const decryptedMessages: Message[] = [];
 
-  for (const msg of messages) {
+  for (const raw of rawMessages) {
+    // Normalize snake_case from server to camelCase
+    const msg = {
+      id: raw.id,
+      conversationId: raw.conversation_id || raw.conversationId || "",
+      senderWalletId: raw.sender_wallet_id || raw.senderWalletId || "",
+      encryptedContent: raw.encrypted_content || raw.encryptedContent || "",
+      signature: raw.signature || "",
+      selfDestruct: raw.self_destruct ?? raw.selfDestruct ?? false,
+      destructAfterSeconds: raw.destruct_after_seconds ?? raw.destructAfterSeconds,
+      readAt: raw.read_at || raw.readAt,
+      createdAt: raw.created_at || raw.createdAt || "",
+      isRead: raw.is_read ?? raw.isRead ?? false,
+    };
+
     // Try multiple ways to find sender (handles old wallet-XXX format and new key-based IDs)
     let sender = participants.find(p =>
       p.id === msg.senderWalletId ||
@@ -644,7 +668,7 @@ export async function getMessages(
       const storedPlaintext = getSentMessage(msg.id);
       plaintext = storedPlaintext || "[Your encrypted message]";
       signatureValid = true;
-    } else if (senderSigningPublicKey) {
+    } else if (senderSigningPublicKey && msg.encryptedContent) {
       try {
         const decryptData = await decryptMessage(
           msg.encryptedContent,
