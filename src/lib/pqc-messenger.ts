@@ -81,7 +81,7 @@ export function clearStoredSentMessages(): void {
 function storeSentMessage(messageId: string, plaintext: string): void {
   const settings = getPrivacySettings();
   if (!settings.storeSentMessages) return;
-  
+
   try {
     const stored = localStorage.getItem(SENT_MESSAGES_KEY);
     const messages: Record<string, string> = stored ? JSON.parse(stored) : {};
@@ -102,7 +102,7 @@ function storeSentMessage(messageId: string, plaintext: string): void {
 function getSentMessage(messageId: string): string | null {
   const settings = getPrivacySettings();
   if (!settings.storeSentMessages) return null;
-  
+
   try {
     const stored = localStorage.getItem(SENT_MESSAGES_KEY);
     if (!stored) return null;
@@ -321,7 +321,7 @@ export async function getWallets(): Promise<Wallet[]> {
   if (!response.ok) return [];
   const data = await response.json().catch(() => null);
   const rawWallets = data?.wallets || [];
-  
+
   // Convert snake_case from server to camelCase
   return rawWallets.map((w: {
     id?: string;
@@ -487,7 +487,7 @@ export async function getConversations(walletId: string): Promise<Conversation[]
   if (!response.ok) return [];
   const data = await response.json().catch(() => null);
   const rawConversations = data?.conversations || [];
-  
+
   // Fetch all wallets to populate participant details
   const allWallets = await getWallets();
   const walletMap = new Map<string, Wallet>();
@@ -496,12 +496,12 @@ export async function getConversations(walletId: string): Promise<Conversation[]
     if (w.signingPublicKey) walletMap.set(w.signingPublicKey, w);
     if (w.encryptionPublicKey) walletMap.set(w.encryptionPublicKey, w);
   }
-  
+
   // Populate participants with full wallet data
   // Server returns participant_ids (snake_case), convert to participants array
-  const conversations: Conversation[] = rawConversations.map((conv: { 
-    id: string; 
-    name?: string; 
+  const conversations: Conversation[] = rawConversations.map((conv: {
+    id: string;
+    name?: string;
     is_group?: boolean;
     isGroup?: boolean;
     created_by?: string;
@@ -515,7 +515,7 @@ export async function getConversations(walletId: string): Promise<Conversation[]
     const participants = participantIds
       .map((id: string) => walletMap.get(id))
       .filter((w): w is Wallet => w !== undefined);
-    
+
     return {
       id: conv.id,
       name: conv.name,
@@ -526,7 +526,7 @@ export async function getConversations(walletId: string): Promise<Conversation[]
       participants,
     };
   });
-  
+
   return conversations;
 }
 
@@ -555,7 +555,7 @@ export async function sendMessage(
     headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
     body: JSON.stringify({
       conversationId,
-      senderWalletId: senderWallet.signingPublicKey || senderWallet.id, // Prefer signingPublicKey for consistency
+      senderWalletId: senderWallet.id, // Use wallet UUID for consistent participant matching
       encryptedContent: encryptData.encryptedPackage,
       signature: encryptData.signature,
       selfDestruct,
@@ -609,17 +609,17 @@ export async function getMessages(
 
   for (const msg of messages) {
     // Try multiple ways to find sender (handles old wallet-XXX format and new key-based IDs)
-    let sender = participants.find(p => 
+    let sender = participants.find(p =>
       p.id === msg.senderWalletId ||
       p.signingPublicKey === msg.senderWalletId ||
       p.encryptionPublicKey === msg.senderWalletId
     );
-    
+
     // If not found in participants, try fetching from server
     if (!sender && msg.senderWalletId) {
       try {
         const allWallets = await getWallets();
-        sender = allWallets.find(w => 
+        sender = allWallets.find(w =>
           w.id === msg.senderWalletId ||
           w.signingPublicKey === msg.senderWalletId
         );
@@ -630,17 +630,15 @@ export async function getMessages(
 
     let plaintext = "[Unable to decrypt]";
     let signatureValid = false;
-    const senderSigningPublicKey =
-      sender?.signingPublicKey ||
-      (msg.senderWalletId && msg.senderWalletId.length > 100 ? msg.senderWalletId : undefined);
+    const senderSigningPublicKey = sender?.signingPublicKey;
 
     // Check if this is our own message (check all possible ID formats)
     const isOwnMessage = msg.senderWalletId === recipientWallet.id ||
-                         msg.senderWalletId === recipientWallet.signingPublicKey ||
-                         msg.senderWalletId === recipientWallet.encryptionPublicKey ||
-                         // Also check if sender starts with recipient's key prefix
-                         (recipientWallet.signingPublicKey && 
-                          msg.senderWalletId?.startsWith(recipientWallet.signingPublicKey.substring(0, 20)));
+      msg.senderWalletId === recipientWallet.signingPublicKey ||
+      msg.senderWalletId === recipientWallet.encryptionPublicKey ||
+      // Also check if sender starts with recipient's key prefix
+      (recipientWallet.signingPublicKey &&
+        msg.senderWalletId?.startsWith(recipientWallet.signingPublicKey.substring(0, 20)));
 
     if (isOwnMessage) {
       const storedPlaintext = getSentMessage(msg.id);

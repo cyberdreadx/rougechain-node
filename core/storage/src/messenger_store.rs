@@ -81,10 +81,23 @@ impl MessengerStore {
 
     pub fn list_conversations(&self, wallet_id: &str) -> Result<Vec<Conversation>, String> {
         let state = self.load_state()?;
+        // Collect all IDs that belong to this wallet (UUID, signing key, encryption key)
+        let mut matching_ids: Vec<String> = vec![wallet_id.to_string()];
+        for w in &state.wallets {
+            if w.id == wallet_id || w.signing_public_key == wallet_id || w.encryption_public_key == wallet_id {
+                matching_ids.push(w.id.clone());
+                if !w.signing_public_key.is_empty() {
+                    matching_ids.push(w.signing_public_key.clone());
+                }
+                if !w.encryption_public_key.is_empty() {
+                    matching_ids.push(w.encryption_public_key.clone());
+                }
+            }
+        }
         Ok(state
             .conversations
             .into_iter()
-            .filter(|c| c.participant_ids.iter().any(|id| id == wallet_id))
+            .filter(|c| c.participant_ids.iter().any(|id| matching_ids.contains(id)))
             .collect())
     }
 
