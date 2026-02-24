@@ -76,6 +76,39 @@ export function NodeDashboard() {
       }, delay);
     };
 
+    const fetchNodeStats = async (baseUrl: string): Promise<DaemonInfo | null> => {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+        const statsRes = await fetch(`${baseUrl}/api/stats`, {
+          signal: controller.signal,
+          headers: getCoreApiHeaders(),
+        });
+        const healthRes = await fetch(`${baseUrl}/api/health`, {
+          signal: controller.signal,
+          headers: getCoreApiHeaders(),
+        });
+        clearTimeout(timeoutId);
+
+        if (statsRes.ok && healthRes.ok) {
+          const statsRaw = await statsRes.json() as Record<string, unknown>;
+          const healthRaw = await healthRes.json() as Record<string, unknown>;
+          const match = baseUrl.match(/:(\d+)\b/);
+          const port = match ? Number(match[1]) : null;
+          return {
+            port,
+            baseUrl,
+            stats: normalizeStats(statsRaw),
+            health: normalizeHealth(healthRaw),
+          };
+        }
+      } catch {
+        // Node not reachable
+      }
+      return null;
+    };
+
     const fetchAllDaemonStats = async () => {
       setIsChecking(true);
       const apiPorts = [5100, 5101, 5102, 5103, 5104];
@@ -85,50 +118,61 @@ export function NodeDashboard() {
         configuredUrl,
         ...apiPorts.map((port) => `http://127.0.0.1:${port}`),
       ].filter(Boolean);
-      
-      // Check all ports in parallel for faster detection
-      const promises = apiBases.map(async (baseUrl) => {
+
+      // Phase 1: Query known endpoints
+      const initialResults = await Promise.all(apiBases.map(fetchNodeStats));
+      const initialStats = initialResults.filter((r): r is DaemonInfo => r !== null);
+
+      // Phase 2: Discover peer nodes from any reachable node
+      const peerUrls = new Set<string>();
+      for (const node of initialStats) {
         try {
-          // Use AbortController with short timeout for faster failure
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 500); // 500ms timeout per port
-          
-          const statsRes = await fetch(`${baseUrl}/api/stats`, {
-            signal: controller.signal,
-            headers: getCoreApiHeaders(),
-          });
-          const healthRes = await fetch(`${baseUrl}/api/health`, {
+          const timeoutId = setTimeout(() => controller.abort(), 3000);
+          const peersRes = await fetch(`${node.baseUrl}/api/peers`, {
             signal: controller.signal,
             headers: getCoreApiHeaders(),
           });
           clearTimeout(timeoutId);
-          
-          if (statsRes.ok && healthRes.ok) {
-            const statsRaw = await statsRes.json() as Record<string, unknown>;
-            const healthRaw = await healthRes.json() as Record<string, unknown>;
-            const match = baseUrl.match(/:(\d+)\b/);
-            const port = match ? Number(match[1]) : null;
-            return {
-              port,
-              baseUrl,
-              stats: normalizeStats(statsRaw),
-              health: normalizeHealth(healthRaw),
-            };
+          if (peersRes.ok) {
+            const peersData = await peersRes.json() as { peers?: string[] };
+            if (peersData.peers) {
+              for (const peerUrl of peersData.peers) {
+                const normalized = peerUrl.replace(/\/+$/, "").replace(/\/api$/, "");
+                // Only add if not already in our initial bases
+                if (!apiBases.some((b) => b === normalized)) {
+                  peerUrls.add(normalized);
+                }
+              }
+            }
           }
         } catch {
-          // Node not running on this port
+          // Could not fetch peers from this node
         }
-        return null;
-      });
+      }
 
-      const results = await Promise.all(promises);
-      const stats = results
-        .filter((r): r is DaemonInfo => r !== null);
-      
-      setDaemonStats(stats);
+      // Phase 3: Query discovered peer nodes
+      const peerResults = await Promise.all(
+        Array.from(peerUrls).map(fetchNodeStats)
+      );
+      const peerStats = peerResults.filter((r): r is DaemonInfo => r !== null);
+
+      // Merge and deduplicate by node_id
+      const allNodes = [...initialStats, ...peerStats];
+      const seen = new Set<string>();
+      const deduped: DaemonInfo[] = [];
+      for (const node of allNodes) {
+        const id = node.stats.node_id || node.baseUrl;
+        if (!seen.has(id)) {
+          seen.add(id);
+          deduped.push(node);
+        }
+      }
+
+      setDaemonStats(deduped);
       setIsChecking(false);
 
-      if (stats.length > 0) {
+      if (deduped.length > 0) {
         backoffIndex = 0;
         scheduleNext(60000);
       } else {
