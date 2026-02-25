@@ -254,7 +254,7 @@ const Messenger = () => {
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
 
       {/* Action Bar */}
-      <div className="sticky top-0 z-40 flex items-center justify-between px-4 py-2 bg-background/80 backdrop-blur-sm border-b border-border">
+      <div className="sticky top-0 z-40 flex items-center justify-between px-4 py-2 bg-background/80 backdrop-blur-sm border-b border-border w-full min-w-0">
         <div className="flex items-center gap-2 min-w-0">
           <Key className="w-4 h-4 text-primary flex-shrink-0" />
           <div className="flex flex-col min-w-0">
@@ -322,7 +322,7 @@ const Messenger = () => {
       </div>
 
       {/* Main content */}
-      <main className="relative z-10 flex-1 flex overflow-hidden">
+      <main className="relative z-10 flex-1 flex overflow-hidden w-full min-w-0">
         {/* Conversation list */}
         <div className={`w-full sm:w-80 border-r border-border ${selectedConversation ? 'hidden sm:block' : ''}`}>
           <ConversationList

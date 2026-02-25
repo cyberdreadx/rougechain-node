@@ -59,7 +59,7 @@ const EncryptionDetailsPanel = ({
   onClose: () => void;
 }) => {
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  
+
   let parsedPackage: EncryptedPackage | null = null;
   try {
     parsedPackage = JSON.parse(message.encryptedContent);
@@ -275,20 +275,20 @@ const EncryptionDetailsPanel = ({
 };
 
 // Encryption animation overlay component
-const EncryptionAnimation = ({ 
-  plaintext, 
-  onComplete 
-}: { 
-  plaintext: string; 
+const EncryptionAnimation = ({
+  plaintext,
+  onComplete
+}: {
+  plaintext: string;
   onComplete: () => void;
 }) => {
   const [phase, setPhase] = useState<"plaintext" | "scrambling" | "encrypted" | "sending">("plaintext");
   const [displayText, setDisplayText] = useState(plaintext);
-  
+
   // Generate pseudo-ciphertext
   const generateCiphertext = (length: number) => {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
-    return Array.from({ length: Math.min(length * 2, 64) }, () => 
+    return Array.from({ length: Math.min(length * 2, 64) }, () =>
       chars[Math.floor(Math.random() * chars.length)]
     ).join("");
   };
@@ -296,7 +296,7 @@ const EncryptionAnimation = ({
   useEffect(() => {
     // Phase 1: Show plaintext briefly
     const timer1 = setTimeout(() => setPhase("scrambling"), 400);
-    
+
     return () => clearTimeout(timer1);
   }, []);
 
@@ -315,14 +315,14 @@ const EncryptionAnimation = ({
         }).join("");
         setDisplayText(scrambled);
         iterations++;
-        
+
         if (iterations >= maxIterations) {
           clearInterval(scrambleInterval);
           setPhase("encrypted");
           setDisplayText(generateCiphertext(plaintext.length));
         }
       }, 60);
-      
+
       return () => clearInterval(scrambleInterval);
     }
   }, [phase, plaintext]);
@@ -345,7 +345,7 @@ const EncryptionAnimation = ({
       exit={{ opacity: 0, scale: 0.8, y: -20 }}
       className="flex justify-end mb-4"
     >
-      <div className="relative max-w-[80%]">
+      <div className="relative w-full max-w-[85%] sm:max-w-[75%] flex flex-col items-end">
         {/* Encryption status indicator */}
         <motion.div
           initial={{ opacity: 0, x: 10 }}
@@ -368,11 +368,10 @@ const EncryptionAnimation = ({
 
         {/* Message bubble with animation */}
         <motion.div
-          className={`rounded-2xl px-4 py-2 rounded-br-md overflow-hidden ${
-            phase === "plaintext" 
-              ? "bg-primary/50 text-primary-foreground" 
-              : "bg-gradient-to-r from-primary via-accent to-primary bg-[length:200%_100%] text-primary-foreground"
-          }`}
+          className={`rounded-2xl px-4 py-2 rounded-br-md overflow-hidden min-w-[120px] break-words ${phase === "plaintext"
+            ? "bg-primary/50 text-primary-foreground"
+            : "bg-gradient-to-r from-primary via-accent to-primary bg-[length:200%_100%] text-primary-foreground"
+            }`}
           animate={{
             backgroundPosition: phase !== "plaintext" ? ["0% 0%", "100% 0%", "0% 0%"] : "0% 0%",
           }}
@@ -382,16 +381,16 @@ const EncryptionAnimation = ({
             ease: "linear"
           }}
         >
-          <motion.p 
+          <motion.p
             className="text-sm font-mono break-all"
-            animate={{ 
-              opacity: phase === "sending" ? [1, 0.5, 1] : 1 
+            animate={{
+              opacity: phase === "sending" ? [1, 0.5, 1] : 1
             }}
             transition={{ duration: 0.3, repeat: phase === "sending" ? Infinity : 0 }}
           >
             {displayText}
           </motion.p>
-          
+
           {/* Lock icon animation */}
           <motion.div
             className="flex justify-end mt-1"
@@ -399,16 +398,15 @@ const EncryptionAnimation = ({
             animate={{ opacity: 1 }}
           >
             <motion.div
-              animate={{ 
+              animate={{
                 scale: phase === "encrypted" || phase === "sending" ? [1, 1.2, 1] : 1,
               }}
               transition={{ duration: 0.3 }}
             >
-              <Lock className={`w-3 h-3 ${
-                phase === "encrypted" || phase === "sending" 
-                  ? "text-success" 
-                  : "text-primary-foreground/60"
-              }`} />
+              <Lock className={`w-3 h-3 ${phase === "encrypted" || phase === "sending"
+                ? "text-success"
+                : "text-primary-foreground/60"
+                }`} />
             </motion.div>
           </motion.div>
         </motion.div>
@@ -420,12 +418,12 @@ const EncryptionAnimation = ({
               <motion.div
                 key={i}
                 className="absolute w-1 h-1 bg-primary rounded-full"
-                initial={{ 
-                  x: "50%", 
-                  y: "50%", 
-                  opacity: 0 
+                initial={{
+                  x: "50%",
+                  y: "50%",
+                  opacity: 0
                 }}
-                animate={{ 
+                animate={{
                   x: `${Math.random() * 100}%`,
                   y: `${Math.random() * 100}%`,
                   opacity: [0, 1, 0],
@@ -482,7 +480,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
 
   // Track previous message count to detect new messages
   const prevMessageCountRef = useRef<number>(0);
-  
+
   // Scroll to bottom only on initial load or when new messages arrive
   useEffect(() => {
     // Only scroll if message count increased (new message arrived)
@@ -499,7 +497,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
         wallet,
         conversation.participants || []
       );
-      
+
       // Track new messages that arrived after initial load (not from current user)
       if (!isInitialLoad && msgs.length > 0) {
         const newIds = new Set<string>();
@@ -512,10 +510,10 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
           setNewMessageIds(prev => new Set([...prev, ...newIds]));
         }
       }
-      
+
       // Update seen messages
       msgs.forEach(msg => seenMessageIdsRef.current.add(msg.id));
-      
+
       setMessages(msgs);
     } catch (error) {
       console.error("Failed to load messages:", error);
@@ -534,11 +532,11 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
 
   const handleEncryptionComplete = async () => {
     if (!encryptingMessage || !recipient) return;
-    
+
     setIsSending(true);
     const messageText = encryptingMessage;
     setEncryptingMessage(null);
-    
+
     // Ensure recipient has the latest encryption key (fetch from server)
     let recipientEncryptionKey = recipient.encryptionPublicKey;
     if (!recipientEncryptionKey) {
@@ -560,7 +558,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
       setIsSending(false);
       return;
     }
-    
+
     try {
       const msg = await sendMessage(
         conversation.id,
@@ -570,11 +568,11 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
         selfDestruct,
         selfDestruct ? destructSeconds : undefined
       );
-      
+
       // Add to seen messages so it doesn't trigger animations
       seenMessageIdsRef.current.add(msg.id);
       setMessages(prev => [...prev, msg]);
-      
+
       // If recipient is demo bot, get AI response
       if (isRecipientBot) {
         // Small delay to make it feel natural
@@ -583,7 +581,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
           if (botWallet) {
             try {
               const botResponse = await getBotReply(messageText);
-              
+
               const botMsg = await sendMessage(
                 conversation.id,
                 botResponse,
@@ -591,7 +589,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
                 wallet.encryptionPublicKey,
                 false
               );
-              
+
               // Mark bot message as new for decryption animation
               setNewMessageIds(prev => new Set([...prev, botMsg.id]));
               setMessages(prev => [...prev, botMsg]);
@@ -620,11 +618,10 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
         >
           <ArrowLeft className="w-5 h-5" />
         </Button>
-        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-          isRecipientBot 
-            ? "bg-gradient-to-br from-primary to-accent" 
-            : "bg-primary/20"
-        }`}>
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isRecipientBot
+          ? "bg-gradient-to-br from-primary to-accent"
+          : "bg-primary/20"
+          }`}>
           {isRecipientBot ? (
             <Bot className="w-5 h-5 text-primary-foreground" />
           ) : (
@@ -642,7 +639,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
           </div>
           {recipient && !isRecipientBot && (
             <button
-              className="text-xs text-muted-foreground font-mono hover:text-foreground transition-colors flex items-center gap-1"
+              className="text-[10px] sm:text-xs text-muted-foreground font-mono hover:text-foreground transition-colors flex items-center gap-1 w-full"
               onClick={() => {
                 const address = recipient.signingPublicKey || recipient.encryptionPublicKey || "";
                 navigator.clipboard.writeText(address);
@@ -650,7 +647,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
               }}
               title="Click to copy recipient address"
             >
-              <span className="truncate max-w-[150px] sm:max-w-[250px]">
+              <span className="truncate max-w-[100px] sm:max-w-[200px] inline-block">
                 {(recipient.signingPublicKey || recipient.encryptionPublicKey || "").substring(0, 16)}...
               </span>
               <Copy className="w-3 h-3 flex-shrink-0" />
@@ -799,14 +796,14 @@ const DecryptionAnimation = ({
       const scrambleInterval = setInterval(() => {
         const progress = iterations / maxIterations;
         const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
-        
+
         // Gradually reveal plaintext from left to right
         const revealed = plaintext.slice(0, Math.floor(progress * plaintext.length));
         const remaining = plaintext.length - revealed.length;
-        const scrambled = Array.from({ length: remaining }, () => 
+        const scrambled = Array.from({ length: remaining }, () =>
           chars[Math.floor(Math.random() * chars.length)]
         ).join("");
-        
+
         setDisplayText(revealed + scrambled);
         iterations++;
 
@@ -861,11 +858,10 @@ const DecryptionAnimation = ({
 
         {/* Message bubble with animation */}
         <motion.div
-          className={`rounded-2xl px-4 py-2 rounded-bl-md overflow-hidden ${
-            phase === "done"
-              ? "bg-muted text-foreground"
-              : "bg-gradient-to-r from-accent/80 via-primary/80 to-accent/80 bg-[length:200%_100%] text-foreground"
-          }`}
+          className={`rounded-2xl px-4 py-2 rounded-bl-md overflow-hidden ${phase === "done"
+            ? "bg-muted text-foreground"
+            : "bg-gradient-to-r from-accent/80 via-primary/80 to-accent/80 bg-[length:200%_100%] text-foreground"
+            }`}
           animate={{
             backgroundPosition: phase !== "done" ? ["0% 0%", "100% 0%", "0% 0%"] : "0% 0%",
           }}
@@ -940,16 +936,16 @@ const DecryptionAnimation = ({
 };
 
 // Message bubble component
-const MessageBubble = ({ 
-  message, 
-  isOwn, 
+const MessageBubble = ({
+  message,
+  isOwn,
   index,
   onTap,
   isNew = false,
   onAnimationComplete,
-}: { 
-  message: Message; 
-  isOwn: boolean; 
+}: {
+  message: Message;
+  isOwn: boolean;
   index: number;
   onTap: () => void;
   isNew?: boolean;
@@ -980,20 +976,19 @@ const MessageBubble = ({
         whileHover={{ scale: 1.01 }}
         whileTap={{ scale: 0.98 }}
         onClick={onTap}
-        className={`max-w-[80%] rounded-2xl px-4 py-2 cursor-pointer transition-shadow hover:shadow-lg ${
-          isOwn
-            ? "bg-primary text-primary-foreground rounded-br-md hover:shadow-primary/20"
-            : "bg-muted text-foreground rounded-bl-md hover:shadow-accent/20"
-        }`}
+        className={`w-full max-w-[85%] sm:max-w-[80%] rounded-2xl px-4 py-2 cursor-pointer transition-shadow hover:shadow-lg break-words ${isOwn
+          ? "bg-primary text-primary-foreground rounded-br-md hover:shadow-primary/20"
+          : "bg-muted text-foreground rounded-bl-md hover:shadow-accent/20"
+          }`}
       >
         {!isOwn && (
           <p className="text-xs font-medium mb-1 opacity-70">
             {message.senderDisplayName}
           </p>
         )}
-        <p className="text-sm whitespace-pre-wrap">
+        <p className="text-sm whitespace-pre-wrap break-words min-w-0">
           {message.plaintext?.startsWith("[Unable") ? (
-            <span className="text-muted-foreground italic">{message.plaintext}</span>
+            <span className="text-muted-foreground italic break-words">{message.plaintext}</span>
           ) : message.plaintext}
         </p>
         <div className={`flex items-center gap-1 mt-1 text-xs ${isOwn ? "justify-end" : ""}`}>
