@@ -72,7 +72,7 @@ const TokenIcon = ({ symbol, size = 24 }: { symbol: string; size?: number }) => 
     return <img src={xrgeLogo} alt="XRGE" className="rounded-full" style={{ width: size, height: size }} />;
   }
   return (
-    <div 
+    <div
       className="rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold"
       style={{ width: size, height: size }}
     >
@@ -87,13 +87,14 @@ const formatAddress = (addr: string): string => {
 };
 
 const formatTime = (timestamp: number): string => {
-  const date = new Date(timestamp * 1000);
-  return date.toLocaleString();
+  // Auto-detect: if < 13 digits, it's seconds; otherwise milliseconds
+  const ms = timestamp < 1e12 ? timestamp * 1000 : timestamp;
+  return new Date(ms).toLocaleString();
 };
 
 const formatTimeShort = (timestamp: number): string => {
-  const date = new Date(timestamp * 1000);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const ms = timestamp < 1e12 ? timestamp * 1000 : timestamp;
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
 
 const getEventIcon = (eventType: string) => {
@@ -135,16 +136,16 @@ const PoolDetail = () => {
   const [loading, setLoading] = useState(true);
   const [chartToken, setChartToken] = useState<"a" | "b">("a");
   const [showSwapWidget, setShowSwapWidget] = useState(false);
-  
+
   const wallet = loadUnifiedWallet();
 
   const fetchData = useCallback(async () => {
     if (!poolId) return;
-    
+
     try {
       const baseUrl = getNodeApiBaseUrl();
       if (!baseUrl) return;
-      
+
       // Fetch pool, prices, events, and stats in parallel
       const [poolRes, pricesRes, eventsRes, statsRes] = await Promise.all([
         fetch(`${baseUrl}/pool/${poolId}`, { headers: getCoreApiHeaders() }),
@@ -152,22 +153,22 @@ const PoolDetail = () => {
         fetch(`${baseUrl}/pool/${poolId}/events`, { headers: getCoreApiHeaders() }),
         fetch(`${baseUrl}/pool/${poolId}/stats`, { headers: getCoreApiHeaders() }),
       ]);
-      
+
       if (poolRes.ok) {
         const data = await poolRes.json();
         setPool(data.pool || null);
       }
-      
+
       if (pricesRes.ok) {
         const data = await pricesRes.json();
         setPrices(data.prices || []);
       }
-      
+
       if (eventsRes.ok) {
         const data = await eventsRes.json();
         setEvents(data.events || []);
       }
-      
+
       if (statsRes.ok) {
         const data = await statsRes.json();
         setStats(data.stats || null);
@@ -193,9 +194,9 @@ const PoolDetail = () => {
     reserve_b: p.reserve_b,
   }));
 
-  const currentPrice = chartData.length > 0 
-    ? chartData[chartData.length - 1].price 
-    : pool 
+  const currentPrice = chartData.length > 0
+    ? chartData[chartData.length - 1].price
+    : pool
       ? (chartToken === "a" ? pool.reserve_b / pool.reserve_a : pool.reserve_a / pool.reserve_b)
       : 0;
 
@@ -336,28 +337,28 @@ const PoolDetail = () => {
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                  <XAxis 
-                    dataKey="time" 
+                  <XAxis
+                    dataKey="time"
                     stroke="#666"
                     tick={{ fill: '#888', fontSize: 12 }}
                   />
-                  <YAxis 
+                  <YAxis
                     stroke="#666"
                     tick={{ fill: '#888', fontSize: 12 }}
                     tickFormatter={(v) => v.toFixed(4)}
                   />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: '#1a1a1a', 
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#1a1a1a',
                       border: '1px solid #333',
                       borderRadius: '8px'
                     }}
                     labelStyle={{ color: '#888' }}
                   />
-                  <Line 
-                    type="monotone" 
-                    dataKey="price" 
-                    stroke="#22c55e" 
+                  <Line
+                    type="monotone"
+                    dataKey="price"
+                    stroke="#22c55e"
                     strokeWidth={2}
                     dot={false}
                   />
@@ -383,7 +384,7 @@ const PoolDetail = () => {
             {events.length > 0 ? (
               <div className="space-y-2">
                 {events.map((event) => (
-                  <div 
+                  <div
                     key={event.id}
                     className="flex items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
                   >

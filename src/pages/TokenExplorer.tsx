@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { 
-  ArrowLeft, 
-  Copy, 
-  ExternalLink, 
-  Users, 
-  Coins, 
-  BarChart3, 
+import {
+  ArrowLeft,
+  Copy,
+  ExternalLink,
+  Users,
+  Coins,
+  BarChart3,
   Clock,
   TrendingUp,
   TrendingDown,
@@ -31,14 +31,14 @@ import xrgeLogo from "@/assets/xrge-logo.webp";
 // Discord logo component
 const DiscordLogo = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" className={className} fill="currentColor">
-    <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+    <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
   </svg>
 );
 
 // X logo component
 const XLogo = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" className={className} fill="currentColor">
-    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
   </svg>
 );
 
@@ -103,7 +103,7 @@ const TokenExplorer = () => {
 
   const { tokenPrices, xrgeUsdPrice } = useTokenPrices(60000);
   const tokenPrice = symbol ? tokenPrices[symbol] : null;
-  
+
   // Check if current user is the token creator
   const wallet = loadUnifiedWallet();
   const isCreator = wallet && metadata?.creator === wallet.signingPublicKey;
@@ -111,7 +111,7 @@ const TokenExplorer = () => {
 
   const handleClaimOwnership = async () => {
     if (!wallet || !symbol) return;
-    
+
     setClaiming(true);
     try {
       const result = await claimTokenMetadata(
@@ -119,7 +119,7 @@ const TokenExplorer = () => {
         wallet.signingPrivateKey,
         symbol
       );
-      
+
       if (result.success) {
         toast.success("Ownership claimed!", {
           description: "You can now edit this token's metadata",
@@ -140,7 +140,7 @@ const TokenExplorer = () => {
 
   const fetchTokenData = useCallback(async () => {
     if (!symbol) return;
-    
+
     setLoading(true);
     try {
       const baseUrl = getNodeApiBaseUrl();
@@ -177,7 +177,7 @@ const TokenExplorer = () => {
       if (poolsRes.ok) {
         const poolsData = await poolsRes.json();
         const pools = poolsData.pools || [];
-        const tokenPool = pools.find((p: PoolInfo) => 
+        const tokenPool = pools.find((p: PoolInfo) =>
           (p.token_a === symbol && p.token_b === "XRGE") ||
           (p.token_b === symbol && p.token_a === "XRGE")
         );
@@ -193,7 +193,7 @@ const TokenExplorer = () => {
             setPriceHistory(pricesData.prices || []);
           }
 
-          }
+        }
       }
 
       // Fetch token transactions (all tx types involving this token)
@@ -276,19 +276,19 @@ const TokenExplorer = () => {
         <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-40">
           <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="currentColor" strokeOpacity="0.1" />
           <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke="currentColor" strokeOpacity="0.1" />
-          
+
           <defs>
             <linearGradient id={`gradient-${symbol}`} x1="0" x2="0" y1="0" y2="1">
               <stop offset="0%" stopColor={isUp ? "#22c55e" : "#ef4444"} stopOpacity="0.3" />
               <stop offset="100%" stopColor={isUp ? "#22c55e" : "#ef4444"} stopOpacity="0" />
             </linearGradient>
           </defs>
-          
+
           <polygon
             fill={`url(#gradient-${symbol})`}
             points={`${padding},${height - padding} ${points} ${width - padding},${height - padding}`}
           />
-          
+
           <polyline
             fill="none"
             stroke={isUp ? "#22c55e" : "#ef4444"}
@@ -296,10 +296,10 @@ const TokenExplorer = () => {
             points={points}
           />
         </svg>
-        
+
         <div className="flex justify-between text-xs text-muted-foreground px-4">
-          <span>{new Date(priceHistory[0].timestamp).toLocaleDateString()}</span>
-          <span>{new Date(priceHistory[priceHistory.length - 1].timestamp).toLocaleDateString()}</span>
+          <span>{new Date(priceHistory[0].timestamp < 1e12 ? priceHistory[0].timestamp * 1000 : priceHistory[0].timestamp).toLocaleDateString()}</span>
+          <span>{new Date(priceHistory[priceHistory.length - 1].timestamp < 1e12 ? priceHistory[priceHistory.length - 1].timestamp * 1000 : priceHistory[priceHistory.length - 1].timestamp).toLocaleDateString()}</span>
         </div>
       </div>
     );
@@ -347,7 +347,7 @@ const TokenExplorer = () => {
             {metadata?.description && (
               <p className="text-sm text-muted-foreground mt-1">{metadata.description}</p>
             )}
-            
+
             {/* Social Links */}
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-2">
               {metadata?.website && (
@@ -383,7 +383,7 @@ const TokenExplorer = () => {
                   <DiscordLogo className="w-4 h-4" />
                 </a>
               )}
-              
+
               {/* Edit button for creator */}
               {isCreator && (
                 <Button
@@ -396,7 +396,7 @@ const TokenExplorer = () => {
                   Edit
                 </Button>
               )}
-              
+
               {/* Claim ownership button for tokens without metadata */}
               {hasNoMetadata && wallet && (
                 <Button
@@ -416,7 +416,7 @@ const TokenExplorer = () => {
               )}
             </div>
           </div>
-          
+
           {/* Price Badge */}
           {tokenPrice && (
             <div className="text-left sm:text-right mt-3 sm:mt-0 w-full sm:w-auto">
@@ -443,7 +443,7 @@ const TokenExplorer = () => {
               </p>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardContent className="pt-4">
               <div className="flex items-center gap-2 text-muted-foreground mb-1">
@@ -455,7 +455,7 @@ const TokenExplorer = () => {
               </p>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardContent className="pt-4">
               <div className="flex items-center gap-2 text-muted-foreground mb-1">
@@ -467,7 +467,7 @@ const TokenExplorer = () => {
               </p>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardContent className="pt-4">
               <div className="flex items-center gap-2 text-muted-foreground mb-1">
@@ -476,7 +476,7 @@ const TokenExplorer = () => {
               </div>
               <p className="text-lg font-mono font-semibold">
                 {pool ? (
-                  pool.token_a === symbol 
+                  pool.token_a === symbol
                     ? `${pool.reserve_a.toLocaleString()} ${symbol}`
                     : `${pool.reserve_b.toLocaleString()} ${symbol}`
                 ) : "No pool"}
@@ -525,7 +525,7 @@ const TokenExplorer = () => {
                   <p className="font-mono text-sm">{pool.total_lp_supply.toLocaleString()}</p>
                 </div>
               </div>
-              
+
               <div className="grid grid-cols-2 gap-4 p-3 rounded-lg bg-secondary/30">
                 <div>
                   <p className="text-xs text-muted-foreground">{pool.token_a} Reserve</p>
@@ -567,8 +567,8 @@ const TokenExplorer = () => {
                     <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                       <span className="text-xs text-muted-foreground w-5 flex-shrink-0">#{index + 1}</span>
                       <p className="font-mono text-xs truncate">
-                        {holder.address.startsWith("Liquidity") 
-                          ? holder.address 
+                        {holder.address.startsWith("Liquidity")
+                          ? holder.address
                           : `${holder.address.substring(0, 20)}...`}
                       </p>
                     </div>
@@ -605,15 +605,14 @@ const TokenExplorer = () => {
                     className="flex flex-col sm:flex-row sm:items-center justify-between p-2 rounded-lg hover:bg-secondary/50 transition-colors gap-2"
                   >
                     <div className="flex items-start sm:items-center gap-2 sm:gap-3">
-                      <span className={`text-xs px-2 py-0.5 rounded font-medium whitespace-nowrap flex-shrink-0 ${
-                        tx.tx_type === 'create_token' ? 'bg-purple-500/20 text-purple-400' :
-                        tx.tx_type === 'transfer' ? 'bg-blue-500/20 text-blue-400' :
-                        tx.tx_type === 'swap' ? 'bg-green-500/20 text-green-400' :
-                        tx.tx_type === 'create_pool' ? 'bg-yellow-500/20 text-yellow-400' :
-                        tx.tx_type === 'add_liquidity' ? 'bg-cyan-500/20 text-cyan-400' :
-                        tx.tx_type === 'remove_liquidity' ? 'bg-red-500/20 text-red-400' :
-                        'bg-gray-500/20 text-gray-400'
-                      }`}>
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium whitespace-nowrap flex-shrink-0 ${tx.tx_type === 'create_token' ? 'bg-purple-500/20 text-purple-400' :
+                          tx.tx_type === 'transfer' ? 'bg-blue-500/20 text-blue-400' :
+                            tx.tx_type === 'swap' ? 'bg-green-500/20 text-green-400' :
+                              tx.tx_type === 'create_pool' ? 'bg-yellow-500/20 text-yellow-400' :
+                                tx.tx_type === 'add_liquidity' ? 'bg-cyan-500/20 text-cyan-400' :
+                                  tx.tx_type === 'remove_liquidity' ? 'bg-red-500/20 text-red-400' :
+                                    'bg-gray-500/20 text-gray-400'
+                        }`}>
                         {tx.tx_type.replace(/_/g, ' ')}
                       </span>
                       <div className="min-w-0">
@@ -621,7 +620,7 @@ const TokenExplorer = () => {
                           {tx.from.substring(0, 16)}...
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          #{tx.block_height} • {new Date(tx.timestamp * 1000).toLocaleDateString()}
+                          #{tx.block_height} • {new Date(tx.timestamp < 1e12 ? tx.timestamp * 1000 : tx.timestamp).toLocaleDateString()}
                         </p>
                       </div>
                     </div>
