@@ -29,8 +29,8 @@ export default function WalletTab({ wallet }: Props) {
     const [sendMemo, setSendMemo] = useState("");
     const [isSending, setIsSending] = useState(false);
 
-    const refreshData = useCallback(async () => {
-        setIsLoading(true);
+    const refreshData = useCallback(async (showSpinner = true) => {
+        if (showSpinner) setIsLoading(true);
         try {
             const [bal, txs] = await Promise.all([
                 getWalletBalance(wallet.signingPublicKey),
@@ -44,7 +44,12 @@ export default function WalletTab({ wallet }: Props) {
         setIsLoading(false);
     }, [wallet.signingPublicKey]);
 
-    useEffect(() => { refreshData(); }, [refreshData]);
+    useEffect(() => {
+        refreshData();
+        // Auto-refresh every 10 seconds
+        const interval = setInterval(() => refreshData(false), 10_000);
+        return () => clearInterval(interval);
+    }, [refreshData]);
 
     const xrgeBalance = balances.find(b => b.symbol === TOKEN_SYMBOL)?.balance || 0;
 
@@ -58,6 +63,8 @@ export default function WalletTab({ wallet }: Props) {
         setIsClaiming(true);
         try {
             await claimFaucet(wallet.signingPublicKey);
+            // Wait 2s for the node to process the faucet tx
+            await new Promise(r => setTimeout(r, 2000));
             await refreshData();
         } catch (err) {
             console.error("Faucet failed:", err);
@@ -95,7 +102,7 @@ export default function WalletTab({ wallet }: Props) {
             <div className="p-4 bg-gradient-to-br from-card to-secondary/30 border-b border-border">
                 <div className="flex items-center justify-between mb-1">
                     <span className="text-xs text-muted-foreground">{wallet.displayName}</span>
-                    <button onClick={refreshData} className="text-muted-foreground hover:text-primary transition-colors">
+                    <button onClick={() => refreshData()} className="text-muted-foreground hover:text-primary transition-colors">
                         <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
                     </button>
                 </div>
@@ -206,8 +213,8 @@ export default function WalletTab({ wallet }: Props) {
                                 >
                                     <div className="flex items-center gap-2 min-w-0">
                                         <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] ${tx.type === "receive"
-                                                ? "bg-success/20 text-success"
-                                                : "bg-destructive/20 text-destructive"
+                                            ? "bg-success/20 text-success"
+                                            : "bg-destructive/20 text-destructive"
                                             }`}>
                                             {tx.type === "receive" ? <TrendingUp className="w-3 h-3" /> : <Send className="w-3 h-3" />}
                                         </div>
