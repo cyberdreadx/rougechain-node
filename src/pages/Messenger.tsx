@@ -247,7 +247,7 @@ const Messenger = () => {
   }
 
   return (
-    <div className="h-screen md:h-screen flex flex-col overflow-hidden" style={{ height: '100dvh' }}>
+    <div className="h-screen md:h-screen flex flex-col overflow-hidden overflow-x-hidden" style={{ height: '100dvh' }}>
 
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
