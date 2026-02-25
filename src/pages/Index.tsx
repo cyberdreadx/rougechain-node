@@ -49,16 +49,16 @@ const LiveNetworkStatus = () => {
     try {
       const baseUrl = getCoreApiBaseUrl();
       if (!baseUrl) return;
-      
+
       const res = await fetch(`${baseUrl}/stats`, {
         headers: getCoreApiHeaders(),
         signal: AbortSignal.timeout(3000),
       });
-      
+
       if (res.ok) {
         const data = await res.json();
         const newHeight = data.network_height || data.networkHeight || 0;
-        
+
         setStats(prev => {
           // Trigger pulse animation on new block
           if (prev && newHeight > prev.height && prev.height > 0) {
@@ -111,18 +111,18 @@ const LiveNetworkStatus = () => {
           />
           <div className={`w-3 h-3 rounded-full ${stats.isLive ? 'bg-red-500 animate-pulse' : 'bg-gray-500'}`} />
         </div>
-        
+
         <div className="flex items-center gap-4 text-sm font-mono">
           <div className="flex items-center gap-1.5">
             <Zap className="w-3.5 h-3.5 text-red-400" />
             <span className="text-red-400/80">TESTNET</span>
           </div>
-          
+
           <div className="h-4 w-px bg-red-500/30" />
-          
+
           <div className="flex items-center gap-1.5">
             <span className="text-muted-foreground text-xs">BLOCK</span>
-            <motion.span 
+            <motion.span
               key={stats.height}
               initial={{ opacity: 0, y: -5 }}
               animate={{ opacity: 1, y: 0 }}
@@ -131,9 +131,9 @@ const LiveNetworkStatus = () => {
               #{stats.height.toLocaleString()}
             </motion.span>
           </div>
-          
+
           <div className="h-4 w-px bg-red-500/30" />
-          
+
           <div className="flex items-center gap-1.5">
             <span className="text-muted-foreground text-xs">PEERS</span>
             <span className="text-fuchsia-400 font-bold">{stats.peers}</span>
@@ -150,14 +150,14 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">
-      
+
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
-      <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-red-500/5 rounded-full blur-3xl pointer-events-none" />
-      <div className="fixed bottom-0 right-0 w-[600px] h-[600px] bg-fuchsia-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[800px] h-[800px] bg-red-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-0 right-0 w-full max-w-[600px] h-[600px] bg-fuchsia-500/5 rounded-full blur-3xl pointer-events-none" />
 
       <main className="relative z-10 max-w-4xl mx-auto px-4 py-12">
-        
+
         {/* Testnet Banner */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -174,10 +174,10 @@ const Index = () => {
             <span className="text-fuchsia-400 animate-pulse">→</span>
           </div>
         </motion.div>
-        
+
         {/* Live Network Status */}
         <LiveNetworkStatus />
-        
+
         {/* Hero */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -197,11 +197,11 @@ const Index = () => {
             Welcome to{" "}
             <span className="text-gradient-quantum">RougeChain</span>
           </h1>
-          
+
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-4">
             A post-quantum Layer 1 blockchain with ML-DSA signatures, Rust core, and modern UI.
           </p>
-          
+
           <p className="text-sm text-red-400/80 max-w-xl mx-auto mb-8 font-mono">
             Join the testnet now - create a wallet, claim XRGE, and help stress-test the network before mainnet.
           </p>
@@ -213,9 +213,9 @@ const Index = () => {
                 Open Wallet
               </Button>
             </Link>
-            <a 
-              href="https://aerodrome.finance/swap?from=0x833589fcd6edb6e08f4c7c32d4f71b54bda02913&to=0x147120faec9277ec02d957584cfcd92b56a24317&chain0=8453&chain1=8453" 
-              target="_blank" 
+            <a
+              href="https://aerodrome.finance/swap?from=0x833589fcd6edb6e08f4c7c32d4f71b54bda02913&to=0x147120faec9277ec02d957584cfcd92b56a24317&chain0=8453&chain1=8453"
+              target="_blank"
               rel="noopener noreferrer"
             >
               <Button size="lg" variant="outline" className="gap-2 border-red-500/50 text-red-400 hover:bg-red-500/10 hover:text-red-300">
@@ -271,9 +271,9 @@ const Index = () => {
                 <p className="text-xs text-muted-foreground">Live chart from DexScreener</p>
               </div>
             </div>
-            <a 
-              href="https://dexscreener.com/base/0x147120faec9277ec02d957584cfcd92b56a24317" 
-              target="_blank" 
+            <a
+              href="https://dexscreener.com/base/0x147120faec9277ec02d957584cfcd92b56a24317"
+              target="_blank"
               rel="noopener noreferrer"
               className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
             >
@@ -281,7 +281,7 @@ const Index = () => {
               <ExternalLink className="w-3 h-3" />
             </a>
           </div>
-          
+
           {/* Live Price Stats */}
           {priceUsd !== null && (
             <motion.div
@@ -328,7 +328,7 @@ const Index = () => {
               </div>
             </motion.div>
           )}
-          
+
           <div className="rounded-2xl border border-red-500/20 overflow-hidden bg-black/40">
             <iframe
               src="https://dexscreener.com/base/0x147120faec9277ec02d957584cfcd92b56a24317?embed=1&theme=dark&trades=0&info=0"
@@ -390,7 +390,7 @@ const Index = () => {
               <span className="text-sm font-mono text-red-400">TESTNET IS LIVE</span>
             </div>
             <p className="text-muted-foreground text-sm max-w-md">
-              RougeChain testnet is open for testing. Create a wallet, request tokens from the faucet, 
+              RougeChain testnet is open for testing. Create a wallet, request tokens from the faucet,
               and help us battle-test the network before mainnet launch.
             </p>
             <div className="flex items-center gap-2 mt-2">

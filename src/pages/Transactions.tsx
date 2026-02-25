@@ -270,8 +270,8 @@ const Transactions = () => {
 
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
-      <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
-      <div className="fixed bottom-0 right-0 w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-0 right-0 w-full max-w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />
 
       <main className="relative z-10 max-w-6xl mx-auto px-4 py-10">
         {/* Network Stats Bar */}
@@ -334,8 +334,8 @@ const Transactions = () => {
               </div>
             </div>
             <p className="text-sm text-muted-foreground">
-              {connectionType === "websocket" 
-                ? "Real-time updates via WebSocket" 
+              {connectionType === "websocket"
+                ? "Real-time updates via WebSocket"
                 : "Live stream of recent transactions from the core node."}
             </p>
           </div>
@@ -380,8 +380,8 @@ const Transactions = () => {
                 </div>
               )}
               {paginatedTxs.map((tx) => (
-                <div 
-                  key={tx.id} 
+                <div
+                  key={tx.id}
                   className="rounded-lg border border-border bg-background/60 p-3 space-y-2 cursor-pointer hover:border-primary/50 transition-colors"
                   onClick={() => setSelectedTx(tx)}
                 >
@@ -614,7 +614,7 @@ const Transactions = () => {
               {selectedTx && labelForType(selectedTx.type)} • {selectedTx && formatAge(selectedTx.time)}
             </DialogDescription>
           </DialogHeader>
-          
+
           {selectedTx && (
             <div className="space-y-4">
               {/* Amount */}

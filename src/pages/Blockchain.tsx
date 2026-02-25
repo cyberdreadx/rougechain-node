@@ -72,7 +72,7 @@ const Blockchain = () => {
           setIsLoading(false);
           return;
         }
-        
+
         try {
           const isLocal = NODE_API_URL.includes("localhost") || NODE_API_URL.includes("127.0.0.1");
           const timeoutMs = isLocal ? 3000 : 10000;
@@ -112,7 +112,7 @@ const Blockchain = () => {
             }
           }
         }
-        
+
         // No nodes found
         setChain([]);
         setNodeConnected(false);
@@ -211,22 +211,22 @@ const Blockchain = () => {
 
   const handleValidateChain = async () => {
     if (chain.length === 0) return;
-    
+
     setIsValidating(true);
     try {
       // Basic validation: check chain linkage
       let valid = true;
       const errors: string[] = [];
-      
+
       for (let i = 0; i < chain.length; i++) {
         if (i > 0 && chain[i].previousHash !== chain[i - 1].hash) {
           valid = false;
           errors.push(`Block ${i}: Invalid previous hash linkage`);
         }
       }
-      
+
       setChainValidity({ valid, checked: true });
-      
+
       if (valid) {
         toast.success("Chain validated!", {
           description: `All ${chain.length} blocks verified (ML-DSA-65 signatures verified by node)`,
@@ -245,11 +245,11 @@ const Blockchain = () => {
 
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">
-      
+
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
-      <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
-      <div className="fixed bottom-0 right-0 w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-0 right-0 w-full max-w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />
 
       {/* Main content */}
       <main className="relative z-10 max-w-7xl mx-auto px-4 py-6">
@@ -261,7 +261,7 @@ const Blockchain = () => {
         >
           <GlobalNetworkGlobe className="h-[500px]" />
         </motion.div>
-        
+
         {/* Verify Chain Button - below globe */}
         {chain.length > 0 && (
           <div className="flex justify-end mb-4">
@@ -337,18 +337,16 @@ const Blockchain = () => {
                         <button
                           type="button"
                           onClick={() => setViewMode("table")}
-                          className={`px-3 py-1 text-[11px] rounded-full transition ${
-                            viewMode === "table" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
-                          }`}
+                          className={`px-3 py-1 text-[11px] rounded-full transition ${viewMode === "table" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                            }`}
                         >
                           Compact table
                         </button>
                         <button
                           type="button"
                           onClick={() => setViewMode("grid")}
-                          className={`px-3 py-1 text-[11px] rounded-full transition ${
-                            viewMode === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
-                          }`}
+                          className={`px-3 py-1 text-[11px] rounded-full transition ${viewMode === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                            }`}
                         >
                           Visual grid
                         </button>

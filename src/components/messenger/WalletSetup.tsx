@@ -26,10 +26,10 @@ const WalletSetup = ({ onWalletCreated, onWalletImported }: WalletSetupProps) =>
 
   const handleCreate = async () => {
     if (!displayName.trim()) return;
-    
+
     setIsCreating(true);
     setStage("generating");
-    
+
     try {
       const wallet = await createWallet(displayName.trim());
       onWalletCreated(wallet);
@@ -67,7 +67,7 @@ const WalletSetup = ({ onWalletCreated, onWalletImported }: WalletSetupProps) =>
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
 
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
@@ -91,7 +91,7 @@ const WalletSetup = ({ onWalletCreated, onWalletImported }: WalletSetupProps) =>
               {stage === "generating" ? "Generating Keypairs..." : "Create Your Wallet"}
             </CardTitle>
             <p className="text-sm text-muted-foreground mt-2">
-              {stage === "generating" 
+              {stage === "generating"
                 ? "Creating quantum-safe cryptographic keys"
                 : "Your wallet contains post-quantum keypairs for secure messaging"
               }
