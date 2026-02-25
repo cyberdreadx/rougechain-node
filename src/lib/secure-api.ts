@@ -103,7 +103,7 @@ export async function secureCreateToken(
     initialSupply,
     fee
   );
-  return submitSignedTx("/v2/token/create", signedTx);
+  return submitSignedTx("/v2/token/create", signedTx) as Promise<ApiResponse<{ token_symbol: string }>>;
 }
 
 /**
@@ -147,7 +147,7 @@ export async function secureCreatePool(
     amountA,
     amountB
   );
-  return submitSignedTx("/v2/pool/create", signedTx);
+  return submitSignedTx("/v2/pool/create", signedTx) as Promise<ApiResponse<{ pool_id: string }>>;
 }
 
 /**

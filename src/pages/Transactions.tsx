@@ -266,7 +266,7 @@ const Transactions = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background relative overflow-hidden">
+    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background relative overflow-hidden">
 
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
