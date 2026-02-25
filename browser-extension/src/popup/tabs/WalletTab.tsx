@@ -126,20 +126,20 @@ export default function WalletTab({ wallet }: Props) {
                 <div className="flex gap-2 mt-3">
                     <button
                         onClick={() => setShowSend(!showSend)}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 active:scale-[0.97] transition-all"
                     >
                         <Send className="w-3.5 h-3.5" /> Send
                     </button>
                     <button
                         onClick={copyAddress}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-secondary text-secondary-foreground text-xs font-medium hover:bg-secondary/80 transition-colors"
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-secondary text-secondary-foreground text-xs font-semibold hover:bg-secondary/80 active:scale-[0.97] transition-all"
                     >
                         <Download className="w-3.5 h-3.5" /> Receive
                     </button>
                     <button
                         onClick={handleFaucet}
                         disabled={isClaiming}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-accent/20 text-accent-foreground text-xs font-medium hover:bg-accent/30 transition-colors disabled:opacity-50"
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-accent/20 text-accent-foreground text-xs font-semibold hover:bg-accent/30 active:scale-[0.97] transition-all disabled:opacity-50"
                     >
                         <Droplets className={`w-3.5 h-3.5 ${isClaiming ? "animate-spin" : ""}`} /> Faucet
                     </button>
@@ -209,7 +209,7 @@ export default function WalletTab({ wallet }: Props) {
                             {transactions.map(tx => (
                                 <div
                                     key={tx.id}
-                                    className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-secondary/30 transition-colors"
+                                    className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-secondary/30 card-hover transition-all cursor-default"
                                 >
                                     <div className="flex items-center gap-2 min-w-0">
                                         <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] ${tx.type === "receive"

@@ -37,7 +37,9 @@ export default function App() {
         return (
             <div className="flex items-center justify-center h-full bg-background">
                 <div className="text-center">
-                    <img src="/xrge-logo.webp" alt="XRGE" className="w-12 h-12 mx-auto animate-pulse rounded-full" />
+                    <div className="logo-ring w-14 h-14 mx-auto">
+                        <img src="/xrge-logo.webp" alt="XRGE" className="animate-pulse" />
+                    </div>
                     <p className="text-xs text-muted-foreground mt-3">Loading...</p>
                 </div>
             </div>
@@ -77,9 +79,11 @@ export default function App() {
     return (
         <div className="flex flex-col h-full bg-background">
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-card/60 backdrop-blur-sm">
+            <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-card/60 backdrop-blur-sm">
                 <div className="flex items-center gap-2.5">
-                    <img src="/xrge-logo.webp" alt="XRGE" className="w-7 h-7 rounded-full ring-1 ring-primary/30" />
+                    <div className="logo-ring w-7 h-7">
+                        <img src="/xrge-logo.webp" alt="XRGE" />
+                    </div>
                     <span className="text-sm font-bold text-gradient-quantum tracking-tight">RougeChain</span>
                 </div>
                 <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-success/10 border border-success/20">
@@ -102,14 +106,14 @@ export default function App() {
             </div>
 
             {/* Bottom tab bar */}
-            <div className="flex items-center border-t border-border bg-card/80 backdrop-blur-sm">
+            <div className="flex items-center border-t border-border tab-bar-glass">
                 {tabs.map(({ id, label, icon: Icon }) => (
                     <button
                         key={id}
                         onClick={() => setActiveTab(id)}
                         className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 transition-all relative ${activeTab === id
-                                ? "text-primary"
-                                : "text-muted-foreground hover:text-foreground"
+                            ? "text-primary"
+                            : "text-muted-foreground hover:text-foreground"
                             }`}
                     >
                         {activeTab === id && (
