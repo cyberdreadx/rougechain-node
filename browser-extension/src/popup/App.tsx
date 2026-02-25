@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Wallet, MessageCircle, Settings, Shield, Lock } from "lucide-react";
+import { Wallet, MessageCircle, Settings, Lock } from "lucide-react";
 import { initStorage } from "../lib/storage";
 import {
     loadUnifiedWallet,
@@ -37,8 +37,8 @@ export default function App() {
         return (
             <div className="flex items-center justify-center h-full bg-background">
                 <div className="text-center">
-                    <Shield className="w-10 h-10 text-primary mx-auto animate-pulse" />
-                    <p className="text-xs text-muted-foreground mt-2">Loading...</p>
+                    <img src="/xrge-logo.webp" alt="XRGE" className="w-12 h-12 mx-auto animate-pulse rounded-full" />
+                    <p className="text-xs text-muted-foreground mt-3">Loading...</p>
                 </div>
             </div>
         );
@@ -77,16 +77,14 @@ export default function App() {
     return (
         <div className="flex flex-col h-full bg-background">
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-card/50">
-                <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center">
-                        <Shield className="w-3.5 h-3.5 text-primary" />
-                    </div>
-                    <span className="text-sm font-semibold text-gradient-quantum">RougeChain</span>
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-card/60 backdrop-blur-sm">
+                <div className="flex items-center gap-2.5">
+                    <img src="/xrge-logo.webp" alt="XRGE" className="w-7 h-7 rounded-full ring-1 ring-primary/30" />
+                    <span className="text-sm font-bold text-gradient-quantum tracking-tight">RougeChain</span>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-success/10 border border-success/20">
                     <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-                    <span className="text-[10px] text-muted-foreground">Devnet</span>
+                    <span className="text-[10px] text-success font-medium">Devnet</span>
                 </div>
             </div>
 
@@ -104,16 +102,19 @@ export default function App() {
             </div>
 
             {/* Bottom tab bar */}
-            <div className="flex items-center border-t border-border bg-card/80">
+            <div className="flex items-center border-t border-border bg-card/80 backdrop-blur-sm">
                 {tabs.map(({ id, label, icon: Icon }) => (
                     <button
                         key={id}
                         onClick={() => setActiveTab(id)}
-                        className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors ${activeTab === id
+                        className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 transition-all relative ${activeTab === id
                                 ? "text-primary"
                                 : "text-muted-foreground hover:text-foreground"
                             }`}
                     >
+                        {activeTab === id && (
+                            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full bg-primary" />
+                        )}
                         <Icon className="w-4 h-4" />
                         <span className="text-[10px] font-medium">{label}</span>
                     </button>

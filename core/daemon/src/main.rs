@@ -2203,6 +2203,8 @@ async fn send_messenger_message(
         destruct_after_seconds: body.get("destructAfterSeconds").and_then(|v| v.as_u64()),
         created_at: chrono::Utc::now().to_rfc3339(),
         is_read: false,
+        message_type: body.get("messageType").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
+        spoiler: body.get("spoiler").and_then(|v| v.as_bool()).unwrap_or(false),
     };
     let message = node.send_message(message).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "success": true, "message": message })))

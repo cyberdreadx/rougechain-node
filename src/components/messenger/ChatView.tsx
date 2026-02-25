@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint } from "lucide-react";
+import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint, Paperclip, Image as ImageIcon, Video, EyeOff, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { Conversation, WalletWithPrivateKeys, Message, Wallet } from "@/lib/pqc-messenger";
-import { getBotReply, getMessages, sendMessage, isDemoBot, loadDemoBotWallet, getWallets } from "@/lib/pqc-messenger";
+import type { Conversation, WalletWithPrivateKeys, Message, Wallet, MessageType } from "@/lib/pqc-messenger";
+import { getBotReply, getMessages, sendMessage, isDemoBot, loadDemoBotWallet, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE } from "@/lib/pqc-messenger";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -277,10 +277,12 @@ const EncryptionDetailsPanel = ({
 // Encryption animation overlay component
 const EncryptionAnimation = ({
   plaintext,
-  onComplete
+  onComplete,
+  isMedia = false,
 }: {
   plaintext: string;
   onComplete: () => void;
+  isMedia?: boolean;
 }) => {
   const [phase, setPhase] = useState<"plaintext" | "scrambling" | "encrypted" | "sending">("plaintext");
   const [displayText, setDisplayText] = useState(plaintext);
@@ -359,8 +361,8 @@ const EncryptionAnimation = ({
             <Key className="w-3 h-3" />
           </motion.div>
           <span className="font-mono">
-            {phase === "plaintext" && "Preparing..."}
-            {phase === "scrambling" && "Encrypting with ML-KEM-768..."}
+            {phase === "plaintext" && (isMedia ? "Preparing media..." : "Preparing...")}
+            {phase === "scrambling" && (isMedia ? "Encrypting media with ML-KEM-768..." : "Encrypting with ML-KEM-768...")}
             {phase === "encrypted" && "Signing with ML-DSA-65..."}
             {phase === "sending" && "Sending..."}
           </span>
@@ -388,7 +390,12 @@ const EncryptionAnimation = ({
             }}
             transition={{ duration: 0.3, repeat: phase === "sending" ? Infinity : 0 }}
           >
-            {displayText}
+            {isMedia ? (
+              <span className="flex items-center gap-2">
+                <ImageIcon className="w-4 h-4" />
+                {phase === "plaintext" ? plaintext : displayText}
+              </span>
+            ) : displayText}
           </motion.p>
 
           {/* Lock icon animation */}
@@ -450,8 +457,12 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
   const [isSending, setIsSending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [encryptingMessage, setEncryptingMessage] = useState<string | null>(null);
+  const [encryptingMessageType, setEncryptingMessageType] = useState<MessageType>("text");
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const [newMessageIds, setNewMessageIds] = useState<Set<string>>(new Set());
+  const [stagedMedia, setStagedMedia] = useState<{ file: File; previewUrl: string } | null>(null);
+  const [spoiler, setSpoiler] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
 
@@ -522,20 +533,72 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
     }
   };
 
-  const handleSend = async () => {
-    if (!newMessage.trim() || !recipient || isSending) return;
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    const messageText = newMessage.trim();
-    setNewMessage("");
-    setEncryptingMessage(messageText);
+    if (file.size > MAX_MEDIA_SIZE) {
+      toast.error(`File too large. Maximum size is ${MAX_MEDIA_SIZE / (1024 * 1024)} MB.`);
+      return;
+    }
+
+    if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
+      toast.error("Only images and videos are supported.");
+      return;
+    }
+
+    const previewUrl = URL.createObjectURL(file);
+    setStagedMedia({ file, previewUrl });
+    // Reset file input
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
+
+  const clearStagedMedia = () => {
+    if (stagedMedia) {
+      URL.revokeObjectURL(stagedMedia.previewUrl);
+      setStagedMedia(null);
+    }
+  };
+
+  const handleSend = async () => {
+    if ((!newMessage.trim() && !stagedMedia) || !recipient || isSending) return;
+
+    if (stagedMedia) {
+      // Media message
+      try {
+        const { payload, messageType } = await fileToMediaPayload(stagedMedia.file);
+        const displayName = stagedMedia.file.name;
+        clearStagedMedia();
+        setNewMessage("");
+        setEncryptingMessageType(messageType);
+        setEncryptingMessage(displayName);
+        // Store payload in a ref for the encryption complete handler
+        pendingMediaPayloadRef.current = payload;
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to process media.");
+        return;
+      }
+    } else {
+      // Text message
+      const messageText = newMessage.trim();
+      setNewMessage("");
+      setEncryptingMessageType("text");
+      setEncryptingMessage(messageText);
+      pendingMediaPayloadRef.current = null;
+    }
+  };
+
+  const pendingMediaPayloadRef = useRef<string | null>(null);
 
   const handleEncryptionComplete = async () => {
     if (!encryptingMessage || !recipient) return;
 
     setIsSending(true);
-    const messageText = encryptingMessage;
+    const messageText = pendingMediaPayloadRef.current || encryptingMessage;
+    const currentMessageType = encryptingMessageType;
     setEncryptingMessage(null);
+    setEncryptingMessageType("text");
+    pendingMediaPayloadRef.current = null;
 
     // Ensure recipient has the latest encryption key (fetch from server)
     let recipientEncryptionKey = recipient.encryptionPublicKey;
@@ -566,7 +629,9 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
         wallet,
         recipientEncryptionKey,
         selfDestruct,
-        selfDestruct ? destructSeconds : undefined
+        selfDestruct ? destructSeconds : undefined,
+        currentMessageType,
+        spoiler
       );
 
       // Add to seen messages so it doesn't trigger animations
@@ -702,6 +767,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
                 key="encrypting"
                 plaintext={encryptingMessage}
                 onComplete={handleEncryptionComplete}
+                isMedia={encryptingMessageType !== "text"}
               />
             )}
           </AnimatePresence>
@@ -725,18 +791,79 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
           />
         </div>
 
+        {/* Spoiler toggle */}
+        <div className="flex items-center justify-between mb-3 text-sm">
+          <div className="flex items-center gap-2">
+            <EyeOff className={`w-4 h-4 ${spoiler ? "text-amber-500" : "text-muted-foreground"}`} />
+            <span className={spoiler ? "text-amber-500" : "text-muted-foreground"}>
+              Spoiler {spoiler ? "(hidden until clicked)" : ""}
+            </span>
+          </div>
+          <Switch
+            checked={spoiler}
+            onCheckedChange={setSpoiler}
+          />
+        </div>
+
+        {/* Staged media preview */}
+        {stagedMedia && (
+          <div className="mb-3 relative inline-block">
+            <div className="relative rounded-lg overflow-hidden border border-border bg-muted/50 max-w-[200px]">
+              {stagedMedia.file.type.startsWith("video/") ? (
+                <div className="flex items-center gap-2 p-3">
+                  <Video className="w-5 h-5 text-primary" />
+                  <span className="text-sm text-foreground truncate max-w-[140px]">{stagedMedia.file.name}</span>
+                </div>
+              ) : (
+                <img
+                  src={stagedMedia.previewUrl}
+                  alt="Preview"
+                  className="max-h-[120px] w-auto object-cover"
+                />
+              )}
+              <button
+                onClick={clearStagedMedia}
+                className="absolute top-1 right-1 p-1 rounded-full bg-background/80 hover:bg-background transition-colors"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1 truncate max-w-[200px]">
+              {stagedMedia.file.name} ({(stagedMedia.file.size / 1024).toFixed(0)} KB)
+            </p>
+          </div>
+        )}
+
         <div className="flex gap-2">
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,video/*"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isSending || !!encryptingMessage}
+            title="Attach image or video"
+            className="flex-shrink-0"
+          >
+            <Paperclip className="w-4 h-4" />
+          </Button>
           <Input
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            placeholder="Type a message..."
+            placeholder={stagedMedia ? "Add a caption (optional)..." : "Type a message..."}
             className="flex-1"
             onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
             disabled={isSending || !!encryptingMessage}
           />
           <Button
             onClick={handleSend}
-            disabled={!newMessage.trim() || isSending || !!encryptingMessage}
+            disabled={(!newMessage.trim() && !stagedMedia) || isSending || !!encryptingMessage}
             size="icon"
           >
             {isSending || encryptingMessage ? (
@@ -953,6 +1080,9 @@ const MessageBubble = ({
 }) => {
   const [showDecryptAnimation, setShowDecryptAnimation] = useState(isNew && !isOwn);
 
+  const [spoilerRevealed, setSpoilerRevealed] = useState(false);
+  const isSpoiler = message.spoiler && !spoilerRevealed;
+
   if (showDecryptAnimation && onAnimationComplete) {
     return (
       <DecryptionAnimation
@@ -976,22 +1106,75 @@ const MessageBubble = ({
         whileHover={{ scale: 1.01 }}
         whileTap={{ scale: 0.98 }}
         onClick={onTap}
-        className={`max-w-[85%] sm:max-w-[80%] rounded-2xl px-4 py-2 cursor-pointer transition-shadow hover:shadow-lg break-words ${
-          isOwn
-            ? "bg-primary text-primary-foreground rounded-br-md hover:shadow-primary/20"
-            : "bg-muted text-foreground rounded-bl-md hover:shadow-accent/20"
-        }`}
+        className={`max-w-[85%] sm:max-w-[80%] rounded-2xl px-4 py-2 cursor-pointer transition-shadow hover:shadow-lg break-words ${isOwn
+          ? "bg-primary text-primary-foreground rounded-br-md hover:shadow-primary/20"
+          : "bg-muted text-foreground rounded-bl-md hover:shadow-accent/20"
+          }`}
       >
         {!isOwn && (
           <p className="text-xs font-medium mb-1 opacity-70">
             {message.senderDisplayName}
           </p>
         )}
-        <p className="text-sm whitespace-pre-wrap break-words min-w-0">
-          {message.plaintext?.startsWith("[Unable") ? (
-            <span className="text-muted-foreground italic break-words">{message.plaintext}</span>
-          ) : message.plaintext}
-        </p>
+        {/* Media or text content */}
+        <div className="relative">
+          {isSpoiler && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="absolute inset-0 z-10 flex items-center justify-center rounded-lg cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSpoilerRevealed(true);
+              }}
+              style={{ backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)" }}
+            >
+              <div className="flex flex-col items-center gap-1 px-3 py-2">
+                <EyeOff className="w-5 h-5 opacity-70" />
+                <span className="text-xs font-medium opacity-70">
+                  {message.messageType !== "text" ? "SPOILER" : "Click to reveal"}
+                </span>
+              </div>
+            </motion.div>
+          )}
+          <div className={isSpoiler ? "select-none" : ""}>
+            {message.mediaUrl && message.messageType === "image" ? (
+              <div className="my-1">
+                <img
+                  src={message.mediaUrl}
+                  alt={message.mediaFileName || "Image"}
+                  className={`max-w-full rounded-lg max-h-[300px] object-contain cursor-pointer transition-all duration-300 ${isSpoiler ? "blur-xl scale-[0.98]" : ""}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!isSpoiler) window.open(message.mediaUrl, "_blank");
+                  }}
+                />
+                {message.mediaFileName && !isSpoiler && (
+                  <p className="text-[10px] opacity-50 mt-1">{message.mediaFileName}</p>
+                )}
+              </div>
+            ) : message.mediaUrl && message.messageType === "video" ? (
+              <div className="my-1">
+                <video
+                  src={isSpoiler ? undefined : message.mediaUrl}
+                  controls={!isSpoiler}
+                  className={`max-w-full rounded-lg max-h-[300px] transition-all duration-300 ${isSpoiler ? "blur-xl scale-[0.98]" : ""}`}
+                  onClick={(e) => e.stopPropagation()}
+                  poster={isSpoiler ? undefined : undefined}
+                />
+                {message.mediaFileName && !isSpoiler && (
+                  <p className="text-[10px] opacity-50 mt-1">{message.mediaFileName}</p>
+                )}
+              </div>
+            ) : (
+              <p className={`text-sm whitespace-pre-wrap break-words min-w-0 transition-all duration-300 ${isSpoiler ? "blur-md" : ""}`}>
+                {message.plaintext?.startsWith("[Unable") ? (
+                  <span className="text-muted-foreground italic break-words">{message.plaintext}</span>
+                ) : message.plaintext}
+              </p>
+            )}
+          </div>
+        </div>
         <div className={`flex items-center gap-1 mt-1 text-xs ${isOwn ? "justify-end" : ""}`}>
           <span className="opacity-60">
             {formatMessageTime(message.createdAt)}

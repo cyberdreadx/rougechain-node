@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Shield, Loader2, Sparkles, Plus, Upload } from "lucide-react";
+import { Loader2, Plus, Upload } from "lucide-react";
 import { generateKeypair } from "../../lib/pqc-blockchain";
 import { generateEncryptionKeypair, registerWalletOnNode } from "../../lib/pqc-messenger";
 import { saveUnifiedWallet, type UnifiedWallet } from "../../lib/unified-wallet";
@@ -72,9 +72,7 @@ export default function CreateWalletScreen({ onCreated }: Props) {
 
     return (
         <div className="flex flex-col items-center justify-center h-full p-6 bg-background">
-            <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4 glow-quantum">
-                <Sparkles className="w-8 h-8 text-primary" />
-            </div>
+            <img src="/xrge-logo.webp" alt="XRGE" className="w-16 h-16 rounded-2xl mb-4 glow-quantum" />
 
             <h1 className="text-lg font-bold text-gradient-quantum mb-1">RougeChain Wallet</h1>
             <p className="text-xs text-muted-foreground text-center mb-6">

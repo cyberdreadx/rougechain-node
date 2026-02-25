@@ -34,6 +34,14 @@ pub struct MessengerMessage {
     pub destruct_after_seconds: Option<u64>,
     pub created_at: String,
     pub is_read: bool,
+    #[serde(default = "default_message_type")]
+    pub message_type: String, // "text", "image", "video"
+    #[serde(default)]
+    pub spoiler: bool,
+}
+
+fn default_message_type() -> String {
+    "text".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

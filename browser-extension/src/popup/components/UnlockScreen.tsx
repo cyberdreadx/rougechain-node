@@ -30,9 +30,7 @@ export default function UnlockScreen({ onUnlocked }: Props) {
 
     return (
         <div className="flex flex-col items-center justify-center h-full p-6 bg-background">
-            <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4 glow-quantum">
-                <Lock className="w-8 h-8 text-primary" />
-            </div>
+            <img src="/xrge-logo.webp" alt="XRGE" className="w-16 h-16 rounded-2xl mb-4 glow-quantum" />
 
             <h1 className="text-lg font-bold text-gradient-quantum mb-1">Vault Locked</h1>
             {metadata?.displayName && (

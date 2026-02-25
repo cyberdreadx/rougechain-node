@@ -15,6 +15,8 @@ export interface WalletWithPrivateKeys extends Wallet {
   encryptionPrivateKey: string;
 }
 
+export type MessageType = "text" | "image" | "video";
+
 export interface Message {
   id: string;
   conversationId: string;
@@ -29,6 +31,12 @@ export interface Message {
   plaintext?: string;
   signatureValid?: boolean;
   senderDisplayName?: string;
+  // Media support
+  messageType?: MessageType;
+  mediaUrl?: string;       // data URL for rendering (client-side only)
+  mediaFileName?: string;  // original filename (client-side only)
+  // Spoiler support
+  spoiler?: boolean;
 }
 
 export interface Conversation {
@@ -47,6 +55,59 @@ const DEMO_BOT_STORAGE_KEY = "pqc_demo_bot_wallet";
 const SENT_MESSAGES_KEY = "pqc_sent_messages";
 const PRIVACY_SETTINGS_KEY = "pqc_privacy_settings";
 const MESSENGER_API_PREFIX = "/messenger";
+
+// Media support constants
+export const MAX_MEDIA_SIZE = 10 * 1024 * 1024; // 10 MB limit
+
+// Media payload envelope (stored as encrypted plaintext)
+interface MediaPayload {
+  type: "image" | "video";
+  fileName: string;
+  mimeType: string;
+  data: string; // base64 encoded
+}
+
+// Convert a File to a media payload string for encryption
+export async function fileToMediaPayload(file: File): Promise<{ payload: string; messageType: MessageType }> {
+  if (file.size > MAX_MEDIA_SIZE) {
+    throw new Error(`File too large. Maximum size is ${MAX_MEDIA_SIZE / (1024 * 1024)} MB.`);
+  }
+
+  const messageType: MessageType = file.type.startsWith("video/") ? "video" : "image";
+  const buffer = await file.arrayBuffer();
+  const base64 = btoa(
+    new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
+  );
+
+  const envelope: MediaPayload = {
+    type: messageType,
+    fileName: file.name,
+    mimeType: file.type,
+    data: base64,
+  };
+
+  return {
+    payload: JSON.stringify(envelope),
+    messageType,
+  };
+}
+
+// Extract media data URL from a decrypted media payload
+function parseMediaPayload(plaintext: string): { mediaUrl: string; mediaFileName: string; messageType: MessageType } | null {
+  try {
+    const envelope = JSON.parse(plaintext) as MediaPayload;
+    if (envelope.type && envelope.data && (envelope.type === "image" || envelope.type === "video")) {
+      return {
+        mediaUrl: `data:${envelope.mimeType};base64,${envelope.data}`,
+        mediaFileName: envelope.fileName || "media",
+        messageType: envelope.type,
+      };
+    }
+  } catch {
+    // Not a media payload
+  }
+  return null;
+}
 
 // Privacy settings interface
 export interface PrivacySettings {
@@ -530,14 +591,16 @@ export async function getConversations(walletId: string): Promise<Conversation[]
   return conversations;
 }
 
-// Send an encrypted message
+// Send an encrypted message (text or media)
 export async function sendMessage(
   conversationId: string,
   plaintext: string,
   senderWallet: WalletWithPrivateKeys,
   recipientEncryptionPublicKey: string,
   selfDestruct: boolean = false,
-  destructAfterSeconds?: number
+  destructAfterSeconds?: number,
+  messageType: MessageType = "text",
+  spoiler: boolean = false
 ): Promise<Message> {
   const apiBase = getMessengerApiBase();
   if (!apiBase) {
@@ -555,11 +618,13 @@ export async function sendMessage(
     headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
     body: JSON.stringify({
       conversationId,
-      senderWalletId: senderWallet.id, // Use wallet UUID for consistent participant matching
+      senderWalletId: senderWallet.id,
       encryptedContent: encryptData.encryptedPackage,
       signature: encryptData.signature,
       selfDestruct,
       destructAfterSeconds,
+      messageType,
+      spoiler,
     }),
   });
 
@@ -582,8 +647,13 @@ export async function sendMessage(
   const msgSelfDestruct = msg.self_destruct ?? msg.selfDestruct ?? selfDestruct;
   const msgDestructAfterSeconds = msg.destruct_after_seconds ?? msg.destructAfterSeconds ?? destructAfterSeconds;
   const msgCreatedAt = msg.created_at || msg.createdAt || new Date().toISOString();
+  const msgMessageType = (msg.message_type || msg.messageType || messageType) as MessageType;
+  const msgSpoiler = msg.spoiler ?? spoiler ?? false;
 
   storeSentMessage(msgId, plaintext);
+
+  // Parse media payload for client-side rendering
+  const mediaInfo = msgMessageType !== "text" ? parseMediaPayload(plaintext) : null;
 
   return {
     id: msgId,
@@ -595,8 +665,12 @@ export async function sendMessage(
     destructAfterSeconds: msgDestructAfterSeconds,
     readAt: msg.read_at || msg.readAt,
     createdAt: msgCreatedAt,
-    plaintext,
+    plaintext: mediaInfo ? mediaInfo.mediaFileName : plaintext,
     signatureValid: true,
+    messageType: msgMessageType,
+    mediaUrl: mediaInfo?.mediaUrl,
+    mediaFileName: mediaInfo?.mediaFileName,
+    spoiler: msgSpoiler,
   };
 }
 
@@ -691,6 +765,12 @@ export async function getMessages(
       }
     }
 
+    // Detect media messages and extract media data
+    const rawMessageType = (raw.message_type || raw.messageType || "text") as MessageType;
+    const mediaInfo = rawMessageType !== "text" ? parseMediaPayload(plaintext) : null;
+    // For own media messages, try to parse the stored plaintext
+    const ownMediaInfo = isOwnMessage && rawMessageType !== "text" ? parseMediaPayload(plaintext) : null;
+
     decryptedMessages.push({
       id: msg.id,
       conversationId: msg.conversationId,
@@ -701,9 +781,13 @@ export async function getMessages(
       destructAfterSeconds: msg.destructAfterSeconds,
       readAt: msg.readAt,
       createdAt: msg.createdAt,
-      plaintext,
+      plaintext: mediaInfo?.mediaFileName || ownMediaInfo?.mediaFileName || plaintext,
       signatureValid,
       senderDisplayName: sender?.displayName || (isOwnMessage ? "You" : "Unknown"),
+      messageType: mediaInfo?.messageType || ownMediaInfo?.messageType || rawMessageType,
+      mediaUrl: mediaInfo?.mediaUrl || ownMediaInfo?.mediaUrl,
+      mediaFileName: mediaInfo?.mediaFileName || ownMediaInfo?.mediaFileName,
+      spoiler: raw.spoiler ?? false,
     });
   }
 

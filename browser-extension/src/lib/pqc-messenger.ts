@@ -19,6 +19,8 @@ export interface WalletWithPrivateKeys extends Wallet {
     encryptionPrivateKey: string;
 }
 
+export type MessageType = "text" | "image" | "video";
+
 export interface Message {
     id: string;
     conversationId: string;
@@ -32,6 +34,12 @@ export interface Message {
     plaintext?: string;
     signatureValid?: boolean;
     senderDisplayName?: string;
+    // Media support
+    messageType?: MessageType;
+    mediaUrl?: string;
+    mediaFileName?: string;
+    // Spoiler support
+    spoiler?: boolean;
 }
 
 export interface Conversation {
@@ -46,6 +54,43 @@ export interface Conversation {
 }
 
 const MESSENGER_API_PREFIX = "/messenger";
+
+// Media support
+export const MAX_MEDIA_SIZE = 10 * 1024 * 1024; // 10 MB
+
+interface MediaPayload {
+    type: "image" | "video";
+    fileName: string;
+    mimeType: string;
+    data: string;
+}
+
+export async function fileToMediaPayload(file: File): Promise<{ payload: string; messageType: MessageType }> {
+    if (file.size > MAX_MEDIA_SIZE) {
+        throw new Error(`File too large. Maximum size is ${MAX_MEDIA_SIZE / (1024 * 1024)} MB.`);
+    }
+    const messageType: MessageType = file.type.startsWith("video/") ? "video" : "image";
+    const buffer = await file.arrayBuffer();
+    const base64 = btoa(
+        new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
+    );
+    const envelope: MediaPayload = { type: messageType, fileName: file.name, mimeType: file.type, data: base64 };
+    return { payload: JSON.stringify(envelope), messageType };
+}
+
+function parseMediaPayload(plaintext: string): { mediaUrl: string; mediaFileName: string; messageType: MessageType } | null {
+    try {
+        const envelope = JSON.parse(plaintext) as MediaPayload;
+        if (envelope.type && envelope.data && (envelope.type === "image" || envelope.type === "video")) {
+            return {
+                mediaUrl: `data:${envelope.mimeType};base64,${envelope.data}`,
+                mediaFileName: envelope.fileName || "media",
+                messageType: envelope.type,
+            };
+        }
+    } catch { /* not media */ }
+    return null;
+}
 
 function bytesToHex(bytes: Uint8Array): string {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
@@ -248,7 +293,9 @@ export async function sendMessage(
     wallet: WalletWithPrivateKeys,
     recipientEncryptionPublicKey: string,
     selfDestruct: boolean = false,
-    destructAfterSeconds?: number
+    destructAfterSeconds?: number,
+    messageType: MessageType = "text",
+    spoiler: boolean = false
 ): Promise<Message> {
     const apiBase = getMessengerApiBase();
     if (!apiBase) throw new Error("Node not configured");
@@ -267,10 +314,14 @@ export async function sendMessage(
             signature,
             self_destruct: selfDestruct,
             destruct_after_seconds: destructAfterSeconds,
+            messageType,
+            spoiler,
         }),
     });
     if (!res.ok) throw new Error(`Send failed: ${await res.text()}`);
     const data = await res.json();
+
+    const mediaInfo = messageType !== "text" ? parseMediaPayload(plaintext) : null;
 
     return {
         id: data.id || crypto.randomUUID(),
@@ -281,9 +332,13 @@ export async function sendMessage(
         selfDestruct,
         destructAfterSeconds,
         createdAt: data.created_at || new Date().toISOString(),
-        plaintext,
+        plaintext: mediaInfo ? mediaInfo.mediaFileName : plaintext,
         signatureValid: true,
         senderDisplayName: wallet.displayName,
+        messageType,
+        mediaUrl: mediaInfo?.mediaUrl,
+        mediaFileName: mediaInfo?.mediaFileName,
+        spoiler,
     };
 }
 
@@ -347,13 +402,20 @@ export async function getMessages(
                 plaintext = "[Unable to decrypt]";
             }
 
+            const rawMsgType = (raw.message_type || raw.messageType || "text") as MessageType;
+            const mediaInfo = rawMsgType !== "text" ? parseMediaPayload(plaintext) : null;
+
             messages.push({
                 ...msg,
-                plaintext,
+                plaintext: mediaInfo?.mediaFileName || plaintext,
                 signatureValid,
                 senderDisplayName: participants.find(p =>
                     p.id === msg.senderWalletId || p.signingPublicKey === msg.senderWalletId
                 )?.displayName || "Unknown",
+                messageType: mediaInfo?.messageType || rawMsgType,
+                mediaUrl: mediaInfo?.mediaUrl,
+                mediaFileName: mediaInfo?.mediaFileName,
+                spoiler: raw.spoiler ?? false,
             });
         }
         return messages;
@@ -371,6 +433,8 @@ function normalizeMessage(raw: any): Message {
         destructAfterSeconds: raw.destruct_after_seconds || raw.destructAfterSeconds,
         readAt: raw.read_at || raw.readAt,
         createdAt: raw.created_at || raw.createdAt,
+        messageType: (raw.message_type || raw.messageType || "text") as MessageType,
+        spoiler: raw.spoiler ?? false,
     };
 }
 
