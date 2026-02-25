@@ -247,7 +247,7 @@ const Messenger = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background relative overflow-hidden">
+    <div className="h-screen md:h-screen flex flex-col overflow-hidden" style={{ height: '100dvh' }}>
 
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
@@ -322,7 +322,7 @@ const Messenger = () => {
       </div>
 
       {/* Main content */}
-      <main className="relative z-10 h-[calc(100vh-73px)] flex overflow-hidden">
+      <main className="relative z-10 flex-1 flex overflow-hidden">
         {/* Conversation list */}
         <div className={`w-full sm:w-80 border-r border-border ${selectedConversation ? 'hidden sm:block' : ''}`}>
           <ConversationList

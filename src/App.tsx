@@ -24,12 +24,22 @@ const queryClient = new QueryClient();
 // Scroll to top on route change
 function ScrollToTop() {
   const { pathname } = useLocation();
-  
+
   useEffect(() => {
-    window.scrollTo(0, 0);
+    // Don't scroll to top on messenger route (it manages its own scroll)
+    if (pathname !== '/messenger') {
+      window.scrollTo(0, 0);
+    }
   }, [pathname]);
-  
+
   return null;
+}
+
+// Hide footer on fullscreen pages like messenger
+function ConditionalFooter() {
+  const { pathname } = useLocation();
+  if (pathname === '/messenger') return null;
+  return <Footer />;
 }
 
 const App = () => (
@@ -58,7 +68,7 @@ const App = () => (
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </div>
-            <Footer />
+            <ConditionalFooter />
           </Sidebar>
         </div>
       </BrowserRouter>
