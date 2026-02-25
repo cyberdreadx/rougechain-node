@@ -403,11 +403,23 @@ export async function getMessages(
             }
 
             const rawMsgType = (raw.message_type || raw.messageType || "text") as MessageType;
-            const mediaInfo = rawMsgType !== "text" ? parseMediaPayload(plaintext) : null;
+
+            // Always try to parse media from decrypted plaintext —
+            // backend may default messageType to "text" even for images
+            const mediaInfo = plaintext !== "[Unable to decrypt]"
+                ? parseMediaPayload(plaintext)
+                : null;
+
+            // If decryption failed and this is supposed to be a media message,
+            // show a clean placeholder instead of garbled bytecode
+            let displayPlaintext = plaintext;
+            if (plaintext === "[Unable to decrypt]" && rawMsgType !== "text") {
+                displayPlaintext = `[${rawMsgType === "image" ? "Image" : "Video"} — unable to decrypt]`;
+            }
 
             messages.push({
                 ...msg,
-                plaintext: mediaInfo?.mediaFileName || plaintext,
+                plaintext: mediaInfo?.mediaFileName || displayPlaintext,
                 signatureValid,
                 senderDisplayName: participants.find(p =>
                     p.id === msg.senderWalletId || p.signingPublicKey === msg.senderWalletId

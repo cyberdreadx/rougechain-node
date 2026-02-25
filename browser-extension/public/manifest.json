@@ -21,6 +21,10 @@
         "alarms",
         "notifications"
     ],
+    "host_permissions": [
+        "http://localhost:5100/*",
+        "https://xrge-node.gltch.app/*"
+    ],
     "background": {
         "service_worker": "service-worker.js",
         "type": "module"
