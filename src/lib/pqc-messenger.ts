@@ -765,11 +765,32 @@ export async function getMessages(
       }
     }
 
+    // Detect garbage decryption output — if most chars are non-printable,
+    // the wrong key was used and decryption produced nonsense
+    if (plaintext !== "[Unable to decrypt]" && plaintext !== "[Your encrypted message]" && plaintext.length > 20) {
+      const nonPrintable = [...plaintext].filter(c => {
+        const code = c.charCodeAt(0);
+        return code < 32 && code !== 10 && code !== 13 && code !== 9;
+      }).length;
+      if (nonPrintable / plaintext.length > 0.1) {
+        plaintext = "[Unable to decrypt]";
+      }
+    }
+
     // Detect media messages and extract media data
     const rawMessageType = (raw.message_type || raw.messageType || "text") as MessageType;
-    const mediaInfo = rawMessageType !== "text" ? parseMediaPayload(plaintext) : null;
-    // For own media messages, try to parse the stored plaintext
-    const ownMediaInfo = isOwnMessage && rawMessageType !== "text" ? parseMediaPayload(plaintext) : null;
+
+    // Always try to parse media from plaintext — backend may default
+    // messageType to "text" even for image/video messages
+    const mediaInfo = (plaintext && plaintext !== "[Unable to decrypt]" && plaintext !== "[Your encrypted message]")
+      ? parseMediaPayload(plaintext)
+      : null;
+
+    // If decryption failed and this is a media message, show clean placeholder
+    let displayPlaintext = plaintext;
+    if ((plaintext === "[Unable to decrypt]" || plaintext === "[Your encrypted message]") && rawMessageType !== "text") {
+      displayPlaintext = `[${rawMessageType === "image" ? "Image" : "Video"} — unable to decrypt]`;
+    }
 
     decryptedMessages.push({
       id: msg.id,
@@ -781,12 +802,12 @@ export async function getMessages(
       destructAfterSeconds: msg.destructAfterSeconds,
       readAt: msg.readAt,
       createdAt: msg.createdAt,
-      plaintext: mediaInfo?.mediaFileName || ownMediaInfo?.mediaFileName || plaintext,
+      plaintext: mediaInfo?.mediaFileName || displayPlaintext,
       signatureValid,
       senderDisplayName: sender?.displayName || (isOwnMessage ? "You" : "Unknown"),
-      messageType: mediaInfo?.messageType || ownMediaInfo?.messageType || rawMessageType,
-      mediaUrl: mediaInfo?.mediaUrl || ownMediaInfo?.mediaUrl,
-      mediaFileName: mediaInfo?.mediaFileName || ownMediaInfo?.mediaFileName,
+      messageType: mediaInfo?.messageType || rawMessageType,
+      mediaUrl: mediaInfo?.mediaUrl,
+      mediaFileName: mediaInfo?.mediaFileName,
       spoiler: raw.spoiler ?? false,
     });
   }

@@ -202,7 +202,19 @@ function ChatView({
                 wallet,
                 conversation.participants || []
             );
-            setMessages(msgs);
+            // Merge with existing messages to preserve locally-known media data.
+            // The sender can't re-decrypt their own messages (encrypted for recipient),
+            // so mediaUrl from sendMessage() would be lost on re-fetch without this.
+            setMessages(prev => {
+                if (prev.length === 0) return msgs;
+                const existing = new Map(prev.map(m => [m.id, m]));
+                return msgs.map(m => {
+                    const old = existing.get(m.id);
+                    // If we already had media data but re-fetch lost it, keep the old message
+                    if (old?.mediaUrl && !m.mediaUrl) return { ...m, mediaUrl: old.mediaUrl, mediaFileName: old.mediaFileName, messageType: old.messageType, plaintext: old.plaintext };
+                    return m;
+                });
+            });
         } catch (err) { console.error(err); }
         setIsLoading(false);
     };
@@ -370,8 +382,8 @@ function ChatView({
                     <button
                         onClick={() => setSpoiler(!spoiler)}
                         className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] transition-colors ${spoiler
-                                ? "bg-amber-500/20 text-amber-500"
-                                : "text-muted-foreground hover:text-foreground"
+                            ? "bg-amber-500/20 text-amber-500"
+                            : "text-muted-foreground hover:text-foreground"
                             }`}
                     >
                         <EyeOff className="w-3 h-3" />

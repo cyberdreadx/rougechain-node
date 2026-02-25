@@ -402,6 +402,18 @@ export async function getMessages(
                 plaintext = "[Unable to decrypt]";
             }
 
+            // Detect garbage decryption output — if most chars are non-printable,
+            // the wrong key was used and decryption produced nonsense
+            if (plaintext !== "[Unable to decrypt]" && plaintext.length > 20) {
+                const nonPrintable = [...plaintext].filter(c => {
+                    const code = c.charCodeAt(0);
+                    return code < 32 && code !== 10 && code !== 13 && code !== 9;
+                }).length;
+                if (nonPrintable / plaintext.length > 0.1) {
+                    plaintext = "[Unable to decrypt]";
+                }
+            }
+
             const rawMsgType = (raw.message_type || raw.messageType || "text") as MessageType;
 
             // Always try to parse media from decrypted plaintext —

@@ -525,7 +525,21 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
       // Update seen messages
       msgs.forEach(msg => seenMessageIdsRef.current.add(msg.id));
 
-      setMessages(msgs);
+      // Merge with existing messages to preserve locally-known media data.
+      // The sender can't re-decrypt their own messages (encrypted for recipient),
+      // so mediaUrl from sendMessage() would be lost on re-fetch without this.
+      setMessages(prev => {
+        if (prev.length === 0) return msgs;
+        const existing = new Map(prev.map(m => [m.id, m]));
+        return msgs.map(m => {
+          const old = existing.get(m.id);
+          // If we had media data but re-fetch lost it, keep the old message data
+          if (old?.mediaUrl && !m.mediaUrl) {
+            return { ...m, mediaUrl: old.mediaUrl, mediaFileName: old.mediaFileName, messageType: old.messageType, plaintext: old.plaintext };
+          }
+          return m;
+        });
+      });
     } catch (error) {
       console.error("Failed to load messages:", error);
     } finally {
