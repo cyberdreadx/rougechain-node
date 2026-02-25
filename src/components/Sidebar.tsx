@@ -170,7 +170,7 @@ export function Sidebar({ children }: SidebarProps) {
   );
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen w-full overflow-x-hidden">
       {/* Mobile Header */}
       <div className="fixed top-0 left-0 right-0 z-50 md:hidden bg-background border-b border-border px-4 py-3 flex items-center gap-3">
         <button 
@@ -216,7 +216,7 @@ export function Sidebar({ children }: SidebarProps) {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 md:ml-16 mt-14 md:mt-0 overflow-x-hidden max-w-full">
+      <main className="flex-1 md:ml-16 mt-14 md:mt-0 overflow-x-hidden min-w-0">
         {children}
       </main>
     </div>
