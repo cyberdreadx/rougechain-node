@@ -520,22 +520,28 @@ export function ValidatorDashboard({
       {/* Validator List */}
       <ValidatorList />
 
-      {/* Staking Dialog */}
+      {/* Staking Dialog - full-screen bottom sheet on mobile, centered modal on desktop */}
       <AnimatePresence>
         {showStaking && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-end md:items-center md:justify-center"
             onClick={(e) => e.target === e.currentTarget && setShowStaking(false)}
           >
+            {/* Mobile: slide-up bottom sheet */}
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-card border border-border rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto p-6"
+              initial={{ opacity: 0, y: 100 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 100 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="bg-card border-t md:border border-border md:rounded-xl rounded-t-2xl shadow-xl w-full md:max-w-md max-h-[95dvh] md:max-h-[90vh] overflow-y-auto p-5 md:p-6"
             >
+              {/* Drag handle for mobile */}
+              <div className="md:hidden flex justify-center mb-4">
+                <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
+              </div>
               <StakingDialog
                 walletId={walletId}
                 signingPublicKey={signingPublicKey}
