@@ -103,7 +103,7 @@ export default function Validators() {
 
         <div className="grid lg:grid-cols-3 gap-6 md:gap-8">
           {/* Main Dashboard */}
-          <div className="lg:col-span-2 order-2 lg:order-1">
+          <div className="lg:col-span-2 order-2 lg:order-1 min-w-0 overflow-hidden">
             <ValidatorDashboard
               walletId={walletId}
               signingPublicKey={signingPublicKey}

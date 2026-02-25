@@ -173,36 +173,36 @@ export function ValidatorDashboard({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0 overflow-hidden w-full">
       {/* Header Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-        <Card className="bg-card/50 backdrop-blur border-border overflow-hidden">
-          <CardContent className="p-3 md:p-4">
-            <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <Shield className="w-4 h-4" />
-              <span className="text-xs">Total Validators</span>
+      <div className="grid grid-cols-2 gap-3">
+        <Card className="bg-card/50 backdrop-blur border-border overflow-hidden min-w-0">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-1.5 text-muted-foreground mb-1 min-w-0">
+              <Shield className="w-3.5 h-3.5 flex-shrink-0" />
+              <span className="text-xs truncate">Total Validators</span>
             </div>
             <div className="text-2xl font-bold">{validators.length}</div>
             <div className="text-xs text-green-500">{activeValidators} active</div>
           </CardContent>
         </Card>
 
-        <Card className="bg-card/50 backdrop-blur border-border overflow-hidden">
-          <CardContent className="p-3 md:p-4">
-            <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <TrendingUp className="w-4 h-4" />
+        <Card className="bg-card/50 backdrop-blur border-border overflow-hidden min-w-0">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-1.5 text-muted-foreground mb-1 min-w-0">
+              <TrendingUp className="w-3.5 h-3.5 flex-shrink-0" />
               <span className="text-xs truncate">Total Staked</span>
             </div>
-            <div className="text-xl md:text-2xl font-bold">{formatStake(totalStake)}</div>
+            <div className="text-xl font-bold truncate">{formatStake(totalStake)}</div>
             <div className="text-xs text-muted-foreground">XRGE</div>
           </CardContent>
         </Card>
 
-        <Card className="bg-card/50 backdrop-blur border-border overflow-hidden">
-          <CardContent className="p-3 md:p-4">
-            <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <Atom className="w-4 h-4" />
-              <span className="text-xs">Quantum Entropy</span>
+        <Card className="bg-card/50 backdrop-blur border-border overflow-hidden min-w-0">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-1.5 text-muted-foreground mb-1 min-w-0">
+              <Atom className="w-3.5 h-3.5 flex-shrink-0" />
+              <span className="text-xs truncate">Quantum Entropy</span>
             </div>
             <div className="text-2xl font-bold">
               {validators.reduce((sum, v) => sum + v.quantumEntropyContributions, 0)}
@@ -211,21 +211,21 @@ export function ValidatorDashboard({
           </CardContent>
         </Card>
 
-        <Card className="bg-card/50 backdrop-blur border-border overflow-hidden">
-          <CardContent className="p-3 md:p-4">
-            <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <Activity className="w-4 h-4 flex-shrink-0" />
-              <span className="text-xs truncate">Validator Votes</span>
+        <Card className="bg-card/50 backdrop-blur border-border overflow-hidden min-w-0">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-1.5 text-muted-foreground mb-1 min-w-0">
+              <Activity className="w-3.5 h-3.5 flex-shrink-0" />
+              <span className="text-xs truncate">Vote Participation</span>
             </div>
-            <div className="text-xl md:text-2xl font-bold">
+            <div className="text-xl font-bold">
               {averageVoteParticipation.toFixed(1)}%
             </div>
             <Progress 
               value={averageVoteParticipation} 
               className="h-1 mt-2" 
             />
-            <div className="text-xs text-muted-foreground mt-2 truncate">
-              Precommit participation (height {voteSummary?.height ?? "—"})
+            <div className="text-xs text-muted-foreground mt-1 truncate">
+              Height {voteSummary?.height ?? "—"}
             </div>
           </CardContent>
         </Card>
@@ -520,22 +520,28 @@ export function ValidatorDashboard({
       {/* Validator List */}
       <ValidatorList />
 
-      {/* Staking Dialog */}
+      {/* Staking Dialog - full-screen bottom sheet on mobile, centered modal on desktop */}
       <AnimatePresence>
         {showStaking && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-end md:items-center md:justify-center"
             onClick={(e) => e.target === e.currentTarget && setShowStaking(false)}
           >
+            {/* Mobile: slide-up bottom sheet */}
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-card border border-border rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto p-6"
+              initial={{ opacity: 0, y: 100 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 100 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="bg-card border-t md:border border-border md:rounded-xl rounded-t-2xl shadow-xl w-full md:max-w-md max-h-[95dvh] md:max-h-[90vh] overflow-y-auto p-5 md:p-6"
             >
+              {/* Drag handle for mobile */}
+              <div className="md:hidden flex justify-center mb-4">
+                <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
+              </div>
               <StakingDialog
                 walletId={walletId}
                 signingPublicKey={signingPublicKey}
