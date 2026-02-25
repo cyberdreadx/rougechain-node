@@ -8,8 +8,7 @@ html,
 body,
 #root {
     width: 380px;
-    min-height: 520px;
-    max-height: 600px;
+    height: 600px;
     margin: 0;
     padding: 0;
     overflow: hidden;

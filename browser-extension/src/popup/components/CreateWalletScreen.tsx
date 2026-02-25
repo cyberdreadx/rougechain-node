@@ -72,7 +72,9 @@ export default function CreateWalletScreen({ onCreated }: Props) {
 
     return (
         <div className="flex flex-col items-center justify-center h-full p-6 bg-background">
-            <img src="/xrge-logo.webp" alt="XRGE" className="w-16 h-16 rounded-2xl mb-4 glow-quantum" />
+            <div className="logo-ring w-16 h-16 mb-4">
+                <img src="/xrge-logo.webp" alt="XRGE" />
+            </div>
 
             <h1 className="text-lg font-bold text-gradient-quantum mb-1">RougeChain Wallet</h1>
             <p className="text-xs text-muted-foreground text-center mb-6">
