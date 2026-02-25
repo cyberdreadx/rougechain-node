@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import {
     ArrowLeft, Send, Lock, Shield, Plus, Loader2,
-    MessageCircle, CheckCircle2, XCircle, Timer
+    MessageCircle, CheckCircle2, XCircle, Timer,
+    Paperclip, EyeOff, Image as ImageIcon, Video, X
 } from "lucide-react";
 import type { UnifiedWallet } from "../../lib/unified-wallet";
 import { toMessengerWallet } from "../../lib/unified-wallet";
@@ -12,8 +13,11 @@ import {
     sendMessage,
     createConversation,
     registerWalletOnNode,
+    fileToMediaPayload,
+    MAX_MEDIA_SIZE,
     type Conversation,
     type Message,
+    type MessageType,
     type Wallet,
     type WalletWithPrivateKeys,
 } from "../../lib/pqc-messenger";
@@ -183,6 +187,9 @@ function ChatView({
     const [newMessage, setNewMessage] = useState("");
     const [isSending, setIsSending] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
+    const [stagedMedia, setStagedMedia] = useState<{ file: File; previewUrl: string } | null>(null);
+    const [spoiler, setSpoiler] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const prevCountRef = useRef(0);
 
@@ -213,16 +220,53 @@ function ChatView({
         prevCountRef.current = messages.length;
     }, [messages.length]);
 
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (file.size > MAX_MEDIA_SIZE) {
+            alert(`File too large. Max ${MAX_MEDIA_SIZE / (1024 * 1024)} MB.`);
+            return;
+        }
+        if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
+            alert("Only images and videos are supported.");
+            return;
+        }
+        setStagedMedia({ file, previewUrl: URL.createObjectURL(file) });
+        if (fileInputRef.current) fileInputRef.current.value = "";
+    };
+
+    const clearStagedMedia = () => {
+        if (stagedMedia) {
+            URL.revokeObjectURL(stagedMedia.previewUrl);
+            setStagedMedia(null);
+        }
+    };
+
     const handleSend = async () => {
-        if (!newMessage.trim() || !recipient || isSending) return;
-        const text = newMessage.trim();
-        setNewMessage("");
+        if ((!newMessage.trim() && !stagedMedia) || !recipient || isSending) return;
         setIsSending(true);
+
+        let textToSend = newMessage.trim();
+        let msgType: MessageType = "text";
+
+        if (stagedMedia) {
+            try {
+                const { payload, messageType } = await fileToMediaPayload(stagedMedia.file);
+                textToSend = payload;
+                msgType = messageType;
+                clearStagedMedia();
+            } catch (err) {
+                alert(err instanceof Error ? err.message : "Failed to process media.");
+                setIsSending(false);
+                return;
+            }
+        }
+
+        setNewMessage("");
 
         try {
             const recipientKey = recipient.encryptionPublicKey;
             if (!recipientKey) {
-                // Try fetching latest keys
                 const wallets = await getWallets();
                 const match = wallets.find(w => w.id === recipient.id);
                 if (!match?.encryptionPublicKey) {
@@ -231,12 +275,14 @@ function ChatView({
                     return;
                 }
                 const msg = await sendMessage(
-                    conversation.id, text, wallet, match.encryptionPublicKey
+                    conversation.id, textToSend, wallet, match.encryptionPublicKey,
+                    false, undefined, msgType, spoiler
                 );
                 setMessages(prev => [...prev, msg]);
             } else {
                 const msg = await sendMessage(
-                    conversation.id, text, wallet, recipientKey
+                    conversation.id, textToSend, wallet, recipientKey,
+                    false, undefined, msgType, spoiler
                 );
                 setMessages(prev => [...prev, msg]);
             }
@@ -244,6 +290,7 @@ function ChatView({
             console.error("Send failed:", err);
         }
         setIsSending(false);
+        setSpoiler(false);
     };
 
     return (
@@ -284,32 +331,7 @@ function ChatView({
                         const isOwn = msg.senderWalletId === wallet.id ||
                             msg.senderWalletId === wallet.signingPublicKey;
                         return (
-                            <div key={msg.id} className={`flex ${isOwn ? "justify-end" : "justify-start"}`}>
-                                <div className={`max-w-[80%] rounded-xl px-3 py-1.5 ${isOwn
-                                        ? "bg-primary text-primary-foreground rounded-br-sm"
-                                        : "bg-muted text-foreground rounded-bl-sm"
-                                    }`}>
-                                    {!isOwn && (
-                                        <p className="text-[10px] font-medium opacity-60 mb-0.5">
-                                            {msg.senderDisplayName}
-                                        </p>
-                                    )}
-                                    <p className="text-xs whitespace-pre-wrap break-words">
-                                        {msg.plaintext?.startsWith("[Unable") ? (
-                                            <span className="italic opacity-60">{msg.plaintext}</span>
-                                        ) : msg.plaintext}
-                                    </p>
-                                    <div className={`flex items-center gap-1 mt-0.5 text-[10px] ${isOwn ? "justify-end" : ""}`}>
-                                        <span className="opacity-50">{formatTime(msg.createdAt)}</span>
-                                        {msg.selfDestruct && <Timer className="w-2.5 h-2.5 text-destructive" />}
-                                        {msg.signatureValid ? (
-                                            <CheckCircle2 className="w-2.5 h-2.5 text-success" />
-                                        ) : (
-                                            <XCircle className="w-2.5 h-2.5 text-destructive" />
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
+                            <MessageBubble key={msg.id} msg={msg} isOwn={isOwn} />
                         );
                     })
                 )}
@@ -317,26 +339,162 @@ function ChatView({
             </div>
 
             {/* Input */}
-            <div className="flex items-center gap-2 px-2 py-2 border-t border-border bg-card/50">
-                <input
-                    type="text"
-                    placeholder="Type a message..."
-                    value={newMessage}
-                    onChange={e => setNewMessage(e.target.value)}
-                    onKeyDown={e => e.key === "Enter" && handleSend()}
-                    className="flex-1 px-3 py-1.5 rounded-lg bg-input border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                />
-                <button
-                    onClick={handleSend}
-                    disabled={!newMessage.trim() || isSending}
-                    className="w-8 h-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 disabled:opacity-40 transition-colors"
-                >
-                    {isSending ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                        <Send className="w-3.5 h-3.5" />
+            <div className="border-t border-border bg-card/50">
+                {/* Staged media preview */}
+                {stagedMedia && (
+                    <div className="px-2 pt-2 flex items-center gap-2">
+                        <div className="relative rounded border border-border bg-muted/50 max-w-[100px]">
+                            {stagedMedia.file.type.startsWith("video/") ? (
+                                <div className="flex items-center gap-1 p-1.5">
+                                    <Video className="w-3.5 h-3.5 text-primary" />
+                                    <span className="text-[10px] truncate max-w-[60px]">{stagedMedia.file.name}</span>
+                                </div>
+                            ) : (
+                                <img src={stagedMedia.previewUrl} alt="Preview" className="max-h-[50px] w-auto rounded" />
+                            )}
+                            <button
+                                onClick={clearStagedMedia}
+                                className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center"
+                            >
+                                <X className="w-2.5 h-2.5" />
+                            </button>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground truncate">
+                            {(stagedMedia.file.size / 1024).toFixed(0)} KB
+                        </span>
+                    </div>
+                )}
+
+                {/* Spoiler toggle */}
+                <div className="px-2 pt-1.5 flex items-center gap-1.5">
+                    <button
+                        onClick={() => setSpoiler(!spoiler)}
+                        className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] transition-colors ${spoiler
+                                ? "bg-amber-500/20 text-amber-500"
+                                : "text-muted-foreground hover:text-foreground"
+                            }`}
+                    >
+                        <EyeOff className="w-3 h-3" />
+                        Spoiler
+                    </button>
+                </div>
+
+                <div className="flex items-center gap-2 px-2 py-2">
+                    {/* Hidden file input */}
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*,video/*"
+                        onChange={handleFileSelect}
+                        className="hidden"
+                    />
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isSending}
+                        className="text-muted-foreground hover:text-foreground disabled:opacity-40 transition-colors"
+                        title="Attach image or video"
+                    >
+                        <Paperclip className="w-3.5 h-3.5" />
+                    </button>
+                    <input
+                        type="text"
+                        placeholder={stagedMedia ? "Caption (optional)..." : "Type a message..."}
+                        value={newMessage}
+                        onChange={e => setNewMessage(e.target.value)}
+                        onKeyDown={e => e.key === "Enter" && handleSend()}
+                        className="flex-1 px-3 py-1.5 rounded-lg bg-input border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                    <button
+                        onClick={handleSend}
+                        disabled={(!newMessage.trim() && !stagedMedia) || isSending}
+                        className="w-8 h-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 disabled:opacity-40 transition-colors"
+                    >
+                        {isSending ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                            <Send className="w-3.5 h-3.5" />
+                        )}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// Compact message bubble with media + spoiler support
+function MessageBubble({ msg, isOwn }: { msg: Message; isOwn: boolean }) {
+    const [revealed, setRevealed] = useState(false);
+    const isSpoiler = msg.spoiler && !revealed;
+
+    return (
+        <div className={`flex ${isOwn ? "justify-end" : "justify-start"}`}>
+            <div className={`max-w-[80%] rounded-xl px-3 py-1.5 ${isOwn
+                ? "bg-primary text-primary-foreground rounded-br-sm"
+                : "bg-muted text-foreground rounded-bl-sm"
+                }`}>
+                {!isOwn && (
+                    <p className="text-[10px] font-medium opacity-60 mb-0.5">
+                        {msg.senderDisplayName}
+                    </p>
+                )}
+
+                {/* Content with spoiler support */}
+                <div className="relative">
+                    {isSpoiler && (
+                        <div
+                            onClick={() => setRevealed(true)}
+                            className="absolute inset-0 z-10 flex items-center justify-center cursor-pointer rounded"
+                            style={{ backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}
+                        >
+                            <div className="flex items-center gap-1 text-[10px] opacity-70">
+                                <EyeOff className="w-3 h-3" />
+                                <span>{msg.messageType !== "text" ? "SPOILER" : "Tap to reveal"}</span>
+                            </div>
+                        </div>
                     )}
-                </button>
+                    <div className={isSpoiler ? "select-none" : ""}>
+                        {msg.mediaUrl && msg.messageType === "image" ? (
+                            <div className="my-1">
+                                <img
+                                    src={msg.mediaUrl}
+                                    alt={msg.mediaFileName || "Image"}
+                                    className={`max-w-full rounded max-h-[150px] object-contain transition-all duration-300 ${isSpoiler ? "blur-xl" : ""}`}
+                                />
+                                {msg.mediaFileName && !isSpoiler && (
+                                    <p className="text-[9px] opacity-40 mt-0.5">{msg.mediaFileName}</p>
+                                )}
+                            </div>
+                        ) : msg.mediaUrl && msg.messageType === "video" ? (
+                            <div className="my-1">
+                                <video
+                                    src={isSpoiler ? undefined : msg.mediaUrl}
+                                    controls={!isSpoiler}
+                                    className={`max-w-full rounded max-h-[150px] transition-all duration-300 ${isSpoiler ? "blur-xl" : ""}`}
+                                />
+                                {msg.mediaFileName && !isSpoiler && (
+                                    <p className="text-[9px] opacity-40 mt-0.5">{msg.mediaFileName}</p>
+                                )}
+                            </div>
+                        ) : (
+                            <p className={`text-xs whitespace-pre-wrap break-words transition-all duration-300 ${isSpoiler ? "blur-md" : ""}`}>
+                                {msg.plaintext?.startsWith("[Unable") ? (
+                                    <span className="italic opacity-60">{msg.plaintext}</span>
+                                ) : msg.plaintext}
+                            </p>
+                        )}
+                    </div>
+                </div>
+
+                <div className={`flex items-center gap-1 mt-0.5 text-[10px] ${isOwn ? "justify-end" : ""}`}>
+                    <span className="opacity-50">{formatTime(msg.createdAt)}</span>
+                    {msg.spoiler && <EyeOff className="w-2.5 h-2.5 opacity-50" />}
+                    {msg.selfDestruct && <Timer className="w-2.5 h-2.5 text-destructive" />}
+                    {msg.signatureValid ? (
+                        <CheckCircle2 className="w-2.5 h-2.5 text-success" />
+                    ) : (
+                        <XCircle className="w-2.5 h-2.5 text-destructive" />
+                    )}
+                </div>
             </div>
         </div>
     );

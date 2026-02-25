@@ -321,6 +321,8 @@ impl MessengerService for GrpcNode {
             destruct_after_seconds: if req.destruct_after_seconds == 0 { None } else { Some(req.destruct_after_seconds) },
             created_at: chrono::Utc::now().to_rfc3339(),
             is_read: false,
+            message_type: "text".to_string(),
+            spoiler: false,
         };
         let stored = self.node.send_message(message).map_err(|e| Status::internal(e))?;
         Ok(Response::new(map_message(stored)))
