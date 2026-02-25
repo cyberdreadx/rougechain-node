@@ -322,7 +322,7 @@ const Messenger = () => {
       </div>
 
       {/* Main content */}
-      <main className="relative z-10 flex-1 flex overflow-hidden">
+      <main className="relative z-10 flex-1 flex overflow-hidden min-w-0">
         {/* Conversation list */}
         <div className={`w-full sm:w-80 border-r border-border ${selectedConversation ? 'hidden sm:block' : ''}`}>
           <ConversationList
@@ -340,7 +340,7 @@ const Messenger = () => {
         </div>
 
         {/* Chat view */}
-        <div className={`flex-1 overflow-hidden ${!selectedConversation ? 'hidden sm:flex' : 'flex'}`}>
+        <div className={`flex-1 overflow-hidden min-w-0 ${!selectedConversation ? 'hidden sm:flex' : 'flex'}`}>
           {selectedConversation && messengerWallet ? (
             <ChatView
               conversation={selectedConversation}
