@@ -173,7 +173,7 @@ export async function claimFaucet(publicKey: string): Promise<any> {
     const res = await fetch(`${baseUrl}/faucet`, {
         method: "POST",
         headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ address: publicKey }),
+        body: JSON.stringify({ recipientPublicKey: publicKey }),
     });
 
     if (!res.ok) {
