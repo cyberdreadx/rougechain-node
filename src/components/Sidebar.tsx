@@ -216,7 +216,7 @@ export function Sidebar({ children }: SidebarProps) {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 md:ml-16 mt-14 md:mt-0">
+      <main className="flex-1 md:ml-16 mt-14 md:mt-0 overflow-x-hidden max-w-full">
         {children}
       </main>
     </div>
