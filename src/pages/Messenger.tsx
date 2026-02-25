@@ -13,7 +13,7 @@ import SwapWidget from "@/components/messenger/SwapWidget";
 import WalletBackup from "@/components/wallet/WalletBackup";
 import type { Conversation, Wallet, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
 import { getConversations, getWallets, saveWalletLocally, registerWalletOnNode } from "@/lib/pqc-messenger";
-import { 
+import {
   UnifiedWallet,
   VaultSettings,
   getVaultSettings,
@@ -21,10 +21,10 @@ import {
   unlockUnifiedWallet,
   isWalletLocked,
   getLockedWalletMetadata,
-  loadUnifiedWallet, 
-  saveUnifiedWallet, 
-  toMessengerWallet, 
-  fromMessengerWallet 
+  loadUnifiedWallet,
+  saveUnifiedWallet,
+  toMessengerWallet,
+  fromMessengerWallet
 } from "@/lib/unified-wallet";
 
 const Messenger = () => {
@@ -59,6 +59,11 @@ const Messenger = () => {
     if (wallet) {
       loadConversations();
       loadContacts();
+      // Poll for new conversations every 5 seconds so recipients discover incoming chats
+      const interval = setInterval(() => {
+        loadConversations();
+      }, 5000);
+      return () => clearInterval(interval);
     }
   }, [wallet]);
 
@@ -80,26 +85,26 @@ const Messenger = () => {
     try {
       const wallets = await getWallets();
       // Filter out our own wallet by checking all identifiers
-      const filtered = wallets.filter(w => 
+      const filtered = wallets.filter(w =>
         w.id !== wallet?.id &&
         w.id !== wallet?.signingPublicKey &&
         w.signingPublicKey !== wallet?.signingPublicKey &&
         w.encryptionPublicKey !== wallet?.encryptionPublicKey
       );
-      
+
       // Remove duplicates - keep the one with a non-generic name, or the latest
       const uniqueMap = new Map<string, typeof filtered[0]>();
       for (const w of filtered) {
         const key = w.signingPublicKey || w.encryptionPublicKey || w.id;
         const existing = uniqueMap.get(key);
         // Prefer wallet with custom name over "My Wallet" or empty
-        if (!existing || 
-            (existing.displayName === "My Wallet" && w.displayName !== "My Wallet") ||
-            (!existing.displayName && w.displayName)) {
+        if (!existing ||
+          (existing.displayName === "My Wallet" && w.displayName !== "My Wallet") ||
+          (!existing.displayName && w.displayName)) {
           uniqueMap.set(key, w);
         }
       }
-      
+
       setContacts(Array.from(uniqueMap.values()));
     } catch (error) {
       console.error("Failed to load contacts:", error);
@@ -107,8 +112,8 @@ const Messenger = () => {
   };
 
   // Convert wallet to messenger format for components
-  const messengerWallet = useMemo(() => 
-    wallet ? toMessengerWallet(wallet) as WalletWithPrivateKeys : null, 
+  const messengerWallet = useMemo(() =>
+    wallet ? toMessengerWallet(wallet) as WalletWithPrivateKeys : null,
     [wallet]
   );
 
@@ -176,7 +181,7 @@ const Messenger = () => {
       }
       console.log("Registering wallet with encryption key:", wallet.encryptionPublicKey.slice(0, 32) + "...");
       await registerWalletOnNode({
-        id: wallet.signingPublicKey, // Always use signingPublicKey as ID for consistency
+        id: wallet.id, // Use wallet UUID to match conversation participant IDs
         displayName: wallet.displayName,
         signingPublicKey: wallet.signingPublicKey,
         encryptionPublicKey: wallet.encryptionPublicKey,
@@ -243,7 +248,7 @@ const Messenger = () => {
 
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">
-      
+
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
       <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
@@ -256,7 +261,7 @@ const Messenger = () => {
             <span className="text-sm font-medium text-foreground truncate">
               {wallet.displayName}
             </span>
-            <button 
+            <button
               className="flex items-center gap-1 text-xs text-muted-foreground font-mono hover:text-foreground transition-colors"
               onClick={() => {
                 navigator.clipboard.writeText(wallet.signingPublicKey);
@@ -369,8 +374,8 @@ const Messenger = () => {
       {/* Privacy settings modal */}
       <AnimatePresence>
         {showPrivacySettings && (
-          <PrivacySettings 
-            onClose={() => setShowPrivacySettings(false)} 
+          <PrivacySettings
+            onClose={() => setShowPrivacySettings(false)}
             onProfileUpdated={() => {
               // Refresh wallet state
               const updated = loadUnifiedWallet();
