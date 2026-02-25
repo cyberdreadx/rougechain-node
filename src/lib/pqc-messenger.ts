@@ -261,9 +261,9 @@ async function decryptMessage(
   const contentBytes = hexToBytes(encryptedData.encryptedContent);
 
   const decryptedBytes = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: ivBytes },
+    { name: "AES-GCM", iv: new Uint8Array(ivBytes.buffer.slice(ivBytes.byteOffset, ivBytes.byteOffset + ivBytes.byteLength)) as BufferSource },
     aesKey,
-    contentBytes
+    new Uint8Array(contentBytes.buffer.slice(contentBytes.byteOffset, contentBytes.byteOffset + contentBytes.byteLength)) as BufferSource
   );
 
   const plaintext = new TextDecoder().decode(decryptedBytes);
