@@ -191,9 +191,9 @@ export function ValidatorDashboard({
           <CardContent className="p-3 md:p-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
               <TrendingUp className="w-4 h-4" />
-              <span className="text-xs">Total Staked</span>
+              <span className="text-xs truncate">Total Staked</span>
             </div>
-            <div className="text-2xl font-bold">{formatStake(totalStake)}</div>
+            <div className="text-xl md:text-2xl font-bold">{formatStake(totalStake)}</div>
             <div className="text-xs text-muted-foreground">XRGE</div>
           </CardContent>
         </Card>
@@ -217,7 +217,7 @@ export function ValidatorDashboard({
               <Activity className="w-4 h-4 flex-shrink-0" />
               <span className="text-xs truncate">Validator Votes</span>
             </div>
-            <div className="text-2xl font-bold">
+            <div className="text-xl md:text-2xl font-bold">
               {averageVoteParticipation.toFixed(1)}%
             </div>
             <Progress 
