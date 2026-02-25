@@ -1,0 +1,58 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+    width: 400px;
+    min-height: 560px;
+    max-height: 600px;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: hsl(220 20% 4%);
+    color: hsl(180 100% 95%);
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+* {
+    box-sizing: border-box;
+    border-color: hsl(220 30% 18%);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 4px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: hsl(220 30% 25%);
+    border-radius: 4px;
+}
+
+/* Circuit grid background */
+.circuit-bg {
+    background-image:
+        linear-gradient(hsl(220 30% 20%) 1px, transparent 1px),
+        linear-gradient(90deg, hsl(220 30% 20%) 1px, transparent 1px);
+    background-size: 40px 40px;
+}
+
+/* Quantum glow effect */
+.glow-quantum {
+    box-shadow: 0 0 20px hsl(175 85% 50% / 0.3), 0 0 40px hsl(175 85% 50% / 0.1);
+}
+
+.text-gradient-quantum {
+    background: linear-gradient(135deg, hsl(175 85% 50%), hsl(200 90% 45%), hsl(280 80% 60%));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
