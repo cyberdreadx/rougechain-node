@@ -247,14 +247,14 @@ const Messenger = () => {
   }
 
   return (
-    <div className="h-screen md:h-screen flex flex-col overflow-hidden overflow-x-hidden" style={{ height: '100dvh' }}>
+    <div className="flex flex-col overflow-hidden h-[calc(100dvh-3.5rem)] md:h-dvh max-w-full">
 
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
 
       {/* Action Bar */}
-      <div className="sticky top-0 z-40 flex items-center justify-between px-4 py-2 bg-background/80 backdrop-blur-sm border-b border-border w-full min-w-0">
+      <div className="sticky top-0 z-40 flex items-center justify-between px-2 sm:px-4 py-2 bg-background/80 backdrop-blur-sm border-b border-border gap-1 overflow-x-hidden w-full min-w-0">
         <div className="flex items-center gap-2 min-w-0">
           <Key className="w-4 h-4 text-primary flex-shrink-0" />
           <div className="flex flex-col min-w-0">
@@ -276,7 +276,7 @@ const Messenger = () => {
             </button>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
           <Button
             variant="ghost"
             size="icon"
@@ -312,8 +312,18 @@ const Messenger = () => {
           </Button>
           <Button
             variant="outline"
+            size="icon"
+            onClick={() => setShowContactPicker(true)}
+            title="New Chat"
+            className="sm:hidden"
+          >
+            <Plus className="w-4 h-4" />
+          </Button>
+          <Button
+            variant="outline"
             size="sm"
             onClick={() => setShowContactPicker(true)}
+            className="hidden sm:flex"
           >
             <Plus className="w-4 h-4 mr-1" />
             New Chat
@@ -340,7 +350,7 @@ const Messenger = () => {
         </div>
 
         {/* Chat view */}
-        <div className={`flex-1 overflow-hidden ${!selectedConversation ? 'hidden sm:flex' : 'flex'}`}>
+        <div className={`flex-1 overflow-hidden min-w-0 ${!selectedConversation ? 'hidden sm:flex' : 'flex'}`}>
           {selectedConversation && messengerWallet ? (
             <ChatView
               conversation={selectedConversation}

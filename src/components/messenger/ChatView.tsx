@@ -607,7 +607,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden">
+    <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
       {/* Chat header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-card/50">
         <Button
@@ -661,7 +661,7 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 space-y-4">
         {isLoading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -976,10 +976,18 @@ const MessageBubble = ({
         whileHover={{ scale: 1.01 }}
         whileTap={{ scale: 0.98 }}
         onClick={onTap}
+<<<<<<< HEAD
         className={`w-full max-w-[85%] sm:max-w-[80%] rounded-2xl px-4 py-2 cursor-pointer transition-shadow hover:shadow-lg break-words ${isOwn
           ? "bg-primary text-primary-foreground rounded-br-md hover:shadow-primary/20"
           : "bg-muted text-foreground rounded-bl-md hover:shadow-accent/20"
           }`}
+=======
+        className={`max-w-[80%] rounded-2xl px-4 py-2 cursor-pointer transition-shadow hover:shadow-lg break-words ${
+          isOwn
+            ? "bg-primary text-primary-foreground rounded-br-md hover:shadow-primary/20"
+            : "bg-muted text-foreground rounded-bl-md hover:shadow-accent/20"
+        }`}
+>>>>>>> 9854c2acc9e076a54911b3397048b78827d82e06
       >
         {!isOwn && (
           <p className="text-xs font-medium mb-1 opacity-70">

@@ -175,9 +175,9 @@ export function ValidatorDashboard({
   return (
     <div className="space-y-6">
       {/* Header Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="bg-card/50 backdrop-blur border-border">
-          <CardContent className="p-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+        <Card className="bg-card/50 backdrop-blur border-border overflow-hidden">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
               <Shield className="w-4 h-4" />
               <span className="text-xs">Total Validators</span>
@@ -187,19 +187,19 @@ export function ValidatorDashboard({
           </CardContent>
         </Card>
 
-        <Card className="bg-card/50 backdrop-blur border-border">
-          <CardContent className="p-4">
+        <Card className="bg-card/50 backdrop-blur border-border overflow-hidden">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
               <TrendingUp className="w-4 h-4" />
-              <span className="text-xs">Total Staked</span>
+              <span className="text-xs truncate">Total Staked</span>
             </div>
-            <div className="text-2xl font-bold">{formatStake(totalStake)}</div>
+            <div className="text-xl md:text-2xl font-bold">{formatStake(totalStake)}</div>
             <div className="text-xs text-muted-foreground">XRGE</div>
           </CardContent>
         </Card>
 
-        <Card className="bg-card/50 backdrop-blur border-border">
-          <CardContent className="p-4">
+        <Card className="bg-card/50 backdrop-blur border-border overflow-hidden">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
               <Atom className="w-4 h-4" />
               <span className="text-xs">Quantum Entropy</span>
@@ -211,21 +211,21 @@ export function ValidatorDashboard({
           </CardContent>
         </Card>
 
-        <Card className="bg-card/50 backdrop-blur border-border">
-          <CardContent className="p-4">
+        <Card className="bg-card/50 backdrop-blur border-border overflow-hidden">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <Activity className="w-4 h-4" />
-              <span className="text-xs">Validator Votes</span>
+              <Activity className="w-4 h-4 flex-shrink-0" />
+              <span className="text-xs truncate">Validator Votes</span>
             </div>
-            <div className="text-2xl font-bold">
+            <div className="text-xl md:text-2xl font-bold">
               {averageVoteParticipation.toFixed(1)}%
             </div>
             <Progress 
               value={averageVoteParticipation} 
               className="h-1 mt-2" 
             />
-            <div className="text-xs text-muted-foreground mt-2">
-              Precommit participation (last {voteSummary?.height ?? "—"} height)
+            <div className="text-xs text-muted-foreground mt-2 truncate">
+              Precommit participation (height {voteSummary?.height ?? "—"})
             </div>
           </CardContent>
         </Card>
@@ -260,7 +260,7 @@ export function ValidatorDashboard({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
             {(Object.keys(STAKE_REQUIREMENTS) as ValidatorTier[]).map((tier) => {
               const TierIcon = tierConfig[tier].icon;
               const count = tierCounts[tier] || 0;

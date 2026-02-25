@@ -619,11 +619,11 @@ const Wallet = () => {
             {wallet && (
               <div className="flex items-center gap-2">
                 {wsConnectionType === "websocket" ? (
-                  <Wifi className="w-3 h-3 text-green-500" title="Live updates via WebSocket" />
+                  <Wifi className="w-3 h-3 text-green-500" />
                 ) : wsConnectionType === "polling" ? (
-                  <RefreshCw className="w-3 h-3 text-amber-500" title="Polling for updates" />
+                  <RefreshCw className="w-3 h-3 text-amber-500" />
                 ) : (
-                  <WifiOff className="w-3 h-3 text-destructive" title="Disconnected" />
+                  <WifiOff className="w-3 h-3 text-destructive" />
                 )}
                 <span className="text-[11px] text-muted-foreground hidden sm:inline">
                   {formatLastUpdated(lastUpdated)}

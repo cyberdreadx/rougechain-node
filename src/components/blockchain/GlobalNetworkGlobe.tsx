@@ -234,6 +234,7 @@ const ConnectionLine = ({ start, end, index }: ConnectionLineProps) => {
   return (
     <group>
       {/* The curved line - deep red/magenta glow */}
+      {/* @ts-ignore - R3F line element */}
       <line geometry={geometry} frustumCulled={false}>
         <lineBasicMaterial color="#ff1744" transparent opacity={0.15} />
       </line>

@@ -266,7 +266,7 @@ const Transactions = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background relative overflow-hidden">
+    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background relative overflow-x-hidden">
 
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
@@ -381,9 +381,9 @@ const Transactions = () => {
               )}
               {paginatedTxs.map((tx) => (
                 <div
-                  key={tx.id}
-                  className="rounded-lg border border-border bg-background/60 p-3 space-y-2 cursor-pointer hover:border-primary/50 transition-colors"
-                  onClick={() => setSelectedTx(tx)}
+                   key={tx.id}
+                   className="rounded-lg border border-border bg-background/60 p-3 space-y-2 cursor-pointer hover:border-primary/50 transition-colors overflow-hidden"
+                   onClick={() => setSelectedTx(tx)}
                 >
                   <div className="flex items-center justify-between">
                     <Badge variant="secondary">{labelForType(tx.type)}</Badge>
@@ -453,7 +453,7 @@ const Transactions = () => {
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Block Hash</div>
-                      <div className="font-mono">{truncateHash(tx.blockHash, 10, 8)}</div>
+                      <div className="font-mono text-xs truncate max-w-full">{truncateHash(tx.blockHash, 8, 6)}</div>
                     </div>
                   </div>
                 </div>
