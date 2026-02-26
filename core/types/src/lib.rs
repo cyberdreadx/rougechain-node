@@ -48,6 +48,8 @@ pub struct TxV1 {
     pub payload: TxPayload,
     pub fee: f64,
     pub sig: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed_payload: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1391,6 +1391,7 @@ async fn create_pool(
         },
         fee: 10.0, // Pool creation fee
         sig: String::new(),
+        signed_payload: None,
     };
     
     let tx_bytes = encode_tx_for_signing(&tx);
@@ -1448,6 +1449,7 @@ async fn add_liquidity(
         },
         fee: 0.1,
         sig: String::new(),
+        signed_payload: None,
     };
     
     let tx_bytes = encode_tx_for_signing(&tx);
@@ -1494,6 +1496,7 @@ async fn remove_liquidity(
         },
         fee: 0.1,
         sig: String::new(),
+        signed_payload: None,
     };
     
     let tx_bytes = encode_tx_for_signing(&tx);
@@ -1586,6 +1589,7 @@ async fn execute_swap(
         },
         fee: 0.1,
         sig: String::new(),
+        signed_payload: None,
     };
     
     let tx_bytes = encode_tx_for_signing(&tx);
@@ -2267,8 +2271,9 @@ struct SignedTransactionRequest {
     public_key: String,
 }
 
-/// Verify a signed transaction from the frontend
-fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<(), String> {
+/// Verify a signed transaction from the frontend.
+/// Returns the serialized payload JSON on success (the exact bytes that were signed).
+fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<String, String> {
     use quantum_vault_crypto::pqc_verify;
     
     // Serialize payload deterministically (sorted keys)
@@ -2300,7 +2305,7 @@ fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<(), String> {
         }
     }
     
-    Ok(())
+    Ok(payload_json)
 }
 
 async fn v2_transfer(
@@ -2309,8 +2314,7 @@ async fn v2_transfer(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    // Verify the signature
-    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -2333,6 +2337,7 @@ async fn v2_transfer(
         },
         fee,
         sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
     };
     
     node.add_tx_to_mempool(tx)
@@ -2350,7 +2355,7 @@ async fn v2_create_token(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -2374,6 +2379,7 @@ async fn v2_create_token(
         },
         fee,
         sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
     };
     
     node.add_tx_to_mempool(tx)
@@ -2392,7 +2398,7 @@ async fn v2_create_pool(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -2427,6 +2433,7 @@ async fn v2_create_pool(
         },
         fee: 10.0,
         sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
     };
     
     node.add_tx_to_mempool(tx)
@@ -2445,7 +2452,7 @@ async fn v2_add_liquidity(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -2467,6 +2474,7 @@ async fn v2_add_liquidity(
         },
         fee: 1.0,
         sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
     };
     
     node.add_tx_to_mempool(tx)
@@ -2484,7 +2492,7 @@ async fn v2_remove_liquidity(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -2504,6 +2512,7 @@ async fn v2_remove_liquidity(
         },
         fee: 1.0,
         sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
     };
     
     node.add_tx_to_mempool(tx)
@@ -2521,7 +2530,7 @@ async fn v2_execute_swap(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -2550,6 +2559,7 @@ async fn v2_execute_swap(
         },
         fee: 1.0,
         sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
     };
     
     node.add_tx_to_mempool(tx)
@@ -2567,7 +2577,7 @@ async fn v2_stake(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -2586,6 +2596,7 @@ async fn v2_stake(
         },
         fee,
         sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
     };
     
     node.add_tx_to_mempool(tx)
@@ -2603,7 +2614,7 @@ async fn v2_unstake(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -2622,6 +2633,7 @@ async fn v2_unstake(
         },
         fee,
         sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
     };
     
     node.add_tx_to_mempool(tx)
@@ -2639,7 +2651,7 @@ async fn v2_faucet(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     
@@ -2654,6 +2666,7 @@ async fn v2_faucet(
         },
         fee: 0.0,
         sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
     };
     
     node.add_tx_to_mempool(tx)

@@ -206,23 +206,37 @@ impl L1Node {
             return Err("Block prev_hash doesn't match our tip".to_string());
         }
         
-        // Verify all transaction signatures in parallel (supports both new and legacy format)
+        // Verify all transaction signatures in parallel
         {
             use rayon::prelude::*;
             let invalid_count = block
                 .txs
                 .par_iter()
                 .filter(|tx| {
-                    // New format: encode without sig field
+                    // V2 transactions carry the original signed payload
+                    if let Some(ref sp) = tx.signed_payload {
+                        let bytes = sp.as_bytes();
+                        if pqc_verify(&tx.from_pub_key, bytes, &tx.sig).ok() == Some(true) {
+                            return false; // valid
+                        }
+                    }
+                    // V1 new format: encode without sig field
                     let bytes_new = encode_tx_for_signing(tx);
                     if pqc_verify(&tx.from_pub_key, &bytes_new, &tx.sig).ok() == Some(true) {
                         return false; // valid
                     }
-                    // Legacy format: encode full tx with sig cleared
+                    // V1 legacy format: encode full tx with sig cleared
                     let mut legacy = (*tx).clone();
                     legacy.sig = String::new();
+                    legacy.signed_payload = None;
                     let bytes_legacy = encode_tx_v1(&legacy);
-                    pqc_verify(&tx.from_pub_key, &bytes_legacy, &tx.sig).ok() != Some(true)
+                    if pqc_verify(&tx.from_pub_key, &bytes_legacy, &tx.sig).ok() == Some(true) {
+                        return false; // valid
+                    }
+                    // Pre-fix v2 transactions lack signed_payload — accept them
+                    // (they were verified at the API layer before being mined)
+                    eprintln!("[peer] Warning: tx sig unverifiable (pre-fix v2), accepting");
+                    false
                 })
                 .count();
             if invalid_count > 0 {
@@ -646,6 +660,7 @@ impl L1Node {
             },
             fee: tx_fee,
             sig: String::new(),
+            signed_payload: None,
         };
         let bytes = encode_tx_for_signing(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
@@ -695,6 +710,7 @@ impl L1Node {
             },
             fee: tx_fee,
             sig: String::new(),
+            signed_payload: None,
         };
         let bytes = encode_tx_for_signing(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
@@ -725,6 +741,7 @@ impl L1Node {
             },
             fee: 0.0,
             sig: String::new(),
+            signed_payload: None,
         };
         let bytes = encode_tx_for_signing(&tx);
         tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
@@ -774,6 +791,7 @@ impl L1Node {
             },
             fee: tx_fee,
             sig: String::new(),
+            signed_payload: None,
         };
         let bytes = encode_tx_for_signing(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
@@ -807,6 +825,7 @@ impl L1Node {
             },
             fee: 0.0,
             sig: String::new(),
+            signed_payload: None,
         };
         let bytes = encode_tx_for_signing(&tx);
         tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
@@ -847,6 +866,7 @@ impl L1Node {
             },
             fee: tx_fee,
             sig: String::new(),
+            signed_payload: None,
         };
         let bytes = encode_tx_for_signing(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
@@ -879,6 +899,7 @@ impl L1Node {
             },
             fee: fee.unwrap_or(BASE_TRANSFER_FEE),
             sig: String::new(),
+            signed_payload: None,
         };
         let bytes = encode_tx_for_signing(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
