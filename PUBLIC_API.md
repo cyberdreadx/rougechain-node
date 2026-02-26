@@ -3,9 +3,13 @@
 ## Base URL
 
 ```
-http://YOUR_SERVER_IP:5100/api
-# Or with domain:
-https://your-domain.com/api
+https://testnet.rougechain.io/api
+```
+
+For local development:
+
+```
+http://127.0.0.1:5101/api
 ```
 
 ## Authentication
@@ -352,10 +356,15 @@ All endpoints return errors in this format:
 
 ## Rate Limiting
 
-Currently no rate limiting is implemented. For production, add:
-- Rate limiting per IP
-- Transaction size limits
-- Mempool size limits
+The daemon supports configurable rate limiting via CLI flags:
+
+| Flag | Description |
+|------|-------------|
+| `--rate-limit-per-minute N` | Global rate limit per IP |
+| `--rate-limit-read-per-minute N` | Read endpoint rate limit |
+| `--rate-limit-write-per-minute N` | Write endpoint rate limit |
+
+Set to `0` (default) for unlimited. Rate-limited requests receive HTTP 429.
 
 ---
 

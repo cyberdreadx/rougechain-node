@@ -1,78 +1,184 @@
-# Deploying RougeChain on Hostinger VPS
+# Deploying RougeChain on a VPS
 
 ## Overview
 
-- **Core Node**: Deploy on Hostinger VPS (runs 24/7)
-- **Frontend**: Deploy on Netlify (or Vercel, or same VPS)
+- **Core Node**: Deploy on a VPS (runs 24/7)
+- **Frontend**: Deploy on Netlify (auto-deploys from GitHub)
 
-## Part 1: Core Node on Hostinger VPS
+## Part 1: Core Node on VPS
 
 ### Prerequisites
 
-1. SSH access to your Hostinger VPS
+1. SSH access to your VPS
 2. Rust toolchain installed
-3. Public IP or domain name
+3. Domain name pointed to VPS IP (for SSL)
 
 ### Step 1: Connect to VPS
 
 ```bash
-ssh root@your-vps-ip
-# Or with username
-ssh username@your-vps-ip
+ssh user@your-vps-ip
 ```
 
 ### Step 2: Install Rust (if not installed)
 
 ```bash
-# Update system
 sudo apt update && sudo apt upgrade -y
-
-# Install Rust
 curl https://sh.rustup.rs -sSf | sh -s -- -y
 source "$HOME/.cargo/env"
-
-# Verify
 rustc --version
-cargo --version
 ```
 
-### Step 3: Clone/Upload Your Project
+### Step 3: Clone the Project
 
-**Option A: Git Clone**
 ```bash
-cd /var/www  # or wherever you want
-git clone https://github.com/your-username/quantum-vault.git
-cd quantum-vault
+git clone https://github.com/cyberdreadx/quantum-vault.git rougechain
+cd rougechain
 ```
-
-**Option B: Upload via SFTP**
-- Use FileZilla or similar
-- Upload entire project to `/var/www/quantum-vault` (or your preferred location)
 
 ### Step 4: Build the Core Node
 
 ```bash
-cd /var/www/quantum-vault/core
+cd core
 cargo build --release
 ```
 
-### Step 5: Configure Firewall
+This takes 5-10 minutes on a typical VPS.
+
+### Step 5: Run the Daemon
+
+**As the primary testnet node** (this IS `testnet.rougechain.io`):
 
 ```bash
-# Allow P2P port (4100)
-sudo ufw allow 4100/tcp
+tmux new-session -d -s daemon "$(pwd)/target/release/quantum-vault-daemon \
+  --mine --host 0.0.0.0 --api-port 5100 \
+  --bridge-custody-address 0xYOUR_BRIDGE_ADDRESS"
+```
 
-# Allow API port (5100)
-sudo ufw allow 5100/tcp
+**As a secondary node** (peers with the testnet):
 
-# Allow SSH (if not already)
-sudo ufw allow 22/tcp
+```bash
+tmux new-session -d -s daemon "$(pwd)/target/release/quantum-vault-daemon \
+  --mine \
+  --peers https://testnet.rougechain.io/api \
+  --bridge-custody-address 0xYOUR_BRIDGE_ADDRESS"
+```
 
-# Enable firewall
+Check the daemon:
+
+```bash
+tmux attach -t daemon
+# Ctrl+B then D to detach without stopping
+```
+
+### Step 6: Configure Firewall
+
+```bash
+sudo ufw allow 22/tcp     # SSH
+sudo ufw allow 80/tcp     # HTTP (for certbot)
+sudo ufw allow 443/tcp    # HTTPS
+sudo ufw allow 4101/tcp   # gRPC (optional, for direct peer connections)
 sudo ufw enable
 ```
 
-### Step 6: Create systemd Service
+### Step 7: Setup Nginx Reverse Proxy
+
+Install Nginx:
+
+```bash
+sudo apt install nginx -y
+```
+
+Create `/etc/nginx/sites-available/testnet-rougechain`:
+
+```nginx
+server {
+    server_name testnet.yourdomain.com;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:5100;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/ws {
+        proxy_pass http://127.0.0.1:5100;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+
+    listen 80;
+}
+```
+
+Enable the site:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/testnet-rougechain /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl restart nginx
+```
+
+### Step 8: Setup SSL with Let's Encrypt
+
+```bash
+sudo apt install certbot python3-certbot-nginx -y
+sudo certbot --nginx -d testnet.yourdomain.com
+```
+
+### Step 9: Verify
+
+```bash
+curl https://testnet.yourdomain.com/api/stats
+```
+
+## Part 2: Frontend on Netlify
+
+1. Push code to GitHub
+2. Go to [netlify.com](https://netlify.com) → Add new site → Import from GitHub
+3. Build settings:
+   - Build command: `npm run build`
+   - Publish directory: `dist`
+4. Environment variables:
+   - `VITE_CORE_API_URL_TESTNET` = `https://testnet.yourdomain.com/api`
+5. Deploy
+
+The frontend auto-deploys on every `git push`.
+
+## Managing the Daemon
+
+### View Logs
+
+```bash
+tmux attach -t daemon
+# Ctrl+B then D to detach
+```
+
+### Restart After Code Update
+
+```bash
+cd ~/rougechain && git pull
+cd core && cargo build --release
+pkill -9 -f quantum-vault; sleep 3
+tmux new-session -d -s daemon "$(pwd)/target/release/quantum-vault-daemon \
+  --mine --host 0.0.0.0 --api-port 5100 \
+  --bridge-custody-address 0xYOUR_BRIDGE_ADDRESS"
+```
+
+### Stop the Daemon
+
+```bash
+tmux kill-session -t daemon
+# or
+pkill -9 -f quantum-vault
+```
+
+### Alternative: systemd Service
+
+If you prefer auto-restart on reboot instead of tmux:
 
 ```bash
 sudo tee /etc/systemd/system/quantum-vault-daemon.service > /dev/null <<'EOF'
@@ -83,11 +189,13 @@ After=network.target
 [Service]
 Type=simple
 User=your-user
-WorkingDirectory=/var/www/quantum-vault/core
-ExecStart=/var/www/quantum-vault/core/target/release/quantum-vault-daemon --host 0.0.0.0 --port 4100 --api-port 5100 --mine
-Environment=QV_API_KEYS=your_api_key_here
+WorkingDirectory=/path/to/rougechain/core
+ExecStart=/path/to/rougechain/core/target/release/quantum-vault-daemon \
+  --mine --host 0.0.0.0 --api-port 5100 \
+  --bridge-custody-address 0xYOUR_BRIDGE_ADDRESS
+Environment=QV_PEERS=https://testnet.rougechain.io/api
 Restart=always
-RestartSec=3
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
@@ -98,235 +206,79 @@ sudo systemctl enable quantum-vault-daemon
 sudo systemctl start quantum-vault-daemon
 ```
 
-### Step 7: Verify Node is Running
+Monitor with:
 
 ```bash
-# Check status
-sudo systemctl status quantum-vault-daemon --no-pager
-
-# View logs
+sudo systemctl status quantum-vault-daemon
 sudo journalctl -u quantum-vault-daemon -f
-
-# Test API
-curl http://localhost:5100/api/stats
-```
-
-### Step 9: Setup Nginx Reverse Proxy (Optional but Recommended)
-
-Install Nginx:
-```bash
-sudo apt install nginx
-```
-
-Create config file `/etc/nginx/sites-available/rougechain`:
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;  # Or your VPS IP
-
-    # API endpoint
-    location /api/ {
-        proxy_pass http://127.0.0.1:5100;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # Frontend (if hosting on same VPS)
-    location / {
-        root /var/www/quantum-vault/dist;
-        try_files $uri $uri/ /index.html;
-    }
-}
-```
-
-Enable site:
-```bash
-sudo ln -s /etc/nginx/sites-available/rougechain /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-### Step 10: Setup SSL with Let's Encrypt (Recommended)
-
-```bash
-sudo apt install certbot python3-certbot-nginx
-sudo certbot --nginx -d your-domain.com
-```
-
-## Part 2: Frontend on Netlify
-
-### Option A: Deploy from Git
-
-1. **Push to GitHub** (if not already)
-   ```bash
-   git add .
-   git commit -m "Ready for deployment"
-   git push
-   ```
-
-2. **Connect to Netlify**
-   - Go to [netlify.com](https://netlify.com)
-   - Click "Add new site" → "Import an existing project"
-   - Connect to your GitHub repo
-   - Select the repository
-
-3. **Build Settings**
-   ```
-   Build command: npm run build
-   Publish directory: dist
-   ```
-
-4. **Environment Variables**
-   - Go to Site settings → Environment variables
-   - Add:
-     - `VITE_NODE_API_URL_TESTNET` = `https://your-testnet-domain.com/api`
-     - `VITE_NODE_API_URL_MAINNET` = `https://your-mainnet-domain.com/api`
-   - Or use IPs if no domain
-
-5. **Deploy**
-   - Click "Deploy site"
-   - Netlify will build and deploy automatically
-
-### Option B: Deploy via Netlify CLI
-
-```bash
-# Install Netlify CLI
-npm install -g netlify-cli
-
-# Login
-netlify login
-
-# Build your site
-npm run build
-
-# Deploy
-netlify deploy --prod
-```
-
-### Option C: Deploy Frontend on Same VPS
-
-If you want to host frontend on the same VPS:
-
-```bash
-# Build frontend
-cd /var/www/quantum-vault
-npm run build
-
-# The Nginx config above already serves from /dist
-# Just update the root path in nginx config
-```
-
-## Configuration
-
-### Environment Variables
-
-**On Netlify:**
-- `VITE_NODE_API_URL_TESTNET` = `https://your-testnet-domain.com/api` (or your VPS IP)
-- `VITE_NODE_API_URL_MAINNET` = `https://your-mainnet-domain.com/api` (or your VPS IP)
-- `VITE_CORE_API_KEY` = `your_api_key_here` (if API key auth enabled)
-
-**On VPS (for node):**
-- `QV_API_KEYS` = `key1,key2` (optional, enables API key auth)
-
-### Update Frontend to Point to Your Node
-
-In your `.env` file (or Netlify env vars):
-```
-VITE_NODE_API_URL_TESTNET=https://your-testnet-domain.com/api
-VITE_NODE_API_URL_MAINNET=https://your-mainnet-domain.com/api
-```
-
-Or if using IP:
-```
-VITE_NODE_API_URL_TESTNET=http://your-vps-ip:5100/api
-VITE_NODE_API_URL_MAINNET=http://your-vps-ip:5100/api
-```
-
-## Monitoring
-
-### Check Node Status
-
-```bash
-sudo systemctl status quantum-vault-daemon --no-pager
-sudo journalctl -u quantum-vault-daemon -f
-
-# Check if API is accessible
-curl http://your-vps-ip:5100/api/stats
-```
-
-### Restart
-
-```bash
-sudo systemctl restart quantum-vault-daemon
 ```
 
 ## Troubleshooting
 
-### Node won't start
+### Database Lock Error
+
+```
+Error: "IO error: could not acquire lock..."
+```
+
+An old daemon process is still running. Kill it:
+
 ```bash
-# Check logs
-sudo journalctl -u quantum-vault-daemon -f
+pkill -9 -f quantum-vault
+sleep 3
+# then start again
+```
 
-# Check if port is in use
-sudo netstat -tulpn | grep 4100
-sudo netstat -tulpn | grep 5100
+If `pkill` doesn't work (process name too long), use:
 
-# Kill process on port if needed
+```bash
+ps aux | grep quantum-vault
+kill -9 <PID>
+```
+
+### Port Already in Use
+
+```bash
+sudo lsof -i :5100
 sudo kill -9 <PID>
 ```
 
-### Can't access from outside
-- Check firewall: `sudo ufw status`
-- Check if node is listening on `0.0.0.0`: `--host 0.0.0.0`
-- Check Hostinger firewall rules in control panel
+### 502 Bad Gateway
 
-### systemd not starting on reboot
+Nginx can't reach the daemon. Check:
+
+1. Is the daemon running? `ps aux | grep quantum-vault`
+2. Is it on the right port? Check `--api-port` matches nginx `proxy_pass`
+3. Restart nginx: `sudo systemctl restart nginx`
+
+### Peer Sync Errors
+
+Dead peers are automatically backed off with exponential cooldown (20s → 10min). The first failure is logged; subsequent failures are suppressed. Peers recover automatically when they come back online.
+
+### tmux Session Dies Immediately
+
+The daemon is crashing on startup. Run it directly (not in tmux) to see the error:
+
 ```bash
-sudo systemctl enable quantum-vault-daemon
+./target/release/quantum-vault-daemon --mine --host 0.0.0.0 --api-port 5100
 ```
 
-## Quick Start Script
-
-Create `/var/www/quantum-vault/start-node.sh`:
-
-```bash
-#!/bin/bash
-cd /var/www/quantum-vault/core
-./target/release/quantum-vault-daemon --host 0.0.0.0 --port 4100 --api-port 5100 --mine
-```
-
-Make executable:
-```bash
-chmod +x start-node.sh
-```
+Common causes: database lock, port conflict, or missing arguments.
 
 ## Security Checklist
 
-- [ ] Firewall configured (ports 4100, 5100)
-- [ ] Node running as non-root user (recommended)
+- [ ] Firewall configured (UFW)
+- [ ] Node running as non-root user
 - [ ] SSL/HTTPS enabled (Let's Encrypt)
-- [ ] systemd auto-restart configured
+- [ ] tmux or systemd for persistence
 - [ ] Regular backups of chain data
-- [ ] Monitor disk space (chain grows over time)
 
 ## Backup Chain Data
 
 ```bash
-# Backup chain files
-tar -czf quantum-vault-backup-$(date +%Y%m%d).tar.gz \
-  ~/.quantum-vault/core-node/
+# Backup
+tar -czf rougechain-backup-$(date +%Y%m%d).tar.gz ~/.quantum-vault/core-node/
 
 # Restore
 tar -xzf rougechain-backup-YYYYMMDD.tar.gz -C ~/
 ```
-
-## Next Steps
-
-1. **Test your node**: `curl http://your-vps-ip:5100/api/stats`
-2. **Deploy frontend**: Connect to Netlify
-3. **Share your node**: Give users your API URL
-4. **Monitor**: Set up alerts for node downtime
-
-Your RougeChain L1 is now publicly accessible! 🚀

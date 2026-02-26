@@ -1,105 +1,157 @@
-# Quick Deployment Summary
-
-## ✅ Yes, you can deploy on both!
-
-- **Core Node**: Hostinger VPS ✅
-- **Frontend**: Netlify ✅ (or same VPS)
+# Deployment Summary
 
 ## Architecture
 
 ```
-┌─────────────────┐         ┌──────────────────┐
-│   Netlify       │         │  Hostinger VPS   │
-│   (Frontend)    │────────▶│  (Core Node)     │
-│   - React UI    │  API    │  - Blockchain    │
-│   - Free SSL    │  Calls  │  - Mining        │
-│   - CDN         │         │  - P2P Network   │
-└─────────────────┘         └──────────────────┘
+┌─────────────────┐         ┌──────────────────────────┐
+│   Netlify        │         │  Primary VPS              │
+│   (Frontend)     │────────▶│  testnet.rougechain.io    │
+│   rougechain.io  │  API    │  - Daemon (port 5100)     │
+│   - React UI     │  Calls  │  - Nginx reverse proxy    │
+│   - Free SSL     │         │  - SSL via Let's Encrypt  │
+│   - CDN          │         │  - Mining enabled          │
+└─────────────────┘         └────────────┬─────────────┘
+                                         │ P2P Sync
+                            ┌────────────▼─────────────┐
+                            │  Secondary VPS            │
+                            │  - Daemon (port 5100)     │
+                            │  - Peers with primary     │
+                            │  - Mining enabled          │
+                            └──────────────────────────┘
 ```
 
-## Quick Steps
+## Components
 
-### 1. Deploy Core Node on Hostinger VPS (5 minutes)
+| Component | Hosted On | URL |
+|-----------|-----------|-----|
+| Frontend | Netlify | `https://rougechain.io` |
+| Primary Node | VPS | `https://testnet.rougechain.io/api` |
+| Secondary Node(s) | VPS | Peers with primary |
+
+## Quick Deploy
+
+### 1. Primary Node (the testnet)
 
 ```bash
-# SSH into your VPS
-ssh root@your-vps-ip
+# Build
+cd core && cargo build --release
 
-# Run the quick setup script
-wget https://raw.githubusercontent.com/your-repo/quantum-vault/main/QUICK_START_VPS.sh
-chmod +x QUICK_START_VPS.sh
-./QUICK_START_VPS.sh
-
-# Or manually:
-cd /var/www/quantum-vault/core
-curl https://sh.rustup.rs -sSf | sh -s -- -y
-source "$HOME/.cargo/env"
-cargo build --release
-
-# Run the daemon
-./target/release/quantum-vault-daemon --host 0.0.0.0 --port 4100 --api-port 5100 --mine
+# Run in tmux (no --peers since this IS the testnet)
+tmux new-session -d -s daemon "/path/to/quantum-vault-daemon \
+  --mine --host 0.0.0.0 --api-port 5100 \
+  --bridge-custody-address 0xYOUR_ADDRESS"
 ```
 
-### 2. Deploy Frontend on Netlify (3 minutes)
+Set up Nginx to reverse proxy `testnet.rougechain.io` → `localhost:5100`, then add SSL with certbot.
+
+### 2. Secondary Node (peers with testnet)
+
+```bash
+# Build
+cd core && cargo build --release
+
+# Run in tmux
+tmux new-session -d -s daemon "/path/to/quantum-vault-daemon \
+  --mine \
+  --peers https://testnet.rougechain.io/api \
+  --bridge-custody-address 0xYOUR_ADDRESS"
+```
+
+### 3. Frontend (Netlify)
 
 1. Push code to GitHub
-2. Go to [netlify.com](https://netlify.com)
-3. Import from GitHub
-4. Build settings:
-   - Build command: `npm run build`
-   - Publish: `dist`
-5. Add env vars:
-   - `VITE_NODE_API_URL_TESTNET` = `http://your-vps-ip:5100/api`
-   - `VITE_NODE_API_URL_MAINNET` = `https://your-mainnet-domain.com/api`
-6. Deploy!
+2. Import repo on [netlify.com](https://netlify.com)
+3. Build settings: command `npm run build`, publish `dist`
+4. Environment variable: `VITE_CORE_API_URL_TESTNET=https://testnet.rougechain.io/api`
+5. Deploy - auto-deploys on every git push
 
-## Configuration
+## Environment Variables
 
-### Hostinger VPS
-- Open ports: 4100 (P2P), 5100 (API)
-- Core node runs 24/7 via systemd (recommended)
-- Auto-restarts on reboot
-- Optional API keys via `QV_API_KEYS` (comma-separated)
+### Frontend (.env)
 
-### Netlify
-- Environment variables: `VITE_NODE_API_URL_TESTNET`, `VITE_NODE_API_URL_MAINNET`
-- Auto-deploys on git push
-- Free SSL included
-- If API keys are enabled, set `VITE_CORE_API_KEY` for frontend calls
+```bash
+VITE_CORE_API_URL=https://testnet.rougechain.io/api
+VITE_CORE_API_URL_TESTNET=https://testnet.rougechain.io/api
+VITE_NODE_API_URL=https://testnet.rougechain.io/api
+VITE_NODE_API_URL_TESTNET=https://testnet.rougechain.io/api
+```
+
+For local development, create `.env.local` (gitignored) with `localhost` URLs.
+
+### Daemon (optional)
+
+```bash
+QV_API_KEYS=key1,key2          # Enable API key auth
+QV_PEERS=https://peer1/api     # Peer URLs
+QV_PUBLIC_URL=https://mynode    # Public URL for peer discovery
+QV_BRIDGE_CUSTODY_ADDRESS=0x.. # Bridge custody address
+```
+
+## Managing the Daemon
+
+```bash
+tmux attach -t daemon          # View daemon logs
+# Ctrl+B then D               # Detach (keeps running)
+tmux kill-session -t daemon    # Stop daemon
+
+# Restart after code update
+pkill -9 -f quantum-vault
+sleep 3
+cd core && cargo build --release
+tmux new-session -d -s daemon "/path/to/quantum-vault-daemon --mine ..."
+```
+
+## Nginx Config (for primary node)
+
+```nginx
+server {
+    server_name testnet.rougechain.io;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:5100;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/ws {
+        proxy_pass http://127.0.0.1:5100;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+
+    listen 80;
+}
+```
+
+Then enable SSL:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/testnet-rougechain /etc/nginx/sites-enabled/
+sudo certbot --nginx -d testnet.rougechain.io
+```
 
 ## Test Your Setup
 
 ```bash
-# Test core node API
-curl http://your-vps-ip:5100/api/stats
+# Test API
+curl https://testnet.rougechain.io/api/stats
 
-# Should return JSON with node stats
+# Should return JSON like:
+# {"connected_peers":1,"network_height":120,"is_mining":true,...}
 ```
 
 ## Cost
 
-- **Hostinger VPS**: ~$5-10/month (depends on plan)
-- **Netlify**: FREE (for frontend hosting)
-- **Total**: ~$5-10/month
-
-## Benefits
-
-✅ **Core node on VPS**: Always running, full control  
-✅ **Frontend on Netlify**: Free, fast CDN, auto-deploy  
-✅ **Separation**: Frontend can update without touching node  
-✅ **Scalability**: Easy to add more nodes later
+- **VPS**: ~$5-10/month each
+- **Netlify**: Free (frontend hosting)
+- **Domain**: ~$10/year
 
 ## Full Guides
 
-- **Hostinger VPS**: See `DEPLOYMENT_HOSTINGER.md`
-- **Netlify**: See `DEPLOYMENT_NETLIFY.md`
-- **Quick Script**: See `QUICK_START_VPS.sh`
-
-## Need Help?
-
-Common issues:
-- **Can't access API**: Check firewall, use `--host 0.0.0.0`
-- **Build fails**: Check Rust toolchain installation
-- **CORS errors**: Core node allows any origin by default
-
-Your blockchain will be live in ~10 minutes! 🚀
+- `DEPLOYMENT_HOSTINGER.md` - Detailed VPS deployment with systemd and Nginx
+- `DEPLOYMENT_NETLIFY.md` - Frontend deployment on Netlify
+- `core/README.md` - All CLI options and API endpoints

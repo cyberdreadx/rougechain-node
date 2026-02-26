@@ -22,6 +22,7 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | **Token Burning** | Official burn address with on-chain tracking |
 | **Proof of Stake** | Energy-efficient consensus with validator staking |
 | **P2P Network** | Decentralized peer-to-peer block and transaction propagation |
+| **qETH Bridge** | Bridge ETH from Base Sepolia to qETH on RougeChain |
 | **Custom Tokens** | Create your own tokens on the network |
 | **Encrypted Messenger** | End-to-end encrypted messaging with PQC |
 | **Open Source** | Fully open source Rust backend and React frontend |
@@ -41,9 +42,21 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | Testnet | `https://testnet.rougechain.io/api` |
 | Devnet (local) | `http://127.0.0.1:5100/api` |
 
-## Token: XRGE
+## Tokens
+
+### XRGE
 
 The native token of RougeChain is **XRGE** (pronounced "rouge").
+
+### qETH
+
+**qETH** is a bridged representation of ETH on RougeChain. It uses 6 decimal places and can be bridged in from Base Sepolia or withdrawn back.
+
+| Property | Value |
+|----------|-------|
+| Decimals | 6 |
+| Bridge Source | Base Sepolia |
+| Bridge Contract | Configured per-node via `--bridge-custody-address` |
 
 ### Fees
 

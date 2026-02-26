@@ -2,6 +2,8 @@
 
 RougeChain is a production-ready L1 blockchain powered by NIST-approved post-quantum cryptography (ML-DSA-65 and ML-KEM-768) to protect against quantum computing threats.
 
+**Live Testnet**: [rougechain.io](https://rougechain.io) | **API**: `https://testnet.rougechain.io/api`
+
 ## Features
 
 ### Core
@@ -9,12 +11,19 @@ RougeChain is a production-ready L1 blockchain powered by NIST-approved post-qua
 - **L1 Node Daemon**: Rust core node with HTTP + gRPC APIs
 - **Client-Side Signing**: Private keys never leave your browser - all transactions signed locally
 - **Token Burning**: Official on-chain burn address with transparent burn tracking
+- **P2P Networking**: Multi-node peering with automatic peer discovery and exponential backoff for unreachable peers
 
 ### DeFi (AMM/DEX)
 - **Liquidity Pools**: Uniswap V2-style constant product AMM
 - **Token Swaps**: Swap between any tokens with 0.3% fee
 - **LP Tokens**: Earn fees by providing liquidity
 - **Price Charts**: Real-time price history and pool analytics
+- **Custom Tokens**: Create and deploy your own tokens on-chain
+
+### Bridge
+- **qETH Bridge**: Bridge ETH from Base Sepolia to qETH on RougeChain
+- **Bridge Withdrawals**: Burn qETH to withdraw ETH back to Base Sepolia
+- **Relayer Support**: Automated bridge withdrawal fulfillment
 
 ### Apps
 - **Web Wallet**: Create wallets, send tokens, and view transaction history
@@ -24,7 +33,7 @@ RougeChain is a production-ready L1 blockchain powered by NIST-approved post-qua
 
 ### API
 - **Secure v2 API**: Client-side signed transactions (private keys never sent)
-- **Legacy API**: Full RESTful API for wallet creation and transaction submission
+- **Legacy v1 API**: Full RESTful API for wallet creation and transaction submission
 - **WebSocket**: Real-time updates for blocks and transactions
 
 ## Quick Start
@@ -34,53 +43,127 @@ RougeChain is a production-ready L1 blockchain powered by NIST-approved post-qua
 - Node.js 18+ (frontend)
 - Rust toolchain (core node)
 
-### Installation
+### Local Development
 
-```sh
+```bash
 # Clone the repository
-git clone <YOUR_GIT_URL>
+git clone https://github.com/cyberdreadx/quantum-vault.git
 cd quantum-vault
 
 # Install frontend dependencies
 npm install
 
-# Start development server
+# Start the frontend dev server
 npm run dev
 ```
 
-### Running the Core Node (Rust)
+In a separate terminal, start the core node:
 
-```sh
+```bash
 cd core
-# Start a mining node
-cargo run -p quantum-vault-daemon -- --host 0.0.0.0 --port 4100 --api-port 5100 --mine
+cargo run -p quantum-vault-daemon -- --mine
+```
+
+The frontend defaults to `http://localhost:5101/api`. For local development, create a `.env.local` file:
+
+```
+VITE_CORE_API_URL=http://127.0.0.1:5101/api
+VITE_CORE_API_URL_TESTNET=http://127.0.0.1:5101/api
+```
+
+### Connect to Public Testnet
+
+To run a node that syncs with the public testnet:
+
+```bash
+cd core
+cargo run -p quantum-vault-daemon -- --mine --peers https://testnet.rougechain.io/api
+```
+
+### Production Deployment
+
+```bash
+# Build the daemon
+cd core
+cargo build --release
+
+# Run as primary node (no peers needed if you ARE the testnet)
+./target/release/quantum-vault-daemon \
+  --mine \
+  --host 0.0.0.0 \
+  --api-port 5100 \
+  --bridge-custody-address 0xYOUR_ADDRESS
+
+# Run as secondary node (peers with the testnet)
+./target/release/quantum-vault-daemon \
+  --mine \
+  --host 0.0.0.0 \
+  --api-port 5100 \
+  --peers https://testnet.rougechain.io/api \
+  --bridge-custody-address 0xYOUR_ADDRESS
+```
+
+Use tmux to keep the daemon running after disconnecting SSH:
+
+```bash
+tmux new-session -d -s daemon "/path/to/quantum-vault-daemon --mine --host 0.0.0.0 --api-port 5100"
+tmux attach -t daemon     # view logs
+# Ctrl+B then D to detach
 ```
 
 ## Project Structure
 
-- `core/` - Rust L1 node daemon
-- `src/` - React frontend application
+```
+quantum-vault/
+├── core/                  # Rust L1 node daemon
+│   ├── daemon/            # Main binary (API server, miner, peer sync)
+│   ├── types/             # Shared types and codec helpers
+│   ├── crypto/            # PQC signing (ML-DSA-65) and hashing
+│   ├── consensus/         # Proposer selection
+│   ├── storage/           # Chain, validator, pool persistence
+│   └── p2p/               # TCP gossip scaffolding
+├── src/                   # React frontend application
+│   ├── pages/             # Wallet, Swap, Pools, Bridge, Explorer
+│   ├── components/        # UI components
+│   ├── lib/               # API clients, PQC signer, network config
+│   └── hooks/             # React hooks (ETH price, qETH formatting)
+├── scripts/               # Bridge relayer scripts
+├── docs/                  # Documentation (GitBook format)
+└── public/                # Static assets
+```
 
 ## Technologies
 
-- **Frontend**: Vite, React, TypeScript, Tailwind CSS, shadcn-ui
-- **Backend**: Rust (axum + tonic)
-- **Cryptography**: @noble/post-quantum (ML-DSA-65, ML-KEM-768)
-- **Storage**: File-based JSONL storage for blockchain data
+- **Frontend**: Vite, React, TypeScript, Tailwind CSS, shadcn/ui
+- **Backend**: Rust (Axum HTTP + Tonic gRPC)
+- **Cryptography**: ML-DSA-65 (CRYSTALS-Dilithium), ML-KEM-768, SHA-256
+- **Storage**: RocksDB-backed persistent storage
+- **Networking**: HTTP peer sync with automatic discovery
+
+## Network Info
+
+| Property | Value |
+|----------|-------|
+| Chain ID | `rougechain-devnet-1` |
+| Native Token | XRGE |
+| Bridged Token | qETH (6 decimals) |
+| Testnet URL | `https://testnet.rougechain.io/api` |
+| Frontend | `https://rougechain.io` |
+| Block Time | 400ms |
 
 ## Deployment
 
 See deployment guides:
-- `DEPLOYMENT_SUMMARY.md` - Quick overview
-- `DEPLOYMENT_HOSTINGER.md` - VPS deployment guide
-- `DEPLOYMENT_NETLIFY.md` - Frontend deployment guide
-- `QUICK_START_VPS.sh` - Automated VPS setup script
+- `DEPLOYMENT_SUMMARY.md` - Architecture overview
+- `DEPLOYMENT_HOSTINGER.md` - VPS deployment with Nginx + SSL
+- `DEPLOYMENT_NETLIFY.md` - Frontend deployment on Netlify
 
 ## Documentation
 
-- `core/README.md` - Rust core node documentation
-- `PUBLIC_API.md` - Public API documentation
+- `core/README.md` - Rust core node documentation and CLI reference
+- `PUBLIC_API.md` - Full API endpoint documentation
 - `TROUBLESHOOTING_TRANSACTIONS.md` - Transaction debugging guide
+- `docs/` - Comprehensive documentation (GitBook format)
 
 ## License
 
