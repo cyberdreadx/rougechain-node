@@ -206,16 +206,23 @@ impl L1Node {
             return Err("Block prev_hash doesn't match our tip".to_string());
         }
         
-        // TODO: Verify proposer signature
-        // Verify all transaction signatures in parallel
+        // Verify all transaction signatures in parallel (supports both new and legacy format)
         {
             use rayon::prelude::*;
             let invalid_count = block
                 .txs
                 .par_iter()
                 .filter(|tx| {
-                    let bytes = encode_tx_for_signing(tx);
-                    pqc_verify(&tx.from_pub_key, &bytes, &tx.sig).ok() != Some(true)
+                    // New format: encode without sig field
+                    let bytes_new = encode_tx_for_signing(tx);
+                    if pqc_verify(&tx.from_pub_key, &bytes_new, &tx.sig).ok() == Some(true) {
+                        return false; // valid
+                    }
+                    // Legacy format: encode full tx with sig cleared
+                    let mut legacy = (*tx).clone();
+                    legacy.sig = String::new();
+                    let bytes_legacy = encode_tx_v1(&legacy);
+                    pqc_verify(&tx.from_pub_key, &bytes_legacy, &tx.sig).ok() != Some(true)
                 })
                 .count();
             if invalid_count > 0 {
