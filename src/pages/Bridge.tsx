@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { ArrowRightLeft, ExternalLink, Loader2, Wallet, Copy, Check } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, ExternalLink, Loader2, Wallet, Copy, Check, ArrowRightLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { baseSepolia } from "viem/chains";
 import {
@@ -25,7 +26,6 @@ const Bridge = () => {
   const [claiming, setClaiming] = useState(false);
   const [copied, setCopied] = useState(false);
   const [rougechainPubkey, setRougechainPubkey] = useState("");
-  // Bridge out state
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawEvmAddress, setWithdrawEvmAddress] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
@@ -186,7 +186,7 @@ const Bridge = () => {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <ArrowRightLeft className="w-5 h-5" />
-              Bridge (Base Sepolia → RougeChain)
+              Bridge (Base Sepolia ↔ RougeChain)
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -207,7 +207,7 @@ const Bridge = () => {
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="space-y-8"
+        className="space-y-6"
       >
         <div>
           <h1 className="text-3xl font-bold text-foreground flex items-center gap-2">
@@ -215,166 +215,194 @@ const Bridge = () => {
             Bridge
           </h1>
           <p className="text-muted-foreground mt-1">
-            Bridge Base Sepolia ETH ↔ RougeChain qETH
+            Bridge between Base Sepolia ETH and RougeChain qETH
           </p>
         </div>
 
-        <Card className="border-primary/20">
-          <CardHeader>
-            <CardTitle className="text-lg">Step 1: Send ETH</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Send testnet ETH from your wallet to the bridge custody address on Base Sepolia.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Input
-                readOnly
-                value={config.custodyAddress || ""}
-                className="font-mono text-sm"
-              />
-              <Button size="icon" variant="outline" onClick={copyCustody}>
-                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              </Button>
-            </div>
-            <a
-              href={`https://sepolia.basescan.org/address/${config.custodyAddress}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-primary hover:underline flex items-center gap-1"
-            >
-              View on Basescan <ExternalLink className="w-3 h-3" />
-            </a>
-          </CardContent>
-        </Card>
+        <Tabs defaultValue="bridge-in" className="w-full">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="bridge-in" className="gap-2">
+              <ArrowDownToLine className="w-4 h-4" />
+              Bridge In
+            </TabsTrigger>
+            <TabsTrigger value="bridge-out" className="gap-2">
+              <ArrowUpFromLine className="w-4 h-4" />
+              Bridge Out
+            </TabsTrigger>
+          </TabsList>
 
-        <Card className="border-primary/20">
-          <CardHeader>
-            <CardTitle className="text-lg">Step 2: Claim qETH</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              After your transaction is confirmed, enter the details below to claim qETH on RougeChain.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {!evmAddress ? (
-              <Button onClick={connectEvm} className="gap-2">
-                <Wallet className="w-4 h-4" />
-                Connect Base Sepolia Wallet
-              </Button>
-            ) : (
-              <div className="text-sm">
-                <span className="text-muted-foreground">Connected: </span>
-                <span className="font-mono">{evmAddress.slice(0, 6)}...{evmAddress.slice(-4)}</span>
-              </div>
-            )}
-            <div className="space-y-2">
-              <Label>Transaction Hash</Label>
-              <Input
-                placeholder="0x..."
-                value={evmTxHash}
-                onChange={(e) => setEvmTxHash(e.target.value)}
-                className="font-mono"
-              />
+          <TabsContent value="bridge-in" className="space-y-6 mt-6">
+            <div className="rounded-lg border border-primary/10 bg-primary/5 p-4">
+              <p className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">ETH → qETH</span> — Send Base Sepolia ETH to the custody address, then claim your qETH on RougeChain.
+              </p>
             </div>
-            <div className="space-y-2">
-              <Label>Your EVM Address (sender)</Label>
-              <Input
-                placeholder="0x... or connect wallet above"
-                value={evmAddress}
-                onChange={(e) => setEvmAddress(e.target.value)}
-                className="font-mono"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>RougeChain Recipient (public key)</Label>
-              <Input
-                placeholder="Your RougeChain public key"
-                value={rougechainPubkey}
-                onChange={(e) => setRougechainPubkey(e.target.value)}
-                className="font-mono text-sm"
-              />
-              <p className="text-xs text-muted-foreground">Auto-filled from your wallet if connected.</p>
-            </div>
-            <Button
-              onClick={handleClaim}
-              disabled={claiming || !evmTxHash || !rougechainPubkey}
-              className="w-full gap-2"
-            >
-              {claiming ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Claiming...
-                </>
-              ) : (
-                <>
-                  Claim qETH
-                  <ArrowRightLeft className="w-4 h-4" />
-                </>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
 
-        <Card className="border-primary/20">
-          <CardHeader>
-            <CardTitle className="text-lg">Bridge Out: qETH → ETH</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Burn qETH on RougeChain and receive ETH on Base Sepolia. The operator fulfills withdrawals.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="text-sm text-muted-foreground">
-              Balance: {formatQethForDisplay(qethBalance)} qETH
-            </div>
-            <div className="space-y-2">
-              <Label>Amount (qETH)</Label>
-              <Input
-                type="number"
-                step="0.000001"
-                min="0.000001"
-                placeholder="0.0005"
-                value={withdrawAmount}
-                onChange={(e) => setWithdrawAmount(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Receive ETH at (Base Sepolia address)</Label>
-              <Input
-                placeholder="0x..."
-                value={withdrawEvmAddress}
-                onChange={(e) => setWithdrawEvmAddress(e.target.value)}
-                className="font-mono"
-              />
-            </div>
-            <Button
-              onClick={handleWithdraw}
-              disabled={withdrawing || !withdrawAmount || !withdrawEvmAddress || !loadUnifiedWallet()?.signingPrivateKey || qethBalance < humanToQeth(parseFloat(withdrawAmount) || 0)}
-              className="w-full gap-2"
-            >
-              {withdrawing ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Submitting...
-                </>
-              ) : (
-                <>
-                  Bridge Out qETH
-                  <ArrowRightLeft className="w-4 h-4" />
-                </>
-              )}
-            </Button>
-            <p className="text-xs text-muted-foreground">
-              Requires RougeChain wallet. 0.1 XRGE fee. Operator processes withdrawals (may take time on testnet).
-            </p>
-          </CardContent>
-        </Card>
+            <Card className="border-primary/20">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-bold">1</span>
+                  Send ETH to Custody Address
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Input
+                    readOnly
+                    value={config.custodyAddress || ""}
+                    className="font-mono text-sm"
+                  />
+                  <Button size="icon" variant="outline" onClick={copyCustody}>
+                    {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  </Button>
+                </div>
+                <a
+                  href={`https://sepolia.basescan.org/address/${config.custodyAddress}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-primary hover:underline flex items-center gap-1"
+                >
+                  View on Basescan <ExternalLink className="w-3 h-3" />
+                </a>
+              </CardContent>
+            </Card>
 
-        <p className="text-xs text-muted-foreground">
-          Min 0.000001 ETH. 1 ETH (18 decimals) ≈ 1,000,000 qETH units (6 decimals) on RougeChain. Get Base Sepolia ETH from{" "}
-          <a href="https://www.coinbase.com/faucets/base-ethereum-goerli-faucet" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-            faucets
-          </a>.
-        </p>
+            <Card className="border-primary/20">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-bold">2</span>
+                  Claim qETH on RougeChain
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {!evmAddress ? (
+                  <Button onClick={connectEvm} variant="outline" className="gap-2 w-full">
+                    <Wallet className="w-4 h-4" />
+                    Connect Base Sepolia Wallet
+                  </Button>
+                ) : (
+                  <div className="flex items-center gap-2 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2">
+                    <div className="w-2 h-2 rounded-full bg-green-500" />
+                    <span className="text-sm text-muted-foreground">Connected:</span>
+                    <span className="font-mono text-sm">{evmAddress.slice(0, 6)}...{evmAddress.slice(-4)}</span>
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label>Transaction Hash</Label>
+                  <Input
+                    placeholder="0x..."
+                    value={evmTxHash}
+                    onChange={(e) => setEvmTxHash(e.target.value)}
+                    className="font-mono"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Your EVM Address (sender)</Label>
+                  <Input
+                    placeholder="0x... or connect wallet above"
+                    value={evmAddress}
+                    onChange={(e) => setEvmAddress(e.target.value)}
+                    className="font-mono"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>RougeChain Recipient (public key)</Label>
+                  <Input
+                    placeholder="Your RougeChain public key"
+                    value={rougechainPubkey}
+                    onChange={(e) => setRougechainPubkey(e.target.value)}
+                    className="font-mono text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">Auto-filled from your wallet if connected.</p>
+                </div>
+                <Button
+                  onClick={handleClaim}
+                  disabled={claiming || !evmTxHash || !rougechainPubkey}
+                  className="w-full gap-2"
+                >
+                  {claiming ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Claiming...
+                    </>
+                  ) : (
+                    "Claim qETH"
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+
+            <p className="text-xs text-muted-foreground text-center">
+              Min 0.000001 ETH. 1 ETH ≈ 1,000,000 qETH units. Get Base Sepolia ETH from{" "}
+              <a href="https://www.coinbase.com/faucets/base-ethereum-goerli-faucet" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                faucets
+              </a>.
+            </p>
+          </TabsContent>
+
+          <TabsContent value="bridge-out" className="space-y-6 mt-6">
+            <div className="rounded-lg border border-primary/10 bg-primary/5 p-4">
+              <p className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">qETH → ETH</span> — Burn qETH on RougeChain and receive ETH back on Base Sepolia.
+              </p>
+            </div>
+
+            <Card className="border-primary/20">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Withdraw qETH</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between rounded-md border border-border/50 bg-muted/30 px-4 py-3">
+                  <span className="text-sm text-muted-foreground">Your qETH Balance</span>
+                  <span className="font-mono font-medium">{formatQethForDisplay(qethBalance)} qETH</span>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Amount (qETH)</Label>
+                  <Input
+                    type="number"
+                    step="0.000001"
+                    min="0.000001"
+                    placeholder="0.0005"
+                    value={withdrawAmount}
+                    onChange={(e) => setWithdrawAmount(e.target.value)}
+                  />
+                  {withdrawAmount && !isNaN(parseFloat(withdrawAmount)) && parseFloat(withdrawAmount) > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      ≈ {parseFloat(withdrawAmount).toFixed(6)} ETH on Base Sepolia
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label>Receive ETH at (Base Sepolia address)</Label>
+                  <Input
+                    placeholder="0x..."
+                    value={withdrawEvmAddress}
+                    onChange={(e) => setWithdrawEvmAddress(e.target.value)}
+                    className="font-mono"
+                  />
+                </div>
+                <Button
+                  onClick={handleWithdraw}
+                  disabled={withdrawing || !withdrawAmount || !withdrawEvmAddress || !loadUnifiedWallet()?.signingPrivateKey || qethBalance < humanToQeth(parseFloat(withdrawAmount) || 0)}
+                  className="w-full gap-2"
+                >
+                  {withdrawing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Submitting...
+                    </>
+                  ) : (
+                    "Bridge Out qETH"
+                  )}
+                </Button>
+                <p className="text-xs text-muted-foreground text-center">
+                  0.1 XRGE fee. The operator processes withdrawals (may take time on testnet).
+                </p>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </motion.div>
     </div>
   );
