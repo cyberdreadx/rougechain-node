@@ -1,0 +1,652 @@
+import {
+  createSignedTransfer,
+  createSignedTokenCreation,
+  createSignedSwap,
+  createSignedPoolCreation,
+  createSignedAddLiquidity,
+  createSignedRemoveLiquidity,
+  createSignedStake,
+  createSignedUnstake,
+  createSignedFaucetRequest,
+  createSignedBurn,
+  createSignedNftCreateCollection,
+  createSignedNftMint,
+  createSignedNftBatchMint,
+  createSignedNftTransfer,
+  createSignedNftBurn,
+  createSignedNftLock,
+  createSignedNftFreezeCollection,
+} from "./signer.js";
+import type {
+  WalletKeys,
+  ApiResponse,
+  SignedTransaction,
+  NodeStats,
+  Block,
+  TokenMetadata,
+  BalanceResponse,
+  LiquidityPool,
+  SwapQuote,
+  PoolEvent,
+  PoolStats,
+  NftCollection,
+  NftToken,
+  Validator,
+  BridgeConfig,
+  BridgeWithdrawal,
+  TransferParams,
+  CreateTokenParams,
+  SwapParams,
+  CreatePoolParams,
+  AddLiquidityParams,
+  RemoveLiquidityParams,
+  StakeParams,
+  CreateNftCollectionParams,
+  MintNftParams,
+  BatchMintNftParams,
+  TransferNftParams,
+  BurnNftParams,
+  LockNftParams,
+  FreezeCollectionParams,
+  BridgeWithdrawParams,
+  SwapQuoteParams,
+  TokenMetadataUpdateParams,
+  TokenHolder,
+} from "./types.js";
+
+type FetchFn = typeof globalThis.fetch;
+
+export interface RougeChainOptions {
+  /** Custom fetch implementation (defaults to globalThis.fetch) */
+  fetch?: FetchFn;
+  /** Optional API key for authenticated endpoints */
+  apiKey?: string;
+}
+
+export class RougeChain {
+  private readonly baseUrl: string;
+  private readonly fetchFn: FetchFn;
+  private readonly headers: Record<string, string>;
+
+  public readonly nft: NftClient;
+  public readonly dex: DexClient;
+  public readonly bridge: BridgeClient;
+
+  constructor(baseUrl: string, options: RougeChainOptions = {}) {
+    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.headers = { "Content-Type": "application/json" };
+    if (options.apiKey) {
+      this.headers["X-API-Key"] = options.apiKey;
+    }
+
+    this.nft = new NftClient(this);
+    this.dex = new DexClient(this);
+    this.bridge = new BridgeClient(this);
+  }
+
+  // ===== Internal helpers =====
+
+  /** @internal */
+  async get<T = unknown>(path: string): Promise<T> {
+    const res = await this.fetchFn(`${this.baseUrl}${path}`, {
+      headers: this.headers,
+    });
+    if (!res.ok) {
+      throw new Error(`GET ${path} failed: ${res.status} ${res.statusText}`);
+    }
+    return res.json() as Promise<T>;
+  }
+
+  /** @internal */
+  async post<T = unknown>(path: string, body: unknown): Promise<T> {
+    const res = await this.fetchFn(`${this.baseUrl}${path}`, {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(
+        `POST ${path} failed: ${res.status} ${res.statusText} ${text}`
+      );
+    }
+    return res.json() as Promise<T>;
+  }
+
+  /** @internal */
+  async submitTx(
+    endpoint: string,
+    signedTx: SignedTransaction
+  ): Promise<ApiResponse> {
+    try {
+      const raw = await this.post<Record<string, unknown>>(endpoint, signedTx);
+      const { success, error, ...rest } = raw;
+      return {
+        success: success as boolean,
+        error: error as string | undefined,
+        data: Object.keys(rest).length > 0 ? rest : undefined,
+      };
+    } catch (e) {
+      return {
+        success: false,
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+
+  // ===== Stats & Health =====
+
+  async getStats(): Promise<NodeStats> {
+    return this.get<NodeStats>("/stats");
+  }
+
+  async getHealth(): Promise<{ status: string; chain_id: string; height: number }> {
+    return this.get("/health");
+  }
+
+  // ===== Blocks =====
+
+  async getBlocks(opts: { limit?: number } = {}): Promise<Block[]> {
+    const q = opts.limit ? `?limit=${opts.limit}` : "";
+    const data = await this.get<{ blocks: Block[] }>(`/blocks${q}`);
+    return data.blocks;
+  }
+
+  async getBlocksSummary(
+    range: "1h" | "24h" | "7d" = "24h"
+  ): Promise<unknown> {
+    return this.get(`/blocks/summary?range=${range}`);
+  }
+
+  // ===== Balance =====
+
+  async getBalance(publicKey: string): Promise<BalanceResponse> {
+    return this.get<BalanceResponse>(`/balance/${publicKey}`);
+  }
+
+  async getTokenBalance(publicKey: string, token: string): Promise<number> {
+    const data = await this.get<{ balance: number }>(
+      `/balance/${publicKey}/${token}`
+    );
+    return data.balance;
+  }
+
+  // ===== Transactions =====
+
+  async getTransactions(
+    opts: { limit?: number; offset?: number } = {}
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (opts.limit) params.set("limit", String(opts.limit));
+    if (opts.offset) params.set("offset", String(opts.offset));
+    const q = params.toString();
+    return this.get(`/txs${q ? `?${q}` : ""}`);
+  }
+
+  // ===== Tokens =====
+
+  async getTokens(): Promise<TokenMetadata[]> {
+    const data = await this.get<{ tokens: TokenMetadata[]; success: boolean }>(
+      "/tokens"
+    );
+    return data.tokens;
+  }
+
+  async getTokenMetadata(symbol: string): Promise<TokenMetadata> {
+    return this.get<TokenMetadata>(`/token/${symbol}/metadata`);
+  }
+
+  async getTokenHolders(
+    symbol: string
+  ): Promise<TokenHolder[]> {
+    const data = await this.get<{ holders: TokenHolder[] }>(
+      `/token/${symbol}/holders`
+    );
+    return data.holders;
+  }
+
+  async getTokenTransactions(
+    symbol: string
+  ): Promise<unknown> {
+    return this.get(`/token/${symbol}/transactions`);
+  }
+
+  // ===== Validators =====
+
+  async getValidators(): Promise<Validator[]> {
+    const data = await this.get<{ validators: Validator[] }>("/validators");
+    return data.validators;
+  }
+
+  async getValidatorStats(): Promise<unknown> {
+    return this.get("/validators/stats");
+  }
+
+  async getFinality(): Promise<{
+    finalized_height: number;
+    tip_height: number;
+    total_stake: number;
+    finalized_stake: number;
+  }> {
+    return this.get("/finality");
+  }
+
+  // ===== Peers =====
+
+  async getPeers(): Promise<string[]> {
+    const data = await this.get<{ peers: string[] }>("/peers");
+    return data.peers;
+  }
+
+  // ===== Burned =====
+
+  async getBurnedTokens(): Promise<{
+    burned: Record<string, number>;
+    total_xrge_burned: number;
+  }> {
+    return this.get("/burned");
+  }
+
+  // ===== Write operations =====
+
+  async transfer(
+    wallet: WalletKeys,
+    params: TransferParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedTransfer(
+      wallet,
+      params.to,
+      params.amount,
+      params.fee,
+      params.token
+    );
+    return this.submitTx("/v2/transfer", tx);
+  }
+
+  async createToken(
+    wallet: WalletKeys,
+    params: CreateTokenParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedTokenCreation(
+      wallet,
+      params.name,
+      params.symbol,
+      params.totalSupply,
+      params.fee
+    );
+    return this.submitTx("/v2/token/create", tx);
+  }
+
+  async stake(
+    wallet: WalletKeys,
+    params: StakeParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedStake(wallet, params.amount, params.fee);
+    return this.submitTx("/v2/stake", tx);
+  }
+
+  async unstake(
+    wallet: WalletKeys,
+    params: StakeParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedUnstake(wallet, params.amount, params.fee);
+    return this.submitTx("/v2/unstake", tx);
+  }
+
+  async faucet(wallet: WalletKeys): Promise<ApiResponse> {
+    const tx = createSignedFaucetRequest(wallet);
+    return this.submitTx("/v2/faucet", tx);
+  }
+
+  async burn(
+    wallet: WalletKeys,
+    amount: number,
+    fee = 1,
+    token = "XRGE"
+  ): Promise<ApiResponse> {
+    const tx = createSignedBurn(wallet, amount, fee, token);
+    return this.submitTx("/v2/transfer", tx);
+  }
+
+  async updateTokenMetadata(
+    wallet: WalletKeys,
+    params: TokenMetadataUpdateParams
+  ): Promise<ApiResponse> {
+    try {
+      const data = await this.post<ApiResponse>("/token/metadata/update", {
+        token_symbol: params.symbol,
+        from_public_key: wallet.publicKey,
+        from_private_key: wallet.privateKey,
+        image: params.image,
+        description: params.description,
+        website: params.website,
+        twitter: params.twitter,
+        discord: params.discord,
+      });
+      return data;
+    } catch (e) {
+      return {
+        success: false,
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+}
+
+// ===== NFT Sub-client =====
+
+class NftClient {
+  constructor(private readonly rc: RougeChain) {}
+
+  // Queries
+
+  async getCollections(): Promise<NftCollection[]> {
+    const data = await this.rc.get<{ collections: NftCollection[] }>(
+      "/nft/collections"
+    );
+    return data.collections;
+  }
+
+  async getCollection(collectionId: string): Promise<NftCollection> {
+    return this.rc.get<NftCollection>(
+      `/nft/collection/${encodeURIComponent(collectionId)}`
+    );
+  }
+
+  async getTokens(
+    collectionId: string,
+    opts: { limit?: number; offset?: number } = {}
+  ): Promise<{ tokens: NftToken[]; total: number }> {
+    const params = new URLSearchParams();
+    if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+    if (opts.offset !== undefined) params.set("offset", String(opts.offset));
+    const q = params.toString();
+    return this.rc.get(
+      `/nft/collection/${encodeURIComponent(collectionId)}/tokens${q ? `?${q}` : ""}`
+    );
+  }
+
+  async getToken(
+    collectionId: string,
+    tokenId: number
+  ): Promise<NftToken> {
+    return this.rc.get<NftToken>(
+      `/nft/token/${encodeURIComponent(collectionId)}/${tokenId}`
+    );
+  }
+
+  async getByOwner(pubkey: string): Promise<NftToken[]> {
+    const data = await this.rc.get<{ nfts: NftToken[] }>(
+      `/nft/owner/${encodeURIComponent(pubkey)}`
+    );
+    return data.nfts;
+  }
+
+  // Write operations
+
+  async createCollection(
+    wallet: WalletKeys,
+    params: CreateNftCollectionParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedNftCreateCollection(wallet, params.symbol, params.name, {
+      maxSupply: params.maxSupply,
+      royaltyBps: params.royaltyBps,
+      image: params.image,
+      description: params.description,
+    });
+    return this.rc.submitTx("/v2/nft/collection/create", tx);
+  }
+
+  async mint(
+    wallet: WalletKeys,
+    params: MintNftParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedNftMint(wallet, params.collectionId, params.name, {
+      metadataUri: params.metadataUri,
+      attributes: params.attributes,
+    });
+    return this.rc.submitTx("/v2/nft/mint", tx);
+  }
+
+  async batchMint(
+    wallet: WalletKeys,
+    params: BatchMintNftParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedNftBatchMint(
+      wallet,
+      params.collectionId,
+      params.names,
+      { uris: params.uris, batchAttributes: params.batchAttributes }
+    );
+    return this.rc.submitTx("/v2/nft/batch-mint", tx);
+  }
+
+  async transfer(
+    wallet: WalletKeys,
+    params: TransferNftParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedNftTransfer(
+      wallet,
+      params.collectionId,
+      params.tokenId,
+      params.to,
+      params.salePrice
+    );
+    return this.rc.submitTx("/v2/nft/transfer", tx);
+  }
+
+  async burn(
+    wallet: WalletKeys,
+    params: BurnNftParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedNftBurn(wallet, params.collectionId, params.tokenId);
+    return this.rc.submitTx("/v2/nft/burn", tx);
+  }
+
+  async lock(
+    wallet: WalletKeys,
+    params: LockNftParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedNftLock(
+      wallet,
+      params.collectionId,
+      params.tokenId,
+      params.locked
+    );
+    return this.rc.submitTx("/v2/nft/lock", tx);
+  }
+
+  async freezeCollection(
+    wallet: WalletKeys,
+    params: FreezeCollectionParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedNftFreezeCollection(
+      wallet,
+      params.collectionId,
+      params.frozen
+    );
+    return this.rc.submitTx("/v2/nft/freeze-collection", tx);
+  }
+}
+
+// ===== DEX Sub-client =====
+
+class DexClient {
+  constructor(private readonly rc: RougeChain) {}
+
+  // Queries
+
+  async getPools(): Promise<LiquidityPool[]> {
+    const data = await this.rc.get<{ pools: LiquidityPool[] }>("/pools");
+    return data.pools;
+  }
+
+  async getPool(poolId: string): Promise<LiquidityPool> {
+    return this.rc.get<LiquidityPool>(`/pool/${poolId}`);
+  }
+
+  async getPoolEvents(poolId: string): Promise<PoolEvent[]> {
+    const data = await this.rc.get<{ events: PoolEvent[] }>(
+      `/pool/${poolId}/events`
+    );
+    return data.events;
+  }
+
+  async getPoolPrices(poolId: string): Promise<unknown> {
+    return this.rc.get(`/pool/${poolId}/prices`);
+  }
+
+  async getPoolStats(poolId: string): Promise<PoolStats> {
+    return this.rc.get<PoolStats>(`/pool/${poolId}/stats`);
+  }
+
+  async quote(params: SwapQuoteParams): Promise<SwapQuote> {
+    return this.rc.post<SwapQuote>("/swap/quote", {
+      pool_id: params.poolId,
+      token_in: params.tokenIn,
+      amount_in: params.amountIn,
+    });
+  }
+
+  // Write operations
+
+  async swap(
+    wallet: WalletKeys,
+    params: SwapParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedSwap(
+      wallet,
+      params.tokenIn,
+      params.tokenOut,
+      params.amountIn,
+      params.minAmountOut
+    );
+    return this.rc.submitTx("/v2/swap/execute", tx);
+  }
+
+  async createPool(
+    wallet: WalletKeys,
+    params: CreatePoolParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedPoolCreation(
+      wallet,
+      params.tokenA,
+      params.tokenB,
+      params.amountA,
+      params.amountB
+    );
+    return this.rc.submitTx("/v2/pool/create", tx);
+  }
+
+  async addLiquidity(
+    wallet: WalletKeys,
+    params: AddLiquidityParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedAddLiquidity(
+      wallet,
+      params.poolId,
+      params.amountA,
+      params.amountB
+    );
+    return this.rc.submitTx("/v2/pool/add-liquidity", tx);
+  }
+
+  async removeLiquidity(
+    wallet: WalletKeys,
+    params: RemoveLiquidityParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedRemoveLiquidity(wallet, params.poolId, params.lpAmount);
+    return this.rc.submitTx("/v2/pool/remove-liquidity", tx);
+  }
+}
+
+// ===== Bridge Sub-client =====
+
+class BridgeClient {
+  constructor(private readonly rc: RougeChain) {}
+
+  async getConfig(): Promise<BridgeConfig> {
+    try {
+      const data = await this.rc.get<Record<string, unknown>>("/bridge/config");
+      return {
+        enabled: data.enabled === true,
+        custodyAddress: data.custodyAddress as string | undefined,
+        chainId: (data.chainId as number) ?? 84532,
+      };
+    } catch {
+      return { enabled: false, chainId: 84532 };
+    }
+  }
+
+  async getWithdrawals(): Promise<BridgeWithdrawal[]> {
+    const data = await this.rc.get<{ withdrawals: BridgeWithdrawal[] }>(
+      "/bridge/withdrawals"
+    );
+    return data.withdrawals;
+  }
+
+  async withdraw(
+    wallet: WalletKeys,
+    params: BridgeWithdrawParams
+  ): Promise<ApiResponse> {
+    try {
+      const evm = params.evmAddress.startsWith("0x")
+        ? params.evmAddress
+        : `0x${params.evmAddress}`;
+      const data = await this.rc.post<Record<string, unknown>>(
+        "/bridge/withdraw",
+        {
+          fromPrivateKey: wallet.privateKey,
+          fromPublicKey: wallet.publicKey,
+          amountUnits: params.amount,
+          evmAddress: evm,
+          fee: params.fee,
+        }
+      );
+      return {
+        success: data.success === true,
+        error: data.error as string | undefined,
+        data,
+      };
+    } catch (e) {
+      return {
+        success: false,
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+
+  async claim(params: {
+    evmTxHash: string;
+    evmAddress: string;
+    evmSignature: string;
+    recipientPubkey: string;
+  }): Promise<ApiResponse> {
+    try {
+      const data = await this.rc.post<Record<string, unknown>>(
+        "/bridge/claim",
+        {
+          evmTxHash: params.evmTxHash.startsWith("0x")
+            ? params.evmTxHash
+            : `0x${params.evmTxHash}`,
+          evmAddress: params.evmAddress.startsWith("0x")
+            ? params.evmAddress
+            : `0x${params.evmAddress}`,
+          evmSignature: params.evmSignature,
+          recipientRougechainPubkey: params.recipientPubkey,
+        }
+      );
+      return {
+        success: data.success === true,
+        error: data.error as string | undefined,
+        data,
+      };
+    } catch (e) {
+      return {
+        success: false,
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+}
