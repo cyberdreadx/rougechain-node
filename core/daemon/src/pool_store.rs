@@ -181,6 +181,13 @@ impl PoolStore {
         let all_pools = self.list_pools()?;
         Ok(all_pools.into_iter().filter(|p| p.contains_token(token_symbol)).collect())
     }
+
+    /// Clear all pools (used before rebuilding pool state from chain history)
+    pub fn clear_all(&self) -> Result<(), String> {
+        self.db.clear().map_err(|e| format!("Failed to clear pools: {}", e))?;
+        self.db.flush().map_err(|e| format!("Failed to flush: {}", e))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

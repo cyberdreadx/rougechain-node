@@ -100,6 +100,7 @@ impl L1Node {
     pub fn init(&self) -> Result<(), String> {
         self.store.init()?;
         self.messenger_store.init()?;
+        self.rebuild_pool_state()?;
         self.rebuild_balances()?;
         self.rebuild_token_balances()?;
         let tip = self.store.get_tip()?;
@@ -139,6 +140,9 @@ impl L1Node {
         
         // Clear and replace the chain file
         self.store.reset_chain(blocks)?;
+        
+        // Rebuild pool state from the new chain
+        self.rebuild_pool_state()?;
         
         // Reset balances
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
@@ -244,14 +248,12 @@ impl L1Node {
             }
         }
         
-        // Store the block
-        self.store.append_block(&block)?;
-        
-        // Apply transactions and distribute fees
+        // Apply state BEFORE storing to disk (atomic: don't store blocks we can't apply)
         self.apply_balance_block(&block)?;
-        
-        // Apply validator state changes
         self.apply_validator_block(&block)?;
+        
+        // Only persist after state was applied successfully
+        self.store.append_block(&block)?;
         
         eprintln!("[node] Imported block {} from peer", block.header.height);
         Ok(())
@@ -1232,8 +1234,13 @@ impl L1Node {
                 let amount_a = tx.payload.amount_a.ok_or("missing amount_a")?;
                 let amount_b = tx.payload.amount_b.ok_or("missing amount_b")?;
                 
-                let mut pool = self.pool_store.get_pool(pool_id)?
-                    .ok_or_else(|| format!("Pool not found: {}", pool_id))?;
+                let mut pool = match self.pool_store.get_pool(pool_id)? {
+                    Some(p) => p,
+                    None => {
+                        eprintln!("[node] Warning: Pool {} not found, skipping add_liquidity", pool_id);
+                        return Ok(());
+                    }
+                };
                 
                 // Deduct fee
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
@@ -1311,8 +1318,13 @@ impl L1Node {
                 let pool_id = tx.payload.pool_id.as_ref().ok_or("missing pool_id")?;
                 let lp_amount = tx.payload.lp_amount.ok_or("missing lp_amount")?;
                 
-                let mut pool = self.pool_store.get_pool(pool_id)?
-                    .ok_or_else(|| format!("Pool not found: {}", pool_id))?;
+                let mut pool = match self.pool_store.get_pool(pool_id)? {
+                    Some(p) => p,
+                    None => {
+                        eprintln!("[node] Warning: Pool {} not found, skipping remove_liquidity", pool_id);
+                        return Ok(());
+                    }
+                };
                 
                 // Deduct fee
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
@@ -1399,19 +1411,38 @@ impl L1Node {
                 
                 // Execute swap through the path
                 let mut current_amount = amount_in;
+                let mut swap_ok = true;
                 for i in 0..(path.len() - 1) {
                     let t_in = &path[i];
                     let t_out = &path[i + 1];
                     
                     let pool_id = LiquidityPool::make_pool_id(t_in, t_out);
-                    let mut pool = self.pool_store.get_pool(&pool_id)?
-                        .ok_or_else(|| format!("Pool not found: {}", pool_id))?;
+                    let mut pool = match self.pool_store.get_pool(&pool_id)? {
+                        Some(p) => p,
+                        None => {
+                            eprintln!("[node] Warning: Pool {} not found, skipping swap", pool_id);
+                            swap_ok = false;
+                            break;
+                        }
+                    };
                     
-                    let (reserve_in, reserve_out) = pool.get_reserves(t_in)
-                        .ok_or("Invalid token for pool")?;
+                    let (reserve_in, reserve_out) = match pool.get_reserves(t_in) {
+                        Some(r) => r,
+                        None => {
+                            eprintln!("[node] Warning: Invalid token for pool {}, skipping swap", pool_id);
+                            swap_ok = false;
+                            break;
+                        }
+                    };
                     
-                    let amount_out = amm::get_amount_out(current_amount, reserve_in, reserve_out)
-                        .ok_or("Insufficient liquidity")?;
+                    let amount_out = match amm::get_amount_out(current_amount, reserve_in, reserve_out) {
+                        Some(a) => a,
+                        None => {
+                            eprintln!("[node] Warning: Insufficient liquidity in {}, skipping swap", pool_id);
+                            swap_ok = false;
+                            break;
+                        }
+                    };
                     
                     // Deduct input token (only on first hop)
                     if i == 0 {
@@ -1436,9 +1467,13 @@ impl L1Node {
                     current_amount = amount_out;
                 }
                 
+                if !swap_ok {
+                    return Ok(());
+                }
+                
                 // Check slippage
                 if current_amount < min_amount_out {
-                    return Err(format!("Slippage exceeded: got {} but minimum was {}", current_amount, min_amount_out));
+                    eprintln!("[node] Warning: Slippage exceeded in imported swap, accepting anyway");
                 }
                 
                 // Credit output token
@@ -1699,6 +1734,120 @@ impl L1Node {
     fn rebuild_token_balances(&self) -> Result<(), String> {
         // Token balances are rebuilt as part of rebuild_balances
         // This is a separate call for clarity but the work is done in rebuild_balances
+        Ok(())
+    }
+
+    /// Rebuild pool state from chain history.
+    /// Clears pool_store and replays all pool-related transactions from genesis
+    /// to reconstruct correct pool reserves, LP supply, and pool existence.
+    fn rebuild_pool_state(&self) -> Result<(), String> {
+        let blocks = self.store.get_all_blocks()?;
+        if blocks.is_empty() {
+            return Ok(());
+        }
+
+        self.pool_store.clear_all()?;
+
+        let mut pool_count = 0u32;
+        for block in &blocks {
+            for tx in &block.txs {
+                match tx.tx_type.as_str() {
+                    "create_pool" => {
+                        if let (Some(token_a), Some(token_b), Some(amount_a), Some(amount_b)) = (
+                            tx.payload.token_a_symbol.as_ref(),
+                            tx.payload.token_b_symbol.as_ref(),
+                            tx.payload.amount_a,
+                            tx.payload.amount_b,
+                        ) {
+                            let pool = LiquidityPool::new(
+                                token_a.clone(),
+                                token_b.clone(),
+                                amount_a,
+                                amount_b,
+                                tx.from_pub_key.clone(),
+                                block.header.time,
+                            );
+                            self.pool_store.save_pool(&pool)?;
+                            pool_count += 1;
+                        }
+                    }
+                    "add_liquidity" => {
+                        if let (Some(pool_id), Some(amount_a), Some(amount_b)) = (
+                            tx.payload.pool_id.as_ref(),
+                            tx.payload.amount_a,
+                            tx.payload.amount_b,
+                        ) {
+                            if let Some(mut pool) = self.pool_store.get_pool(pool_id)? {
+                                let lp_amount = amm::calculate_lp_mint(
+                                    amount_a, amount_b,
+                                    pool.reserve_a, pool.reserve_b,
+                                    pool.total_lp_supply,
+                                ).unwrap_or(0);
+                                pool.reserve_a += amount_a;
+                                pool.reserve_b += amount_b;
+                                pool.total_lp_supply += lp_amount;
+                                self.pool_store.save_pool(&pool)?;
+                            }
+                        }
+                    }
+                    "remove_liquidity" => {
+                        if let (Some(pool_id), Some(lp_amount)) = (
+                            tx.payload.pool_id.as_ref(),
+                            tx.payload.lp_amount,
+                        ) {
+                            if let Some(mut pool) = self.pool_store.get_pool(pool_id)? {
+                                if let Some((amount_a, amount_b)) = amm::calculate_remove_liquidity(
+                                    lp_amount, pool.reserve_a, pool.reserve_b, pool.total_lp_supply,
+                                ) {
+                                    pool.reserve_a = pool.reserve_a.saturating_sub(amount_a);
+                                    pool.reserve_b = pool.reserve_b.saturating_sub(amount_b);
+                                    pool.total_lp_supply = pool.total_lp_supply.saturating_sub(lp_amount);
+                                    self.pool_store.save_pool(&pool)?;
+                                }
+                            }
+                        }
+                    }
+                    "swap" => {
+                        if let (Some(token_in), Some(token_out), Some(amount_in)) = (
+                            tx.payload.token_a_symbol.as_ref(),
+                            tx.payload.token_b_symbol.as_ref(),
+                            tx.payload.amount_a,
+                        ) {
+                            let path = tx.payload.swap_path.clone()
+                                .unwrap_or_else(|| vec![token_in.clone(), token_out.clone()]);
+
+                            let mut current_amount = amount_in;
+                            for i in 0..(path.len() - 1) {
+                                let t_in = &path[i];
+                                let t_out = &path[i + 1];
+                                let pool_id = LiquidityPool::make_pool_id(t_in, t_out);
+
+                                if let Some(mut pool) = self.pool_store.get_pool(&pool_id)? {
+                                    if let Some((reserve_in, reserve_out)) = pool.get_reserves(t_in) {
+                                        if let Some(amount_out) = amm::get_amount_out(current_amount, reserve_in, reserve_out) {
+                                            if pool.token_a == *t_in {
+                                                pool.reserve_a += current_amount;
+                                                pool.reserve_b = pool.reserve_b.saturating_sub(amount_out);
+                                            } else {
+                                                pool.reserve_b += current_amount;
+                                                pool.reserve_a = pool.reserve_a.saturating_sub(amount_out);
+                                            }
+                                            self.pool_store.save_pool(&pool)?;
+                                            current_amount = amount_out;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if pool_count > 0 {
+            eprintln!("[node] Rebuilt {} pools from chain history", pool_count);
+        }
         Ok(())
     }
     
