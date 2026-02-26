@@ -1,16 +1,22 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio::time::sleep;
 
 use crate::node::L1Node;
 use quantum_vault_types::BlockV1;
 
+struct PeerHealth {
+    consecutive_failures: u32,
+    next_retry: Instant,
+}
+
 /// Manages dynamic peer list
 #[derive(Clone)]
 pub struct PeerManager {
     peers: Arc<RwLock<HashSet<String>>>,
+    health: Arc<RwLock<HashMap<String, PeerHealth>>>,
     self_url: Option<String>,
 }
 
@@ -19,12 +25,53 @@ impl PeerManager {
         let peers: HashSet<String> = initial_peers.into_iter().collect();
         Self {
             peers: Arc::new(RwLock::new(peers)),
+            health: Arc::new(RwLock::new(HashMap::new())),
             self_url,
         }
     }
 
     pub async fn get_peers(&self) -> Vec<String> {
         self.peers.read().await.iter().cloned().collect()
+    }
+
+    /// Get only peers that aren't in cooldown
+    pub async fn get_active_peers(&self) -> Vec<String> {
+        let peers = self.peers.read().await;
+        let health = self.health.read().await;
+        let now = Instant::now();
+        peers
+            .iter()
+            .filter(|p| {
+                health
+                    .get(*p)
+                    .map(|h| now >= h.next_retry)
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Record a successful sync for a peer (resets backoff)
+    pub async fn record_success(&self, peer_url: &str) {
+        let mut health = self.health.write().await;
+        health.remove(peer_url);
+    }
+
+    /// Record a failed sync for a peer (increases backoff).
+    /// Returns true if this is the first failure (should log), false if suppressed.
+    pub async fn record_failure(&self, peer_url: &str) -> bool {
+        let mut health = self.health.write().await;
+        let entry = health.entry(peer_url.to_string()).or_insert(PeerHealth {
+            consecutive_failures: 0,
+            next_retry: Instant::now(),
+        });
+        entry.consecutive_failures += 1;
+        let backoff = std::cmp::min(
+            10 * 2u64.pow(entry.consecutive_failures.min(8)),
+            600, // max 10 minutes
+        );
+        entry.next_retry = Instant::now() + Duration::from_secs(backoff);
+        entry.consecutive_failures == 1
     }
 
     pub async fn add_peer(&self, peer_url: String) -> bool {
@@ -45,11 +92,9 @@ impl PeerManager {
     }
     
     /// Check if an IP address belongs to a known peer
-    /// Extracts hostnames from peer URLs and checks for IP match
     pub async fn is_known_peer_ip(&self, client_ip: &str) -> bool {
         let peers = self.peers.read().await;
         for peer_url in peers.iter() {
-            // Extract hostname/IP from URL
             if let Some(host) = extract_host_from_url(peer_url) {
                 if host == client_ip {
                     return true;
@@ -272,7 +317,7 @@ pub async fn start_peer_sync(peer_manager: Arc<PeerManager>, node: Arc<L1Node>) 
     }
     
     let mut discovery_counter = 0u32;
-    let mut backoff_secs = 10u64; // Start with 10 second interval
+    let mut backoff_secs = 10u64;
     const MIN_SYNC_INTERVAL: u64 = 10;
     const MAX_SYNC_INTERVAL: u64 = 60;
     
@@ -280,45 +325,46 @@ pub async fn start_peer_sync(peer_manager: Arc<PeerManager>, node: Arc<L1Node>) 
     loop {
         sleep(Duration::from_secs(backoff_secs)).await;
         
-        let peers = peer_manager.get_peers().await;
+        let peers = peer_manager.get_active_peers().await;
         let mut had_rate_limit = false;
         
         for peer in &peers {
-            // Sync blocks
             match sync_from_peer(peer, &node, false).await {
                 Ok(count) if count > 0 => {
                     eprintln!("[peer] Synced {} new blocks from {}", count, peer);
-                    // Successful sync with new blocks - reset to normal interval
+                    peer_manager.record_success(peer).await;
                     backoff_secs = MIN_SYNC_INTERVAL;
                 }
                 Ok(_) => {
-                    // No new blocks - can slow down a bit
+                    peer_manager.record_success(peer).await;
                     backoff_secs = std::cmp::min(backoff_secs + 5, MAX_SYNC_INTERVAL);
                 }
                 Err(e) => {
                     if e.contains("429") || e.contains("Too Many Requests") {
                         had_rate_limit = true;
-                        // Don't log every rate limit, just increase backoff
                     } else {
-                        eprintln!("[peer] Sync error from {}: {}", peer, e);
+                        let should_log = peer_manager.record_failure(peer).await;
+                        if should_log {
+                            eprintln!("[peer] Sync error from {} (suppressing repeats): {}", peer, e);
+                        }
                     }
                 }
             }
         }
         
-        // If rate limited, increase backoff significantly
         if had_rate_limit {
             backoff_secs = std::cmp::min(backoff_secs * 2, MAX_SYNC_INTERVAL);
             eprintln!("[peer] Rate limited, backing off to {}s", backoff_secs);
         }
         
-        // Peer discovery every ~60 seconds
+        // Peer discovery every ~60 seconds (use all peers, not just active)
         discovery_counter += 1;
         let discovery_threshold = (60 / backoff_secs).max(1) as u32;
         if discovery_counter >= discovery_threshold {
             discovery_counter = 0;
             
-            for peer in &peers {
+            let all_peers = peer_manager.get_peers().await;
+            for peer in &all_peers {
                 match discover_peers(peer).await {
                     Ok(new_peers) => {
                         for new_peer in new_peers {
@@ -327,7 +373,7 @@ pub async fn start_peer_sync(peer_manager: Arc<PeerManager>, node: Arc<L1Node>) 
                             }
                         }
                     }
-                    Err(_) => {} // Ignore discovery errors
+                    Err(_) => {}
                 }
             }
         }
