@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -6,12 +6,13 @@ use chrono::Utc;
 
 use quantum_vault_consensus::{compute_selection_seed, fetch_entropy, select_proposer, ProposerSelectionResult};
 use quantum_vault_crypto::{bytes_to_hex, pqc_keygen, pqc_sign, pqc_verify, sha256};
+use quantum_vault_storage::bridge_withdraw_store::BridgeWithdrawStore;
 use quantum_vault_storage::chain_store::ChainStore;
 use quantum_vault_storage::messenger_store::{Conversation, MessengerMessage, MessengerStore, MessengerWallet};
 use quantum_vault_storage::token_metadata_store::{TokenMetadata, TokenMetadataStore};
 use quantum_vault_storage::validator_store::{ValidatorState, ValidatorStore};
 use quantum_vault_types::{
-    compute_block_hash, compute_tx_hash, encode_header_v1, encode_tx_v1, BlockHeaderV1, BlockV1,
+    compute_block_hash, compute_tx_hash, encode_header_v1, encode_tx_v1, encode_tx_for_signing, BlockHeaderV1, BlockV1,
     ChainConfig, PQKeypair, SlashPayload, TxPayload, TxV1, VoteMessage,
 };
 
@@ -37,6 +38,8 @@ pub struct NodeOptions {
     pub data_dir: PathBuf,
     pub chain: ChainConfig,
     pub mine: bool,
+    /// Optional store for pending bridge withdrawals (qETH → ETH)
+    pub bridge_withdraw_store: Option<std::sync::Arc<BridgeWithdrawStore>>,
 }
 
 /// Key for token balances: (public_key, token_symbol)
@@ -54,6 +57,7 @@ pub struct L1Node {
     token_metadata_store: TokenMetadataStore,
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
+    verified_tx_ids: Arc<Mutex<HashSet<String>>>,
     balances: Arc<Mutex<HashMap<String, f64>>>,
     token_balances: Arc<Mutex<HashMap<TokenBalanceKey, f64>>>,
     lp_balances: Arc<Mutex<HashMap<TokenBalanceKey, f64>>>,  // LP token balances
@@ -83,6 +87,7 @@ impl L1Node {
             token_metadata_store,
             keys: Arc::new(Mutex::new(keys)),
             mempool: Arc::new(Mutex::new(HashMap::new())),
+            verified_tx_ids: Arc::new(Mutex::new(HashSet::new())),
             balances: Arc::new(Mutex::new(HashMap::new())),
             token_balances: Arc::new(Mutex::new(HashMap::new())),
             lp_balances: Arc::new(Mutex::new(HashMap::new())),
@@ -202,7 +207,21 @@ impl L1Node {
         }
         
         // TODO: Verify proposer signature
-        // TODO: Verify all transaction signatures
+        // Verify all transaction signatures in parallel
+        {
+            use rayon::prelude::*;
+            let invalid_count = block
+                .txs
+                .par_iter()
+                .filter(|tx| {
+                    let bytes = encode_tx_for_signing(tx);
+                    pqc_verify(&tx.from_pub_key, &bytes, &tx.sig).ok() != Some(true)
+                })
+                .count();
+            if invalid_count > 0 {
+                return Err(format!("Block has {} invalid tx signatures", invalid_count));
+            }
+        }
         
         // Store the block
         self.store.append_block(&block)?;
@@ -345,6 +364,11 @@ impl L1Node {
                             .map(|s| s.to_uppercase() == symbol_upper)
                             .unwrap_or(false);
                         token_in_match || token_out_match
+                    }
+                    "bridge_mint" | "bridge_withdraw" => {
+                        tx.payload.token_symbol.as_ref()
+                            .map(|s| s.to_uppercase() == symbol_upper)
+                            .unwrap_or(false)
                     }
                     _ => false,
                 };
@@ -560,12 +584,12 @@ impl L1Node {
         
         let mut mempool = self.mempool.lock().map_err(|_| "mempool lock")?;
         
-        // Skip if already in mempool
         if mempool.contains_key(&tx_hash) {
             return Ok(());
         }
         
-        // TODO: Verify signature before adding
+        // Mark as pre-verified (caller already checked the client-side signature)
+        self.verified_tx_ids.lock().map_err(|_| "verified lock")?.insert(tx_hash.clone());
         
         mempool.insert(tx_hash, tx);
         Ok(())
@@ -616,7 +640,7 @@ impl L1Node {
             fee: tx_fee,
             sig: String::new(),
         };
-        let bytes = encode_tx_v1(&tx);
+        let bytes = encode_tx_for_signing(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
         let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
         if !ok {
@@ -665,7 +689,7 @@ impl L1Node {
             fee: tx_fee,
             sig: String::new(),
         };
-        let bytes = encode_tx_v1(&tx);
+        let bytes = encode_tx_for_signing(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
         let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
         if !ok {
@@ -695,7 +719,89 @@ impl L1Node {
             fee: 0.0,
             sig: String::new(),
         };
-        let bytes = encode_tx_v1(&tx);
+        let bytes = encode_tx_for_signing(&tx);
+        tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
+        self.accept_tx(tx.clone())?;
+        Ok(tx)
+    }
+
+    /// Submit a bridge_withdraw tx (user-signed): burn qETH and record withdrawal for operator to release ETH.
+    pub fn submit_bridge_withdraw_tx(
+        &self,
+        from_private_key: &str,
+        from_public_key: &str,
+        amount_units: u64,
+        evm_address: &str,
+        fee: Option<f64>,
+    ) -> Result<TxV1, String> {
+        let tx_fee = fee.unwrap_or(BASE_TRANSFER_FEE);
+        // Check XRGE for fee
+        let xrge_balance = self.get_balance(from_public_key)?;
+        if xrge_balance < tx_fee {
+            return Err(format!("Insufficient XRGE for fee: need {} XRGE", tx_fee));
+        }
+        // Check qETH balance
+        let qeth_balance = self.get_token_balance(from_public_key, "qETH")?;
+        if qeth_balance < amount_units as f64 {
+            return Err(format!(
+                "Insufficient qETH: have {}, need {}",
+                qeth_balance, amount_units
+            ));
+        }
+        // Validate EVM address (0x + 40 hex chars)
+        let evm = evm_address.trim().to_lowercase();
+        let evm = if evm.starts_with("0x") { evm } else { format!("0x{}", evm) };
+        if evm.len() != 42 || !evm[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err("Invalid EVM address".to_string());
+        }
+        let mut tx = TxV1 {
+            version: 1,
+            tx_type: "bridge_withdraw".to_string(),
+            from_pub_key: from_public_key.to_string(),
+            nonce: Utc::now().timestamp_millis() as u64,
+            payload: TxPayload {
+                amount: Some(amount_units),
+                token_symbol: Some("qETH".to_string()),
+                evm_address: Some(evm),
+                ..Default::default()
+            },
+            fee: tx_fee,
+            sig: String::new(),
+        };
+        let bytes = encode_tx_for_signing(&tx);
+        tx.sig = pqc_sign(from_private_key, &bytes)?;
+        let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
+        if !ok {
+            return Err("invalid signature".to_string());
+        }
+        self.accept_tx(tx.clone())?;
+        Ok(tx)
+    }
+
+    /// Submit a bridge_mint tx (authority only): mint bridged token to recipient.
+    /// Used when verifying a deposit from Base Sepolia (or other EVM chain).
+    pub fn submit_bridge_mint_tx(
+        &self,
+        recipient_public_key: &str,
+        amount: u64,
+        token_symbol: &str,
+    ) -> Result<TxV1, String> {
+        let keys = self.keys.lock().map_err(|_| "keys lock")?.clone();
+        let mut tx = TxV1 {
+            version: 1,
+            tx_type: "bridge_mint".to_string(),
+            from_pub_key: keys.public_key_hex.clone(),
+            nonce: Utc::now().timestamp_millis() as u64,
+            payload: TxPayload {
+                to_pub_key_hex: Some(recipient_public_key.to_string()),
+                amount: Some(amount),
+                token_symbol: Some(token_symbol.to_string()),
+                ..Default::default()
+            },
+            fee: 0.0,
+            sig: String::new(),
+        };
+        let bytes = encode_tx_for_signing(&tx);
         tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
         self.accept_tx(tx.clone())?;
         Ok(tx)
@@ -735,7 +841,7 @@ impl L1Node {
             fee: tx_fee,
             sig: String::new(),
         };
-        let bytes = encode_tx_v1(&tx);
+        let bytes = encode_tx_for_signing(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
         let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
         if !ok {
@@ -767,7 +873,7 @@ impl L1Node {
             fee: fee.unwrap_or(BASE_TRANSFER_FEE),
             sig: String::new(),
         };
-        let bytes = encode_tx_v1(&tx);
+        let bytes = encode_tx_for_signing(&tx);
         tx.sig = pqc_sign(from_private_key, &bytes)?;
         let ok = pqc_verify(from_public_key, &bytes, &tx.sig)?;
         if !ok {
@@ -889,8 +995,28 @@ impl L1Node {
         if mempool.is_empty() {
             return Ok(None);
         }
-        let txs: Vec<TxV1> = mempool.values().cloned().collect();
-        mempool.clear();
+        let tx_entries: Vec<(String, TxV1)> = mempool.drain().collect();
+        drop(mempool);
+        let mut verified_set = self.verified_tx_ids.lock().map_err(|_| "verified lock")?;
+        // Verify signatures in parallel; skip re-verification for pre-verified (v2 API) txs
+        let txs: Vec<TxV1> = {
+            use rayon::prelude::*;
+            tx_entries.into_par_iter()
+                .filter(|(id, tx)| {
+                    if verified_set.contains(id) {
+                        return true;
+                    }
+                    let bytes = encode_tx_for_signing(tx);
+                    pqc_verify(&tx.from_pub_key, &bytes, &tx.sig).ok() == Some(true)
+                })
+                .map(|(_, tx)| tx)
+                .collect()
+        };
+        verified_set.clear();
+        drop(verified_set);
+        if txs.is_empty() {
+            return Ok(None);
+        }
         let tip = self.store.get_tip()?;
         let header = BlockHeaderV1 {
             version: 1,
@@ -953,6 +1079,22 @@ impl L1Node {
                 block.header.time,
                 block.header.height,
             )?;
+        }
+        
+        // Persist bridge_withdraw txs for operator to fulfill ETH releases
+        if let Some(ref store) = self.opts.bridge_withdraw_store {
+            for tx in &block.txs {
+                if tx.tx_type == "bridge_withdraw"
+                    && tx.payload.token_symbol.as_deref() == Some("qETH")
+                    && tx.payload.amount.unwrap_or(0) > 0
+                {
+                    if let Some(evm_addr) = tx.payload.evm_address.as_ref() {
+                        let tx_id = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
+                        let amount = tx.payload.amount.unwrap_or(0);
+                        let _ = store.add(tx_id.clone(), evm_addr.clone(), amount);
+                    }
+                }
+            }
         }
         
         // Distribute fees: 25% to proposer, 75% split by stake
@@ -1618,6 +1760,33 @@ impl L1Node {
                     let total_supply = tx.payload.token_total_supply.unwrap_or(0) as f64;
                     let creator_key = (tx.from_pub_key.clone(), token_symbol.clone());
                     *token_balances.entry(creator_key).or_insert(0.0) += total_supply;
+                }
+            }
+            "bridge_mint" => {
+                // Bridge deposit: mint bridged token to recipient (no fee, no deduction)
+                if let (Some(to_pub_key), Some(token_symbol)) = (
+                    tx.payload.to_pub_key_hex.as_ref(),
+                    tx.payload.token_symbol.as_ref(),
+                ) {
+                    let amount = tx.payload.amount.unwrap_or(0) as f64;
+                    if amount > 0.0 {
+                        let recipient_key = (to_pub_key.clone(), token_symbol.clone());
+                        *token_balances.entry(recipient_key).or_insert(0.0) += amount;
+                    }
+                }
+            }
+            "bridge_withdraw" => {
+                // Burn qETH and deduct XRGE fee; withdrawal recorded in apply_balance_block
+                if let (Some(token_symbol), Some(amount)) = (
+                    tx.payload.token_symbol.as_ref(),
+                    tx.payload.amount,
+                ) {
+                    if token_symbol.to_uppercase() == "QETH" && amount > 0 {
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                        let sender_key = (tx.from_pub_key.clone(), token_symbol.clone());
+                        *token_balances.entry(sender_key).or_insert(0.0) -= amount as f64;
+                        *burned_tokens.entry(token_symbol.clone()).or_insert(0.0) += amount as f64;
+                    }
                 }
             }
             "slash" => {}

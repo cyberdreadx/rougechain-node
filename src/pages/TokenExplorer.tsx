@@ -27,6 +27,8 @@ import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { claimTokenMetadata } from "@/lib/secure-api";
 import UpdateTokenMetadataDialog from "@/components/wallet/UpdateTokenMetadataDialog";
 import xrgeLogo from "@/assets/xrge-logo.webp";
+import qethLogo from "@/assets/qeth-logo.png";
+import { formatTokenAmount } from "@/hooks/use-eth-price";
 
 // Discord logo component
 const DiscordLogo = ({ className }: { className?: string }) => (
@@ -230,6 +232,9 @@ const TokenExplorer = () => {
   const renderIcon = () => {
     if (symbol === "XRGE") {
       return <img src={xrgeLogo} alt="XRGE" className="w-16 h-16 rounded-full" />;
+    }
+    if (symbol === "qETH") {
+      return <img src={qethLogo} alt="qETH" className="w-16 h-16 rounded-full" />;
     }
     if (metadata?.image) {
       return <img src={metadata.image} alt={symbol} className="w-16 h-16 rounded-full object-cover bg-secondary" />;
@@ -439,7 +444,7 @@ const TokenExplorer = () => {
                 <span className="text-xs">Total Supply</span>
               </div>
               <p className="text-lg font-mono font-semibold">
-                {totalSupply.toLocaleString()}
+                {formatTokenAmount(totalSupply, symbol)}
               </p>
             </CardContent>
           </Card>
@@ -477,8 +482,8 @@ const TokenExplorer = () => {
               <p className="text-lg font-mono font-semibold">
                 {pool ? (
                   pool.token_a === symbol
-                    ? `${pool.reserve_a.toLocaleString()} ${symbol}`
-                    : `${pool.reserve_b.toLocaleString()} ${symbol}`
+                    ? `${formatTokenAmount(pool.reserve_a, pool.token_a)} ${symbol}`
+                    : `${formatTokenAmount(pool.reserve_b, pool.token_b)} ${symbol}`
                 ) : "No pool"}
               </p>
             </CardContent>
@@ -529,11 +534,11 @@ const TokenExplorer = () => {
               <div className="grid grid-cols-2 gap-4 p-3 rounded-lg bg-secondary/30">
                 <div>
                   <p className="text-xs text-muted-foreground">{pool.token_a} Reserve</p>
-                  <p className="font-mono font-semibold">{pool.reserve_a.toLocaleString()}</p>
+                  <p className="font-mono font-semibold">{formatTokenAmount(pool.reserve_a, pool.token_a)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">{pool.token_b} Reserve</p>
-                  <p className="font-mono font-semibold">{pool.reserve_b.toLocaleString()}</p>
+                  <p className="font-mono font-semibold">{formatTokenAmount(pool.reserve_b, pool.token_b)}</p>
                 </div>
               </div>
 
@@ -573,7 +578,7 @@ const TokenExplorer = () => {
                       </p>
                     </div>
                     <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-4 pl-7 sm:pl-0">
-                      <p className="font-mono text-sm">{holder.balance.toLocaleString()}</p>
+                      <p className="font-mono text-sm">{formatTokenAmount(holder.balance, symbol)}</p>
                       <p className="text-xs text-muted-foreground">{holder.percentage.toFixed(2)}%</p>
                     </div>
                   </div>
@@ -625,7 +630,7 @@ const TokenExplorer = () => {
                       </div>
                     </div>
                     <div className="flex items-center justify-between sm:justify-end gap-2 pl-0 sm:pl-4">
-                      <p className="font-mono text-sm font-semibold">{tx.amount.toLocaleString()}</p>
+                      <p className="font-mono text-sm font-semibold">{formatTokenAmount(tx.amount, symbol)}</p>
                       <p className="text-xs text-muted-foreground">{symbol}</p>
                     </div>
                   </div>

@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/network";
 import { toast } from "sonner";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
+import { formatTokenAmount } from "@/hooks/use-eth-price";
 
 const ITEMS_PER_PAGE = 20;
 
@@ -441,7 +442,7 @@ const Transactions = () => {
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div>
                       <div className="text-xs text-muted-foreground">Amount</div>
-                      <div className="font-mono">{tx.amount ? tx.amount.toLocaleString() : "—"} <span className="text-primary">{tx.symbol}</span></div>
+                      <div className="font-mono">{tx.amount ? formatTokenAmount(tx.amount, tx.symbol) : "—"} <span className="text-primary">{tx.symbol}</span></div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Fee</div>
@@ -535,7 +536,7 @@ const Transactions = () => {
                         </div>
                       </td>
                       <td className="py-2 px-2 text-right font-mono">
-                        {tx.amount ? tx.amount.toLocaleString() : "—"} <span className="text-primary">{tx.symbol}</span>
+                        {tx.amount ? formatTokenAmount(tx.amount, tx.symbol) : "—"} <span className="text-primary">{tx.symbol}</span>
                       </td>
                       <td className="py-2 px-2 text-right font-mono">
                         {tx.fee ? tx.fee.toFixed(2) : "0.00"} <span className="text-muted-foreground">XRGE</span>
@@ -623,7 +624,7 @@ const Transactions = () => {
                   <div>
                     <p className="text-xs text-muted-foreground">Amount</p>
                     <p className="text-xl font-bold font-mono">
-                      {selectedTx.amount ? selectedTx.amount.toLocaleString() : "0"} <span className="text-primary">{selectedTx.symbol}</span>
+                      {selectedTx.amount ? formatTokenAmount(selectedTx.amount, selectedTx.symbol) : "0"} <span className="text-primary">{selectedTx.symbol}</span>
                     </p>
                   </div>
                   <Badge variant="secondary">{labelForType(selectedTx.type)}</Badge>

@@ -15,6 +15,7 @@ import {
   ExternalLink,
   ArrowLeftRight,
   Droplets,
+  ArrowRightLeft,
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY } from "@/lib/network";
@@ -25,6 +26,7 @@ const navItems = [
   { to: "/", label: "Home", icon: Home },
   { to: "/wallet", label: "Wallet", icon: Wallet },
   { to: "/swap", label: "Swap", icon: ArrowLeftRight },
+  { to: "/bridge", label: "Bridge", icon: ArrowRightLeft },
   { to: "/pools", label: "Pools", icon: Droplets },
   { to: "/blockchain", label: "Blockchain", icon: Globe2 },
   { to: "/messenger", label: "Messenger", icon: MessageSquare },

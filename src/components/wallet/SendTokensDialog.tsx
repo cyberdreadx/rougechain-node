@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { sendTransaction, getWalletBalance, WalletBalance, BASE_TRANSFER_FEE } from "@/lib/pqc-wallet";
+import { qethToHuman, humanToQeth, formatQethForDisplay } from "@/hooks/use-eth-price";
 import PqcQrScanner from "./PqcQrScanner";
 
 interface SendTokensDialogProps {
@@ -62,7 +63,8 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
   const [showScanner, setShowScanner] = useState(false);
 
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
-  const selectedTokenBalance = balances.find(b => b.symbol === selectedToken)?.balance || 0;
+  const rawSelectedBalance = balances.find(b => b.symbol === selectedToken)?.balance || 0;
+  const isQeth = selectedToken === "qETH";
   const selectedTokenInfo = balances.find(b => b.symbol === selectedToken);
 
   // Live address validation
@@ -83,10 +85,12 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
       setError("Invalid amount");
       return;
     }
+    const amountToSend = isQeth ? humanToQeth(amountNum) : amountNum;
 
-    // Check token balance
-    if (amountNum > selectedTokenBalance) {
-      setError(`Insufficient ${selectedToken} balance. You have ${selectedTokenBalance.toLocaleString()} ${selectedToken}`);
+    // Check token balance (raw units)
+    if (amountToSend > rawSelectedBalance) {
+      const displayBal = isQeth ? qethToHuman(rawSelectedBalance) : rawSelectedBalance;
+      setError(`Insufficient ${selectedToken} balance. You have ${isQeth ? displayBal.toString() : rawSelectedBalance.toLocaleString()} ${selectedToken}`);
       return;
     }
 
@@ -110,7 +114,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
         wallet.signingPrivateKey,
         wallet.signingPublicKey,
         parsed.address, // Use parsed address without prefix
-        amountNum,
+        amountToSend,
         selectedToken,
         memo || undefined
       );
@@ -120,7 +124,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
       setConfirming(true);
       
       // Poll for balance change (up to 30 seconds)
-      const startBalance = selectedTokenBalance;
+      const startBalance = rawSelectedBalance;
       const maxAttempts = 15;
       let confirmed = false;
       
@@ -132,7 +136,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
           const newBalance = newBalances.find(b => b.symbol === selectedToken)?.balance || 0;
           
           // Check if balance changed (decreased by approximately the sent amount)
-          if (newBalance < startBalance - (amountNum * 0.9)) {
+          if (newBalance < rawSelectedBalance - (amountToSend * 0.9)) {
             confirmed = true;
             break;
           }
@@ -199,19 +203,24 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {balances.map((token) => (
-                    <SelectItem key={token.symbol} value={token.symbol}>
-                      <div className="flex items-center gap-2">
-                        <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs font-bold">
-                          {token.icon || token.symbol.charAt(0)}
-                        </span>
-                        <span>{token.symbol}</span>
-                        <span className="text-muted-foreground text-xs">
-                          ({token.balance.toLocaleString()})
-                        </span>
-                      </div>
-                    </SelectItem>
-                  ))}
+                  {balances.map((token) => {
+                    const balStr = token.symbol === "qETH"
+                      ? formatQethForDisplay(token.balance)
+                      : token.balance.toLocaleString();
+                    return (
+                      <SelectItem key={token.symbol} value={token.symbol}>
+                        <div className="flex items-center gap-2">
+                          <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs font-bold">
+                            {token.icon || token.symbol.charAt(0)}
+                          </span>
+                          <span>{token.symbol}</span>
+                          <span className="text-muted-foreground text-xs">
+                            ({balStr})
+                          </span>
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             </div>
@@ -268,10 +277,14 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
                 size="sm"
                 className="h-6 px-2 text-xs text-primary"
                 onClick={() => {
-                  // For XRGE, leave room for fee. For other tokens, use full balance
-                  const maxAmount = selectedToken === "XRGE" 
-                    ? Math.max(0, selectedTokenBalance - BASE_TRANSFER_FEE)
-                    : selectedTokenBalance;
+                  let maxAmount: number;
+                  if (selectedToken === "XRGE") {
+                    maxAmount = Math.max(0, rawSelectedBalance - BASE_TRANSFER_FEE);
+                  } else if (isQeth) {
+                    maxAmount = qethToHuman(rawSelectedBalance);
+                  } else {
+                    maxAmount = rawSelectedBalance;
+                  }
                   setAmount(maxAmount.toString());
                 }}
               >
@@ -292,7 +305,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
               </span>
             </div>
             <div className="flex justify-between text-xs text-muted-foreground mt-1">
-              <span>Available: {selectedTokenBalance.toLocaleString()} {selectedToken}</span>
+              <span>Available: {isQeth ? formatQethForDisplay(rawSelectedBalance) : rawSelectedBalance.toLocaleString()} {selectedToken}</span>
               <span>Fee: {BASE_TRANSFER_FEE} XRGE</span>
             </div>
           </div>

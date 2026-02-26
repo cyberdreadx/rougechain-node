@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Droplets, TrendingUp, Loader2, Info, Minus, BarChart3, ArrowDownUp, Shield } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
+import qethLogo from "@/assets/qeth-logo.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -29,6 +30,7 @@ import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { secureCreatePool, secureAddLiquidity, secureRemoveLiquidity } from "@/lib/secure-api";
 import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
 import SwapWidget from "@/components/messenger/SwapWidget";
+import { formatTokenAmount } from "@/hooks/use-eth-price";
 
 interface Pool {
   pool_id: string;
@@ -286,15 +288,16 @@ const Pools = () => {
     }
   };
 
-  const formatNumber = (n: number) => {
-    if (n >= 1000000) return (n / 1000000).toFixed(2) + "M";
-    if (n >= 1000) return (n / 1000).toFixed(2) + "K";
-    return n.toLocaleString();
+  const formatNumber = (n: number, symbol?: string) => {
+    return formatTokenAmount(n, symbol);
   };
 
   const TokenIcon = ({ symbol, size = 32 }: { symbol: string; size?: number }) => {
     if (symbol === "XRGE") {
       return <img src={xrgeLogo} alt="XRGE" className="rounded-full" style={{ width: size, height: size }} />;
+    }
+    if (symbol === "qETH") {
+      return <img src={qethLogo} alt="qETH" className="rounded-full" style={{ width: size, height: size }} />;
     }
     return (
       <div 
@@ -365,7 +368,7 @@ const Pools = () => {
                         <SelectContent>
                           {tokens.map(t => (
                             <SelectItem key={t.symbol} value={t.symbol} disabled={t.symbol === newTokenB}>
-                              {t.symbol} ({formatNumber(t.balance)})
+                              {t.symbol} ({formatNumber(t.balance, t.symbol)})
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -386,7 +389,7 @@ const Pools = () => {
                         <SelectContent>
                           {tokens.map(t => (
                             <SelectItem key={t.symbol} value={t.symbol} disabled={t.symbol === newTokenA}>
-                              {t.symbol} ({formatNumber(t.balance)})
+                              {t.symbol} ({formatNumber(t.balance, t.symbol)})
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -454,7 +457,7 @@ const Pools = () => {
                         </div>
                       </div>
                       <Badge variant="secondary">
-                        TVL: {formatNumber(pool.reserve_a + pool.reserve_b)}
+                        TVL: {formatNumber(pool.reserve_a, pool.token_a)} + {formatNumber(pool.reserve_b, pool.token_b)}
                       </Badge>
                     </div>
                   </CardHeader>
@@ -462,11 +465,11 @@ const Pools = () => {
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                       <div>
                         <p className="text-muted-foreground">{pool.token_a} Reserve</p>
-                        <p className="font-mono font-medium">{formatNumber(pool.reserve_a)}</p>
+                        <p className="font-mono font-medium">{formatNumber(pool.reserve_a, pool.token_a)}</p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">{pool.token_b} Reserve</p>
-                        <p className="font-mono font-medium">{formatNumber(pool.reserve_b)}</p>
+                        <p className="font-mono font-medium">{formatNumber(pool.reserve_b, pool.token_b)}</p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">LP Supply</p>
@@ -598,7 +601,8 @@ const Pools = () => {
                         <div>
                           <span className="font-medium">
                             {formatNumber(
-                              (parseFloat(removeAmount) / selectedPool.total_lp_supply) * selectedPool.reserve_a
+                              (parseFloat(removeAmount) / selectedPool.total_lp_supply) * selectedPool.reserve_a,
+                              selectedPool.token_a
                             )}
                           </span>{" "}
                           {selectedPool.token_a}
@@ -606,7 +610,8 @@ const Pools = () => {
                         <div>
                           <span className="font-medium">
                             {formatNumber(
-                              (parseFloat(removeAmount) / selectedPool.total_lp_supply) * selectedPool.reserve_b
+                              (parseFloat(removeAmount) / selectedPool.total_lp_supply) * selectedPool.reserve_b,
+                              selectedPool.token_b
                             )}
                           </span>{" "}
                           {selectedPool.token_b}

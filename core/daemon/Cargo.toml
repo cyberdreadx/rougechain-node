@@ -18,11 +18,14 @@ futures = "0.3"
 hyper = { version = "0.14", features = ["server", "tcp", "http1", "http2"] }
 tower-http = { version = "0.4", features = ["cors"] }
 reqwest = { version = "0.11", features = ["json"] }
+hex = "0.4"
 quantum-vault-types = { path = "../types" }
 quantum-vault-crypto = { path = "../crypto" }
 quantum-vault-consensus = { path = "../consensus" }
 quantum-vault-storage = { path = "../storage" }
 sled = "0.34"
+eth-ecdsa-verifier = "0.1"
+rayon = "1.10"
 
 [build-dependencies]
 tonic-build = "0.11"

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { ArrowDownUp, Settings, Info, Loader2, RefreshCw, ChevronDown, AlertTriangle, Shield } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
+import qethLogo from "@/assets/qeth-logo.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +28,7 @@ import { Slider } from "@/components/ui/slider";
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { secureSwap } from "@/lib/secure-api";
+import { formatTokenAmount, isQeth, humanToQeth, qethToHuman } from "@/hooks/use-eth-price";
 import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
 
 interface Token {
@@ -56,6 +58,9 @@ interface Pool {
 const TokenIcon = ({ symbol, size = 20 }: { symbol: string; size?: number }) => {
   if (symbol === "XRGE") {
     return <img src={xrgeLogo} alt="XRGE" className="rounded-full" style={{ width: size, height: size }} />;
+  }
+  if (symbol === "qETH") {
+    return <img src={qethLogo} alt="qETH" className="rounded-full" style={{ width: size, height: size }} />;
   }
   return (
     <div 
@@ -196,7 +201,7 @@ const Swap = () => {
         body: JSON.stringify({
           token_in: tokenIn,
           token_out: tokenOut,
-          amount_in: Math.floor(amount),
+          amount_in: Math.floor(isQeth(tokenIn) ? humanToQeth(amount) : amount),
         }),
       });
       
@@ -236,22 +241,22 @@ const Swap = () => {
     }
     
     const amount = parseFloat(amountIn);
+    const rawAmountIn = Math.floor(isQeth(tokenIn) ? humanToQeth(amount) : amount);
     const minOut = Math.floor(quote.amount_out * (1 - slippage / 100));
     
     setLoading(true);
     try {
-      // Use secure client-side signing - private key never leaves the browser
       const result = await secureSwap(
         wallet.publicKey,
         wallet.privateKey,
         tokenIn,
         tokenOut,
-        Math.floor(amount),
+        rawAmountIn,
         minOut
       );
       
       if (result.success) {
-        toast.success(`Swap submitted: ${amount} ${tokenIn} → ~${quote.amount_out} ${tokenOut}`, {
+        toast.success(`Swap submitted: ${amount} ${tokenIn} → ~${formatTokenAmount(quote.amount_out, tokenOut)} ${tokenOut}`, {
           description: "Signed securely on your device",
         });
         setAmountIn("");
@@ -343,7 +348,7 @@ const Swap = () => {
               <div className="space-y-2">
                 <div className="flex justify-between text-sm text-muted-foreground">
                   <span>You pay</span>
-                  <span>Balance: {tokenInData?.balance.toLocaleString() || 0}</span>
+                  <span>Balance: {tokenInData ? formatTokenAmount(tokenInData.balance, tokenIn) : 0}</span>
                 </div>
                 <div className="flex gap-2">
                   <Input
@@ -377,7 +382,7 @@ const Swap = () => {
                   ) : (
                     <span />
                   )}
-                  {tokenInData && parseFloat(amountIn) > tokenInData.balance && (
+                  {tokenInData && parseFloat(amountIn) > (isQeth(tokenIn) ? qethToHuman(tokenInData.balance) : tokenInData.balance) && (
                     <p className="text-xs text-destructive">Insufficient balance</p>
                   )}
                 </div>
@@ -399,13 +404,13 @@ const Swap = () => {
               <div className="space-y-2">
                 <div className="flex justify-between text-sm text-muted-foreground">
                   <span>You receive</span>
-                  <span>Balance: {tokenOutData?.balance.toLocaleString() || 0}</span>
+                  <span>Balance: {tokenOutData ? formatTokenAmount(tokenOutData.balance, tokenOut) : 0}</span>
                 </div>
                 <div className="flex gap-2">
                   <Input
                     type="text"
                     placeholder="0"
-                    value={quote ? quote.amount_out.toLocaleString() : ""}
+                    value={quote ? formatTokenAmount(quote.amount_out, tokenOut) : ""}
                     readOnly
                     className="text-2xl font-mono flex-grow bg-muted/50"
                   />
@@ -444,7 +449,12 @@ const Swap = () => {
                 <div className="bg-secondary/50 rounded-lg p-3 space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Rate</span>
-                    <span>1 {tokenIn} ≈ {(quote.amount_out / parseFloat(amountIn)).toFixed(4)} {tokenOut}</span>
+                    <span>1 {tokenIn} ≈ {(() => {
+                      const rawIn = isQeth(tokenIn) ? humanToQeth(parseFloat(amountIn)) : parseFloat(amountIn);
+                      const humanOut = isQeth(tokenOut) ? qethToHuman(quote.amount_out) : quote.amount_out;
+                      const humanIn = isQeth(tokenIn) ? parseFloat(amountIn) : rawIn;
+                      return (humanOut / humanIn).toFixed(4);
+                    })()} {tokenOut}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Price Impact</span>
@@ -455,7 +465,7 @@ const Swap = () => {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Minimum received</span>
-                    <span>{Math.floor(quote.amount_out * (1 - slippage / 100)).toLocaleString()} {tokenOut}</span>
+                    <span>{formatTokenAmount(Math.floor(quote.amount_out * (1 - slippage / 100)), tokenOut)} {tokenOut}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Route</span>
@@ -467,7 +477,7 @@ const Swap = () => {
               {/* Swap Button */}
               <Button
                 onClick={executeSwap}
-                disabled={!wallet || !quote || loading || parseFloat(amountIn) > (tokenInData?.balance || 0)}
+                disabled={!wallet || !quote || loading || parseFloat(amountIn) > (tokenInData ? (isQeth(tokenIn) ? qethToHuman(tokenInData.balance) : tokenInData.balance) : 0)}
                 className="w-full h-12 text-lg"
               >
                 {loading ? (
@@ -481,7 +491,7 @@ const Swap = () => {
                   "Enter Amount"
                 ) : !quote ? (
                   "No Route Found"
-                ) : parseFloat(amountIn) > (tokenInData?.balance || 0) ? (
+                ) : parseFloat(amountIn) > (tokenInData ? (isQeth(tokenIn) ? qethToHuman(tokenInData.balance) : tokenInData.balance) : 0) ? (
                   "Insufficient Balance"
                 ) : (
                   "Swap"

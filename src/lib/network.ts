@@ -15,7 +15,7 @@ export function getCoreApiBaseUrl(): string {
   const defaultUrl =
     import.meta.env.VITE_CORE_API_URL ||
     import.meta.env.VITE_NODE_API_URL ||
-    "http://localhost:5100/api";
+    "http://localhost:5101/api";
   const mainnetUrl =
     (import.meta.env.VITE_CORE_API_URL_MAINNET as string | undefined) ||
     (import.meta.env.VITE_NODE_API_URL_MAINNET as string | undefined);

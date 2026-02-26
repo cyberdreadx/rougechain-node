@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { formatUsd, formatTokenPrice } from "@/lib/price-service";
 import xrgeLogo from "@/assets/xrge-logo.webp";
+import qethLogo from "@/assets/qeth-logo.png";
 import UpdateTokenMetadataDialog from "./UpdateTokenMetadataDialog";
 
 interface TokenDetailDialogProps {
@@ -201,6 +202,9 @@ const TokenDetailDialog = ({
   const renderIcon = () => {
     if (symbol === "XRGE") {
       return <img src={xrgeLogo} alt="XRGE" className="w-16 h-16 rounded-full" />;
+    }
+    if (symbol === "qETH") {
+      return <img src={qethLogo} alt="qETH" className="w-16 h-16 rounded-full" />;
     }
     if (imageUrl) {
       return <img src={imageUrl} alt={symbol} className="w-16 h-16 rounded-full object-cover bg-secondary" />;

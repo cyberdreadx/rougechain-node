@@ -55,8 +55,10 @@ async function submitSignedTx(
       body: JSON.stringify(signedTx),
     });
 
-    const data = await res.json();
-    return data;
+    const raw = await res.json();
+    // Normalize: server returns fields at top level, but ApiResponse expects them in `data`
+    const { success, error, ...rest } = raw;
+    return { success, error, data: Object.keys(rest).length > 0 ? rest : undefined };
   } catch (e) {
     return { success: false, error: `Request failed: ${e}` };
   }

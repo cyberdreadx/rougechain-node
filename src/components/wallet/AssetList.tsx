@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { TrendingUp, TrendingDown, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import xrgeLogo from "@/assets/xrge-logo.webp";
+import qethLogo from "@/assets/qeth-logo.png";
 
 interface Asset {
   id: string;
@@ -32,6 +33,15 @@ const AssetList = ({ assets = [], emptyActionLabel, onEmptyAction, emptyHint, on
         <img 
           src={xrgeLogo} 
           alt="XRGE" 
+          className="w-10 h-10 rounded-full object-cover"
+        />
+      );
+    }
+    if (asset.symbol === "qETH") {
+      return (
+        <img 
+          src={qethLogo} 
+          alt="qETH" 
           className="w-10 h-10 rounded-full object-cover"
         />
       );

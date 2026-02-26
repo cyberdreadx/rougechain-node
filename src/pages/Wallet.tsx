@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { useTokenPrices } from "@/hooks/use-token-prices";
+import { useETHPrice, qethToHuman, formatQethForDisplay } from "@/hooks/use-eth-price";
 import { useTokenMetadata } from "@/hooks/use-token-metadata";
 import { formatUsd, formatTokenPrice } from "@/lib/price-service";
 import { Button } from "@/components/ui/button";
@@ -387,8 +388,11 @@ const Wallet = () => {
   };
 
   const claimFromFaucet = async () => {
-    if (!wallet) return;
-    
+    if (!wallet) {
+      toast.error("Connect your wallet first");
+      return;
+    }
+
     setMinting(true);
     try {
       // Try node API faucet endpoint directly (preferred method)
@@ -406,27 +410,32 @@ const Wallet = () => {
         });
 
         const rawText = await res.text();
-        let data;
+        let data: { success?: boolean; error?: string; message?: string } | null = null;
         try {
           data = rawText ? JSON.parse(rawText) : null;
-        } catch (jsonError) {
-          console.error(`[Faucet] Failed to parse JSON response:`, rawText);
-          throw new Error(`Server returned invalid JSON: ${rawText.substring(0, 100)}`);
+        } catch {
+          if (!res.ok) {
+            throw new Error(`Faucet failed: ${res.status} ${res.statusText}`);
+          }
+          throw new Error("Invalid server response");
         }
 
         if (!res.ok) {
-          const errorMsg = data?.error || `Faucet request failed: ${res.status} ${res.statusText}`;
+          const errorMsg = data?.error ?? (data ? JSON.stringify(data) : `Faucet failed: ${res.status} ${res.statusText}`);
           console.error(`[Faucet] API error:`, errorMsg);
-          throw new Error(errorMsg);
+          throw new Error(typeof errorMsg === "string" ? errorMsg : "Faucet request failed");
         }
 
         if (data.success) {
-          toast.success("🎉 Claimed 10,000 XRGE from faucet!", {
-            description: data.message || "Transaction will be included in the next block"
+          toast.success("🎉 Claimed 10,000 XRGE!", {
+            description: "Balance will update once the block is mined."
           });
-          // Wait a moment for the transaction to be processed
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          // Immediate refresh, then poll (miner runs ~1s)
           await refreshWalletData();
+          for (const delayMs of [800, 1600, 2400]) {
+            await new Promise((r) => setTimeout(r, delayMs));
+            await refreshWalletData();
+          }
         } else {
           const errorMsg = data?.error || "Faucet request was not successful";
           console.error(`[Faucet] Request not successful:`, errorMsg);
@@ -461,6 +470,7 @@ const Wallet = () => {
   const walletUsdValue = totalUsdValue > 0 ? formatUsd(totalUsdValue) : null;
 
   const networkLabel = getNetworkLabel(chainIdLabel);
+  const { priceUsd: ethPriceUsd } = useETHPrice(60_000);
 
   const formatLastUpdated = (timestamp: number | null) => {
     if (!timestamp && syncError) return "Sync failed";
@@ -476,31 +486,38 @@ const Wallet = () => {
 
   // Convert balances to asset format with USD values (from pools + DexScreener)
   const assets = balances.map(b => {
-    // Get USD value from token prices (includes XRGE from DexScreener + pool-derived prices)
+    // qETH: 1 unit = 10^-6 ETH, display as 0.0005 and use ETH price for USD
+    const isQeth = b.symbol === "qETH";
+    const displayBalance = isQeth ? qethToHuman(b.balance) : b.balance;
+    const balanceStr = isQeth ? formatQethForDisplay(b.balance) : b.balance.toLocaleString();
+
     const tokenPrice = tokenPrices[b.symbol];
-    const usdValue = tokenPrice 
-      ? (tokenPrice.priceUsd < 0.01 
-          ? formatTokenPrice(b.balance * tokenPrice.priceUsd)
-          : formatUsd(b.balance * tokenPrice.priceUsd))
-      : null;
-    
-    // Format per-token price
-    const pricePerToken = tokenPrice
-      ? formatTokenPrice(tokenPrice.priceUsd)
-      : null;
-    
-    // Get token image from on-chain metadata
+    let usdValue: string | null = null;
+    if (isQeth && ethPriceUsd !== null) {
+      usdValue = formatUsd(displayBalance * ethPriceUsd);
+    } else if (tokenPrice) {
+      usdValue = tokenPrice.priceUsd < 0.01
+        ? formatTokenPrice(b.balance * tokenPrice.priceUsd)
+        : formatUsd(b.balance * tokenPrice.priceUsd);
+    }
+
+    const pricePerToken = isQeth && ethPriceUsd !== null
+      ? formatTokenPrice(ethPriceUsd)
+      : tokenPrice
+        ? formatTokenPrice(tokenPrice.priceUsd)
+        : null;
+
     const imageUrl = getTokenImage(b.symbol);
-    
+
     return {
       id: b.symbol,
       name: b.name,
       symbol: b.symbol,
-      balance: b.balance.toLocaleString(),
-      value: `${b.balance} ${b.symbol}`,
+      balance: balanceStr,
+      value: isQeth ? `${balanceStr} qETH` : `${b.balance} ${b.symbol}`,
       usdValue,
       pricePerToken,
-      change: 0, // TODO: Track price changes
+      change: 0,
       icon: b.icon,
       imageUrl,
     };

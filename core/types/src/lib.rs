@@ -35,6 +35,8 @@ pub struct TxPayload {
     pub min_amount_out: Option<u64>,       // Minimum output (slippage protection)
     pub swap_path: Option<Vec<String>>,    // Multi-hop path [TOKENA, XRGE, TOKENB]
     pub lp_amount: Option<u64>,            // LP token amount for remove_liquidity
+    // Bridge withdraw: EVM address to receive ETH when burning qETH
+    pub evm_address: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +96,28 @@ pub struct PQKeypair {
 
 pub fn encode_tx_v1(tx: &TxV1) -> Vec<u8> {
     serde_json::to_vec(tx).unwrap_or_default()
+}
+
+/// Encode everything except `sig` — this is the message that gets signed/verified.
+pub fn encode_tx_for_signing(tx: &TxV1) -> Vec<u8> {
+    #[derive(Serialize)]
+    struct Signable<'a> {
+        version: u32,
+        tx_type: &'a str,
+        from_pub_key: &'a str,
+        nonce: u64,
+        payload: &'a TxPayload,
+        fee: f64,
+    }
+    let s = Signable {
+        version: tx.version,
+        tx_type: &tx.tx_type,
+        from_pub_key: &tx.from_pub_key,
+        nonce: tx.nonce,
+        payload: &tx.payload,
+        fee: tx.fee,
+    };
+    serde_json::to_vec(&s).unwrap_or_default()
 }
 
 pub fn encode_header_v1(header: &BlockHeaderV1) -> Vec<u8> {

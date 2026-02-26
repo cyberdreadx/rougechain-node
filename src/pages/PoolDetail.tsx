@@ -10,6 +10,8 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import SwapWidget from "@/components/messenger/SwapWidget";
 import xrgeLogo from "@/assets/xrge-logo.webp";
+import qethLogo from "@/assets/qeth-logo.png";
+import { formatTokenAmount } from "@/hooks/use-eth-price";
 
 interface Pool {
   pool_id: string;
@@ -60,16 +62,16 @@ interface PoolStats {
   volume_24h_b: number;
 }
 
-const formatNumber = (n: number): string => {
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(2)}K`;
-  return n.toFixed(2);
+const formatNumber = (n: number, symbol?: string): string => {
+  return formatTokenAmount(n, symbol);
 };
 
 const TokenIcon = ({ symbol, size = 24 }: { symbol: string; size?: number }) => {
   if (symbol === "XRGE") {
     return <img src={xrgeLogo} alt="XRGE" className="rounded-full" style={{ width: size, height: size }} />;
+  }
+  if (symbol === "qETH") {
+    return <img src={qethLogo} alt="qETH" className="rounded-full" style={{ width: size, height: size }} />;
   }
   return (
     <div
@@ -115,9 +117,9 @@ const getEventIcon = (eventType: string) => {
 const getEventLabel = (event: PoolEvent, pool: Pool | null): string => {
   switch (event.event_type) {
     case "Swap":
-      return `Swap ${formatNumber(event.amount_in || 0)} ${event.token_in} → ${formatNumber(event.amount_out || 0)} ${event.token_out}`;
+      return `Swap ${formatNumber(event.amount_in || 0, event.token_in)} ${event.token_in} → ${formatNumber(event.amount_out || 0, event.token_out)} ${event.token_out}`;
     case "AddLiquidity":
-      return `Add ${formatNumber(event.amount_a || 0)} ${pool?.token_a} + ${formatNumber(event.amount_b || 0)} ${pool?.token_b}`;
+      return `Add ${formatNumber(event.amount_a || 0, pool?.token_a)} ${pool?.token_a} + ${formatNumber(event.amount_b || 0, pool?.token_b)} ${pool?.token_b}`;
     case "RemoveLiquidity":
       return `Remove ${formatNumber(event.lp_amount || 0)} LP`;
     case "CreatePool":
@@ -272,13 +274,13 @@ const PoolDetail = () => {
           <Card>
             <CardContent className="pt-6">
               <p className="text-sm text-muted-foreground">{pool.token_a} Reserve</p>
-              <p className="text-2xl font-bold font-mono">{formatNumber(pool.reserve_a)}</p>
+              <p className="text-2xl font-bold font-mono">{formatNumber(pool.reserve_a, pool.token_a)}</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
               <p className="text-sm text-muted-foreground">{pool.token_b} Reserve</p>
-              <p className="text-2xl font-bold font-mono">{formatNumber(pool.reserve_b)}</p>
+              <p className="text-2xl font-bold font-mono">{formatNumber(pool.reserve_b, pool.token_b)}</p>
             </CardContent>
           </Card>
           <Card>

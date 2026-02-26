@@ -18,6 +18,7 @@ import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
 import { useXRGEPrice } from "@/hooks/use-xrge-price";
 import { formatUsd } from "@/lib/price-service";
 import xrgeLogo from "@/assets/xrge-logo.webp";
+import qethLogo from "@/assets/qeth-logo.png";
 
 interface Token {
   symbol: string;
@@ -40,6 +41,9 @@ interface SwapWidgetProps {
 const TokenIcon = ({ symbol, size = 16 }: { symbol: string; size?: number }) => {
   if (symbol === "XRGE") {
     return <img src={xrgeLogo} alt="XRGE" className="rounded-full" style={{ width: size, height: size }} />;
+  }
+  if (symbol === "qETH") {
+    return <img src={qethLogo} alt="qETH" className="rounded-full" style={{ width: size, height: size }} />;
   }
   return (
     <div 

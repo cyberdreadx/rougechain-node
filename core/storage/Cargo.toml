@@ -10,5 +10,6 @@ sled = "0.34"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 hex = "0.4"
+tokio = { version = "1", features = ["sync"] }
 quantum-vault-types = { path = "../types" }
 quantum-vault-crypto = { path = "../crypto" }
