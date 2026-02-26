@@ -32,6 +32,12 @@
     "web3",
     "sdk"
   ],
+  "homepage": "https://rougechain.io",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cyberdreadx/quantum-vault",
+    "directory": "sdk"
+  },
   "license": "MIT",
   "dependencies": {
     "@noble/post-quantum": "^0.2.0",
