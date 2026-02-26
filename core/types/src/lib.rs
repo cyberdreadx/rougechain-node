@@ -37,6 +37,39 @@ pub struct TxPayload {
     pub lp_amount: Option<u64>,            // LP token amount for remove_liquidity
     // Bridge withdraw: EVM address to receive ETH when burning qETH
     pub evm_address: Option<String>,
+    // NFT fields
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_collection_symbol: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_collection_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_collection_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_max_supply: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_royalty_bps: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_token_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_token_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_metadata_uri: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_attributes: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_locked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_frozen: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_batch_names: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_batch_uris: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_batch_attributes: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

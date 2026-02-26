@@ -32,14 +32,15 @@ function bytesToHex(bytes: Uint8Array): string {
  * Transaction payload structure for signing
  */
 export interface TransactionPayload {
-  type: "transfer" | "create_token" | "swap" | "create_pool" | "add_liquidity" | "remove_liquidity" | "stake" | "unstake" | "faucet";
-  from: string; // sender public key
-  to?: string; // recipient public key (for transfers)
+  type: "transfer" | "create_token" | "swap" | "create_pool" | "add_liquidity" | "remove_liquidity" | "stake" | "unstake" | "faucet"
+    | "nft_create_collection" | "nft_mint" | "nft_batch_mint" | "nft_transfer" | "nft_burn" | "nft_lock" | "nft_freeze_collection";
+  from: string;
+  to?: string;
   amount?: number;
   fee?: number;
-  token?: string; // token symbol
+  token?: string;
   timestamp: number;
-  nonce: string; // random nonce for replay protection
+  nonce: string;
   // Token creation
   token_name?: string;
   token_symbol?: string;
@@ -56,6 +57,23 @@ export interface TransactionPayload {
   amount_a?: number;
   amount_b?: number;
   lp_amount?: number;
+  // NFT fields
+  symbol?: string;
+  name?: string;
+  collectionId?: string;
+  description?: string;
+  image?: string;
+  maxSupply?: number;
+  royaltyBps?: number;
+  tokenId?: number;
+  metadataUri?: string;
+  attributes?: unknown;
+  locked?: boolean;
+  frozen?: boolean;
+  salePrice?: number;
+  names?: string[];
+  uris?: string[];
+  batchAttributes?: unknown[];
 }
 
 /**
@@ -356,6 +374,153 @@ export function createSignedBurn(
   };
   
   return signTransaction(payload, fromPrivateKey, fromPublicKey);
+}
+
+// ============================================
+// NFT signing helpers
+// ============================================
+
+export function createSignedNftCreateCollection(
+  publicKey: string,
+  privateKey: string,
+  symbol: string,
+  name: string,
+  opts: { maxSupply?: number; royaltyBps?: number; image?: string; description?: string } = {}
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "nft_create_collection",
+    from: publicKey,
+    symbol,
+    name,
+    fee: 50,
+    maxSupply: opts.maxSupply,
+    royaltyBps: opts.royaltyBps,
+    image: opts.image,
+    description: opts.description,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  return signTransaction(payload, privateKey, publicKey);
+}
+
+export function createSignedNftMint(
+  publicKey: string,
+  privateKey: string,
+  collectionId: string,
+  name: string,
+  opts: { metadataUri?: string; attributes?: unknown } = {}
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "nft_mint",
+    from: publicKey,
+    collectionId,
+    name,
+    fee: 5,
+    metadataUri: opts.metadataUri,
+    attributes: opts.attributes,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  return signTransaction(payload, privateKey, publicKey);
+}
+
+export function createSignedNftBatchMint(
+  publicKey: string,
+  privateKey: string,
+  collectionId: string,
+  names: string[],
+  opts: { uris?: string[]; batchAttributes?: unknown[] } = {}
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "nft_batch_mint",
+    from: publicKey,
+    collectionId,
+    names,
+    fee: 5 * names.length,
+    uris: opts.uris,
+    batchAttributes: opts.batchAttributes,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  return signTransaction(payload, privateKey, publicKey);
+}
+
+export function createSignedNftTransfer(
+  publicKey: string,
+  privateKey: string,
+  collectionId: string,
+  tokenId: number,
+  toPublicKey: string,
+  salePrice?: number
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "nft_transfer",
+    from: publicKey,
+    collectionId,
+    tokenId,
+    to: toPublicKey,
+    fee: 1,
+    salePrice,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  return signTransaction(payload, privateKey, publicKey);
+}
+
+export function createSignedNftBurn(
+  publicKey: string,
+  privateKey: string,
+  collectionId: string,
+  tokenId: number
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "nft_burn",
+    from: publicKey,
+    collectionId,
+    tokenId,
+    fee: 0.1,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  return signTransaction(payload, privateKey, publicKey);
+}
+
+export function createSignedNftLock(
+  publicKey: string,
+  privateKey: string,
+  collectionId: string,
+  tokenId: number,
+  locked: boolean
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "nft_lock",
+    from: publicKey,
+    collectionId,
+    tokenId,
+    locked,
+    fee: 0.1,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  return signTransaction(payload, privateKey, publicKey);
+}
+
+export function createSignedNftFreezeCollection(
+  publicKey: string,
+  privateKey: string,
+  collectionId: string,
+  frozen: boolean
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "nft_freeze_collection",
+    from: publicKey,
+    collectionId,
+    frozen,
+    fee: 0.1,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  return signTransaction(payload, privateKey, publicKey);
 }
 
 /**

@@ -1,5 +1,6 @@
 mod amm;
 mod grpc;
+mod nft_store;
 mod pool_events;
 mod node;
 mod peer;
@@ -397,6 +398,20 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/stake", post(v2_stake))
         .route("/api/v2/unstake", post(v2_unstake))
         .route("/api/v2/faucet", post(v2_faucet))
+        // NFT V2 write endpoints
+        .route("/api/v2/nft/collection/create", post(v2_nft_create_collection))
+        .route("/api/v2/nft/mint", post(v2_nft_mint))
+        .route("/api/v2/nft/batch-mint", post(v2_nft_batch_mint))
+        .route("/api/v2/nft/transfer", post(v2_nft_transfer))
+        .route("/api/v2/nft/burn", post(v2_nft_burn))
+        .route("/api/v2/nft/lock", post(v2_nft_lock))
+        .route("/api/v2/nft/freeze-collection", post(v2_nft_freeze_collection))
+        // NFT read-only endpoints
+        .route("/api/nft/collections", get(nft_list_collections))
+        .route("/api/nft/collection/:id", get(nft_get_collection))
+        .route("/api/nft/collection/:id/tokens", get(nft_get_collection_tokens))
+        .route("/api/nft/token/:collection_id/:token_id", get(nft_get_token))
+        .route("/api/nft/owner/:pubkey", get(nft_get_owner_nfts))
         .route("/api/bridge/config", get(bridge_config))
         .route("/api/bridge/claim", post(bridge_claim))
         .route("/api/bridge/withdraw", post(bridge_withdraw))
@@ -2676,6 +2691,357 @@ async fn v2_faucet(
         "success": true,
         "message": "Faucet request submitted"
     })))
+}
+
+// ===== NFT V2 Write Handlers =====
+
+async fn v2_nft_create_collection(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    let p = &body.payload;
+    let symbol = p.get("symbol").and_then(|v| v.as_str()).unwrap_or_default();
+    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+    let description = p.get("description").and_then(|v| v.as_str()).map(String::from);
+    let image = p.get("image").and_then(|v| v.as_str()).map(String::from);
+    let max_supply = p.get("maxSupply").and_then(|v| v.as_u64());
+    let royalty_bps = p.get("royaltyBps").and_then(|v| v.as_u64()).map(|v| v as u16);
+
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "nft_create_collection".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            nft_collection_symbol: Some(symbol.to_string()),
+            nft_collection_name: Some(name.to_string()),
+            nft_description: description,
+            nft_image: image,
+            nft_max_supply: max_supply,
+            nft_royalty_bps: royalty_bps,
+            ..Default::default()
+        },
+        fee: 50.0,
+        sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
+    };
+
+    state.node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "NFT collection creation submitted"
+    })))
+}
+
+async fn v2_nft_mint(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    let p = &body.payload;
+    let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
+    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+    let metadata_uri = p.get("metadataUri").and_then(|v| v.as_str()).map(String::from);
+    let attributes = p.get("attributes").cloned();
+
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "nft_mint".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            nft_collection_id: Some(collection_id.to_string()),
+            nft_token_name: Some(name.to_string()),
+            nft_metadata_uri: metadata_uri,
+            nft_attributes: attributes,
+            ..Default::default()
+        },
+        fee: 5.0,
+        sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
+    };
+
+    state.node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "NFT mint submitted"
+    })))
+}
+
+async fn v2_nft_batch_mint(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    let p = &body.payload;
+    let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
+    let names: Vec<String> = p.get("names")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    if names.is_empty() || names.len() > 50 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "batch mint requires 1-50 names"}))));
+    }
+
+    let uris: Option<Vec<String>> = p.get("uris")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+    let attributes: Option<Vec<serde_json::Value>> = p.get("attributes")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.to_vec());
+
+    let fee = 5.0 * names.len() as f64;
+
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "nft_batch_mint".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            nft_collection_id: Some(collection_id.to_string()),
+            nft_batch_names: Some(names),
+            nft_batch_uris: uris,
+            nft_batch_attributes: attributes,
+            ..Default::default()
+        },
+        fee,
+        sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
+    };
+
+    state.node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "NFT batch mint submitted"
+    })))
+}
+
+async fn v2_nft_transfer(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    let p = &body.payload;
+    let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
+    let token_id = p.get("tokenId").and_then(|v| v.as_u64()).unwrap_or(0);
+    let to = p.get("to").and_then(|v| v.as_str()).unwrap_or_default();
+    let sale_price = p.get("salePrice").and_then(|v| v.as_u64());
+
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "nft_transfer".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            nft_collection_id: Some(collection_id.to_string()),
+            nft_token_id: Some(token_id),
+            to_pub_key_hex: Some(to.to_string()),
+            amount: sale_price,
+            ..Default::default()
+        },
+        fee: 1.0,
+        sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
+    };
+
+    state.node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "NFT transfer submitted"
+    })))
+}
+
+async fn v2_nft_burn(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    let p = &body.payload;
+    let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
+    let token_id = p.get("tokenId").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "nft_burn".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            nft_collection_id: Some(collection_id.to_string()),
+            nft_token_id: Some(token_id),
+            ..Default::default()
+        },
+        fee: 0.1,
+        sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
+    };
+
+    state.node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "NFT burn submitted"
+    })))
+}
+
+async fn v2_nft_lock(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    let p = &body.payload;
+    let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
+    let token_id = p.get("tokenId").and_then(|v| v.as_u64()).unwrap_or(0);
+    let locked = p.get("locked").and_then(|v| v.as_bool()).unwrap_or(true);
+
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "nft_lock".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            nft_collection_id: Some(collection_id.to_string()),
+            nft_token_id: Some(token_id),
+            nft_locked: Some(locked),
+            ..Default::default()
+        },
+        fee: 0.1,
+        sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
+    };
+
+    state.node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "NFT lock toggled"
+    })))
+}
+
+async fn v2_nft_freeze_collection(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    let p = &body.payload;
+    let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
+    let frozen = p.get("frozen").and_then(|v| v.as_bool()).unwrap_or(true);
+
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "nft_freeze_collection".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            nft_collection_id: Some(collection_id.to_string()),
+            nft_frozen: Some(frozen),
+            ..Default::default()
+        },
+        fee: 0.1,
+        sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
+    };
+
+    state.node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Collection freeze toggled"
+    })))
+}
+
+// ===== NFT Read-Only Query Handlers =====
+
+async fn nft_list_collections(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let collections = state.node.list_nft_collections()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
+    Ok(Json(serde_json::json!({ "collections": collections })))
+}
+
+async fn nft_get_collection(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let col = state.node.get_nft_collection(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
+    match col {
+        Some(c) => Ok(Json(serde_json::json!(c))),
+        None => Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Collection not found"})))),
+    }
+}
+
+#[derive(Deserialize)]
+struct NftTokensQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+async fn nft_get_collection_tokens(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<NftTokensQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let limit = q.limit.unwrap_or(50).min(200);
+    let offset = q.offset.unwrap_or(0);
+    let (tokens, total) = state.node.get_nft_tokens_by_collection(&id, limit, offset)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
+    Ok(Json(serde_json::json!({ "tokens": tokens, "total": total, "limit": limit, "offset": offset })))
+}
+
+async fn nft_get_token(
+    State(state): State<AppState>,
+    Path((collection_id, token_id)): Path<(String, u64)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let token = state.node.get_nft_token(&collection_id, token_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
+    match token {
+        Some(t) => Ok(Json(serde_json::json!(t))),
+        None => Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "NFT not found"})))),
+    }
+}
+
+async fn nft_get_owner_nfts(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let nfts = state.node.get_nfts_by_owner(&pubkey)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
+    Ok(Json(serde_json::json!({ "nfts": nfts })))
 }
 
 #[derive(Serialize)]

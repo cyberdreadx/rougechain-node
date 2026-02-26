@@ -18,6 +18,13 @@ import {
   createSignedUnstake,
   createSignedFaucetRequest,
   createSignedBurn,
+  createSignedNftCreateCollection,
+  createSignedNftMint,
+  createSignedNftBatchMint,
+  createSignedNftTransfer,
+  createSignedNftBurn,
+  createSignedNftLock,
+  createSignedNftFreezeCollection,
   BURN_ADDRESS,
 } from "./pqc-signer";
 
@@ -434,6 +441,201 @@ export async function updateTokenMetadata(
     
     const data = await res.json();
     return data;
+  } catch (e) {
+    return { success: false, error: `Request failed: ${e}` };
+  }
+}
+
+// ===== NFT API =====
+
+export interface NftCollection {
+  collection_id: string;
+  symbol: string;
+  name: string;
+  creator: string;
+  description?: string;
+  image?: string;
+  max_supply?: number;
+  minted: number;
+  royalty_bps: number;
+  royalty_recipient: string;
+  frozen: boolean;
+  created_at: number;
+}
+
+export interface NftToken {
+  collection_id: string;
+  token_id: number;
+  owner: string;
+  creator: string;
+  name: string;
+  metadata_uri?: string;
+  attributes?: unknown;
+  locked: boolean;
+  minted_at: number;
+  transferred_at: number;
+}
+
+export async function secureCreateNftCollection(
+  publicKey: string,
+  privateKey: string,
+  symbol: string,
+  name: string,
+  opts: { maxSupply?: number; royaltyBps?: number; image?: string; description?: string } = {}
+): Promise<ApiResponse> {
+  const signedTx = createSignedNftCreateCollection(publicKey, privateKey, symbol, name, opts);
+  return submitSignedTx("/v2/nft/collection/create", signedTx);
+}
+
+export async function secureMintNft(
+  publicKey: string,
+  privateKey: string,
+  collectionId: string,
+  name: string,
+  opts: { metadataUri?: string; attributes?: unknown } = {}
+): Promise<ApiResponse> {
+  const signedTx = createSignedNftMint(publicKey, privateKey, collectionId, name, opts);
+  return submitSignedTx("/v2/nft/mint", signedTx);
+}
+
+export async function secureBatchMintNft(
+  publicKey: string,
+  privateKey: string,
+  collectionId: string,
+  names: string[],
+  opts: { uris?: string[]; batchAttributes?: unknown[] } = {}
+): Promise<ApiResponse> {
+  const signedTx = createSignedNftBatchMint(publicKey, privateKey, collectionId, names, opts);
+  return submitSignedTx("/v2/nft/batch-mint", signedTx);
+}
+
+export async function secureTransferNft(
+  publicKey: string,
+  privateKey: string,
+  collectionId: string,
+  tokenId: number,
+  toPublicKey: string,
+  salePrice?: number
+): Promise<ApiResponse> {
+  const signedTx = createSignedNftTransfer(publicKey, privateKey, collectionId, tokenId, toPublicKey, salePrice);
+  return submitSignedTx("/v2/nft/transfer", signedTx);
+}
+
+export async function secureBurnNft(
+  publicKey: string,
+  privateKey: string,
+  collectionId: string,
+  tokenId: number
+): Promise<ApiResponse> {
+  const signedTx = createSignedNftBurn(publicKey, privateKey, collectionId, tokenId);
+  return submitSignedTx("/v2/nft/burn", signedTx);
+}
+
+export async function secureLockNft(
+  publicKey: string,
+  privateKey: string,
+  collectionId: string,
+  tokenId: number,
+  locked: boolean
+): Promise<ApiResponse> {
+  const signedTx = createSignedNftLock(publicKey, privateKey, collectionId, tokenId, locked);
+  return submitSignedTx("/v2/nft/lock", signedTx);
+}
+
+export async function secureFreezeNftCollection(
+  publicKey: string,
+  privateKey: string,
+  collectionId: string,
+  frozen: boolean
+): Promise<ApiResponse> {
+  const signedTx = createSignedNftFreezeCollection(publicKey, privateKey, collectionId, frozen);
+  return submitSignedTx("/v2/nft/freeze-collection", signedTx);
+}
+
+// ===== NFT Query Functions (no signing needed) =====
+
+export async function getNftCollections(): Promise<ApiResponse<NftCollection[]>> {
+  const baseUrl = getNodeApiBaseUrl();
+  if (!baseUrl) return { success: false, error: "API not configured" };
+
+  try {
+    const res = await fetch(`${baseUrl}/nft/collections`, { headers: getCoreApiHeaders() });
+    const data = await res.json();
+    return { success: true, data: data.collections };
+  } catch (e) {
+    return { success: false, error: `Request failed: ${e}` };
+  }
+}
+
+export async function getNftCollection(collectionId: string): Promise<ApiResponse<NftCollection>> {
+  const baseUrl = getNodeApiBaseUrl();
+  if (!baseUrl) return { success: false, error: "API not configured" };
+
+  try {
+    const res = await fetch(`${baseUrl}/nft/collection/${encodeURIComponent(collectionId)}`, { headers: getCoreApiHeaders() });
+    if (!res.ok) return { success: false, error: "Collection not found" };
+    const data = await res.json();
+    return { success: true, data };
+  } catch (e) {
+    return { success: false, error: `Request failed: ${e}` };
+  }
+}
+
+export async function getNftTokens(
+  collectionId: string,
+  limit?: number,
+  offset?: number
+): Promise<ApiResponse<{ tokens: NftToken[]; total: number }>> {
+  const baseUrl = getNodeApiBaseUrl();
+  if (!baseUrl) return { success: false, error: "API not configured" };
+
+  const params = new URLSearchParams();
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (offset !== undefined) params.set("offset", String(offset));
+
+  try {
+    const res = await fetch(
+      `${baseUrl}/nft/collection/${encodeURIComponent(collectionId)}/tokens?${params}`,
+      { headers: getCoreApiHeaders() }
+    );
+    const data = await res.json();
+    return { success: true, data };
+  } catch (e) {
+    return { success: false, error: `Request failed: ${e}` };
+  }
+}
+
+export async function getNftToken(
+  collectionId: string,
+  tokenId: number
+): Promise<ApiResponse<NftToken>> {
+  const baseUrl = getNodeApiBaseUrl();
+  if (!baseUrl) return { success: false, error: "API not configured" };
+
+  try {
+    const res = await fetch(
+      `${baseUrl}/nft/token/${encodeURIComponent(collectionId)}/${tokenId}`,
+      { headers: getCoreApiHeaders() }
+    );
+    if (!res.ok) return { success: false, error: "NFT not found" };
+    const data = await res.json();
+    return { success: true, data };
+  } catch (e) {
+    return { success: false, error: `Request failed: ${e}` };
+  }
+}
+
+export async function getNftsByOwner(pubkey: string): Promise<ApiResponse<NftToken[]>> {
+  const baseUrl = getNodeApiBaseUrl();
+  if (!baseUrl) return { success: false, error: "API not configured" };
+
+  try {
+    const res = await fetch(
+      `${baseUrl}/nft/owner/${encodeURIComponent(pubkey)}`,
+      { headers: getCoreApiHeaders() }
+    );
+    const data = await res.json();
+    return { success: true, data: data.nfts };
   } catch (e) {
     return { success: false, error: `Request failed: ${e}` };
   }

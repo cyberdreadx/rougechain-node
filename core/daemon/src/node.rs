@@ -17,6 +17,7 @@ use quantum_vault_types::{
 };
 
 use crate::amm;
+use crate::nft_store::{NftCollection, NftStore, NftToken};
 use crate::pool_store::{LiquidityPool, PoolStore};
 use crate::pool_events::{PoolEvent, PoolEventStore, PoolEventType, PriceSnapshot};
 
@@ -24,6 +25,10 @@ const BASE_TRANSFER_FEE: f64 = 0.1;
 const TOKEN_CREATION_FEE: f64 = 100.0;
 const POOL_CREATION_FEE: f64 = 10.0;
 const SWAP_FEE: f64 = 0.1;
+const NFT_COLLECTION_FEE: f64 = 50.0;
+const NFT_MINT_FEE: f64 = 5.0;
+const NFT_TRANSFER_FEE: f64 = 1.0;
+const NFT_SMALL_FEE: f64 = 0.1;
 const JAIL_BLOCKS: u64 = 20;
 const SLASH_DIVISOR: u128 = 10;
 const MAX_MEMPOOL: usize = 2000;
@@ -55,6 +60,7 @@ pub struct L1Node {
     pool_store: PoolStore,
     pool_event_store: PoolEventStore,
     token_metadata_store: TokenMetadataStore,
+    nft_store: NftStore,
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
     verified_tx_ids: Arc<Mutex<HashSet<String>>>,
@@ -69,12 +75,13 @@ pub struct L1Node {
 impl L1Node {
     pub fn new(opts: NodeOptions) -> Result<Self, String> {
         let data_dir_str = opts.data_dir.to_string_lossy().to_string();
-        let store = ChainStore::new(&opts.data_dir, opts.chain.clone());
+        let store = ChainStore::new(&opts.data_dir, opts.chain.clone())?;
         let validator_store = ValidatorStore::new(&data_dir_str)?;
         let messenger_store = MessengerStore::new(&data_dir_str);
         let pool_store = PoolStore::new(&opts.data_dir)?;
         let pool_event_store = PoolEventStore::new(&opts.data_dir)?;
         let token_metadata_store = TokenMetadataStore::new(&data_dir_str)?;
+        let nft_store = NftStore::new(&opts.data_dir)?;
         let keys = pqc_keygen();
         Ok(Self {
             node_id: uuid::Uuid::new_v4().to_string(),
@@ -85,6 +92,7 @@ impl L1Node {
             pool_store,
             pool_event_store,
             token_metadata_store,
+            nft_store,
             keys: Arc::new(Mutex::new(keys)),
             mempool: Arc::new(Mutex::new(HashMap::new())),
             verified_tx_ids: Arc::new(Mutex::new(HashSet::new())),
@@ -101,6 +109,7 @@ impl L1Node {
         self.store.init()?;
         self.messenger_store.init()?;
         self.rebuild_pool_state()?;
+        self.rebuild_nft_state()?;
         self.rebuild_balances()?;
         self.rebuild_token_balances()?;
         let tip = self.store.get_tip()?;
@@ -141,8 +150,9 @@ impl L1Node {
         // Clear and replace the chain file
         self.store.reset_chain(blocks)?;
         
-        // Rebuild pool state from the new chain
+        // Rebuild pool and NFT state from the new chain
         self.rebuild_pool_state()?;
+        self.rebuild_nft_state()?;
         
         // Reset balances
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
@@ -186,11 +196,10 @@ impl L1Node {
     }
 
     pub fn get_recent_blocks(&self, limit: usize) -> Result<Vec<BlockV1>, String> {
-        let blocks = self.store.get_all_blocks()?;
-        if limit == 0 || blocks.len() <= limit {
-            return Ok(blocks);
+        if limit == 0 {
+            return self.store.get_all_blocks();
         }
-        Ok(blocks[blocks.len() - limit..].to_vec())
+        self.store.get_recent_blocks(limit)
     }
 
     /// Import a block from a peer (for P2P sync)
@@ -1011,12 +1020,14 @@ impl L1Node {
     }
 
     pub fn get_fee_stats(&self) -> Result<(f64, f64), String> {
+        let tip = self.store.get_tip()?;
+        let last_fees = if let Some(last_block) = self.store.get_block(tip.height)? {
+            last_block.txs.iter().map(|tx| tx.fee).sum::<f64>()
+        } else {
+            0.0
+        };
         let blocks = self.store.get_all_blocks()?;
-        let total_fees = blocks.iter().map(|b| b.txs.iter().map(|tx| tx.fee).sum::<f64>()).sum();
-        let last_fees = blocks
-            .last()
-            .map(|b| b.txs.iter().map(|tx| tx.fee).sum::<f64>())
-            .unwrap_or(0.0);
+        let total_fees: f64 = blocks.iter().map(|b| b.txs.iter().map(|tx| tx.fee).sum::<f64>()).sum();
         Ok((total_fees, last_fees))
     }
 
@@ -1108,6 +1119,13 @@ impl L1Node {
                 tx,
                 block.header.time,
                 block.header.height,
+            )?;
+
+            // Handle NFT transactions
+            self.apply_nft_tx_inner(
+                &mut balances,
+                tx,
+                block.header.time,
             )?;
         }
         
@@ -2052,6 +2070,288 @@ impl L1Node {
             return self.validator_store.delete_validator(public_key);
         }
         self.validator_store.set_validator(public_key, state)
+    }
+
+    // ===== NFT Methods =====
+
+    pub fn get_nft_collection(&self, collection_id: &str) -> Result<Option<NftCollection>, String> {
+        self.nft_store.get_collection(collection_id)
+    }
+
+    pub fn list_nft_collections(&self) -> Result<Vec<NftCollection>, String> {
+        self.nft_store.list_collections()
+    }
+
+    pub fn get_nft_token(&self, collection_id: &str, token_id: u64) -> Result<Option<NftToken>, String> {
+        self.nft_store.get_token(collection_id, token_id)
+    }
+
+    pub fn get_nft_tokens_by_collection(&self, collection_id: &str, limit: usize, offset: usize) -> Result<(Vec<NftToken>, usize), String> {
+        self.nft_store.get_tokens_by_collection(collection_id, limit, offset)
+    }
+
+    pub fn get_nfts_by_owner(&self, owner: &str) -> Result<Vec<NftToken>, String> {
+        self.nft_store.get_tokens_by_owner(owner)
+    }
+
+    /// Apply NFT transaction effects during block processing
+    fn apply_nft_tx_inner(
+        &self,
+        balances: &mut HashMap<String, f64>,
+        tx: &TxV1,
+        block_time: u64,
+    ) -> Result<(), String> {
+        match tx.tx_type.as_str() {
+            "nft_create_collection" => {
+                let symbol = tx.payload.nft_collection_symbol.as_ref().ok_or("missing nft_collection_symbol")?;
+                let name = tx.payload.nft_collection_name.as_ref().ok_or("missing nft_collection_name")?;
+                let collection_id = NftCollection::make_collection_id(&tx.from_pub_key, symbol);
+
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+
+                let col = NftCollection {
+                    collection_id,
+                    symbol: symbol.to_uppercase(),
+                    name: name.clone(),
+                    creator: tx.from_pub_key.clone(),
+                    description: tx.payload.nft_description.clone(),
+                    image: tx.payload.nft_image.clone(),
+                    max_supply: tx.payload.nft_max_supply,
+                    minted: 0,
+                    royalty_bps: tx.payload.nft_royalty_bps.unwrap_or(0),
+                    royalty_recipient: tx.from_pub_key.clone(),
+                    frozen: false,
+                    created_at: block_time,
+                };
+                self.nft_store.save_collection(&col)?;
+            }
+            "nft_mint" => {
+                let col_id = tx.payload.nft_collection_id.as_ref().ok_or("missing nft_collection_id")?;
+                let token_name = tx.payload.nft_token_name.as_ref().ok_or("missing nft_token_name")?;
+
+                let mut col = match self.nft_store.get_collection(col_id)? {
+                    Some(c) => c,
+                    None => {
+                        eprintln!("[node] Warning: Collection {} not found, skipping nft_mint", col_id);
+                        return Ok(());
+                    }
+                };
+
+                if col.frozen {
+                    eprintln!("[node] Warning: Collection {} is frozen, skipping nft_mint", col_id);
+                    return Ok(());
+                }
+                if let Some(max) = col.max_supply {
+                    if col.minted >= max {
+                        eprintln!("[node] Warning: Collection {} reached max supply, skipping nft_mint", col_id);
+                        return Ok(());
+                    }
+                }
+
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+
+                let token_id = col.minted + 1;
+                col.minted = token_id;
+                self.nft_store.save_collection(&col)?;
+
+                let token = NftToken {
+                    collection_id: col_id.clone(),
+                    token_id,
+                    owner: tx.from_pub_key.clone(),
+                    creator: tx.from_pub_key.clone(),
+                    name: token_name.clone(),
+                    metadata_uri: tx.payload.nft_metadata_uri.clone(),
+                    attributes: tx.payload.nft_attributes.clone(),
+                    locked: false,
+                    minted_at: block_time,
+                    transferred_at: block_time,
+                };
+                self.nft_store.save_token(&token)?;
+            }
+            "nft_batch_mint" => {
+                let col_id = tx.payload.nft_collection_id.as_ref().ok_or("missing nft_collection_id")?;
+                let names = tx.payload.nft_batch_names.as_ref().ok_or("missing nft_batch_names")?;
+
+                let mut col = match self.nft_store.get_collection(col_id)? {
+                    Some(c) => c,
+                    None => {
+                        eprintln!("[node] Warning: Collection {} not found, skipping nft_batch_mint", col_id);
+                        return Ok(());
+                    }
+                };
+
+                if col.frozen {
+                    eprintln!("[node] Warning: Collection {} is frozen, skipping nft_batch_mint", col_id);
+                    return Ok(());
+                }
+                if let Some(max) = col.max_supply {
+                    if col.minted + names.len() as u64 > max {
+                        eprintln!("[node] Warning: Collection {} would exceed max supply, skipping nft_batch_mint", col_id);
+                        return Ok(());
+                    }
+                }
+
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+
+                let uris = tx.payload.nft_batch_uris.as_ref();
+                let attrs = tx.payload.nft_batch_attributes.as_ref();
+
+                for (i, name) in names.iter().enumerate() {
+                    let token_id = col.minted + 1;
+                    col.minted = token_id;
+
+                    let token = NftToken {
+                        collection_id: col_id.clone(),
+                        token_id,
+                        owner: tx.from_pub_key.clone(),
+                        creator: tx.from_pub_key.clone(),
+                        name: name.clone(),
+                        metadata_uri: uris.and_then(|u| u.get(i).cloned()),
+                        attributes: attrs.and_then(|a| a.get(i).cloned()),
+                        locked: false,
+                        minted_at: block_time,
+                        transferred_at: block_time,
+                    };
+                    self.nft_store.save_token(&token)?;
+                }
+                self.nft_store.save_collection(&col)?;
+            }
+            "nft_transfer" => {
+                let col_id = tx.payload.nft_collection_id.as_ref().ok_or("missing nft_collection_id")?;
+                let token_id = tx.payload.nft_token_id.ok_or("missing nft_token_id")?;
+                let to = tx.payload.to_pub_key_hex.as_ref().ok_or("missing to_pub_key_hex")?;
+
+                let mut token = match self.nft_store.get_token(col_id, token_id)? {
+                    Some(t) => t,
+                    None => {
+                        eprintln!("[node] Warning: NFT {}:{} not found, skipping transfer", col_id, token_id);
+                        return Ok(());
+                    }
+                };
+
+                if token.owner != tx.from_pub_key {
+                    eprintln!("[node] Warning: NFT {}:{} not owned by sender, skipping transfer", col_id, token_id);
+                    return Ok(());
+                }
+                if token.locked {
+                    eprintln!("[node] Warning: NFT {}:{} is locked, skipping transfer", col_id, token_id);
+                    return Ok(());
+                }
+
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+
+                // Royalties
+                let sale_price = tx.payload.amount.unwrap_or(0) as f64;
+                if sale_price > 0.0 {
+                    if let Some(col) = self.nft_store.get_collection(col_id)? {
+                        if col.royalty_bps > 0 {
+                            let royalty = (sale_price * col.royalty_bps as f64) / 10000.0;
+                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= royalty;
+                            *balances.entry(col.royalty_recipient.clone()).or_insert(0.0) += royalty;
+                        }
+                    }
+                }
+
+                token.owner = to.clone();
+                token.transferred_at = block_time;
+                self.nft_store.save_token(&token)?;
+            }
+            "nft_burn" => {
+                let col_id = tx.payload.nft_collection_id.as_ref().ok_or("missing nft_collection_id")?;
+                let token_id = tx.payload.nft_token_id.ok_or("missing nft_token_id")?;
+
+                if let Some(token) = self.nft_store.get_token(col_id, token_id)? {
+                    if token.owner != tx.from_pub_key {
+                        eprintln!("[node] Warning: NFT {}:{} not owned by sender, skipping burn", col_id, token_id);
+                        return Ok(());
+                    }
+                }
+
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                self.nft_store.delete_token(col_id, token_id)?;
+            }
+            "nft_lock" => {
+                let col_id = tx.payload.nft_collection_id.as_ref().ok_or("missing nft_collection_id")?;
+                let token_id = tx.payload.nft_token_id.ok_or("missing nft_token_id")?;
+                let locked = tx.payload.nft_locked.unwrap_or(true);
+
+                let mut token = match self.nft_store.get_token(col_id, token_id)? {
+                    Some(t) => t,
+                    None => return Ok(()),
+                };
+
+                if token.owner != tx.from_pub_key {
+                    eprintln!("[node] Warning: NFT {}:{} not owned by sender, skipping lock", col_id, token_id);
+                    return Ok(());
+                }
+
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+
+                token.locked = locked;
+                self.nft_store.save_token(&token)?;
+            }
+            "nft_freeze_collection" => {
+                let col_id = tx.payload.nft_collection_id.as_ref().ok_or("missing nft_collection_id")?;
+                let frozen = tx.payload.nft_frozen.unwrap_or(true);
+
+                let mut col = match self.nft_store.get_collection(col_id)? {
+                    Some(c) => c,
+                    None => return Ok(()),
+                };
+
+                if col.creator != tx.from_pub_key {
+                    eprintln!("[node] Warning: Only creator can freeze collection {}, skipping", col_id);
+                    return Ok(());
+                }
+
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+
+                col.frozen = frozen;
+                self.nft_store.save_collection(&col)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Rebuild NFT state (collections + tokens) from chain history
+    fn rebuild_nft_state(&self) -> Result<(), String> {
+        let blocks = self.store.get_all_blocks()?;
+        if blocks.is_empty() {
+            return Ok(());
+        }
+
+        self.nft_store.clear_all()?;
+
+        let mut col_count = 0u32;
+        let mut token_count = 0u32;
+        let mut dummy_balances: HashMap<String, f64> = HashMap::new();
+
+        for block in &blocks {
+            for tx in &block.txs {
+                match tx.tx_type.as_str() {
+                    "nft_create_collection" | "nft_mint" | "nft_batch_mint"
+                    | "nft_transfer" | "nft_burn" | "nft_lock" | "nft_freeze_collection" => {
+                        if tx.tx_type == "nft_create_collection" {
+                            col_count += 1;
+                        }
+                        if tx.tx_type == "nft_mint" {
+                            token_count += 1;
+                        }
+                        if tx.tx_type == "nft_batch_mint" {
+                            token_count += tx.payload.nft_batch_names.as_ref().map(|n| n.len() as u32).unwrap_or(0);
+                        }
+                        let _ = self.apply_nft_tx_inner(&mut dummy_balances, tx, block.header.time);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if col_count > 0 || token_count > 0 {
+            eprintln!("[node] Rebuilt {} NFT collections, {} NFTs from chain history", col_count, token_count);
+        }
+        Ok(())
     }
 
     pub fn list_wallets(&self) -> Result<Vec<MessengerWallet>, String> {
