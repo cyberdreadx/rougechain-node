@@ -33,7 +33,7 @@ function bytesToHex(bytes: Uint8Array): string {
  */
 export interface TransactionPayload {
   type: "transfer" | "create_token" | "swap" | "create_pool" | "add_liquidity" | "remove_liquidity" | "stake" | "unstake" | "faucet"
-    | "nft_create_collection" | "nft_mint" | "nft_batch_mint" | "nft_transfer" | "nft_burn" | "nft_lock" | "nft_freeze_collection";
+  | "nft_create_collection" | "nft_mint" | "nft_batch_mint" | "nft_transfer" | "nft_burn" | "nft_lock" | "nft_freeze_collection";
   from: string;
   to?: string;
   amount?: number;
@@ -116,9 +116,9 @@ export function signTransaction(
 ): SignedTransaction {
   const payloadBytes = serializePayload(payload);
   const privateKeyBytes = hexToBytes(privateKey);
-  
-  const signature = ml_dsa65.sign(payloadBytes, privateKeyBytes);
-  
+
+  const signature = ml_dsa65.sign(privateKeyBytes, payloadBytes);
+
   return {
     payload,
     signature: bytesToHex(signature),
@@ -137,8 +137,8 @@ export function verifyTransaction(signedTx: SignedTransaction): boolean {
     const payloadBytes = serializePayload(signedTx.payload);
     const signatureBytes = hexToBytes(signedTx.signature);
     const publicKeyBytes = hexToBytes(signedTx.public_key);
-    
-    return ml_dsa65.verify(signatureBytes, payloadBytes, publicKeyBytes);
+
+    return ml_dsa65.verify(publicKeyBytes, payloadBytes, signatureBytes);
   } catch {
     return false;
   }
@@ -169,7 +169,7 @@ export function createSignedTransfer(
     timestamp: Date.now(),
     nonce: generateNonce(),
   };
-  
+
   return signTransaction(payload, fromPrivateKey, fromPublicKey);
 }
 
@@ -194,7 +194,7 @@ export function createSignedTokenCreation(
     timestamp: Date.now(),
     nonce: generateNonce(),
   };
-  
+
   return signTransaction(payload, creatorPrivateKey, creatorPublicKey);
 }
 
@@ -219,7 +219,7 @@ export function createSignedSwap(
     timestamp: Date.now(),
     nonce: generateNonce(),
   };
-  
+
   return signTransaction(payload, fromPrivateKey, fromPublicKey);
 }
 
@@ -244,7 +244,7 @@ export function createSignedPoolCreation(
     timestamp: Date.now(),
     nonce: generateNonce(),
   };
-  
+
   return signTransaction(payload, creatorPrivateKey, creatorPublicKey);
 }
 
@@ -267,7 +267,7 @@ export function createSignedAddLiquidity(
     timestamp: Date.now(),
     nonce: generateNonce(),
   };
-  
+
   return signTransaction(payload, fromPrivateKey, fromPublicKey);
 }
 
@@ -288,7 +288,7 @@ export function createSignedRemoveLiquidity(
     timestamp: Date.now(),
     nonce: generateNonce(),
   };
-  
+
   return signTransaction(payload, fromPrivateKey, fromPublicKey);
 }
 
@@ -309,7 +309,7 @@ export function createSignedStake(
     timestamp: Date.now(),
     nonce: generateNonce(),
   };
-  
+
   return signTransaction(payload, fromPrivateKey, fromPublicKey);
 }
 
@@ -330,7 +330,7 @@ export function createSignedUnstake(
     timestamp: Date.now(),
     nonce: generateNonce(),
   };
-  
+
   return signTransaction(payload, fromPrivateKey, fromPublicKey);
 }
 
@@ -347,7 +347,7 @@ export function createSignedFaucetRequest(
     timestamp: Date.now(),
     nonce: generateNonce(),
   };
-  
+
   return signTransaction(payload, privateKey, publicKey);
 }
 
@@ -372,7 +372,7 @@ export function createSignedBurn(
     timestamp: Date.now(),
     nonce: generateNonce(),
   };
-  
+
   return signTransaction(payload, fromPrivateKey, fromPublicKey);
 }
 

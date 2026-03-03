@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import {
     ArrowLeft, Send, Lock, Shield, Plus, Loader2,
     MessageCircle, CheckCircle2, XCircle, Timer,
-    Paperclip, EyeOff, Image as ImageIcon, Video, X
+    Paperclip, EyeOff, Image as ImageIcon, Video, X, Trash2
 } from "lucide-react";
 import type { UnifiedWallet } from "../../lib/unified-wallet";
 import { toMessengerWallet } from "../../lib/unified-wallet";
@@ -12,6 +12,7 @@ import {
     getWallets,
     sendMessage,
     createConversation,
+    deleteConversation,
     registerWalletOnNode,
     fileToMediaPayload,
     MAX_MEDIA_SIZE,
@@ -40,6 +41,8 @@ export default function MessengerTab({ wallet }: Props) {
     const [contacts, setContacts] = useState<Wallet[]>([]);
     const [showContacts, setShowContacts] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
+    const [regStatus, setRegStatus] = useState<"pending" | "ok" | "error">("pending");
+    const [regError, setRegError] = useState<string | null>(null);
 
     const messengerWallet = toMessengerWallet(wallet) as WalletWithPrivateKeys;
 
@@ -54,15 +57,25 @@ export default function MessengerTab({ wallet }: Props) {
         setContacts(wallets.filter(w => w.id !== wallet.id));
     };
 
-    useEffect(() => {
-        // Register wallet on mount
-        registerWalletOnNode({
-            id: wallet.id,
-            displayName: wallet.displayName,
-            signingPublicKey: wallet.signingPublicKey,
-            encryptionPublicKey: wallet.encryptionPublicKey,
-        }).catch(() => { });
+    const doRegister = async () => {
+        setRegStatus("pending");
+        setRegError(null);
+        try {
+            await registerWalletOnNode({
+                id: wallet.id,
+                displayName: wallet.displayName,
+                signingPublicKey: wallet.signingPublicKey,
+                encryptionPublicKey: wallet.encryptionPublicKey,
+            });
+            setRegStatus("ok");
+        } catch (err: any) {
+            setRegStatus("error");
+            setRegError(err.message || "Registration failed");
+        }
+    };
 
+    useEffect(() => {
+        doRegister();
         loadConversations();
         loadContacts();
         const interval = setInterval(loadConversations, 5000);
@@ -93,6 +106,20 @@ export default function MessengerTab({ wallet }: Props) {
                     <Plus className="w-3.5 h-3.5" />
                 </button>
             </div>
+
+            {/* Registration status */}
+            {regStatus === "error" && (
+                <div className="flex items-center justify-between px-3 py-1.5 bg-destructive/10 border-b border-destructive/20">
+                    <span className="text-[10px] text-destructive truncate">{regError || "Registration failed"}</span>
+                    <button onClick={doRegister} className="text-[10px] text-destructive font-medium hover:underline flex-shrink-0 ml-2">Retry</button>
+                </div>
+            )}
+            {regStatus === "ok" && (
+                <div className="flex items-center gap-1 px-3 py-1 bg-success/5 border-b border-success/10">
+                    <CheckCircle2 className="w-2.5 h-2.5 text-success" />
+                    <span className="text-[10px] text-success">Registered on node</span>
+                </div>
+            )}
 
             {/* Contact picker */}
             {showContacts && (
@@ -148,23 +175,41 @@ export default function MessengerTab({ wallet }: Props) {
                     conversations.map(convo => {
                         const other = convo.participants?.find(p => p.id !== wallet.id);
                         return (
-                            <button
+                            <div
                                 key={convo.id}
-                                onClick={() => setSelected(convo)}
-                                className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-secondary/30 transition-colors text-left border-b border-border/50"
+                                className="flex items-center border-b border-border/50 hover:bg-secondary/30 transition-colors"
                             >
-                                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                                    <MessageCircle className="w-4 h-4 text-primary" />
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                    <p className="text-xs font-medium text-foreground truncate">
-                                        {convo.name || other?.displayName || "Unknown"}
-                                    </p>
-                                    <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-                                        <Lock className="w-2.5 h-2.5" /> End-to-end encrypted
-                                    </p>
-                                </div>
-                            </button>
+                                <button
+                                    onClick={() => setSelected(convo)}
+                                    className="flex-1 flex items-center gap-2 px-3 py-2.5 text-left min-w-0"
+                                >
+                                    <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                                        <MessageCircle className="w-4 h-4 text-primary" />
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="text-xs font-medium text-foreground truncate">
+                                            {convo.name || other?.displayName || "Unknown"}
+                                        </p>
+                                        <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                            <Lock className="w-2.5 h-2.5" /> End-to-end encrypted
+                                        </p>
+                                    </div>
+                                </button>
+                                <button
+                                    onClick={async (e) => {
+                                        e.stopPropagation();
+                                        if (!confirm("Delete this conversation?")) return;
+                                        try {
+                                            await deleteConversation(convo.id);
+                                            setConversations(prev => prev.filter(c => c.id !== convo.id));
+                                        } catch (err) { console.error("Delete failed:", err); }
+                                    }}
+                                    className="px-2 py-2.5 text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
+                                    title="Delete conversation"
+                                >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
                         );
                     })
                 )}
@@ -189,11 +234,25 @@ function ChatView({
     const [isLoading, setIsLoading] = useState(true);
     const [stagedMedia, setStagedMedia] = useState<{ file: File; previewUrl: string } | null>(null);
     const [spoiler, setSpoiler] = useState(false);
+    const [resolvedRecipient, setResolvedRecipient] = useState<Wallet | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const prevCountRef = useRef(0);
 
-    const recipient = conversation.participants?.find(p => p.id !== wallet.id);
+    const participantRecipient = conversation.participants?.find(p => p.id !== wallet.id);
+    const recipient = participantRecipient || resolvedRecipient;
+
+    useEffect(() => {
+        if (!participantRecipient && conversation.participantIds) {
+            const otherId = conversation.participantIds.find(id => id !== wallet.id);
+            if (otherId) {
+                getWallets().then(wallets => {
+                    const match = wallets.find(w => w.id === otherId);
+                    if (match) setResolvedRecipient(match);
+                }).catch(() => {});
+            }
+        }
+    }, [participantRecipient, conversation.participantIds, wallet.id]);
 
     const loadMessages = async () => {
         try {
@@ -202,16 +261,20 @@ function ChatView({
                 wallet,
                 conversation.participants || []
             );
-            // Merge with existing messages to preserve locally-known media data.
-            // The sender can't re-decrypt their own messages (encrypted for recipient),
-            // so mediaUrl from sendMessage() would be lost on re-fetch without this.
             setMessages(prev => {
                 if (prev.length === 0) return msgs;
                 const existing = new Map(prev.map(m => [m.id, m]));
                 return msgs.map(m => {
                     const old = existing.get(m.id);
-                    // If we already had media data but re-fetch lost it, keep the old message
-                    if (old?.mediaUrl && !m.mediaUrl) return { ...m, mediaUrl: old.mediaUrl, mediaFileName: old.mediaFileName, messageType: old.messageType, plaintext: old.plaintext };
+                    if (!old) return m;
+                    const oldGood = old.plaintext && !old.plaintext.startsWith("[Unable");
+                    const newBad = !m.plaintext || m.plaintext.startsWith("[Unable");
+                    if (oldGood && newBad) {
+                        return { ...m, plaintext: old.plaintext, signatureValid: old.signatureValid, mediaUrl: old.mediaUrl, mediaFileName: old.mediaFileName, messageType: old.messageType };
+                    }
+                    if (old.mediaUrl && !m.mediaUrl) {
+                        return { ...m, mediaUrl: old.mediaUrl, mediaFileName: old.mediaFileName, messageType: old.messageType, plaintext: old.plaintext };
+                    }
                     return m;
                 });
             });
@@ -254,8 +317,17 @@ function ChatView({
         }
     };
 
+    const [sendError, setSendError] = useState<string | null>(null);
+
     const handleSend = async () => {
-        if ((!newMessage.trim() && !stagedMedia) || !recipient || isSending) return;
+        if ((!newMessage.trim() && !stagedMedia) || isSending) return;
+        setSendError(null);
+
+        if (!recipient) {
+            setSendError("Recipient not found. They may not be registered.");
+            return;
+        }
+
         setIsSending(true);
 
         let textToSend = newMessage.trim();
@@ -268,7 +340,7 @@ function ChatView({
                 msgType = messageType;
                 clearStagedMedia();
             } catch (err) {
-                alert(err instanceof Error ? err.message : "Failed to process media.");
+                setSendError(err instanceof Error ? err.message : "Failed to process media.");
                 setIsSending(false);
                 return;
             }
@@ -277,29 +349,25 @@ function ChatView({
         setNewMessage("");
 
         try {
-            const recipientKey = recipient.encryptionPublicKey;
+            let recipientKey = recipient.encryptionPublicKey;
             if (!recipientKey) {
                 const wallets = await getWallets();
                 const match = wallets.find(w => w.id === recipient.id);
                 if (!match?.encryptionPublicKey) {
-                    alert("Recipient's encryption key not found");
+                    setSendError("Recipient's encryption key not found");
                     setIsSending(false);
                     return;
                 }
-                const msg = await sendMessage(
-                    conversation.id, textToSend, wallet, match.encryptionPublicKey,
-                    false, undefined, msgType, spoiler
-                );
-                setMessages(prev => [...prev, msg]);
-            } else {
-                const msg = await sendMessage(
-                    conversation.id, textToSend, wallet, recipientKey,
-                    false, undefined, msgType, spoiler
-                );
-                setMessages(prev => [...prev, msg]);
+                recipientKey = match.encryptionPublicKey;
             }
-        } catch (err) {
+            const msg = await sendMessage(
+                conversation.id, textToSend, wallet, recipientKey,
+                false, undefined, msgType, spoiler
+            );
+            setMessages(prev => [...prev, msg]);
+        } catch (err: any) {
             console.error("Send failed:", err);
+            setSendError(err.message || "Send failed");
         }
         setIsSending(false);
         setSpoiler(false);
@@ -352,6 +420,11 @@ function ChatView({
 
             {/* Input */}
             <div className="border-t border-border bg-card/50">
+                {sendError && (
+                    <div className="px-3 py-1.5 bg-destructive/10 text-destructive text-[10px]">
+                        {sendError}
+                    </div>
+                )}
                 {/* Staged media preview */}
                 {stagedMedia && (
                     <div className="px-2 pt-2 flex items-center gap-2">

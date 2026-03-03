@@ -26,10 +26,15 @@ interface SendTokensDialogProps {
   onSuccess: () => void;
 }
 
+// ML-DSA-65 public key = 1952 bytes = 3904 hex characters
+const ML_DSA65_PUBKEY_HEX_LEN = 3904;
+// Allow a small tolerance for minor encoding differences
+const MIN_ADDRESS_LEN = ML_DSA65_PUBKEY_HEX_LEN - 100;
+
 // Validate and parse xrge: prefixed address
 const parseXrgeAddress = (input: string): { valid: boolean; address: string; error?: string } => {
   const trimmed = input.trim();
-  
+
   if (!trimmed) {
     return { valid: false, address: "", error: "Recipient address required" };
   }
@@ -38,15 +43,19 @@ const parseXrgeAddress = (input: string): { valid: boolean; address: string; err
   const prefixMatch = trimmed.match(/^xrge:/i);
   const rawAddress = prefixMatch ? trimmed.slice(5) : trimmed;
 
-  // Validate the address (ML-DSA-65 public keys are base64 encoded, ~2600+ chars)
-  if (rawAddress.length < 100) {
-    return { valid: false, address: rawAddress, error: "Address too short - invalid public key" };
+  // Check for valid hex characters
+  const hexRegex = /^[A-Fa-f0-9]+$/;
+  if (!hexRegex.test(rawAddress)) {
+    return { valid: false, address: rawAddress, error: "Invalid address format — expected hex-encoded public key" };
   }
 
-  // Check for valid base64 characters
-  const base64Regex = /^[A-Za-z0-9+/=]+$/;
-  if (!base64Regex.test(rawAddress)) {
-    return { valid: false, address: rawAddress, error: "Invalid address format" };
+  // Validate the address length (ML-DSA-65 public keys are 3904 hex chars)
+  if (rawAddress.length < MIN_ADDRESS_LEN) {
+    return {
+      valid: false,
+      address: rawAddress,
+      error: `Address too short (${rawAddress.length} chars) — expected ${ML_DSA65_PUBKEY_HEX_LEN} hex characters for a full ML-DSA-65 public key`,
+    };
   }
 
   return { valid: true, address: rawAddress };
@@ -73,7 +82,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
 
   const handleSend = async () => {
     setError("");
-    
+
     const parsed = parseXrgeAddress(recipient);
     if (!parsed.valid) {
       setError(parsed.error || "Invalid address");
@@ -118,23 +127,23 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
         selectedToken,
         memo || undefined
       );
-      
+
       // Transaction submitted - now wait for it to be mined
       setSending(false);
       setConfirming(true);
-      
+
       // Poll for balance change (up to 30 seconds)
       const startBalance = rawSelectedBalance;
       const maxAttempts = 15;
       let confirmed = false;
-      
+
       for (let i = 0; i < maxAttempts; i++) {
         await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-        
+
         try {
           const newBalances = await getWalletBalance(wallet.signingPublicKey);
           const newBalance = newBalances.find(b => b.symbol === selectedToken)?.balance || 0;
-          
+
           // Check if balance changed (decreased by approximately the sent amount)
           if (newBalance < rawSelectedBalance - (amountToSend * 0.9)) {
             confirmed = true;
@@ -144,9 +153,9 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
           // Ignore polling errors
         }
       }
-      
+
       setConfirming(false);
-      
+
       if (confirmed) {
         toast.success(`Sent ${amountNum} ${selectedToken} successfully!`, {
           description: "Transaction confirmed on-chain"
@@ -156,7 +165,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
           description: "Transaction submitted - may take a moment to confirm"
         });
       }
-      
+
       onSuccess();
     } catch (err) {
       console.error("Send error:", err);
@@ -183,9 +192,9 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
       >
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold text-foreground">Send Tokens</h2>
-          <Button 
-            variant="ghost" 
-            size="icon" 
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={onClose}
             disabled={sending || confirming}
           >
@@ -246,9 +255,8 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
                 value={recipient}
                 onChange={(e) => setRecipient(e.target.value)}
                 placeholder="xrge:... or public key"
-                className={`font-mono text-sm pr-10 ${
-                  recipient && !isAddressValid ? "border-destructive" : ""
-                } ${recipient && isAddressValid ? "border-success" : ""}`}
+                className={`font-mono text-sm pr-10 ${recipient && !isAddressValid ? "border-destructive" : ""
+                  } ${recipient && isAddressValid ? "border-success" : ""}`}
               />
               {recipient && (
                 <div className="absolute right-3 top-1/2 -translate-y-1/2">

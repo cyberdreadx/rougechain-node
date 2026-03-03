@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Wallet, MessageCircle, Settings, Lock } from "lucide-react";
+import { Wallet, Coins, Image, MessageCircle, Mail, Settings, Lock } from "lucide-react";
 import { initStorage } from "../lib/storage";
 import {
     loadUnifiedWallet,
@@ -9,12 +9,15 @@ import {
     type UnifiedWallet,
 } from "../lib/unified-wallet";
 import WalletTab from "./tabs/WalletTab";
+import TokensTab from "./tabs/TokensTab";
+import NftsTab from "./tabs/NftsTab";
 import MessengerTab from "./tabs/MessengerTab";
+import MailTab from "./tabs/MailTab";
 import SettingsTab from "./tabs/SettingsTab";
 import UnlockScreen from "./components/UnlockScreen";
 import CreateWalletScreen from "./components/CreateWalletScreen";
 
-type Tab = "wallet" | "messenger" | "settings";
+type Tab = "wallet" | "tokens" | "nfts" | "messenger" | "mail" | "settings";
 
 export default function App() {
     const [ready, setReady] = useState(false);
@@ -72,7 +75,10 @@ export default function App() {
 
     const tabs: { id: Tab; label: string; icon: typeof Wallet }[] = [
         { id: "wallet", label: "Wallet", icon: Wallet },
+        { id: "tokens", label: "Tokens", icon: Coins },
+        { id: "nfts", label: "NFTs", icon: Image },
         { id: "messenger", label: "Chat", icon: MessageCircle },
+        { id: "mail", label: "Mail", icon: Mail },
         { id: "settings", label: "Settings", icon: Settings },
     ];
 
@@ -95,7 +101,10 @@ export default function App() {
             {/* Tab content */}
             <div className="flex-1 overflow-hidden">
                 {activeTab === "wallet" && wallet && <WalletTab wallet={wallet} onUpdate={setWallet} />}
+                {activeTab === "tokens" && wallet && <TokensTab wallet={wallet} />}
+                {activeTab === "nfts" && wallet && <NftsTab wallet={wallet} />}
                 {activeTab === "messenger" && wallet && <MessengerTab wallet={wallet} />}
+                {activeTab === "mail" && wallet && <MailTab wallet={wallet} />}
                 {activeTab === "settings" && wallet && (
                     <SettingsTab
                         wallet={wallet}

@@ -18,10 +18,14 @@ export default defineConfig({
             input: {
                 popup: path.resolve(__dirname, "popup.html"),
                 "service-worker": path.resolve(__dirname, "src/background/service-worker.ts"),
+                content: path.resolve(__dirname, "src/content/inject.ts"),
+                provider: path.resolve(__dirname, "src/content/provider.ts"),
             },
             output: {
                 entryFileNames: (chunkInfo) => {
                     if (chunkInfo.name === "service-worker") return "service-worker.js";
+                    if (chunkInfo.name === "content") return "content.js";
+                    if (chunkInfo.name === "provider") return "provider.js";
                     return "assets/[name]-[hash].js";
                 },
             },

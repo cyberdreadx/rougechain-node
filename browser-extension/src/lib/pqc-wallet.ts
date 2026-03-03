@@ -3,6 +3,7 @@
  * Adapted from quantum-vault/src/lib/pqc-wallet.ts
  */
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
+import { cachedFetch, invalidate } from "./api-cache";
 import type { Block } from "./pqc-blockchain";
 
 export const TOTAL_SUPPLY = 36_000_000_000;
@@ -58,67 +59,76 @@ export function formatTimestamp(timestamp: number): string {
     return date.toLocaleDateString();
 }
 
-// Fetch balance from node API
-export async function getWalletBalance(publicKey: string): Promise<WalletBalance[]> {
+async function fetchBalance(publicKey: string): Promise<WalletBalance[]> {
     const baseUrl = getCoreApiBaseUrl();
     if (!baseUrl) return [{ symbol: TOKEN_SYMBOL, balance: 0, name: TOKEN_NAME, icon: "🔴" }];
 
-    try {
-        const res = await fetch(`${baseUrl}/balance/${publicKey}`, {
-            headers: getCoreApiHeaders(),
+    const res = await fetch(`${baseUrl}/balance/${publicKey}`, {
+        headers: getCoreApiHeaders(),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json() as {
+        success: boolean;
+        balance: number;
+        token_balances?: Record<string, number>;
+    };
+
+    const balances: WalletBalance[] = [];
+
+    if (data.success) {
+        balances.push({
+            symbol: TOKEN_SYMBOL,
+            balance: data.balance,
+            name: TOKEN_NAME,
+            icon: "🔴",
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json() as {
-            success: boolean;
-            balance: number;
-            token_balances?: Record<string, number>;
-        };
 
-        const balances: WalletBalance[] = [];
-
-        if (data.success) {
-            balances.push({
-                symbol: TOKEN_SYMBOL,
-                balance: data.balance,
-                name: TOKEN_NAME,
-                icon: "🔴",
-            });
-
-            // Add custom token balances
-            if (data.token_balances) {
-                for (const [symbol, balance] of Object.entries(data.token_balances)) {
-                    if (balance > 0) {
-                        balances.push({
-                            symbol,
-                            balance,
-                            name: symbol,
-                            icon: symbol.charAt(0)?.toUpperCase() || "🪙",
-                            tokenAddress: `token:${symbol.toLowerCase()}`,
-                        });
-                    }
+        if (data.token_balances) {
+            for (const [symbol, balance] of Object.entries(data.token_balances)) {
+                if (balance > 0) {
+                    balances.push({
+                        symbol,
+                        balance,
+                        name: symbol,
+                        icon: symbol.charAt(0)?.toUpperCase() || "🪙",
+                        tokenAddress: `token:${symbol.toLowerCase()}`,
+                    });
                 }
             }
         }
+    }
 
-        if (balances.length > 0) return balances;
-        return [{ symbol: TOKEN_SYMBOL, balance: 0, name: TOKEN_NAME, icon: "🔴" }];
+    if (balances.length > 0) return balances;
+    return [{ symbol: TOKEN_SYMBOL, balance: 0, name: TOKEN_NAME, icon: "🔴" }];
+}
+
+export async function getWalletBalance(publicKey: string): Promise<WalletBalance[]> {
+    try {
+        return await cachedFetch("balance", publicKey, () => fetchBalance(publicKey));
     } catch (err) {
         console.error("Failed to fetch balance:", err);
         return [{ symbol: TOKEN_SYMBOL, balance: 0, name: TOKEN_NAME, icon: "🔴" }];
     }
 }
 
-// Fetch transactions by parsing blocks from the node API
 export async function getWalletTransactions(publicKey: string): Promise<WalletTransaction[]> {
+    try {
+        return await cachedFetch("blocks", publicKey, () => fetchTransactions(publicKey));
+    } catch (err) {
+        console.error("Failed to fetch transactions:", err);
+        return [];
+    }
+}
+
+async function fetchTransactions(publicKey: string): Promise<WalletTransaction[]> {
     const baseUrl = getCoreApiBaseUrl();
     if (!baseUrl) return [];
 
-    try {
-        const res = await fetch(`${baseUrl}/blocks`, {
-            headers: getCoreApiHeaders(),
-        });
-        if (!res.ok) return [];
-        const data = await res.json() as {
+    const res = await fetch(`${baseUrl}/blocks`, {
+        headers: getCoreApiHeaders(),
+    });
+    if (!res.ok) return [];
+    const data = await res.json() as {
             blocks: Array<{
                 version: number;
                 header: {
@@ -198,11 +208,84 @@ export async function getWalletTransactions(publicKey: string): Promise<WalletTr
             }
         }
 
-        return walletTxs.sort((a, b) => b.blockIndex - a.blockIndex);
-    } catch (err) {
-        console.error("Failed to fetch transactions:", err);
-        return [];
-    }
+    return walletTxs.sort((a, b) => b.blockIndex - a.blockIndex);
+}
+
+export interface TokenMeta {
+    symbol: string;
+    name: string;
+    creator: string;
+    image?: string;
+    description?: string;
+}
+
+export async function getTokens(): Promise<TokenMeta[]> {
+    const baseUrl = getCoreApiBaseUrl();
+    if (!baseUrl) return [];
+    try {
+        return await cachedFetch("tokens", "all", async () => {
+            const res = await fetch(`${baseUrl}/tokens`, { headers: getCoreApiHeaders() });
+            if (!res.ok) return [];
+            const data = await res.json();
+            return data.tokens || [];
+        });
+    } catch { return []; }
+}
+
+export interface NftCollection {
+    collection_id: string;
+    symbol: string;
+    name: string;
+    creator: string;
+    description?: string;
+    image?: string;
+    max_supply?: number;
+    minted: number;
+    royalty_bps: number;
+    frozen: boolean;
+}
+
+export interface NftToken {
+    collection_id: string;
+    token_id: number;
+    owner: string;
+    creator: string;
+    name: string;
+    metadata_uri?: string;
+    attributes?: unknown;
+    locked: boolean;
+    minted_at: number;
+}
+
+export async function getNftOwned(publicKey: string): Promise<NftToken[]> {
+    const baseUrl = getCoreApiBaseUrl();
+    if (!baseUrl) return [];
+    try {
+        return await cachedFetch("nftOwner", publicKey, async () => {
+            const res = await fetch(`${baseUrl}/nft/owner/${encodeURIComponent(publicKey)}`, { headers: getCoreApiHeaders() });
+            if (!res.ok) return [];
+            const data = await res.json();
+            return data.nfts || [];
+        });
+    } catch { return []; }
+}
+
+export async function getNftCollections(): Promise<NftCollection[]> {
+    const baseUrl = getCoreApiBaseUrl();
+    if (!baseUrl) return [];
+    try {
+        return await cachedFetch("nftCollections", "all", async () => {
+            const res = await fetch(`${baseUrl}/nft/collections`, { headers: getCoreApiHeaders() });
+            if (!res.ok) return [];
+            const data = await res.json();
+            return data.collections || [];
+        });
+    } catch { return []; }
+}
+
+export function invalidateNfts(): void {
+    invalidate("nftOwner");
+    invalidate("nftCollections");
 }
 
 // Send transaction via node API (server-side signing via tx/submit)
@@ -237,6 +320,9 @@ export async function sendTransaction(
     try { data = JSON.parse(text); } catch { throw new Error(`Invalid response: ${text.substring(0, 100)}`); }
 
     if (res.ok && data.success) {
+        invalidate("balance");
+        invalidate("blocks");
+        invalidate("tokens");
         return {
             index: 0,
             timestamp: Date.now(),
@@ -268,5 +354,7 @@ export async function claimFaucet(publicKey: string): Promise<any> {
         const errText = await res.text();
         throw new Error(`Faucet claim failed: ${errText}`);
     }
+    invalidate("balance");
+    invalidate("blocks");
     return res.json();
 }

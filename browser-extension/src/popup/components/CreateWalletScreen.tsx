@@ -30,7 +30,7 @@ export default function CreateWalletScreen({ onCreated }: Props) {
                 signingPrivateKey: keypair.privateKey,
                 encryptionPublicKey: encKeypair.publicKey,
                 encryptionPrivateKey: encKeypair.privateKey,
-                version: 2,
+                version: 3,
             };
 
             saveUnifiedWallet(wallet);

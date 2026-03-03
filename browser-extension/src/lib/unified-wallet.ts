@@ -4,7 +4,7 @@
  * Adapted from quantum-vault/src/lib/unified-wallet.ts
  */
 import * as storage from "./storage";
-import { ml_kem768 } from "@noble/post-quantum/ml-kem";
+import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 
 function bytesToHex(bytes: Uint8Array): string {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
@@ -31,13 +31,14 @@ const VAULT_SETTINGS_KEY = "pqc-unified-wallet-vault-settings";
 const ENCRYPTED_WALLET_KEY = "pqc-unified-wallet-encrypted";
 
 function ensureEncryptionKeys(wallet: UnifiedWallet): UnifiedWallet {
-    if (wallet.encryptionPublicKey && wallet.encryptionPrivateKey) return wallet;
+    const needsRegen = !wallet.encryptionPublicKey || !wallet.encryptionPrivateKey || (wallet.version || 0) < 3;
+    if (!needsRegen) return wallet;
     const keypair = ml_kem768.keygen();
     return {
         ...wallet,
-        encryptionPublicKey: wallet.encryptionPublicKey || bytesToHex(keypair.publicKey),
-        encryptionPrivateKey: wallet.encryptionPrivateKey || bytesToHex(keypair.secretKey),
-        version: 2,
+        encryptionPublicKey: bytesToHex(keypair.publicKey),
+        encryptionPrivateKey: bytesToHex(keypair.secretKey),
+        version: 3,
     };
 }
 

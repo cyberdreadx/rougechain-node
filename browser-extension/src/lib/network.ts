@@ -5,7 +5,7 @@ export type NetworkType = "mainnet" | "testnet";
 export const NETWORK_STORAGE_KEY = "rougechain-network";
 
 // Default node URLs — browser extension uses the remote public node
-const DEFAULT_TESTNET_URL = "https://xrge-node.gltch.app/api";
+const DEFAULT_TESTNET_URL = "https://testnet.rougechain.io/api";
 const DEFAULT_MAINNET_URL = "";
 
 export function getActiveNetwork(): NetworkType {

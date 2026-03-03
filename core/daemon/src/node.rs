@@ -8,7 +8,9 @@ use quantum_vault_consensus::{compute_selection_seed, fetch_entropy, select_prop
 use quantum_vault_crypto::{bytes_to_hex, pqc_keygen, pqc_sign, pqc_verify, sha256};
 use quantum_vault_storage::bridge_withdraw_store::BridgeWithdrawStore;
 use quantum_vault_storage::chain_store::ChainStore;
+use quantum_vault_storage::mail_store::{MailLabel, MailMessage, MailStore};
 use quantum_vault_storage::messenger_store::{Conversation, MessengerMessage, MessengerStore, MessengerWallet};
+use quantum_vault_storage::name_registry::{NameEntry, NameRegistry};
 use quantum_vault_storage::token_metadata_store::{TokenMetadata, TokenMetadataStore};
 use quantum_vault_storage::validator_store::{ValidatorState, ValidatorStore};
 use quantum_vault_types::{
@@ -61,6 +63,8 @@ pub struct L1Node {
     pool_event_store: PoolEventStore,
     token_metadata_store: TokenMetadataStore,
     nft_store: NftStore,
+    name_registry: NameRegistry,
+    mail_store: MailStore,
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
     verified_tx_ids: Arc<Mutex<HashSet<String>>>,
@@ -82,6 +86,8 @@ impl L1Node {
         let pool_event_store = PoolEventStore::new(&opts.data_dir)?;
         let token_metadata_store = TokenMetadataStore::new(&data_dir_str)?;
         let nft_store = NftStore::new(&opts.data_dir)?;
+        let name_registry = NameRegistry::new(&opts.data_dir)?;
+        let mail_store = MailStore::new(&opts.data_dir)?;
         let keys = pqc_keygen();
         Ok(Self {
             node_id: uuid::Uuid::new_v4().to_string(),
@@ -93,6 +99,8 @@ impl L1Node {
             pool_event_store,
             token_metadata_store,
             nft_store,
+            name_registry,
+            mail_store,
             keys: Arc::new(Mutex::new(keys)),
             mempool: Arc::new(Mutex::new(HashMap::new())),
             verified_tx_ids: Arc::new(Mutex::new(HashSet::new())),
@@ -2390,6 +2398,50 @@ impl L1Node {
 
     pub fn mark_message_read(&self, message_id: &str) -> Result<MessengerMessage, String> {
         self.messenger_store.mark_message_read(message_id)
+    }
+
+    // --- Name Registry ---
+
+    pub fn register_name(&self, name: &str, wallet_id: &str) -> Result<NameEntry, String> {
+        self.name_registry.register_name(name, wallet_id)
+    }
+
+    pub fn lookup_name(&self, name: &str) -> Result<Option<NameEntry>, String> {
+        self.name_registry.lookup_name(name)
+    }
+
+    pub fn reverse_lookup_name(&self, wallet_id: &str) -> Result<Option<String>, String> {
+        self.name_registry.reverse_lookup(wallet_id)
+    }
+
+    pub fn release_name(&self, name: &str, wallet_id: &str) -> Result<(), String> {
+        self.name_registry.release_name(name, wallet_id)
+    }
+
+    // --- Mail ---
+
+    pub fn send_mail(&self, msg: MailMessage) -> Result<MailMessage, String> {
+        self.mail_store.store_message(msg)
+    }
+
+    pub fn get_mail(&self, message_id: &str) -> Result<Option<MailMessage>, String> {
+        self.mail_store.get_message(message_id)
+    }
+
+    pub fn list_mail_folder(&self, wallet_id: &str, folder: &str) -> Result<Vec<(MailMessage, MailLabel)>, String> {
+        self.mail_store.list_folder(wallet_id, folder)
+    }
+
+    pub fn move_mail(&self, wallet_id: &str, message_id: &str, folder: &str) -> Result<(), String> {
+        self.mail_store.move_to_folder(wallet_id, message_id, folder)
+    }
+
+    pub fn mark_mail_read(&self, wallet_id: &str, message_id: &str) -> Result<(), String> {
+        self.mail_store.mark_read(wallet_id, message_id)
+    }
+
+    pub fn delete_mail(&self, wallet_id: &str, message_id: &str) -> Result<(), String> {
+        self.mail_store.delete_message(wallet_id, message_id)
     }
 
 }

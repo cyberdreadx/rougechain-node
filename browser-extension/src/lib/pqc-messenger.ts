@@ -3,8 +3,9 @@
  * Adapted from quantum-vault/src/lib/pqc-messenger.ts
  */
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
-import { ml_dsa65 } from "@noble/post-quantum/ml-dsa";
-import { ml_kem768 } from "@noble/post-quantum/ml-kem";
+import { cachedFetch, invalidate } from "./api-cache";
+import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
+import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 
 export interface Wallet {
     id: string;
@@ -113,26 +114,24 @@ export async function registerWalletOnNode(wallet: Wallet): Promise<void> {
     const apiBase = getMessengerApiBase();
     if (!apiBase) throw new Error("Node not configured");
 
-    const res = await fetch(`${apiBase}/wallets`, {
+    const res = await fetch(`${apiBase}/wallets/register`, {
         method: "POST",
         headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({
             id: wallet.id,
-            display_name: wallet.displayName,
-            signing_public_key: wallet.signingPublicKey,
-            encryption_public_key: wallet.encryptionPublicKey,
+            displayName: wallet.displayName,
+            signingPublicKey: wallet.signingPublicKey,
+            encryptionPublicKey: wallet.encryptionPublicKey,
         }),
     });
     if (!res.ok) throw new Error(`Registration failed: ${await res.text()}`);
 }
 
-export async function encryptMessage(
+async function kemEncryptPlaintext(
     plaintext: string,
-    recipientEncryptionPublicKey: string,
-    senderSigningPrivateKey: string
-): Promise<{ encryptedPackage: string; signature: string }> {
-    const recipientPubKeyBytes = hexToBytes(recipientEncryptionPublicKey);
-    const { cipherText, sharedSecret } = ml_kem768.encapsulate(recipientPubKeyBytes);
+    encryptionPublicKey: Uint8Array
+): Promise<{ kemCipherText: string; iv: string; encryptedContent: string }> {
+    const { cipherText, sharedSecret } = ml_kem768.encapsulate(encryptionPublicKey);
 
     const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret, "HKDF", false, ["deriveKey"]);
     const aesKey = await crypto.subtle.deriveKey(
@@ -150,14 +149,36 @@ export async function encryptMessage(
         new TextEncoder().encode(plaintext)
     );
 
-    const encryptedPackage = JSON.stringify({
+    return {
         kemCipherText: bytesToHex(cipherText),
         iv: bytesToHex(iv),
         encryptedContent: bytesToHex(new Uint8Array(encrypted)),
-    });
+    };
+}
+
+export async function encryptMessage(
+    plaintext: string,
+    recipientEncryptionPublicKey: string,
+    senderSigningPrivateKey: string,
+    senderEncryptionPublicKey?: string
+): Promise<{ encryptedPackage: string; signature: string }> {
+    const recipientPubKeyBytes = hexToBytes(recipientEncryptionPublicKey);
+    const recipientEnc = await kemEncryptPlaintext(plaintext, recipientPubKeyBytes);
+
+    const pkg: Record<string, string> = { ...recipientEnc };
+
+    if (senderEncryptionPublicKey) {
+        const senderPubKeyBytes = hexToBytes(senderEncryptionPublicKey);
+        const senderEnc = await kemEncryptPlaintext(plaintext, senderPubKeyBytes);
+        pkg.senderKemCipherText = senderEnc.kemCipherText;
+        pkg.senderIv = senderEnc.iv;
+        pkg.senderEncryptedContent = senderEnc.encryptedContent;
+    }
+
+    const encryptedPackage = JSON.stringify(pkg);
 
     const signerPrivKey = hexToBytes(senderSigningPrivateKey);
-    const signature = ml_dsa65.sign(new TextEncoder().encode(encryptedPackage), signerPrivKey);
+    const signature = ml_dsa65.sign(signerPrivKey, new TextEncoder().encode(encryptedPackage));
 
     return {
         encryptedPackage,
@@ -165,23 +186,13 @@ export async function encryptMessage(
     };
 }
 
-export async function decryptMessage(
-    encryptedPackage: string,
-    recipientEncryptionPrivateKey: string,
-    senderSigningPublicKey: string,
-    signature: string
-): Promise<{ plaintext: string; signatureValid: boolean }> {
-    let signatureValid = false;
-    try {
-        const sigBytes = hexToBytes(signature);
-        const pubKeyBytes = hexToBytes(senderSigningPublicKey);
-        signatureValid = ml_dsa65.verify(sigBytes, new TextEncoder().encode(encryptedPackage), pubKeyBytes);
-    } catch { /* noop */ }
-
-    const parsed = JSON.parse(encryptedPackage);
-    const cipherTextBytes = hexToBytes(parsed.kemCipherText);
-    const privKeyBytes = hexToBytes(recipientEncryptionPrivateKey);
-    const sharedSecret = ml_kem768.decapsulate(cipherTextBytes, privKeyBytes);
+async function kemDecryptContent(
+    kemCipherTextHex: string,
+    ivHex: string,
+    encryptedContentHex: string,
+    encryptionPrivateKey: Uint8Array
+): Promise<string> {
+    const sharedSecret = ml_kem768.decapsulate(hexToBytes(kemCipherTextHex), encryptionPrivateKey);
 
     const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret, "HKDF", false, ["deriveKey"]);
     const aesKey = await crypto.subtle.deriveKey(
@@ -193,15 +204,50 @@ export async function decryptMessage(
     );
 
     const decrypted = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: hexToBytes(parsed.iv) },
+        { name: "AES-GCM", iv: hexToBytes(ivHex) },
         aesKey,
-        hexToBytes(parsed.encryptedContent)
+        hexToBytes(encryptedContentHex)
     );
 
-    return {
-        plaintext: new TextDecoder().decode(decrypted),
-        signatureValid,
-    };
+    return new TextDecoder().decode(decrypted);
+}
+
+export async function decryptMessage(
+    encryptedPackage: string,
+    recipientEncryptionPrivateKey: string,
+    senderSigningPublicKey: string,
+    signature: string,
+    isSender: boolean = false
+): Promise<{ plaintext: string; signatureValid: boolean }> {
+    let signatureValid = false;
+    try {
+        const sigBytes = hexToBytes(signature);
+        const pubKeyBytes = hexToBytes(senderSigningPublicKey);
+        signatureValid = ml_dsa65.verify(pubKeyBytes, new TextEncoder().encode(encryptedPackage), sigBytes);
+    } catch { /* noop */ }
+
+    const parsed = JSON.parse(encryptedPackage);
+    const privKeyBytes = hexToBytes(recipientEncryptionPrivateKey);
+
+    let plaintext: string;
+
+    if (isSender && parsed.senderKemCipherText) {
+        plaintext = await kemDecryptContent(
+            parsed.senderKemCipherText,
+            parsed.senderIv,
+            parsed.senderEncryptedContent,
+            privKeyBytes
+        );
+    } else {
+        plaintext = await kemDecryptContent(
+            parsed.kemCipherText,
+            parsed.iv,
+            parsed.encryptedContent,
+            privKeyBytes
+        );
+    }
+
+    return { plaintext, signatureValid };
 }
 
 export function generateEncryptionKeypair(): { publicKey: string; privateKey: string } {
@@ -236,17 +282,19 @@ export async function getWallets(): Promise<Wallet[]> {
     const apiBase = getMessengerApiBase();
     if (!apiBase) return [];
     try {
-        const res = await fetch(`${apiBase}/wallets`, { headers: getCoreApiHeaders() });
-        if (!res.ok) return [];
-        const data = await res.json();
-        const wallets = data.wallets || data || [];
-        return wallets.map((w: any) => ({
-            id: w.id,
-            displayName: w.display_name || w.displayName || "Unknown",
-            signingPublicKey: w.signing_public_key || w.signingPublicKey || "",
-            encryptionPublicKey: w.encryption_public_key || w.encryptionPublicKey || "",
-            createdAt: w.created_at || w.createdAt,
-        }));
+        return await cachedFetch("messengerWallets", "all", async () => {
+            const res = await fetch(`${apiBase}/wallets`, { headers: getCoreApiHeaders() });
+            if (!res.ok) return [];
+            const data = await res.json();
+            const wallets = data.wallets || data || [];
+            return wallets.map((w: any) => ({
+                id: w.id,
+                displayName: w.display_name || w.displayName || "Unknown",
+                signingPublicKey: w.signing_public_key || w.signingPublicKey || "",
+                encryptionPublicKey: w.encryption_public_key || w.encryptionPublicKey || "",
+                createdAt: w.created_at || w.createdAt,
+            }));
+        });
     } catch { return []; }
 }
 
@@ -262,29 +310,44 @@ export async function createConversation(
         method: "POST",
         headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({
-            created_by: walletId,
-            participant_ids: participantIds,
+            createdBy: walletId,
+            participantIds,
             name,
-            is_group: participantIds.length > 2,
+            isGroup: participantIds.length > 2,
         }),
     });
     if (!res.ok) throw new Error(`Failed to create conversation: ${await res.text()}`);
+    invalidate("messengerConversations");
     const data = await res.json();
-    return normalizeConversation(data);
+    return normalizeConversation(data.conversation || data);
 }
 
 export async function getConversations(walletId: string): Promise<Conversation[]> {
     const apiBase = getMessengerApiBase();
     if (!apiBase) return [];
     try {
-        const res = await fetch(`${apiBase}/conversations?wallet_id=${walletId}`, {
-            headers: getCoreApiHeaders(),
+        return await cachedFetch("messengerConversations", walletId, async () => {
+            const res = await fetch(`${apiBase}/conversations?walletId=${walletId}`, {
+                headers: getCoreApiHeaders(),
+            });
+            if (!res.ok) return [];
+            const data = await res.json();
+            const convos = data.conversations || data || [];
+            return convos.map(normalizeConversation);
         });
-        if (!res.ok) return [];
-        const data = await res.json();
-        const convos = data.conversations || data || [];
-        return convos.map(normalizeConversation);
     } catch { return []; }
+}
+
+export async function deleteConversation(conversationId: string): Promise<void> {
+    const apiBase = getMessengerApiBase();
+    if (!apiBase) throw new Error("Node not configured");
+    const res = await fetch(`${apiBase}/conversations/${encodeURIComponent(conversationId)}`, {
+        method: "DELETE",
+        headers: getCoreApiHeaders(),
+    });
+    if (!res.ok) throw new Error(`Delete failed: ${await res.text()}`);
+    invalidate("messengerConversations");
+    invalidate("messengerMessages", conversationId);
 }
 
 export async function sendMessage(
@@ -301,24 +364,26 @@ export async function sendMessage(
     if (!apiBase) throw new Error("Node not configured");
 
     const { encryptedPackage, signature } = await encryptMessage(
-        plaintext, recipientEncryptionPublicKey, wallet.signingPrivateKey
+        plaintext, recipientEncryptionPublicKey, wallet.signingPrivateKey,
+        wallet.encryptionPublicKey
     );
 
     const res = await fetch(`${apiBase}/messages`, {
         method: "POST",
         headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({
-            conversation_id: conversationId,
-            sender_wallet_id: wallet.id,
-            encrypted_content: encryptedPackage,
+            conversationId,
+            senderWalletId: wallet.id,
+            encryptedContent: encryptedPackage,
             signature,
-            self_destruct: selfDestruct,
-            destruct_after_seconds: destructAfterSeconds,
+            selfDestruct,
+            destructAfterSeconds,
             messageType,
             spoiler,
         }),
     });
     if (!res.ok) throw new Error(`Send failed: ${await res.text()}`);
+    invalidate("messengerMessages", conversationId);
     const data = await res.json();
 
     const mediaInfo = messageType !== "text" ? parseMediaPayload(plaintext) : null;
@@ -342,22 +407,27 @@ export async function sendMessage(
     };
 }
 
+async function fetchRawMessages(conversationId: string): Promise<unknown[]> {
+    const apiBase = getMessengerApiBase();
+    if (!apiBase) return [];
+    return cachedFetch("messengerMessages", conversationId, async () => {
+        const res = await fetch(
+            `${apiBase}/messages?conversationId=${encodeURIComponent(conversationId)}`,
+            { headers: getCoreApiHeaders() }
+        );
+        if (!res.ok) return [];
+        const data = await res.json();
+        return data.messages || data || [];
+    });
+}
+
 export async function getMessages(
     conversationId: string,
     wallet: WalletWithPrivateKeys,
     participants: Wallet[]
 ): Promise<Message[]> {
-    const apiBase = getMessengerApiBase();
-    if (!apiBase) return [];
-
     try {
-        const res = await fetch(
-            `${apiBase}/conversations/${conversationId}/messages`,
-            { headers: getCoreApiHeaders() }
-        );
-        if (!res.ok) return [];
-        const data = await res.json();
-        const rawMessages = data.messages || data || [];
+        const rawMessages = await fetchRawMessages(conversationId);
 
         const messages: Message[] = [];
         for (const raw of rawMessages) {
@@ -373,31 +443,17 @@ export async function getMessages(
                     p.id === msg.senderWalletId ||
                     p.signingPublicKey === msg.senderWalletId
                 );
-                const senderSigningKey = senderParticipant?.signingPublicKey || "";
+                const senderSigningKey = senderParticipant?.signingPublicKey || wallet.signingPublicKey;
 
-                if (isOwn) {
-                    // Try to decrypt own messages with recipient's key
-                    const recipient = participants.find(p => p.id !== wallet.id);
-                    if (recipient) {
-                        const result = await decryptMessage(
-                            msg.encryptedContent,
-                            wallet.encryptionPrivateKey,
-                            senderSigningKey || wallet.signingPublicKey,
-                            msg.signature
-                        );
-                        plaintext = result.plaintext;
-                        signatureValid = result.signatureValid;
-                    }
-                } else {
-                    const result = await decryptMessage(
-                        msg.encryptedContent,
-                        wallet.encryptionPrivateKey,
-                        senderSigningKey,
-                        msg.signature
-                    );
-                    plaintext = result.plaintext;
-                    signatureValid = result.signatureValid;
-                }
+                const result = await decryptMessage(
+                    msg.encryptedContent,
+                    wallet.encryptionPrivateKey,
+                    senderSigningKey,
+                    msg.signature,
+                    isOwn
+                );
+                plaintext = result.plaintext;
+                signatureValid = result.signatureValid;
             } catch {
                 plaintext = "[Unable to decrypt]";
             }

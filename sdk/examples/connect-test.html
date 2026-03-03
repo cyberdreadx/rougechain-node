@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RougeChain dApp Connect Test</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #0a0a0f;
+            --card: #12121a;
+            --border: #1e1e2e;
+            --primary: #7c3aed;
+            --primary-hover: #6d28d9;
+            --success: #10b981;
+            --error: #ef4444;
+            --text: #e2e8f0;
+            --muted: #64748b;
+            --input-bg: #1a1a2e;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 2rem;
+        }
+        .container { max-width: 720px; margin: 0 auto; }
+        h1 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+            background: linear-gradient(135deg, #7c3aed, #06b6d4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subtitle { color: var(--muted); font-size: 0.875rem; margin-bottom: 2rem; }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+        }
+        .card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 0.75rem; }
+        .status-dot {
+            display: inline-block;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .status-dot.connected { background: var(--success); }
+        .status-dot.disconnected { background: var(--error); }
+        .status-dot.detecting { background: #eab308; animation: pulse 1s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.625rem 1.25rem;
+            border-radius: 8px;
+            font-size: 0.8125rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        button:hover { background: var(--primary-hover); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        button.secondary {
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+        }
+        button.secondary:hover { background: var(--border); }
+        .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
+        input, select {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--input-bg);
+            color: var(--text);
+            font-size: 0.8125rem;
+            margin-top: 0.5rem;
+        }
+        input:focus, select:focus { outline: none; border-color: var(--primary); }
+        .field-group { margin-bottom: 0.75rem; }
+        .field-group label { font-size: 0.75rem; color: var(--muted); }
+        .log {
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.75rem;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.75rem;
+            max-height: 250px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: var(--muted);
+            margin-top: 0.75rem;
+        }
+        .log .entry { padding: 2px 0; }
+        .log .entry.error { color: var(--error); }
+        .log .entry.success { color: var(--success); }
+        .log .entry.info { color: #60a5fa; }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.375rem 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.8125rem;
+        }
+        .info-row:last-child { border: none; }
+        .info-label { color: var(--muted); }
+        .info-value { font-family: monospace; font-size: 0.75rem; max-width: 400px; overflow: hidden; text-overflow: ellipsis; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+        @media (max-width: 600px) { .grid-2 { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>RougeChain dApp Test</h1>
+        <p class="subtitle">Developer boilerplate for testing the RougeChain wallet extension provider</p>
+
+        <!-- Extension Detection -->
+        <div class="card">
+            <h2><span class="status-dot detecting" id="detect-dot"></span> Extension Status</h2>
+            <p id="detect-status" style="font-size:0.8125rem; color:var(--muted)">Checking for RougeChain extension...</p>
+            <div class="btn-row">
+                <button id="btn-connect" disabled>Connect Wallet</button>
+                <button id="btn-disconnect" class="secondary" disabled>Disconnect</button>
+            </div>
+        </div>
+
+        <!-- Wallet Info -->
+        <div class="card" id="wallet-card" style="display:none">
+            <h2>Wallet Info</h2>
+            <div class="info-row"><span class="info-label">Public Key</span><span class="info-value" id="info-pubkey">—</span></div>
+            <div class="info-row"><span class="info-label">XRGE Balance</span><span class="info-value" id="info-balance">—</span></div>
+            <div class="info-row"><span class="info-label">Token Balances</span><span class="info-value" id="info-tokens">—</span></div>
+            <div class="btn-row">
+                <button id="btn-refresh" class="secondary">Refresh Balance</button>
+            </div>
+        </div>
+
+        <!-- Send Transfer -->
+        <div class="card" id="transfer-card" style="display:none">
+            <h2>Send Transfer</h2>
+            <div class="field-group">
+                <label>Recipient Public Key</label>
+                <input id="send-to" placeholder="Paste recipient address..." />
+            </div>
+            <div class="grid-2">
+                <div class="field-group">
+                    <label>Amount</label>
+                    <input id="send-amount" type="number" placeholder="100" />
+                </div>
+                <div class="field-group">
+                    <label>Token (optional)</label>
+                    <input id="send-token" placeholder="XRGE" />
+                </div>
+            </div>
+            <div class="btn-row">
+                <button id="btn-send">Send Transaction</button>
+            </div>
+        </div>
+
+        <!-- Create Token -->
+        <div class="card" id="token-card" style="display:none">
+            <h2>Create Token</h2>
+            <div class="grid-2">
+                <div class="field-group">
+                    <label>Token Name</label>
+                    <input id="tok-name" placeholder="My Token" />
+                </div>
+                <div class="field-group">
+                    <label>Symbol</label>
+                    <input id="tok-symbol" placeholder="MTK" />
+                </div>
+            </div>
+            <div class="field-group">
+                <label>Total Supply</label>
+                <input id="tok-supply" type="number" placeholder="1000000" />
+            </div>
+            <div class="btn-row">
+                <button id="btn-create-token">Create Token</button>
+            </div>
+        </div>
+
+        <!-- NFT Operations -->
+        <div class="card" id="nft-card" style="display:none">
+            <h2>NFT Operations</h2>
+            <div class="grid-2">
+                <div class="field-group">
+                    <label>Collection Symbol</label>
+                    <input id="nft-col-symbol" placeholder="ART" />
+                </div>
+                <div class="field-group">
+                    <label>Collection Name</label>
+                    <input id="nft-col-name" placeholder="My Art" />
+                </div>
+            </div>
+            <div class="btn-row">
+                <button id="btn-create-collection">Create Collection</button>
+            </div>
+            <hr style="border-color:var(--border); margin: 1rem 0" />
+            <div class="grid-2">
+                <div class="field-group">
+                    <label>Collection ID (for minting)</label>
+                    <input id="nft-mint-col" placeholder="Collection ID..." />
+                </div>
+                <div class="field-group">
+                    <label>NFT Name</label>
+                    <input id="nft-mint-name" placeholder="Piece #1" />
+                </div>
+            </div>
+            <div class="field-group">
+                <label>Metadata URI (optional)</label>
+                <input id="nft-mint-uri" placeholder="https://..." />
+            </div>
+            <div class="btn-row">
+                <button id="btn-mint-nft">Mint NFT</button>
+            </div>
+            <hr style="border-color:var(--border); margin: 1rem 0" />
+            <div class="btn-row">
+                <button id="btn-view-nfts" class="secondary">View My NFTs</button>
+            </div>
+        </div>
+
+        <!-- Log -->
+        <div class="card">
+            <h2>Console</h2>
+            <div class="btn-row" style="margin-top:0; margin-bottom:0.5rem">
+                <button id="btn-clear" class="secondary" style="font-size:0.75rem; padding:0.375rem 0.75rem">Clear</button>
+            </div>
+            <div class="log" id="log"></div>
+        </div>
+    </div>
+
+    <script>
+        const $ = id => document.getElementById(id);
+        const logEl = $('log');
+        let publicKey = null;
+
+        function log(msg, type = '') {
+            const el = document.createElement('div');
+            el.className = 'entry ' + type;
+            el.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logEl.appendChild(el);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function logObj(label, obj) {
+            log(`${label}: ${JSON.stringify(obj, null, 2)}`, 'info');
+        }
+
+        $('btn-clear').onclick = () => { logEl.innerHTML = ''; };
+
+        // Detect extension
+        function detectExtension() {
+            if (window.rougechain && window.rougechain.isRougeChain) {
+                $('detect-dot').className = 'status-dot connected';
+                $('detect-status').textContent = 'RougeChain extension detected';
+                $('btn-connect').disabled = false;
+                log('Extension detected', 'success');
+            } else {
+                $('detect-dot').className = 'status-dot disconnected';
+                $('detect-status').textContent = 'Extension not found. Install the RougeChain Wallet extension.';
+                log('Extension not detected. Waiting...', 'error');
+            }
+        }
+
+        window.addEventListener('rougechain#initialized', detectExtension);
+        setTimeout(detectExtension, 500);
+
+        // Connect
+        $('btn-connect').onclick = async () => {
+            try {
+                log('Connecting...');
+                const result = await window.rougechain.connect();
+                publicKey = result.publicKey;
+                log(`Connected: ${publicKey.slice(0, 20)}...`, 'success');
+                $('info-pubkey').textContent = publicKey.slice(0, 32) + '...';
+                $('wallet-card').style.display = '';
+                $('transfer-card').style.display = '';
+                $('token-card').style.display = '';
+                $('nft-card').style.display = '';
+                $('btn-disconnect').disabled = false;
+                refreshBalance();
+            } catch (err) {
+                log(`Connect failed: ${err.message}`, 'error');
+            }
+        };
+
+        // Disconnect
+        $('btn-disconnect').onclick = () => {
+            publicKey = null;
+            $('wallet-card').style.display = 'none';
+            $('transfer-card').style.display = 'none';
+            $('token-card').style.display = 'none';
+            $('nft-card').style.display = 'none';
+            $('btn-disconnect').disabled = true;
+            log('Disconnected');
+        };
+
+        // Refresh balance
+        async function refreshBalance() {
+            try {
+                const result = await window.rougechain.getBalance();
+                $('info-balance').textContent = (result.balance || 0).toLocaleString() + ' XRGE';
+                const tokens = result.tokens || {};
+                const tokenList = Object.entries(tokens).map(([s, b]) => `${b} ${s}`).join(', ');
+                $('info-tokens').textContent = tokenList || 'None';
+                log('Balance refreshed', 'success');
+            } catch (err) {
+                log(`Balance error: ${err.message}`, 'error');
+            }
+        }
+        $('btn-refresh').onclick = refreshBalance;
+
+        // Send transfer
+        $('btn-send').onclick = async () => {
+            const to = $('send-to').value.trim();
+            const amount = parseFloat($('send-amount').value);
+            const token = $('send-token').value.trim() || 'XRGE';
+            if (!to || !amount) { log('Fill in recipient and amount', 'error'); return; }
+            try {
+                log(`Sending ${amount} ${token} to ${to.slice(0, 16)}...`);
+                const result = await window.rougechain.sendTransaction({
+                    type: 'transfer',
+                    to_pub_key_hex: to,
+                    amount,
+                    token_symbol: token,
+                    fee: 0.1,
+                });
+                log(`Sent! txId: ${result.txId}`, 'success');
+            } catch (err) {
+                log(`Send failed: ${err.message}`, 'error');
+            }
+        };
+
+        // Create token
+        $('btn-create-token').onclick = async () => {
+            const name = $('tok-name').value.trim();
+            const symbol = $('tok-symbol').value.trim().toUpperCase();
+            const supply = parseInt($('tok-supply').value);
+            if (!name || !symbol || !supply) { log('Fill in all token fields', 'error'); return; }
+            try {
+                log(`Creating token ${symbol}...`);
+                const result = await window.rougechain.sendTransaction({
+                    type: 'create_token',
+                    token_name: name,
+                    token_symbol: symbol,
+                    token_total_supply: supply,
+                    fee: 10,
+                });
+                log(`Token created! txId: ${result.txId}`, 'success');
+            } catch (err) {
+                log(`Create token failed: ${err.message}`, 'error');
+            }
+        };
+
+        // Create collection
+        $('btn-create-collection').onclick = async () => {
+            const symbol = $('nft-col-symbol').value.trim().toUpperCase();
+            const name = $('nft-col-name').value.trim();
+            if (!symbol || !name) { log('Fill in collection fields', 'error'); return; }
+            try {
+                log(`Creating collection ${symbol}...`);
+                const result = await window.rougechain.sendTransaction({
+                    type: 'nft_create_collection',
+                    symbol,
+                    name,
+                    fee: 50,
+                });
+                log(`Collection created! txId: ${result.txId}`, 'success');
+            } catch (err) {
+                log(`Create collection failed: ${err.message}`, 'error');
+            }
+        };
+
+        // Mint NFT
+        $('btn-mint-nft').onclick = async () => {
+            const colId = $('nft-mint-col').value.trim();
+            const name = $('nft-mint-name').value.trim();
+            const uri = $('nft-mint-uri').value.trim();
+            if (!colId || !name) { log('Fill in collection ID and NFT name', 'error'); return; }
+            try {
+                log(`Minting "${name}" in ${colId.slice(0, 16)}...`);
+                const result = await window.rougechain.sendTransaction({
+                    type: 'nft_mint',
+                    collectionId: colId,
+                    name,
+                    metadataUri: uri || undefined,
+                    fee: 5,
+                });
+                log(`Minted! txId: ${result.txId}`, 'success');
+            } catch (err) {
+                log(`Mint failed: ${err.message}`, 'error');
+            }
+        };
+
+        // View NFTs
+        $('btn-view-nfts').onclick = async () => {
+            if (!publicKey) { log('Connect wallet first', 'error'); return; }
+            try {
+                log('Fetching NFTs...');
+                const res = await fetch(`https://testnet.rougechain.io/api/nft/owner/${encodeURIComponent(publicKey)}`);
+                const data = await res.json();
+                const nfts = data.nfts || [];
+                if (nfts.length === 0) {
+                    log('No NFTs owned', 'info');
+                } else {
+                    nfts.forEach(nft => {
+                        log(`  ${nft.name} (${nft.collection_id.slice(0,12)}... #${nft.token_id})`, 'info');
+                    });
+                    log(`Total: ${nfts.length} NFTs`, 'success');
+                }
+            } catch (err) {
+                log(`Fetch NFTs failed: ${err.message}`, 'error');
+            }
+        };
+    </script>
+</body>
+</html>

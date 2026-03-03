@@ -2,7 +2,7 @@
  * PQC Blockchain — ML-DSA-65 key generation and signing
  * Adapted from quantum-vault/src/lib/pqc-blockchain.ts
  */
-import { ml_dsa65 } from "@noble/post-quantum/ml-dsa";
+import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 
 export interface Block {
     index: number;
@@ -88,7 +88,7 @@ export async function mineBlock(
     }
 
     const messageBytes = new TextEncoder().encode(hash);
-    const signature = ml_dsa65.sign(messageBytes, hexToBytes(privateKey));
+    const signature = ml_dsa65.sign(hexToBytes(privateKey), messageBytes);
 
     return {
         index,
@@ -107,7 +107,7 @@ export async function verifyBlockSignature(block: Block): Promise<boolean> {
         const messageBytes = new TextEncoder().encode(block.hash);
         const signatureBytes = hexToBytes(block.signature);
         const publicKeyBytes = hexToBytes(block.signerPublicKey);
-        return ml_dsa65.verify(signatureBytes, messageBytes, publicKeyBytes);
+        return ml_dsa65.verify(publicKeyBytes, messageBytes, signatureBytes);
     } catch {
         return false;
     }

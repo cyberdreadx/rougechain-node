@@ -84,12 +84,11 @@ let valid = verify(message, &signature, &pk);
 
 ```typescript
 // TypeScript example
-import { ml_dsa65 } from '@aspect-build/pqcrypto';
+import { ml_dsa65 } from '@noble/post-quantum/ml-dsa';
 
-const seed = crypto.getRandomValues(new Uint8Array(32));
-const { publicKey, secretKey } = ml_dsa65.keygen(seed);
-const signature = ml_dsa65.sign(message, secretKey);
-const valid = ml_dsa65.verify(signature, message, publicKey);
+const { publicKey, secretKey } = ml_dsa65.keygen();
+const signature = ml_dsa65.sign(secretKey, message);
+const valid = ml_dsa65.verify(publicKey, message, signature);
 ```
 
 ## Security Considerations

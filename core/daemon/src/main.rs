@@ -374,6 +374,20 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/messenger/messages", get(get_messenger_messages))
         .route("/api/messenger/messages", post(send_messenger_message))
         .route("/api/messenger/messages/read", post(mark_messenger_read))
+        // Name registry
+        .route("/api/names/register", post(register_name))
+        .route("/api/names/resolve/:name", get(resolve_name))
+        .route("/api/names/reverse/:walletId", get(reverse_lookup_name))
+        .route("/api/names/release", delete(release_name))
+        // Mail
+        .route("/api/mail/send", post(send_mail))
+        .route("/api/mail/inbox", get(get_mail_inbox))
+        .route("/api/mail/sent", get(get_mail_sent))
+        .route("/api/mail/trash", get(get_mail_trash))
+        .route("/api/mail/message/:id", get(get_mail_message))
+        .route("/api/mail/move", post(move_mail))
+        .route("/api/mail/read", post(mark_mail_read))
+        .route("/api/mail/:id", delete(delete_mail))
         .route("/api/peers", get(get_peers))
         .route("/api/peers/register", post(register_peer))
         // AMM/DEX endpoints
@@ -446,8 +460,8 @@ async fn auth_middleware<B>(
     if path.starts_with("/api/v2/") {
         return Ok(next.run(request).await);
     }
-    // Bypass rate limiting for messenger endpoints
-    if path.starts_with("/api/messenger/") {
+    // Bypass rate limiting for messenger, mail, and name endpoints
+    if path.starts_with("/api/messenger/") || path.starts_with("/api/mail/") || path.starts_with("/api/names/") {
         return Ok(next.run(request).await);
     }
 
@@ -2272,6 +2286,177 @@ async fn mark_messenger_read(
     let message_id = body.get("messageId").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     let message = node.mark_message_read(&message_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "success": true, "message": message })))
+}
+
+// ============================================
+// Name Registry endpoints
+// ============================================
+
+async fn register_name(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let name = body.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+    let wallet_id = body.get("walletId").and_then(|v| v.as_str()).unwrap_or_default();
+    match state.node.register_name(name, wallet_id) {
+        Ok(entry) => Ok(Json(serde_json::json!({ "success": true, "entry": entry }))),
+        Err(e) => Ok(Json(serde_json::json!({ "success": false, "error": e }))),
+    }
+}
+
+async fn resolve_name(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let entry = state.node.lookup_name(&name).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    match entry {
+        Some(e) => {
+            let wallets = state.node.list_wallets().unwrap_or_default();
+            let wallet = wallets.iter().find(|w| w.id == e.wallet_id);
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "entry": e,
+                "wallet": wallet,
+            })))
+        }
+        None => Ok(Json(serde_json::json!({ "success": false, "error": "Name not found" }))),
+    }
+}
+
+async fn reverse_lookup_name(
+    State(state): State<AppState>,
+    Path(wallet_id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let name = state.node.reverse_lookup_name(&wallet_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "success": true, "name": name })))
+}
+
+async fn release_name(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let name = body.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+    let wallet_id = body.get("walletId").and_then(|v| v.as_str()).unwrap_or_default();
+    match state.node.release_name(name, wallet_id) {
+        Ok(()) => Ok(Json(serde_json::json!({ "success": true }))),
+        Err(e) => Ok(Json(serde_json::json!({ "success": false, "error": e }))),
+    }
+}
+
+// ============================================
+// Mail endpoints
+// ============================================
+
+async fn send_mail(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let msg = quantum_vault_storage::mail_store::MailMessage {
+        id: uuid::Uuid::new_v4().to_string(),
+        from_wallet_id: body.get("fromWalletId").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        to_wallet_ids: body.get("toWalletIds")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default(),
+        subject_encrypted: body.get("subjectEncrypted").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        body_encrypted: body.get("bodyEncrypted").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        signature: body.get("signature").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        reply_to_id: body.get("replyToId").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        has_attachment: body.get("hasAttachment").and_then(|v| v.as_bool()).unwrap_or(false),
+        attachment_hash: body.get("attachmentHash").and_then(|v| v.as_str()).map(|s| s.to_string()),
+    };
+    let msg = state.node.send_mail(msg).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "success": true, "message": msg })))
+}
+
+async fn get_mail_inbox(
+    State(state): State<AppState>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let wallet_id = query.get("walletId").cloned().unwrap_or_default();
+    let items = state.node.list_mail_folder(&wallet_id, "inbox").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let messages: Vec<serde_json::Value> = items.into_iter().map(|(msg, label)| {
+        serde_json::json!({ "message": msg, "label": label })
+    }).collect();
+    Ok(Json(serde_json::json!({ "success": true, "messages": messages })))
+}
+
+async fn get_mail_sent(
+    State(state): State<AppState>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let wallet_id = query.get("walletId").cloned().unwrap_or_default();
+    let items = state.node.list_mail_folder(&wallet_id, "sent").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let messages: Vec<serde_json::Value> = items.into_iter().map(|(msg, label)| {
+        serde_json::json!({ "message": msg, "label": label })
+    }).collect();
+    Ok(Json(serde_json::json!({ "success": true, "messages": messages })))
+}
+
+async fn get_mail_trash(
+    State(state): State<AppState>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let wallet_id = query.get("walletId").cloned().unwrap_or_default();
+    let items = state.node.list_mail_folder(&wallet_id, "trash").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let messages: Vec<serde_json::Value> = items.into_iter().map(|(msg, label)| {
+        serde_json::json!({ "message": msg, "label": label })
+    }).collect();
+    Ok(Json(serde_json::json!({ "success": true, "messages": messages })))
+}
+
+async fn get_mail_message(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let wallet_id = query.get("walletId").cloned().unwrap_or_default();
+    let msg = state.node.get_mail(&id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !wallet_id.is_empty() {
+        let _ = state.node.mark_mail_read(&wallet_id, &id);
+    }
+    match msg {
+        Some(m) => Ok(Json(serde_json::json!({ "success": true, "message": m }))),
+        None => Ok(Json(serde_json::json!({ "success": false, "error": "Message not found" }))),
+    }
+}
+
+async fn move_mail(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let wallet_id = body.get("walletId").and_then(|v| v.as_str()).unwrap_or_default();
+    let message_id = body.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
+    let folder = body.get("folder").and_then(|v| v.as_str()).unwrap_or_default();
+    match state.node.move_mail(wallet_id, message_id, folder) {
+        Ok(()) => Ok(Json(serde_json::json!({ "success": true }))),
+        Err(e) => Ok(Json(serde_json::json!({ "success": false, "error": e }))),
+    }
+}
+
+async fn mark_mail_read(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let wallet_id = body.get("walletId").and_then(|v| v.as_str()).unwrap_or_default();
+    let message_id = body.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
+    match state.node.mark_mail_read(wallet_id, message_id) {
+        Ok(()) => Ok(Json(serde_json::json!({ "success": true }))),
+        Err(e) => Ok(Json(serde_json::json!({ "success": false, "error": e }))),
+    }
+}
+
+async fn delete_mail(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let wallet_id = query.get("walletId").cloned().unwrap_or_default();
+    match state.node.delete_mail(&wallet_id, &id) {
+        Ok(()) => Ok(Json(serde_json::json!({ "success": true }))),
+        Err(e) => Ok(Json(serde_json::json!({ "success": false, "error": e }))),
+    }
 }
 
 // ============================================

@@ -277,7 +277,7 @@ async function encryptMessage(
   );
 
   const senderPrivKeyBytes = hexToBytes(senderSigningPrivateKey);
-  const signature = ml_dsa65.sign(plaintextBytes, senderPrivKeyBytes);
+  const signature = ml_dsa65.sign(senderPrivKeyBytes, plaintextBytes);
 
   const encryptedData = {
     kemCipherText: bytesToHex(cipherText),
@@ -331,7 +331,7 @@ async function decryptMessage(
   const senderPubKeyBytes = hexToBytes(senderSigningPublicKey);
   const signatureBytes = hexToBytes(signature);
   const plaintextBytes = new TextEncoder().encode(plaintext);
-  const signatureValid = ml_dsa65.verify(signatureBytes, plaintextBytes, senderPubKeyBytes);
+  const signatureValid = ml_dsa65.verify(senderPubKeyBytes, plaintextBytes, signatureBytes);
 
   return { plaintext, signatureValid };
 }
