@@ -10,12 +10,16 @@ interface ConversationListProps {
   conversations: Conversation[];
   selectedId?: string;
   currentWalletId: string;
+  currentWalletKeys?: string[]; // Additional identifiers (signing key, encryption key)
   onSelect: (conversation: Conversation) => void;
   onDelete?: (conversationId: string) => void;
 }
 
-const ConversationList = ({ conversations, selectedId, currentWalletId, onSelect, onDelete }: ConversationListProps) => {
+const ConversationList = ({ conversations, selectedId, currentWalletId, currentWalletKeys = [], onSelect, onDelete }: ConversationListProps) => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Build a set of all identifiers for the current wallet
+  const myIds = new Set([currentWalletId, ...currentWalletKeys].filter(Boolean));
 
   const handleDelete = async (e: React.MouseEvent, conversationId: string) => {
     e.stopPropagation();
@@ -37,7 +41,12 @@ const ConversationList = ({ conversations, selectedId, currentWalletId, onSelect
   };
 
   const getOtherParticipant = (conversation: Conversation) => {
-    return conversation.participants?.find(p => p.id !== currentWalletId);
+    // Exclude the current wallet by checking id AND public keys
+    return conversation.participants?.find(p =>
+      !myIds.has(p.id) &&
+      !myIds.has(p.signingPublicKey) &&
+      !myIds.has(p.encryptionPublicKey)
+    );
   };
 
   const getConversationName = (conversation: Conversation): string => {

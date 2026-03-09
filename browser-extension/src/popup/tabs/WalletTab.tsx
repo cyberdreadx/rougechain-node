@@ -107,11 +107,14 @@ export default function WalletTab({ wallet }: Props) {
                     </button>
                 </div>
 
-                <div className="flex items-baseline gap-2 mb-2">
-                    <span className="text-2xl font-bold text-foreground">
-                        {xrgeBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })}
-                    </span>
-                    <span className="text-sm text-primary font-medium">{TOKEN_SYMBOL}</span>
+                <div className="flex items-center gap-2.5 mb-2">
+                    <img src="/xrge-logo.webp" alt="XRGE" className="w-9 h-9 rounded-full ring-2 ring-primary/30" />
+                    <div className="flex items-baseline gap-2">
+                        <span className="text-2xl font-bold text-foreground">
+                            {xrgeBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                        </span>
+                        <span className="text-sm text-primary font-medium">{TOKEN_SYMBOL}</span>
+                    </div>
                 </div>
 
                 <button

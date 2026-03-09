@@ -1,15 +1,20 @@
 #!/usr/bin/env npx tsx
 /**
- * Bridge Relayer: Polls pending withdrawals and sends ETH from custody to users.
+ * Bridge Relayer: Handles both ETH and XRGE bridge operations.
+ *
+ * ETH Bridge:  Polls pending withdrawals and sends ETH from custody.
+ * XRGE Bridge: Polls pending XRGE withdrawals and calls vault.release().
  *
  * Env:
- *   CORE_API_URL            - RougeChain API (e.g. http://localhost:5101)
- *   BRIDGE_CUSTODY_PRIVATE_KEY - Private key of wallet holding ETH (0x-prefixed hex)
- *   BASE_SEPOLIA_RPC        - RPC URL (default: https://sepolia.base.org)
- *   POLL_INTERVAL_MS        - Poll interval (default: 15000)
+ *   CORE_API_URL               - RougeChain API (e.g. http://localhost:5101)
+ *   BRIDGE_CUSTODY_PRIVATE_KEY - Private key of bridge wallet (0x-prefixed hex)
+ *   BASE_SEPOLIA_RPC           - RPC URL (default: https://sepolia.base.org)
+ *   XRGE_BRIDGE_VAULT          - BridgeVault contract address
+ *   XRGE_CONTRACT_ADDRESS      - XRGE ERC-20 address (default: mainnet)
+ *   POLL_INTERVAL_MS           - Poll interval (default: 5000)
  */
 
-import { createWalletClient, createPublicClient, http } from "viem";
+import { createWalletClient, createPublicClient, http, parseAbi, getContract } from "viem";
 import { baseSepolia } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -17,28 +22,83 @@ const CORE_API_URL = process.env.CORE_API_URL || "http://localhost:5101";
 const PRIVATE_KEY = process.env.BRIDGE_CUSTODY_PRIVATE_KEY;
 const RPC_URL = process.env.BASE_SEPOLIA_RPC || "https://sepolia.base.org";
 const POLL_MS = parseInt(process.env.POLL_INTERVAL_MS || "5000", 10);
+const VAULT_ADDRESS = process.env.XRGE_BRIDGE_VAULT;
+
+// ── ABIs ────────────────────────────────────────────────────────
+
+const BRIDGE_VAULT_ABI = parseAbi([
+  "function release(address to, uint256 amount, string l1TxId) external",
+  "function totalLocked() external view returns (uint256)",
+  "function vaultBalance() external view returns (uint256)",
+]);
+
+// ── Helpers ─────────────────────────────────────────────────────
 
 // qETH: 1 unit = 10^-6 ETH => wei = amount_units * 10^12
 function unitsToWei(amountUnits: number): bigint {
   return BigInt(amountUnits) * 10n ** 12n;
 }
 
-async function fetchWithdrawals(): Promise<
-  { tx_id: string; evm_address: string; amount_units: number }[]
-> {
+// XRGE on L1 uses whole units; on EVM it's 18 decimals
+function xrgeToWei(amount: number): bigint {
+  return BigInt(amount) * 10n ** 18n;
+}
+
+// ── ETH withdraw types ──────────────────────────────────────────
+
+interface EthWithdrawal {
+  tx_id: string;
+  evm_address: string;
+  amount_units: number;
+}
+
+async function fetchEthWithdrawals(): Promise<EthWithdrawal[]> {
   const res = await fetch(`${CORE_API_URL}/api/bridge/withdrawals`);
   if (!res.ok) throw new Error(`API error ${res.status}`);
   const data = await res.json();
   return data.withdrawals || [];
 }
 
-async function fulfillWithdrawal(txId: string): Promise<boolean> {
+async function fulfillEthWithdrawal(txId: string): Promise<boolean> {
   const res = await fetch(`${CORE_API_URL}/api/bridge/withdrawals/${encodeURIComponent(txId)}`, {
     method: "DELETE",
   });
   const data = await res.json().catch(() => ({}));
   return data.success === true;
 }
+
+// ── XRGE withdraw types ─────────────────────────────────────────
+
+interface XrgeWithdrawal {
+  tx_id: string;
+  evm_address: string;
+  amount: number;
+}
+
+async function fetchXrgeWithdrawals(): Promise<XrgeWithdrawal[]> {
+  try {
+    const res = await fetch(`${CORE_API_URL}/api/bridge/xrge/withdrawals`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.withdrawals || [];
+  } catch {
+    return [];
+  }
+}
+
+async function fulfillXrgeWithdrawal(txId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${CORE_API_URL}/api/bridge/xrge/withdrawals/${encodeURIComponent(txId)}`, {
+      method: "DELETE",
+    });
+    const data = await res.json().catch(() => ({}));
+    return data.success === true;
+  } catch {
+    return false;
+  }
+}
+
+// ── Main ────────────────────────────────────────────────────────
 
 async function main() {
   if (!PRIVATE_KEY?.trim()) {
@@ -59,17 +119,26 @@ async function main() {
     transport,
   });
 
-  if (!walletClient) {
-    console.error("Failed to create wallet client");
-    process.exit(1);
+  console.log(`[relayer] Started. Polling ${CORE_API_URL} every ${POLL_MS}ms`);
+  console.log(`[relayer] Custody/Relayer: ${account.address}`);
+
+  // Set up XRGE vault contract if configured
+  let vaultContract: ReturnType<typeof getContract> | null = null;
+  if (VAULT_ADDRESS) {
+    vaultContract = getContract({
+      address: VAULT_ADDRESS as `0x${string}`,
+      abi: BRIDGE_VAULT_ABI,
+      client: { public: publicClient, wallet: walletClient },
+    });
+    console.log(`[relayer] XRGE BridgeVault: ${VAULT_ADDRESS}`);
+  } else {
+    console.log("[relayer] No XRGE_BRIDGE_VAULT set — XRGE bridge disabled");
   }
 
-  console.log(`[relayer] Started. Polling ${CORE_API_URL} every ${POLL_MS}ms`);
-  console.log(`[relayer] Custody: ${account.address}`);
-
-  const run = async () => {
+  // ── ETH bridge loop ───────────────────────────────────────────
+  const processEthWithdrawals = async () => {
     try {
-      const withdrawals = await fetchWithdrawals();
+      const withdrawals = await fetchEthWithdrawals();
       if (withdrawals.length === 0) return;
 
       const balance = await publicClient.getBalance({ address: account.address });
@@ -77,12 +146,11 @@ async function main() {
         address: account.address,
         blockTag: "pending",
       });
-      console.log(`[relayer] Pending: ${withdrawals.length}, Balance: ${(Number(balance) / 1e18).toFixed(6)} ETH`);
+      console.log(`[relayer/ETH] Pending: ${withdrawals.length}, Balance: ${(Number(balance) / 1e18).toFixed(6)} ETH`);
 
-      // Filter to what we can afford (reserve ~0.0001 ETH for gas)
-      const gasReserve = 100n * 21000n * 2n; // ~21000 gas * 2 gwei * 100 txs
+      const gasReserve = 100n * 21000n * 2n;
       let remaining = balance - gasReserve;
-      const affordable: { w: typeof withdrawals[0]; wei: bigint; i: number }[] = [];
+      const affordable: { w: EthWithdrawal; wei: bigint; i: number }[] = [];
       for (let i = 0; i < withdrawals.length && remaining > 0n; i++) {
         const w = withdrawals[i];
         const wei = unitsToWei(w.amount_units);
@@ -90,36 +158,68 @@ async function main() {
           affordable.push({ w, wei, i });
           remaining -= wei;
         } else {
-          console.warn(`[relayer] Skipping ${w.tx_id} (need ${Number(wei) / 1e18} ETH, have ${Number(remaining) / 1e18})`);
+          console.warn(`[relayer/ETH] Skipping ${w.tx_id} (need ${Number(wei) / 1e18} ETH)`);
         }
       }
 
-      // Send affordable withdrawals in parallel with explicit nonces
       const results = await Promise.allSettled(
         affordable.map(async ({ w, wei }, idx) => {
           const hash = await walletClient.sendTransaction({
             to: w.evm_address as `0x${string}`,
             value: wei,
             gas: 21000n,
-            nonce: nonce + BigInt(idx),
+            nonce: nonce + idx,
           });
-          console.log(`[relayer] Sent ${Number(wei) / 1e18} ETH to ${w.evm_address.slice(0, 10)}... tx: ${hash}`);
-          const ok = await fulfillWithdrawal(w.tx_id);
-          if (ok) {
-            console.log(`[relayer] Fulfilled ${w.tx_id}`);
-          } else {
-            console.warn(`[relayer] Failed to mark fulfilled: ${w.tx_id}`);
-          }
+          console.log(`[relayer/ETH] Sent ${Number(wei) / 1e18} ETH to ${w.evm_address.slice(0, 10)}... tx: ${hash}`);
+          const ok = await fulfillEthWithdrawal(w.tx_id);
+          if (ok) console.log(`[relayer/ETH] Fulfilled ${w.tx_id}`);
+          else console.warn(`[relayer/ETH] Failed to mark fulfilled: ${w.tx_id}`);
         })
       );
       results.forEach((r, i) => {
         if (r.status === "rejected") {
-          console.error(`[relayer] Tx failed for ${affordable[i]?.w.tx_id}:`, r.reason);
+          console.error(`[relayer/ETH] Tx failed for ${affordable[i]?.w.tx_id}:`, r.reason);
         }
       });
     } catch (e) {
-      console.error("[relayer] Poll error:", e);
+      console.error("[relayer/ETH] Poll error:", e);
     }
+  };
+
+  // ── XRGE bridge loop ──────────────────────────────────────────
+  const processXrgeWithdrawals = async () => {
+    if (!vaultContract) return;
+
+    try {
+      const withdrawals = await fetchXrgeWithdrawals();
+      if (withdrawals.length === 0) return;
+
+      console.log(`[relayer/XRGE] Pending: ${withdrawals.length}`);
+
+      for (const w of withdrawals) {
+        try {
+          const weiAmount = xrgeToWei(w.amount);
+          const hash = await (vaultContract as any).write.release([
+            w.evm_address as `0x${string}`,
+            weiAmount,
+            w.tx_id,
+          ]);
+          console.log(`[relayer/XRGE] Released ${w.amount} XRGE to ${w.evm_address.slice(0, 10)}... tx: ${hash}`);
+          const ok = await fulfillXrgeWithdrawal(w.tx_id);
+          if (ok) console.log(`[relayer/XRGE] Fulfilled ${w.tx_id}`);
+          else console.warn(`[relayer/XRGE] Failed to mark fulfilled: ${w.tx_id}`);
+        } catch (e) {
+          console.error(`[relayer/XRGE] Release failed for ${w.tx_id}:`, e);
+        }
+      }
+    } catch (e) {
+      console.error("[relayer/XRGE] Poll error:", e);
+    }
+  };
+
+  // ── Combined polling ──────────────────────────────────────────
+  const run = async () => {
+    await Promise.all([processEthWithdrawals(), processXrgeWithdrawals()]);
   };
 
   await run();

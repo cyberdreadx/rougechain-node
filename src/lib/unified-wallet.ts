@@ -4,6 +4,12 @@
  */
 import { getActiveNetwork } from "./network";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
+import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
+
+// Expected key sizes (bytes) for FIPS 204 / FIPS 203
+const ML_DSA65_SECRET_KEY_BYTES = 4032;
+const ML_DSA65_PUBLIC_KEY_BYTES = 1952;
+const ML_KEM768_SECRET_KEY_BYTES = 2400;
 
 // Helper to convert bytes to hex
 function bytesToHex(bytes: Uint8Array): string {
@@ -11,20 +17,37 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 
-// Generate encryption keys if missing (for wallet upgrade)
-function ensureEncryptionKeys(wallet: UnifiedWallet): UnifiedWallet {
-  if (wallet.encryptionPublicKey && wallet.encryptionPrivateKey) {
-    return wallet; // Already has encryption keys
+// Validate and regenerate keys if sizes don't match FIPS standards
+function ensureCorrectKeys(wallet: UnifiedWallet): UnifiedWallet {
+  let updated = { ...wallet };
+  let changed = false;
+
+  // Check signing key sizes match FIPS 204 ML-DSA-65
+  const sigPrivBytes = updated.signingPrivateKey ? updated.signingPrivateKey.length / 2 : 0;
+  const sigPubBytes = updated.signingPublicKey ? updated.signingPublicKey.length / 2 : 0;
+  if (sigPrivBytes !== ML_DSA65_SECRET_KEY_BYTES || sigPubBytes !== ML_DSA65_PUBLIC_KEY_BYTES) {
+    console.warn(`[Vault] Signing key size mismatch (${sigPrivBytes}/${sigPubBytes}). Regenerating FIPS 204 keys.`);
+    const sigKeypair = ml_dsa65.keygen();
+    updated.signingPublicKey = bytesToHex(sigKeypair.publicKey);
+    updated.signingPrivateKey = bytesToHex(sigKeypair.secretKey);
+    changed = true;
   }
-  
-  // Let the library generate its own secure random seed
-  const encryptionKeypair = ml_kem768.keygen();
-  
-  return {
-    ...wallet,
-    encryptionPublicKey: bytesToHex(encryptionKeypair.publicKey),
-    encryptionPrivateKey: bytesToHex(encryptionKeypair.secretKey),
-  };
+
+  // Check encryption key sizes match FIPS 203 ML-KEM-768
+  const encPrivBytes = updated.encryptionPrivateKey ? updated.encryptionPrivateKey.length / 2 : 0;
+  if (!updated.encryptionPublicKey || !updated.encryptionPrivateKey || encPrivBytes !== ML_KEM768_SECRET_KEY_BYTES) {
+    console.warn(`[Vault] Encryption key size mismatch or missing. Regenerating FIPS 203 keys.`);
+    const encKeypair = ml_kem768.keygen();
+    updated.encryptionPublicKey = bytesToHex(encKeypair.publicKey);
+    updated.encryptionPrivateKey = bytesToHex(encKeypair.secretKey);
+    changed = true;
+  }
+
+  if (changed) {
+    updated.version = 4;
+  }
+
+  return updated;
 }
 
 // Storage keys
@@ -109,10 +132,7 @@ export async function encryptWallet(wallet: UnifiedWallet, password: string): Pr
   const key = await deriveKey(password, salt);
   
   const encoder = new TextEncoder();
-  const data = encoder.encode(JSON.stringify({
-    ...wallet,
-    version: 2, // Unified wallet version
-  }));
+  const data = encoder.encode(JSON.stringify(wallet));
   
   const encrypted = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
@@ -218,7 +238,8 @@ export async function unlockUnifiedWallet(password: string): Promise<UnifiedWall
   if (!encrypted) {
     throw new Error("No encrypted wallet found");
   }
-  const wallet = await decryptWallet(encrypted, password);
+  const rawWallet = await decryptWallet(encrypted, password);
+  const wallet = ensureCorrectKeys(rawWallet);
   saveUnifiedWallet(wallet);
   localStorage.setItem(getScopedKey(WALLET_LOCKED_KEY), "false");
   return wallet;
@@ -248,28 +269,29 @@ function migrateFromV1(data: any): UnifiedWallet {
 
 // Save unified wallet (syncs to both storage locations for compatibility)
 export function saveUnifiedWallet(wallet: UnifiedWallet): void {
+  const validated = ensureCorrectKeys(wallet);
   const unifiedKey = getScopedKey(UNIFIED_WALLET_KEY);
   const messengerKey = getScopedKey(MESSENGER_WALLET_KEY);
   const blockchainKey = getScopedKey(BLOCKCHAIN_WALLET_KEY);
   // Save to unified storage
-  localStorage.setItem(unifiedKey, JSON.stringify(wallet));
+  localStorage.setItem(unifiedKey, JSON.stringify(validated));
   
   // Sync to messenger format for backward compatibility
   localStorage.setItem(messengerKey, JSON.stringify({
-    id: wallet.id,
-    displayName: wallet.displayName,
-    signingPublicKey: wallet.signingPublicKey,
-    signingPrivateKey: wallet.signingPrivateKey,
-    encryptionPublicKey: wallet.encryptionPublicKey,
-    encryptionPrivateKey: wallet.encryptionPrivateKey,
-    createdAt: new Date(wallet.createdAt).toISOString(),
+    id: validated.id,
+    displayName: validated.displayName,
+    signingPublicKey: validated.signingPublicKey,
+    signingPrivateKey: validated.signingPrivateKey,
+    encryptionPublicKey: validated.encryptionPublicKey,
+    encryptionPrivateKey: validated.encryptionPrivateKey,
+    createdAt: new Date(validated.createdAt).toISOString(),
   }));
   
   // Sync to blockchain format for backward compatibility
   localStorage.setItem(blockchainKey, JSON.stringify({
-    publicKey: wallet.signingPublicKey,
-    privateKey: wallet.signingPrivateKey,
-    createdAt: wallet.createdAt,
+    publicKey: validated.signingPublicKey,
+    privateKey: validated.signingPrivateKey,
+    createdAt: validated.createdAt,
     linkedToMessenger: true,
   }));
 }
@@ -282,11 +304,13 @@ export function loadUnifiedWallet(): UnifiedWallet | null {
   
   // Helper to upgrade wallet with encryption keys if missing
   const upgradeAndSave = (wallet: UnifiedWallet): UnifiedWallet => {
-    const upgraded = ensureEncryptionKeys(wallet);
-    if (upgraded !== wallet) {
+    const upgraded = ensureCorrectKeys(wallet);
+    if (upgraded.version !== wallet.version ||
+        upgraded.signingPublicKey !== wallet.signingPublicKey ||
+        upgraded.encryptionPublicKey !== wallet.encryptionPublicKey) {
       // Save the upgraded wallet
       saveUnifiedWallet(upgraded);
-      console.log("[Wallet] Upgraded wallet with encryption keys for messenger");
+      console.log("[Vault] Keys upgraded and persisted to localStorage (v" + upgraded.version + ")");
     }
     return upgraded;
   };

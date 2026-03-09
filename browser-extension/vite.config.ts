@@ -17,6 +17,7 @@ export default defineConfig({
         rollupOptions: {
             input: {
                 popup: path.resolve(__dirname, "popup.html"),
+                approval: path.resolve(__dirname, "approval.html"),
                 "service-worker": path.resolve(__dirname, "src/background/service-worker.ts"),
                 content: path.resolve(__dirname, "src/content/inject.ts"),
                 provider: path.resolve(__dirname, "src/content/provider.ts"),

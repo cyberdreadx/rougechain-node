@@ -5,6 +5,12 @@
  */
 import * as storage from "./storage";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
+import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
+
+// Expected key sizes (bytes) for FIPS 204 / FIPS 203
+const ML_DSA65_SECRET_KEY_BYTES = 4032;
+const ML_DSA65_PUBLIC_KEY_BYTES = 1952;
+const ML_KEM768_SECRET_KEY_BYTES = 2400;
 
 function bytesToHex(bytes: Uint8Array): string {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
@@ -30,16 +36,42 @@ const WALLET_METADATA_KEY = "pqc-unified-wallet-metadata";
 const VAULT_SETTINGS_KEY = "pqc-unified-wallet-vault-settings";
 const ENCRYPTED_WALLET_KEY = "pqc-unified-wallet-encrypted";
 
-function ensureEncryptionKeys(wallet: UnifiedWallet): UnifiedWallet {
-    const needsRegen = !wallet.encryptionPublicKey || !wallet.encryptionPrivateKey || (wallet.version || 0) < 3;
-    if (!needsRegen) return wallet;
-    const keypair = ml_kem768.keygen();
-    return {
-        ...wallet,
-        encryptionPublicKey: bytesToHex(keypair.publicKey),
-        encryptionPrivateKey: bytesToHex(keypair.secretKey),
-        version: 3,
-    };
+function ensureCorrectKeys(wallet: UnifiedWallet): UnifiedWallet {
+    let updated = { ...wallet };
+    let changed = false;
+
+    // Check signing key sizes match FIPS 204 ML-DSA-65
+    const sigPrivBytes = updated.signingPrivateKey ? updated.signingPrivateKey.length / 2 : 0;
+    const sigPubBytes = updated.signingPublicKey ? updated.signingPublicKey.length / 2 : 0;
+    const signingNeedsRegen = sigPrivBytes !== ML_DSA65_SECRET_KEY_BYTES ||
+        sigPubBytes !== ML_DSA65_PUBLIC_KEY_BYTES;
+
+    if (signingNeedsRegen) {
+        console.warn(`[Vault] Signing key size mismatch (got ${sigPrivBytes}/${sigPubBytes}, expected ${ML_DSA65_SECRET_KEY_BYTES}/${ML_DSA65_PUBLIC_KEY_BYTES}). Regenerating FIPS 204 keys.`);
+        const sigKeypair = ml_dsa65.keygen();
+        updated.signingPublicKey = bytesToHex(sigKeypair.publicKey);
+        updated.signingPrivateKey = bytesToHex(sigKeypair.secretKey);
+        changed = true;
+    }
+
+    // Check encryption key sizes match FIPS 203 ML-KEM-768
+    const encPrivBytes = updated.encryptionPrivateKey ? updated.encryptionPrivateKey.length / 2 : 0;
+    const needsEncRegen = !updated.encryptionPublicKey || !updated.encryptionPrivateKey ||
+        encPrivBytes !== ML_KEM768_SECRET_KEY_BYTES || (updated.version || 0) < 3;
+
+    if (needsEncRegen) {
+        console.warn(`[Vault] Encryption key size mismatch or missing. Regenerating FIPS 203 keys.`);
+        const encKeypair = ml_kem768.keygen();
+        updated.encryptionPublicKey = bytesToHex(encKeypair.publicKey);
+        updated.encryptionPrivateKey = bytesToHex(encKeypair.secretKey);
+        changed = true;
+    }
+
+    if (changed) {
+        updated.version = 4;
+    }
+
+    return updated;
 }
 
 // PBKDF2 key derivation
@@ -143,7 +175,7 @@ export function autoLockWallet(): void {
 }
 
 export function saveUnifiedWallet(wallet: UnifiedWallet): void {
-    const upgraded = ensureEncryptionKeys(wallet);
+    const upgraded = ensureCorrectKeys(wallet);
     storage.setItem(UNIFIED_WALLET_KEY, JSON.stringify(upgraded));
 }
 
@@ -152,7 +184,15 @@ export function loadUnifiedWallet(): UnifiedWallet | null {
     if (!raw) return null;
     try {
         const wallet = JSON.parse(raw) as UnifiedWallet;
-        return ensureEncryptionKeys(wallet);
+        const upgraded = ensureCorrectKeys(wallet);
+        // Persist upgraded keys back to storage if they changed
+        if (upgraded.version !== wallet.version ||
+            upgraded.signingPublicKey !== wallet.signingPublicKey ||
+            upgraded.encryptionPublicKey !== wallet.encryptionPublicKey) {
+            storage.setItem(UNIFIED_WALLET_KEY, JSON.stringify(upgraded));
+            console.warn("[Vault] Keys upgraded and persisted to storage (v" + upgraded.version + ")");
+        }
+        return upgraded;
     } catch { return null; }
 }
 

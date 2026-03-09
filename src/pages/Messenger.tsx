@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw, ArrowDownUp, Copy } from "lucide-react";
+import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw, ArrowDownUp, Copy, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -38,6 +38,7 @@ const Messenger = () => {
   const [showSwapWidget, setShowSwapWidget] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isReregistering, setIsReregistering] = useState(false);
+  const [isRegeneratingKeys, setIsRegeneratingKeys] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [unlockPassword, setUnlockPassword] = useState("");
   const [unlocking, setUnlocking] = useState(false);
@@ -147,8 +148,10 @@ const Messenger = () => {
     }
     setUnlocking(true);
     try {
-      const unlocked = await unlockUnifiedWallet(unlockPassword.trim());
-      setWallet(unlocked);
+      await unlockUnifiedWallet(unlockPassword.trim());
+      const validated = loadUnifiedWallet();
+      if (!validated) throw new Error("Wallet could not be loaded after unlock");
+      setWallet(validated);
       setIsLocked(false);
       setUnlockPassword("");
       toast.success("Wallet unlocked");
@@ -198,6 +201,53 @@ const Messenger = () => {
       });
     } finally {
       setIsReregistering(false);
+    }
+  };
+
+  const handleRegenerateKeys = async () => {
+    if (!wallet || isRegeneratingKeys) return;
+    setIsRegeneratingKeys(true);
+    try {
+      // Dynamically import to generate fresh FIPS keys
+      const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
+      const { ml_kem768 } = await import("@noble/post-quantum/ml-kem.js");
+      const bytesToHex = (bytes: Uint8Array) =>
+        Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+
+      const sigKeypair = ml_dsa65.keygen();
+      const encKeypair = ml_kem768.keygen();
+
+      const updated: UnifiedWallet = {
+        ...wallet,
+        signingPublicKey: bytesToHex(sigKeypair.publicKey),
+        signingPrivateKey: bytesToHex(sigKeypair.secretKey),
+        encryptionPublicKey: bytesToHex(encKeypair.publicKey),
+        encryptionPrivateKey: bytesToHex(encKeypair.secretKey),
+        version: 4,
+      };
+
+      saveUnifiedWallet(updated);
+      setWallet(updated);
+
+      // Re-register with new public keys
+      await registerWalletOnNode({
+        id: updated.id,
+        displayName: updated.displayName,
+        signingPublicKey: updated.signingPublicKey,
+        encryptionPublicKey: updated.encryptionPublicKey,
+      });
+
+      toast.success("Keys regenerated!", {
+        description: "Fresh FIPS 204/203 keys generated and registered. Wallet identity preserved.",
+      });
+      loadContacts();
+    } catch (error) {
+      console.error("Key regeneration failed:", error);
+      toast.error("Key regeneration failed", {
+        description: String(error),
+      });
+    } finally {
+      setIsRegeneratingKeys(false);
     }
   };
 
@@ -297,6 +347,15 @@ const Messenger = () => {
           <Button
             variant="ghost"
             size="icon"
+            onClick={handleRegenerateKeys}
+            disabled={isRegeneratingKeys}
+            title="Regenerate encryption keys (fixes key mismatch errors)"
+          >
+            <KeyRound className={`w-4 h-4 ${isRegeneratingKeys ? "animate-spin" : ""}`} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={() => setShowWalletBackup(true)}
             title="Backup Wallet"
           >
@@ -339,6 +398,7 @@ const Messenger = () => {
             conversations={conversations}
             selectedId={selectedConversation?.id}
             currentWalletId={wallet.id}
+            currentWalletKeys={[wallet.signingPublicKey, wallet.encryptionPublicKey]}
             onSelect={setSelectedConversation}
             onDelete={(id) => {
               setConversations(prev => prev.filter(c => c.id !== id));

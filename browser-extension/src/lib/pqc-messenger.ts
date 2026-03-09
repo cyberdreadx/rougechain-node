@@ -125,6 +125,8 @@ export async function registerWalletOnNode(wallet: Wallet): Promise<void> {
         }),
     });
     if (!res.ok) throw new Error(`Registration failed: ${await res.text()}`);
+    const data = await res.json();
+    if (data.success === false) throw new Error(data.error || "Registration failed");
 }
 
 async function kemEncryptPlaintext(
@@ -178,6 +180,12 @@ export async function encryptMessage(
     const encryptedPackage = JSON.stringify(pkg);
 
     const signerPrivKey = hexToBytes(senderSigningPrivateKey);
+    if (signerPrivKey.length !== 4032) {
+        throw new Error(
+            `Signing key invalid (${signerPrivKey.length} bytes, expected 4032). ` +
+            `Please go to Settings and create a new wallet to regenerate FIPS 204 keys.`
+        );
+    }
     const signature = ml_dsa65.sign(signerPrivKey, new TextEncoder().encode(encryptedPackage));
 
     return {

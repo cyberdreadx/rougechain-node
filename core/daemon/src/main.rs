@@ -2198,9 +2198,25 @@ async fn register_messenger_wallet(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let node = &state.node;
+    let id = body.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let display_name = body.get("displayName").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+
+    // Enforce unique display names (case-insensitive)
+    if let Ok(existing_wallets) = node.list_wallets() {
+        let name_lower = display_name.to_lowercase();
+        for w in &existing_wallets {
+            if w.display_name.to_lowercase() == name_lower && w.id != id {
+                return Ok(Json(serde_json::json!({
+                    "success": false,
+                    "error": format!("Display name '{}' is already taken", display_name)
+                })));
+            }
+        }
+    }
+
     let wallet = quantum_vault_storage::messenger_store::MessengerWallet {
-        id: body.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-        display_name: body.get("displayName").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        id,
+        display_name,
         signing_public_key: body.get("signingPublicKey").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
         encryption_public_key: body.get("encryptionPublicKey").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
         created_at: chrono::Utc::now().to_rfc3339(),

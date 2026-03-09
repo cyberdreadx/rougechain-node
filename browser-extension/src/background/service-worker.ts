@@ -1,6 +1,7 @@
 /**
  * Service worker for RougeChain Wallet Extension
- * Handles auto-lock timer, badge updates, and dApp connection messages
+ * Handles auto-lock timer, badge updates, and dApp connection messages.
+ * Opens approval popup windows for connect/sign/send requests.
  */
 
 interface ConnectedSite {
@@ -43,7 +44,7 @@ chrome.runtime.onInstalled.addListener(() => {
     console.log("RougeChain Wallet Extension installed");
 });
 
-// ─── dApp message handler ────────────────────────────────
+// ─── Storage helpers ─────────────────────────────────────
 
 function getConnectedSites(): Promise<ConnectedSite[]> {
     return new Promise((resolve) => {
@@ -99,6 +100,99 @@ function getApiBaseUrl(): Promise<string> {
     });
 }
 
+// ─── Approval popup logic ────────────────────────────────
+
+let approvalCounter = 0;
+
+/**
+ * Opens the approval popup and waits for the user to approve or deny.
+ * Returns `true` if approved, `false` if denied or window closed.
+ */
+function requestApproval(
+    type: "connect" | "sign" | "send",
+    origin: string,
+    payload?: Record<string, unknown>
+): Promise<boolean> {
+    return new Promise((resolve) => {
+        const requestId = `${Date.now()}-${++approvalCounter}`;
+
+        // Store payload data in session storage for the popup to read
+        chrome.storage.session.set({
+            [`approval-${requestId}`]: { payload, origin, type },
+        });
+
+        // Build the popup URL
+        const params = new URLSearchParams({
+            id: requestId,
+            type,
+            origin,
+        });
+
+        // Open approval popup window
+        chrome.windows.create(
+            {
+                url: chrome.runtime.getURL(`approval.html?${params.toString()}`),
+                type: "popup",
+                width: 380,
+                height: 520,
+                focused: true,
+            },
+            (win) => {
+                const windowId = win?.id;
+
+                // Listen for the response from the popup
+                const storageListener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+                    const responseKey = `approval-response-${requestId}`;
+                    if (changes[responseKey]) {
+                        cleanup();
+                        const response = changes[responseKey].newValue;
+                        resolve(response?.approved === true);
+                    }
+                };
+
+                // Listen for window close (user closed without clicking)
+                const windowListener = (closedWindowId: number) => {
+                    if (closedWindowId === windowId) {
+                        // Give a brief moment for storage write to complete
+                        setTimeout(() => {
+                            chrome.storage.session.get(`approval-response-${requestId}`, (data) => {
+                                const response = data[`approval-response-${requestId}`];
+                                cleanup();
+                                if (response) {
+                                    resolve(response.approved === true);
+                                } else {
+                                    resolve(false); // Window closed = deny
+                                }
+                            });
+                        }, 300);
+                    }
+                };
+
+                const cleanup = () => {
+                    chrome.storage.session.onChanged.removeListener(storageListener);
+                    chrome.windows.onRemoved.removeListener(windowListener);
+                    // Clean up stored data
+                    chrome.storage.session.remove([
+                        `approval-${requestId}`,
+                        `approval-response-${requestId}`,
+                    ]);
+                };
+
+                chrome.storage.session.onChanged.addListener(storageListener);
+                chrome.windows.onRemoved.addListener(windowListener);
+
+                // Timeout after 2 minutes
+                setTimeout(() => {
+                    cleanup();
+                    resolve(false);
+                }, 120_000);
+            }
+        );
+    });
+}
+
+// ─── dApp message handler ────────────────────────────────
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type !== "rougechain-request") return false;
 
@@ -114,10 +208,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         return;
                     }
 
+                    // Check if already connected — skip approval
                     const sites = await getConnectedSites();
                     const alreadyConnected = sites.some(s => s.origin === origin);
 
                     if (!alreadyConnected) {
+                        // Open approval popup
+                        const approved = await requestApproval("connect", origin);
+                        if (!approved) {
+                            sendResponse({ error: "User denied connection" });
+                            return;
+                        }
                         sites.push({ origin, connectedAt: Date.now() });
                         await saveConnectedSites(sites);
                     }
@@ -179,6 +280,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         return;
                     }
 
+                    // Open approval popup for signing
+                    const signApproved = await requestApproval("sign", origin, payload as Record<string, unknown>);
+                    if (!signApproved) {
+                        sendResponse({ error: "User denied signature request" });
+                        return;
+                    }
+
                     const signedPayload = JSON.stringify(payload, Object.keys(payload).sort());
                     sendResponse({
                         result: {
@@ -205,6 +313,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     const payload = params?.payload;
                     if (!payload || typeof payload !== "object") {
                         sendResponse({ error: "Invalid payload" });
+                        return;
+                    }
+
+                    // Open approval popup for transaction
+                    const sendApproved = await requestApproval("send", origin, payload as Record<string, unknown>);
+                    if (!sendApproved) {
+                        sendResponse({ error: "User denied transaction" });
                         return;
                     }
 

@@ -249,46 +249,113 @@ export async function registerWalletOnNode(wallet: Wallet): Promise<void> {
   });
 }
 
-async function encryptMessage(
+async function kemEncryptPlaintext(
   plaintext: string,
-  recipientEncryptionPublicKey: string,
-  senderSigningPrivateKey: string
-): Promise<{ encryptedPackage: string; signature: string }> {
-  const recipientPubKeyBytes = hexToBytes(recipientEncryptionPublicKey);
-  const { cipherText, sharedSecret } = ml_kem768.encapsulate(recipientPubKeyBytes);
+  encryptionPublicKey: Uint8Array
+): Promise<{ kemCipherText: string; iv: string; encryptedContent: string }> {
+  const { cipherText, sharedSecret } = ml_kem768.encapsulate(encryptionPublicKey);
 
-  const keyBuffer = new ArrayBuffer(32);
-  new Uint8Array(keyBuffer).set(sharedSecret.slice(0, 32));
-
-  const aesKey = await crypto.subtle.importKey(
-    "raw",
-    keyBuffer,
-    { name: "AES-GCM" },
+  const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret, "HKDF", false, ["deriveKey"]);
+  const aesKey = await crypto.subtle.deriveKey(
+    { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("pqc-msg") },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
     false,
     ["encrypt"]
   );
 
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const plaintextBytes = new TextEncoder().encode(plaintext);
-  const encryptedBytes = await crypto.subtle.encrypt(
+  const encrypted = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     aesKey,
-    plaintextBytes
+    new TextEncoder().encode(plaintext)
   );
 
-  const senderPrivKeyBytes = hexToBytes(senderSigningPrivateKey);
-  const signature = ml_dsa65.sign(senderPrivKeyBytes, plaintextBytes);
-
-  const encryptedData = {
+  return {
     kemCipherText: bytesToHex(cipherText),
     iv: bytesToHex(iv),
-    encryptedContent: bytesToHex(new Uint8Array(encryptedBytes)),
+    encryptedContent: bytesToHex(new Uint8Array(encrypted)),
   };
+}
+
+async function encryptMessage(
+  plaintext: string,
+  recipientEncryptionPublicKey: string,
+  senderSigningPrivateKey: string,
+  senderEncryptionPublicKey?: string
+): Promise<{ encryptedPackage: string; signature: string }> {
+  const senderPrivKeyBytes = hexToBytes(senderSigningPrivateKey);
+  if (senderPrivKeyBytes.length !== 4032) {
+    throw new Error(
+      `Signing key invalid (${senderPrivKeyBytes.length} bytes, expected 4032). ` +
+      `Your wallet has old-format keys. Please regenerate keys in Settings.`
+    );
+  }
+
+  const recipientPubKeyBytes = hexToBytes(recipientEncryptionPublicKey);
+  const recipientEnc = await kemEncryptPlaintext(plaintext, recipientPubKeyBytes);
+
+  const pkg: Record<string, string> = { ...recipientEnc };
+
+  if (senderEncryptionPublicKey) {
+    const senderPubKeyBytes = hexToBytes(senderEncryptionPublicKey);
+    const senderEnc = await kemEncryptPlaintext(plaintext, senderPubKeyBytes);
+    pkg.senderKemCipherText = senderEnc.kemCipherText;
+    pkg.senderIv = senderEnc.iv;
+    pkg.senderEncryptedContent = senderEnc.encryptedContent;
+  }
+
+  const encryptedPackage = JSON.stringify(pkg);
+  const signature = ml_dsa65.sign(senderPrivKeyBytes, new TextEncoder().encode(encryptedPackage));
 
   return {
-    encryptedPackage: JSON.stringify(encryptedData),
+    encryptedPackage,
     signature: bytesToHex(signature),
   };
+}
+
+async function kemDecryptPayload(
+  kemCipherText: string,
+  iv: string,
+  encryptedContent: string,
+  decryptionPrivateKey: Uint8Array
+): Promise<string> {
+  const sharedSecret = ml_kem768.decapsulate(hexToBytes(kemCipherText), decryptionPrivateKey);
+
+  const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret, "HKDF", false, ["deriveKey"]);
+  const aesKey = await crypto.subtle.deriveKey(
+    { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("pqc-msg") },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["decrypt"]
+  );
+
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: hexToBytes(iv) },
+    aesKey,
+    hexToBytes(encryptedContent)
+  );
+  return new TextDecoder().decode(decrypted);
+}
+
+async function decryptMessageLegacy(
+  encryptedPackage: string,
+  recipientEncryptionPrivateKey: string,
+): Promise<string> {
+  const data = JSON.parse(encryptedPackage) as { kemCipherText: string; iv: string; encryptedContent: string };
+  const privKey = hexToBytes(recipientEncryptionPrivateKey);
+  const sharedSecret = ml_kem768.decapsulate(hexToBytes(data.kemCipherText), privKey);
+
+  const keyBuf = new ArrayBuffer(32);
+  new Uint8Array(keyBuf).set(sharedSecret.slice(0, 32));
+  const aesKey = await crypto.subtle.importKey("raw", keyBuf, { name: "AES-GCM" }, false, ["decrypt"]);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: hexToBytes(data.iv) },
+    aesKey,
+    hexToBytes(data.encryptedContent)
+  );
+  return new TextDecoder().decode(decrypted);
 }
 
 async function decryptMessage(
@@ -301,37 +368,47 @@ async function decryptMessage(
     kemCipherText: string;
     iv: string;
     encryptedContent: string;
+    senderKemCipherText?: string;
+    senderIv?: string;
+    senderEncryptedContent?: string;
   };
 
-  const recipientPrivKeyBytes = hexToBytes(recipientEncryptionPrivateKey);
-  const kemCipherTextBytes = hexToBytes(encryptedData.kemCipherText);
-  const sharedSecret = ml_kem768.decapsulate(kemCipherTextBytes, recipientPrivKeyBytes);
+  const privKeyBytes = hexToBytes(recipientEncryptionPrivateKey);
+  let plaintext: string;
 
-  const keyBuffer = new ArrayBuffer(32);
-  new Uint8Array(keyBuffer).set(sharedSecret.slice(0, 32));
+  try {
+    plaintext = await kemDecryptPayload(
+      encryptedData.kemCipherText, encryptedData.iv, encryptedData.encryptedContent, privKeyBytes
+    );
+  } catch {
+    // Fall back to legacy (raw shared-secret AES, no HKDF) for old messages
+    try {
+      plaintext = await decryptMessageLegacy(encryptedPackage, recipientEncryptionPrivateKey);
+    } catch {
+      // Try sender-copy if present (own sent messages)
+      if (encryptedData.senderKemCipherText && encryptedData.senderIv && encryptedData.senderEncryptedContent) {
+        plaintext = await kemDecryptPayload(
+          encryptedData.senderKemCipherText, encryptedData.senderIv, encryptedData.senderEncryptedContent, privKeyBytes
+        );
+      } else {
+        throw new Error("Decryption failed");
+      }
+    }
+  }
 
-  const aesKey = await crypto.subtle.importKey(
-    "raw",
-    keyBuffer,
-    { name: "AES-GCM" },
-    false,
-    ["decrypt"]
-  );
-
-  const ivBytes = hexToBytes(encryptedData.iv);
-  const contentBytes = hexToBytes(encryptedData.encryptedContent);
-
-  const decryptedBytes = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: new Uint8Array(ivBytes.buffer.slice(ivBytes.byteOffset, ivBytes.byteOffset + ivBytes.byteLength)) as BufferSource },
-    aesKey,
-    new Uint8Array(contentBytes.buffer.slice(contentBytes.byteOffset, contentBytes.byteOffset + contentBytes.byteLength)) as BufferSource
-  );
-
-  const plaintext = new TextDecoder().decode(decryptedBytes);
-  const senderPubKeyBytes = hexToBytes(senderSigningPublicKey);
-  const signatureBytes = hexToBytes(signature);
-  const plaintextBytes = new TextEncoder().encode(plaintext);
-  const signatureValid = ml_dsa65.verify(senderPubKeyBytes, plaintextBytes, signatureBytes);
+  let signatureValid = false;
+  try {
+    const sigPubKeyBytes = hexToBytes(senderSigningPublicKey);
+    const sigBytes = hexToBytes(signature);
+    // Try v0.5 format: signature over the encrypted package
+    signatureValid = ml_dsa65.verify(sigPubKeyBytes, new TextEncoder().encode(encryptedPackage), sigBytes);
+    if (!signatureValid) {
+      // Fall back to legacy format: signature over plaintext
+      signatureValid = ml_dsa65.verify(sigPubKeyBytes, new TextEncoder().encode(plaintext), sigBytes);
+    }
+  } catch (e) {
+    console.warn("[Messenger] Signature verification failed (key format mismatch)", e);
+  }
 
   return { plaintext, signatureValid };
 }
@@ -610,7 +687,8 @@ export async function sendMessage(
   const encryptData = await encryptMessage(
     plaintext,
     recipientEncryptionPublicKey,
-    senderWallet.signingPrivateKey
+    senderWallet.signingPrivateKey,
+    senderWallet.encryptionPublicKey
   );
 
   const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/messages`, {
@@ -740,8 +818,28 @@ export async function getMessages(
 
     if (isOwnMessage) {
       const storedPlaintext = getSentMessage(msg.id);
-      plaintext = storedPlaintext || "[Your encrypted message]";
-      signatureValid = true;
+      if (storedPlaintext) {
+        plaintext = storedPlaintext;
+        signatureValid = true;
+      } else if (msg.encryptedContent) {
+        // Try decrypting sender-copy (dual-encrypted messages)
+        try {
+          const decryptData = await decryptMessage(
+            msg.encryptedContent,
+            recipientWallet.encryptionPrivateKey,
+            recipientWallet.signingPublicKey,
+            msg.signature
+          );
+          plaintext = decryptData.plaintext;
+          signatureValid = decryptData.signatureValid;
+        } catch {
+          plaintext = "[Your encrypted message]";
+          signatureValid = true;
+        }
+      } else {
+        plaintext = "[Your encrypted message]";
+        signatureValid = true;
+      }
     } else if (senderSigningPublicKey && msg.encryptedContent) {
       try {
         const decryptData = await decryptMessage(
