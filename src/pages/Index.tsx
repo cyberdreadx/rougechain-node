@@ -184,14 +184,20 @@ const Index = () => {
           animate={{ opacity: 1, y: 0 }}
           className="text-center mb-16"
         >
-          <motion.img
-            src={xrgeLogo}
-            alt="XRGE"
+          <motion.div
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ delay: 0.1 }}
-            className="w-24 h-24 mx-auto mb-6 rounded-full shadow-lg shadow-red-500/20 ring-2 ring-red-500/20"
-          />
+            className="mx-auto mb-6 w-24 h-24"
+          >
+            <span className="animate-jelly inline-block w-24 h-24">
+              <img
+                src={xrgeLogo}
+                alt="XRGE"
+                className="w-24 h-24 rounded-full shadow-lg shadow-red-500/20 ring-2 ring-red-500/20"
+              />
+            </span>
+          </motion.div>
 
           <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-4">
             Welcome to{" "}
