@@ -75,7 +75,7 @@ const Messenger = () => {
   const loadConversations = async () => {
     if (!wallet) return;
     try {
-      const convs = await getConversations(wallet.id, wallet);
+      const convs = await getConversations(wallet.id, toMessengerWallet(wallet) as Parameters<typeof getConversations>[1]);
       const blocked = new Set(getBlockedWalletIds());
       const myWalletData = {
         id: wallet.id,
