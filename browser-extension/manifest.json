@@ -32,7 +32,10 @@
     "content_scripts": [
         {
             "matches": [
-                "<all_urls>"
+                "https://rougechain.io/*",
+                "https://*.rougechain.io/*",
+                "https://testnet.rougechain.io/*",
+                "http://localhost/*"
             ],
             "js": [
                 "content.js"
@@ -47,7 +50,10 @@
                 "approval.html"
             ],
             "matches": [
-                "<all_urls>"
+                "https://rougechain.io/*",
+                "https://*.rougechain.io/*",
+                "https://testnet.rougechain.io/*",
+                "http://localhost/*"
             ]
         }
     ],

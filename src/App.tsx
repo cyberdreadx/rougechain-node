@@ -19,6 +19,7 @@ import PoolDetail from "./pages/PoolDetail";
 import TokenExplorer from "./pages/TokenExplorer";
 import Bridge from "./pages/Bridge";
 import Mail from "./pages/Mail";
+import Privacy from "./pages/Privacy";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -68,6 +69,7 @@ const App = () => (
                 <Route path="/token/:symbol" element={<TokenExplorer />} />
                 <Route path="/bridge" element={<Bridge />} />
                 <Route path="/mail" element={<Mail />} />
+                <Route path="/privacy" element={<Privacy />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

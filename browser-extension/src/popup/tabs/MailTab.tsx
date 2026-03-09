@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import {
     ArrowLeft, Send, Inbox, SendHorizonal, Trash2, Loader2,
     Mail, Plus, RefreshCw, CheckCircle2, XCircle, AtSign, Reply,
-    MailOpen
+    MailOpen, Settings, ToggleLeft, ToggleRight, Type,
 } from "lucide-react";
 import type { UnifiedWallet } from "../../lib/unified-wallet";
 import { toMessengerWallet } from "../../lib/unified-wallet";
@@ -20,7 +20,26 @@ interface Props {
 }
 
 type Folder = "inbox" | "sent" | "trash";
-type View = "list" | "compose" | "read";
+type View = "list" | "compose" | "read" | "settings";
+
+const MAIL_SETTINGS_KEY = "pqc_mail_settings";
+
+interface MailSettings {
+    signature: string;
+    signatureEnabled: boolean;
+}
+
+function loadMailSettings(): MailSettings {
+    try {
+        const raw = localStorage.getItem(MAIL_SETTINGS_KEY);
+        if (raw) return JSON.parse(raw);
+    } catch { /* */ }
+    return { signature: "", signatureEnabled: false };
+}
+
+function saveMailSettings(settings: MailSettings): void {
+    localStorage.setItem(MAIL_SETTINGS_KEY, JSON.stringify(settings));
+}
 
 function formatDate(dateInput: string): string {
     try {
@@ -34,6 +53,33 @@ function formatDate(dateInput: string): string {
     } catch { return ""; }
 }
 
+function buildThread(allItems: MailItem[], selected: MailItem): MailItem[] {
+    const byId = new Map<string, MailItem>();
+    for (const item of allItems) byId.set(item.message.id, item);
+
+    let rootId = selected.message.id;
+    let cur = selected.message;
+    while (cur.replyToId && byId.has(cur.replyToId)) {
+        rootId = cur.replyToId;
+        cur = byId.get(cur.replyToId)!.message;
+    }
+
+    const threadIds = new Set<string>();
+    const collect = (parentId: string) => {
+        threadIds.add(parentId);
+        for (const item of allItems) {
+            if (item.message.replyToId === parentId && !threadIds.has(item.message.id)) {
+                collect(item.message.id);
+            }
+        }
+    };
+    collect(rootId);
+
+    return allItems
+        .filter(item => threadIds.has(item.message.id))
+        .sort((a, b) => new Date(a.message.createdAt).getTime() - new Date(b.message.createdAt).getTime());
+}
+
 export default function MailTab({ wallet }: Props) {
     const [folder, setFolder] = useState<Folder>("inbox");
     const [view, setView] = useState<View>("list");
@@ -45,6 +91,8 @@ export default function MailTab({ wallet }: Props) {
     const [nameInput, setNameInput] = useState("");
     const [nameError, setNameError] = useState<string | null>(null);
     const [nameRegistering, setNameRegistering] = useState(false);
+    const [threadItems, setThreadItems] = useState<MailItem[]>([]);
+    const [mailSettings, setMailSettings] = useState<MailSettings>(loadMailSettings);
 
     const messengerWallet = toMessengerWallet(wallet) as WalletWithPrivateKeys;
 
@@ -93,13 +141,35 @@ export default function MailTab({ wallet }: Props) {
         setNameRegistering(false);
     };
 
-    const openMail = (item: MailItem) => {
+    const openMail = async (item: MailItem) => {
         setSelectedItem(item);
         setView("read");
         if (!item.label.isRead) {
             markMailRead(wallet.id, item.message.id).catch(() => {});
         }
+        try {
+            const [inbox, sent] = await Promise.all([
+                getInbox(messengerWallet),
+                getSent(messengerWallet),
+            ]);
+            const deduped = new Map<string, MailItem>();
+            for (const m of [...inbox, ...sent]) deduped.set(m.message.id, m);
+            const thread = buildThread([...deduped.values()], item);
+            setThreadItems(thread);
+        } catch {
+            setThreadItems([item]);
+        }
     };
+
+    if (view === "settings") {
+        return (
+            <SettingsViewExt
+                onBack={() => setView("list")}
+                settings={mailSettings}
+                onSave={setMailSettings}
+            />
+        );
+    }
 
     if (view === "compose") {
         return (
@@ -107,6 +177,7 @@ export default function MailTab({ wallet }: Props) {
                 wallet={messengerWallet}
                 myName={myName}
                 onBack={() => { setView("list"); loadFolder(); }}
+                mailSettings={mailSettings}
             />
         );
     }
@@ -118,7 +189,8 @@ export default function MailTab({ wallet }: Props) {
                 wallet={messengerWallet}
                 myName={myName}
                 folder={folder}
-                onBack={() => { setView("list"); loadFolder(); }}
+                thread={threadItems}
+                onBack={() => { setView("list"); setThreadItems([]); loadFolder(); }}
                 onReply={() => setView("compose")}
             />
         );
@@ -156,6 +228,13 @@ export default function MailTab({ wallet }: Props) {
                         className="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center text-primary hover:bg-primary/30 transition-colors"
                     >
                         <Plus className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                        onClick={() => setView("settings")}
+                        className="w-7 h-7 rounded-lg hover:bg-secondary/30 flex items-center justify-center text-muted-foreground transition-colors"
+                        title="Mail settings"
+                    >
+                        <Settings className="w-3 h-3" />
                     </button>
                     <button
                         onClick={loadFolder}
@@ -277,14 +356,19 @@ function ComposeView({
     wallet,
     myName,
     onBack,
+    mailSettings,
 }: {
     wallet: WalletWithPrivateKeys;
     myName: string | null;
     onBack: () => void;
+    mailSettings: MailSettings;
 }) {
+    const sigBlock = mailSettings.signatureEnabled && mailSettings.signature.trim()
+        ? `\n\n--\n${mailSettings.signature.trim()}`
+        : "";
     const [to, setTo] = useState("");
     const [subject, setSubject] = useState("");
-    const [body, setBody] = useState("");
+    const [body, setBody] = useState(sigBlock);
     const [isSending, setIsSending] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [resolvedTo, setResolvedTo] = useState<string | null>(null);
@@ -408,11 +492,167 @@ function ComposeView({
     );
 }
 
+function SettingsViewExt({
+    onBack,
+    settings,
+    onSave,
+}: {
+    onBack: () => void;
+    settings: MailSettings;
+    onSave: (s: MailSettings) => void;
+}) {
+    const [sig, setSig] = useState(settings.signature);
+    const [sigEnabled, setSigEnabled] = useState(settings.signatureEnabled);
+
+    const handleSave = () => {
+        const updated: MailSettings = { signature: sig, signatureEnabled: sigEnabled };
+        saveMailSettings(updated);
+        onSave(updated);
+        onBack();
+    };
+
+    return (
+        <div className="flex flex-col h-full">
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card/50">
+                <button onClick={onBack} className="text-muted-foreground hover:text-foreground">
+                    <ArrowLeft className="w-4 h-4" />
+                </button>
+                <Settings className="w-3.5 h-3.5 text-primary" />
+                <span className="text-xs font-medium">Mail Settings</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3 space-y-4">
+                <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                            <Type className="w-3 h-3 text-primary" />
+                            <span className="text-[11px] font-semibold text-foreground">Signature</span>
+                        </div>
+                        <button onClick={() => setSigEnabled(!sigEnabled)} className="flex items-center gap-1">
+                            {sigEnabled ? (
+                                <ToggleRight className="w-5 h-5 text-primary" />
+                            ) : (
+                                <ToggleLeft className="w-5 h-5 text-muted-foreground" />
+                            )}
+                            <span className={`text-[10px] ${sigEnabled ? "text-primary" : "text-muted-foreground"}`}>
+                                {sigEnabled ? "On" : "Off"}
+                            </span>
+                        </button>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">
+                        Auto-appended to new emails and replies.
+                    </p>
+                    <textarea
+                        placeholder={"Best regards,\nYour Name"}
+                        value={sig}
+                        onChange={e => setSig(e.target.value)}
+                        rows={4}
+                        disabled={!sigEnabled}
+                        className={`w-full px-2.5 py-1.5 rounded-lg bg-input border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none transition-opacity ${
+                            !sigEnabled ? "opacity-40" : ""
+                        }`}
+                    />
+                    {sigEnabled && sig.trim() && (
+                        <div className="rounded-lg border border-border/50 bg-card/50 p-2">
+                            <p className="text-[9px] text-muted-foreground mb-1 font-medium">Preview:</p>
+                            <div className="text-[11px] text-muted-foreground whitespace-pre-wrap border-l-2 border-primary/30 pl-2">
+                                --{"\n"}{sig.trim()}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div className="px-3 py-2 border-t border-border">
+                <button
+                    onClick={handleSave}
+                    className="w-full py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium flex items-center justify-center gap-1.5 hover:bg-primary/90 transition-colors"
+                >
+                    Save Settings
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function ThreadMessageExt({
+    item,
+    isLatest,
+    defaultExpanded,
+}: {
+    item: MailItem;
+    isLatest: boolean;
+    defaultExpanded: boolean;
+}) {
+    const [expanded, setExpanded] = useState(defaultExpanded);
+    const { message } = item;
+
+    if (!expanded) {
+        return (
+            <button
+                onClick={() => setExpanded(true)}
+                className="w-full flex items-center gap-2 px-3 py-2 hover:bg-secondary/20 transition-colors text-left border-b border-border/50"
+            >
+                <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+                    <AtSign className="w-3 h-3 text-muted-foreground" />
+                </div>
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1">
+                        <span className="text-[10px] font-medium text-muted-foreground truncate">
+                            {message.senderName || "Unknown"}
+                        </span>
+                        <span className="text-[9px] text-muted-foreground flex-shrink-0">{formatDate(message.createdAt)}</span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground truncate">{message.body?.substring(0, 60)}</p>
+                </div>
+            </button>
+        );
+    }
+
+    return (
+        <div className={`border-b border-border/50 ${isLatest ? "" : "bg-card/30"}`}>
+            <div className="flex items-center gap-2 px-3 py-2">
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${
+                    isLatest ? "bg-primary/20" : "bg-muted"
+                }`}>
+                    <AtSign className={`w-3 h-3 ${isLatest ? "text-primary" : "text-muted-foreground"}`} />
+                </div>
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1">
+                        <span className={`text-[11px] font-medium truncate ${isLatest ? "text-foreground" : "text-muted-foreground"}`}>
+                            {message.senderName || "Unknown"}
+                        </span>
+                        {message.signatureValid ? (
+                            <CheckCircle2 className="w-2.5 h-2.5 text-success flex-shrink-0" />
+                        ) : (
+                            <XCircle className="w-2.5 h-2.5 text-destructive flex-shrink-0" />
+                        )}
+                    </div>
+                    <p className="text-[9px] text-muted-foreground">{formatDate(message.createdAt)}</p>
+                </div>
+                {!isLatest && (
+                    <button onClick={() => setExpanded(false)} className="text-[9px] text-muted-foreground hover:text-foreground">
+                        hide
+                    </button>
+                )}
+            </div>
+            <div className="px-3 pb-2 pl-[2rem]">
+                <div className={`text-xs whitespace-pre-wrap break-words leading-relaxed ${
+                    message.body?.startsWith("[Unable") ? "italic text-muted-foreground" : "text-foreground"
+                }`}>
+                    {message.body}
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function ReadView({
     item,
     wallet,
     myName,
     folder,
+    thread,
     onBack,
     onReply,
 }: {
@@ -420,10 +660,11 @@ function ReadView({
     wallet: WalletWithPrivateKeys;
     myName: string | null;
     folder: Folder;
+    thread: MailItem[];
     onBack: () => void;
     onReply: () => void;
 }) {
-    const { message, label } = item;
+    const { message } = item;
 
     const handleTrash = async () => {
         try {
@@ -447,9 +688,10 @@ function ReadView({
         }
     };
 
+    const hasThread = thread.length > 1;
+
     return (
         <div className="flex flex-col h-full">
-            {/* Header */}
             <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card/50">
                 <button onClick={onBack} className="text-muted-foreground hover:text-foreground">
                     <ArrowLeft className="w-4 h-4" />
@@ -458,6 +700,9 @@ function ReadView({
                     <p className="text-xs font-medium text-foreground truncate">
                         {message.subject || "(No subject)"}
                     </p>
+                    {hasThread && (
+                        <p className="text-[9px] text-muted-foreground">{thread.length} messages</p>
+                    )}
                 </div>
                 <div className="flex items-center gap-1">
                     {folder === "trash" && (
@@ -479,50 +724,59 @@ function ReadView({
                 </div>
             </div>
 
-            {/* Message content */}
-            <div className="flex-1 overflow-y-auto p-3">
-                {/* Sender info */}
-                <div className="flex items-center gap-2 mb-3">
-                    <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
-                        <AtSign className="w-4 h-4 text-primary" />
+            <div className="flex-1 overflow-y-auto">
+                {hasThread ? (
+                    <div>
+                        {thread.map((threadItem, idx) => (
+                            <ThreadMessageExt
+                                key={threadItem.message.id}
+                                item={threadItem}
+                                isLatest={threadItem.message.id === item.message.id}
+                                defaultExpanded={idx >= thread.length - 2}
+                            />
+                        ))}
                     </div>
-                    <div className="min-w-0">
-                        <p className="text-xs font-medium text-foreground truncate">
-                            {message.senderName || "Unknown"}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground">
-                            {formatDate(message.createdAt)}
-                        </p>
+                ) : (
+                    <div className="p-3">
+                        <div className="flex items-center gap-2 mb-3">
+                            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+                                <AtSign className="w-4 h-4 text-primary" />
+                            </div>
+                            <div className="min-w-0">
+                                <p className="text-xs font-medium text-foreground truncate">
+                                    {message.senderName || "Unknown"}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground">
+                                    {formatDate(message.createdAt)}
+                                </p>
+                            </div>
+                            {message.signatureValid ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-success ml-auto flex-shrink-0" />
+                            ) : (
+                                <XCircle className="w-3.5 h-3.5 text-destructive ml-auto flex-shrink-0" />
+                            )}
+                        </div>
+
+                        <h3 className="text-sm font-semibold text-foreground mb-2">
+                            {message.subject || "(No subject)"}
+                        </h3>
+
+                        <div className="text-xs text-foreground whitespace-pre-wrap break-words leading-relaxed">
+                            {message.body?.startsWith("[Unable") ? (
+                                <span className="italic text-muted-foreground">{message.body}</span>
+                            ) : (
+                                message.body
+                            )}
+                        </div>
                     </div>
-                    {message.signatureValid ? (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-success ml-auto flex-shrink-0" />
-                    ) : (
-                        <XCircle className="w-3.5 h-3.5 text-destructive ml-auto flex-shrink-0" />
-                    )}
-                </div>
+                )}
 
-                {/* Subject */}
-                <h3 className="text-sm font-semibold text-foreground mb-2">
-                    {message.subject || "(No subject)"}
-                </h3>
-
-                {/* Body */}
-                <div className="text-xs text-foreground whitespace-pre-wrap break-words leading-relaxed">
-                    {message.body?.startsWith("[Unable") ? (
-                        <span className="italic text-muted-foreground">{message.body}</span>
-                    ) : (
-                        message.body
-                    )}
-                </div>
-
-                {/* Encryption badge */}
-                <div className="mt-4 flex items-center gap-1 text-[10px] text-muted-foreground">
+                <div className="px-3 pb-1 flex items-center gap-1 text-[10px] text-muted-foreground">
                     <CheckCircle2 className="w-2.5 h-2.5" />
                     ML-KEM-768 + ML-DSA-65 encrypted
                 </div>
             </div>
 
-            {/* Reply button */}
             {folder !== "trash" && (
                 <div className="px-3 py-2 border-t border-border">
                     <button
