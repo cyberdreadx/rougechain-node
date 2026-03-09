@@ -96,7 +96,9 @@ export function Sidebar({ children }: SidebarProps) {
     <>
       {/* Logo Section */}
       <div className="flex items-center gap-3 p-4 border-b border-border">
-        <img src={xrgeLogo} alt="XRGE" className="w-8 h-8 rounded-full flex-shrink-0 animate-jelly" />
+        <span className="flex-shrink-0 animate-jelly inline-block">
+          <img src={xrgeLogo} alt="XRGE" className="w-8 h-8 rounded-full" />
+        </span>
         <div className={cn(
           "overflow-hidden transition-all duration-300",
           (expanded || isMobile) ? "opacity-100 w-auto" : "opacity-0 w-0"
