@@ -183,7 +183,7 @@ export function Sidebar({ children }: SidebarProps) {
         >
           <Menu className="w-5 h-5" />
         </button>
-        <img src={xrgeLogo} alt="XRGE" className="w-7 h-7 rounded-full" />
+        <img src={xrgeLogo} alt="XRGE" className="w-7 h-7 rounded-full animate-jelly" />
         <span className="font-bold">RougeChain</span>
         <div className="ml-auto flex items-center gap-2 px-2 py-1 rounded-full bg-card border border-border text-xs">
           <span className={`h-2 w-2 rounded-full ${getActiveNetwork() === "mainnet" ? "bg-success" : "bg-amber-500"}`} />

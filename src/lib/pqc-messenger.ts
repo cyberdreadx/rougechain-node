@@ -395,7 +395,7 @@ async function kemEncryptPlaintext(
 ): Promise<{ kemCipherText: string; iv: string; encryptedContent: string }> {
   const { cipherText, sharedSecret } = ml_kem768.encapsulate(encryptionPublicKey);
 
-  const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret, "HKDF", false, ["deriveKey"]);
+  const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret.buffer.slice(sharedSecret.byteOffset, sharedSecret.byteOffset + sharedSecret.byteLength) as ArrayBuffer, "HKDF", false, ["deriveKey"]);
   const aesKey = await crypto.subtle.deriveKey(
     { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("pqc-msg") },
     keyMaterial,

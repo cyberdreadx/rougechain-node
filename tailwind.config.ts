@@ -105,6 +105,13 @@ export default {
           "0%": { backgroundPosition: "-200% 0" },
           "100%": { backgroundPosition: "200% 0" },
         },
+        "jelly": {
+          "0%, 100%": { transform: "scale(1, 1)" },
+          "20%": { transform: "scale(0.85, 1.15)" },
+          "40%": { transform: "scale(1.15, 0.85)" },
+          "60%": { transform: "scale(0.92, 1.08)" },
+          "80%": { transform: "scale(1.05, 0.95)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -112,6 +119,7 @@ export default {
         "pulse-glow": "pulse-glow 2s ease-in-out infinite",
         "float": "float 3s ease-in-out infinite",
         "shimmer": "shimmer 2s linear infinite",
+        "jelly": "jelly 2s ease-in-out infinite",
       },
     },
   },
