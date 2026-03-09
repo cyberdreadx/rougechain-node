@@ -76,6 +76,27 @@ const Messenger = () => {
     if (!wallet) return;
     try {
       const convs = await getConversations(wallet.id, wallet);
+      const myWalletData = {
+        id: wallet.id,
+        displayName: wallet.displayName,
+        signingPublicKey: wallet.signingPublicKey,
+        encryptionPublicKey: wallet.encryptionPublicKey,
+      };
+      for (const conv of convs) {
+        if (conv.participants) {
+          conv.participants = conv.participants.map(p => {
+            if (
+              p.id === wallet.id ||
+              p.signingPublicKey === wallet.signingPublicKey ||
+              p.encryptionPublicKey === wallet.encryptionPublicKey ||
+              p.displayName === wallet.displayName
+            ) {
+              return myWalletData;
+            }
+            return p;
+          });
+        }
+      }
       setConversations(convs);
     } catch (error) {
       console.error("Failed to load conversations:", error);
