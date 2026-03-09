@@ -399,6 +399,7 @@ const Messenger = () => {
             selectedId={selectedConversation?.id}
             currentWalletId={wallet.id}
             currentWalletKeys={[wallet.signingPublicKey, wallet.encryptionPublicKey]}
+            currentWalletName={wallet.displayName}
             onSelect={setSelectedConversation}
             onDelete={(id) => {
               setConversations(prev => prev.filter(c => c.id !== id));

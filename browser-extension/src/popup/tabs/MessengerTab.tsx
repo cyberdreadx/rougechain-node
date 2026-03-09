@@ -174,9 +174,11 @@ export default function MessengerTab({ wallet }: Props) {
                 ) : (
                     conversations.map(convo => {
                         const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
-                        const other = convo.participants?.find(p =>
-                            !myIds.has(p.id) && !myIds.has(p.signingPublicKey) && !myIds.has(p.encryptionPublicKey)
-                        );
+                        const isSelf = (p: any) => myIds.has(p.id) || myIds.has(p.signingPublicKey || "") || myIds.has(p.encryptionPublicKey || "");
+                        let other = convo.participants?.find((p: any) => !isSelf(p));
+                        if (!other && wallet.displayName && convo.participants?.length === 2) {
+                            other = convo.participants.find((p: any) => p.displayName !== wallet.displayName);
+                        }
                         return (
                             <div
                                 key={convo.id}
@@ -243,9 +245,11 @@ function ChatView({
     const prevCountRef = useRef(0);
 
     const chatMyIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
-    const participantRecipient = conversation.participants?.find(p =>
-        !chatMyIds.has(p.id) && !chatMyIds.has(p.signingPublicKey) && !chatMyIds.has(p.encryptionPublicKey)
-    );
+    const chatIsSelf = (p: any) => chatMyIds.has(p.id) || chatMyIds.has(p.signingPublicKey || "") || chatMyIds.has(p.encryptionPublicKey || "");
+    let participantRecipient = conversation.participants?.find((p: any) => !chatIsSelf(p));
+    if (!participantRecipient && wallet.displayName && conversation.participants?.length === 2) {
+        participantRecipient = conversation.participants.find((p: any) => p.displayName !== wallet.displayName);
+    }
     const recipient = participantRecipient || resolvedRecipient;
 
     useEffect(() => {

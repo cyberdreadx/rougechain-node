@@ -10,15 +10,15 @@ interface ConversationListProps {
   conversations: Conversation[];
   selectedId?: string;
   currentWalletId: string;
-  currentWalletKeys?: string[]; // Additional identifiers (signing key, encryption key)
+  currentWalletKeys?: string[];
+  currentWalletName?: string;
   onSelect: (conversation: Conversation) => void;
   onDelete?: (conversationId: string) => void;
 }
 
-const ConversationList = ({ conversations, selectedId, currentWalletId, currentWalletKeys = [], onSelect, onDelete }: ConversationListProps) => {
+const ConversationList = ({ conversations, selectedId, currentWalletId, currentWalletKeys = [], currentWalletName, onSelect, onDelete }: ConversationListProps) => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // Build a set of all identifiers for the current wallet
   const myIds = new Set([currentWalletId, ...currentWalletKeys].filter(Boolean));
 
   const handleDelete = async (e: React.MouseEvent, conversationId: string) => {
@@ -40,13 +40,23 @@ const ConversationList = ({ conversations, selectedId, currentWalletId, currentW
     }
   };
 
+  const isSelf = (p: { id: string; signingPublicKey?: string; encryptionPublicKey?: string; displayName?: string }) => {
+    if (myIds.has(p.id) || myIds.has(p.signingPublicKey || "") || myIds.has(p.encryptionPublicKey || "")) return true;
+    return false;
+  };
+
   const getOtherParticipant = (conversation: Conversation) => {
-    // Exclude the current wallet by checking id AND public keys
-    return conversation.participants?.find(p =>
-      !myIds.has(p.id) &&
-      !myIds.has(p.signingPublicKey) &&
-      !myIds.has(p.encryptionPublicKey)
-    );
+    const participants = conversation.participants;
+    if (!participants || participants.length === 0) return undefined;
+
+    const other = participants.find(p => !isSelf(p));
+    if (other) return other;
+
+    // Keys may have been regenerated — fall back to excluding by display name
+    if (currentWalletName && participants.length === 2) {
+      return participants.find(p => p.displayName !== currentWalletName);
+    }
+    return undefined;
   };
 
   const getConversationName = (conversation: Conversation): string => {
