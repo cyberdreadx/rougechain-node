@@ -88,7 +88,7 @@ export async function mineBlock(
     }
 
     const messageBytes = new TextEncoder().encode(hash);
-    const signature = ml_dsa65.sign(hexToBytes(privateKey), messageBytes);
+    const signature = ml_dsa65.sign(messageBytes, hexToBytes(privateKey));
 
     return {
         index,
@@ -107,7 +107,7 @@ export async function verifyBlockSignature(block: Block): Promise<boolean> {
         const messageBytes = new TextEncoder().encode(block.hash);
         const signatureBytes = hexToBytes(block.signature);
         const publicKeyBytes = hexToBytes(block.signerPublicKey);
-        return ml_dsa65.verify(publicKeyBytes, messageBytes, signatureBytes);
+        return ml_dsa65.verify(signatureBytes, messageBytes, publicKeyBytes);
     } catch {
         return false;
     }

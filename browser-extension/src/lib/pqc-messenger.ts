@@ -186,7 +186,7 @@ export async function encryptMessage(
             `Please go to Settings and create a new wallet to regenerate FIPS 204 keys.`
         );
     }
-    const signature = ml_dsa65.sign(signerPrivKey, new TextEncoder().encode(encryptedPackage));
+    const signature = ml_dsa65.sign(new TextEncoder().encode(encryptedPackage), signerPrivKey);
 
     return {
         encryptedPackage,
@@ -231,7 +231,7 @@ export async function decryptMessage(
     try {
         const sigBytes = hexToBytes(signature);
         const pubKeyBytes = hexToBytes(senderSigningPublicKey);
-        signatureValid = ml_dsa65.verify(pubKeyBytes, new TextEncoder().encode(encryptedPackage), sigBytes);
+        signatureValid = ml_dsa65.verify(sigBytes, new TextEncoder().encode(encryptedPackage), pubKeyBytes);
     } catch { /* noop */ }
 
     const parsed = JSON.parse(encryptedPackage);

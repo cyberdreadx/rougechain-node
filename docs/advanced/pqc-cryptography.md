@@ -87,8 +87,8 @@ let valid = verify(message, &signature, &pk);
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa';
 
 const { publicKey, secretKey } = ml_dsa65.keygen();
-const signature = ml_dsa65.sign(secretKey, message);
-const valid = ml_dsa65.verify(publicKey, message, signature);
+const signature = ml_dsa65.sign(message, secretKey);
+const valid = ml_dsa65.verify(signature, message, publicKey);
 ```
 
 ## Security Considerations

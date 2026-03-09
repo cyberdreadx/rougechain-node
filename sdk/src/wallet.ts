@@ -43,8 +43,8 @@ export class Wallet implements WalletKeys {
   verify(): boolean {
     try {
       const msg = new TextEncoder().encode("rougechain-verify");
-      const sig = ml_dsa65.sign(hexToBytes(this.privateKey), msg);
-      return ml_dsa65.verify(hexToBytes(this.publicKey), msg, sig);
+      const sig = ml_dsa65.sign(msg, hexToBytes(this.privateKey));
+      return ml_dsa65.verify(sig, msg, hexToBytes(this.publicKey));
     } catch {
       return false;
     }

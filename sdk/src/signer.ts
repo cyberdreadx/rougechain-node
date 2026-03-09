@@ -20,7 +20,7 @@ export function signTransaction(
   publicKey: string
 ): SignedTransaction {
   const payloadBytes = serializePayload(payload);
-  const signature = ml_dsa65.sign(hexToBytes(privateKey), payloadBytes);
+  const signature = ml_dsa65.sign(payloadBytes, hexToBytes(privateKey));
   return {
     payload,
     signature: bytesToHex(signature),
@@ -32,9 +32,9 @@ export function verifyTransaction(signedTx: SignedTransaction): boolean {
   try {
     const payloadBytes = serializePayload(signedTx.payload);
     return ml_dsa65.verify(
-      hexToBytes(signedTx.public_key),
+      hexToBytes(signedTx.signature),
       payloadBytes,
-      hexToBytes(signedTx.signature)
+      hexToBytes(signedTx.public_key)
     );
   } catch {
     return false;

@@ -306,7 +306,7 @@ async function encryptMessage(
   }
 
   const encryptedPackage = JSON.stringify(pkg);
-  const signature = ml_dsa65.sign(senderPrivKeyBytes, new TextEncoder().encode(encryptedPackage));
+  const signature = ml_dsa65.sign(new TextEncoder().encode(encryptedPackage), senderPrivKeyBytes);
 
   return {
     encryptedPackage,
@@ -401,10 +401,9 @@ async function decryptMessage(
     const sigPubKeyBytes = hexToBytes(senderSigningPublicKey);
     const sigBytes = hexToBytes(signature);
     // Try v0.5 format: signature over the encrypted package
-    signatureValid = ml_dsa65.verify(sigPubKeyBytes, new TextEncoder().encode(encryptedPackage), sigBytes);
+    signatureValid = ml_dsa65.verify(sigBytes, new TextEncoder().encode(encryptedPackage), sigPubKeyBytes);
     if (!signatureValid) {
-      // Fall back to legacy format: signature over plaintext
-      signatureValid = ml_dsa65.verify(sigPubKeyBytes, new TextEncoder().encode(plaintext), sigBytes);
+      signatureValid = ml_dsa65.verify(sigBytes, new TextEncoder().encode(plaintext), sigPubKeyBytes);
     }
   } catch (e) {
     console.warn("[Messenger] Signature verification failed (key format mismatch)", e);
