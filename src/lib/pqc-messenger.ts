@@ -462,7 +462,9 @@ async function kemDecryptPayload(
 ): Promise<string> {
   const sharedSecret = ml_kem768.decapsulate(hexToBytes(kemCipherText), decryptionPrivateKey);
 
-  const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret, "HKDF", false, ["deriveKey"]);
+  const ssArr = sharedSecret;
+  const ssBuf = ssArr.buffer.slice(ssArr.byteOffset, ssArr.byteOffset + ssArr.byteLength) as ArrayBuffer;
+  const keyMaterial = await crypto.subtle.importKey("raw", ssBuf, "HKDF", false, ["deriveKey"]);
   const aesKey = await crypto.subtle.deriveKey(
     { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("pqc-msg") },
     keyMaterial,
@@ -471,10 +473,14 @@ async function kemDecryptPayload(
     ["decrypt"]
   );
 
+  const ivBytes = hexToBytes(iv);
+  const ivBuf = ivBytes.buffer.slice(ivBytes.byteOffset, ivBytes.byteOffset + ivBytes.byteLength) as ArrayBuffer;
+  const encBytes = hexToBytes(encryptedContent);
+  const encBuf = encBytes.buffer.slice(encBytes.byteOffset, encBytes.byteOffset + encBytes.byteLength) as ArrayBuffer;
   const decrypted = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: hexToBytes(iv) },
+    { name: "AES-GCM", iv: ivBuf },
     aesKey,
-    hexToBytes(encryptedContent)
+    encBuf
   );
   return new TextDecoder().decode(decrypted);
 }
