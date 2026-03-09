@@ -418,7 +418,7 @@ async function kemEncryptPlaintext(
   };
 }
 
-async function encryptMessage(
+export async function encryptMessage(
   plaintext: string,
   recipientEncryptionPublicKey: string,
   senderSigningPrivateKey: string,
@@ -498,11 +498,12 @@ async function decryptMessageLegacy(
   return new TextDecoder().decode(decrypted);
 }
 
-async function decryptMessage(
+export async function decryptMessage(
   encryptedPackage: string,
   recipientEncryptionPrivateKey: string,
   senderSigningPublicKey: string,
-  signature: string
+  signature: string,
+  isSender: boolean = false
 ): Promise<{ plaintext: string; signatureValid: boolean }> {
   const encryptedData = JSON.parse(encryptedPackage) as {
     kemCipherText: string;
@@ -516,22 +517,26 @@ async function decryptMessage(
   const privKeyBytes = hexToBytes(recipientEncryptionPrivateKey);
   let plaintext: string;
 
-  try {
+  if (isSender && encryptedData.senderKemCipherText && encryptedData.senderIv && encryptedData.senderEncryptedContent) {
     plaintext = await kemDecryptPayload(
-      encryptedData.kemCipherText, encryptedData.iv, encryptedData.encryptedContent, privKeyBytes
+      encryptedData.senderKemCipherText, encryptedData.senderIv, encryptedData.senderEncryptedContent, privKeyBytes
     );
-  } catch {
-    // Fall back to legacy (raw shared-secret AES, no HKDF) for old messages
+  } else {
     try {
-      plaintext = await decryptMessageLegacy(encryptedPackage, recipientEncryptionPrivateKey);
+      plaintext = await kemDecryptPayload(
+        encryptedData.kemCipherText, encryptedData.iv, encryptedData.encryptedContent, privKeyBytes
+      );
     } catch {
-      // Try sender-copy if present (own sent messages)
-      if (encryptedData.senderKemCipherText && encryptedData.senderIv && encryptedData.senderEncryptedContent) {
-        plaintext = await kemDecryptPayload(
-          encryptedData.senderKemCipherText, encryptedData.senderIv, encryptedData.senderEncryptedContent, privKeyBytes
-        );
-      } else {
-        throw new Error("Decryption failed");
+      try {
+        plaintext = await decryptMessageLegacy(encryptedPackage, recipientEncryptionPrivateKey);
+      } catch {
+        if (encryptedData.senderKemCipherText && encryptedData.senderIv && encryptedData.senderEncryptedContent) {
+          plaintext = await kemDecryptPayload(
+            encryptedData.senderKemCipherText, encryptedData.senderIv, encryptedData.senderEncryptedContent, privKeyBytes
+          );
+        } else {
+          throw new Error("Decryption failed");
+        }
       }
     }
   }

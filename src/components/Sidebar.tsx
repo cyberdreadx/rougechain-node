@@ -16,6 +16,7 @@ import {
   ArrowDownUp,
   Droplets,
   Cable,
+  Mail,
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY } from "@/lib/network";
@@ -30,6 +31,7 @@ const navItems = [
   { to: "/pools", label: "Pools", icon: Droplets },
   { to: "/blockchain", label: "Blockchain", icon: Globe2 },
   { to: "/messenger", label: "Messenger", icon: MessageSquare },
+  { to: "/mail", label: "Mail", icon: Mail },
   { to: "/transactions", label: "Tx Feed", icon: Activity },
   { to: "/validators", label: "Validators", icon: Shield },
   { to: "/node", label: "Core Node", icon: Network },

@@ -18,6 +18,7 @@ import Pools from "./pages/Pools";
 import PoolDetail from "./pages/PoolDetail";
 import TokenExplorer from "./pages/TokenExplorer";
 import Bridge from "./pages/Bridge";
+import Mail from "./pages/Mail";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -28,7 +29,7 @@ function ScrollToTop() {
 
   useEffect(() => {
     // Don't scroll to top on messenger route (it manages its own scroll)
-    if (pathname !== '/messenger') {
+    if (pathname !== '/messenger' && pathname !== '/mail') {
       window.scrollTo(0, 0);
     }
   }, [pathname]);
@@ -39,7 +40,7 @@ function ScrollToTop() {
 // Hide footer on fullscreen pages like messenger
 function ConditionalFooter() {
   const { pathname } = useLocation();
-  if (pathname === '/messenger') return null;
+  if (pathname === '/messenger' || pathname === '/mail') return null;
   return <Footer />;
 }
 
@@ -66,6 +67,7 @@ const App = () => (
                 <Route path="/pool/:poolId" element={<PoolDetail />} />
                 <Route path="/token/:symbol" element={<TokenExplorer />} />
                 <Route path="/bridge" element={<Bridge />} />
+                <Route path="/mail" element={<Mail />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
