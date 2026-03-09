@@ -7,12 +7,16 @@
     <meta name="description" content="RougeChain: The quantum-safe blockchain powered by NIST-approved post-quantum cryptography (ML-DSA-65, ML-KEM-768) to protect against quantum computing threats." />
     <meta name="author" content="RougeChain" />
     <meta name="keywords" content="blockchain, quantum-safe, post-quantum cryptography, ML-DSA, ML-KEM, CRYSTALS-Dilithium, quantum computing, cryptocurrency, XRGE, RougeChain" />
-    <meta name="theme-color" content="#dc2626" />
+    <meta name="theme-color" content="#00d2be" />
     <meta name="robots" content="index, follow" />
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json" />
 
     <!-- Favicon -->
     <link rel="icon" type="image/webp" href="/favicon.webp" />
-    <link rel="apple-touch-icon" href="/favicon.webp" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
@@ -38,5 +42,12 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("/sw.js").catch(() => {});
+        });
+      }
+    </script>
   </body>
 </html>
