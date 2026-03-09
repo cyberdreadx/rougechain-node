@@ -57,7 +57,11 @@ export interface Conversation {
 const MESSENGER_API_PREFIX = "/messenger";
 
 // Media support
-export const MAX_MEDIA_SIZE = 2 * 1024 * 1024; // 2 MB (encrypted + base64 overhead must fit server limits)
+export const MAX_MEDIA_SIZE = 50 * 1024 * 1024; // 50 MB input (will be compressed)
+const TARGET_PAYLOAD_BYTES = 1.5 * 1024 * 1024;
+const IMAGE_MAX_DIM = 1600;
+const VIDEO_MAX_DIM = 640;
+const VIDEO_MAX_DURATION_S = 30;
 
 interface MediaPayload {
     type: "image" | "video";
@@ -66,16 +70,131 @@ interface MediaPayload {
     data: string;
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+}
+
+async function compressImage(file: File): Promise<{ blob: Blob; mimeType: string }> {
+    const bitmap = await createImageBitmap(file);
+    let { width, height } = bitmap;
+
+    if (width > IMAGE_MAX_DIM || height > IMAGE_MAX_DIM) {
+        const scale = IMAGE_MAX_DIM / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+    }
+
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+
+    for (const quality of [0.8, 0.6, 0.4, 0.25]) {
+        const blob = await canvas.convertToBlob({ type: "image/webp", quality });
+        if (blob.size <= TARGET_PAYLOAD_BYTES) return { blob, mimeType: "image/webp" };
+    }
+
+    const dim2 = Math.round(IMAGE_MAX_DIM * 0.5);
+    const scale2 = dim2 / Math.max(width, height);
+    const w2 = Math.round(width * scale2);
+    const h2 = Math.round(height * scale2);
+    const canvas2 = new OffscreenCanvas(w2, h2);
+    const ctx2 = canvas2.getContext("2d")!;
+    const bmp2 = await createImageBitmap(file);
+    ctx2.drawImage(bmp2, 0, 0, w2, h2);
+    bmp2.close();
+    const blob = await canvas2.convertToBlob({ type: "image/webp", quality: 0.5 });
+    return { blob, mimeType: "image/webp" };
+}
+
+async function compressVideo(file: File): Promise<{ blob: Blob; mimeType: string }> {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+
+    const url = URL.createObjectURL(file);
+    video.src = url;
+
+    await new Promise<void>((res, rej) => {
+        video.onloadedmetadata = () => res();
+        video.onerror = () => rej(new Error("Cannot load video"));
+    });
+
+    const duration = Math.min(video.duration, VIDEO_MAX_DURATION_S);
+    let { videoWidth: w, videoHeight: h } = video;
+    if (w > VIDEO_MAX_DIM || h > VIDEO_MAX_DIM) {
+        const scale = VIDEO_MAX_DIM / Math.max(w, h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d")!;
+
+    const targetBitsPerSec = Math.floor((TARGET_PAYLOAD_BYTES * 8) / duration * 0.85);
+    const stream = canvas.captureStream(15);
+    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+        ? "video/webm;codecs=vp9"
+        : "video/webm";
+
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: targetBitsPerSec });
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+
+    const done = new Promise<Blob>((res) => {
+        recorder.onstop = () => res(new Blob(chunks, { type: "video/webm" }));
+    });
+
+    video.currentTime = 0;
+    await new Promise<void>((r) => { video.onseeked = () => r(); });
+    video.play();
+    recorder.start();
+
+    await new Promise<void>((res) => {
+        const draw = () => {
+            if (video.ended || video.currentTime >= duration) {
+                recorder.stop();
+                video.pause();
+                res();
+                return;
+            }
+            ctx.drawImage(video, 0, 0, w, h);
+            requestAnimationFrame(draw);
+        };
+        draw();
+    });
+
+    URL.revokeObjectURL(url);
+    return { blob: await done, mimeType: "video/webm" };
+}
+
 export async function fileToMediaPayload(file: File): Promise<{ payload: string; messageType: MessageType }> {
     if (file.size > MAX_MEDIA_SIZE) {
         throw new Error(`File too large. Maximum size is ${MAX_MEDIA_SIZE / (1024 * 1024)} MB.`);
     }
     const messageType: MessageType = file.type.startsWith("video/") ? "video" : "image";
-    const buffer = await file.arrayBuffer();
-    const base64 = btoa(
-        new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
-    );
-    const envelope: MediaPayload = { type: messageType, fileName: file.name, mimeType: file.type, data: base64 };
+
+    let blob: Blob;
+    let mimeType: string;
+
+    if (messageType === "image") {
+        ({ blob, mimeType } = await compressImage(file));
+    } else {
+        ({ blob, mimeType } = await compressVideo(file));
+    }
+
+    const base64 = arrayBufferToBase64(await blob.arrayBuffer());
+    const envelope: MediaPayload = {
+        type: messageType,
+        fileName: file.name.replace(/\.[^.]+$/, messageType === "image" ? ".webp" : ".webm"),
+        mimeType,
+        data: base64,
+    };
     return { payload: JSON.stringify(envelope), messageType };
 }
 
