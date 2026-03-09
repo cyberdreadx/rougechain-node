@@ -100,10 +100,12 @@ const rougechain = {
     },
 };
 
-Object.defineProperty(window, "rougechain", {
-    value: Object.freeze(rougechain),
-    writable: false,
-    configurable: false,
-});
+if (!(window as any).rougechain) {
+    Object.defineProperty(window, "rougechain", {
+        value: Object.freeze(rougechain),
+        writable: false,
+        configurable: false,
+    });
+}
 
 window.dispatchEvent(new Event("rougechain#initialized"));
