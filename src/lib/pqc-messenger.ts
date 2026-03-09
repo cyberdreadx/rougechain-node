@@ -57,7 +57,7 @@ const PRIVACY_SETTINGS_KEY = "pqc_privacy_settings";
 const MESSENGER_API_PREFIX = "/messenger";
 
 // Media support constants
-export const MAX_MEDIA_SIZE = 10 * 1024 * 1024; // 10 MB limit
+export const MAX_MEDIA_SIZE = 2 * 1024 * 1024; // 2 MB (encrypted + base64 overhead must fit server limits)
 
 // Media payload envelope (stored as encrypted plaintext)
 interface MediaPayload {

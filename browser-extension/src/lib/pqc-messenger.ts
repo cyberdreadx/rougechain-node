@@ -57,7 +57,7 @@ export interface Conversation {
 const MESSENGER_API_PREFIX = "/messenger";
 
 // Media support
-export const MAX_MEDIA_SIZE = 10 * 1024 * 1024; // 10 MB
+export const MAX_MEDIA_SIZE = 2 * 1024 * 1024; // 2 MB (encrypted + base64 overhead must fit server limits)
 
 interface MediaPayload {
     type: "image" | "video";
@@ -500,6 +500,17 @@ export async function getMessages(
                 );
                 plaintext = result.plaintext;
                 signatureValid = result.signatureValid;
+
+                if (!isOwn && msg.selfDestruct && !msg.readAt) {
+                    const apiBase = getMessengerApiBase();
+                    if (apiBase) {
+                        fetch(`${apiBase}/messages/read`, {
+                            method: "POST",
+                            headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
+                            body: JSON.stringify({ messageId: msg.id }),
+                        }).catch(() => {});
+                    }
+                }
             } catch {
                 plaintext = "[Unable to decrypt]";
             }
