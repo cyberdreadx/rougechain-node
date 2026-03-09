@@ -96,7 +96,9 @@ export function Sidebar({ children }: SidebarProps) {
     <>
       {/* Logo Section */}
       <div className="flex items-center gap-3 p-4 border-b border-border">
-        <img src={xrgeLogo} alt="XRGE" className="w-8 h-8 rounded-full flex-shrink-0 animate-jelly" />
+        <span className="flex-shrink-0 animate-jelly inline-block">
+          <img src={xrgeLogo} alt="XRGE" className="w-8 h-8 rounded-full" />
+        </span>
         <div className={cn(
           "overflow-hidden transition-all duration-300",
           (expanded || isMobile) ? "opacity-100 w-auto" : "opacity-0 w-0"
@@ -183,7 +185,9 @@ export function Sidebar({ children }: SidebarProps) {
         >
           <Menu className="w-5 h-5" />
         </button>
-        <img src={xrgeLogo} alt="XRGE" className="w-7 h-7 rounded-full animate-jelly" />
+        <span className="animate-jelly inline-block">
+          <img src={xrgeLogo} alt="XRGE" className="w-7 h-7 rounded-full" />
+        </span>
         <span className="font-bold">RougeChain</span>
         <div className="ml-auto flex items-center gap-2 px-2 py-1 rounded-full bg-card border border-border text-xs">
           <span className={`h-2 w-2 rounded-full ${getActiveNetwork() === "mainnet" ? "bg-success" : "bg-amber-500"}`} />
