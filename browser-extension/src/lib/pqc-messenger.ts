@@ -341,7 +341,24 @@ export async function getConversations(walletId: string): Promise<Conversation[]
             if (!res.ok) return [];
             const data = await res.json();
             const convos = data.conversations || data || [];
-            return convos.map(normalizeConversation);
+
+            const allWallets = await getWallets();
+            const walletMap = new Map<string, Wallet>();
+            for (const w of allWallets) {
+                if (w.id) walletMap.set(w.id, w);
+                if (w.signingPublicKey) walletMap.set(w.signingPublicKey, w);
+                if (w.encryptionPublicKey) walletMap.set(w.encryptionPublicKey, w);
+            }
+
+            return convos.map((raw: any) => {
+                const conv = normalizeConversation(raw);
+                if ((!conv.participants || conv.participants.length === 0) && conv.participantIds?.length) {
+                    conv.participants = conv.participantIds
+                        .map((id: string) => walletMap.get(id))
+                        .filter((w): w is Wallet => w !== undefined);
+                }
+                return conv;
+            });
         });
     } catch { return []; }
 }
@@ -429,6 +446,14 @@ async function fetchRawMessages(conversationId: string): Promise<unknown[]> {
     });
 }
 
+function findParticipant(participants: Wallet[], senderWalletId: string): Wallet | undefined {
+    return participants.find(p =>
+        p.id === senderWalletId ||
+        p.signingPublicKey === senderWalletId ||
+        p.encryptionPublicKey === senderWalletId
+    );
+}
+
 export async function getMessages(
     conversationId: string,
     wallet: WalletWithPrivateKeys,
@@ -437,21 +462,34 @@ export async function getMessages(
     try {
         const rawMessages = await fetchRawMessages(conversationId);
 
+        let allParticipants = participants;
+        if (!allParticipants.length) {
+            try {
+                const wallets = await getWallets();
+                allParticipants = wallets;
+            } catch { /* use empty */ }
+        }
+
         const messages: Message[] = [];
         for (const raw of rawMessages) {
             const msg = normalizeMessage(raw);
             const isOwn = msg.senderWalletId === wallet.id ||
-                msg.senderWalletId === wallet.signingPublicKey;
+                msg.senderWalletId === wallet.signingPublicKey ||
+                msg.senderWalletId === wallet.encryptionPublicKey;
 
             let plaintext = "[Unable to decrypt]";
             let signatureValid = false;
 
+            let sender = findParticipant(allParticipants, msg.senderWalletId);
+            if (!sender && msg.senderWalletId && allParticipants === participants) {
+                try {
+                    const wallets = await getWallets();
+                    sender = findParticipant(wallets, msg.senderWalletId);
+                } catch { /* ignore */ }
+            }
+
             try {
-                const senderParticipant = participants.find(p =>
-                    p.id === msg.senderWalletId ||
-                    p.signingPublicKey === msg.senderWalletId
-                );
-                const senderSigningKey = senderParticipant?.signingPublicKey || wallet.signingPublicKey;
+                const senderSigningKey = sender?.signingPublicKey || wallet.signingPublicKey;
 
                 const result = await decryptMessage(
                     msg.encryptedContent,
@@ -466,8 +504,6 @@ export async function getMessages(
                 plaintext = "[Unable to decrypt]";
             }
 
-            // Detect garbage decryption output — if most chars are non-printable,
-            // the wrong key was used and decryption produced nonsense
             if (plaintext !== "[Unable to decrypt]" && plaintext.length > 20) {
                 const nonPrintable = [...plaintext].filter(c => {
                     const code = c.charCodeAt(0);
@@ -480,14 +516,10 @@ export async function getMessages(
 
             const rawMsgType = (raw.message_type || raw.messageType || "text") as MessageType;
 
-            // Always try to parse media from decrypted plaintext —
-            // backend may default messageType to "text" even for images
             const mediaInfo = plaintext !== "[Unable to decrypt]"
                 ? parseMediaPayload(plaintext)
                 : null;
 
-            // If decryption failed and this is supposed to be a media message,
-            // show a clean placeholder instead of garbled bytecode
             let displayPlaintext = plaintext;
             if (plaintext === "[Unable to decrypt]" && rawMsgType !== "text") {
                 displayPlaintext = `[${rawMsgType === "image" ? "Image" : "Video"} — unable to decrypt]`;
@@ -497,9 +529,7 @@ export async function getMessages(
                 ...msg,
                 plaintext: mediaInfo?.mediaFileName || displayPlaintext,
                 signatureValid,
-                senderDisplayName: participants.find(p =>
-                    p.id === msg.senderWalletId || p.signingPublicKey === msg.senderWalletId
-                )?.displayName || "Unknown",
+                senderDisplayName: sender?.displayName || (isOwn ? "You" : "Unknown"),
                 messageType: mediaInfo?.messageType || rawMsgType,
                 mediaUrl: mediaInfo?.mediaUrl,
                 mediaFileName: mediaInfo?.mediaFileName,

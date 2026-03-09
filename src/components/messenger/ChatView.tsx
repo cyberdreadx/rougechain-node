@@ -466,7 +466,12 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
 
-  const recipient = conversation.participants?.find(p => p.id !== wallet.id);
+  const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
+  const recipient = conversation.participants?.find(p =>
+    !myIds.has(p.id) &&
+    !myIds.has(p.signingPublicKey) &&
+    !myIds.has(p.encryptionPublicKey)
+  );
   const isRecipientBot = recipient ? isDemoBot(recipient.id) : false;
 
   const getConversationName = (): string => {

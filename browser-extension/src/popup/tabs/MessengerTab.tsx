@@ -173,7 +173,10 @@ export default function MessengerTab({ wallet }: Props) {
                     </div>
                 ) : (
                     conversations.map(convo => {
-                        const other = convo.participants?.find(p => p.id !== wallet.id);
+                        const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
+                        const other = convo.participants?.find(p =>
+                            !myIds.has(p.id) && !myIds.has(p.signingPublicKey) && !myIds.has(p.encryptionPublicKey)
+                        );
                         return (
                             <div
                                 key={convo.id}
@@ -239,15 +242,18 @@ function ChatView({
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const prevCountRef = useRef(0);
 
-    const participantRecipient = conversation.participants?.find(p => p.id !== wallet.id);
+    const chatMyIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
+    const participantRecipient = conversation.participants?.find(p =>
+        !chatMyIds.has(p.id) && !chatMyIds.has(p.signingPublicKey) && !chatMyIds.has(p.encryptionPublicKey)
+    );
     const recipient = participantRecipient || resolvedRecipient;
 
     useEffect(() => {
         if (!participantRecipient && conversation.participantIds) {
-            const otherId = conversation.participantIds.find(id => id !== wallet.id);
+            const otherId = conversation.participantIds.find(id => !chatMyIds.has(id));
             if (otherId) {
                 getWallets().then(wallets => {
-                    const match = wallets.find(w => w.id === otherId);
+                    const match = wallets.find(w => w.id === otherId || w.signingPublicKey === otherId);
                     if (match) setResolvedRecipient(match);
                 }).catch(() => {});
             }
