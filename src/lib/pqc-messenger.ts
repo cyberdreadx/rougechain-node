@@ -54,7 +54,33 @@ const WALLET_STORAGE_KEY = "pqc_messenger_wallet";
 const DEMO_BOT_STORAGE_KEY = "pqc_demo_bot_wallet";
 const SENT_MESSAGES_KEY = "pqc_sent_messages";
 const PRIVACY_SETTINGS_KEY = "pqc_privacy_settings";
+const BLOCKED_WALLETS_KEY = "pqc_blocked_wallets";
 const MESSENGER_API_PREFIX = "/messenger";
+
+// --- Block list helpers ---
+
+export function getBlockedWalletIds(): string[] {
+  try {
+    const raw = localStorage.getItem(BLOCKED_WALLETS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+export function blockWallet(walletId: string): void {
+  const list = new Set(getBlockedWalletIds());
+  list.add(walletId);
+  localStorage.setItem(BLOCKED_WALLETS_KEY, JSON.stringify([...list]));
+}
+
+export function unblockWallet(walletId: string): void {
+  const list = new Set(getBlockedWalletIds());
+  list.delete(walletId);
+  localStorage.setItem(BLOCKED_WALLETS_KEY, JSON.stringify([...list]));
+}
+
+export function isWalletBlocked(walletId: string): boolean {
+  return getBlockedWalletIds().includes(walletId);
+}
 
 // Media support constants
 export const MAX_MEDIA_SIZE = 50 * 1024 * 1024; // 50 MB input (will be compressed)

@@ -1,18 +1,19 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint, Paperclip, Image as ImageIcon, Video, EyeOff, Eye } from "lucide-react";
+import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint, Paperclip, Image as ImageIcon, Video, EyeOff, Eye, Ban } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Conversation, WalletWithPrivateKeys, Message, Wallet, MessageType } from "@/lib/pqc-messenger";
-import { getBotReply, getMessages, sendMessage, isDemoBot, loadDemoBotWallet, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE } from "@/lib/pqc-messenger";
+import { getBotReply, getMessages, sendMessage, isDemoBot, loadDemoBotWallet, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, isWalletBlocked, blockWallet, unblockWallet } from "@/lib/pqc-messenger";
 
 interface ChatViewProps {
   conversation: Conversation;
   wallet: WalletWithPrivateKeys;
   onBack: () => void;
+  onBlocked?: () => void;
 }
 
 interface EncryptedPackage {
@@ -449,7 +450,7 @@ const EncryptionAnimation = ({
   );
 };
 
-const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
+const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [selfDestruct, setSelfDestruct] = useState(false);
@@ -471,6 +472,23 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
     !myIds.has(p.id) && !myIds.has(p.signingPublicKey) && !myIds.has(p.encryptionPublicKey)
   );
   const isRecipientBot = recipient ? isDemoBot(recipient.id) : false;
+  const recipientMainId = recipient?.id || recipient?.signingPublicKey || "";
+  const [blocked, setBlocked] = useState(() => recipientMainId ? isWalletBlocked(recipientMainId) : false);
+
+  const handleToggleBlock = () => {
+    if (!recipientMainId) return;
+    if (blocked) {
+      unblockWallet(recipientMainId);
+      setBlocked(false);
+      toast.success(`Unblocked ${recipient?.displayName || "user"}`);
+    } else {
+      if (!confirm(`Block ${recipient?.displayName || "this user"}? You won't see their messages or conversations.`)) return;
+      blockWallet(recipientMainId);
+      setBlocked(true);
+      toast.success(`Blocked ${recipient?.displayName || "user"}`);
+      onBlocked?.();
+    }
+  };
 
   const getConversationName = (): string => {
     if (conversation.name) return conversation.name;
@@ -740,6 +758,17 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
             ML-KEM-768 + ML-DSA-65
           </p>
         </div>
+        {recipient && !isRecipientBot && (
+          <Button
+            variant={blocked ? "destructive" : "ghost"}
+            size="icon"
+            onClick={handleToggleBlock}
+            title={blocked ? "Unblock user" : "Block user"}
+            className="flex-shrink-0"
+          >
+            <Ban className="w-4 h-4" />
+          </Button>
+        )}
       </div>
 
       {/* Messages */}

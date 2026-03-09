@@ -55,6 +55,32 @@ export interface Conversation {
 }
 
 const MESSENGER_API_PREFIX = "/messenger";
+const BLOCKED_WALLETS_KEY = "pqc_blocked_wallets";
+
+// --- Block list helpers ---
+
+export function getBlockedWalletIds(): string[] {
+    try {
+        const raw = localStorage.getItem(BLOCKED_WALLETS_KEY);
+        return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+}
+
+export function blockWallet(walletId: string): void {
+    const list = new Set(getBlockedWalletIds());
+    list.add(walletId);
+    localStorage.setItem(BLOCKED_WALLETS_KEY, JSON.stringify([...list]));
+}
+
+export function unblockWallet(walletId: string): void {
+    const list = new Set(getBlockedWalletIds());
+    list.delete(walletId);
+    localStorage.setItem(BLOCKED_WALLETS_KEY, JSON.stringify([...list]));
+}
+
+export function isWalletBlocked(walletId: string): boolean {
+    return getBlockedWalletIds().includes(walletId);
+}
 
 // Media support
 export const MAX_MEDIA_SIZE = 50 * 1024 * 1024; // 50 MB input (will be compressed)
@@ -453,7 +479,7 @@ export async function getConversations(walletId: string): Promise<Conversation[]
     const apiBase = getMessengerApiBase();
     if (!apiBase) return [];
     try {
-        return await cachedFetch("messengerConversations", walletId, async () => {
+        const all = await cachedFetch("messengerConversations", walletId, async () => {
             const res = await fetch(`${apiBase}/conversations?walletId=${walletId}`, {
                 headers: getCoreApiHeaders(),
             });
@@ -478,6 +504,14 @@ export async function getConversations(walletId: string): Promise<Conversation[]
                 }
                 return conv;
             });
+        });
+        const blocked = new Set(getBlockedWalletIds());
+        if (blocked.size === 0) return all;
+        return all.filter(conv => {
+            const hasBlocked = conv.participants?.some(p =>
+                blocked.has(p.id) || blocked.has(p.signingPublicKey) || blocked.has(p.encryptionPublicKey)
+            ) || conv.participantIds?.some(id => blocked.has(id));
+            return !hasBlocked;
         });
     } catch { return []; }
 }

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import {
     ArrowLeft, Send, Lock, Shield, Plus, Loader2,
     MessageCircle, CheckCircle2, XCircle, Timer,
-    Paperclip, EyeOff, Image as ImageIcon, Video, X, Trash2
+    Paperclip, EyeOff, Image as ImageIcon, Video, X, Trash2, Ban
 } from "lucide-react";
 import type { UnifiedWallet } from "../../lib/unified-wallet";
 import { toMessengerWallet } from "../../lib/unified-wallet";
@@ -16,6 +16,10 @@ import {
     registerWalletOnNode,
     fileToMediaPayload,
     MAX_MEDIA_SIZE,
+    isWalletBlocked,
+    blockWallet,
+    unblockWallet,
+    getBlockedWalletIds,
     type Conversation,
     type Message,
     type MessageType,
@@ -54,7 +58,11 @@ export default function MessengerTab({ wallet }: Props) {
 
     const loadContacts = async () => {
         const wallets = await getWallets();
-        setContacts(wallets.filter(w => w.id !== wallet.id));
+        const blocked = new Set(getBlockedWalletIds());
+        setContacts(wallets.filter(w =>
+            w.id !== wallet.id &&
+            !blocked.has(w.id) && !blocked.has(w.signingPublicKey) && !blocked.has(w.encryptionPublicKey)
+        ));
     };
 
     const doRegister = async () => {
@@ -88,6 +96,10 @@ export default function MessengerTab({ wallet }: Props) {
                 conversation={selected}
                 wallet={messengerWallet}
                 onBack={() => setSelected(null)}
+                onBlocked={() => {
+                    setSelected(null);
+                    loadConversations();
+                }}
             />
         );
     }
@@ -228,10 +240,12 @@ function ChatView({
     conversation,
     wallet,
     onBack,
+    onBlocked,
 }: {
     conversation: Conversation;
     wallet: WalletWithPrivateKeys;
     onBack: () => void;
+    onBlocked?: () => void;
 }) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [newMessage, setNewMessage] = useState("");
@@ -251,6 +265,21 @@ function ChatView({
         participantRecipient = conversation.participants.find((p: any) => p.displayName !== wallet.displayName);
     }
     const recipient = participantRecipient || resolvedRecipient;
+    const recipientMainId = recipient?.id || recipient?.signingPublicKey || "";
+    const [blocked, setBlocked] = useState(() => recipientMainId ? isWalletBlocked(recipientMainId) : false);
+
+    const handleToggleBlock = () => {
+        if (!recipientMainId) return;
+        if (blocked) {
+            unblockWallet(recipientMainId);
+            setBlocked(false);
+        } else {
+            if (!confirm(`Block ${recipient?.displayName || "this user"}?`)) return;
+            blockWallet(recipientMainId);
+            setBlocked(true);
+            onBlocked?.();
+        }
+    };
 
     useEffect(() => {
         if (!participantRecipient && conversation.participantIds) {
@@ -393,7 +422,7 @@ function ChatView({
                 <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center">
                     <Shield className="w-3.5 h-3.5 text-primary" />
                 </div>
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium text-foreground truncate">
                         {conversation.name || recipient?.displayName || "Unknown"}
                     </p>
@@ -401,6 +430,15 @@ function ChatView({
                         <Lock className="w-2 h-2" /> ML-KEM-768 + ML-DSA-65
                     </p>
                 </div>
+                {recipient && (
+                    <button
+                        onClick={handleToggleBlock}
+                        className={`p-1 rounded transition-colors flex-shrink-0 ${blocked ? "text-destructive bg-destructive/10" : "text-muted-foreground hover:text-destructive"}`}
+                        title={blocked ? "Unblock user" : "Block user"}
+                    >
+                        <Ban className="w-3.5 h-3.5" />
+                    </button>
+                )}
             </div>
 
             {/* Messages */}

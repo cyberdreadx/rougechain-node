@@ -12,7 +12,7 @@ import PrivacySettings from "@/components/messenger/PrivacySettings";
 import SwapWidget from "@/components/messenger/SwapWidget";
 import WalletBackup from "@/components/wallet/WalletBackup";
 import type { Conversation, Wallet, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
-import { getConversations, getWallets, saveWalletLocally, registerWalletOnNode } from "@/lib/pqc-messenger";
+import { getConversations, getWallets, saveWalletLocally, registerWalletOnNode, getBlockedWalletIds } from "@/lib/pqc-messenger";
 import {
   UnifiedWallet,
   VaultSettings,
@@ -76,12 +76,14 @@ const Messenger = () => {
     if (!wallet) return;
     try {
       const convs = await getConversations(wallet.id, wallet);
+      const blocked = new Set(getBlockedWalletIds());
       const myWalletData = {
         id: wallet.id,
         displayName: wallet.displayName,
         signingPublicKey: wallet.signingPublicKey,
         encryptionPublicKey: wallet.encryptionPublicKey,
       };
+      const filtered: Conversation[] = [];
       for (const conv of convs) {
         if (conv.participants) {
           conv.participants = conv.participants.map(p => {
@@ -96,8 +98,12 @@ const Messenger = () => {
             return p;
           });
         }
+        const hasBlockedParticipant = conv.participants?.some(p =>
+          blocked.has(p.id) || blocked.has(p.signingPublicKey) || blocked.has(p.encryptionPublicKey)
+        ) || conv.participantIds?.some(id => blocked.has(id));
+        if (!hasBlockedParticipant) filtered.push(conv);
       }
-      setConversations(convs);
+      setConversations(filtered);
     } catch (error) {
       console.error("Failed to load conversations:", error);
     }
@@ -106,20 +112,19 @@ const Messenger = () => {
   const loadContacts = async () => {
     try {
       const wallets = await getWallets();
-      // Filter out our own wallet by checking all identifiers
+      const blocked = new Set(getBlockedWalletIds());
       const filtered = wallets.filter(w =>
         w.id !== wallet?.id &&
         w.id !== wallet?.signingPublicKey &&
         w.signingPublicKey !== wallet?.signingPublicKey &&
-        w.encryptionPublicKey !== wallet?.encryptionPublicKey
+        w.encryptionPublicKey !== wallet?.encryptionPublicKey &&
+        !blocked.has(w.id) && !blocked.has(w.signingPublicKey) && !blocked.has(w.encryptionPublicKey)
       );
 
-      // Remove duplicates - keep the one with a non-generic name, or the latest
       const uniqueMap = new Map<string, typeof filtered[0]>();
       for (const w of filtered) {
         const key = w.signingPublicKey || w.encryptionPublicKey || w.id;
         const existing = uniqueMap.get(key);
-        // Prefer wallet with custom name over "My Wallet" or empty
         if (!existing ||
           (existing.displayName === "My Wallet" && w.displayName !== "My Wallet") ||
           (!existing.displayName && w.displayName)) {
@@ -438,6 +443,11 @@ const Messenger = () => {
               conversation={selectedConversation}
               wallet={messengerWallet}
               onBack={() => setSelectedConversation(null)}
+              onBlocked={() => {
+                setSelectedConversation(null);
+                loadConversations();
+                loadContacts();
+              }}
             />
           ) : (
             <div className="flex-1 flex items-center justify-center text-muted-foreground">
