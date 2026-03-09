@@ -467,20 +467,9 @@ const ChatView = ({ conversation, wallet, onBack }: ChatViewProps) => {
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
 
   const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
-  const isSelf = (p: { id: string; signingPublicKey?: string; encryptionPublicKey?: string }) =>
-    myIds.has(p.id) || myIds.has(p.signingPublicKey || "") || myIds.has(p.encryptionPublicKey || "");
-
-  const recipient = (() => {
-    const participants = conversation.participants;
-    if (!participants || participants.length === 0) return undefined;
-    const other = participants.find(p => !isSelf(p));
-    if (other) return other;
-    // Keys regenerated — fall back to excluding by display name
-    if (wallet.displayName && participants.length === 2) {
-      return participants.find(p => p.displayName !== wallet.displayName);
-    }
-    return undefined;
-  })();
+  const recipient = conversation.participants?.find(p =>
+    !myIds.has(p.id) && !myIds.has(p.signingPublicKey) && !myIds.has(p.encryptionPublicKey)
+  );
   const isRecipientBot = recipient ? isDemoBot(recipient.id) : false;
 
   const getConversationName = (): string => {

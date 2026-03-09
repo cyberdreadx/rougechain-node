@@ -615,7 +615,7 @@ export async function deleteConversation(conversationId: string): Promise<void> 
 }
 
 // Get conversations for a wallet
-export async function getConversations(walletId: string): Promise<Conversation[]> {
+export async function getConversations(walletId: string, currentWallet?: Wallet): Promise<Conversation[]> {
   const apiBase = getMessengerApiBase();
   if (!apiBase) return [];
   const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/conversations?walletId=${encodeURIComponent(walletId)}`, {
@@ -625,7 +625,6 @@ export async function getConversations(walletId: string): Promise<Conversation[]
   const data = await response.json().catch(() => null);
   const rawConversations = data?.conversations || [];
 
-  // Fetch all wallets to populate participant details
   const allWallets = await getWallets();
   const walletMap = new Map<string, Wallet>();
   for (const w of allWallets) {
@@ -634,8 +633,10 @@ export async function getConversations(walletId: string): Promise<Conversation[]
     if (w.encryptionPublicKey) walletMap.set(w.encryptionPublicKey, w);
   }
 
-  // Populate participants with full wallet data
-  // Server returns participant_ids (snake_case), convert to participants array
+  const currentIds = currentWallet
+    ? new Set([currentWallet.id, currentWallet.signingPublicKey, currentWallet.encryptionPublicKey].filter(Boolean))
+    : new Set<string>();
+
   const conversations: Conversation[] = rawConversations.map((conv: {
     id: string;
     name?: string;
@@ -650,7 +651,14 @@ export async function getConversations(walletId: string): Promise<Conversation[]
   }) => {
     const participantIds = conv.participant_ids || conv.participantIds || [];
     const participants = participantIds
-      .map((id: string) => walletMap.get(id))
+      .map((id: string) => {
+        if (currentIds.has(id)) return currentWallet!;
+        const w = walletMap.get(id);
+        if (w && currentWallet && w.displayName === currentWallet.displayName && !currentIds.has(w.id)) {
+          return currentWallet;
+        }
+        return w;
+      })
       .filter((w): w is Wallet => w !== undefined);
 
     return {

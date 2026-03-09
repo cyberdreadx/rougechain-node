@@ -75,7 +75,7 @@ const Messenger = () => {
   const loadConversations = async () => {
     if (!wallet) return;
     try {
-      const convs = await getConversations(wallet.id);
+      const convs = await getConversations(wallet.id, wallet);
       setConversations(convs);
     } catch (error) {
       console.error("Failed to load conversations:", error);

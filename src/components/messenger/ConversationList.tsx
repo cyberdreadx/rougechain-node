@@ -40,23 +40,12 @@ const ConversationList = ({ conversations, selectedId, currentWalletId, currentW
     }
   };
 
-  const isSelf = (p: { id: string; signingPublicKey?: string; encryptionPublicKey?: string; displayName?: string }) => {
-    if (myIds.has(p.id) || myIds.has(p.signingPublicKey || "") || myIds.has(p.encryptionPublicKey || "")) return true;
-    return false;
-  };
-
   const getOtherParticipant = (conversation: Conversation) => {
-    const participants = conversation.participants;
-    if (!participants || participants.length === 0) return undefined;
-
-    const other = participants.find(p => !isSelf(p));
-    if (other) return other;
-
-    // Keys may have been regenerated — fall back to excluding by display name
-    if (currentWalletName && participants.length === 2) {
-      return participants.find(p => p.displayName !== currentWalletName);
-    }
-    return undefined;
+    return conversation.participants?.find(p =>
+      !myIds.has(p.id) &&
+      !myIds.has(p.signingPublicKey) &&
+      !myIds.has(p.encryptionPublicKey)
+    );
   };
 
   const getConversationName = (conversation: Conversation): string => {
