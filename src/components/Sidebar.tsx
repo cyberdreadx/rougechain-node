@@ -24,20 +24,56 @@ import xrgeLogo from "@/assets/xrge-logo.webp";
 import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY } from "@/lib/network";
 import { cn } from "@/lib/utils";
 
-const navItems = [
-  { to: "/", label: "Home", icon: Home },
-  { to: "/wallet", label: "Wallet", icon: Wallet },
-  { to: "/swap", label: "Swap", icon: ArrowDownUp },
-  { to: "/bridge", label: "Bridge", icon: Cable },
-  { to: "/pools", label: "Pools", icon: Droplets },
-  { to: "/tokens", label: "Tokens", icon: Coins },
-  { to: "/nfts", label: "NFTs", icon: Image },
-  { to: "/blockchain", label: "Blockchain", icon: Globe2 },
-  { to: "/messenger", label: "Messenger", icon: MessageSquare },
-  { to: "/mail", label: "Mail", icon: Mail },
-  { to: "/transactions", label: "Tx Feed", icon: Activity },
-  { to: "/validators", label: "Validators", icon: Shield },
-  { to: "/node", label: "Core Node", icon: Network },
+interface NavItem {
+  to: string;
+  label: string;
+  icon: typeof Home;
+}
+
+interface NavGroup {
+  title: string;
+  items: NavItem[];
+}
+
+const navGroups: NavGroup[] = [
+  {
+    title: "",
+    items: [
+      { to: "/", label: "Home", icon: Home },
+    ],
+  },
+  {
+    title: "DeFi",
+    items: [
+      { to: "/wallet", label: "Wallet", icon: Wallet },
+      { to: "/swap", label: "Swap", icon: ArrowDownUp },
+      { to: "/bridge", label: "Bridge", icon: Cable },
+      { to: "/pools", label: "Pools", icon: Droplets },
+    ],
+  },
+  {
+    title: "Explorer",
+    items: [
+      { to: "/blockchain", label: "Blockchain", icon: Globe2 },
+      { to: "/transactions", label: "Tx Feed", icon: Activity },
+      { to: "/tokens", label: "Tokens", icon: Coins },
+      { to: "/nfts", label: "NFTs", icon: Image },
+    ],
+  },
+  {
+    title: "Social",
+    items: [
+      { to: "/messenger", label: "Messenger", icon: MessageSquare },
+      { to: "/mail", label: "Mail", icon: Mail },
+    ],
+  },
+  {
+    title: "Network",
+    items: [
+      { to: "/validators", label: "Validators", icon: Shield },
+      { to: "/node", label: "Core Node", icon: Network },
+    ],
+  },
 ];
 
 function GlobalSearch({ visible }: { visible: boolean }) {
@@ -172,40 +208,56 @@ export function Sidebar({ children }: SidebarProps) {
       <GlobalSearch visible={expanded || isMobile} />
 
       {/* Navigation Links */}
-      <nav className="flex-1 py-4 px-2 space-y-1 overflow-y-auto">
-        {navItems.map((item) => {
-          const isActive = location.pathname === item.to;
-          const Icon = item.icon;
-          
-          return (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              onClick={() => isMobile && setMobileOpen(false)}
-              className={cn(
-                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
-                isActive 
-                  ? "bg-primary/10 text-primary" 
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              )}
-            >
-              <Icon className="w-5 h-5 flex-shrink-0" />
-              <span className={cn(
-                "whitespace-nowrap overflow-hidden transition-all duration-300",
-                (expanded || isMobile) ? "opacity-100 w-auto" : "opacity-0 w-0"
+      <nav className="flex-1 py-2 px-2 space-y-0.5 overflow-y-auto">
+        {navGroups.map((group) => (
+          <div key={group.title || "home"}>
+            {group.title && (
+              <div className={cn(
+                "px-3 pt-3 pb-1 transition-all duration-300",
+                (expanded || isMobile) ? "opacity-100" : "opacity-0 h-0 pt-0 pb-0 overflow-hidden"
               )}>
-                {item.label}
-              </span>
-            </NavLink>
-          );
-        })}
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">{group.title}</span>
+              </div>
+            )}
+            {group.items.map((item) => {
+              const isActive = location.pathname === item.to;
+              const Icon = item.icon;
+              return (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  onClick={() => isMobile && setMobileOpen(false)}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
+                    isActive
+                      ? "bg-primary/10 text-primary"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                  )}
+                >
+                  <Icon className="w-5 h-5 flex-shrink-0" />
+                  <span className={cn(
+                    "whitespace-nowrap overflow-hidden transition-all duration-300",
+                    (expanded || isMobile) ? "opacity-100 w-auto" : "opacity-0 w-0"
+                  )}>
+                    {item.label}
+                  </span>
+                </NavLink>
+              );
+            })}
+          </div>
+        ))}
         
-        {/* External Docs Link */}
+        <div className={cn(
+          "px-3 pt-3 pb-1 transition-all duration-300",
+          (expanded || isMobile) ? "opacity-100" : "opacity-0 h-0 pt-0 pb-0 overflow-hidden"
+        )}>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Resources</span>
+        </div>
         <a
           href="https://ai-integrations.gitbook.io/rougechain-post-quantum/"
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted"
+          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted"
         >
           <BookOpen className="w-5 h-5 flex-shrink-0" />
           <span className={cn(

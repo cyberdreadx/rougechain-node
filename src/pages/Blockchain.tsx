@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { Shield, Blocks, RotateCcw, CheckCircle2, XCircle, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { Link } from "react-router-dom";
 import PQCInfo from "@/components/blockchain/PQCInfo";
 import { QuantumThreatPanel } from "@/components/blockchain/QuantumThreatPanel";
 import { TamperDemo } from "@/components/blockchain/TamperDemo";
@@ -417,12 +418,12 @@ const Blockchain = () => {
                       </thead>
                       <tbody className="divide-y divide-border">
                         {pagedChain.map((block) => (
-                          <tr key={block.hash} className="hover:bg-secondary/40 transition-colors">
-                            <td className="py-2 px-2 font-medium text-primary">#{block.index}</td>
+                          <tr key={block.hash} className="hover:bg-secondary/40 transition-colors cursor-pointer">
+                            <td className="py-2 px-2 font-medium"><Link to={`/block/${block.index}`} className="text-primary hover:underline">#{block.index}</Link></td>
                             <td className="py-2 px-2 text-muted-foreground">{formatAge(block.timestamp)}</td>
                             <td className="py-2 px-2 text-right font-mono">{getTxCount(block)}</td>
-                            <td className="py-2 px-2 font-mono">{truncateHash(block.hash)}</td>
-                            <td className="py-2 px-2 font-mono">{truncateHash(block.signerPublicKey, 8, 6)}</td>
+                            <td className="py-2 px-2 font-mono"><Link to={`/block/${block.index}`} className="text-primary/80 hover:underline">{truncateHash(block.hash)}</Link></td>
+                            <td className="py-2 px-2 font-mono"><Link to={`/address/${block.signerPublicKey}`} className="hover:underline text-accent">{truncateHash(block.signerPublicKey, 8, 6)}</Link></td>
                           </tr>
                         ))}
                       </tbody>
@@ -432,7 +433,7 @@ const Blockchain = () => {
                 {chain.length > 0 && viewMode === "grid" && (
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                     {pagedChain.map((block) => (
-                      <div key={block.hash} className="rounded-lg border border-border bg-background/60 p-3">
+                      <Link key={block.hash} to={`/block/${block.index}`} className="rounded-lg border border-border bg-background/60 p-3 hover:border-primary/40 transition-colors block">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-sm font-semibold text-primary">#{block.index}</span>
                           <span className="text-xs text-muted-foreground">{formatAge(block.timestamp)}</span>
@@ -444,14 +445,14 @@ const Blockchain = () => {
                           </div>
                           <div>
                             <p className="text-muted-foreground">Proposer</p>
-                            <p className="font-mono text-foreground">{truncateHash(block.signerPublicKey, 8, 6)}</p>
+                            <p className="font-mono text-accent">{truncateHash(block.signerPublicKey, 8, 6)}</p>
                           </div>
                           <div className="col-span-2">
                             <p className="text-muted-foreground">Hash</p>
                             <p className="font-mono text-foreground">{truncateHash(block.hash, 14, 10)}</p>
                           </div>
                         </div>
-                      </div>
+                      </Link>
                     ))}
                   </div>
                 )}
