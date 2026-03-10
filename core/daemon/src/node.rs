@@ -2100,9 +2100,17 @@ impl L1Node {
                 if let Some(to_pub_key) = tx.payload.to_pub_key_hex.as_ref() {
                     let amount = tx.payload.amount.unwrap_or(0) as f64;
                     let is_burn = to_pub_key == BURN_ADDRESS;
-                    
+                    let is_faucet = tx.payload.faucet == Some(true)
+                        && !node_pub_key.is_empty()
+                        && tx.from_pub_key == node_pub_key;
+
+                    if is_faucet {
+                        // Faucet mint: credit recipient without debiting sender
+                        *balances.entry(to_pub_key.clone()).or_insert(0.0) += amount;
+                        return;
+                    }
+
                     if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
-                        // Balance guard for token transfer
                         let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
                         if xrge_bal < tx.fee {
                             eprintln!("[node] Rejecting transfer: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
@@ -2125,7 +2133,6 @@ impl L1Node {
                             *token_balances.entry(recipient_key).or_insert(0.0) += amount;
                         }
                     } else {
-                        // Balance guard for XRGE transfer
                         let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
                         if xrge_bal < amount + tx.fee {
                             eprintln!("[node] Rejecting transfer: insufficient XRGE ({:.4} < {:.4})", xrge_bal, amount + tx.fee);
