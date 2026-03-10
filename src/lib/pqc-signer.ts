@@ -33,12 +33,15 @@ function bytesToHex(bytes: Uint8Array): string {
  */
 export interface TransactionPayload {
   type: "transfer" | "create_token" | "swap" | "create_pool" | "add_liquidity" | "remove_liquidity" | "stake" | "unstake" | "faucet"
-  | "nft_create_collection" | "nft_mint" | "nft_batch_mint" | "nft_transfer" | "nft_burn" | "nft_lock" | "nft_freeze_collection";
+  | "nft_create_collection" | "nft_mint" | "nft_batch_mint" | "nft_transfer" | "nft_burn" | "nft_lock" | "nft_freeze_collection"
+  | "bridge_withdraw";
   from: string;
   to?: string;
   amount?: number;
   fee?: number;
   token?: string;
+  tokenSymbol?: string;
+  evmAddress?: string;
   timestamp: number;
   nonce: string;
   // Token creation
@@ -521,6 +524,32 @@ export function createSignedNftFreezeCollection(
     nonce: generateNonce(),
   };
   return signTransaction(payload, privateKey, publicKey);
+}
+
+// ============================================
+// Bridge signing helpers
+// ============================================
+
+export function createSignedBridgeWithdraw(
+  fromPublicKey: string,
+  fromPrivateKey: string,
+  amountUnits: number,
+  evmAddress: string,
+  tokenSymbol: string = "qETH",
+  fee: number = 0.1
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "bridge_withdraw",
+    from: fromPublicKey,
+    amount: amountUnits,
+    fee,
+    tokenSymbol,
+    evmAddress: evmAddress.startsWith("0x") ? evmAddress : `0x${evmAddress}`,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+
+  return signTransaction(payload, fromPrivateKey, fromPublicKey);
 }
 
 /**

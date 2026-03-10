@@ -23,6 +23,7 @@ const PRIVATE_KEY = process.env.BRIDGE_CUSTODY_PRIVATE_KEY;
 const RPC_URL = process.env.BASE_SEPOLIA_RPC || "https://sepolia.base.org";
 const POLL_MS = parseInt(process.env.POLL_INTERVAL_MS || "5000", 10);
 const VAULT_ADDRESS = process.env.XRGE_BRIDGE_VAULT;
+const RELAYER_SECRET = process.env.BRIDGE_RELAYER_SECRET || "";
 
 // ── ABIs ────────────────────────────────────────────────────────
 
@@ -31,6 +32,14 @@ const BRIDGE_VAULT_ABI = parseAbi([
   "function totalLocked() external view returns (uint256)",
   "function vaultBalance() external view returns (uint256)",
 ]);
+
+const ROUGE_BRIDGE_ABI = parseAbi([
+  "function releaseETH(address to, uint256 amount, bytes32 l1TxId) external",
+  "function releaseERC20(address token, address to, uint256 amount, bytes32 l1TxId) external",
+]);
+
+const ROUGE_BRIDGE_ADDRESS = process.env.ROUGE_BRIDGE_ADDRESS;
+const USDC_ADDRESS = process.env.USDC_ADDRESS || "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -62,6 +71,10 @@ async function fetchEthWithdrawals(): Promise<EthWithdrawal[]> {
 async function fulfillEthWithdrawal(txId: string): Promise<boolean> {
   const res = await fetch(`${CORE_API_URL}/api/bridge/withdrawals/${encodeURIComponent(txId)}`, {
     method: "DELETE",
+    headers: {
+      "x-bridge-relayer-secret": RELAYER_SECRET,
+      "Content-Type": "application/json",
+    },
   });
   const data = await res.json().catch(() => ({}));
   return data.success === true;
@@ -90,6 +103,10 @@ async function fulfillXrgeWithdrawal(txId: string): Promise<boolean> {
   try {
     const res = await fetch(`${CORE_API_URL}/api/bridge/xrge/withdrawals/${encodeURIComponent(txId)}`, {
       method: "DELETE",
+      headers: {
+        "x-bridge-relayer-secret": RELAYER_SECRET,
+        "Content-Type": "application/json",
+      },
     });
     const data = await res.json().catch(() => ({}));
     return data.success === true;
@@ -135,6 +152,17 @@ async function main() {
     console.log("[relayer] No XRGE_BRIDGE_VAULT set — XRGE bridge disabled");
   }
 
+  // Set up RougeBridge contract if configured
+  let bridgeContract: ReturnType<typeof getContract> | null = null;
+  if (ROUGE_BRIDGE_ADDRESS) {
+    bridgeContract = getContract({
+      address: ROUGE_BRIDGE_ADDRESS as `0x${string}`,
+      abi: ROUGE_BRIDGE_ABI,
+      client: { public: publicClient, wallet: walletClient },
+    });
+    console.log(`[relayer] RougeBridge contract: ${ROUGE_BRIDGE_ADDRESS}`);
+  }
+
   // ── ETH bridge loop ───────────────────────────────────────────
   const processEthWithdrawals = async () => {
     try {
@@ -142,45 +170,36 @@ async function main() {
       if (withdrawals.length === 0) return;
 
       const balance = await publicClient.getBalance({ address: account.address });
-      const nonce = await publicClient.getTransactionCount({
-        address: account.address,
-        blockTag: "pending",
-      });
       console.log(`[relayer/ETH] Pending: ${withdrawals.length}, Balance: ${(Number(balance) / 1e18).toFixed(6)} ETH`);
 
-      const gasReserve = 100n * 21000n * 2n;
-      let remaining = balance - gasReserve;
-      const affordable: { w: EthWithdrawal; wei: bigint; i: number }[] = [];
-      for (let i = 0; i < withdrawals.length && remaining > 0n; i++) {
-        const w = withdrawals[i];
-        const wei = unitsToWei(w.amount_units);
-        if (wei <= remaining) {
-          affordable.push({ w, wei, i });
-          remaining -= wei;
-        } else {
-          console.warn(`[relayer/ETH] Skipping ${w.tx_id} (need ${Number(wei) / 1e18} ETH)`);
-        }
-      }
+      for (const w of withdrawals) {
+        try {
+          const wei = unitsToWei(w.amount_units);
 
-      const results = await Promise.allSettled(
-        affordable.map(async ({ w, wei }, idx) => {
-          const hash = await walletClient.sendTransaction({
-            to: w.evm_address as `0x${string}`,
-            value: wei,
-            gas: 21000n,
-            nonce: nonce + idx,
-          });
-          console.log(`[relayer/ETH] Sent ${Number(wei) / 1e18} ETH to ${w.evm_address.slice(0, 10)}... tx: ${hash}`);
+          if (bridgeContract) {
+            const l1TxIdBytes = `0x${w.tx_id.padEnd(64, "0").slice(0, 64)}` as `0x${string}`;
+            const hash = await (bridgeContract as any).write.releaseETH([
+              w.evm_address as `0x${string}`,
+              wei,
+              l1TxIdBytes,
+            ]);
+            console.log(`[relayer/ETH] Released via contract ${Number(wei) / 1e18} ETH to ${w.evm_address.slice(0, 10)}... tx: ${hash}`);
+          } else {
+            const hash = await walletClient.sendTransaction({
+              to: w.evm_address as `0x${string}`,
+              value: wei,
+              gas: 21000n,
+            });
+            console.log(`[relayer/ETH] Sent ${Number(wei) / 1e18} ETH to ${w.evm_address.slice(0, 10)}... tx: ${hash}`);
+          }
+
           const ok = await fulfillEthWithdrawal(w.tx_id);
           if (ok) console.log(`[relayer/ETH] Fulfilled ${w.tx_id}`);
           else console.warn(`[relayer/ETH] Failed to mark fulfilled: ${w.tx_id}`);
-        })
-      );
-      results.forEach((r, i) => {
-        if (r.status === "rejected") {
-          console.error(`[relayer/ETH] Tx failed for ${affordable[i]?.w.tx_id}:`, r.reason);
+        } catch (e) {
+          console.error(`[relayer/ETH] Tx failed for ${w.tx_id}:`, e);
         }
-      });
+      }
     } catch (e) {
       console.error("[relayer/ETH] Poll error:", e);
     }

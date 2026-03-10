@@ -20,6 +20,7 @@ import {
   ERC20_ABI,
   BRIDGE_VAULT_ABI,
 } from "@/lib/bridge";
+import { createSignedBridgeWithdraw } from "@/lib/pqc-signer";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { getWalletBalance } from "@/lib/pqc-wallet";
 import { qethToHuman, humanToQeth, formatQethForDisplay } from "@/hooks/use-eth-price";
@@ -37,6 +38,8 @@ const Bridge = () => {
   const [withdrawEvmAddress, setWithdrawEvmAddress] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
   const [qethBalance, setQethBalance] = useState(0);
+  const [qusdcBalance, setQusdcBalance] = useState(0);
+  const [bridgeToken, setBridgeToken] = useState<"ETH" | "USDC">("ETH");
   // XRGE bridge state
   const [xrgeDepositAmount, setXrgeDepositAmount] = useState("");
   const [xrgeDepositing, setXrgeDepositing] = useState(false);
@@ -68,6 +71,8 @@ const Bridge = () => {
     getWalletBalance(wallet.signingPublicKey).then((balances) => {
       const qeth = balances.find((b) => b.symbol === "qETH")?.balance ?? 0;
       setQethBalance(qeth);
+      const qusdc = balances.find((b) => b.symbol === "qUSDC")?.balance ?? 0;
+      setQusdcBalance(qusdc);
       const xrge = balances.find((b) => b.symbol === "XRGE")?.balance ?? 0;
       setXrgeL1Balance(xrge);
     });
@@ -119,9 +124,12 @@ const Bridge = () => {
       toast.error("Enter a valid amount");
       return;
     }
-    const amountUnits = humanToQeth(amountNum);
-    if (amountUnits > qethBalance) {
-      toast.error("Insufficient qETH balance");
+    const isUsdc = bridgeToken === "USDC";
+    const amountUnits = isUsdc ? Math.round(amountNum * 1e6) : humanToQeth(amountNum);
+    const currentBalance = isUsdc ? qusdcBalance : qethBalance;
+    const tokenLabel = isUsdc ? "qUSDC" : "qETH";
+    if (amountUnits > currentBalance) {
+      toast.error(`Insufficient ${tokenLabel} balance`);
       return;
     }
     const evm = withdrawEvmAddress.trim();
@@ -131,11 +139,21 @@ const Bridge = () => {
     }
     setWithdrawing(true);
     try {
+      const evmAddr = evm.startsWith("0x") ? evm : `0x${evm}`;
+      const signed = createSignedBridgeWithdraw(
+        wallet.signingPublicKey,
+        wallet.signingPrivateKey,
+        amountUnits,
+        evmAddr,
+        tokenLabel,
+      );
       const result = await bridgeWithdraw({
-        fromPrivateKey: wallet.signingPrivateKey,
         fromPublicKey: wallet.signingPublicKey,
         amountUnits,
-        evmAddress: evm.startsWith("0x") ? evm : `0x${evm}`,
+        evmAddress: evmAddr,
+        tokenSymbol: tokenLabel,
+        signature: signed.signature,
+        payload: signed.payload as unknown as Record<string, unknown>,
       });
       if (result.success) {
         toast.success(`Bridge out submitted! Tx: ${result.txId}`);
@@ -176,6 +194,7 @@ const Bridge = () => {
         evmAddress: evmAddress.trim(),
         evmSignature: signature as string,
         recipientRougechainPubkey: recipient,
+        token: bridgeToken,
       });
       if (result.success) {
         toast.success(`Claim submitted! Tx: ${result.txId}`);
@@ -299,11 +318,20 @@ const Bridge = () => {
     }
     setXrgeWithdrawing(true);
     try {
+      const evmAddr = evm.startsWith("0x") ? evm : `0x${evm}`;
+      const signed = createSignedBridgeWithdraw(
+        wallet.signingPublicKey,
+        wallet.signingPrivateKey,
+        amountNum,
+        evmAddr,
+        "XRGE",
+      );
       const result = await bridgeWithdrawXrge({
-        fromPrivateKey: wallet.signingPrivateKey,
         fromPublicKey: wallet.signingPublicKey,
         amount: amountNum,
-        evmAddress: evm.startsWith("0x") ? evm : `0x${evm}`,
+        evmAddress: evmAddr,
+        signature: signed.signature,
+        payload: signed.payload as unknown as Record<string, unknown>,
       });
       if (result.success) {
         toast.success(`XRGE bridge out submitted! Tx: ${result.txId}`);
@@ -516,10 +544,23 @@ const Bridge = () => {
           {/* ── ETH Bridge In (existing) ─────────────────────── */}
           {config?.enabled && (
             <TabsContent value="eth-in" className="space-y-6 mt-6">
-              <div className="rounded-lg border border-primary/10 bg-primary/5 p-4">
-                <p className="text-sm text-muted-foreground">
-                  <span className="font-medium text-foreground">ETH → qETH</span> — Send Base Sepolia ETH to the custody address, then claim your qETH on RougeChain.
-                </p>
+              <div className="rounded-lg border border-primary/10 bg-primary/5 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    <span className="font-medium text-foreground">{bridgeToken === "ETH" ? "ETH → qETH" : "USDC → qUSDC"}</span> — {bridgeToken === "ETH" ? "Send Base Sepolia ETH to the custody address, then claim your qETH on RougeChain." : "Send USDC to the bridge contract, then claim your qUSDC on RougeChain."}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs">Token:</Label>
+                  <Button
+                    size="sm" variant={bridgeToken === "ETH" ? "default" : "outline"}
+                    onClick={() => setBridgeToken("ETH")} className="h-7 px-3 text-xs"
+                  >ETH</Button>
+                  <Button
+                    size="sm" variant={bridgeToken === "USDC" ? "default" : "outline"}
+                    onClick={() => setBridgeToken("USDC")} className="h-7 px-3 text-xs"
+                  >USDC</Button>
+                </div>
               </div>
 
               <Card className="border-primary/20">
@@ -628,24 +669,42 @@ const Bridge = () => {
           {/* ── ETH Bridge Out (existing) ────────────────────── */}
           {config?.enabled && (
             <TabsContent value="eth-out" className="space-y-6 mt-6">
-              <div className="rounded-lg border border-primary/10 bg-primary/5 p-4">
-                <p className="text-sm text-muted-foreground">
-                  <span className="font-medium text-foreground">qETH → ETH</span> — Burn qETH on RougeChain and receive ETH back on Base Sepolia.
-                </p>
+              <div className="rounded-lg border border-primary/10 bg-primary/5 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    <span className="font-medium text-foreground">{bridgeToken === "ETH" ? "qETH → ETH" : "qUSDC → USDC"}</span> — {bridgeToken === "ETH" ? "Burn qETH on RougeChain and receive ETH back on Base Sepolia." : "Burn qUSDC on RougeChain and receive USDC back on Base Sepolia."}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs">Token:</Label>
+                  <Button
+                    size="sm" variant={bridgeToken === "ETH" ? "default" : "outline"}
+                    onClick={() => setBridgeToken("ETH")} className="h-7 px-3 text-xs"
+                  >ETH</Button>
+                  <Button
+                    size="sm" variant={bridgeToken === "USDC" ? "default" : "outline"}
+                    onClick={() => setBridgeToken("USDC")} className="h-7 px-3 text-xs"
+                  >USDC</Button>
+                </div>
               </div>
 
               <Card className="border-primary/20">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Withdraw qETH</CardTitle>
+                  <CardTitle className="text-base">Withdraw {bridgeToken === "ETH" ? "qETH" : "qUSDC"}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center justify-between rounded-md border border-border/50 bg-muted/30 px-4 py-3">
-                    <span className="text-sm text-muted-foreground">Your qETH Balance</span>
-                    <span className="font-mono font-medium">{formatQethForDisplay(qethBalance)} qETH</span>
+                    <span className="text-sm text-muted-foreground">Your {bridgeToken === "ETH" ? "qETH" : "qUSDC"} Balance</span>
+                    <span className="font-mono font-medium">
+                      {bridgeToken === "ETH"
+                        ? `${formatQethForDisplay(qethBalance)} qETH`
+                        : `${(qusdcBalance / 1e6).toFixed(2)} qUSDC`
+                      }
+                    </span>
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Amount (qETH)</Label>
+                    <Label>Amount ({bridgeToken === "ETH" ? "qETH" : "qUSDC"})</Label>
                     <Input
                       type="number"
                       step="0.000001"
@@ -656,12 +715,12 @@ const Bridge = () => {
                     />
                     {withdrawAmount && !isNaN(parseFloat(withdrawAmount)) && parseFloat(withdrawAmount) > 0 && (
                       <p className="text-xs text-muted-foreground">
-                        ≈ {parseFloat(withdrawAmount).toFixed(6)} ETH on Base Sepolia
+                        ≈ {parseFloat(withdrawAmount).toFixed(bridgeToken === "USDC" ? 2 : 6)} {bridgeToken} on Base Sepolia
                       </p>
                     )}
                   </div>
                   <div className="space-y-2">
-                    <Label>Receive ETH at (Base Sepolia address)</Label>
+                    <Label>Receive {bridgeToken} at (Base Sepolia address)</Label>
                     <Input
                       placeholder="0x..."
                       value={withdrawEvmAddress}
@@ -671,7 +730,7 @@ const Bridge = () => {
                   </div>
                   <Button
                     onClick={handleWithdraw}
-                    disabled={withdrawing || !withdrawAmount || !withdrawEvmAddress || !loadUnifiedWallet()?.signingPrivateKey || qethBalance < humanToQeth(parseFloat(withdrawAmount) || 0)}
+                    disabled={withdrawing || !withdrawAmount || !withdrawEvmAddress || !loadUnifiedWallet()?.signingPrivateKey}
                     className="w-full gap-2"
                   >
                     {withdrawing ? (
@@ -680,7 +739,7 @@ const Bridge = () => {
                         Submitting...
                       </>
                     ) : (
-                      "Bridge Out qETH"
+                      `Bridge Out ${bridgeToken === "ETH" ? "qETH" : "qUSDC"}`
                     )}
                   </Button>
                   <p className="text-xs text-muted-foreground text-center">

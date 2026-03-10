@@ -103,6 +103,8 @@ struct AppState {
     base_sepolia_rpc: String,
     bridge_claim_store: Arc<BridgeClaimStore>,
     bridge_withdraw_store: std::sync::Arc<BridgeWithdrawStore>,
+    bridge_relayer_secret: Option<String>,
+    xrge_bridge_vault: Option<String>,
 }
 
 #[derive(Clone)]
@@ -268,6 +270,8 @@ async fn main() -> Result<(), String> {
         base_sepolia_rpc: args.base_sepolia_rpc.clone(),
         bridge_claim_store,
         bridge_withdraw_store,
+        bridge_relayer_secret: std::env::var("BRIDGE_RELAYER_SECRET").ok().filter(|s| !s.is_empty()),
+        xrge_bridge_vault: std::env::var("XRGE_BRIDGE_VAULT").ok().filter(|s| !s.is_empty()),
     };
     
     eprintln!("[core-daemon] WebSocket broadcaster initialized");
@@ -434,6 +438,12 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/bridge/withdraw", post(bridge_withdraw))
         .route("/api/bridge/withdrawals", get(bridge_withdrawals))
         .route("/api/bridge/withdrawals/:tx_id", delete(bridge_withdrawal_fulfill))
+        // XRGE bridge endpoints
+        .route("/api/bridge/xrge/config", get(xrge_bridge_config))
+        .route("/api/bridge/xrge/claim", post(xrge_bridge_claim))
+        .route("/api/bridge/xrge/withdraw", post(xrge_bridge_withdraw))
+        .route("/api/bridge/xrge/withdrawals", get(xrge_bridge_withdrawals))
+        .route("/api/bridge/xrge/withdrawals/:tx_id", delete(xrge_bridge_fulfill))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(
             CorsLayer::new()
@@ -456,7 +466,7 @@ async fn auth_middleware<B>(
     if path == "/api/health" || path == "/api/stats" {
         return Ok(next.run(request).await);
     }
-    if path == "/api/faucet" || path == "/api/tx/submit" || path == "/api/stake/submit" || path == "/api/unstake/submit" || path == "/api/token/create" || path == "/api/bridge/claim" || path == "/api/bridge/config" || path == "/api/bridge/withdraw" || path == "/api/bridge/withdrawals" || path.starts_with("/api/bridge/withdrawals/") {
+    if path == "/api/faucet" || path == "/api/tx/submit" || path == "/api/stake/submit" || path == "/api/unstake/submit" || path == "/api/token/create" || path.starts_with("/api/bridge/") {
         return Ok(next.run(request).await);
     }
     // Bypass rate limiting for secure v2 endpoints
@@ -3809,6 +3819,52 @@ struct BridgeConfigResponse {
     enabled: bool,
     custody_address: Option<String>,
     chain_id: u64,
+    supported_tokens: Vec<String>,
+}
+
+/// Parse ERC-20 Transfer event amount from a transaction receipt.
+/// ERC-20 Transfer topic: 0xddf252ad...
+/// Returns the amount in the token's smallest units.
+async fn parse_erc20_transfer_amount(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    tx_hash: &str,
+) -> Result<u64, String> {
+    let resp = client
+        .post(rpc_url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_getTransactionReceipt",
+            "params": [tx_hash],
+            "id": 1,
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let result = json.get("result").ok_or("No receipt")?;
+    let logs = result.get("logs").and_then(|v| v.as_array()).ok_or("No logs")?;
+
+    let transfer_topic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+    for log in logs {
+        let topics = log.get("topics").and_then(|v| v.as_array());
+        if let Some(topics) = topics {
+            if topics.len() >= 3 {
+                let topic0 = topics[0].as_str().unwrap_or("");
+                if topic0 == transfer_topic {
+                    let data = log.get("data").and_then(|v| v.as_str()).unwrap_or("0x0");
+                    let amount = u128::from_str_radix(
+                        data.trim_start_matches("0x"),
+                        16,
+                    ).unwrap_or(0);
+                    // USDC has 6 decimals; we store qUSDC in the same 6-decimal units
+                    return Ok(amount as u64);
+                }
+            }
+        }
+    }
+    Err("No Transfer event found".to_string())
 }
 
 async fn bridge_config(State(state): State<AppState>) -> Json<BridgeConfigResponse> {
@@ -3819,7 +3875,8 @@ async fn bridge_config(State(state): State<AppState>) -> Json<BridgeConfigRespon
     Json(BridgeConfigResponse {
         enabled,
         custody_address,
-        chain_id: 84532, // Base Sepolia
+        chain_id: 84532,
+        supported_tokens: vec!["ETH".to_string(), "USDC".to_string()],
     })
 }
 
@@ -3828,8 +3885,9 @@ async fn bridge_config(State(state): State<AppState>) -> Json<BridgeConfigRespon
 struct BridgeClaimRequest {
     evm_tx_hash: String,
     evm_address: String,
-    evm_signature: String, // personal_sign of claim message - proves sender owns the deposit
+    evm_signature: String,
     recipient_rougechain_pubkey: String,
+    token: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -4014,14 +4072,35 @@ async fn bridge_claim(
             }
         }
     }
-    let amount_units = (value_wei / 1_000_000_000_000) as u64;
-    if amount_units == 0 {
-        return Ok(Json(BridgeClaimResponse {
-            success: false,
-            tx_id: None,
-            error: Some("Amount too small (min 0.000001 ETH)".to_string()),
-        }));
-    }
+    let bridge_token = body.token.as_deref().unwrap_or("ETH").to_uppercase();
+
+    let (amount_units, mint_symbol) = match bridge_token.as_str() {
+        "USDC" => {
+            // USDC has 6 decimals on EVM. We check the tx receipt for ERC-20 transfer logs.
+            // For USDC, value_wei from the ETH tx will be 0 (it's an ERC-20 transfer).
+            // We need to parse the transfer amount from the logs.
+            let usdc_amount = parse_erc20_transfer_amount(
+                &client, &rpc_url, &tx_hash_hex
+            ).await.unwrap_or(0);
+            if usdc_amount == 0 {
+                return Ok(Json(BridgeClaimResponse {
+                    success: false, tx_id: None,
+                    error: Some("No USDC transfer found in transaction".to_string()),
+                }));
+            }
+            (usdc_amount, "qUSDC")
+        }
+        _ => {
+            let units = (value_wei / 1_000_000_000_000) as u64;
+            if units == 0 {
+                return Ok(Json(BridgeClaimResponse {
+                    success: false, tx_id: None,
+                    error: Some("Amount too small (min 0.000001 ETH)".to_string()),
+                }));
+            }
+            (units, "qETH")
+        }
+    };
 
     if let Err(e) = state.bridge_claim_store.insert(tx_hash_hex.clone()).await {
         return Ok(Json(BridgeClaimResponse {
@@ -4033,7 +4112,7 @@ async fn bridge_claim(
 
     use quantum_vault_crypto::{bytes_to_hex, sha256};
     use quantum_vault_types::encode_tx_v1;
-    match state.node.submit_bridge_mint_tx(&recipient, amount_units, "qETH") {
+    match state.node.submit_bridge_mint_tx(&recipient, amount_units, mint_symbol) {
         Ok(tx) => {
             let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
             Ok(Json(BridgeClaimResponse {
@@ -4053,11 +4132,14 @@ async fn bridge_claim(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BridgeWithdrawRequest {
-    from_private_key: String,
+    #[serde(default)]
+    from_private_key: Option<String>,
     from_public_key: String,
     amount_units: u64,
     evm_address: String,
     fee: Option<f64>,
+    signature: Option<String>,
+    payload: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -4086,13 +4168,51 @@ async fn bridge_withdraw(
             error: Some("Amount must be greater than 0".to_string()),
         }));
     }
-    match state.node.submit_bridge_withdraw_tx(
-        &body.from_private_key,
-        &body.from_public_key,
-        body.amount_units,
-        &body.evm_address,
-        body.fee,
-    ) {
+
+    let token_symbol = body.payload.as_ref()
+        .and_then(|p| p.get("tokenSymbol"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("qETH")
+        .to_string();
+
+    // Prefer signed payload (client-side signing) over raw private key
+    let tx_result = if let (Some(signature), Some(payload)) = (&body.signature, &body.payload) {
+        let signed_req = SignedTransactionRequest {
+            payload: payload.clone(),
+            signature: signature.clone(),
+            public_key: body.from_public_key.clone(),
+        };
+        if let Err(e) = verify_signed_tx(&signed_req) {
+            return Ok(Json(BridgeWithdrawResponse {
+                success: false,
+                tx_id: None,
+                error: Some(format!("Signature verification failed: {}", e)),
+            }));
+        }
+        state.node.submit_bridge_withdraw_tx_signed(
+            &body.from_public_key,
+            body.amount_units,
+            &body.evm_address,
+            body.fee,
+            &token_symbol,
+        )
+    } else if let Some(ref private_key) = body.from_private_key {
+        state.node.submit_bridge_withdraw_tx(
+            private_key,
+            &body.from_public_key,
+            body.amount_units,
+            &body.evm_address,
+            body.fee,
+        )
+    } else {
+        return Ok(Json(BridgeWithdrawResponse {
+            success: false,
+            tx_id: None,
+            error: Some("Either signature+payload or fromPrivateKey is required".to_string()),
+        }));
+    };
+
+    match tx_result {
         Ok(tx) => {
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
             state.ws_broadcaster.broadcast_new_tx(
@@ -4158,21 +4278,43 @@ struct BridgeFulfillResponse {
 async fn bridge_withdrawal_fulfill(
     State(state): State<AppState>,
     Path(tx_id): Path<String>,
-    Json(body): Json<SignedTransactionRequest>,
+    headers: axum::http::HeaderMap,
+    body: String,
 ) -> Json<BridgeFulfillResponse> {
-    // Only the node operator can fulfill withdrawals
-    let node_pub_key = state.node.get_node_public_key();
-    if body.public_key != node_pub_key {
-        return Json(BridgeFulfillResponse {
-            success: false,
-            error: Some("unauthorized: only the node operator can fulfill withdrawals".to_string()),
-        });
-    }
-    if let Err(e) = verify_signed_tx(&body) {
-        return Json(BridgeFulfillResponse {
-            success: false,
-            error: Some(format!("signature verification failed: {}", e)),
-        });
+    let relayer_auth = if let Some(ref secret) = state.bridge_relayer_secret {
+        headers.get("x-bridge-relayer-secret")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v == secret.as_str())
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    if !relayer_auth {
+        let parsed: Result<SignedTransactionRequest, _> = serde_json::from_str(&body);
+        match parsed {
+            Ok(signed_body) => {
+                let node_pub_key = state.node.get_node_public_key();
+                if signed_body.public_key != node_pub_key {
+                    return Json(BridgeFulfillResponse {
+                        success: false,
+                        error: Some("unauthorized: only the node operator can fulfill withdrawals".to_string()),
+                    });
+                }
+                if let Err(e) = verify_signed_tx(&signed_body) {
+                    return Json(BridgeFulfillResponse {
+                        success: false,
+                        error: Some(format!("signature verification failed: {}", e)),
+                    });
+                }
+            }
+            Err(_) => {
+                return Json(BridgeFulfillResponse {
+                    success: false,
+                    error: Some("unauthorized: provide x-bridge-relayer-secret header or signed body".to_string()),
+                });
+            }
+        }
     }
 
     match state.bridge_withdraw_store.remove(&tx_id) {
@@ -4188,6 +4330,235 @@ async fn bridge_withdrawal_fulfill(
             success: false,
             error: Some(e),
         }),
+    }
+}
+
+// ============================================
+// XRGE Bridge endpoints (Base <-> RougeChain L1)
+// ============================================
+
+async fn xrge_bridge_config(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let enabled = state.xrge_bridge_vault.is_some();
+    Json(serde_json::json!({
+        "enabled": enabled,
+        "vaultAddress": state.xrge_bridge_vault,
+        "tokenAddress": "0x147120faEC9277ec02d957584CFCD92B56A24317",
+        "chainId": 84532,
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct XrgeBridgeClaimRequest {
+    evm_tx_hash: String,
+    evm_address: String,
+    amount: String,
+    recipient_rougechain_pubkey: String,
+}
+
+async fn xrge_bridge_claim(
+    State(state): State<AppState>,
+    Json(body): Json<XrgeBridgeClaimRequest>,
+) -> Json<serde_json::Value> {
+    if state.xrge_bridge_vault.is_none() {
+        return Json(serde_json::json!({ "success": false, "error": "XRGE bridge not enabled" }));
+    }
+    let tx_hash = body.evm_tx_hash.trim_start_matches("0x").to_lowercase();
+    let tx_hash_hex = format!("0x{}", tx_hash);
+    let prefixed_hash = format!("xrge:{}", tx_hash_hex);
+
+    if state.bridge_claim_store.contains(&prefixed_hash).await {
+        return Json(serde_json::json!({ "success": false, "error": "Transaction already claimed" }));
+    }
+
+    let amount_raw: f64 = body.amount.parse().unwrap_or(0.0);
+    let amount_l1 = (amount_raw / 1e18).round() as u64;
+    if amount_l1 == 0 {
+        return Json(serde_json::json!({ "success": false, "error": "Amount too small" }));
+    }
+
+    let recipient = normalize_recipient(&body.recipient_rougechain_pubkey);
+
+    let client = reqwest::Client::new();
+    let rpc_url = &state.base_sepolia_rpc;
+    let resp = client
+        .post(rpc_url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_getTransactionReceipt",
+            "params": [tx_hash_hex],
+            "id": 1,
+        }))
+        .send()
+        .await;
+
+    let receipt_ok = match resp {
+        Ok(r) => match r.json::<serde_json::Value>().await {
+            Ok(j) => {
+                let result = j.get("result");
+                match result {
+                    Some(serde_json::Value::Null) | None => false,
+                    Some(obj) => {
+                        let status = obj.get("status").and_then(|v| v.as_str()).unwrap_or("0x0");
+                        status == "0x1"
+                    }
+                }
+            }
+            Err(_) => false,
+        },
+        Err(_) => false,
+    };
+
+    if !receipt_ok {
+        return Json(serde_json::json!({ "success": false, "error": "Transaction not confirmed or failed" }));
+    }
+
+    if let Err(e) = state.bridge_claim_store.insert(prefixed_hash).await {
+        return Json(serde_json::json!({ "success": false, "error": format!("Failed to persist claim: {}", e) }));
+    }
+
+    use quantum_vault_crypto::{bytes_to_hex, sha256};
+    use quantum_vault_types::encode_tx_v1;
+    match state.node.submit_bridge_mint_tx(&recipient, amount_l1, "XRGE") {
+        Ok(tx) => {
+            let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
+            Json(serde_json::json!({ "success": true, "txId": id }))
+        }
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct XrgeBridgeWithdrawRequest {
+    from_public_key: String,
+    amount: u64,
+    evm_address: String,
+    signature: Option<String>,
+    payload: Option<serde_json::Value>,
+    #[serde(default)]
+    from_private_key: Option<String>,
+}
+
+async fn xrge_bridge_withdraw(
+    State(state): State<AppState>,
+    Json(body): Json<XrgeBridgeWithdrawRequest>,
+) -> Json<serde_json::Value> {
+    if state.xrge_bridge_vault.is_none() {
+        return Json(serde_json::json!({ "success": false, "error": "XRGE bridge not enabled" }));
+    }
+    if body.amount == 0 {
+        return Json(serde_json::json!({ "success": false, "error": "Amount must be greater than 0" }));
+    }
+
+    let tx_result = if let (Some(signature), Some(payload)) = (&body.signature, &body.payload) {
+        let signed_req = SignedTransactionRequest {
+            payload: payload.clone(),
+            signature: signature.clone(),
+            public_key: body.from_public_key.clone(),
+        };
+        if let Err(e) = verify_signed_tx(&signed_req) {
+            return Json(serde_json::json!({ "success": false, "error": format!("Signature verification failed: {}", e) }));
+        }
+        state.node.submit_bridge_withdraw_tx_signed(
+            &body.from_public_key,
+            body.amount,
+            &body.evm_address,
+            Some(0.1),
+            "XRGE",
+        )
+    } else if let Some(ref private_key) = body.from_private_key {
+        state.node.submit_bridge_withdraw_tx(
+            private_key,
+            &body.from_public_key,
+            body.amount,
+            &body.evm_address,
+            Some(0.1),
+        )
+    } else {
+        return Json(serde_json::json!({ "success": false, "error": "Either signature+payload or fromPrivateKey is required" }));
+    };
+
+    match tx_result {
+        Ok(tx) => {
+            let id = quantum_vault_crypto::bytes_to_hex(
+                &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)),
+            );
+            state.ws_broadcaster.broadcast_new_tx(
+                &id, &tx.tx_type, &tx.from_pub_key,
+                tx.payload.evm_address.as_deref(), tx.payload.amount,
+            );
+            let peers = state.peer_manager.get_peers().await;
+            if !peers.is_empty() { peer::broadcast_tx(&peers, &tx); }
+            Json(serde_json::json!({ "success": true, "txId": id }))
+        }
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+async fn xrge_bridge_withdrawals(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let list = state.bridge_withdraw_store.list().unwrap_or_default();
+    let xrge_withdrawals: Vec<_> = list.into_iter()
+        .filter(|w| w.tx_id.starts_with("xrge:") || {
+            // TODO: once we tag token_symbol in PendingWithdrawal, filter properly
+            false
+        })
+        .map(|w| serde_json::json!({
+            "tx_id": w.tx_id,
+            "evm_address": w.evm_address,
+            "amount": w.amount_units,
+            "created_at": w.created_at,
+        }))
+        .collect();
+    Json(serde_json::json!({ "withdrawals": xrge_withdrawals }))
+}
+
+async fn xrge_bridge_fulfill(
+    State(state): State<AppState>,
+    Path(tx_id): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> Json<BridgeFulfillResponse> {
+    let relayer_auth = if let Some(ref secret) = state.bridge_relayer_secret {
+        headers.get("x-bridge-relayer-secret")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v == secret.as_str())
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    if !relayer_auth {
+        let parsed: Result<SignedTransactionRequest, _> = serde_json::from_str(&body);
+        match parsed {
+            Ok(signed_body) => {
+                let node_pub_key = state.node.get_node_public_key();
+                if signed_body.public_key != node_pub_key {
+                    return Json(BridgeFulfillResponse {
+                        success: false,
+                        error: Some("unauthorized".to_string()),
+                    });
+                }
+                if let Err(e) = verify_signed_tx(&signed_body) {
+                    return Json(BridgeFulfillResponse {
+                        success: false,
+                        error: Some(format!("signature verification failed: {}", e)),
+                    });
+                }
+            }
+            Err(_) => {
+                return Json(BridgeFulfillResponse {
+                    success: false,
+                    error: Some("unauthorized: provide x-bridge-relayer-secret header or signed body".to_string()),
+                });
+            }
+        }
+    }
+
+    match state.bridge_withdraw_store.remove(&tx_id) {
+        Ok(true) => Json(BridgeFulfillResponse { success: true, error: None }),
+        Ok(false) => Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found".to_string()) }),
+        Err(e) => Json(BridgeFulfillResponse { success: false, error: Some(e) }),
     }
 }
 

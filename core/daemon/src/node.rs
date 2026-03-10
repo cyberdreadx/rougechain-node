@@ -843,6 +843,55 @@ impl L1Node {
         Ok(tx)
     }
 
+    /// Submit a bridge_withdraw tx without requiring a private key (pre-verified signature).
+    pub fn submit_bridge_withdraw_tx_signed(
+        &self,
+        from_public_key: &str,
+        amount_units: u64,
+        evm_address: &str,
+        fee: Option<f64>,
+        token_symbol: &str,
+    ) -> Result<TxV1, String> {
+        let tx_fee = fee.unwrap_or(BASE_TRANSFER_FEE);
+        let xrge_balance = self.get_balance(from_public_key)?;
+        if xrge_balance < tx_fee {
+            return Err(format!("Insufficient XRGE for fee: need {} XRGE", tx_fee));
+        }
+        let token_upper = token_symbol.to_uppercase();
+        let token_balance = self.get_token_balance(from_public_key, &token_upper)?;
+        if token_balance < amount_units as f64 {
+            return Err(format!(
+                "Insufficient {}: have {}, need {}",
+                token_upper, token_balance, amount_units
+            ));
+        }
+        let evm = evm_address.trim().to_lowercase();
+        let evm = if evm.starts_with("0x") { evm } else { format!("0x{}", evm) };
+        if evm.len() != 42 || !evm[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err("Invalid EVM address".to_string());
+        }
+        let keys = self.keys.lock().map_err(|_| "keys lock")?.clone();
+        let mut tx = TxV1 {
+            version: 1,
+            tx_type: "bridge_withdraw".to_string(),
+            from_pub_key: from_public_key.to_string(),
+            nonce: Utc::now().timestamp_millis() as u64,
+            payload: TxPayload {
+                amount: Some(amount_units),
+                token_symbol: Some(token_upper),
+                evm_address: Some(evm),
+                ..Default::default()
+            },
+            fee: tx_fee,
+            sig: String::new(),
+            signed_payload: None,
+        };
+        let bytes = encode_tx_for_signing(&tx);
+        tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
+        self.accept_tx(tx.clone())?;
+        Ok(tx)
+    }
+
     /// Submit a bridge_mint tx (authority only): mint bridged token to recipient.
     /// Used when verifying a deposit from Base Sepolia (or other EVM chain).
     pub fn submit_bridge_mint_tx(
@@ -2235,21 +2284,22 @@ impl L1Node {
                     tx.payload.token_symbol.as_ref(),
                     tx.payload.amount,
                 ) {
-                    if token_symbol.to_uppercase() == "QETH" && amount > 0 {
+                    if amount > 0 {
                         let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
                         if xrge_bal < tx.fee {
                             eprintln!("[node] Rejecting bridge_withdraw: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
                             return;
                         }
-                        let sender_key = (tx.from_pub_key.clone(), token_symbol.clone());
+                        let token_upper = token_symbol.to_uppercase();
+                        let sender_key = (tx.from_pub_key.clone(), token_upper.clone());
                         let token_bal = *token_balances.get(&sender_key).unwrap_or(&0.0);
                         if token_bal < amount as f64 {
-                            eprintln!("[node] Rejecting bridge_withdraw: insufficient qETH ({:.4} < {})", token_bal, amount);
+                            eprintln!("[node] Rejecting bridge_withdraw: insufficient {} ({:.4} < {})", token_upper, token_bal, amount);
                             return;
                         }
                         *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
                         *token_balances.entry(sender_key).or_insert(0.0) -= amount as f64;
-                        *burned_tokens.entry(token_symbol.clone()).or_insert(0.0) += amount as f64;
+                        *burned_tokens.entry(token_upper).or_insert(0.0) += amount as f64;
                     }
                 }
             }

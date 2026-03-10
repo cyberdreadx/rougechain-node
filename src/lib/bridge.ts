@@ -51,6 +51,7 @@ export interface BridgeClaimParams {
   evmAddress: string;
   evmSignature: string;
   recipientRougechainPubkey: string;
+  token?: "ETH" | "USDC";
 }
 
 export interface BridgeClaimResult {
@@ -60,11 +61,15 @@ export interface BridgeClaimResult {
 }
 
 export interface BridgeWithdrawParams {
-  fromPrivateKey: string;
   fromPublicKey: string;
   amountUnits: number;
   evmAddress: string;
   fee?: number;
+  tokenSymbol?: string;
+  signature?: string;
+  payload?: Record<string, unknown>;
+  /** @deprecated Use signature+payload instead */
+  fromPrivateKey?: string;
 }
 
 export interface BridgeWithdrawResult {
@@ -82,16 +87,30 @@ export async function bridgeWithdraw(params: BridgeWithdrawParams): Promise<Brid
   if (!baseUrl) {
     return { success: false, error: "No API configured" };
   }
+  const evmAddr = params.evmAddress.startsWith("0x") ? params.evmAddress : `0x${params.evmAddress}`;
+
+  const body: Record<string, unknown> = {
+    fromPublicKey: params.fromPublicKey,
+    amountUnits: params.amountUnits,
+    evmAddress: evmAddr,
+    fee: params.fee,
+  };
+
+  if (params.signature && params.payload) {
+    body.signature = params.signature;
+    body.payload = params.payload;
+  } else if (params.fromPrivateKey) {
+    body.fromPrivateKey = params.fromPrivateKey;
+  }
+
+  if (params.tokenSymbol) {
+    body.payload = { ...(body.payload as Record<string, unknown> || {}), tokenSymbol: params.tokenSymbol };
+  }
+
   const res = await fetch(`${baseUrl}/bridge/withdraw`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
-    body: JSON.stringify({
-      fromPrivateKey: params.fromPrivateKey,
-      fromPublicKey: params.fromPublicKey,
-      amountUnits: params.amountUnits,
-      evmAddress: params.evmAddress.startsWith("0x") ? params.evmAddress : `0x${params.evmAddress}`,
-      fee: params.fee,
-    }),
+    body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
   return {
@@ -118,6 +137,7 @@ export async function claimBridgeDeposit(params: BridgeClaimParams): Promise<Bri
       evmAddress: params.evmAddress.startsWith("0x") ? params.evmAddress : `0x${params.evmAddress}`,
       evmSignature: params.evmSignature,
       recipientRougechainPubkey: params.recipientRougechainPubkey,
+      token: params.token || "ETH",
     }),
   });
   const data = await res.json().catch(() => ({}));
@@ -127,6 +147,9 @@ export async function claimBridgeDeposit(params: BridgeClaimParams): Promise<Bri
     error: data.error,
   };
 }
+
+/** USDC on Base Sepolia (Circle's testnet USDC) */
+export const USDC_BASE_SEPOLIA = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 
 // ============================================================
 // XRGE Bridge (Base ↔ RougeChain L1 via BridgeVault)
@@ -228,14 +251,16 @@ export async function claimXrgeBridgeDeposit(
 }
 
 export interface XrgeBridgeWithdrawParams {
-  /** Signer private key on L1 */
-  fromPrivateKey: string;
   /** Signer public key on L1 */
   fromPublicKey: string;
   /** Amount to bridge out (in L1 XRGE units) */
   amount: number;
   /** Destination EVM address on Base */
   evmAddress: string;
+  signature?: string;
+  payload?: Record<string, unknown>;
+  /** @deprecated Use signature+payload instead */
+  fromPrivateKey?: string;
 }
 
 /**
@@ -248,15 +273,21 @@ export async function bridgeWithdrawXrge(
   if (!baseUrl) {
     return { success: false, error: "No API configured" };
   }
+  const body: Record<string, unknown> = {
+    fromPublicKey: params.fromPublicKey,
+    amount: params.amount,
+    evmAddress: params.evmAddress.startsWith("0x") ? params.evmAddress : `0x${params.evmAddress}`,
+  };
+  if (params.signature && params.payload) {
+    body.signature = params.signature;
+    body.payload = params.payload;
+  } else if (params.fromPrivateKey) {
+    body.fromPrivateKey = params.fromPrivateKey;
+  }
   const res = await fetch(`${baseUrl}/bridge/xrge/withdraw`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
-    body: JSON.stringify({
-      fromPrivateKey: params.fromPrivateKey,
-      fromPublicKey: params.fromPublicKey,
-      amount: params.amount,
-      evmAddress: params.evmAddress.startsWith("0x") ? params.evmAddress : `0x${params.evmAddress}`,
-    }),
+    body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
   return {
