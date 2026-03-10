@@ -17,6 +17,11 @@ import Swap from "./pages/Swap";
 import Pools from "./pages/Pools";
 import PoolDetail from "./pages/PoolDetail";
 import TokenExplorer from "./pages/TokenExplorer";
+import BlockDetail from "./pages/BlockDetail";
+import TransactionDetail from "./pages/TransactionDetail";
+import AddressDetail from "./pages/AddressDetail";
+import NFTExplorer from "./pages/NFTExplorer";
+import TokensList from "./pages/TokensList";
 import Bridge from "./pages/Bridge";
 import Mail from "./pages/Mail";
 import Privacy from "./pages/Privacy";
@@ -67,6 +72,12 @@ const App = () => (
                 <Route path="/pools" element={<Pools />} />
                 <Route path="/pool/:poolId" element={<PoolDetail />} />
                 <Route path="/token/:symbol" element={<TokenExplorer />} />
+                <Route path="/block/:height" element={<BlockDetail />} />
+                <Route path="/tx/:hash" element={<TransactionDetail />} />
+                <Route path="/address/:pubkey" element={<AddressDetail />} />
+                <Route path="/tokens" element={<TokensList />} />
+                <Route path="/nfts/:collectionId" element={<NFTExplorer />} />
+                <Route path="/nfts" element={<NFTExplorer />} />
                 <Route path="/bridge" element={<Bridge />} />
                 <Route path="/mail" element={<Mail />} />
                 <Route path="/privacy" element={<Privacy />} />

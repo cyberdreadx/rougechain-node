@@ -348,7 +348,10 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/health", get(get_health))
         .route("/api/blocks", get(get_blocks))
         .route("/api/blocks/import", post(import_block))
+        .route("/api/block/:height", get(get_block_by_height))
         .route("/api/txs", get(get_txs))
+        .route("/api/tx/:hash", get(get_tx_by_hash))
+        .route("/api/address/:public_key/transactions", get(get_address_transactions))
         .route("/api/blocks/summary", get(get_blocks_summary))
         .route("/api/balance/:public_key", get(get_balance))
         .route("/api/balance/:public_key/:token_symbol", get(get_token_balance))
@@ -1189,6 +1192,119 @@ async fn import_block(
         }
         Err(e) => Ok(Json(ImportBlockResponse { success: false, error: Some(e) })),
     }
+}
+
+async fn get_block_by_height(
+    State(state): State<AppState>,
+    Path(height): Path<u64>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
+    match node.get_block(height) {
+        Ok(Some(block)) => {
+            let tx_count = block.txs.len();
+            let total_fees: f64 = block.txs.iter().map(|t| t.fee).sum();
+            let txs: Vec<serde_json::Value> = block.txs.iter().map(|tx| {
+                let tx_id = quantum_vault_crypto::bytes_to_hex(
+                    &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
+                );
+                serde_json::json!({
+                    "txId": tx_id,
+                    "tx": tx,
+                })
+            }).collect();
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "block": {
+                    "height": block.header.height,
+                    "hash": block.hash,
+                    "prevHash": block.header.prev_hash,
+                    "time": block.header.time,
+                    "proposer": block.header.proposer_pub_key,
+                    "txHash": block.header.tx_hash,
+                    "txCount": tx_count,
+                    "totalFees": total_fees,
+                    "transactions": txs,
+                }
+            })))
+        }
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+async fn get_tx_by_hash(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
+    let blocks = node.get_all_blocks().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    for block in &blocks {
+        for tx in &block.txs {
+            let tx_id = quantum_vault_crypto::bytes_to_hex(
+                &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
+            );
+            if tx_id == hash {
+                return Ok(Json(serde_json::json!({
+                    "success": true,
+                    "txId": tx_id,
+                    "blockHeight": block.header.height,
+                    "blockHash": block.hash,
+                    "blockTime": block.header.time,
+                    "tx": tx,
+                })));
+            }
+        }
+    }
+    Err(StatusCode::NOT_FOUND)
+}
+
+#[derive(Deserialize)]
+struct AddressTxsQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+async fn get_address_transactions(
+    State(state): State<AppState>,
+    Path(public_key): Path<String>,
+    Query(query): Query<AddressTxsQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
+    let blocks = node.get_all_blocks().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut items: Vec<serde_json::Value> = Vec::new();
+    for block in &blocks {
+        for tx in &block.txs {
+            let is_sender = tx.from_pub_key == public_key;
+            let is_recipient = tx.payload.to_pub_key_hex.as_deref() == Some(&public_key);
+            if is_sender || is_recipient {
+                let tx_id = quantum_vault_crypto::bytes_to_hex(
+                    &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
+                );
+                items.push(serde_json::json!({
+                    "txId": tx_id,
+                    "blockHeight": block.header.height,
+                    "blockHash": block.hash,
+                    "blockTime": block.header.time,
+                    "direction": if is_sender { "out" } else { "in" },
+                    "tx": tx,
+                }));
+            }
+        }
+    }
+    items.sort_by(|a, b| {
+        let bt_a = a["blockTime"].as_u64().unwrap_or(0);
+        let bt_b = b["blockTime"].as_u64().unwrap_or(0);
+        bt_b.cmp(&bt_a)
+    });
+    let total = items.len();
+    let limit = query.limit.unwrap_or(50).min(500);
+    let offset = query.offset.unwrap_or(0);
+    let paged: Vec<serde_json::Value> = items.into_iter().skip(offset).take(limit).collect();
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "transactions": paged,
+        "total": total,
+    })))
 }
 
 #[derive(Deserialize)]

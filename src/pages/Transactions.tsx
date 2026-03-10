@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { Activity, RefreshCw, Copy, Check, Zap, Box, Users, Clock, ChevronLeft, ChevronRight, ExternalLink, ArrowUpRight, ArrowDownLeft, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -487,13 +488,13 @@ const Transactions = () => {
                     <tr key={tx.id} className="hover:bg-secondary/40 transition-colors cursor-pointer" onClick={() => setSelectedTx(tx)}>
                       <td className="py-2 px-2 font-mono">
                         <div className="flex items-center gap-1">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setSelectedTx(tx); }}
+                          <Link
+                            to={`/tx/${tx.id}`}
+                            onClick={(e) => e.stopPropagation()}
                             className="text-primary hover:underline"
-                            title="View transaction details"
                           >
                             {truncateHash(tx.id || tx.blockHash, 8, 6)}
-                          </button>
+                          </Link>
                           <button
                             onClick={(e) => { e.stopPropagation(); copyToClipboard(tx.id || tx.blockHash); }}
                             className="p-1 hover:bg-secondary rounded transition-colors"
@@ -509,29 +510,19 @@ const Transactions = () => {
                       </td>
                       <td className="py-2 px-2 font-mono">
                         <div className="flex items-center gap-1">
-                          <span title={tx.from || "—"}>{truncateHash(tx.from || "—")}</span>
-                          {tx.from && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); copyToClipboard(tx.from); }}
-                              className="p-1 hover:bg-secondary rounded transition-colors"
-                              title="Copy address"
-                            >
-                              {copiedAddress === tx.from ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
-                            </button>
+                          {tx.from && tx.from !== "FAUCET" ? (
+                            <Link to={`/address/${tx.from}`} onClick={(e) => e.stopPropagation()} className="hover:text-primary" title={tx.from}>{truncateHash(tx.from)}</Link>
+                          ) : (
+                            <span title={tx.from || "—"}>{truncateHash(tx.from || "—")}</span>
                           )}
                         </div>
                       </td>
                       <td className="py-2 px-2 font-mono">
                         <div className="flex items-center gap-1">
-                          <span title={tx.to || "—"}>{truncateHash(tx.to || "—")}</span>
-                          {tx.to && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); copyToClipboard(tx.to); }}
-                              className="p-1 hover:bg-secondary rounded transition-colors"
-                              title="Copy address"
-                            >
-                              {copiedAddress === tx.to ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
-                            </button>
+                          {tx.to ? (
+                            <Link to={`/address/${tx.to}`} onClick={(e) => e.stopPropagation()} className="hover:text-primary" title={tx.to}>{truncateHash(tx.to)}</Link>
+                          ) : (
+                            <span>—</span>
                           )}
                         </div>
                       </td>
@@ -541,7 +532,9 @@ const Transactions = () => {
                       <td className="py-2 px-2 text-right font-mono">
                         {tx.fee ? tx.fee.toFixed(2) : "0.00"} <span className="text-muted-foreground">XRGE</span>
                       </td>
-                      <td className="py-2 px-2 font-mono">#{tx.blockHeight}</td>
+                      <td className="py-2 px-2 font-mono">
+                        <Link to={`/block/${tx.blockHeight}`} onClick={(e) => e.stopPropagation()} className="hover:text-primary">#{tx.blockHeight}</Link>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

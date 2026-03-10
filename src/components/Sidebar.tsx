@@ -1,6 +1,5 @@
-import { useState } from "react";
-import { NavLink } from "react-router-dom";
-import { useLocation } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { 
   Home, 
   Wallet, 
@@ -17,10 +16,12 @@ import {
   Droplets,
   Cable,
   Mail,
+  Coins,
+  Image,
+  Search,
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY } from "@/lib/network";
-import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -29,6 +30,8 @@ const navItems = [
   { to: "/swap", label: "Swap", icon: ArrowDownUp },
   { to: "/bridge", label: "Bridge", icon: Cable },
   { to: "/pools", label: "Pools", icon: Droplets },
+  { to: "/tokens", label: "Tokens", icon: Coins },
+  { to: "/nfts", label: "NFTs", icon: Image },
   { to: "/blockchain", label: "Blockchain", icon: Globe2 },
   { to: "/messenger", label: "Messenger", icon: MessageSquare },
   { to: "/mail", label: "Mail", icon: Mail },
@@ -36,6 +39,45 @@ const navItems = [
   { to: "/validators", label: "Validators", icon: Shield },
   { to: "/node", label: "Core Node", icon: Network },
 ];
+
+function GlobalSearch({ visible }: { visible: boolean }) {
+  const [query, setQuery] = useState("");
+  const navigate = useNavigate();
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+    if (/^\d+$/.test(q)) {
+      navigate(`/block/${q}`);
+    } else if (q.length === 64 && /^[0-9a-fA-F]+$/.test(q)) {
+      navigate(`/tx/${q}`);
+    } else if (q.length > 100) {
+      navigate(`/address/${q}`);
+    } else {
+      navigate(`/token/${q.toUpperCase()}`);
+    }
+    setQuery("");
+  };
+
+  return (
+    <div className={cn(
+      "px-3 py-2 border-b border-border transition-all duration-300",
+      visible ? "opacity-100 h-auto" : "opacity-0 h-0 py-0 overflow-hidden"
+    )}>
+      <form onSubmit={handleSearch} className="relative">
+        <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search address / tx / block..."
+          className="w-full pl-7 pr-2 py-1.5 rounded-lg bg-card border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+        />
+      </form>
+    </div>
+  );
+}
 
 interface SidebarProps {
   children: React.ReactNode;
@@ -126,8 +168,11 @@ export function Sidebar({ children }: SidebarProps) {
         </div>
       </div>
 
+      {/* Global Search */}
+      <GlobalSearch visible={expanded || isMobile} />
+
       {/* Navigation Links */}
-      <nav className="flex-1 py-4 px-2 space-y-1">
+      <nav className="flex-1 py-4 px-2 space-y-1 overflow-y-auto">
         {navItems.map((item) => {
           const isActive = location.pathname === item.to;
           const Icon = item.icon;
