@@ -2216,6 +2216,12 @@ impl L1Node {
                 let name = tx.payload.nft_collection_name.as_ref().ok_or("missing nft_collection_name")?;
                 let collection_id = NftCollection::make_collection_id(&tx.from_pub_key, symbol);
 
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting nft_create_collection: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
+                    return Ok(());
+                }
+
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
 
                 let col = NftCollection {
@@ -2246,6 +2252,10 @@ impl L1Node {
                     }
                 };
 
+                if col.creator != tx.from_pub_key {
+                    eprintln!("[node] Rejecting nft_mint: {} is not the creator of collection {}", &tx.from_pub_key[..16], col_id);
+                    return Ok(());
+                }
                 if col.frozen {
                     eprintln!("[node] Warning: Collection {} is frozen, skipping nft_mint", col_id);
                     return Ok(());
@@ -2255,6 +2265,12 @@ impl L1Node {
                         eprintln!("[node] Warning: Collection {} reached max supply, skipping nft_mint", col_id);
                         return Ok(());
                     }
+                }
+
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting nft_mint: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
+                    return Ok(());
                 }
 
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
@@ -2289,6 +2305,10 @@ impl L1Node {
                     }
                 };
 
+                if col.creator != tx.from_pub_key {
+                    eprintln!("[node] Rejecting nft_batch_mint: {} is not the creator of collection {}", &tx.from_pub_key[..16], col_id);
+                    return Ok(());
+                }
                 if col.frozen {
                     eprintln!("[node] Warning: Collection {} is frozen, skipping nft_batch_mint", col_id);
                     return Ok(());
@@ -2298,6 +2318,12 @@ impl L1Node {
                         eprintln!("[node] Warning: Collection {} would exceed max supply, skipping nft_batch_mint", col_id);
                         return Ok(());
                     }
+                }
+
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting nft_batch_mint: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
+                    return Ok(());
                 }
 
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
@@ -2347,17 +2373,31 @@ impl L1Node {
                     return Ok(());
                 }
 
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-
-                // Royalties
+                // Calculate total cost (fee + royalty)
                 let sale_price = tx.payload.amount.unwrap_or(0) as f64;
+                let mut total_cost = tx.fee;
+                let mut royalty_amount = 0.0;
                 if sale_price > 0.0 {
                     if let Some(col) = self.nft_store.get_collection(col_id)? {
                         if col.royalty_bps > 0 {
-                            let royalty = (sale_price * col.royalty_bps as f64) / 10000.0;
-                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= royalty;
-                            *balances.entry(col.royalty_recipient.clone()).or_insert(0.0) += royalty;
+                            royalty_amount = (sale_price * col.royalty_bps as f64) / 10000.0;
+                            total_cost += royalty_amount;
                         }
+                    }
+                }
+
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < total_cost {
+                    eprintln!("[node] Rejecting nft_transfer: insufficient XRGE ({:.4} < {:.4})", xrge_bal, total_cost);
+                    return Ok(());
+                }
+
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+
+                if royalty_amount > 0.0 {
+                    if let Some(col) = self.nft_store.get_collection(col_id)? {
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= royalty_amount;
+                        *balances.entry(col.royalty_recipient.clone()).or_insert(0.0) += royalty_amount;
                     }
                 }
 
@@ -2374,6 +2414,15 @@ impl L1Node {
                         eprintln!("[node] Warning: NFT {}:{} not owned by sender, skipping burn", col_id, token_id);
                         return Ok(());
                     }
+                } else {
+                    eprintln!("[node] Warning: NFT {}:{} not found, skipping burn", col_id, token_id);
+                    return Ok(());
+                }
+
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting nft_burn: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
+                    return Ok(());
                 }
 
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
@@ -2394,6 +2443,12 @@ impl L1Node {
                     return Ok(());
                 }
 
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting nft_lock: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
+                    return Ok(());
+                }
+
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
 
                 token.locked = locked;
@@ -2410,6 +2465,12 @@ impl L1Node {
 
                 if col.creator != tx.from_pub_key {
                     eprintln!("[node] Warning: Only creator can freeze collection {}, skipping", col_id);
+                    return Ok(());
+                }
+
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting nft_freeze_collection: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
                     return Ok(());
                 }
 

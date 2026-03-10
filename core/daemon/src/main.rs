@@ -2567,6 +2567,32 @@ async fn v2_transfer(
     let amount = payload.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let fee = payload.get("fee").and_then(|v| v.as_f64()).unwrap_or(1.0);
     let token = payload.get("token").and_then(|v| v.as_str()).unwrap_or("XRGE");
+
+    // Balance check
+    if token == "XRGE" {
+        let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+        if bal < amount + fee {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("insufficient XRGE balance: have {:.4}, need {:.4}", bal, amount + fee)
+            }))));
+        }
+    } else {
+        let xrge_bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+        if xrge_bal < fee {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("insufficient XRGE for fee: have {:.4}, need {:.4}", xrge_bal, fee)
+            }))));
+        }
+        let token_bal = node.get_token_balance(&body.public_key, token).unwrap_or(0.0);
+        if token_bal < amount {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("insufficient {} balance: have {:.4}, need {:.4}", token, token_bal, amount)
+            }))));
+        }
+    }
     
     let tx = TxV1 {
         version: 1,
@@ -2608,6 +2634,14 @@ async fn v2_create_token(
     let token_symbol = payload.get("token_symbol").and_then(|v| v.as_str()).unwrap_or_default();
     let initial_supply = payload.get("initial_supply").and_then(|v| v.as_u64()).unwrap_or(0);
     let fee = payload.get("fee").and_then(|v| v.as_f64()).unwrap_or(10.0);
+
+    let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false,
+            "error": format!("insufficient XRGE for token creation fee: have {:.4}, need {:.4}", bal, fee)
+        }))));
+    }
     
     let tx = TxV1 {
         version: 1,
@@ -2926,6 +2960,14 @@ async fn v2_stake(
     
     let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
     let fee = payload.get("fee").and_then(|v| v.as_f64()).unwrap_or(1.0);
+
+    let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < amount as f64 + fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false,
+            "error": format!("insufficient XRGE balance: have {:.4}, need {:.4}", bal, amount as f64 + fee)
+        }))));
+    }
     
     let tx = TxV1 {
         version: 1,
@@ -3038,6 +3080,12 @@ async fn v2_nft_create_collection(
     let max_supply = p.get("maxSupply").and_then(|v| v.as_u64());
     let royalty_bps = p.get("royaltyBps").and_then(|v| v.as_u64()).map(|v| v as u16);
 
+    let nft_fee = 50.0_f64;
+    let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < nft_fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE balance for collection fee: have {:.4}, need {:.4}", bal, nft_fee)}))));
+    }
+
     let tx = TxV1 {
         version: 1,
         tx_type: "nft_create_collection".to_string(),
@@ -3052,7 +3100,7 @@ async fn v2_nft_create_collection(
             nft_royalty_bps: royalty_bps,
             ..Default::default()
         },
-        fee: 50.0,
+        fee: nft_fee,
         sig: body.signature.clone(),
         signed_payload: Some(signed_payload),
     };
@@ -3080,6 +3128,29 @@ async fn v2_nft_mint(
     let metadata_uri = p.get("metadataUri").and_then(|v| v.as_str()).map(String::from);
     let attributes = p.get("attributes").cloned();
 
+    let mint_fee = 5.0_f64;
+    let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < mint_fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE balance for mint fee: have {:.4}, need {:.4}", bal, mint_fee)}))));
+    }
+
+    // Only the collection creator can mint
+    if let Ok(Some(col)) = state.node.get_nft_collection(collection_id) {
+        if col.creator != body.public_key {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"success": false, "error": "only the collection creator can mint"}))));
+        }
+        if col.frozen {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "collection is frozen"}))));
+        }
+        if let Some(max) = col.max_supply {
+            if col.minted >= max {
+                return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "collection has reached max supply"}))));
+            }
+        }
+    } else {
+        return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"success": false, "error": "collection not found"}))));
+    }
+
     let tx = TxV1 {
         version: 1,
         tx_type: "nft_mint".to_string(),
@@ -3092,7 +3163,7 @@ async fn v2_nft_mint(
             nft_attributes: attributes,
             ..Default::default()
         },
-        fee: 5.0,
+        fee: mint_fee,
         sig: body.signature.clone(),
         signed_payload: Some(signed_payload),
     };
@@ -3125,14 +3196,35 @@ async fn v2_nft_batch_mint(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "batch mint requires 1-50 names"}))));
     }
 
+    let fee = 5.0 * names.len() as f64;
+    let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE balance for batch mint fee: have {:.4}, need {:.4}", bal, fee)}))));
+    }
+
+    // Only the collection creator can mint
+    if let Ok(Some(col)) = state.node.get_nft_collection(collection_id) {
+        if col.creator != body.public_key {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"success": false, "error": "only the collection creator can mint"}))));
+        }
+        if col.frozen {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "collection is frozen"}))));
+        }
+        if let Some(max) = col.max_supply {
+            if col.minted + names.len() as u64 > max {
+                return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("batch would exceed max supply ({} + {} > {})", col.minted, names.len(), max)}))));
+            }
+        }
+    } else {
+        return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"success": false, "error": "collection not found"}))));
+    }
+
     let uris: Option<Vec<String>> = p.get("uris")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
     let attributes: Option<Vec<serde_json::Value>> = p.get("attributes")
         .and_then(|v| v.as_array())
         .map(|arr| arr.to_vec());
-
-    let fee = 5.0 * names.len() as f64;
 
     let tx = TxV1 {
         version: 1,
@@ -3174,6 +3266,40 @@ async fn v2_nft_transfer(
     let to = p.get("to").and_then(|v| v.as_str()).unwrap_or_default();
     let sale_price = p.get("salePrice").and_then(|v| v.as_u64());
 
+    let transfer_fee = 1.0_f64;
+
+    // Calculate total XRGE needed (fee + royalty if sale)
+    let mut xrge_needed = transfer_fee;
+    if let Some(sp) = sale_price {
+        if sp > 0 {
+            if let Ok(Some(col)) = state.node.get_nft_collection(collection_id) {
+                if col.royalty_bps > 0 {
+                    xrge_needed += (sp as f64 * col.royalty_bps as f64) / 10000.0;
+                }
+            }
+        }
+    }
+
+    let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < xrge_needed {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE balance: have {:.4}, need {:.4} (fee + royalty)", bal, xrge_needed)}))));
+    }
+
+    // Ownership and lock check
+    match state.node.get_nft_token(collection_id, token_id) {
+        Ok(Some(token)) => {
+            if token.owner != body.public_key {
+                return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"success": false, "error": "you do not own this NFT"}))));
+            }
+            if token.locked {
+                return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "NFT is locked"}))));
+            }
+        }
+        _ => {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"success": false, "error": "NFT not found"}))));
+        }
+    }
+
     let tx = TxV1 {
         version: 1,
         tx_type: "nft_transfer".to_string(),
@@ -3186,7 +3312,7 @@ async fn v2_nft_transfer(
             amount: sale_price,
             ..Default::default()
         },
-        fee: 1.0,
+        fee: transfer_fee,
         sig: body.signature.clone(),
         signed_payload: Some(signed_payload),
     };
@@ -3211,6 +3337,24 @@ async fn v2_nft_burn(
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
     let token_id = p.get("tokenId").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    let burn_fee = 0.1_f64;
+    let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < burn_fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE balance for burn fee: have {:.4}, need {:.4}", bal, burn_fee)}))));
+    }
+
+    // Ownership check
+    match state.node.get_nft_token(collection_id, token_id) {
+        Ok(Some(token)) => {
+            if token.owner != body.public_key {
+                return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"success": false, "error": "you do not own this NFT"}))));
+            }
+        }
+        _ => {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"success": false, "error": "NFT not found"}))));
+        }
+    }
 
     let tx = TxV1 {
         version: 1,
@@ -3249,6 +3393,24 @@ async fn v2_nft_lock(
     let token_id = p.get("tokenId").and_then(|v| v.as_u64()).unwrap_or(0);
     let locked = p.get("locked").and_then(|v| v.as_bool()).unwrap_or(true);
 
+    let lock_fee = 0.1_f64;
+    let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < lock_fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE for lock fee: have {:.4}, need {:.4}", bal, lock_fee)}))));
+    }
+
+    // Ownership check
+    match state.node.get_nft_token(collection_id, token_id) {
+        Ok(Some(token)) => {
+            if token.owner != body.public_key {
+                return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"success": false, "error": "you do not own this NFT"}))));
+            }
+        }
+        _ => {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"success": false, "error": "NFT not found"}))));
+        }
+    }
+
     let tx = TxV1 {
         version: 1,
         tx_type: "nft_lock".to_string(),
@@ -3285,6 +3447,24 @@ async fn v2_nft_freeze_collection(
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
     let frozen = p.get("frozen").and_then(|v| v.as_bool()).unwrap_or(true);
+
+    let freeze_fee = 0.1_f64;
+    let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < freeze_fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE for freeze fee: have {:.4}, need {:.4}", bal, freeze_fee)}))));
+    }
+
+    // Only the collection creator can freeze
+    match state.node.get_nft_collection(collection_id) {
+        Ok(Some(col)) => {
+            if col.creator != body.public_key {
+                return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"success": false, "error": "only the collection creator can freeze/unfreeze"}))));
+            }
+        }
+        _ => {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"success": false, "error": "collection not found"}))));
+        }
+    }
 
     let tx = TxV1 {
         version: 1,
