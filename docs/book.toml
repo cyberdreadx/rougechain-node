@@ -1,0 +1,16 @@
+[book]
+title = "RougeChain Documentation"
+description = "Post-Quantum Secure Layer 1 Blockchain"
+authors = ["RougeChain Team"]
+language = "en"
+src = "."
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/cyberdreadx/quantum-vault"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/cyberdreadx/quantum-vault/edit/main/docs/{path}"
