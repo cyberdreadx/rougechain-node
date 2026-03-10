@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, User, MessageSquare, Loader2, Bot, Sparkles, UserPlus, CheckCircle2, AlertCircle, QrCode } from "lucide-react";
+import { X, User, MessageSquare, Loader2, Bot, Sparkles, UserPlus, CheckCircle2, AlertCircle, QrCode, StickyNote } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,6 +37,7 @@ const parseAddress = (input: string): { valid: boolean; publicKey: string; error
 const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: ContactPickerProps) => {
   const [isCreating, setIsCreating] = useState<string | null>(null);
   const [isCreatingBot, setIsCreatingBot] = useState(false);
+  const [isCreatingNoteToSelf, setIsCreatingNoteToSelf] = useState(false);
   const [showManualAdd, setShowManualAdd] = useState(false);
   const [manualAddress, setManualAddress] = useState("");
   const [manualName, setManualName] = useState("");
@@ -133,6 +134,27 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
     }
   };
 
+  const handleNoteToSelf = async () => {
+    setIsCreatingNoteToSelf(true);
+    try {
+      const conversation = await createConversation(wallet.id, wallet.id);
+      conversation.participants = [
+        {
+          id: wallet.id,
+          displayName: wallet.displayName,
+          signingPublicKey: wallet.signingPublicKey,
+          encryptionPublicKey: wallet.encryptionPublicKey,
+        },
+      ];
+      conversation.name = "Note to Self";
+      onConversationCreated(conversation);
+    } catch (error) {
+      console.error("Failed to create note to self:", error);
+    } finally {
+      setIsCreatingNoteToSelf(false);
+    }
+  };
+
   const handleAddManualContact = async () => {
     if (!detectedWallet) {
       setManualError("Wallet not found on network");
@@ -208,6 +230,29 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
               </div>
               <p className="text-sm text-muted-foreground">
                 Test encryption with a local AI bot
+              </p>
+            </div>
+          </button>
+        </div>
+
+        {/* Note to Self */}
+        <div className="px-4 pb-4">
+          <button
+            onClick={handleNoteToSelf}
+            disabled={isCreatingNoteToSelf || isCreatingBot || isCreating !== null}
+            className="w-full p-3 rounded-xl bg-muted/50 border border-border hover:border-primary/50 hover:bg-muted transition-all flex items-center gap-3 disabled:opacity-50"
+          >
+            <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center">
+              {isCreatingNoteToSelf ? (
+                <Loader2 className="w-5 h-5 text-amber-500 animate-spin" />
+              ) : (
+                <StickyNote className="w-5 h-5 text-amber-500" />
+              )}
+            </div>
+            <div className="flex-1 text-left">
+              <p className="font-medium text-foreground">Note to Self</p>
+              <p className="text-xs text-muted-foreground">
+                Save private notes and reminders
               </p>
             </div>
           </button>

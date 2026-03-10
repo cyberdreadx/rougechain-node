@@ -136,8 +136,33 @@ export default function MessengerTab({ wallet }: Props) {
             {/* Contact picker */}
             {showContacts && (
                 <div className="border-b border-border bg-card/80 max-h-40 overflow-y-auto">
+                    {/* Note to Self */}
+                    <button
+                        onClick={async () => {
+                            try {
+                                const convo = await createConversation(
+                                    wallet.id,
+                                    [wallet.id, wallet.id],
+                                    "Note to Self"
+                                );
+                                convo.name = "Note to Self";
+                                setConversations(prev => [convo, ...prev]);
+                                setSelected(convo);
+                                setShowContacts(false);
+                            } catch (err) { console.error(err); }
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-secondary/30 transition-colors text-left border-b border-border/50"
+                    >
+                        <div className="w-7 h-7 rounded-full bg-amber-500/20 flex items-center justify-center">
+                            <MessageCircle className="w-3.5 h-3.5 text-amber-500" />
+                        </div>
+                        <div className="min-w-0">
+                            <p className="text-xs font-medium text-foreground">Note to Self</p>
+                            <p className="text-[10px] text-muted-foreground">Save private notes</p>
+                        </div>
+                    </button>
                     {contacts.length === 0 ? (
-                        <p className="text-xs text-muted-foreground p-3 text-center">No contacts found</p>
+                        <p className="text-xs text-muted-foreground p-3 text-center">No other contacts found</p>
                     ) : (
                         contacts.map(c => (
                             <button
@@ -187,10 +212,12 @@ export default function MessengerTab({ wallet }: Props) {
                     conversations.map(convo => {
                         const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
                         const isSelf = (p: any) => myIds.has(p.id) || myIds.has(p.signingPublicKey || "") || myIds.has(p.encryptionPublicKey || "");
+                        const isNoteToSelf = convo.name === "Note to Self" || (convo.participants?.every((p: any) => isSelf(p)) ?? false);
                         let other = convo.participants?.find((p: any) => !isSelf(p));
                         if (!other && wallet.displayName && convo.participants?.length === 2) {
                             other = convo.participants.find((p: any) => p.displayName !== wallet.displayName);
                         }
+                        const displayName = isNoteToSelf ? "Note to Self" : (convo.name || other?.displayName || "Unknown");
                         return (
                             <div
                                 key={convo.id}
@@ -200,12 +227,12 @@ export default function MessengerTab({ wallet }: Props) {
                                     onClick={() => setSelected(convo)}
                                     className="flex-1 flex items-center gap-2 px-3 py-2.5 text-left min-w-0"
                                 >
-                                    <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                                        <MessageCircle className="w-4 h-4 text-primary" />
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${isNoteToSelf ? "bg-amber-500/20" : "bg-primary/20"}`}>
+                                        <MessageCircle className={`w-4 h-4 ${isNoteToSelf ? "text-amber-500" : "text-primary"}`} />
                                     </div>
                                     <div className="min-w-0 flex-1">
                                         <p className="text-xs font-medium text-foreground truncate">
-                                            {convo.name || other?.displayName || "Unknown"}
+                                            {displayName}
                                         </p>
                                         <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                                             <Lock className="w-2.5 h-2.5" /> End-to-end encrypted
@@ -260,7 +287,13 @@ function ChatView({
 
     const chatMyIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
     const chatIsSelf = (p: any) => chatMyIds.has(p.id) || chatMyIds.has(p.signingPublicKey || "") || chatMyIds.has(p.encryptionPublicKey || "");
-    let participantRecipient = conversation.participants?.find((p: any) => !chatIsSelf(p));
+
+    const isSelfConversation = conversation.name === "Note to Self" ||
+        (conversation.participants?.every((p: any) => chatIsSelf(p)) ?? false);
+
+    let participantRecipient = isSelfConversation
+        ? { id: wallet.id, displayName: wallet.displayName, signingPublicKey: wallet.signingPublicKey, encryptionPublicKey: wallet.encryptionPublicKey }
+        : conversation.participants?.find((p: any) => !chatIsSelf(p));
     if (!participantRecipient && wallet.displayName && conversation.participants?.length === 2) {
         participantRecipient = conversation.participants.find((p: any) => p.displayName !== wallet.displayName);
     }
@@ -424,13 +457,13 @@ function ChatView({
                 </div>
                 <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium text-foreground truncate">
-                        {conversation.name || recipient?.displayName || "Unknown"}
+                        {isSelfConversation ? "Note to Self" : (conversation.name || recipient?.displayName || "Unknown")}
                     </p>
                     <p className="text-[10px] text-muted-foreground flex items-center gap-0.5">
                         <Lock className="w-2 h-2" /> ML-KEM-768 + ML-DSA-65
                     </p>
                 </div>
-                {recipient && (
+                {recipient && !isSelfConversation && (
                     <button
                         onClick={handleToggleBlock}
                         className={`p-1 rounded transition-colors flex-shrink-0 ${blocked ? "text-destructive bg-destructive/10" : "text-muted-foreground hover:text-destructive"}`}

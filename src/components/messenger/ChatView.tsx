@@ -468,10 +468,18 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
 
   const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
-  const recipient = conversation.participants?.find(p =>
-    !myIds.has(p.id) && !myIds.has(p.signingPublicKey) && !myIds.has(p.encryptionPublicKey)
-  );
-  const isRecipientBot = recipient ? isDemoBot(recipient.id) : false;
+
+  const isSelfConversation = conversation.name === "Note to Self" ||
+    (conversation.participants?.every(p =>
+      myIds.has(p.id) || myIds.has(p.signingPublicKey) || myIds.has(p.encryptionPublicKey)
+    ) ?? false);
+
+  const recipient = isSelfConversation
+    ? { id: wallet.id, displayName: wallet.displayName, signingPublicKey: wallet.signingPublicKey, encryptionPublicKey: wallet.encryptionPublicKey }
+    : conversation.participants?.find(p =>
+        !myIds.has(p.id) && !myIds.has(p.signingPublicKey) && !myIds.has(p.encryptionPublicKey)
+      );
+  const isRecipientBot = recipient && !isSelfConversation ? isDemoBot(recipient.id) : false;
   const recipientMainId = recipient?.id || recipient?.signingPublicKey || "";
   const [blocked, setBlocked] = useState(() => recipientMainId ? isWalletBlocked(recipientMainId) : false);
 
@@ -492,6 +500,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
 
   const getConversationName = (): string => {
     if (conversation.name) return conversation.name;
+    if (isSelfConversation) return "Note to Self";
     return recipient?.displayName || "Unknown";
   };
 
@@ -758,7 +767,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
             ML-KEM-768 + ML-DSA-65
           </p>
         </div>
-        {recipient && !isRecipientBot && (
+        {recipient && !isRecipientBot && !isSelfConversation && (
           <Button
             variant={blocked ? "destructive" : "ghost"}
             size="icon"

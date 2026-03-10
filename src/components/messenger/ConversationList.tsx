@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { MessageSquare, Users, Lock, Trash2, Loader2 } from "lucide-react";
+import { MessageSquare, Users, Lock, Trash2, Loader2, StickyNote } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Conversation } from "@/lib/pqc-messenger";
 import { deleteConversation } from "@/lib/pqc-messenger";
@@ -40,6 +40,14 @@ const ConversationList = ({ conversations, selectedId, currentWalletId, currentW
     }
   };
 
+  const isSelfConversation = (conversation: Conversation): boolean => {
+    if (conversation.name === "Note to Self") return true;
+    if (!conversation.participants || conversation.participants.length === 0) return false;
+    return conversation.participants.every(p =>
+      myIds.has(p.id) || myIds.has(p.signingPublicKey) || myIds.has(p.encryptionPublicKey)
+    );
+  };
+
   const getOtherParticipant = (conversation: Conversation) => {
     return conversation.participants?.find(p =>
       !myIds.has(p.id) &&
@@ -50,12 +58,12 @@ const ConversationList = ({ conversations, selectedId, currentWalletId, currentW
 
   const getConversationName = (conversation: Conversation): string => {
     if (conversation.name) return conversation.name;
+
+    if (isSelfConversation(conversation)) return "Note to Self";
     
-    // For 1:1, show the other participant's name
     const other = getOtherParticipant(conversation);
     if (!other) return "Unknown";
     
-    // If displayName is generic or empty, show truncated address
     const genericNames = ["My Wallet", "Unknown", ""];
     if (genericNames.includes(other.displayName || "")) {
       const addr = other.signingPublicKey || other.encryptionPublicKey || other.id || "";
@@ -66,6 +74,7 @@ const ConversationList = ({ conversations, selectedId, currentWalletId, currentW
   };
   
   const getConversationAddress = (conversation: Conversation): string => {
+    if (isSelfConversation(conversation)) return "";
     const other = getOtherParticipant(conversation);
     if (!other) return "";
     const addr = other.signingPublicKey || other.encryptionPublicKey || "";
@@ -102,11 +111,15 @@ const ConversationList = ({ conversations, selectedId, currentWalletId, currentW
             }`}
           >
             <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-              conversation.isGroup 
-                ? "bg-accent/20" 
-                : "bg-primary/20"
+              isSelfConversation(conversation)
+                ? "bg-amber-500/20"
+                : conversation.isGroup 
+                  ? "bg-accent/20" 
+                  : "bg-primary/20"
             }`}>
-              {conversation.isGroup ? (
+              {isSelfConversation(conversation) ? (
+                <StickyNote className="w-5 h-5 text-amber-500" />
+              ) : conversation.isGroup ? (
                 <Users className="w-5 h-5 text-accent" />
               ) : (
                 <MessageSquare className="w-5 h-5 text-primary" />
