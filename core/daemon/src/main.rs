@@ -4351,6 +4351,7 @@ async fn xrge_bridge_config(State(state): State<AppState>) -> Json<serde_json::V
 #[serde(rename_all = "camelCase")]
 struct XrgeBridgeClaimRequest {
     evm_tx_hash: String,
+    #[allow(dead_code)]
     evm_address: String,
     amount: String,
     recipient_rougechain_pubkey: String,
