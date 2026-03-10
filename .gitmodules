@@ -1,0 +1,3 @@
+[submodule "rougechain-wallet"]
+	path = rougechain-wallet
+	url = https://github.com/cyberdreadx/rougechain-wallet.git
