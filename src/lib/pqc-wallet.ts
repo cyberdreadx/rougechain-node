@@ -62,7 +62,7 @@ export interface WalletBalance {
 
 export interface WalletTransaction {
   id: string;
-  type: "send" | "receive" | "swap" | "create_token" | "fee";
+  type: "send" | "receive" | "swap" | "create_token" | "fee" | "stake" | "unstake" | "add_liquidity" | "remove_liquidity" | "create_pool" | "nft_mint" | "nft_transfer" | "bridge";
   amount: string;
   symbol: string;
   address: string;
@@ -124,25 +124,12 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
         };
         txs: Array<{
           version: 1;
-          type?: "transfer" | "stake" | "unstake" | "create_token";
-          tx_type?: "transfer" | "stake" | "unstake" | "create_token";
+          type?: string;
+          tx_type?: string;
           fromPubKey?: string;
           from_pub_key?: string;
           nonce: number;
-          payload: { 
-            toPubKeyHex?: string; 
-            to_pub_key_hex?: string; 
-            amount?: number; 
-            faucet?: boolean;
-            token_name?: string;
-            tokenName?: string;
-            token_symbol?: string;
-            tokenSymbol?: string;
-            token_decimals?: number;
-            tokenDecimals?: number;
-            token_total_supply?: number;
-            tokenTotalSupply?: number;
-          };
+          payload: Record<string, unknown>;
           fee: number;
           sig: string;
         }>;
@@ -199,24 +186,12 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
 
             transactions.push({ tx, block });
           } else if (txType === "create_token") {
-            // Parse create_token transactions
             try {
-              const payload = txV1.payload as { 
-                amount?: number; 
-                token_name?: string; 
-                tokenName?: string;
-                token_symbol?: string;
-                tokenSymbol?: string;
-                token_decimals?: number;
-                tokenDecimals?: number;
-                token_total_supply?: number;
-                tokenTotalSupply?: number;
-              };
-              
-              const tokenName = payload?.token_name || payload?.tokenName || "Unknown Token";
-              const tokenSymbol = payload?.token_symbol || payload?.tokenSymbol || "TOKEN";
-              const tokenDecimals = payload?.token_decimals ?? payload?.tokenDecimals ?? 18;
-              const totalSupply = payload?.token_total_supply || payload?.tokenTotalSupply || payload?.amount || 0;
+              const p = txV1.payload;
+              const tokenName = (p.token_name || p.tokenName || "Unknown Token") as string;
+              const tokenSymbol = (p.token_symbol || p.tokenSymbol || "TOKEN") as string;
+              const tokenDecimals = (p.token_decimals ?? p.tokenDecimals ?? 18) as number;
+              const totalSupply = (p.token_total_supply || p.tokenTotalSupply || p.amount || 0) as number;
               const safeFromPubKey = fromPubKey || "";
               const tokenAddress = safeFromPubKey.length >= 16 
                 ? `token:${safeFromPubKey.slice(0, 16)}:${tokenSymbol.toLowerCase()}`
@@ -225,7 +200,7 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
               const tx: Transaction = {
                 type: "create_token",
                 from: fromPubKey,
-                to: fromPubKey, // Creator receives the tokens
+                to: fromPubKey,
                 amount: totalSupply,
                 symbol: tokenSymbol,
                 timestamp: blockV1.header.time,
@@ -256,8 +231,162 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
               transactions.push({ tx, block });
             } catch (tokenParseError) {
               console.error("Error parsing create_token tx:", tokenParseError);
-              // Skip this transaction
             }
+          } else if (txType === "swap") {
+            const p = txV1.payload;
+            const tokenIn = (p.token_in || p.tokenIn || "") as string;
+            const tokenOut = (p.token_out || p.tokenOut || "") as string;
+            const amountIn = (p.amount_in || p.amountIn || 0) as number;
+
+            const tx: Transaction = {
+              type: "transfer",
+              from: fromPubKey,
+              to: fromPubKey,
+              amount: amountIn,
+              symbol: tokenIn,
+              timestamp: blockV1.header.time,
+              memo: `Swap ${amountIn} ${tokenIn} → ${tokenOut}`,
+              fee: txV1.fee,
+              feeRecipient: proposerPubKey,
+            };
+
+            const block: Block = {
+              index: blockV1.header.height,
+              timestamp: blockV1.header.time,
+              data: JSON.stringify(tx),
+              previousHash: prevHash,
+              hash: blockV1.hash,
+              nonce: 0,
+              signature: proposerSig,
+              signerPublicKey: proposerPubKey,
+            };
+
+            transactions.push({ tx, block });
+          } else if (txType === "stake" || txType === "unstake") {
+            const p = txV1.payload;
+            const amount = (p.amount || 0) as number;
+
+            const tx: Transaction = {
+              type: "transfer",
+              from: fromPubKey,
+              to: fromPubKey,
+              amount: amount,
+              symbol: "XRGE",
+              timestamp: blockV1.header.time,
+              memo: txType === "stake" ? `Staked ${amount} XRGE` : `Unstaked ${amount} XRGE`,
+              fee: txV1.fee,
+              feeRecipient: proposerPubKey,
+            };
+
+            const block: Block = {
+              index: blockV1.header.height,
+              timestamp: blockV1.header.time,
+              data: JSON.stringify(tx),
+              previousHash: prevHash,
+              hash: blockV1.hash,
+              nonce: 0,
+              signature: proposerSig,
+              signerPublicKey: proposerPubKey,
+            };
+
+            transactions.push({ tx, block });
+          } else if (txType === "create_pool" || txType === "add_liquidity" || txType === "remove_liquidity") {
+            const p = txV1.payload;
+            const tokenA = (p.token_a_symbol || p.tokenASymbol || p.token_a || "") as string;
+            const tokenB = (p.token_b_symbol || p.tokenBSymbol || p.token_b || "") as string;
+            const label = txType === "create_pool" ? "Created pool" : txType === "add_liquidity" ? "Added liquidity" : "Removed liquidity";
+
+            const tx: Transaction = {
+              type: "transfer",
+              from: fromPubKey,
+              to: fromPubKey,
+              amount: 0,
+              symbol: "XRGE",
+              timestamp: blockV1.header.time,
+              memo: `${label}: ${tokenA}/${tokenB}`,
+              fee: txV1.fee,
+              feeRecipient: proposerPubKey,
+            };
+
+            const block: Block = {
+              index: blockV1.header.height,
+              timestamp: blockV1.header.time,
+              data: JSON.stringify(tx),
+              previousHash: prevHash,
+              hash: blockV1.hash,
+              nonce: 0,
+              signature: proposerSig,
+              signerPublicKey: proposerPubKey,
+            };
+
+            transactions.push({ tx, block });
+          } else if (txType?.startsWith("nft_")) {
+            const p = txV1.payload;
+            const colId = (p.nft_collection_id || p.nftCollectionId || "") as string;
+            const tokenId = (p.nft_token_id || p.nftTokenId || "") as string;
+            const labels: Record<string, string> = {
+              nft_create_collection: "Created NFT collection",
+              nft_mint: "Minted NFT",
+              nft_batch_mint: "Batch minted NFTs",
+              nft_transfer: "NFT transfer",
+              nft_burn: "Burned NFT",
+              nft_lock: "Locked/Unlocked NFT",
+              nft_freeze_collection: "Froze collection",
+            };
+
+            const tx: Transaction = {
+              type: "transfer",
+              from: fromPubKey,
+              to: (p.to_pub_key_hex || p.toPubKeyHex || fromPubKey) as string,
+              amount: txV1.fee,
+              symbol: "XRGE",
+              timestamp: blockV1.header.time,
+              memo: `${labels[txType || ""] || txType}${colId ? ` (${(colId as string).slice(0, 12)}...)` : ""}${tokenId ? ` #${tokenId}` : ""}`,
+              fee: txV1.fee,
+              feeRecipient: proposerPubKey,
+            };
+
+            const block: Block = {
+              index: blockV1.header.height,
+              timestamp: blockV1.header.time,
+              data: JSON.stringify(tx),
+              previousHash: prevHash,
+              hash: blockV1.hash,
+              nonce: 0,
+              signature: proposerSig,
+              signerPublicKey: proposerPubKey,
+            };
+
+            transactions.push({ tx, block });
+          } else if (txType === "bridge_mint" || txType === "bridge_withdraw") {
+            const p = txV1.payload;
+            const amount = (p.amount || 0) as number;
+            const tokenSymbol = (p.token_symbol || p.tokenSymbol || "qETH") as string;
+
+            const tx: Transaction = {
+              type: "transfer",
+              from: txType === "bridge_mint" ? "BRIDGE" : fromPubKey,
+              to: txType === "bridge_mint" ? ((p.to_pub_key_hex || p.toPubKeyHex || "") as string) : "BRIDGE",
+              amount: amount,
+              symbol: tokenSymbol,
+              timestamp: blockV1.header.time,
+              memo: txType === "bridge_mint" ? `Bridge deposit: ${amount} ${tokenSymbol}` : `Bridge withdrawal: ${amount} ${tokenSymbol}`,
+              fee: txV1.fee,
+              feeRecipient: proposerPubKey,
+            };
+
+            const block: Block = {
+              index: blockV1.header.height,
+              timestamp: blockV1.header.time,
+              data: JSON.stringify(tx),
+              previousHash: prevHash,
+              hash: blockV1.hash,
+              nonce: 0,
+              signature: proposerSig,
+              signerPublicKey: proposerPubKey,
+            };
+
+            transactions.push({ tx, block });
           }
         }
       }
@@ -468,6 +597,16 @@ export async function getWalletTransactions(publicKey: string): Promise<WalletTr
     let type: WalletTransaction["type"] = isSender ? "send" : "receive";
     if (tx.type === "create_token") type = "create_token";
     
+    // Map memo-based types for display
+    const memo = tx.memo || "";
+    if (memo.startsWith("Swap ")) type = "swap";
+    else if (memo.startsWith("Staked ")) type = "stake";
+    else if (memo.startsWith("Unstaked ")) type = "unstake";
+    else if (memo.startsWith("Created pool") || memo.startsWith("Added liquidity")) type = "add_liquidity";
+    else if (memo.startsWith("Removed liquidity")) type = "remove_liquidity";
+    else if (memo.startsWith("Created NFT") || memo.startsWith("Minted NFT") || memo.startsWith("Batch minted") || memo.startsWith("NFT transfer") || memo.startsWith("Burned NFT") || memo.startsWith("Locked/Unlocked") || memo.startsWith("Froze collection")) type = "nft_mint";
+    else if (memo.startsWith("Bridge ")) type = "bridge";
+
     const counterparty = isSender ? tx.to : tx.from;
 
     walletTxs.push({

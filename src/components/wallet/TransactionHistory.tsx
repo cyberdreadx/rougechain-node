@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowUpRight, ArrowDownLeft, RefreshCw, History, Plus, Coins, ExternalLink, Copy } from "lucide-react";
+import { ArrowUpRight, ArrowDownLeft, RefreshCw, History, Plus, Coins, ExternalLink, Copy, ArrowDownUp, Lock, Unlock, Droplets, Image, ArrowLeftRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EXPLORER_URL } from "@/lib/pqc-wallet";
 
 interface Transaction {
   id: string;
-  type: "send" | "receive" | "swap" | "create_token" | "fee";
+  type: "send" | "receive" | "swap" | "create_token" | "fee" | "stake" | "unstake" | "add_liquidity" | "remove_liquidity" | "create_pool" | "nft_mint" | "nft_transfer" | "bridge";
   amount: string;
   symbol: string;
   address: string;
@@ -35,11 +35,24 @@ const getIcon = (type: string) => {
     case "receive":
       return <ArrowDownLeft className="w-4 h-4 text-success" />;
     case "swap":
-      return <RefreshCw className="w-4 h-4 text-accent" />;
+      return <ArrowDownUp className="w-4 h-4 text-accent" />;
     case "create_token":
+    case "create_pool":
       return <Plus className="w-4 h-4 text-primary" />;
     case "fee":
       return <Coins className="w-4 h-4 text-muted-foreground" />;
+    case "stake":
+      return <Lock className="w-4 h-4 text-primary" />;
+    case "unstake":
+      return <Unlock className="w-4 h-4 text-accent" />;
+    case "add_liquidity":
+    case "remove_liquidity":
+      return <Droplets className="w-4 h-4 text-blue-400" />;
+    case "nft_mint":
+    case "nft_transfer":
+      return <Image className="w-4 h-4 text-purple-400" />;
+    case "bridge":
+      return <ArrowLeftRight className="w-4 h-4 text-amber-400" />;
     default:
       return null;
   }
@@ -57,13 +70,32 @@ const getTypeLabel = (type: string) => {
       return "Token Created";
     case "fee":
       return "Fee";
+    case "stake":
+      return "Staked";
+    case "unstake":
+      return "Unstaked";
+    case "add_liquidity":
+      return "Liquidity";
+    case "remove_liquidity":
+      return "Removed LP";
+    case "create_pool":
+      return "Pool Created";
+    case "nft_mint":
+      return "NFT";
+    case "nft_transfer":
+      return "NFT Transfer";
+    case "bridge":
+      return "Bridge";
     default:
       return type;
   }
 };
 
+const INITIAL_DISPLAY_COUNT = 5;
+
 const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction }: TransactionHistoryProps) => {
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   const formatTimestamp = (timestamp?: number) => {
     if (!timestamp) return "—";
@@ -84,6 +116,9 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
     return `${EXPLORER_URL.replace(/\/+$/, "")}/tx/${txHash}`;
   };
 
+  const displayedTxs = showAll ? transactions : transactions.slice(0, INITIAL_DISPLAY_COUNT);
+  const hasMore = transactions.length > INITIAL_DISPLAY_COUNT;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -93,8 +128,13 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
     >
       <div className="px-4 py-3 border-b border-border flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">Recent Activity</h3>
-        {transactions.length > 0 && (
-          <button className="text-xs text-primary hover:underline">View All</button>
+        {hasMore && (
+          <button 
+            className="text-xs text-primary hover:underline"
+            onClick={() => setShowAll(!showAll)}
+          >
+            {showAll ? "Show Less" : `View All (${transactions.length})`}
+          </button>
         )}
       </div>
       
@@ -116,7 +156,7 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
         </div>
       ) : (
         <div className="divide-y divide-border">
-          {transactions.map((tx, index) => (
+          {displayedTxs.map((tx, index) => (
             <motion.div
               key={tx.id}
               initial={{ opacity: 0, x: -20 }}
@@ -137,12 +177,19 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
               
               <div className="text-right">
                 <p className={`text-sm font-medium font-mono ${
-                  tx.type === "receive" ? "text-success" : 
-                  tx.type === "send" ? "text-destructive" : 
-                  tx.type === "create_token" ? "text-primary" : "text-foreground"
+                  tx.type === "receive" || tx.type === "unstake" ? "text-success" : 
+                  tx.type === "send" || tx.type === "stake" ? "text-destructive" : 
+                  tx.type === "create_token" ? "text-primary" : 
+                  tx.type === "swap" ? "text-accent" :
+                  tx.type === "nft_mint" || tx.type === "nft_transfer" ? "text-purple-400" :
+                  tx.type === "bridge" ? "text-amber-400" :
+                  "text-foreground"
                 }`}>
-                  {tx.type === "send" ? "-" : tx.type === "receive" ? "+" : ""}{tx.amount} {tx.symbol}
+                  {tx.type === "send" || tx.type === "stake" ? "-" : tx.type === "receive" || tx.type === "unstake" ? "+" : ""}{tx.memo && (tx.type === "swap" || tx.type === "add_liquidity" || tx.type === "remove_liquidity" || tx.type === "nft_mint" || tx.type === "bridge") ? "" : `${tx.amount} ${tx.symbol}`}
                 </p>
+                {tx.memo && (tx.type === "swap" || tx.type === "add_liquidity" || tx.type === "remove_liquidity" || tx.type === "nft_mint" || tx.type === "bridge") && (
+                  <p className="text-xs text-muted-foreground truncate max-w-[160px]">{tx.memo}</p>
+                )}
                 <div className="flex items-center justify-end gap-1">
                   <p className="text-xs text-muted-foreground">{tx.timeLabel}</p>
                   {tx.fee && tx.fee > 0 && (
