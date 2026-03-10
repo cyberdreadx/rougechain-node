@@ -28,7 +28,7 @@ xcode-select --install
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-repo/quantum-vault
+git clone https://github.com/cyberdreadx/quantum-vault
 cd quantum-vault/core
 
 # Build release binary

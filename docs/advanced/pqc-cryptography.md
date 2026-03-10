@@ -42,6 +42,7 @@ Key sizes:
 
 Used for:
 - Messenger encryption
+- PQC Mail encryption
 - Future: Encrypted transactions
 
 Key sizes:
@@ -67,7 +68,7 @@ RougeChain uses the following libraries:
 | Component | Library |
 |-----------|---------|
 | Backend (Rust) | `pqcrypto` crate |
-| Frontend (JS) | `@aspect-build/pqcrypto` |
+| Frontend (JS) | `@noble/post-quantum` |
 
 All cryptographic operations happen locally - private keys never leave your device.
 

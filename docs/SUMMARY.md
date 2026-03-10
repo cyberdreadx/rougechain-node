@@ -41,9 +41,12 @@
 * [Staking](api-reference/staking.md)
 * [Peers](api-reference/peers.md)
 * [Messenger](api-reference/messenger.md)
+* [Mail](api-reference/mail.md)
 
 ## Advanced
 
-* [Token Creation](advanced/token-creation.md)
-* [PQC Cryptography](advanced/pqc-cryptography.md)
 * [Architecture](advanced/architecture.md)
+* [PQC Cryptography](advanced/pqc-cryptography.md)
+* [Token Creation](advanced/token-creation.md)
+* [Browser Extensions](advanced/browser-extensions.md)
+* [SDK](advanced/sdk.md)

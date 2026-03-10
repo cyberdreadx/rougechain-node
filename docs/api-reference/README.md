@@ -103,6 +103,23 @@ All v2 endpoints accept pre-signed transactions. Private keys never leave the cl
 | `/api/messenger/wallets/register` | POST | Register wallet |
 | `/api/messenger/conversations` | GET/POST | Conversations |
 | `/api/messenger/messages` | GET/POST | Messages |
+| `/api/messenger/messages/read` | POST | Mark message as read (self-destruct) |
+
+### Mail
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/names/register` | POST | Register a mail name |
+| `/api/names/lookup` | GET | Look up a name's public keys |
+| `/api/names/reverse` | GET | Reverse lookup (public key → name) |
+| `/api/mail/send` | POST | Send encrypted mail |
+| `/api/mail/inbox` | GET | Get inbox |
+| `/api/mail/sent` | GET | Get sent mail |
+| `/api/mail/trash` | GET | Get trashed mail |
+| `/api/mail/message/:id` | GET | Get single mail item |
+| `/api/mail/read` | POST | Mark mail as read |
+| `/api/mail/move` | POST | Move mail to folder |
+| `/api/mail/:id` | DELETE | Delete mail permanently |
 
 ## Authentication
 

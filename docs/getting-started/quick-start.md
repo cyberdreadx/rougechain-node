@@ -7,13 +7,13 @@ Get started with RougeChain in 5 minutes.
 Visit [rougechain.io](https://rougechain.io) or run locally:
 
 ```bash
-git clone https://github.com/your-repo/quantum-vault
+git clone https://github.com/cyberdreadx/quantum-vault
 cd quantum-vault
 npm install
 npm run dev
 ```
 
-Open `http://localhost:8080` in your browser.
+Open `http://localhost:5173` in your browser.
 
 ## Step 2: Create Your Wallet
 
@@ -52,6 +52,9 @@ Transaction is signed with your ML-DSA-65 key and broadcast to the network.
 - [Stake and become a validator](../staking/README.md)
 - [Create custom tokens](../advanced/token-creation.md)
 - [Use encrypted messenger](../api-reference/messenger.md)
+- [Send encrypted mail](../api-reference/mail.md)
+- [Install the browser extension](../advanced/browser-extensions.md)
+- [Use the SDK](../advanced/sdk.md)
 
 ## Troubleshooting
 

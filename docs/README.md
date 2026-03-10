@@ -24,7 +24,12 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | **P2P Network** | Decentralized peer-to-peer block and transaction propagation |
 | **qETH Bridge** | Bridge ETH from Base Sepolia to qETH on RougeChain |
 | **Custom Tokens** | Create your own tokens on the network |
-| **Encrypted Messenger** | End-to-end encrypted messaging with PQC |
+| **RC-721 NFTs** | NFT collections with royalties, batch minting, and freezing |
+| **Encrypted Messenger** | E2E encrypted messaging with PQC, media support, self-destruct |
+| **PQC Mail** | Encrypted email with `@rouge.quant` addresses and threading |
+| **Browser Extensions** | Chrome/Firefox wallet extensions with vault lock |
+| **PWA Support** | Installable progressive web app for mobile and desktop |
+| **SDK** | `@rougechain/sdk` npm package for building dApps |
 | **Open Source** | Fully open source Rust backend and React frontend |
 
 ## Quick Links
@@ -34,6 +39,9 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 - [API Reference](api-reference/README.md)
 - [P2P Networking](p2p-networking/README.md)
 - [Staking & Validators](staking/README.md)
+- [Browser Extensions](advanced/browser-extensions.md)
+- [SDK](advanced/sdk.md)
+- [Architecture](advanced/architecture.md)
 
 ## Network Info
 
