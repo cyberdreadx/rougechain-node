@@ -3138,11 +3138,10 @@ async fn v2_faucet(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
-    
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let _ = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
+    let faucet_amount = 10000_u64;
 
     // Rate limit: check if user already has a significant balance (anti-abuse)
     let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
@@ -3157,7 +3156,7 @@ async fn v2_faucet(
     {
         let mempool = node.get_mempool_snapshot();
         let pending_faucet = mempool.iter().any(|tx| {
-            tx.tx_type == "faucet" && tx.from_pub_key == body.public_key
+            tx.payload.faucet == Some(true) && tx.payload.to_pub_key_hex.as_deref() == Some(&body.public_key)
         });
         if pending_faucet {
             return Err((StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({
@@ -3166,27 +3165,14 @@ async fn v2_faucet(
             }))));
         }
     }
-    
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "faucet".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            faucet: Some(true),
-            ..Default::default()
-        },
-        fee: 0.0,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
-    
-    node.add_tx_to_mempool(tx)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    // Use the node's built-in faucet mechanism (creates a proper transfer tx from node key)
+    node.submit_faucet_tx(&body.public_key, faucet_amount)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     Ok(Json(serde_json::json!({
         "success": true,
-        "message": "Faucet request submitted"
+        "message": format!("Faucet: {} XRGE sent", faucet_amount)
     })))
 }
 
