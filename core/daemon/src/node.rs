@@ -172,11 +172,12 @@ impl L1Node {
         lp_balances.clear();
         burned_tokens.clear();
         
+        let node_pub_key_for_rebuild = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         // Replay all transactions to rebuild balances with fee distribution
         for block in blocks {
             // Apply transaction effects
             for tx in &block.txs {
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx);
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key_for_rebuild);
                 Self::apply_amm_balance_effects(
                     &mut balances,
                     &mut token_balances,
@@ -633,6 +634,14 @@ impl L1Node {
         
         mempool.insert(tx_hash, tx);
         Ok(())
+    }
+
+    pub fn get_node_public_key(&self) -> String {
+        self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default()
+    }
+
+    pub fn get_mempool_snapshot(&self) -> Vec<TxV1> {
+        self.mempool.lock().map(|m| m.values().cloned().collect()).unwrap_or_default()
     }
 
     pub fn submit_user_tx(
@@ -1115,11 +1124,20 @@ impl L1Node {
         let mut lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
         let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
         
+        // Track actual fees collected (not all tx fees -- rejected txs don't pay)
+        let mut actual_fees_collected = 0.0_f64;
+
+        let node_pub_key = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         // Apply transaction effects (transfers, stakes, etc.) - fees deducted from senders
         for tx in &block.txs {
-            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx);
+            let before = balances.values().sum::<f64>();
+            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key);
+            let after = balances.values().sum::<f64>();
+            let deducted = before - after;
+            if deducted > 0.0 { actual_fees_collected += tx.fee.min(deducted); }
             
             // Handle AMM transactions
+            let before_amm = balances.values().sum::<f64>();
             self.apply_amm_tx_inner(
                 &mut balances,
                 &mut token_balances,
@@ -1128,13 +1146,20 @@ impl L1Node {
                 block.header.time,
                 block.header.height,
             )?;
+            let after_amm = balances.values().sum::<f64>();
+            let deducted_amm = before_amm - after_amm;
+            if deducted_amm > 0.0 { actual_fees_collected += tx.fee.min(deducted_amm); }
 
             // Handle NFT transactions
+            let before_nft = balances.values().sum::<f64>();
             self.apply_nft_tx_inner(
                 &mut balances,
                 tx,
                 block.header.time,
             )?;
+            let after_nft = balances.values().sum::<f64>();
+            let deducted_nft = before_nft - after_nft;
+            if deducted_nft > 0.0 { actual_fees_collected += tx.fee.min(deducted_nft); }
         }
         
         // Persist bridge_withdraw txs for operator to fulfill ETH releases
@@ -1153,12 +1178,11 @@ impl L1Node {
             }
         }
         
-        // Distribute fees: 25% to proposer, 75% split by stake
-        let total_fees: f64 = block.txs.iter().map(|tx| tx.fee).sum();
-        if total_fees > 0.0 {
+        // Distribute only actually collected fees
+        if actual_fees_collected > 0.0 {
             Self::distribute_fees(
                 &mut balances,
-                total_fees,
+                actual_fees_collected,
                 &block.header.proposer_pub_key,
                 &self.get_validator_stakes_snapshot()?,
             );
@@ -1582,9 +1606,10 @@ impl L1Node {
                     return Ok(());
                 }
                 
-                // Check slippage
+                // Enforce slippage protection
                 if current_amount < min_amount_out {
-                    eprintln!("[node] Warning: Slippage exceeded in imported swap, accepting anyway");
+                    eprintln!("[node] Rejecting swap: slippage exceeded (got {} < min {})", current_amount, min_amount_out);
+                    return Ok(());
                 }
                 
                 // Credit output token
@@ -1644,7 +1669,8 @@ impl L1Node {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
         let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
-        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx);
+        let node_pub_key = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
+        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key);
         Ok(())
     }
 
@@ -1660,10 +1686,11 @@ impl L1Node {
         lp_balances.clear();
         burned_tokens.clear();
         
+        let node_pub_key_rebuild = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         for block in &blocks {
             // Apply transaction effects
             for tx in &block.txs {
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx);
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key_rebuild);
                 
                 // Apply AMM transaction balance effects (but don't update pool_store - already persisted)
                 Self::apply_amm_balance_effects(
@@ -1994,6 +2021,8 @@ impl L1Node {
         token_balances: &mut HashMap<TokenBalanceKey, f64>,
         burned_tokens: &mut HashMap<String, f64>,
         tx: &TxV1,
+        validator_store: Option<&quantum_vault_storage::validator_store::ValidatorStore>,
+        node_pub_key: &str,
     ) {
         match tx.tx_type.as_str() {
             "transfer" => {
@@ -2053,13 +2082,32 @@ impl L1Node {
             }
             "unstake" => {
                 let amount = tx.payload.amount.unwrap_or(0) as f64;
+                // Verify staked balance before crediting
+                if let Some(vs) = validator_store {
+                    let staked = vs.get_validator(&tx.from_pub_key)
+                        .unwrap_or(None)
+                        .map(|v| v.stake)
+                        .unwrap_or(0);
+                    if (amount as u128) > staked {
+                        eprintln!("[node] Rejecting unstake: staked {} but requested {}", staked, amount);
+                        return;
+                    }
+                }
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting unstake: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
+                    return;
+                }
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount - tx.fee;
             }
             "create_token" => {
-                // Token creation fee is deducted from sender (XRGE)
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting create_token: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
+                    return;
+                }
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
                 
-                // Mint token supply to creator
                 if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
                     let total_supply = tx.payload.token_total_supply.unwrap_or(0) as f64;
                     let creator_key = (tx.from_pub_key.clone(), token_symbol.clone());
@@ -2067,7 +2115,11 @@ impl L1Node {
                 }
             }
             "bridge_mint" => {
-                // Bridge deposit: mint bridged token to recipient (no fee, no deduction)
+                // Only the node operator key can issue bridge mints
+                if !node_pub_key.is_empty() && tx.from_pub_key != node_pub_key {
+                    eprintln!("[node] Rejecting bridge_mint: unauthorized sender (not node operator)");
+                    return;
+                }
                 if let (Some(to_pub_key), Some(token_symbol)) = (
                     tx.payload.to_pub_key_hex.as_ref(),
                     tx.payload.token_symbol.as_ref(),
@@ -2080,14 +2132,23 @@ impl L1Node {
                 }
             }
             "bridge_withdraw" => {
-                // Burn qETH and deduct XRGE fee; withdrawal recorded in apply_balance_block
                 if let (Some(token_symbol), Some(amount)) = (
                     tx.payload.token_symbol.as_ref(),
                     tx.payload.amount,
                 ) {
                     if token_symbol.to_uppercase() == "QETH" && amount > 0 {
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                        if xrge_bal < tx.fee {
+                            eprintln!("[node] Rejecting bridge_withdraw: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
+                            return;
+                        }
                         let sender_key = (tx.from_pub_key.clone(), token_symbol.clone());
+                        let token_bal = *token_balances.get(&sender_key).unwrap_or(&0.0);
+                        if token_bal < amount as f64 {
+                            eprintln!("[node] Rejecting bridge_withdraw: insufficient qETH ({:.4} < {})", token_bal, amount);
+                            return;
+                        }
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
                         *token_balances.entry(sender_key).or_insert(0.0) -= amount as f64;
                         *burned_tokens.entry(token_symbol.clone()).or_insert(0.0) += amount as f64;
                     }

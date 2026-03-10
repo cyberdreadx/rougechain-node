@@ -2533,16 +2533,16 @@ fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<String, String> {
         return Err("Invalid signature".to_string());
     }
     
-    // Check timestamp is within acceptable range (5 minutes)
-    if let Some(timestamp) = req.payload.get("timestamp").and_then(|v| v.as_i64()) {
-        let now = chrono::Utc::now().timestamp_millis();
-        let diff = (now - timestamp).abs();
-        if diff > 5 * 60 * 1000 {
-            return Err("Transaction expired (timestamp too old)".to_string());
-        }
+    // Require timestamp within acceptable range (5 minutes) to prevent replay
+    let timestamp = req.payload.get("timestamp").and_then(|v| v.as_i64())
+        .ok_or_else(|| "payload must include a 'timestamp' field".to_string())?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let diff = (now - timestamp).abs();
+    if diff > 5 * 60 * 1000 {
+        return Err("Transaction expired (timestamp too old or too far in the future)".to_string());
     }
     
-    // Check 'from' matches public key
+    // Require 'from' matches public key to prevent impersonation
     if let Some(from) = req.payload.get("from").and_then(|v| v.as_str()) {
         if from != req.public_key {
             return Err("Payload 'from' does not match signing public key".to_string());
@@ -2565,8 +2565,18 @@ async fn v2_transfer(
     
     let to = payload.get("to").and_then(|v| v.as_str()).unwrap_or_default();
     let amount = payload.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let fee = payload.get("fee").and_then(|v| v.as_f64()).unwrap_or(1.0);
     let token = payload.get("token").and_then(|v| v.as_str()).unwrap_or("XRGE");
+    let fee = 1.0_f64; // Server-enforced minimum fee
+
+    if to.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "recipient address is required"}))));
+    }
+    if to == body.public_key {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "cannot transfer to yourself"}))));
+    }
+    if amount <= 0.0 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "amount must be greater than zero"}))));
+    }
 
     // Balance check
     if token == "XRGE" {
@@ -2633,7 +2643,14 @@ async fn v2_create_token(
     let token_name = payload.get("token_name").and_then(|v| v.as_str()).unwrap_or_default();
     let token_symbol = payload.get("token_symbol").and_then(|v| v.as_str()).unwrap_or_default();
     let initial_supply = payload.get("initial_supply").and_then(|v| v.as_u64()).unwrap_or(0);
-    let fee = payload.get("fee").and_then(|v| v.as_f64()).unwrap_or(10.0);
+    let fee = 100.0_f64; // Server-enforced token creation fee
+
+    if token_name.is_empty() || token_symbol.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "token_name and token_symbol are required"}))));
+    }
+    if initial_supply == 0 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "initial_supply must be greater than zero"}))));
+    }
 
     let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
     if bal < fee {
@@ -2685,6 +2702,16 @@ async fn v2_create_pool(
     let token_b = payload.get("token_b").and_then(|v| v.as_str()).unwrap_or_default();
     let amount_a = payload.get("amount_a").and_then(|v| v.as_u64()).unwrap_or(0);
     let amount_b = payload.get("amount_b").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    if token_a.is_empty() || token_b.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "both token symbols are required"}))));
+    }
+    if token_a == token_b {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "cannot create pool with the same token on both sides"}))));
+    }
+    if amount_a == 0 || amount_b == 0 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "initial liquidity amounts must be greater than zero"}))));
+    }
     
     let pool_id = LiquidityPool::make_pool_id(token_a, token_b);
     
@@ -2807,6 +2834,12 @@ async fn v2_add_liquidity(
                 }))));
             }
         }
+    } else {
+        return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"success": false, "error": "pool not found"}))));
+    }
+
+    if amount_a == 0 || amount_b == 0 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "liquidity amounts must be greater than zero"}))));
     }
 
     let tx = TxV1 {
@@ -2847,6 +2880,37 @@ async fn v2_remove_liquidity(
     
     let pool_id = payload.get("pool_id").and_then(|v| v.as_str()).unwrap_or_default();
     let lp_amount = payload.get("lp_amount").and_then(|v| v.as_u64()).unwrap_or(0);
+    let remove_fee = 1.0_f64;
+
+    if lp_amount == 0 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "lp_amount must be greater than zero"}))));
+    }
+
+    // Verify pool exists
+    match node.get_pool(pool_id) {
+        Ok(Some(_)) => {}
+        _ => {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"success": false, "error": "pool not found"}))));
+        }
+    }
+
+    // Verify LP token ownership
+    let lp_bal = node.get_lp_balance(&body.public_key, pool_id).unwrap_or(0.0);
+    if lp_bal < lp_amount as f64 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false,
+            "error": format!("insufficient LP tokens: have {:.4}, want to remove {}", lp_bal, lp_amount)
+        }))));
+    }
+
+    // Verify XRGE for fee
+    let xrge_bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+    if xrge_bal < remove_fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false,
+            "error": format!("insufficient XRGE for fee: have {:.4}, need {:.4}", xrge_bal, remove_fee)
+        }))));
+    }
     
     let tx = TxV1 {
         version: 1,
@@ -2858,7 +2922,7 @@ async fn v2_remove_liquidity(
             lp_amount: Some(lp_amount),
             ..Default::default()
         },
-        fee: 1.0,
+        fee: remove_fee,
         sig: body.signature.clone(),
         signed_payload: Some(signed_payload),
     };
@@ -2889,6 +2953,16 @@ async fn v2_execute_swap(
     let min_amount_out = payload.get("min_amount_out").and_then(|v| v.as_u64()).unwrap_or(0);
     
     let swap_fee = 1.0_f64;
+
+    if token_in.is_empty() || token_out.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "token_in and token_out are required"}))));
+    }
+    if token_in == token_out {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "cannot swap a token for itself"}))));
+    }
+    if amount_in == 0 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "amount_in must be greater than zero"}))));
+    }
 
     // Balance check: ensure user can cover input amount + fee
     if token_in == "XRGE" {
@@ -2959,7 +3033,11 @@ async fn v2_stake(
     let payload = &body.payload;
     
     let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
-    let fee = payload.get("fee").and_then(|v| v.as_f64()).unwrap_or(1.0);
+    let fee = 1.0_f64; // Server-enforced fee
+
+    if amount == 0 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "stake amount must be greater than zero"}))));
+    }
 
     let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
     if bal < amount as f64 + fee {
@@ -3004,7 +3082,34 @@ async fn v2_unstake(
     let payload = &body.payload;
     
     let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
-    let fee = payload.get("fee").and_then(|v| v.as_f64()).unwrap_or(1.0);
+    let fee = 1.0_f64; // Server-enforced fee
+
+    if amount == 0 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "unstake amount must be greater than zero"}))));
+    }
+
+    // Verify user actually has this amount staked
+    if let Ok(validators) = node.list_validators() {
+        let staked = validators.iter()
+            .find(|(pk, _)| pk == &body.public_key)
+            .map(|(_, vs)| vs.stake)
+            .unwrap_or(0);
+        if (amount as u128) > staked {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("insufficient staked balance: have {}, want to unstake {}", staked, amount)
+            }))));
+        }
+    }
+
+    // Check XRGE for fee (unstake returns XRGE, but fee must be payable)
+    let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false,
+            "error": format!("insufficient XRGE for unstake fee: have {:.4}, need {:.4}", bal, fee)
+        }))));
+    }
     
     let tx = TxV1 {
         version: 1,
@@ -3038,6 +3143,29 @@ async fn v2_faucet(
     let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
+
+    // Rate limit: check if user already has a significant balance (anti-abuse)
+    let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal > 50000.0 {
+        return Err((StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({
+            "success": false,
+            "error": "faucet not available: your balance exceeds the faucet threshold"
+        }))));
+    }
+
+    // Check mempool for existing faucet requests from this user
+    {
+        let mempool = node.get_mempool_snapshot();
+        let pending_faucet = mempool.iter().any(|tx| {
+            tx.tx_type == "faucet" && tx.from_pub_key == body.public_key
+        });
+        if pending_faucet {
+            return Err((StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({
+                "success": false,
+                "error": "you already have a pending faucet request"
+            }))));
+        }
+    }
     
     let tx = TxV1 {
         version: 1,
@@ -3906,7 +4034,23 @@ struct BridgeFulfillResponse {
 async fn bridge_withdrawal_fulfill(
     State(state): State<AppState>,
     Path(tx_id): Path<String>,
+    Json(body): Json<SignedTransactionRequest>,
 ) -> Json<BridgeFulfillResponse> {
+    // Only the node operator can fulfill withdrawals
+    let node_pub_key = state.node.get_node_public_key();
+    if body.public_key != node_pub_key {
+        return Json(BridgeFulfillResponse {
+            success: false,
+            error: Some("unauthorized: only the node operator can fulfill withdrawals".to_string()),
+        });
+    }
+    if let Err(e) = verify_signed_tx(&body) {
+        return Json(BridgeFulfillResponse {
+            success: false,
+            error: Some(format!("signature verification failed: {}", e)),
+        });
+    }
+
     match state.bridge_withdraw_store.remove(&tx_id) {
         Ok(true) => Json(BridgeFulfillResponse {
             success: true,
