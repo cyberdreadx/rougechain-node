@@ -28,6 +28,9 @@ contract BridgeVault is Ownable, ReentrancyGuard {
     /// @notice Tracks nonces to prevent duplicate deposits
     mapping(address => uint256) public depositNonce;
 
+    /// @notice Tracks processed L1 tx IDs to prevent duplicate releases
+    mapping(string => bool) public processedL1Txs;
+
     // ── Events ──────────────────────────────────────────────────────
 
     /// @notice Emitted when a user locks XRGE to bridge to L1
@@ -53,6 +56,7 @@ contract BridgeVault is Ownable, ReentrancyGuard {
     error ZeroAmount();
     error EmptyPubkey();
     error InsufficientVaultBalance();
+    error AlreadyProcessed();
 
     // ── Constructor ─────────────────────────────────────────────────
 
@@ -93,6 +97,9 @@ contract BridgeVault is Ownable, ReentrancyGuard {
      */
     function release(address to, uint256 amount, string calldata l1TxId) external onlyOwner nonReentrant {
         if (amount == 0) revert ZeroAmount();
+        if (processedL1Txs[l1TxId]) revert AlreadyProcessed();
+        processedL1Txs[l1TxId] = true;
+
         uint256 balance = xrgeToken.balanceOf(address(this));
         if (balance < amount) revert InsufficientVaultBalance();
 

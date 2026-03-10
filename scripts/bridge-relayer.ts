@@ -25,6 +25,9 @@ const POLL_MS = parseInt(process.env.POLL_INTERVAL_MS || "5000", 10);
 const VAULT_ADDRESS = process.env.XRGE_BRIDGE_VAULT;
 const RELAYER_SECRET = process.env.BRIDGE_RELAYER_SECRET || "";
 
+// In-memory set of tx_ids currently being processed to prevent double-sends on crash/restart races
+const inFlightTxIds = new Set<string>();
+
 // ── ABIs ────────────────────────────────────────────────────────
 
 const BRIDGE_VAULT_ABI = parseAbi([
@@ -173,19 +176,26 @@ async function main() {
       console.log(`[relayer/ETH] Pending: ${withdrawals.length}, Balance: ${(Number(balance) / 1e18).toFixed(6)} ETH`);
 
       for (const w of withdrawals) {
+        if (inFlightTxIds.has(w.tx_id)) {
+          console.log(`[relayer/ETH] Skipping ${w.tx_id} — already in flight`);
+          continue;
+        }
+        inFlightTxIds.add(w.tx_id);
+
         try {
           const wei = unitsToWei(w.amount_units);
+          let hash: `0x${string}`;
 
           if (bridgeContract) {
             const l1TxIdBytes = `0x${w.tx_id.padEnd(64, "0").slice(0, 64)}` as `0x${string}`;
-            const hash = await (bridgeContract as any).write.releaseETH([
+            hash = await (bridgeContract as any).write.releaseETH([
               w.evm_address as `0x${string}`,
               wei,
               l1TxIdBytes,
             ]);
             console.log(`[relayer/ETH] Released via contract ${Number(wei) / 1e18} ETH to ${w.evm_address.slice(0, 10)}... tx: ${hash}`);
           } else {
-            const hash = await walletClient.sendTransaction({
+            hash = await walletClient.sendTransaction({
               to: w.evm_address as `0x${string}`,
               value: wei,
               gas: 21000n,
@@ -193,11 +203,20 @@ async function main() {
             console.log(`[relayer/ETH] Sent ${Number(wei) / 1e18} ETH to ${w.evm_address.slice(0, 10)}... tx: ${hash}`);
           }
 
+          // Wait for on-chain confirmation before marking fulfilled
+          const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1 });
+          if (receipt.status !== "success") {
+            console.error(`[relayer/ETH] Tx reverted on-chain for ${w.tx_id}: ${hash}`);
+            inFlightTxIds.delete(w.tx_id);
+            continue;
+          }
+
           const ok = await fulfillEthWithdrawal(w.tx_id);
           if (ok) console.log(`[relayer/ETH] Fulfilled ${w.tx_id}`);
           else console.warn(`[relayer/ETH] Failed to mark fulfilled: ${w.tx_id}`);
         } catch (e) {
           console.error(`[relayer/ETH] Tx failed for ${w.tx_id}:`, e);
+          inFlightTxIds.delete(w.tx_id);
         }
       }
     } catch (e) {
@@ -216,6 +235,12 @@ async function main() {
       console.log(`[relayer/XRGE] Pending: ${withdrawals.length}`);
 
       for (const w of withdrawals) {
+        if (inFlightTxIds.has(w.tx_id)) {
+          console.log(`[relayer/XRGE] Skipping ${w.tx_id} — already in flight`);
+          continue;
+        }
+        inFlightTxIds.add(w.tx_id);
+
         try {
           const weiAmount = xrgeToWei(w.amount);
           const hash = await (vaultContract as any).write.release([
@@ -224,11 +249,20 @@ async function main() {
             w.tx_id,
           ]);
           console.log(`[relayer/XRGE] Released ${w.amount} XRGE to ${w.evm_address.slice(0, 10)}... tx: ${hash}`);
+
+          const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1 });
+          if (receipt.status !== "success") {
+            console.error(`[relayer/XRGE] Tx reverted on-chain for ${w.tx_id}: ${hash}`);
+            inFlightTxIds.delete(w.tx_id);
+            continue;
+          }
+
           const ok = await fulfillXrgeWithdrawal(w.tx_id);
           if (ok) console.log(`[relayer/XRGE] Fulfilled ${w.tx_id}`);
           else console.warn(`[relayer/XRGE] Failed to mark fulfilled: ${w.tx_id}`);
         } catch (e) {
           console.error(`[relayer/XRGE] Release failed for ${w.tx_id}:`, e);
+          inFlightTxIds.delete(w.tx_id);
         }
       }
     } catch (e) {

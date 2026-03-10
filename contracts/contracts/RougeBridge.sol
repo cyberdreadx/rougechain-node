@@ -132,14 +132,17 @@ contract RougeBridge is Ownable, ReentrancyGuard, Pausable {
         bytes32 l1TxId
     ) external onlyOwner nonReentrant whenNotPaused {
         if (amount == 0) revert ZeroAmount();
+        if (to == address(0)) revert InvalidRequest();
         if (processedL1Txs[l1TxId]) revert AlreadyProcessed();
+
+        // Mark as processed BEFORE timelock to prevent duplicate queuing
+        processedL1Txs[l1TxId] = true;
 
         if (amount >= largeWithdrawalThreshold) {
             _queueTimelock(address(0), to, amount, l1TxId);
             return;
         }
 
-        processedL1Txs[l1TxId] = true;
         if (address(this).balance < amount) revert InsufficientBalance();
         (bool ok,) = to.call{value: amount}("");
         require(ok, "ETH transfer failed");
@@ -153,16 +156,18 @@ contract RougeBridge is Ownable, ReentrancyGuard, Pausable {
         bytes32 l1TxId
     ) external onlyOwner nonReentrant whenNotPaused {
         if (amount == 0) revert ZeroAmount();
+        if (to == address(0)) revert InvalidRequest();
         if (processedL1Txs[l1TxId]) revert AlreadyProcessed();
         if (!supportedTokens[token]) revert UnsupportedToken();
 
-        uint256 thresholdInTokenDecimals = largeWithdrawalThreshold;
-        if (amount >= thresholdInTokenDecimals) {
+        // Mark as processed BEFORE timelock to prevent duplicate queuing
+        processedL1Txs[l1TxId] = true;
+
+        if (amount >= largeWithdrawalThreshold) {
             _queueTimelock(token, to, amount, l1TxId);
             return;
         }
 
-        processedL1Txs[l1TxId] = true;
         IERC20(token).safeTransfer(to, amount);
         emit BridgeReleaseERC20(to, token, amount, l1TxId);
     }
@@ -191,7 +196,6 @@ contract RougeBridge is Ownable, ReentrancyGuard, Pausable {
         if (block.timestamp < req.executeAfter) revert TimelockNotReady();
 
         req.executed = true;
-        processedL1Txs[req.l1TxId] = true;
 
         if (req.token == address(0)) {
             if (address(this).balance < req.amount) revert InsufficientBalance();
