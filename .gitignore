@@ -28,3 +28,6 @@ core/target/
 
 # Local Netlify folder
 .netlify
+
+# Node private keys (NEVER commit)
+node-keys.json

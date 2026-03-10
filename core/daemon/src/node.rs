@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::fs;
 
 use chrono::Utc;
 
@@ -82,7 +83,7 @@ impl L1Node {
         let nft_store = NftStore::new(&opts.data_dir)?;
         let name_registry = NameRegistry::new(&opts.data_dir)?;
         let mail_store = MailStore::new(&opts.data_dir)?;
-        let keys = pqc_keygen();
+        let keys = Self::load_or_create_keys(&opts.data_dir)?;
         Ok(Self {
             node_id: uuid::Uuid::new_v4().to_string(),
             opts,
@@ -105,6 +106,28 @@ impl L1Node {
             votes: Arc::new(Mutex::new(Vec::new())),
             finalized_height: Arc::new(Mutex::new(0)),
         })
+    }
+
+    fn load_or_create_keys(data_dir: &PathBuf) -> Result<PQKeypair, String> {
+        let key_file = data_dir.join("node-keys.json");
+        if key_file.exists() {
+            let data = fs::read_to_string(&key_file)
+                .map_err(|e| format!("Failed to read node keys: {}", e))?;
+            let keys: PQKeypair = serde_json::from_str(&data)
+                .map_err(|e| format!("Failed to parse node keys: {}", e))?;
+            eprintln!("[node] Loaded persisted node keys (pub: {}...)", &keys.public_key_hex[..16.min(keys.public_key_hex.len())]);
+            Ok(keys)
+        } else {
+            let keys = pqc_keygen();
+            let data = serde_json::to_string_pretty(&keys)
+                .map_err(|e| format!("Failed to serialize node keys: {}", e))?;
+            fs::create_dir_all(data_dir)
+                .map_err(|e| format!("Failed to create data dir: {}", e))?;
+            fs::write(&key_file, &data)
+                .map_err(|e| format!("Failed to write node keys: {}", e))?;
+            eprintln!("[node] Generated and saved new node keys (pub: {}...)", &keys.public_key_hex[..16.min(keys.public_key_hex.len())]);
+            Ok(keys)
+        }
     }
 
     pub fn init(&self) -> Result<(), String> {
@@ -166,12 +189,11 @@ impl L1Node {
         lp_balances.clear();
         burned_tokens.clear();
         
-        let node_pub_key_for_rebuild = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         // Replay all transactions to rebuild balances with fee distribution
         for block in blocks {
             // Apply transaction effects
             for tx in &block.txs {
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key_for_rebuild);
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_");
                 Self::apply_amm_balance_effects(
                     &mut balances,
                     &mut token_balances,
@@ -1675,7 +1697,6 @@ impl L1Node {
         lp_balances.clear();
         burned_tokens.clear();
         
-        let node_pub_key_rebuild = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         let mut skipped_txs = 0u64;
 
         for block in &blocks {
@@ -1684,7 +1705,7 @@ impl L1Node {
             for tx in &block.txs {
                 let sum_before: f64 = balances.values().sum();
 
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key_rebuild);
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_");
                 
                 Self::apply_amm_balance_effects(
                     &mut balances,
@@ -2101,8 +2122,8 @@ impl L1Node {
                     let amount = tx.payload.amount.unwrap_or(0) as f64;
                     let is_burn = to_pub_key == BURN_ADDRESS;
                     let is_faucet = tx.payload.faucet == Some(true)
-                        && !node_pub_key.is_empty()
-                        && tx.from_pub_key == node_pub_key;
+                        && (!node_pub_key.is_empty() && tx.from_pub_key == node_pub_key
+                            || node_pub_key == "_rebuild_");
 
                     if is_faucet {
                         // Faucet mint: credit recipient without debiting sender
@@ -2193,8 +2214,8 @@ impl L1Node {
                 }
             }
             "bridge_mint" => {
-                // Only the node operator key can issue bridge mints
-                if !node_pub_key.is_empty() && tx.from_pub_key != node_pub_key {
+                // Only the node operator key can issue bridge mints (skip check during rebuild)
+                if node_pub_key != "_rebuild_" && !node_pub_key.is_empty() && tx.from_pub_key != node_pub_key {
                     eprintln!("[node] Rejecting bridge_mint: unauthorized sender (not node operator)");
                     return;
                 }
