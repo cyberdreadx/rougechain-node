@@ -1602,7 +1602,35 @@ async fn execute_swap(
     use quantum_vault_types::{TxPayload, TxV1, encode_tx_for_signing};
     
     let node = &state.node;
-    
+    let swap_fee = 0.1_f64;
+
+    // Balance check
+    if body.token_in == "XRGE" {
+        let bal = node.get_balance(&body.from_public_key).unwrap_or(0.0);
+        let needed = body.amount_in as f64 + swap_fee;
+        if bal < needed {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("insufficient XRGE balance: have {:.4}, need {:.4}", bal, needed)
+            }))));
+        }
+    } else {
+        let xrge_bal = node.get_balance(&body.from_public_key).unwrap_or(0.0);
+        if xrge_bal < swap_fee {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("insufficient XRGE balance for fee: have {:.4}, need {:.4}", xrge_bal, swap_fee)
+            }))));
+        }
+        let token_bal = node.get_token_balance(&body.from_public_key, &body.token_in).unwrap_or(0.0);
+        if token_bal < body.amount_in as f64 {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("insufficient {} balance: have {:.4}, need {}", body.token_in, token_bal, body.amount_in)
+            }))));
+        }
+    }
+
     let tx = TxV1 {
         version: 1,
         tx_type: "swap".to_string(),
@@ -1616,7 +1644,7 @@ async fn execute_swap(
             swap_path: body.path,
             ..Default::default()
         },
-        fee: 0.1,
+        fee: swap_fee,
         sig: String::new(),
         signed_payload: None,
     };
@@ -2633,6 +2661,40 @@ async fn v2_create_pool(
             "error": format!("Pool {} already exists", pool_id)
         }))));
     }
+
+    let pool_fee = 10.0_f64;
+
+    // Balance check for pool creation
+    let mut xrge_needed = pool_fee;
+    if token_a == "XRGE" { xrge_needed += amount_a as f64; }
+    if token_b == "XRGE" { xrge_needed += amount_b as f64; }
+
+    let xrge_bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+    if xrge_bal < xrge_needed {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false,
+            "error": format!("insufficient XRGE balance: have {:.4}, need {:.4}", xrge_bal, xrge_needed)
+        }))));
+    }
+
+    if token_a != "XRGE" {
+        let bal = node.get_token_balance(&body.public_key, token_a).unwrap_or(0.0);
+        if bal < amount_a as f64 {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("insufficient {} balance: have {:.4}, need {}", token_a, bal, amount_a)
+            }))));
+        }
+    }
+    if token_b != "XRGE" {
+        let bal = node.get_token_balance(&body.public_key, token_b).unwrap_or(0.0);
+        if bal < amount_b as f64 {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("insufficient {} balance: have {:.4}, need {}", token_b, bal, amount_b)
+            }))));
+        }
+    }
     
     let tx = TxV1 {
         version: 1,
@@ -2647,7 +2709,7 @@ async fn v2_create_pool(
             amount_b: Some(amount_b),
             ..Default::default()
         },
-        fee: 10.0,
+        fee: pool_fee,
         sig: body.signature.clone(),
         signed_payload: Some(signed_payload),
     };
@@ -2676,7 +2738,43 @@ async fn v2_add_liquidity(
     let pool_id = payload.get("pool_id").and_then(|v| v.as_str()).unwrap_or_default();
     let amount_a = payload.get("amount_a").and_then(|v| v.as_u64()).unwrap_or(0);
     let amount_b = payload.get("amount_b").and_then(|v| v.as_u64()).unwrap_or(0);
-    
+
+    let liq_fee = 1.0_f64;
+
+    // Balance check for add_liquidity
+    if let Ok(Some(pool)) = node.get_pool(pool_id) {
+        let mut xrge_needed = liq_fee;
+        if pool.token_a == "XRGE" { xrge_needed += amount_a as f64; }
+        if pool.token_b == "XRGE" { xrge_needed += amount_b as f64; }
+
+        let xrge_bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+        if xrge_bal < xrge_needed {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("insufficient XRGE balance: have {:.4}, need {:.4}", xrge_bal, xrge_needed)
+            }))));
+        }
+
+        if pool.token_a != "XRGE" {
+            let bal = node.get_token_balance(&body.public_key, &pool.token_a).unwrap_or(0.0);
+            if bal < amount_a as f64 {
+                return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                    "success": false,
+                    "error": format!("insufficient {} balance: have {:.4}, need {}", pool.token_a, bal, amount_a)
+                }))));
+            }
+        }
+        if pool.token_b != "XRGE" {
+            let bal = node.get_token_balance(&body.public_key, &pool.token_b).unwrap_or(0.0);
+            if bal < amount_b as f64 {
+                return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                    "success": false,
+                    "error": format!("insufficient {} balance: have {:.4}, need {}", pool.token_b, bal, amount_b)
+                }))));
+            }
+        }
+    }
+
     let tx = TxV1 {
         version: 1,
         tx_type: "add_liquidity".to_string(),
@@ -2688,7 +2786,7 @@ async fn v2_add_liquidity(
             amount_b: Some(amount_b),
             ..Default::default()
         },
-        fee: 1.0,
+        fee: liq_fee,
         sig: body.signature.clone(),
         signed_payload: Some(signed_payload),
     };
@@ -2756,7 +2854,35 @@ async fn v2_execute_swap(
     let amount_in = payload.get("amount_in").and_then(|v| v.as_u64()).unwrap_or(0);
     let min_amount_out = payload.get("min_amount_out").and_then(|v| v.as_u64()).unwrap_or(0);
     
-    // Get pool for swap
+    let swap_fee = 1.0_f64;
+
+    // Balance check: ensure user can cover input amount + fee
+    if token_in == "XRGE" {
+        let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+        let needed = amount_in as f64 + swap_fee;
+        if bal < needed {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("insufficient XRGE balance: have {:.4}, need {:.4} (amount {} + fee {})", bal, needed, amount_in, swap_fee)
+            }))));
+        }
+    } else {
+        let xrge_bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+        if xrge_bal < swap_fee {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("insufficient XRGE balance for fee: have {:.4}, need {:.4}", xrge_bal, swap_fee)
+            }))));
+        }
+        let token_bal = node.get_token_balance(&body.public_key, token_in).unwrap_or(0.0);
+        if token_bal < amount_in as f64 {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("insufficient {} balance: have {:.4}, need {}", token_in, token_bal, amount_in)
+            }))));
+        }
+    }
+
     let pool_id = LiquidityPool::make_pool_id(token_in, token_out);
     
     let tx = TxV1 {
@@ -2773,7 +2899,7 @@ async fn v2_execute_swap(
             min_amount_out: Some(min_amount_out),
             ..Default::default()
         },
-        fee: 1.0,
+        fee: swap_fee,
         sig: body.signature.clone(),
         signed_payload: Some(signed_payload),
     };

@@ -1185,6 +1185,32 @@ impl L1Node {
                 let token_b = tx.payload.token_b_symbol.as_ref().ok_or("missing token_b")?;
                 let amount_a = tx.payload.amount_a.ok_or("missing amount_a")?;
                 let amount_b = tx.payload.amount_b.ok_or("missing amount_b")?;
+
+                // Balance guard
+                let mut xrge_needed = tx.fee;
+                if token_a == "XRGE" { xrge_needed += amount_a as f64; }
+                if token_b == "XRGE" { xrge_needed += amount_b as f64; }
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < xrge_needed {
+                    eprintln!("[node] Rejecting create_pool: insufficient XRGE ({:.4} < {:.4})", xrge_bal, xrge_needed);
+                    return Ok(());
+                }
+                if token_a != "XRGE" {
+                    let key = (tx.from_pub_key.clone(), token_a.clone());
+                    let bal = *token_balances.get(&key).unwrap_or(&0.0);
+                    if bal < amount_a as f64 {
+                        eprintln!("[node] Rejecting create_pool: insufficient {} ({:.4} < {})", token_a, bal, amount_a);
+                        return Ok(());
+                    }
+                }
+                if token_b != "XRGE" {
+                    let key = (tx.from_pub_key.clone(), token_b.clone());
+                    let bal = *token_balances.get(&key).unwrap_or(&0.0);
+                    if bal < amount_b as f64 {
+                        eprintln!("[node] Rejecting create_pool: insufficient {} ({:.4} < {})", token_b, bal, amount_b);
+                        return Ok(());
+                    }
+                }
                 
                 // Deduct XRGE fee
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
@@ -1267,6 +1293,32 @@ impl L1Node {
                         return Ok(());
                     }
                 };
+
+                // Balance guard
+                let mut xrge_needed = tx.fee;
+                if pool.token_a == "XRGE" { xrge_needed += amount_a as f64; }
+                if pool.token_b == "XRGE" { xrge_needed += amount_b as f64; }
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < xrge_needed {
+                    eprintln!("[node] Rejecting add_liquidity: insufficient XRGE ({:.4} < {:.4})", xrge_bal, xrge_needed);
+                    return Ok(());
+                }
+                if pool.token_a != "XRGE" {
+                    let key = (tx.from_pub_key.clone(), pool.token_a.clone());
+                    let bal = *token_balances.get(&key).unwrap_or(&0.0);
+                    if bal < amount_a as f64 {
+                        eprintln!("[node] Rejecting add_liquidity: insufficient {} ({:.4} < {})", pool.token_a, bal, amount_a);
+                        return Ok(());
+                    }
+                }
+                if pool.token_b != "XRGE" {
+                    let key = (tx.from_pub_key.clone(), pool.token_b.clone());
+                    let bal = *token_balances.get(&key).unwrap_or(&0.0);
+                    if bal < amount_b as f64 {
+                        eprintln!("[node] Rejecting add_liquidity: insufficient {} ({:.4} < {})", pool.token_b, bal, amount_b);
+                        return Ok(());
+                    }
+                }
                 
                 // Deduct fee
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
@@ -1351,6 +1403,19 @@ impl L1Node {
                         return Ok(());
                     }
                 };
+
+                // Balance guard: check XRGE for fee and LP token balance
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting remove_liquidity: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
+                    return Ok(());
+                }
+                let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
+                let lp_bal = *lp_balances.get(&lp_key).unwrap_or(&0.0);
+                if lp_bal < lp_amount as f64 {
+                    eprintln!("[node] Rejecting remove_liquidity: insufficient LP tokens ({:.4} < {})", lp_bal, lp_amount);
+                    return Ok(());
+                }
                 
                 // Deduct fee
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
@@ -1428,6 +1493,26 @@ impl L1Node {
                 let token_out = tx.payload.token_b_symbol.as_ref().ok_or("missing token_b_symbol (token_out)")?;
                 let amount_in = tx.payload.amount_a.ok_or("missing amount_a (amount_in)")?;
                 let min_amount_out = tx.payload.min_amount_out.unwrap_or(0);
+
+                // Balance guard: reject swap if user cannot afford it
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if token_in == "XRGE" {
+                    if xrge_bal < amount_in as f64 + tx.fee {
+                        eprintln!("[node] Rejecting swap: insufficient XRGE balance ({:.4} < {:.4})", xrge_bal, amount_in as f64 + tx.fee);
+                        return Ok(());
+                    }
+                } else {
+                    if xrge_bal < tx.fee {
+                        eprintln!("[node] Rejecting swap: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
+                        return Ok(());
+                    }
+                    let token_key = (tx.from_pub_key.clone(), token_in.clone());
+                    let token_bal = *token_balances.get(&token_key).unwrap_or(&0.0);
+                    if token_bal < amount_in as f64 {
+                        eprintln!("[node] Rejecting swap: insufficient {} balance ({:.4} < {})", token_in, token_bal, amount_in);
+                        return Ok(());
+                    }
+                }
                 
                 // Deduct fee
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
@@ -1916,38 +2001,54 @@ impl L1Node {
                     let amount = tx.payload.amount.unwrap_or(0) as f64;
                     let is_burn = to_pub_key == BURN_ADDRESS;
                     
-                    // Check if this is a token transfer (has token_symbol)
                     if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
-                        // Token transfer: deduct XRGE fee from sender
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                        
-                        // Track token balance changes
+                        // Balance guard for token transfer
+                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                        if xrge_bal < tx.fee {
+                            eprintln!("[node] Rejecting transfer: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
+                            return;
+                        }
                         let sender_key = (tx.from_pub_key.clone(), token_symbol.clone());
+                        let token_bal = *token_balances.get(&sender_key).unwrap_or(&0.0);
+                        if token_bal < amount {
+                            eprintln!("[node] Rejecting transfer: insufficient {} ({:.4} < {:.4})", token_symbol, token_bal, amount);
+                            return;
+                        }
+
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
                         *token_balances.entry(sender_key).or_insert(0.0) -= amount;
                         
                         if is_burn {
-                            // Burn: add to burned_tokens tracker instead of recipient
                             *burned_tokens.entry(token_symbol.clone()).or_insert(0.0) += amount;
                         } else {
                             let recipient_key = (to_pub_key.clone(), token_symbol.clone());
                             *token_balances.entry(recipient_key).or_insert(0.0) += amount;
                         }
                     } else {
-                        // XRGE transfer
+                        // Balance guard for XRGE transfer
+                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                        if xrge_bal < amount + tx.fee {
+                            eprintln!("[node] Rejecting transfer: insufficient XRGE ({:.4} < {:.4})", xrge_bal, amount + tx.fee);
+                            return;
+                        }
+
                         *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount + tx.fee;
                         
                         if is_burn {
-                            // Burn XRGE: add to burned_tokens tracker
                             *burned_tokens.entry("XRGE".to_string()).or_insert(0.0) += amount;
                         } else {
                             *balances.entry(to_pub_key.clone()).or_insert(0.0) += amount;
                         }
                     }
-                    // Fees are distributed separately via distribute_fees()
                 }
             }
             "stake" => {
                 let amount = tx.payload.amount.unwrap_or(0) as f64;
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < amount + tx.fee {
+                    eprintln!("[node] Rejecting stake: insufficient XRGE ({:.4} < {:.4})", xrge_bal, amount + tx.fee);
+                    return;
+                }
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount + tx.fee;
             }
             "unstake" => {
