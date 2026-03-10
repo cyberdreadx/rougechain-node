@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { ArrowUpRight, ArrowDownLeft, RefreshCw, History, Plus, Coins, ExternalLink, Copy, ArrowDownUp, Lock, Unlock, Droplets, Image, ArrowLeftRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { EXPLORER_URL } from "@/lib/pqc-wallet";
+import { Link } from "react-router-dom";
 
 interface Transaction {
   id: string;
@@ -111,9 +111,9 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
     }
   };
 
-  const explorerUrl = (txHash?: string) => {
-    if (!txHash) return "";
-    return `${EXPLORER_URL.replace(/\/+$/, "")}/tx/${txHash}`;
+  const explorerPath = (txHash?: string) => {
+    if (!txHash) return "/transactions";
+    return `/tx/${txHash}`;
   };
 
   const displayedTxs = showAll ? transactions : transactions.slice(0, INITIAL_DISPLAY_COUNT);
@@ -267,10 +267,10 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
                     size="sm"
                     asChild
                   >
-                    <a href={explorerUrl(selectedTx.txHash)} target="_blank" rel="noopener noreferrer">
+                    <Link to={explorerPath(selectedTx.txHash)}>
                       <ExternalLink className="w-4 h-4 mr-2" />
                       View in Explorer
-                    </a>
+                    </Link>
                   </Button>
                 )}
               </div>

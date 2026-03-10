@@ -237,12 +237,12 @@ const Index = () => {
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ delay: 0.1 }}
-            className="mx-auto mb-6 w-24 h-24 rounded-full ring-2 ring-primary/20 shadow-lg shadow-primary/20"
+            className="mx-auto mb-6 w-24 h-24 rounded-full overflow-hidden border-2 border-primary/20 shadow-[0_0_30px_rgba(0,200,200,0.15)]"
           >
             <img
               src={xrgeLogo}
               alt="XRGE"
-              className="w-24 h-24 rounded-full animate-jelly"
+              className="w-full h-full object-cover rounded-full animate-jelly"
             />
           </motion.div>
 

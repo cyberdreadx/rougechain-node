@@ -8,7 +8,7 @@ export const TOKEN_NAME = "RougeCoin";
 export const CHAIN_NAME = "RougeChain";
 export const TOKEN_DECIMALS = 18;
 export const CHAIN_ID = "rougechain-1";
-export const EXPLORER_URL = "https://rougeelabs.com";
+export const EXPLORER_URL = "https://rougechain.io";
 
 // Fee constants
 export const BASE_TRANSFER_FEE = 0.1; // 0.1 XRGE per transfer

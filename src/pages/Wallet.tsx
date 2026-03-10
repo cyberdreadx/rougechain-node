@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
+import { Link } from "react-router-dom";
 import WalletCard from "@/components/wallet/WalletCard";
 import AssetList from "@/components/wallet/AssetList";
 import TransactionHistory from "@/components/wallet/TransactionHistory";
@@ -36,7 +37,6 @@ import {
   TOTAL_SUPPLY,
   TOKEN_NAME,
   CHAIN_ID,
-  EXPLORER_URL,
   WalletBalance,
   WalletTransaction
 } from "@/lib/pqc-wallet";
@@ -762,14 +762,12 @@ const Wallet = () => {
             >
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-foreground">XRGE Token Info</h3>
-                <a 
-                  href={EXPLORER_URL} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
+                <Link 
+                  to="/blockchain"
                   className="text-xs text-primary hover:underline"
                 >
-                  rougeelabs.com ↗
-                </a>
+                  Explorer ↗
+                </Link>
               </div>
               
               {/* Native Token Info */}
