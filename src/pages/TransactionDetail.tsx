@@ -142,26 +142,52 @@ const TransactionDetail = () => {
           setNotFound(true);
           return;
         }
+        const headers = getCoreApiHeaders();
+
+        // Try direct tx hash lookup first
         const res = await fetch(`${apiBase}/tx/${hash}`, {
           signal: AbortSignal.timeout(8000),
-          headers: getCoreApiHeaders(),
+          headers,
         });
-        if (!res.ok) {
-          setNotFound(true);
-          return;
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success) {
+            setTxData({
+              txId: data.txId ?? hash ?? "",
+              blockHeight: data.blockHeight ?? 0,
+              blockHash: data.blockHash ?? "",
+              blockTime: data.blockTime ?? Date.now(),
+              tx: data.tx ?? {},
+            });
+            return;
+          }
         }
-        const data = await res.json();
-        if (!data.success) {
-          setNotFound(true);
-          return;
-        }
-        setTxData({
-          txId: data.txId ?? hash ?? "",
-          blockHeight: data.blockHeight ?? 0,
-          blockHash: data.blockHash ?? "",
-          blockTime: data.blockTime ?? Date.now(),
-          tx: data.tx ?? {},
+
+        // Fallback: the hash might be a block hash (legacy wallet tx links)
+        // Try to find the block and show its first transaction
+        const blocksRes = await fetch(`${apiBase}/blocks`, {
+          signal: AbortSignal.timeout(8000),
+          headers,
         });
+        if (blocksRes.ok) {
+          const blocksData = await blocksRes.json();
+          const blocks = blocksData.blocks || [];
+          for (const block of blocks) {
+            if (block.hash === hash && block.txs?.length > 0) {
+              const tx = block.txs[0];
+              setTxData({
+                txId: hash,
+                blockHeight: block.header?.height ?? 0,
+                blockHash: block.hash,
+                blockTime: block.header?.time ?? Date.now(),
+                tx: tx,
+              });
+              return;
+            }
+          }
+        }
+
+        setNotFound(true);
       } catch {
         setNotFound(true);
       } finally {

@@ -1238,6 +1238,8 @@ async fn get_tx_by_hash(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let node = &state.node;
     let blocks = node.get_all_blocks().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // First pass: match by computed tx hash
     for block in &blocks {
         for tx in &block.txs {
             let tx_id = quantum_vault_crypto::bytes_to_hex(
@@ -1255,6 +1257,26 @@ async fn get_tx_by_hash(
             }
         }
     }
+
+    // Second pass: match by block hash (frontend may pass block hash as tx identifier)
+    for block in &blocks {
+        if block.hash == hash {
+            if let Some(tx) = block.txs.first() {
+                let tx_id = quantum_vault_crypto::bytes_to_hex(
+                    &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
+                );
+                return Ok(Json(serde_json::json!({
+                    "success": true,
+                    "txId": tx_id,
+                    "blockHeight": block.header.height,
+                    "blockHash": block.hash,
+                    "blockTime": block.header.time,
+                    "tx": tx,
+                })));
+            }
+        }
+    }
+
     Err(StatusCode::NOT_FOUND)
 }
 
