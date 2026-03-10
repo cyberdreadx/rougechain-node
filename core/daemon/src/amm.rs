@@ -11,7 +11,7 @@ use std::collections::{HashMap, VecDeque};
 /// Minimum liquidity burned when creating a pool (prevents first LP manipulation)
 pub const MINIMUM_LIQUIDITY: u64 = 1000;
 
-/// Default fee rate (0.3%)
+#[allow(dead_code)]
 pub const DEFAULT_FEE_RATE: f64 = 0.003;
 
 /// Fee multiplier for calculation (1000 - 3 = 997 for 0.3% fee)
@@ -36,8 +36,7 @@ pub fn get_amount_out(amount_in: u64, reserve_in: u64, reserve_out: u64) -> Opti
     Some((numerator / denominator) as u64)
 }
 
-/// Calculate input amount required for a desired output (with fee)
-/// Formula: amount_in = (reserve_in * amount_out * 1000) / ((reserve_out - amount_out) * 997) + 1
+#[allow(dead_code)]
 pub fn get_amount_in(amount_out: u64, reserve_in: u64, reserve_out: u64) -> Option<u64> {
     if amount_out == 0 || reserve_in == 0 || reserve_out == 0 || amount_out >= reserve_out {
         return None;
@@ -54,8 +53,7 @@ pub fn get_amount_in(amount_out: u64, reserve_in: u64, reserve_out: u64) -> Opti
     Some(((numerator / denominator) + 1) as u64)
 }
 
-/// Quote the equivalent amount of token B for a given amount of token A
-/// Used for adding liquidity proportionally
+#[allow(dead_code)]
 pub fn quote(amount_a: u64, reserve_a: u64, reserve_b: u64) -> Option<u64> {
     if amount_a == 0 || reserve_a == 0 || reserve_b == 0 {
         return None;
@@ -130,12 +128,12 @@ pub fn calculate_price_impact(amount_in: u64, reserve_in: u64, reserve_out: u64)
     ((spot_price - execution_price) / spot_price * 100.0).abs()
 }
 
-/// Multi-hop swap result
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SwapRoute {
-    pub path: Vec<String>,           // Token path: [TOKEN_IN, ..., TOKEN_OUT]
-    pub amounts: Vec<u64>,           // Amount at each step
-    pub pools: Vec<String>,          // Pool IDs used
+    pub path: Vec<String>,
+    pub amounts: Vec<u64>,
+    pub pools: Vec<String>,
     pub total_amount_out: u64,
     pub price_impact: f64,
 }
@@ -238,7 +236,7 @@ fn calculate_route_amounts(
     })
 }
 
-/// Execute a multi-hop swap and return updated pool reserves
+#[allow(dead_code)]
 pub fn execute_multi_hop_swap(
     path: &[String],
     amount_in: u64,

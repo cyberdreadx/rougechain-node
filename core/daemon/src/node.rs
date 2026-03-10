@@ -25,12 +25,6 @@ use crate::pool_events::{PoolEvent, PoolEventStore, PoolEventType, PriceSnapshot
 
 const BASE_TRANSFER_FEE: f64 = 0.1;
 const TOKEN_CREATION_FEE: f64 = 100.0;
-const POOL_CREATION_FEE: f64 = 10.0;
-const SWAP_FEE: f64 = 0.1;
-const NFT_COLLECTION_FEE: f64 = 50.0;
-const NFT_MINT_FEE: f64 = 5.0;
-const NFT_TRANSFER_FEE: f64 = 1.0;
-const NFT_SMALL_FEE: f64 = 0.1;
 const JAIL_BLOCKS: u64 = 20;
 const SLASH_DIVISOR: u128 = 10;
 const MAX_MEMPOOL: usize = 2000;
@@ -576,10 +570,6 @@ impl L1Node {
 
     pub fn get_pool(&self, pool_id: &str) -> Result<Option<LiquidityPool>, String> {
         self.pool_store.get_pool(pool_id)
-    }
-
-    pub fn get_pool_by_tokens(&self, token_a: &str, token_b: &str) -> Result<Option<LiquidityPool>, String> {
-        self.pool_store.get_pool_by_tokens(token_a, token_b)
     }
 
     pub fn list_pools(&self) -> Result<Vec<LiquidityPool>, String> {

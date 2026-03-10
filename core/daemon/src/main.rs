@@ -895,7 +895,7 @@ async fn get_token_holders(
     
     // Get all wallet balances for this symbol
     let wallet_balances = node.get_all_token_balances_for_symbol(&symbol).unwrap_or_default();
-    let wallet_total: f64 = wallet_balances.values().sum();
+    let _wallet_total: f64 = wallet_balances.values().sum();
     
     // Get pool reserves for this token (tokens locked in liquidity)
     let pool_reserves = node.get_token_pool_reserves(&symbol).unwrap_or(0);

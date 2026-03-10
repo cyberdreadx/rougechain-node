@@ -72,12 +72,12 @@ impl LiquidityPool {
         }
     }
     
-    /// Check if this pool contains a specific token
+    #[allow(dead_code)]
     pub fn contains_token(&self, symbol: &str) -> bool {
         self.token_a == symbol || self.token_b == symbol
     }
     
-    /// Get the other token in the pair
+    #[allow(dead_code)]
     pub fn get_other_token(&self, symbol: &str) -> Option<&str> {
         if self.token_a == symbol {
             Some(&self.token_b)
@@ -138,7 +138,7 @@ impl PoolStore {
         }
     }
     
-    /// Get a pool by token pair (in any order)
+    #[allow(dead_code)]
     pub fn get_pool_by_tokens(&self, token_a: &str, token_b: &str) -> Result<Option<LiquidityPool>, String> {
         let pool_id = LiquidityPool::make_pool_id(token_a, token_b);
         self.get_pool(&pool_id)
@@ -160,14 +160,14 @@ impl PoolStore {
         Ok(pools)
     }
     
-    /// Delete a pool
+    #[allow(dead_code)]
     pub fn delete_pool(&self, pool_id: &str) -> Result<(), String> {
         self.db.remove(pool_id.as_bytes()).map_err(|e| format!("Failed to delete pool: {}", e))?;
         self.db.flush().map_err(|e| format!("Failed to flush: {}", e))?;
         Ok(())
     }
     
-    /// Check if a pool exists
+    #[allow(dead_code)]
     pub fn pool_exists(&self, pool_id: &str) -> Result<bool, String> {
         match self.db.get(pool_id.as_bytes()) {
             Ok(Some(_)) => Ok(true),
@@ -176,7 +176,7 @@ impl PoolStore {
         }
     }
     
-    /// Find pools containing a specific token
+    #[allow(dead_code)]
     pub fn find_pools_with_token(&self, token_symbol: &str) -> Result<Vec<LiquidityPool>, String> {
         let all_pools = self.list_pools()?;
         Ok(all_pools.into_iter().filter(|p| p.contains_token(token_symbol)).collect())
