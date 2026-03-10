@@ -1,272 +1,284 @@
-# @rougechain/sdk
+<p align="center">
+  <a href="https://rougechain.io">
+    <img src="https://rougechain.io/logo.webp" alt="RougeChain" width="80" height="80" />
+  </a>
+</p>
 
-Official SDK for **RougeChain** — a post-quantum Layer 1 blockchain secured by ML-DSA-65 (CRYSTALS-Dilithium) signatures.
+<h1 align="center">@rougechain/sdk</h1>
 
-Build dApps on RougeChain from any JavaScript/TypeScript environment: browser, Node.js, or React Native.
+<p align="center">
+  <strong>Build quantum-safe dApps on RougeChain</strong><br />
+  Transfers · DEX · NFTs · Bridge · Mail · Messenger
+</p>
 
-## Installation
+<p align="center">
+  <a href="https://www.npmjs.com/package/@rougechain/sdk"><img src="https://img.shields.io/npm/v/@rougechain/sdk?color=00d2be&label=npm" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/@rougechain/sdk"><img src="https://img.shields.io/npm/dm/@rougechain/sdk?color=00d2be" alt="npm downloads" /></a>
+  <a href="https://github.com/cyberdreadx/quantum-vault/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license" /></a>
+  <a href="https://docs.rougechain.io"><img src="https://img.shields.io/badge/docs-rougechain-00d2be" alt="docs" /></a>
+</p>
+
+---
+
+The official SDK for **RougeChain** — a post-quantum Layer 1 blockchain secured by **ML-DSA-65** (CRYSTALS-Dilithium). All transaction signing happens client-side with NIST-approved post-quantum cryptography. Private keys never leave your application.
+
+Works in the **browser**, **Node.js 18+**, and **React Native**.
+
+## Install
 
 ```bash
 npm install @rougechain/sdk
 ```
 
-## Quick Start
+## 30-Second Quickstart
 
 ```typescript
-import { RougeChain, Wallet } from '@rougechain/sdk';
+import { RougeChain, Wallet } from "@rougechain/sdk";
 
-// Connect to a RougeChain node
-const rc = new RougeChain('https://testnet.rougechain.io/api');
-
-// Generate a new post-quantum wallet
+const rc = new RougeChain("https://testnet.rougechain.io/api");
 const wallet = Wallet.generate();
-console.log('Public key:', wallet.publicKey);
 
-// Request testnet tokens
+// Get testnet tokens
 await rc.faucet(wallet);
 
-// Check balance
-const balance = await rc.getBalance(wallet.publicKey);
-console.log('Balance:', balance);
-
-// Transfer tokens
+// Send 100 XRGE
 await rc.transfer(wallet, { to: recipientPubKey, amount: 100 });
+
+// Check balance
+const { balance } = await rc.getBalance(wallet.publicKey);
 ```
 
-## Core Concepts
+## Features
 
-### Wallet
+| Feature | Sub-client | Description |
+|---------|-----------|-------------|
+| **Wallet** | — | ML-DSA-65 keypair generation, import/export, client-side signing |
+| **Transfers** | `rc` | Send XRGE or custom tokens, burn tokens |
+| **Token Creation** | `rc` | Launch new tokens with one call |
+| **Staking** | `rc` | Stake/unstake XRGE for validation |
+| **DEX** | `rc.dex` | AMM pools, swaps with slippage protection, liquidity |
+| **NFTs** | `rc.nft` | RC-721 collections, mint, batch mint, royalties, freeze |
+| **Bridge** | `rc.bridge` | ETH ↔ qETH, USDC ↔ qUSDC, XRGE bridge (Base Sepolia) |
+| **Mail** | `rc.mail` | On-chain encrypted email (`@rouge.quant`) |
+| **Messenger** | `rc.messenger` | E2E encrypted messaging with self-destruct |
 
-All signing happens client-side. Private keys never leave your application.
+## Wallet
 
 ```typescript
-import { Wallet } from '@rougechain/sdk';
+import { Wallet } from "@rougechain/sdk";
 
-// Generate a new ML-DSA-65 keypair
+// Generate a new post-quantum keypair
 const wallet = Wallet.generate();
 
 // Restore from saved keys
 const restored = Wallet.fromKeys(publicKey, privateKey);
 
-// Export for storage (your responsibility to store securely)
+// Export for storage
 const keys = wallet.toJSON(); // { publicKey, privateKey }
 
 // Verify keypair integrity
-const valid = wallet.verify(); // true
+wallet.verify(); // true
 ```
 
-### Client
-
-The `RougeChain` client handles all API communication. Pass a wallet to any write method to sign transactions automatically.
+## Transfers & Tokens
 
 ```typescript
-import { RougeChain } from '@rougechain/sdk';
-
-const rc = new RougeChain('https://testnet.rougechain.io/api');
-
-// With API key (if the node requires it)
-const rc = new RougeChain('https://testnet.rougechain.io/api', {
-  apiKey: 'your-api-key',
-});
-
-// Custom fetch (useful for Node.js < 18 or React Native)
-const rc = new RougeChain('https://testnet.rougechain.io/api', {
-  fetch: customFetchFn,
-});
-```
-
-## API Reference
-
-### Queries (no wallet needed)
-
-```typescript
-// Node
-const stats = await rc.getStats();
-const health = await rc.getHealth();
-
-// Blocks
-const blocks = await rc.getBlocks({ limit: 10 });
-const summary = await rc.getBlocksSummary('24h');
-
-// Balance
-const balance = await rc.getBalance(publicKey);
-const tokenBal = await rc.getTokenBalance(publicKey, 'MYTOKEN');
-
-// Tokens
-const tokens = await rc.getTokens();
-const meta = await rc.getTokenMetadata('MYTOKEN');
-const holders = await rc.getTokenHolders('MYTOKEN');
-
-// Validators
-const validators = await rc.getValidators();
-const finality = await rc.getFinality();
-
-// Burned tokens
-const burned = await rc.getBurnedTokens();
-```
-
-### Transfers & Tokens
-
-```typescript
-// Transfer XRGE
+// Send XRGE
 await rc.transfer(wallet, { to: recipient, amount: 100 });
 
-// Transfer custom token
-await rc.transfer(wallet, { to: recipient, amount: 50, token: 'MYTOKEN' });
+// Send custom token
+await rc.transfer(wallet, { to: recipient, amount: 50, token: "MYTOKEN" });
 
-// Create a new token
+// Create a new token (costs 10 XRGE)
 await rc.createToken(wallet, {
-  name: 'My Token',
-  symbol: 'MTK',
+  name: "My Token",
+  symbol: "MTK",
   totalSupply: 1_000_000,
 });
 
 // Burn tokens
-await rc.burn(wallet, 500, 1, 'XRGE');
-
-// Faucet (testnet only)
-await rc.faucet(wallet);
+await rc.burn(wallet, 500);
 ```
 
-### Staking
+## DEX (`rc.dex`)
 
 ```typescript
-await rc.stake(wallet, { amount: 1000 });
-await rc.unstake(wallet, { amount: 500 });
-```
-
-### DEX (rc.dex)
-
-```typescript
-// List pools
-const pools = await rc.dex.getPools();
-
-// Get pool details
-const pool = await rc.dex.getPool('XRGE-MTK');
-
-// Get swap quote
+// Get a swap quote
 const quote = await rc.dex.quote({
-  poolId: 'XRGE-MTK',
-  tokenIn: 'XRGE',
+  poolId: "XRGE-MTK",
+  tokenIn: "XRGE",
   amountIn: 100,
 });
+console.log(`You'll receive ${quote.amount_out} MTK`);
 
-// Execute swap
+// Execute swap with slippage protection
 await rc.dex.swap(wallet, {
-  tokenIn: 'XRGE',
-  tokenOut: 'MTK',
+  tokenIn: "XRGE",
+  tokenOut: "MTK",
   amountIn: 100,
-  minAmountOut: 95,
+  minAmountOut: quote.amount_out * 0.98, // 2% slippage
 });
 
-// Create pool
+// Create a new liquidity pool
 await rc.dex.createPool(wallet, {
-  tokenA: 'XRGE',
-  tokenB: 'MTK',
-  amountA: 10000,
-  amountB: 5000,
+  tokenA: "XRGE",
+  tokenB: "MTK",
+  amountA: 10_000,
+  amountB: 5_000,
 });
 
 // Add / remove liquidity
-await rc.dex.addLiquidity(wallet, { poolId: 'XRGE-MTK', amountA: 1000, amountB: 500 });
-await rc.dex.removeLiquidity(wallet, { poolId: 'XRGE-MTK', lpAmount: 100 });
-
-// Pool analytics
-const events = await rc.dex.getPoolEvents('XRGE-MTK');
-const stats = await rc.dex.getPoolStats('XRGE-MTK');
+await rc.dex.addLiquidity(wallet, {
+  poolId: "XRGE-MTK",
+  amountA: 1000,
+  amountB: 500,
+});
+await rc.dex.removeLiquidity(wallet, { poolId: "XRGE-MTK", lpAmount: 100 });
 ```
 
-### NFTs (rc.nft)
+## NFTs (`rc.nft`)
 
-RougeChain implements the RC-721 NFT standard with collections, royalties, freezing, and batch minting.
+RC-721 standard with collections, royalties, freezing, and batch minting.
 
 ```typescript
-// Create a collection
+// Create a collection (5% royalty, max 10k supply)
 await rc.nft.createCollection(wallet, {
-  symbol: 'ART',
-  name: 'My Art Collection',
-  royaltyBps: 500, // 5% royalty
-  maxSupply: 10000,
-  description: 'A post-quantum NFT collection',
+  symbol: "ART",
+  name: "My Art Collection",
+  royaltyBps: 500,
+  maxSupply: 10_000,
 });
 
-// Mint an NFT
+// Mint
 await rc.nft.mint(wallet, {
-  collectionId: 'abc123',
-  name: 'Piece #1',
-  metadataUri: 'https://example.com/nft/1.json',
-  attributes: { rarity: 'legendary' },
+  collectionId: "abc123",
+  name: "Piece #1",
+  metadataUri: "https://example.com/nft/1.json",
+  attributes: { rarity: "legendary" },
 });
 
-// Batch mint (up to 50)
+// Batch mint (up to 50 at once)
 await rc.nft.batchMint(wallet, {
-  collectionId: 'abc123',
-  names: ['#1', '#2', '#3'],
-  uris: ['https://example.com/1.json', 'https://example.com/2.json', 'https://example.com/3.json'],
+  collectionId: "abc123",
+  names: ["#1", "#2", "#3"],
 });
 
-// Transfer with optional sale price (triggers royalty)
+// Transfer with sale price (triggers royalty)
 await rc.nft.transfer(wallet, {
-  collectionId: 'abc123',
+  collectionId: "abc123",
   tokenId: 1,
   to: buyerPubKey,
-  salePrice: 100, // triggers royalty payment to creator
+  salePrice: 100,
 });
 
-// Burn, lock, freeze
-await rc.nft.burn(wallet, { collectionId: 'abc123', tokenId: 1 });
-await rc.nft.lock(wallet, { collectionId: 'abc123', tokenId: 2, locked: true });
-await rc.nft.freezeCollection(wallet, { collectionId: 'abc123', frozen: true });
-
-// Queries
-const collections = await rc.nft.getCollections();
-const collection = await rc.nft.getCollection('abc123');
-const tokens = await rc.nft.getTokens('abc123', { limit: 20, offset: 0 });
-const token = await rc.nft.getToken('abc123', 1);
+// Query
 const myNfts = await rc.nft.getByOwner(wallet.publicKey);
 ```
 
-### Bridge (rc.bridge)
+## Bridge (`rc.bridge`)
 
-Bridge between Base Sepolia ETH and RougeChain qETH.
+Bridge assets between **Base Sepolia** and **RougeChain L1**. Supports ETH ↔ qETH, USDC ↔ qUSDC, and XRGE.
 
 ```typescript
-// Check bridge status
+// Check bridge status & supported tokens
 const config = await rc.bridge.getConfig();
-// { enabled: true, custodyAddress: '0x...', chainId: 84532 }
+// { enabled: true, supportedTokens: ["ETH", "USDC"], chainId: 84532 }
 
-// Withdraw qETH to receive ETH on Base Sepolia
-await rc.bridge.withdraw(wallet, {
-  amount: 500000, // in qETH units
-  evmAddress: '0xYourBaseSepoliaAddress',
-});
-
-// Claim (after depositing ETH to custody address)
+// Claim qETH after depositing ETH to custody address
 await rc.bridge.claim({
-  evmTxHash: '0x...',
-  evmAddress: '0x...',
-  evmSignature: '0x...', // personal_sign from MetaMask
+  evmTxHash: "0x...",
+  evmAddress: "0x...",
+  evmSignature: "0x...",
   recipientPubkey: wallet.publicKey,
+  token: "ETH",
 });
 
-// List pending withdrawals
-const withdrawals = await rc.bridge.getWithdrawals();
+// Claim qUSDC after depositing USDC
+await rc.bridge.claim({
+  evmTxHash: "0x...",
+  evmAddress: "0x...",
+  evmSignature: "0x...",
+  recipientPubkey: wallet.publicKey,
+  token: "USDC",
+});
+
+// Withdraw qETH → receive ETH on Base Sepolia
+await rc.bridge.withdraw(wallet, {
+  amount: 500_000,
+  evmAddress: "0xYourAddress",
+  tokenSymbol: "qETH",
+});
+
+// XRGE bridge
+const xrgeConfig = await rc.bridge.getXrgeConfig();
+await rc.bridge.withdrawXrge(wallet, {
+  amount: 1000,
+  evmAddress: "0xYourAddress",
+});
 ```
 
-### Low-Level Signing
+## Mail (`rc.mail`)
 
-For advanced use cases, sign transactions manually:
+On-chain encrypted email with `@rouge.quant` addresses.
 
 ```typescript
-import { signTransaction, verifyTransaction, generateNonce } from '@rougechain/sdk';
+// Send an encrypted email
+await rc.mail.send({
+  from: wallet.publicKey,
+  to: recipientPubKey,
+  subject: "Hello",
+  body: "This is a test",
+  encrypted_subject: encryptedSubject,
+  encrypted_body: encryptedBody,
+});
+
+// Read inbox
+const inbox = await rc.mail.getInbox(wallet.publicKey);
+
+// Move to trash
+await rc.mail.move(messageId, "trash");
+
+// Mark as read
+await rc.mail.markRead(messageId);
+```
+
+## Messenger (`rc.messenger`)
+
+End-to-end encrypted messaging with media and self-destruct support.
+
+```typescript
+// Register wallet for messaging
+await rc.messenger.registerWallet(wallet.publicKey, "Alice");
+
+// Create a conversation
+const result = await rc.messenger.createConversation([
+  wallet.publicKey,
+  recipientPubKey,
+]);
+
+// Send an encrypted message
+await rc.messenger.sendMessage(conversationId, wallet.publicKey, encryptedContent, {
+  selfDestruct: true,
+});
+
+// Read messages
+const messages = await rc.messenger.getMessages(conversationId);
+```
+
+## Low-Level Signing
+
+For advanced use cases:
+
+```typescript
+import { signTransaction, verifyTransaction, generateNonce } from "@rougechain/sdk";
 
 const payload = {
-  type: 'transfer' as const,
+  type: "transfer" as const,
   from: wallet.publicKey,
   to: recipient,
   amount: 100,
   fee: 1,
-  token: 'XRGE',
+  token: "XRGE",
   timestamp: Date.now(),
   nonce: generateNonce(),
 };
@@ -275,60 +287,40 @@ const signedTx = signTransaction(payload, wallet.privateKey, wallet.publicKey);
 const valid = verifyTransaction(signedTx); // true
 ```
 
-## Environment Setup
+## Environment Support
 
-### Browser
-
-Works out of the box with any bundler (Vite, webpack, etc.).
-
-### Node.js 18+
-
-Works out of the box (native `fetch` and `crypto.getRandomValues`).
-
-### Node.js < 18
-
-Provide a fetch polyfill:
-
-```typescript
-import fetch from 'node-fetch';
-const rc = new RougeChain('https://testnet.rougechain.io/api', { fetch });
-```
-
-### React Native
-
-Install a `crypto.getRandomValues` polyfill before importing the SDK:
-
-```typescript
-import 'react-native-get-random-values';
-import { RougeChain, Wallet } from '@rougechain/sdk';
-```
+| Environment | Notes |
+|-------------|-------|
+| **Browser** | Works with any bundler (Vite, webpack, etc.) |
+| **Node.js 18+** | Works out of the box |
+| **Node.js < 18** | Pass a fetch polyfill: `new RougeChain(url, { fetch })` |
+| **React Native** | Install `react-native-get-random-values` before importing |
 
 ## TypeScript
 
-The SDK is written in TypeScript and ships with full type declarations. All interfaces are exported:
+Written in TypeScript with full type declarations shipped. All interfaces are exported:
 
 ```typescript
 import type {
-  Block,
-  Transaction,
-  TokenMetadata,
-  NftCollection,
-  NftToken,
-  LiquidityPool,
-  BalanceResponse,
-  Validator,
-  BridgeConfig,
-  WalletKeys,
-  ApiResponse,
-} from '@rougechain/sdk';
+  Block, Transaction, TokenMetadata, NftCollection,
+  NftToken, LiquidityPool, BalanceResponse, Validator,
+  BridgeConfig, MailMessage, MessengerMessage, WalletKeys,
+} from "@rougechain/sdk";
 ```
 
 ## Security
 
-- **Post-quantum cryptography**: All signatures use ML-DSA-65 (CRYSTALS-Dilithium), resistant to quantum attacks.
-- **Client-side signing**: Private keys never leave your application. Transactions are signed locally and submitted to the node pre-signed.
-- **No key storage**: The SDK does not store keys. Persistence is your application's responsibility.
+- **Post-quantum cryptography** — All signatures use ML-DSA-65 (CRYSTALS-Dilithium), resistant to quantum computer attacks
+- **Client-side signing** — Private keys never leave your application
+- **No key storage** — The SDK does not store or transmit keys
+
+## Links
+
+- [Website](https://rougechain.io)
+- [Documentation](https://docs.rougechain.io)
+- [Chrome Extension](https://chromewebstore.google.com/detail/rougechain-wallet)
+- [GitHub](https://github.com/cyberdreadx/quantum-vault)
 
 ## License
 
-MIT
+MIT © [RougeChain](https://rougechain.io)
