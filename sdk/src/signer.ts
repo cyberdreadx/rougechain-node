@@ -181,6 +181,25 @@ export function createSignedBurn(
   });
 }
 
+// ===== Bridge builders =====
+
+export function createSignedBridgeWithdraw(
+  wallet: WalletKeys,
+  amount: number,
+  evmAddress: string,
+  tokenSymbol = "qETH",
+  fee = 0.1
+): SignedTransaction {
+  const evm = evmAddress.startsWith("0x") ? evmAddress : `0x${evmAddress}`;
+  return buildAndSign(wallet, {
+    type: "bridge_withdraw",
+    amount,
+    fee,
+    tokenSymbol,
+    evmAddress: evm,
+  });
+}
+
 // ===== NFT builders =====
 
 export function createSignedNftCreateCollection(

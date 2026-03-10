@@ -29,7 +29,8 @@ export type TransactionType =
   | "nft_transfer"
   | "nft_burn"
   | "nft_lock"
-  | "nft_freeze_collection";
+  | "nft_freeze_collection"
+  | "bridge_withdraw";
 
 export interface TransactionPayload {
   type: TransactionType;
@@ -38,6 +39,8 @@ export interface TransactionPayload {
   amount?: number;
   fee?: number;
   token?: string;
+  tokenSymbol?: string;
+  evmAddress?: string;
   timestamp: number;
   nonce: string;
   token_name?: string;
@@ -244,6 +247,7 @@ export interface BridgeConfig {
   enabled: boolean;
   custodyAddress?: string;
   chainId: number;
+  supportedTokens?: string[];
 }
 
 export interface BridgeWithdrawal {
@@ -252,6 +256,66 @@ export interface BridgeWithdrawal {
   evm_address: string;
   amount_units: number;
   status: string;
+  created_at: number;
+}
+
+export interface XrgeBridgeConfig {
+  enabled: boolean;
+  vaultAddress?: string;
+  tokenAddress?: string;
+  chainId: number;
+}
+
+// ===== Mail =====
+
+export interface MailMessage {
+  id: string;
+  from: string;
+  to: string;
+  subject: string;
+  body: string;
+  encrypted_subject?: string;
+  encrypted_body?: string;
+  reply_to_id?: string;
+  read: boolean;
+  folder: "inbox" | "sent" | "trash";
+  created_at: number;
+}
+
+export interface SendMailParams {
+  from: string;
+  to: string;
+  subject: string;
+  body: string;
+  encrypted_subject: string;
+  encrypted_body: string;
+  reply_to_id?: string;
+}
+
+// ===== Messenger =====
+
+export interface MessengerWallet {
+  wallet_id: string;
+  display_name?: string;
+  encryption_public_key?: string;
+  created_at: number;
+}
+
+export interface MessengerConversation {
+  id: string;
+  participants: string[];
+  created_at: number;
+}
+
+export interface MessengerMessage {
+  id: string;
+  conversation_id: string;
+  sender: string;
+  encrypted_content: string;
+  media_type?: string;
+  media_data?: string;
+  self_destruct?: boolean;
+  read?: boolean;
   created_at: number;
 }
 
@@ -351,6 +415,27 @@ export interface BridgeWithdrawParams {
   amount: number;
   evmAddress: string;
   fee?: number;
+  tokenSymbol?: string;
+}
+
+export interface BridgeClaimParams {
+  evmTxHash: string;
+  evmAddress: string;
+  evmSignature: string;
+  recipientPubkey: string;
+  token?: "ETH" | "USDC";
+}
+
+export interface XrgeBridgeClaimParams {
+  evmTxHash: string;
+  evmAddress: string;
+  amount: string;
+  recipientPubkey: string;
+}
+
+export interface XrgeBridgeWithdrawParams {
+  amount: number;
+  evmAddress: string;
 }
 
 export interface SwapQuoteParams {

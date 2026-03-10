@@ -9,6 +9,7 @@ import {
   createSignedUnstake,
   createSignedFaucetRequest,
   createSignedBurn,
+  createSignedBridgeWithdraw,
   createSignedNftCreateCollection,
   createSignedNftMint,
   createSignedNftBatchMint,
@@ -34,6 +35,7 @@ import type {
   Validator,
   BridgeConfig,
   BridgeWithdrawal,
+  XrgeBridgeConfig,
   TransferParams,
   CreateTokenParams,
   SwapParams,
@@ -49,9 +51,17 @@ import type {
   LockNftParams,
   FreezeCollectionParams,
   BridgeWithdrawParams,
+  BridgeClaimParams,
+  XrgeBridgeClaimParams,
+  XrgeBridgeWithdrawParams,
   SwapQuoteParams,
   TokenMetadataUpdateParams,
   TokenHolder,
+  MailMessage,
+  SendMailParams,
+  MessengerWallet,
+  MessengerConversation,
+  MessengerMessage,
 } from "./types.js";
 
 type FetchFn = typeof globalThis.fetch;
@@ -64,13 +74,15 @@ export interface RougeChainOptions {
 }
 
 export class RougeChain {
-  private readonly baseUrl: string;
-  private readonly fetchFn: FetchFn;
-  private readonly headers: Record<string, string>;
+  /** @internal */ readonly baseUrl: string;
+  /** @internal */ readonly fetchFn: FetchFn;
+  /** @internal */ readonly headers: Record<string, string>;
 
   public readonly nft: NftClient;
   public readonly dex: DexClient;
   public readonly bridge: BridgeClient;
+  public readonly mail: MailClient;
+  public readonly messenger: MessengerClient;
 
   constructor(baseUrl: string, options: RougeChainOptions = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
@@ -83,6 +95,8 @@ export class RougeChain {
     this.nft = new NftClient(this);
     this.dex = new DexClient(this);
     this.bridge = new BridgeClient(this);
+    this.mail = new MailClient(this);
+    this.messenger = new MessengerClient(this);
   }
 
   // ===== Internal helpers =====
@@ -573,6 +587,7 @@ class BridgeClient {
         enabled: data.enabled === true,
         custodyAddress: data.custodyAddress as string | undefined,
         chainId: (data.chainId as number) ?? 84532,
+        supportedTokens: data.supportedTokens as string[] | undefined,
       };
     } catch {
       return { enabled: false, chainId: 84532 };
@@ -586,22 +601,28 @@ class BridgeClient {
     return data.withdrawals;
   }
 
+  /** Withdraw qETH/qUSDC — signed client-side, private key never sent to server */
   async withdraw(
     wallet: WalletKeys,
     params: BridgeWithdrawParams
   ): Promise<ApiResponse> {
     try {
-      const evm = params.evmAddress.startsWith("0x")
-        ? params.evmAddress
-        : `0x${params.evmAddress}`;
+      const tokenSymbol = params.tokenSymbol ?? "qETH";
+      const signed = createSignedBridgeWithdraw(
+        wallet,
+        params.amount,
+        params.evmAddress,
+        tokenSymbol,
+        params.fee
+      );
       const data = await this.rc.post<Record<string, unknown>>(
         "/bridge/withdraw",
         {
-          fromPrivateKey: wallet.privateKey,
           fromPublicKey: wallet.publicKey,
           amountUnits: params.amount,
-          evmAddress: evm,
-          fee: params.fee,
+          evmAddress: signed.payload.evmAddress,
+          signature: signed.signature,
+          payload: signed.payload,
         }
       );
       return {
@@ -617,12 +638,8 @@ class BridgeClient {
     }
   }
 
-  async claim(params: {
-    evmTxHash: string;
-    evmAddress: string;
-    evmSignature: string;
-    recipientPubkey: string;
-  }): Promise<ApiResponse> {
+  /** Claim qETH or qUSDC after depositing on Base Sepolia */
+  async claim(params: BridgeClaimParams): Promise<ApiResponse> {
     try {
       const data = await this.rc.post<Record<string, unknown>>(
         "/bridge/claim",
@@ -635,6 +652,7 @@ class BridgeClient {
             : `0x${params.evmAddress}`,
           evmSignature: params.evmSignature,
           recipientRougechainPubkey: params.recipientPubkey,
+          token: params.token ?? "ETH",
         }
       );
       return {
@@ -647,6 +665,247 @@ class BridgeClient {
         success: false,
         error: e instanceof Error ? e.message : String(e),
       };
+    }
+  }
+
+  // ── XRGE Bridge ──
+
+  async getXrgeConfig(): Promise<XrgeBridgeConfig> {
+    try {
+      const data = await this.rc.get<Record<string, unknown>>("/bridge/xrge/config");
+      return {
+        enabled: data.enabled === true,
+        vaultAddress: data.vaultAddress as string | undefined,
+        tokenAddress: data.tokenAddress as string | undefined,
+        chainId: (data.chainId as number) ?? 84532,
+      };
+    } catch {
+      return { enabled: false, chainId: 84532 };
+    }
+  }
+
+  async claimXrge(params: XrgeBridgeClaimParams): Promise<ApiResponse> {
+    try {
+      const data = await this.rc.post<Record<string, unknown>>(
+        "/bridge/xrge/claim",
+        {
+          evmTxHash: params.evmTxHash.startsWith("0x")
+            ? params.evmTxHash
+            : `0x${params.evmTxHash}`,
+          evmAddress: params.evmAddress.startsWith("0x")
+            ? params.evmAddress
+            : `0x${params.evmAddress}`,
+          amount: params.amount,
+          recipientRougechainPubkey: params.recipientPubkey,
+        }
+      );
+      return {
+        success: data.success === true,
+        error: data.error as string | undefined,
+        data,
+      };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  async withdrawXrge(
+    wallet: WalletKeys,
+    params: XrgeBridgeWithdrawParams
+  ): Promise<ApiResponse> {
+    try {
+      const signed = createSignedBridgeWithdraw(
+        wallet,
+        params.amount,
+        params.evmAddress,
+        "XRGE",
+        0.1
+      );
+      const data = await this.rc.post<Record<string, unknown>>(
+        "/bridge/xrge/withdraw",
+        {
+          fromPublicKey: wallet.publicKey,
+          amount: params.amount,
+          evmAddress: signed.payload.evmAddress,
+          signature: signed.signature,
+          payload: signed.payload,
+        }
+      );
+      return {
+        success: data.success === true,
+        error: data.error as string | undefined,
+        data,
+      };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  async getXrgeWithdrawals(): Promise<BridgeWithdrawal[]> {
+    try {
+      const data = await this.rc.get<{ withdrawals: BridgeWithdrawal[] }>(
+        "/bridge/xrge/withdrawals"
+      );
+      return data.withdrawals;
+    } catch {
+      return [];
+    }
+  }
+}
+
+// ===== Mail Sub-client =====
+
+class MailClient {
+  constructor(private readonly rc: RougeChain) {}
+
+  async send(params: SendMailParams): Promise<ApiResponse> {
+    try {
+      const data = await this.rc.post<Record<string, unknown>>("/mail/send", params);
+      return { success: data.success === true, error: data.error as string | undefined, data };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  async getInbox(walletId: string): Promise<MailMessage[]> {
+    const data = await this.rc.get<{ messages: MailMessage[] }>(
+      `/mail/inbox?walletId=${encodeURIComponent(walletId)}`
+    );
+    return data.messages ?? [];
+  }
+
+  async getSent(walletId: string): Promise<MailMessage[]> {
+    const data = await this.rc.get<{ messages: MailMessage[] }>(
+      `/mail/sent?walletId=${encodeURIComponent(walletId)}`
+    );
+    return data.messages ?? [];
+  }
+
+  async getTrash(walletId: string): Promise<MailMessage[]> {
+    const data = await this.rc.get<{ messages: MailMessage[] }>(
+      `/mail/trash?walletId=${encodeURIComponent(walletId)}`
+    );
+    return data.messages ?? [];
+  }
+
+  async getMessage(id: string): Promise<MailMessage> {
+    return this.rc.get<MailMessage>(`/mail/message/${encodeURIComponent(id)}`);
+  }
+
+  async move(messageId: string, folder: string): Promise<ApiResponse> {
+    try {
+      const data = await this.rc.post<Record<string, unknown>>("/mail/move", {
+        messageId,
+        folder,
+      });
+      return { success: data.success === true, error: data.error as string | undefined };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  async markRead(messageId: string): Promise<ApiResponse> {
+    try {
+      const data = await this.rc.post<Record<string, unknown>>("/mail/read", {
+        messageId,
+      });
+      return { success: data.success === true, error: data.error as string | undefined };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  async delete(id: string): Promise<ApiResponse> {
+    try {
+      const res = await this.rc.fetchFn(
+        `${this.rc.baseUrl}/mail/${encodeURIComponent(id)}`,
+        { method: "DELETE", headers: this.rc.headers }
+      );
+      const data = (await res.json()) as Record<string, unknown>;
+      return { success: data.success === true, error: data.error as string | undefined };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+}
+
+// ===== Messenger Sub-client =====
+
+class MessengerClient {
+  constructor(private readonly rc: RougeChain) {}
+
+  async getWallets(): Promise<MessengerWallet[]> {
+    const data = await this.rc.get<{ wallets: MessengerWallet[] }>("/messenger/wallets");
+    return data.wallets ?? [];
+  }
+
+  async registerWallet(walletId: string, displayName?: string, encryptionPublicKey?: string): Promise<ApiResponse> {
+    try {
+      const data = await this.rc.post<Record<string, unknown>>("/messenger/wallets/register", {
+        wallet_id: walletId,
+        display_name: displayName,
+        encryption_public_key: encryptionPublicKey,
+      });
+      return { success: data.success === true, error: data.error as string | undefined };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  async getConversations(walletId: string): Promise<MessengerConversation[]> {
+    const data = await this.rc.get<{ conversations: MessengerConversation[] }>(
+      `/messenger/conversations?walletId=${encodeURIComponent(walletId)}`
+    );
+    return data.conversations ?? [];
+  }
+
+  async createConversation(participants: string[]): Promise<ApiResponse> {
+    try {
+      const data = await this.rc.post<Record<string, unknown>>("/messenger/conversations", {
+        participants,
+      });
+      return { success: data.success === true, error: data.error as string | undefined, data };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  async getMessages(conversationId: string): Promise<MessengerMessage[]> {
+    const data = await this.rc.get<{ messages: MessengerMessage[] }>(
+      `/messenger/messages?conversationId=${encodeURIComponent(conversationId)}`
+    );
+    return data.messages ?? [];
+  }
+
+  async sendMessage(
+    conversationId: string,
+    sender: string,
+    encryptedContent: string,
+    opts: { mediaType?: string; mediaData?: string; selfDestruct?: boolean } = {}
+  ): Promise<ApiResponse> {
+    try {
+      const data = await this.rc.post<Record<string, unknown>>("/messenger/messages", {
+        conversation_id: conversationId,
+        sender,
+        encrypted_content: encryptedContent,
+        media_type: opts.mediaType,
+        media_data: opts.mediaData,
+        self_destruct: opts.selfDestruct,
+      });
+      return { success: data.success === true, error: data.error as string | undefined, data };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  async markRead(messageId: string): Promise<ApiResponse> {
+    try {
+      const data = await this.rc.post<Record<string, unknown>>("/messenger/messages/read", {
+        message_id: messageId,
+      });
+      return { success: data.success === true, error: data.error as string | undefined };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
 }

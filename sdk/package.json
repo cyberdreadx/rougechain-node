@@ -1,6 +1,6 @@
 {
   "name": "@rougechain/sdk",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Official SDK for RougeChain — post-quantum Layer 1 blockchain secured by ML-DSA-65",
   "type": "module",
   "main": "./dist/index.cjs",
