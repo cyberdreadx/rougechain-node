@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { ArrowDownToLine, ArrowUpFromLine, Loader2, Wallet, ArrowRightLeft, Coins, ArrowDown } from "lucide-react";
+import { DeloreanLoader } from "@/components/ui/delorean-loader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -169,10 +170,22 @@ const Bridge = () => {
         const pubkeyHex = Array.from(new TextEncoder().encode(rougechainPubkey)).map(b => b.toString(16).padStart(2, "0")).join("");
         const paddedPubkey = pubkeyHex.padEnd(Math.ceil(pubkeyHex.length / 64) * 64, "0");
         const depositData = "0x0efe6a8b" + BigInt(amountWei).toString(16).padStart(64, "0") + (64).toString(16).padStart(64, "0") + rougechainPubkey.length.toString(16).padStart(64, "0") + paddedPubkey;
-        const depositTx = await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: vaultAddr, data: depositData, gas: "0x30D40" }] });
+        const depositTx = await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: vaultAddr, data: depositData, gas: "0x30D40" }] }) as string;
+
+        setStep("Waiting for deposit confirmation...");
+        let depositConfirmed = false;
+        for (let i = 0; i < 30; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          const receipt = await window.ethereum.request({ method: "eth_getTransactionReceipt", params: [depositTx] }) as { status?: string } | null;
+          if (receipt) {
+            depositConfirmed = receipt.status === "0x1";
+            break;
+          }
+        }
+        if (!depositConfirmed) { toast.error("Deposit transaction failed or timed out on Base"); setProcessing(false); return; }
 
         setStep("Claiming on RougeChain...");
-        const claim = await claimXrgeBridgeDeposit({ evmTxHash: depositTx as string, evmAddress, amount: (BigInt(Math.floor(amountNum)) * 10n ** 18n).toString(), recipientRougechainPubkey: rougechainPubkey });
+        const claim = await claimXrgeBridgeDeposit({ evmTxHash: depositTx, evmAddress, amount: (BigInt(Math.floor(amountNum)) * 10n ** 18n).toString(), recipientRougechainPubkey: rougechainPubkey });
         if (claim.success) toast.success(`Bridged ${amountNum} XRGE to RougeChain!`);
         else toast.warning(`Deposit sent but L1 claim pending. ${claim.error || ""}`);
       } else {
@@ -276,7 +289,7 @@ const Bridge = () => {
   if (configLoading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <DeloreanLoader text="Warming up the flux capacitor..." />
       </div>
     );
   }
@@ -426,6 +439,11 @@ const Bridge = () => {
                     className="font-mono text-sm"
                   />
                 </div>
+              )}
+
+              {/* DeLorean loader during processing */}
+              {processing && (
+                <DeloreanLoader text={step || "Processing..."} />
               )}
 
               {/* Connect wallet / Action button */}
