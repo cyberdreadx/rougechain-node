@@ -293,16 +293,29 @@ const Bridge = () => {
 
               {/* Asset selector */}
               <div className="flex gap-2">
-                {ASSETS.map(a => (
-                  <button
-                    key={a.id}
-                    onClick={() => setAsset(a.id)}
-                    className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-medium transition-all ${asset === a.id ? "bg-primary text-primary-foreground shadow-sm" : "bg-muted/50 text-muted-foreground hover:bg-muted"}`}
-                  >
-                    <span>{a.icon}</span>
-                    {a.label}
-                  </button>
-                ))}
+                {ASSETS.map(a => {
+                  const bal = a.id === "ETH" ? qethBalance
+                    : a.id === "USDC" ? qusdcBalance
+                    : xrgeL1Balance;
+                  const balLabel = a.id === "ETH" ? formatQethForDisplay(bal) + " qETH"
+                    : a.id === "USDC" ? (bal / 1e6).toFixed(2) + " qUSDC"
+                    : bal.toLocaleString() + " XRGE";
+                  return (
+                    <button
+                      key={a.id}
+                      onClick={() => setAsset(a.id)}
+                      className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 rounded-lg text-sm font-medium transition-all ${asset === a.id ? "bg-primary text-primary-foreground shadow-sm" : "bg-muted/50 text-muted-foreground hover:bg-muted"}`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>{a.icon}</span>
+                        {a.label}
+                      </div>
+                      <span className={`text-[10px] font-normal ${asset === a.id ? "text-primary-foreground/70" : "text-muted-foreground/60"}`}>
+                        {balLabel}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
 
               {/* From */}
