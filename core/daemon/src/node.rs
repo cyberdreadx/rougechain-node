@@ -2274,8 +2274,12 @@ impl L1Node {
                 ) {
                     let amount = tx.payload.amount.unwrap_or(0) as f64;
                     if amount > 0.0 {
-                        let recipient_key = (to_pub_key.clone(), token_symbol.clone());
-                        *token_balances.entry(recipient_key).or_insert(0.0) += amount;
+                        if token_symbol.to_uppercase() == "XRGE" {
+                            *balances.entry(to_pub_key.clone()).or_insert(0.0) += amount;
+                        } else {
+                            let recipient_key = (to_pub_key.clone(), token_symbol.clone());
+                            *token_balances.entry(recipient_key).or_insert(0.0) += amount;
+                        }
                     }
                 }
             }
@@ -2285,20 +2289,28 @@ impl L1Node {
                     tx.payload.amount,
                 ) {
                     if amount > 0 {
+                        let token_upper = token_symbol.to_uppercase();
                         let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
                         if xrge_bal < tx.fee {
                             eprintln!("[node] Rejecting bridge_withdraw: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
                             return;
                         }
-                        let token_upper = token_symbol.to_uppercase();
-                        let sender_key = (tx.from_pub_key.clone(), token_upper.clone());
-                        let token_bal = *token_balances.get(&sender_key).unwrap_or(&0.0);
-                        if token_bal < amount as f64 {
-                            eprintln!("[node] Rejecting bridge_withdraw: insufficient {} ({:.4} < {})", token_upper, token_bal, amount);
-                            return;
+                        if token_upper == "XRGE" {
+                            if xrge_bal - tx.fee < amount as f64 {
+                                eprintln!("[node] Rejecting bridge_withdraw: insufficient XRGE ({:.4} < {})", xrge_bal - tx.fee, amount);
+                                return;
+                            }
+                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee + amount as f64;
+                        } else {
+                            let sender_key = (tx.from_pub_key.clone(), token_upper.clone());
+                            let token_bal = *token_balances.get(&sender_key).unwrap_or(&0.0);
+                            if token_bal < amount as f64 {
+                                eprintln!("[node] Rejecting bridge_withdraw: insufficient {} ({:.4} < {})", token_upper, token_bal, amount);
+                                return;
+                            }
+                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                            *token_balances.entry(sender_key).or_insert(0.0) -= amount as f64;
                         }
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                        *token_balances.entry(sender_key).or_insert(0.0) -= amount as f64;
                         *burned_tokens.entry(token_upper).or_insert(0.0) += amount as f64;
                     }
                 }
