@@ -16,6 +16,8 @@ import {
   claimXrgeBridgeDeposit,
   bridgeWithdrawXrge,
   type XrgeBridgeConfig,
+  USDC_BASE_SEPOLIA,
+  XRGE_TOKEN_ADDRESS,
 } from "@/lib/bridge";
 import { createSignedBridgeWithdraw } from "@/lib/pqc-signer";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
@@ -48,6 +50,10 @@ const Bridge = () => {
   const [qusdcBalance, setQusdcBalance] = useState(0);
   const [xrgeL1Balance, setXrgeL1Balance] = useState(0);
 
+  const [evmEthBalance, setEvmEthBalance] = useState(0);
+  const [evmUsdcBalance, setEvmUsdcBalance] = useState(0);
+  const [evmXrgeBalance, setEvmXrgeBalance] = useState(0);
+
   useEffect(() => {
     Promise.all([
       getBridgeConfig().catch(() => ({ enabled: false, chainId: 84532 }) as BridgeConfig),
@@ -74,6 +80,26 @@ const Bridge = () => {
   };
 
   useEffect(refreshBalances, [config]);
+
+  const refreshEvmBalances = async () => {
+    if (!evmAddress || typeof window.ethereum === "undefined") return;
+    try {
+      const ethHex = await window.ethereum.request({ method: "eth_getBalance", params: [evmAddress, "latest"] }) as string;
+      setEvmEthBalance(Number(BigInt(ethHex)) / 1e18);
+
+      const balanceOfSig = "0x70a08231" + evmAddress.slice(2).padStart(64, "0");
+
+      const usdcHex = await window.ethereum.request({ method: "eth_call", params: [{ to: USDC_BASE_SEPOLIA, data: balanceOfSig }, "latest"] }) as string;
+      setEvmUsdcBalance(Number(BigInt(usdcHex)) / 1e6);
+
+      const xrgeHex = await window.ethereum.request({ method: "eth_call", params: [{ to: XRGE_TOKEN_ADDRESS, data: balanceOfSig }, "latest"] }) as string;
+      setEvmXrgeBalance(Number(BigInt(xrgeHex)) / 1e18);
+    } catch (e) {
+      console.log("Failed to fetch EVM balances", e);
+    }
+  };
+
+  useEffect(() => { refreshEvmBalances(); }, [evmAddress]);
 
   const connectEvm = async () => {
     if (typeof window.ethereum === "undefined") {
@@ -112,6 +138,10 @@ const Bridge = () => {
     if (!rougechainPubkey) { toast.error("RougeChain wallet not connected"); return; }
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum <= 0) { toast.error("Enter a valid amount"); return; }
+
+    if (asset === "ETH" && amountNum > evmEthBalance) { toast.error("Insufficient ETH balance on Base"); return; }
+    if (asset === "USDC" && amountNum > evmUsdcBalance) { toast.error("Insufficient USDC balance on Base"); return; }
+    if (asset === "XRGE" && amountNum > evmXrgeBalance) { toast.error("Insufficient XRGE balance on Base"); return; }
 
     setProcessing(true);
 
@@ -181,6 +211,7 @@ const Bridge = () => {
       }
       setAmount("");
       refreshBalances();
+      refreshEvmBalances();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Bridge deposit failed");
     } finally {
@@ -225,6 +256,7 @@ const Bridge = () => {
       }
       setAmount("");
       refreshBalances();
+      refreshEvmBalances();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Withdrawal failed");
     } finally {
@@ -294,12 +326,22 @@ const Bridge = () => {
               {/* Asset selector */}
               <div className="flex gap-2">
                 {ASSETS.map(a => {
-                  const bal = a.id === "ETH" ? qethBalance
-                    : a.id === "USDC" ? qusdcBalance
-                    : xrgeL1Balance;
-                  const balLabel = a.id === "ETH" ? formatQethForDisplay(bal) + " qETH"
-                    : a.id === "USDC" ? (bal / 1e6).toFixed(2) + " qUSDC"
-                    : bal.toLocaleString() + " XRGE";
+                  let balLabel: string;
+                  if (direction === "deposit") {
+                    const evmBal = a.id === "ETH" ? evmEthBalance
+                      : a.id === "USDC" ? evmUsdcBalance
+                      : evmXrgeBalance;
+                    balLabel = evmAddress
+                      ? evmBal.toLocaleString(undefined, { maximumFractionDigits: a.id === "USDC" ? 2 : 6 }) + " " + a.label
+                      : "—";
+                  } else {
+                    const l1Bal = a.id === "ETH" ? qethBalance
+                      : a.id === "USDC" ? qusdcBalance
+                      : xrgeL1Balance;
+                    balLabel = a.id === "ETH" ? formatQethForDisplay(l1Bal) + " qETH"
+                      : a.id === "USDC" ? (l1Bal / 1e6).toFixed(2) + " qUSDC"
+                      : l1Bal.toLocaleString() + " XRGE";
+                  }
                   return (
                     <button
                       key={a.id}
@@ -324,6 +366,13 @@ const Bridge = () => {
                   <span className="text-xs text-muted-foreground">From · {fromChain}</span>
                   {direction === "withdraw" && (
                     <span className="text-xs text-muted-foreground">Balance: {getL1Balance()}</span>
+                  )}
+                  {direction === "deposit" && evmAddress && (
+                    <span className="text-xs text-muted-foreground">
+                      Balance: {asset === "ETH" ? evmEthBalance.toLocaleString(undefined, { maximumFractionDigits: 6 }) + " ETH"
+                        : asset === "USDC" ? evmUsdcBalance.toLocaleString(undefined, { maximumFractionDigits: 2 }) + " USDC"
+                        : evmXrgeBalance.toLocaleString(undefined, { maximumFractionDigits: 6 }) + " XRGE"}
+                    </span>
                   )}
                 </div>
                 <div className="flex items-center gap-3">
