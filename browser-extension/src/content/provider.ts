@@ -100,12 +100,25 @@ const rougechain = {
     },
 };
 
-if (!(window as any).rougechain) {
+// Authenticity token: only the real extension sets this non-enumerable Symbol.
+// dApps can verify authenticity via: window.rougechain?.[Symbol.for("rougechain:authentic")]
+const AUTHENTIC = Symbol.for("rougechain:authentic");
+const frozenProvider = Object.freeze({ ...rougechain, [AUTHENTIC]: true });
+
+// Unconditionally overwrite — prevents malicious pages from pre-defining a fake.
+// If a prior (malicious) definition used configurable: false we catch the error
+// and warn, but the extension still loads correctly in the content script context.
+try {
     Object.defineProperty(window, "rougechain", {
-        value: Object.freeze(rougechain),
+        value: frozenProvider,
         writable: false,
         configurable: false,
     });
+} catch (e) {
+    // Property was already defined as non-configurable (likely by us on a prior inject).
+    // Overwrite via direct assignment as a fallback.
+    try { (window as any).rougechain = frozenProvider; } catch { /* already frozen */ }
+    console.warn("[RougeChain] Could not inject provider — window.rougechain was already defined by another script or is non-configurable.", e);
 }
 
 window.dispatchEvent(new Event("rougechain#initialized"));

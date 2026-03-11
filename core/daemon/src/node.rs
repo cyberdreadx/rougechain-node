@@ -69,6 +69,8 @@ pub struct L1Node {
     burned_tokens: Arc<Mutex<HashMap<String, f64>>>,  // Total burned per token symbol
     votes: Arc<Mutex<Vec<VoteMessage>>>,
     finalized_height: Arc<Mutex<u64>>,
+    /// Per-account nonce dedup: maps account pubkey to set of recently seen nonces
+    used_nonces: Arc<Mutex<HashMap<String, HashSet<u64>>>>,
 }
 
 impl L1Node {
@@ -105,6 +107,7 @@ impl L1Node {
             burned_tokens: Arc::new(Mutex::new(HashMap::new())),
             votes: Arc::new(Mutex::new(Vec::new())),
             finalized_height: Arc::new(Mutex::new(0)),
+            used_nonces: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -244,6 +247,35 @@ impl L1Node {
             return Err("Block prev_hash doesn't match our tip".to_string());
         }
         
+        // Verify proposer signature and block hash integrity
+        {
+            let header_bytes = encode_header_v1(&block.header);
+            match pqc_verify(&block.header.proposer_pub_key, &header_bytes, &block.proposer_sig) {
+                Ok(true) => {}
+                Ok(false) => return Err("Invalid proposer signature on imported block".to_string()),
+                Err(e) => return Err(format!("Proposer sig verification error: {}", e)),
+            }
+            let expected_hash = compute_block_hash(&header_bytes, &block.proposer_sig);
+            if block.hash != expected_hash {
+                return Err("Block hash mismatch".to_string());
+            }
+            // Check proposer is a known validator (skip for early blocks during initial sync
+            // when the syncing node hasn't replayed stake transactions yet)
+            let validators = self.list_validators().unwrap_or_default();
+            if !validators.is_empty() {
+                let is_valid_proposer = validators.iter().any(|(pk, vs)| {
+                    pk == &block.header.proposer_pub_key && vs.stake > 0
+                });
+                if !is_valid_proposer {
+                    eprintln!(
+                        "[peer] Warning: block {} proposer {} not in validator set, accepting (sig valid)",
+                        block.header.height,
+                        &block.header.proposer_pub_key[..16.min(block.header.proposer_pub_key.len())]
+                    );
+                }
+            }
+        }
+
         // Verify all transaction signatures in parallel
         {
             use rayon::prelude::*;
@@ -271,10 +303,8 @@ impl L1Node {
                     if pqc_verify(&tx.from_pub_key, &bytes_legacy, &tx.sig).ok() == Some(true) {
                         return false; // valid
                     }
-                    // Pre-fix v2 transactions lack signed_payload — accept them
-                    // (they were verified at the API layer before being mined)
-                    eprintln!("[peer] Warning: tx sig unverifiable (pre-fix v2), accepting");
-                    false
+                    eprintln!("[peer] Rejecting tx: all signature verification methods failed for {}", &tx.from_pub_key[..16.min(tx.from_pub_key.len())]);
+                    true
                 })
                 .count();
             if invalid_count > 0 {
@@ -633,6 +663,8 @@ impl L1Node {
         use quantum_vault_crypto::{sha256, bytes_to_hex};
         use quantum_vault_types::encode_tx_v1;
         
+        self.check_nonce_replay(&tx.from_pub_key, tx.nonce)?;
+
         let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
         
         let mut mempool = self.mempool.lock().map_err(|_| "mempool lock")?;
@@ -1178,7 +1210,27 @@ impl L1Node {
         Ok(Some(block))
     }
 
+    fn check_nonce_replay(&self, from_pub_key: &str, nonce: u64) -> Result<(), String> {
+        let mut nonces = self.used_nonces.lock().map_err(|_| "nonce lock")?;
+        let account_nonces = nonces.entry(from_pub_key.to_string()).or_default();
+
+        if account_nonces.contains(&nonce) {
+            return Err("Duplicate nonce — possible replay".to_string());
+        }
+
+        account_nonces.insert(nonce);
+
+        // Prune old nonces to prevent unbounded growth (keep last 1000)
+        if account_nonces.len() > 1000 {
+            let min_nonce = *account_nonces.iter().min().unwrap();
+            account_nonces.remove(&min_nonce);
+        }
+
+        Ok(())
+    }
+
     fn accept_tx(&self, tx: TxV1) -> Result<(), String> {
+        self.check_nonce_replay(&tx.from_pub_key, tx.nonce)?;
         let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
         let mut mempool = self.mempool.lock().map_err(|_| "mempool lock")?;
         if mempool.len() >= MAX_MEMPOOL {

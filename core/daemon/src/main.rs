@@ -24,7 +24,7 @@ use clap::Parser;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::time::{sleep, Duration};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{Any, AllowOrigin, CorsLayer};
 
 use crate::websocket::WsBroadcaster;
 
@@ -85,6 +85,9 @@ struct Args {
     /// Bridge: Base Sepolia RPC URL (default: https://sepolia.base.org)
     #[arg(long, env = "QV_BASE_SEPOLIA_RPC", default_value = "https://sepolia.base.org")]
     base_sepolia_rpc: String,
+    /// Enable legacy v1 endpoints that accept private keys (UNSAFE — for local dev only)
+    #[arg(long)]
+    dev: bool,
 }
 
 #[derive(Clone)]
@@ -106,6 +109,8 @@ struct AppState {
     bridge_relayer_secret: Option<String>,
     xrge_bridge_vault: Option<String>,
     xrge_bridge_token: String,
+    faucet_cooldowns: Arc<tokio::sync::Mutex<HashMap<String, i64>>>,
+    dev_mode: bool,
 }
 
 #[derive(Clone)]
@@ -277,6 +282,8 @@ async fn main() -> Result<(), String> {
             .ok()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "0xF9e744a43608AB7D64a106df84e52915e8Efa27E".to_string()),
+        faucet_cooldowns: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        dev_mode: args.dev,
     };
     
     eprintln!("[core-daemon] WebSocket broadcaster initialized");
@@ -450,12 +457,29 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/bridge/xrge/withdrawals", get(xrge_bridge_withdrawals))
         .route("/api/bridge/xrge/withdrawals/:tx_id", delete(xrge_bridge_fulfill))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
-        .layer(
-            CorsLayer::new()
+        .layer({
+            let cors_origins = std::env::var("QV_CORS_ORIGINS")
+                .ok()
+                .filter(|s| !s.is_empty());
+            let cors = CorsLayer::new()
                 .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS, Method::PATCH])
-                .allow_origin(Any)
-                .allow_headers(Any),
-        )
+                .allow_headers(Any);
+            match cors_origins {
+                Some(origins) if origins != "*" => {
+                    let allowed: Vec<axum::http::HeaderValue> = origins
+                        .split(',')
+                        .filter_map(|o| o.trim().parse().ok())
+                        .collect();
+                    cors.allow_origin(AllowOrigin::list(allowed))
+                }
+                _ if state.dev_mode => cors.allow_origin(Any),
+                _ => cors.allow_origin(AllowOrigin::list([
+                    "http://localhost:5173".parse().unwrap(),
+                    "http://localhost:4173".parse().unwrap(),
+                    "http://127.0.0.1:5173".parse().unwrap(),
+                ])),
+            }
+        })
         .with_state(state)
 }
 
@@ -471,31 +495,46 @@ async fn auth_middleware<B>(
     if path == "/api/health" || path == "/api/stats" {
         return Ok(next.run(request).await);
     }
-    if path == "/api/faucet" || path == "/api/tx/submit" || path == "/api/stake/submit" || path == "/api/unstake/submit" || path == "/api/token/create" || path.starts_with("/api/bridge/") {
+    // v1 endpoints that accept private keys — block unless --dev flag is set
+    const V1_KEY_ENDPOINTS: &[&str] = &[
+        "/api/tx/submit",
+        "/api/stake/submit",
+        "/api/unstake/submit",
+        "/api/token/create",
+        "/api/pool/create",
+        "/api/pool/add-liquidity",
+        "/api/pool/remove-liquidity",
+        "/api/swap/execute",
+        "/api/token/metadata/update",
+        "/api/token/metadata/claim",
+        "/api/wallet/create",
+    ];
+    if V1_KEY_ENDPOINTS.iter().any(|ep| path == *ep) {
+        if !state.dev_mode {
+            return Err(StatusCode::GONE);
+        }
         return Ok(next.run(request).await);
     }
-    // Bypass rate limiting for secure v2 endpoints
-    if path.starts_with("/api/v2/") {
-        return Ok(next.run(request).await);
-    }
-    // Bypass rate limiting for messenger, mail, and name endpoints
-    if path.starts_with("/api/messenger/") || path.starts_with("/api/mail/") || path.starts_with("/api/names/") {
-        return Ok(next.run(request).await);
-    }
+    // Auth bypass for endpoints that handle their own auth (v2 uses signatures, faucet/bridge are public)
+    let skip_auth = path == "/api/faucet"
+        || path.starts_with("/api/bridge/")
+        || path.starts_with("/api/v2/")
+        || path.starts_with("/api/messenger/")
+        || path.starts_with("/api/mail/")
+        || path.starts_with("/api/names/");
 
-    if state.auth.is_enabled() {
+    if !skip_auth && state.auth.is_enabled() {
         let api_key = extract_api_key(request.headers());
         if !state.auth.is_valid(api_key.as_deref()) {
             return Err(StatusCode::UNAUTHORIZED);
         }
     }
 
+    // Rate limiting applies to ALL endpoints
     let client_key = client_key(&request);
-    
-    // Determine rate limit tier
+
     let limit = determine_rate_limit_tier(&state, &request).await;
-    
-    // 0 = unlimited (skip rate limiting)
+
     if limit > 0 {
         let mut limiter = state.limiter.lock().await;
         if !limiter.allow(&client_key, limit) {
@@ -511,12 +550,33 @@ async fn auth_middleware<B>(
 /// - Tier 2 (peer_limit): Registered peers
 /// - Tier 3 (read/write_limit): Unknown clients
 async fn determine_rate_limit_tier<B>(state: &AppState, request: &Request<B>) -> u32 {
-    // Check for validator header (Tier 1)
-    if let Some(validator_key) = request.headers().get("x-validator-key") {
-        if let Ok(key_str) = validator_key.to_str() {
-            // Verify this is an active staked validator
-            if is_active_validator(&state.node, key_str) {
-                return state.validator_limit; // Tier 1
+    // Tier 1: validator must prove key ownership by signing a recent timestamp
+    // Headers: X-Validator-Key (pubkey), X-Validator-Sig (signature of timestamp), X-Validator-Ts (unix ms)
+    if let (Some(validator_key), Some(validator_sig), Some(validator_ts)) = (
+        request.headers().get("x-validator-key"),
+        request.headers().get("x-validator-sig"),
+        request.headers().get("x-validator-ts"),
+    ) {
+        if let (Ok(key_str), Ok(sig_str), Ok(ts_str)) = (
+            validator_key.to_str(),
+            validator_sig.to_str(),
+            validator_ts.to_str(),
+        ) {
+            if let Ok(ts) = ts_str.parse::<i64>() {
+                let now = chrono::Utc::now().timestamp_millis();
+                let drift = (now - ts).abs();
+                // Reject timestamps older than 30 seconds
+                if drift < 30_000 {
+                    if is_active_validator(&state.node, key_str) {
+                        if let Ok(true) = quantum_vault_crypto::pqc_verify(
+                            key_str,
+                            ts_str.as_bytes(),
+                            sig_str,
+                        ) {
+                            return state.validator_limit; // Tier 1 — proven
+                        }
+                    }
+                }
             }
         }
     }
@@ -564,6 +624,11 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
 }
 
 fn client_key<B>(request: &Request<B>) -> String {
+    // Prefer actual socket address to prevent IP spoofing via headers (MED-03)
+    if let Some(info) = request.extensions().get::<axum::extract::ConnectInfo<SocketAddr>>() {
+        return info.0.ip().to_string();
+    }
+    // Fallback only when ConnectInfo is unavailable (e.g., behind trusted reverse proxy)
     if let Some(value) = request.headers().get("x-forwarded-for") {
         if let Ok(value) = value.to_str() {
             if let Some(first) = value.split(',').next() {
@@ -573,17 +638,6 @@ fn client_key<B>(request: &Request<B>) -> String {
                 }
             }
         }
-    }
-    if let Some(value) = request.headers().get("x-real-ip") {
-        if let Ok(value) = value.to_str() {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
-            }
-        }
-    }
-    if let Some(info) = request.extensions().get::<axum::extract::ConnectInfo<SocketAddr>>() {
-        return info.0.ip().to_string();
     }
     "unknown".to_string()
 }
@@ -1174,16 +1228,15 @@ struct BlocksResponse {
     blocks: Vec<quantum_vault_types::BlockV1>,
 }
 
+const MAX_BLOCK_PAGE_SIZE: usize = 100;
+
 async fn get_blocks(
     State(state): State<AppState>,
     Query(query): Query<BlocksQuery>,
 ) -> Result<Json<BlocksResponse>, StatusCode> {
     let node = &state.node;
-    let blocks = if let Some(limit) = query.limit {
-        node.get_recent_blocks(limit).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    } else {
-        node.get_all_blocks().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    };
+    let limit = query.limit.unwrap_or(MAX_BLOCK_PAGE_SIZE).min(MAX_BLOCK_PAGE_SIZE);
+    let blocks = node.get_recent_blocks(limit).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(BlocksResponse { blocks }))
 }
 
@@ -2123,6 +2176,9 @@ struct FaucetRequest {
     amount: Option<u64>,
 }
 
+const FAUCET_COOLDOWN_SECS: i64 = 86400; // 24 hours
+const FAUCET_MAX_AMOUNT: u64 = 100_000;
+
 async fn faucet(
     State(state): State<AppState>,
     Json(body): Json<FaucetRequest>,
@@ -2139,7 +2195,33 @@ async fn faucet(
             }));
         }
     }
-    match node.submit_faucet_tx(&body.recipient_public_key, body.amount.unwrap_or(10000)) {
+
+    let amount = body.amount.unwrap_or(10000).min(FAUCET_MAX_AMOUNT);
+
+    let now = chrono::Utc::now().timestamp();
+    {
+        let mut cooldowns = state.faucet_cooldowns.lock().await;
+        if let Some(&last_used) = cooldowns.get(&body.recipient_public_key) {
+            let elapsed = now - last_used;
+            if elapsed < FAUCET_COOLDOWN_SECS {
+                let remaining = FAUCET_COOLDOWN_SECS - elapsed;
+                let hours = remaining / 3600;
+                let mins = (remaining % 3600) / 60;
+                return Ok(Json(TxResponse {
+                    success: false,
+                    tx_id: None,
+                    tx: None,
+                    error: Some(format!(
+                        "Faucet cooldown: please wait {}h {}m before requesting again.",
+                        hours, mins
+                    )),
+                }));
+            }
+        }
+        cooldowns.insert(body.recipient_public_key.clone(), now);
+    }
+
+    match node.submit_faucet_tx(&body.recipient_public_key, amount) {
         Ok(tx) => {
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
             Ok(Json(TxResponse { success: true, tx_id: Some(id), tx: Some(tx), error: None }))
@@ -4356,8 +4438,8 @@ async fn xrge_bridge_config(State(state): State<AppState>) -> Json<serde_json::V
 #[serde(rename_all = "camelCase")]
 struct XrgeBridgeClaimRequest {
     evm_tx_hash: String,
-    #[allow(dead_code)]
     evm_address: String,
+    evm_signature: Option<String>,
     amount: String,
     recipient_rougechain_pubkey: String,
 }
@@ -4417,6 +4499,24 @@ async fn xrge_bridge_claim(
 
     if !receipt_ok {
         return Json(serde_json::json!({ "success": false, "error": "Transaction not confirmed or failed" }));
+    }
+
+    // Verify EVM signature if provided (optional for backward compat, will be required in future)
+    let evm_sig = body.evm_signature.as_deref().unwrap_or("").trim().to_string();
+    if !evm_sig.is_empty() {
+        let claim_message = format!("RougeChain XRGE bridge claim\nTx: {}\nRecipient: {}", tx_hash_hex, recipient);
+        let sig_bytes = hex::decode(evm_sig.trim_start_matches("0x")).unwrap_or_default();
+        let evm_addr = body.evm_address.trim().to_lowercase();
+        let sig_valid = eth_ecdsa_verifier::validate_ecdsa_signature(
+            &evm_addr,
+            claim_message.as_bytes(),
+            &sig_bytes,
+        );
+        if !sig_valid.unwrap_or(false) {
+            return Json(serde_json::json!({ "success": false, "error": "Invalid EVM signature — sign the claim message with the wallet that sent the XRGE" }));
+        }
+    } else {
+        eprintln!("[bridge] Warning: XRGE claim without EVM signature for tx {} — will be required in future", tx_hash_hex);
     }
 
     if let Err(e) = state.bridge_claim_store.insert(prefixed_hash).await {

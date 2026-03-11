@@ -4,9 +4,30 @@
  * Opens approval popup windows for connect/sign/send requests.
  */
 
+import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
+
 interface ConnectedSite {
     origin: string;
     connectedAt: number;
+}
+
+function hexToBytes(hex: string): Uint8Array {
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+    }
+    return bytes;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function signPayload(payloadJson: string, privateKeyHex: string): string {
+    const messageBytes = new TextEncoder().encode(payloadJson);
+    const secretKey = hexToBytes(privateKeyHex);
+    const signature = ml_dsa65.sign(messageBytes, secretKey);
+    return bytesToHex(signature);
 }
 
 // ─── Auto-lock ───────────────────────────────────────────
@@ -288,9 +309,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     }
 
                     const signedPayload = JSON.stringify(payload, Object.keys(payload).sort());
+                    const signSig = signPayload(signedPayload, wallet.privateKey);
                     sendResponse({
                         result: {
                             signedPayload,
+                            signature: signSig,
                             publicKey: wallet.publicKey,
                         },
                     });
@@ -331,12 +354,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         nonce: crypto.randomUUID(),
                     };
 
+                    const txPayloadJson = JSON.stringify(txPayload, Object.keys(txPayload).sort());
+                    const txSig = signPayload(txPayloadJson, wallet.privateKey);
+
                     const res = await fetch(`${baseUrl}/v2/tx/submit`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                             payload: txPayload,
-                            signature: "",
+                            signature: txSig,
                             public_key: wallet.publicKey,
                         }),
                     });
