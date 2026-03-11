@@ -120,8 +120,12 @@ export async function sendMail(
 
   const recipientEncPubKeys: string[] = [];
   for (const toId of toWalletIds) {
-    const w = allWallets.find(w => w.id === toId);
-    if (!w?.encryptionPublicKey) throw new Error(`Recipient ${toId} encryption key not found`);
+    const w = allWallets.find(w =>
+      w.id === toId ||
+      w.signingPublicKey === toId ||
+      w.encryptionPublicKey === toId
+    );
+    if (!w?.encryptionPublicKey) throw new Error(`Recipient ${toId.substring(0, 16)}... encryption key not found. They may need to re-register their wallet.`);
     recipientEncPubKeys.push(w.encryptionPublicKey);
   }
 

@@ -41,7 +41,7 @@ import {
   WalletTransaction
 } from "@/lib/pqc-wallet";
 import { generateKeypair } from "@/lib/pqc-blockchain";
-import { generateEncryptionKeypair } from "@/lib/pqc-messenger";
+import { generateEncryptionKeypair, registerWalletOnNode } from "@/lib/pqc-messenger";
 import { createWalletViaNode } from "@/lib/node-api";
 import { NETWORK_STORAGE_KEY, getCoreApiHeaders, getNetworkLabel, getNodeApiBaseUrl } from "@/lib/network";
 import SendTokensDialog from "@/components/wallet/SendTokensDialog";
@@ -331,6 +331,18 @@ const Wallet = () => {
       
       saveUnifiedWallet(newWallet);
       setWallet(newWallet);
+
+      try {
+        await registerWalletOnNode({
+          id: newWallet.id,
+          displayName: newWallet.displayName,
+          signingPublicKey: newWallet.signingPublicKey,
+          encryptionPublicKey: newWallet.encryptionPublicKey,
+        });
+      } catch (err) {
+        console.warn("Failed to register wallet on node:", err);
+      }
+
       toast.success("Quantum-safe wallet created!", {
         description: "Your wallet is ready to use"
       });

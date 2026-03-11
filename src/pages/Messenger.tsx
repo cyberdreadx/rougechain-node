@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw, ArrowDownUp, Copy, KeyRound } from "lucide-react";
+import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw, ArrowDownUp, Copy, KeyRound, UserCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -43,6 +43,8 @@ const Messenger = () => {
   const [unlockPassword, setUnlockPassword] = useState("");
   const [unlocking, setUnlocking] = useState(false);
   const [vaultSettings, setVaultSettings] = useState<VaultSettings>(() => getVaultSettings());
+  const [showNamePrompt, setShowNamePrompt] = useState(false);
+  const [promptName, setPromptName] = useState("");
 
   // Load wallet from localStorage on mount
   useEffect(() => {
@@ -51,16 +53,29 @@ const Messenger = () => {
     const savedWallet = locked ? null : loadUnifiedWallet();
     if (savedWallet) {
       setWallet(savedWallet);
+      // Prompt for display name if it's generic or empty
+      const name = savedWallet.displayName?.trim() || "";
+      const generic = ["my wallet", "wallet", "unnamed", "untitled", ""];
+      if (generic.includes(name.toLowerCase())) {
+        setShowNamePrompt(true);
+      }
     }
     setIsLoading(false);
   }, []);
 
-  // Load conversations when wallet is available
+  // Load conversations when wallet is available and ensure wallet is registered
   useEffect(() => {
     if (wallet) {
+      if (wallet.encryptionPublicKey) {
+        registerWalletOnNode({
+          id: wallet.id,
+          displayName: wallet.displayName,
+          signingPublicKey: wallet.signingPublicKey,
+          encryptionPublicKey: wallet.encryptionPublicKey,
+        }).catch(() => {});
+      }
       loadConversations();
       loadContacts();
-      // Poll for new conversations every 5 seconds so recipients discover incoming chats
       const interval = setInterval(() => {
         loadConversations();
       }, 5000);
@@ -274,6 +289,27 @@ const Messenger = () => {
       });
     } finally {
       setIsRegeneratingKeys(false);
+    }
+  };
+
+  const handleNamePromptSave = async () => {
+    if (!wallet || !promptName.trim()) return;
+    const updated: UnifiedWallet = { ...wallet, displayName: promptName.trim() };
+    saveUnifiedWallet(updated);
+    setWallet(updated);
+    setShowNamePrompt(false);
+    setPromptName("");
+    // Re-register with updated name
+    try {
+      await registerWalletOnNode({
+        id: updated.id,
+        displayName: updated.displayName,
+        signingPublicKey: updated.signingPublicKey,
+        encryptionPublicKey: updated.encryptionPublicKey,
+      });
+      toast.success(`Name set to "${updated.displayName}"`);
+    } catch {
+      toast.success(`Name saved locally as "${updated.displayName}"`);
     }
   };
 
@@ -514,6 +550,61 @@ const Messenger = () => {
             walletPrivateKey={wallet.signingPrivateKey}
             onClose={() => setShowSwapWidget(false)}
           />
+        )}
+      </AnimatePresence>
+
+      {/* Display name prompt dialog */}
+      <AnimatePresence>
+        {showNamePrompt && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowNamePrompt(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-card border border-border rounded-xl p-6 w-full max-w-sm space-y-4 shadow-xl"
+            >
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center">
+                  <UserCircle className="w-6 h-6 text-primary" />
+                </div>
+                <h3 className="text-lg font-semibold">Set Your Display Name</h3>
+                <p className="text-sm text-muted-foreground text-center">
+                  Choose a name so other users can recognize you in conversations.
+                </p>
+              </div>
+              <Input
+                value={promptName}
+                onChange={(e) => setPromptName(e.target.value)}
+                placeholder="Enter your name..."
+                className="h-12"
+                onKeyDown={(e) => e.key === "Enter" && handleNamePromptSave()}
+                autoFocus
+              />
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setShowNamePrompt(false)}
+                >
+                  Later
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={handleNamePromptSave}
+                  disabled={!promptName.trim()}
+                >
+                  Save Name
+                </Button>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

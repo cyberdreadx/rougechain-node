@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import WalletSetup from "@/components/messenger/WalletSetup";
 import type { WalletWithPrivateKeys } from "@/lib/pqc-messenger";
+import { registerWalletOnNode } from "@/lib/pqc-messenger";
 import {
   getInbox, getSent, getTrash,
   sendMail, moveMail, deleteMail, markMailRead,
@@ -107,7 +108,7 @@ function ComposeView({
   const sigBlock = mailSettings.signatureEnabled && mailSettings.signature.trim()
     ? `\n\n--\n${mailSettings.signature.trim()}`
     : "";
-  const [to, setTo] = useState(replyTo?.message.senderName || "");
+  const [to, setTo] = useState(replyTo?.message.senderName || replyTo?.message.fromWalletId || "");
   const [subject, setSubject] = useState(replyTo ? `Re: ${replyTo.message.subject || ""}` : "");
   const [body, setBody] = useState(sigBlock);
   const [isSending, setIsSending] = useState(false);
@@ -540,6 +541,14 @@ const MailPage = () => {
     if (!locked) {
       const w = loadUnifiedWallet();
       setWallet(w);
+      if (w?.encryptionPublicKey) {
+        registerWalletOnNode({
+          id: w.id,
+          displayName: w.displayName,
+          signingPublicKey: w.signingPublicKey,
+          encryptionPublicKey: w.encryptionPublicKey,
+        }).catch(() => {});
+      }
     }
     setIsLoading(false);
   }, []);
