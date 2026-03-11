@@ -373,11 +373,13 @@ export async function decryptMessage(
     isSender: boolean = false
 ): Promise<{ plaintext: string; signatureValid: boolean }> {
     let signatureValid = false;
-    try {
-        const sigBytes = hexToBytes(signature);
-        const pubKeyBytes = hexToBytes(senderSigningPublicKey);
-        signatureValid = ml_dsa65.verify(sigBytes, new TextEncoder().encode(encryptedPackage), pubKeyBytes);
-    } catch { /* noop */ }
+    if (senderSigningPublicKey && signature) {
+        try {
+            const sigBytes = hexToBytes(signature);
+            const pubKeyBytes = hexToBytes(senderSigningPublicKey);
+            signatureValid = ml_dsa65.verify(sigBytes, new TextEncoder().encode(encryptedPackage), pubKeyBytes);
+        } catch { /* noop */ }
+    }
 
     const parsed = JSON.parse(encryptedPackage);
     const privKeyBytes = hexToBytes(recipientEncryptionPrivateKey);
@@ -475,12 +477,15 @@ export async function createConversation(
     return normalizeConversation(data.conversation || data);
 }
 
-export async function getConversations(walletId: string): Promise<Conversation[]> {
+export async function getConversations(walletId: string, currentWallet?: Wallet): Promise<Conversation[]> {
     const apiBase = getMessengerApiBase();
     if (!apiBase) return [];
     try {
         const all = await cachedFetch("messengerConversations", walletId, async () => {
-            const res = await fetch(`${apiBase}/conversations?walletId=${walletId}`, {
+            const params = new URLSearchParams({ walletId });
+            if (currentWallet?.signingPublicKey) params.set("signingPublicKey", currentWallet.signingPublicKey);
+            if (currentWallet?.encryptionPublicKey) params.set("encryptionPublicKey", currentWallet.encryptionPublicKey);
+            const res = await fetch(`${apiBase}/conversations?${params.toString()}`, {
                 headers: getCoreApiHeaders(),
             });
             if (!res.ok) return [];
@@ -495,11 +500,22 @@ export async function getConversations(walletId: string): Promise<Conversation[]
                 if (w.encryptionPublicKey) walletMap.set(w.encryptionPublicKey, w);
             }
 
+            const currentIds = currentWallet
+                ? new Set([currentWallet.id, currentWallet.signingPublicKey, currentWallet.encryptionPublicKey].filter(Boolean))
+                : new Set<string>();
+
             return convos.map((raw: any) => {
                 const conv = normalizeConversation(raw);
                 if ((!conv.participants || conv.participants.length === 0) && conv.participantIds?.length) {
                     conv.participants = conv.participantIds
-                        .map((id: string) => walletMap.get(id))
+                        .map((id: string) => {
+                            if (currentWallet && currentIds.has(id)) return currentWallet;
+                            const w = walletMap.get(id);
+                            if (w) return w;
+                            return allWallets.find(aw =>
+                                aw.id === id || aw.signingPublicKey === id || aw.encryptionPublicKey === id
+                            );
+                        })
                         .filter((w): w is Wallet => w !== undefined);
                 }
                 return conv;
@@ -634,11 +650,17 @@ export async function getMessages(
             let signatureValid = false;
 
             let sender = findParticipant(allParticipants, msg.senderWalletId);
-            if (!sender && msg.senderWalletId && allParticipants === participants) {
+            if (!sender && msg.senderWalletId) {
                 try {
                     const wallets = await getWallets();
                     sender = findParticipant(wallets, msg.senderWalletId);
                 } catch { /* ignore */ }
+            }
+            // Last resort: in 1:1 chats, use the other participant
+            if (!sender && allParticipants.length >= 2) {
+                sender = allParticipants.find(p =>
+                    p.id !== wallet.id && p.signingPublicKey !== wallet.signingPublicKey
+                );
             }
 
             try {

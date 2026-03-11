@@ -127,8 +127,27 @@ export async function sendMail(
 
     const recipientEncPubKeys: string[] = [];
     for (const toId of toWalletIds) {
-        const w = allWallets.find(w => w.id === toId);
-        if (!w?.encryptionPublicKey) throw new Error(`Recipient ${toId} encryption key not found`);
+        let w = allWallets.find(w =>
+            w.id === toId ||
+            w.signingPublicKey === toId ||
+            w.encryptionPublicKey === toId
+        );
+        if (!w?.encryptionPublicKey) {
+            try {
+                const nameResult = await resolveName(toId);
+                if (nameResult?.wallet?.encryptionPublicKey) w = nameResult.wallet;
+            } catch { /* ignore */ }
+        }
+        if (!w?.encryptionPublicKey) {
+            try {
+                const name = await reverseLookup(toId);
+                if (name) {
+                    const nameResult = await resolveName(name);
+                    if (nameResult?.wallet?.encryptionPublicKey) w = nameResult.wallet;
+                }
+            } catch { /* ignore */ }
+        }
+        if (!w?.encryptionPublicKey) throw new Error(`Recipient ${toId.substring(0, 16)}... encryption key not found. They may need to re-register their wallet.`);
         recipientEncPubKeys.push(w.encryptionPublicKey);
     }
 
@@ -202,9 +221,15 @@ async function getFolder(wallet: WalletWithPrivateKeys, folder: string, cacheCat
         for (const raw of rawItems) {
             const msg = normalizeMailMessage(raw.message || raw);
             const label = normalizeMailLabel(raw.label || {});
-            const isSender = msg.fromWalletId === wallet.id;
+            const isSender = msg.fromWalletId === wallet.id ||
+                msg.fromWalletId === wallet.signingPublicKey ||
+                msg.fromWalletId === wallet.encryptionPublicKey;
 
-            const senderWallet = allWallets.find(w => w.id === msg.fromWalletId);
+            const senderWallet = allWallets.find(w =>
+                w.id === msg.fromWalletId ||
+                w.signingPublicKey === msg.fromWalletId ||
+                w.encryptionPublicKey === msg.fromWalletId
+            );
             const senderSigningKey = senderWallet?.signingPublicKey || wallet.signingPublicKey;
 
             let subject = "[Unable to decrypt]";
@@ -245,7 +270,11 @@ async function getFolder(wallet: WalletWithPrivateKeys, folder: string, cacheCat
 async function getSenderDisplayName(walletId: string, allWallets: Wallet[]): Promise<string> {
     const name = await reverseLookup(walletId);
     if (name) return `${name}@${MAIL_DOMAIN}`;
-    const w = allWallets.find(w => w.id === walletId);
+    const w = allWallets.find(w =>
+        w.id === walletId ||
+        w.signingPublicKey === walletId ||
+        w.encryptionPublicKey === walletId
+    );
     return w?.displayName || walletId.substring(0, 12) + "...";
 }
 
@@ -298,15 +327,13 @@ export async function resolveRecipient(input: string): Promise<string | null> {
     if (trimmed.includes(`@${MAIL_DOMAIN}`)) {
         const name = trimmed.replace(`@${MAIL_DOMAIN}`, "").toLowerCase();
         const result = await resolveName(name);
-        return result?.entry?.wallet_id || null;
+        return result?.wallet?.id || result?.entry?.wallet_id || null;
     }
 
-    // Treat as raw wallet ID
     if (trimmed.length > 20) return trimmed;
 
-    // Could be just a name without the domain
     const result = await resolveName(trimmed);
-    return result?.entry?.wallet_id || null;
+    return result?.wallet?.id || result?.entry?.wallet_id || null;
 }
 
 // --- Helpers ---

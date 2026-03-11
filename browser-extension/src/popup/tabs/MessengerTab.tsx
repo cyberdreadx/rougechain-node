@@ -51,7 +51,7 @@ export default function MessengerTab({ wallet }: Props) {
     const messengerWallet = toMessengerWallet(wallet) as WalletWithPrivateKeys;
 
     const loadConversations = async () => {
-        const convos = await getConversations(wallet.id);
+        const convos = await getConversations(wallet.id, wallet);
         setConversations(convos);
         setIsLoading(false);
     };
