@@ -155,8 +155,11 @@ export const USDC_BASE_SEPOLIA = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 // XRGE Bridge (Base ↔ RougeChain L1 via BridgeVault)
 // ============================================================
 
-/** Real XRGE on Base mainnet */
+/** XRGE on Base mainnet */
 export const XRGE_TOKEN_ADDRESS = "0x147120faEC9277ec02d957584CFCD92B56A24317";
+
+/** XRGE on Base Sepolia (testnet) */
+export const XRGE_TOKEN_ADDRESS_TESTNET = "0xF9e744a43608AB7D64a106df84e52915e8Efa27E";
 
 /** Minimal ERC-20 ABI for approve + balanceOf */
 export const ERC20_ABI = [
@@ -202,7 +205,7 @@ export async function getXrgeBridgeConfig(): Promise<XrgeBridgeConfig> {
     return {
       enabled: data.enabled === true,
       vaultAddress: data.vaultAddress,
-      tokenAddress: data.tokenAddress || XRGE_TOKEN_ADDRESS,
+      tokenAddress: data.tokenAddress || (data.chainId === 8453 ? XRGE_TOKEN_ADDRESS : XRGE_TOKEN_ADDRESS_TESTNET),
       chainId: data.chainId ?? BASE_SEPOLIA_CHAIN_ID,
     };
   } catch {
