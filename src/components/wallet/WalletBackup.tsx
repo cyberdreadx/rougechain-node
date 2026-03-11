@@ -467,7 +467,7 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
               <label className="text-sm font-medium text-foreground">Backup File</label>
               <Input
                 type="file"
-                accept=".pqcbackup,.txt"
+                accept=".pqcbackup,.txt,application/octet-stream,text/plain,*/*"
                 onChange={handleFileSelect}
                 className="cursor-pointer"
               />
