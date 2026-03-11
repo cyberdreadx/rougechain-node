@@ -26,8 +26,22 @@ core/target/
 *.sln
 *.sw?
 
+# Environment files (NEVER commit — contain private keys / secrets)
+.env
+.env.local
+.env.*.local
+contracts/.env
+
 # Local Netlify folder
 .netlify
 
 # Node private keys (NEVER commit)
 node-keys.json
+
+# Build artifacts
+contracts/artifacts/build-info/
+contracts/cache/
+
+# Temp / generated files
+*.zip
+create_store_assets.py

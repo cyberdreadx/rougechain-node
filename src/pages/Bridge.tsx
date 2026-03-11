@@ -1,11 +1,10 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { ArrowDownToLine, ArrowUpFromLine, ExternalLink, Loader2, Wallet, Copy, Check, ArrowRightLeft, Coins } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, Loader2, Wallet, ArrowRightLeft, Coins, ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { baseSepolia } from "viem/chains";
 import {
@@ -17,35 +16,36 @@ import {
   claimXrgeBridgeDeposit,
   bridgeWithdrawXrge,
   type XrgeBridgeConfig,
-  ERC20_ABI,
-  BRIDGE_VAULT_ABI,
 } from "@/lib/bridge";
 import { createSignedBridgeWithdraw } from "@/lib/pqc-signer";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { getWalletBalance } from "@/lib/pqc-wallet";
 import { qethToHuman, humanToQeth, formatQethForDisplay } from "@/hooks/use-eth-price";
 
+type BridgeDirection = "deposit" | "withdraw";
+type BridgeAsset = "ETH" | "USDC" | "XRGE";
+
+const ASSETS: { id: BridgeAsset; label: string; icon: string; l1Label: string }[] = [
+  { id: "ETH", label: "ETH", icon: "Ξ", l1Label: "qETH" },
+  { id: "USDC", label: "USDC", icon: "$", l1Label: "qUSDC" },
+  { id: "XRGE", label: "XRGE", icon: "✦", l1Label: "XRGE" },
+];
+
 const Bridge = () => {
   const [config, setConfig] = useState<BridgeConfig | null>(null);
   const [xrgeConfig, setXrgeConfig] = useState<XrgeBridgeConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
   const [evmAddress, setEvmAddress] = useState("");
-  const [evmTxHash, setEvmTxHash] = useState("");
-  const [claiming, setClaiming] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [rougechainPubkey, setRougechainPubkey] = useState("");
-  const [withdrawAmount, setWithdrawAmount] = useState("");
-  const [withdrawEvmAddress, setWithdrawEvmAddress] = useState("");
-  const [withdrawing, setWithdrawing] = useState(false);
+  const [direction, setDirection] = useState<BridgeDirection>("deposit");
+  const [asset, setAsset] = useState<BridgeAsset>("ETH");
+  const [amount, setAmount] = useState("");
+  const [evmTarget, setEvmTarget] = useState("");
+  const [processing, setProcessing] = useState(false);
+  const [step, setStep] = useState("");
+
   const [qethBalance, setQethBalance] = useState(0);
   const [qusdcBalance, setQusdcBalance] = useState(0);
-  const [bridgeToken, setBridgeToken] = useState<"ETH" | "USDC">("ETH");
-  // XRGE bridge state
-  const [xrgeDepositAmount, setXrgeDepositAmount] = useState("");
-  const [xrgeDepositing, setXrgeDepositing] = useState(false);
-  const [xrgeWithdrawAmount, setXrgeWithdrawAmount] = useState("");
-  const [xrgeWithdrawEvmAddr, setXrgeWithdrawEvmAddr] = useState("");
-  const [xrgeWithdrawing, setXrgeWithdrawing] = useState(false);
   const [xrgeL1Balance, setXrgeL1Balance] = useState(0);
 
   useEffect(() => {
@@ -60,23 +60,20 @@ const Bridge = () => {
 
   useEffect(() => {
     const wallet = loadUnifiedWallet();
-    if (wallet?.signingPublicKey) {
-      setRougechainPubkey(wallet.signingPublicKey);
-    }
+    if (wallet?.signingPublicKey) setRougechainPubkey(wallet.signingPublicKey);
   }, []);
 
-  useEffect(() => {
+  const refreshBalances = () => {
     const wallet = loadUnifiedWallet();
     if (!wallet?.signingPublicKey) return;
     getWalletBalance(wallet.signingPublicKey).then((balances) => {
-      const qeth = balances.find((b) => b.symbol === "qETH")?.balance ?? 0;
-      setQethBalance(qeth);
-      const qusdc = balances.find((b) => b.symbol === "qUSDC")?.balance ?? 0;
-      setQusdcBalance(qusdc);
-      const xrge = balances.find((b) => b.symbol === "XRGE")?.balance ?? 0;
-      setXrgeL1Balance(xrge);
+      setQethBalance(balances.find((b) => b.symbol === "qETH")?.balance ?? 0);
+      setQusdcBalance(balances.find((b) => b.symbol === "qUSDC")?.balance ?? 0);
+      setXrgeL1Balance(balances.find((b) => b.symbol === "XRGE")?.balance ?? 0);
     });
-  }, [config, claiming, withdrawing, xrgeDepositing, xrgeWithdrawing]);
+  };
+
+  useEffect(refreshBalances, [config]);
 
   const connectEvm = async () => {
     if (typeof window.ethereum === "undefined") {
@@ -88,261 +85,151 @@ const Bridge = () => {
       await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: chainIdHex }] }).catch(async () => {
         await window.ethereum.request({
           method: "wallet_addEthereumChain",
-          params: [{
-            chainId: chainIdHex,
-            chainName: baseSepolia.name,
-            nativeCurrency: baseSepolia.nativeCurrency,
-            rpcUrls: [baseSepolia.rpcUrls.default.http[0]],
-            blockExplorerUrls: [baseSepolia.blockExplorers.default.url],
-          }],
+          params: [{ chainId: chainIdHex, chainName: baseSepolia.name, nativeCurrency: baseSepolia.nativeCurrency, rpcUrls: [baseSepolia.rpcUrls.default.http[0]], blockExplorerUrls: [baseSepolia.blockExplorers.default.url] }],
         });
       });
       const accounts = await window.ethereum.request({ method: "eth_requestAccounts" }) as string[];
       setEvmAddress(accounts[0]);
+      setEvmTarget(accounts[0]);
       toast.success("Connected to Base Sepolia");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to connect");
     }
   };
 
-  const copyCustody = () => {
-    if (!config?.custodyAddress) return;
-    navigator.clipboard.writeText(config.custodyAddress);
-    setCopied(true);
-    toast.success("Copied custody address");
-    setTimeout(() => setCopied(false), 2000);
+  const getL1Balance = () => {
+    if (asset === "ETH") return formatQethForDisplay(qethBalance) + " qETH";
+    if (asset === "USDC") return (qusdcBalance / 1e6).toFixed(2) + " qUSDC";
+    return xrgeL1Balance.toLocaleString() + " XRGE";
   };
+
+  const currentAsset = ASSETS.find(a => a.id === asset)!;
+
+  // ── Deposit: Base → RougeChain ────────────────────────────────
+
+  const handleDeposit = async () => {
+    if (!evmAddress) { toast.error("Connect your Base wallet first"); return; }
+    if (!rougechainPubkey) { toast.error("RougeChain wallet not connected"); return; }
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum <= 0) { toast.error("Enter a valid amount"); return; }
+
+    setProcessing(true);
+
+    try {
+      if (asset === "XRGE") {
+        if (!xrgeConfig?.vaultAddress) { toast.error("XRGE bridge vault not configured"); setProcessing(false); return; }
+        const tokenAddr = xrgeConfig.tokenAddress || "0x147120faEC9277ec02d957584CFCD92B56A24317";
+        const vaultAddr = xrgeConfig.vaultAddress;
+        const amountWei = "0x" + (BigInt(Math.floor(amountNum)) * 10n ** 18n).toString(16);
+
+        setStep("Approving XRGE...");
+        const approveData = `0x095ea7b3${vaultAddr.slice(2).padStart(64, "0")}${BigInt(amountWei).toString(16).padStart(64, "0")}`;
+        await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: tokenAddr, data: approveData }] });
+        await new Promise(r => setTimeout(r, 5000));
+
+        setStep("Depositing to vault...");
+        const pubkeyHex = Array.from(new TextEncoder().encode(rougechainPubkey)).map(b => b.toString(16).padStart(2, "0")).join("");
+        const paddedPubkey = pubkeyHex.padEnd(Math.ceil(pubkeyHex.length / 64) * 64, "0");
+        const depositData = "0x0efe6a8b" + BigInt(amountWei).toString(16).padStart(64, "0") + (64).toString(16).padStart(64, "0") + rougechainPubkey.length.toString(16).padStart(64, "0") + paddedPubkey;
+        const depositTx = await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: vaultAddr, data: depositData }] });
+
+        setStep("Claiming on RougeChain...");
+        const claim = await claimXrgeBridgeDeposit({ evmTxHash: depositTx as string, evmAddress, amount: (BigInt(Math.floor(amountNum)) * 10n ** 18n).toString(), recipientRougechainPubkey: rougechainPubkey });
+        if (claim.success) toast.success(`Bridged ${amountNum} XRGE to RougeChain!`);
+        else toast.warning(`Deposit sent but L1 claim pending. ${claim.error || ""}`);
+      } else {
+        if (!config?.custodyAddress) { toast.error("Bridge not configured"); setProcessing(false); return; }
+
+        if (asset === "ETH") {
+          setStep("Sending ETH to bridge...");
+          const weiHex = "0x" + (BigInt(Math.round(amountNum * 1e18))).toString(16);
+          const txHash = await window.ethereum.request({
+            method: "eth_sendTransaction",
+            params: [{ from: evmAddress, to: config.custodyAddress, value: weiHex }],
+          });
+          await new Promise(r => setTimeout(r, 5000));
+
+          setStep("Signing claim...");
+          const recipient = rougechainPubkey;
+          const claimMsg = `RougeChain bridge claim\nTx: ${txHash}\nRecipient: ${recipient}`;
+          const msgHex = "0x" + Array.from(new TextEncoder().encode(claimMsg)).map(b => b.toString(16).padStart(2, "0")).join("");
+          const sig = await window.ethereum.request({ method: "personal_sign", params: [msgHex, evmAddress] });
+
+          setStep("Claiming qETH...");
+          const claim = await claimBridgeDeposit({ evmTxHash: txHash as string, evmAddress, evmSignature: sig as string, recipientRougechainPubkey: recipient, token: "ETH" });
+          if (claim.success) toast.success(`Claimed ${amountNum} ETH as qETH!`);
+          else toast.error(claim.error || "Claim failed");
+        } else {
+          setStep("Sending USDC to bridge...");
+          const usdcAddr = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+          const usdcAmount = "0x" + (BigInt(Math.round(amountNum * 1e6))).toString(16);
+          const transferData = `0xa9059cbb${config.custodyAddress.slice(2).padStart(64, "0")}${BigInt(usdcAmount).toString(16).padStart(64, "0")}`;
+          const txHash = await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: usdcAddr, data: transferData }] });
+          await new Promise(r => setTimeout(r, 5000));
+
+          setStep("Signing claim...");
+          const recipient = rougechainPubkey;
+          const claimMsg = `RougeChain bridge claim\nTx: ${txHash}\nRecipient: ${recipient}`;
+          const msgHex = "0x" + Array.from(new TextEncoder().encode(claimMsg)).map(b => b.toString(16).padStart(2, "0")).join("");
+          const sig = await window.ethereum.request({ method: "personal_sign", params: [msgHex, evmAddress] });
+
+          setStep("Claiming qUSDC...");
+          const claim = await claimBridgeDeposit({ evmTxHash: txHash as string, evmAddress, evmSignature: sig as string, recipientRougechainPubkey: recipient, token: "USDC" });
+          if (claim.success) toast.success(`Claimed ${amountNum} USDC as qUSDC!`);
+          else toast.error(claim.error || "Claim failed");
+        }
+      }
+      setAmount("");
+      refreshBalances();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Bridge deposit failed");
+    } finally {
+      setProcessing(false);
+      setStep("");
+    }
+  };
+
+  // ── Withdraw: RougeChain → Base ───────────────────────────────
 
   const handleWithdraw = async () => {
     const wallet = loadUnifiedWallet();
-    if (!wallet?.signingPrivateKey || !wallet?.signingPublicKey) {
-      toast.error("Connect your RougeChain wallet first");
-      return;
-    }
-    const amountNum = parseFloat(withdrawAmount);
-    if (isNaN(amountNum) || amountNum <= 0) {
-      toast.error("Enter a valid amount");
-      return;
-    }
-    const isUsdc = bridgeToken === "USDC";
-    const amountUnits = isUsdc ? Math.round(amountNum * 1e6) : humanToQeth(amountNum);
-    const currentBalance = isUsdc ? qusdcBalance : qethBalance;
-    const tokenLabel = isUsdc ? "qUSDC" : "qETH";
-    if (amountUnits > currentBalance) {
-      toast.error(`Insufficient ${tokenLabel} balance`);
-      return;
-    }
-    const evm = withdrawEvmAddress.trim();
-    if (!evm || (evm.startsWith("0x") ? evm.length !== 42 : evm.length !== 40)) {
-      toast.error("Enter a valid EVM address (0x + 40 hex chars)");
-      return;
-    }
-    setWithdrawing(true);
+    if (!wallet?.signingPrivateKey || !wallet?.signingPublicKey) { toast.error("Connect your RougeChain wallet first"); return; }
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum <= 0) { toast.error("Enter a valid amount"); return; }
+    const evm = evmTarget.trim();
+    if (!evm || (evm.startsWith("0x") ? evm.length !== 42 : evm.length !== 40)) { toast.error("Enter a valid EVM address"); return; }
+    const evmAddr = evm.startsWith("0x") ? evm : `0x${evm}`;
+
+    setProcessing(true);
+
     try {
-      const evmAddr = evm.startsWith("0x") ? evm : `0x${evm}`;
-      const signed = createSignedBridgeWithdraw(
-        wallet.signingPublicKey,
-        wallet.signingPrivateKey,
-        amountUnits,
-        evmAddr,
-        tokenLabel,
-      );
-      const result = await bridgeWithdraw({
-        fromPublicKey: wallet.signingPublicKey,
-        amountUnits,
-        evmAddress: evmAddr,
-        tokenSymbol: tokenLabel,
-        signature: signed.signature,
-        payload: signed.payload as unknown as Record<string, unknown>,
-      });
-      if (result.success) {
-        toast.success(`Bridge out submitted! Tx: ${result.txId}`);
-        setWithdrawAmount("");
+      if (asset === "XRGE") {
+        if (amountNum > xrgeL1Balance) { toast.error("Insufficient XRGE balance"); setProcessing(false); return; }
+        setStep("Submitting withdrawal...");
+        const signed = createSignedBridgeWithdraw(wallet.signingPublicKey, wallet.signingPrivateKey, amountNum, evmAddr, "XRGE");
+        const result = await bridgeWithdrawXrge({ fromPublicKey: wallet.signingPublicKey, amount: amountNum, evmAddress: evmAddr, signature: signed.signature, payload: signed.payload as unknown as Record<string, unknown> });
+        if (result.success) toast.success(`Withdrawal submitted! The relayer will release XRGE on Base.`);
+        else toast.error(result.error || "Withdrawal failed");
       } else {
-        toast.error(result.error || "Bridge out failed");
+        const isUsdc = asset === "USDC";
+        const amountUnits = isUsdc ? Math.round(amountNum * 1e6) : humanToQeth(amountNum);
+        const currentBalance = isUsdc ? qusdcBalance : qethBalance;
+        const tokenLabel = isUsdc ? "qUSDC" : "qETH";
+        if (amountUnits > currentBalance) { toast.error(`Insufficient ${tokenLabel} balance`); setProcessing(false); return; }
+
+        setStep("Submitting withdrawal...");
+        const signed = createSignedBridgeWithdraw(wallet.signingPublicKey, wallet.signingPrivateKey, amountUnits, evmAddr, tokenLabel);
+        const result = await bridgeWithdraw({ fromPublicKey: wallet.signingPublicKey, amountUnits, evmAddress: evmAddr, tokenSymbol: tokenLabel, signature: signed.signature, payload: signed.payload as unknown as Record<string, unknown> });
+        if (result.success) toast.success(`Withdrawal submitted! The relayer will send ${asset} to your Base address.`);
+        else toast.error(result.error || "Withdrawal failed");
       }
+      setAmount("");
+      refreshBalances();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Bridge out failed");
+      toast.error(e instanceof Error ? e.message : "Withdrawal failed");
     } finally {
-      setWithdrawing(false);
-    }
-  };
-
-  const handleClaim = async () => {
-    if (!evmTxHash.trim() || !evmAddress.trim() || !rougechainPubkey.trim()) {
-      toast.error("Fill in all fields");
-      return;
-    }
-    if (typeof window.ethereum === "undefined") {
-      toast.error("Connect MetaMask to sign the claim");
-      return;
-    }
-    setClaiming(true);
-    try {
-      const txHashHex = evmTxHash.trim().startsWith("0x") ? evmTxHash.trim() : `0x${evmTxHash.trim()}`;
-      const recipient = rougechainPubkey.trim().toLowerCase().replace(/^xrge:/, "");
-      const claimMessage = `RougeChain bridge claim\nTx: ${txHashHex}\nRecipient: ${recipient}`;
-      const msgHex = "0x" + Array.from(new TextEncoder().encode(claimMessage))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-      const signature = await window.ethereum.request({
-        method: "personal_sign",
-        params: [msgHex, evmAddress.trim()],
-      });
-      const result = await claimBridgeDeposit({
-        evmTxHash: txHashHex,
-        evmAddress: evmAddress.trim(),
-        evmSignature: signature as string,
-        recipientRougechainPubkey: recipient,
-        token: bridgeToken,
-      });
-      if (result.success) {
-        toast.success(`Claim submitted! Tx: ${result.txId}`);
-        setEvmTxHash("");
-      } else {
-        toast.error(result.error || "Claim failed");
-      }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Claim failed");
-    } finally {
-      setClaiming(false);
-    }
-  };
-
-  // ── XRGE bridge handlers ────────────────────────────────────────
-
-  const handleXrgeDeposit = async () => {
-    if (!evmAddress) {
-      toast.error("Connect your Base wallet first");
-      return;
-    }
-    if (!rougechainPubkey) {
-      toast.error("RougeChain wallet not connected");
-      return;
-    }
-    if (!xrgeConfig?.vaultAddress) {
-      toast.error("XRGE bridge vault not configured");
-      return;
-    }
-    const amountNum = parseFloat(xrgeDepositAmount);
-    if (isNaN(amountNum) || amountNum <= 0) {
-      toast.error("Enter a valid amount");
-      return;
-    }
-    setXrgeDepositing(true);
-    try {
-      const tokenAddr = xrgeConfig.tokenAddress || "0x147120faEC9277ec02d957584CFCD92B56A24317";
-      const vaultAddr = xrgeConfig.vaultAddress;
-      // Amount in 18-decimal wei
-      const amountWei = "0x" + (BigInt(Math.floor(amountNum)) * 10n ** 18n).toString(16);
-
-      // Step 1: Approve vault to spend XRGE
-      toast.info("Step 1/3: Approving vault to spend XRGE...");
-      const approveData = `0x095ea7b3${vaultAddr.slice(2).padStart(64, "0")}${BigInt(amountWei).toString(16).padStart(64, "0")}`;
-      const approveTx = await window.ethereum.request({
-        method: "eth_sendTransaction",
-        params: [{
-          from: evmAddress,
-          to: tokenAddr,
-          data: approveData,
-        }],
-      });
-      toast.info("Waiting for approval confirmation...");
-      // Wait briefly for approval to be mined
-      await new Promise(r => setTimeout(r, 5000));
-
-      // Step 2: Deposit to vault 
-      toast.info("Step 2/3: Depositing XRGE into bridge vault...");
-      // Encode deposit(uint256, string): selector + amount + string offset + string length + string data
-      const pubkeyHex = Array.from(new TextEncoder().encode(rougechainPubkey))
-        .map(b => b.toString(16).padStart(2, "0")).join("");
-      const pubkeyLen = rougechainPubkey.length;
-      const paddedPubkey = pubkeyHex.padEnd(Math.ceil(pubkeyHex.length / 64) * 64, "0");
-      const depositSelector = "0x0efe6a8b"; // deposit(uint256,string)
-      const depositData = depositSelector +
-        BigInt(amountWei).toString(16).padStart(64, "0") +
-        (64).toString(16).padStart(64, "0") + // offset to string data
-        pubkeyLen.toString(16).padStart(64, "0") +
-        paddedPubkey;
-
-      const depositTx = await window.ethereum.request({
-        method: "eth_sendTransaction",
-        params: [{
-          from: evmAddress,
-          to: vaultAddr,
-          data: depositData,
-        }],
-      });
-
-      // Step 3: Claim on L1
-      toast.info("Step 3/3: Claiming XRGE on RougeChain L1...");
-      const claimResult = await claimXrgeBridgeDeposit({
-        evmTxHash: depositTx as string,
-        evmAddress,
-        amount: (BigInt(Math.floor(amountNum)) * 10n ** 18n).toString(),
-        recipientRougechainPubkey: rougechainPubkey,
-      });
-
-      if (claimResult.success) {
-        toast.success(`Bridged ${amountNum} XRGE to RougeChain! Tx: ${claimResult.txId}`);
-        setXrgeDepositAmount("");
-      } else {
-        toast.warning(`Deposit submitted (tx: ${(depositTx as string).slice(0, 10)}...) but L1 claim pending. ${claimResult.error || ""}`);
-      }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "XRGE bridge deposit failed");
-    } finally {
-      setXrgeDepositing(false);
-    }
-  };
-
-  const handleXrgeWithdraw = async () => {
-    const wallet = loadUnifiedWallet();
-    if (!wallet?.signingPrivateKey || !wallet?.signingPublicKey) {
-      toast.error("Connect your RougeChain wallet first");
-      return;
-    }
-    const amountNum = parseFloat(xrgeWithdrawAmount);
-    if (isNaN(amountNum) || amountNum <= 0) {
-      toast.error("Enter a valid amount");
-      return;
-    }
-    if (amountNum > xrgeL1Balance) {
-      toast.error("Insufficient XRGE balance on L1");
-      return;
-    }
-    const evm = xrgeWithdrawEvmAddr.trim();
-    if (!evm || (evm.startsWith("0x") ? evm.length !== 42 : evm.length !== 40)) {
-      toast.error("Enter a valid EVM address (0x + 40 hex chars)");
-      return;
-    }
-    setXrgeWithdrawing(true);
-    try {
-      const evmAddr = evm.startsWith("0x") ? evm : `0x${evm}`;
-      const signed = createSignedBridgeWithdraw(
-        wallet.signingPublicKey,
-        wallet.signingPrivateKey,
-        amountNum,
-        evmAddr,
-        "XRGE",
-      );
-      const result = await bridgeWithdrawXrge({
-        fromPublicKey: wallet.signingPublicKey,
-        amount: amountNum,
-        evmAddress: evmAddr,
-        signature: signed.signature,
-        payload: signed.payload as unknown as Record<string, unknown>,
-      });
-      if (result.success) {
-        toast.success(`XRGE bridge out submitted! Tx: ${result.txId}`);
-        setXrgeWithdrawAmount("");
-      } else {
-        toast.error(result.error || "XRGE bridge out failed");
-      }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "XRGE bridge out failed");
-    } finally {
-      setXrgeWithdrawing(false);
+      setProcessing(false);
+      setStep("");
     }
   };
 
@@ -354,402 +241,175 @@ const Bridge = () => {
     );
   }
 
-  const anyBridgeEnabled = config?.enabled || xrgeConfig?.enabled;
-
-  if (!anyBridgeEnabled) {
+  if (!config?.enabled && !xrgeConfig?.enabled) {
     return (
-      <div className="container max-w-2xl py-12">
-        <Card className="border-red-500/30 bg-card">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ArrowRightLeft className="w-5 h-5" />
-              Bridge (Base ↔ RougeChain)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground">
-              Bridge is not enabled. The node operator must configure the bridge to enable deposits.
-            </p>
-            <p className="text-sm text-muted-foreground mt-2">
-              Contact your node operator or run your own node with the bridge configured.
-            </p>
+      <div className="container max-w-lg py-12">
+        <Card>
+          <CardContent className="p-8 text-center">
+            <ArrowRightLeft className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
+            <p className="text-muted-foreground">Bridge is not enabled on this node.</p>
           </CardContent>
         </Card>
       </div>
     );
   }
 
+  const fromChain = direction === "deposit" ? "Base Sepolia" : "RougeChain";
+  const toChain = direction === "deposit" ? "RougeChain" : "Base Sepolia";
+  const fromToken = direction === "deposit" ? currentAsset.label : currentAsset.l1Label;
+  const toToken = direction === "deposit" ? currentAsset.l1Label : currentAsset.label;
+
   return (
-    <div className="container max-w-2xl py-12">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="space-y-6"
-      >
-        <div>
-          <h1 className="text-3xl font-bold text-foreground flex items-center gap-2">
-            <ArrowRightLeft className="w-8 h-8" />
-            Bridge
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Bridge between Base and RougeChain
-          </p>
+    <div className="container max-w-lg py-8 sm:py-12">
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-foreground">Bridge</h1>
+          <p className="text-sm text-muted-foreground mt-1">Move assets between Base and RougeChain</p>
         </div>
 
-        <Tabs defaultValue="xrge-in" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4">
-            <TabsTrigger value="xrge-in" className="gap-1.5 text-xs sm:text-sm">
-              <Coins className="w-3.5 h-3.5" />
-              XRGE → L1
-            </TabsTrigger>
-            <TabsTrigger value="xrge-out" className="gap-1.5 text-xs sm:text-sm">
-              <Coins className="w-3.5 h-3.5" />
-              L1 → XRGE
-            </TabsTrigger>
-            {config?.enabled && (
-              <>
-                <TabsTrigger value="eth-in" className="gap-1.5 text-xs sm:text-sm">
-                  <ArrowDownToLine className="w-3.5 h-3.5" />
-                  ETH → qETH
-                </TabsTrigger>
-                <TabsTrigger value="eth-out" className="gap-1.5 text-xs sm:text-sm">
-                  <ArrowUpFromLine className="w-3.5 h-3.5" />
-                  qETH → ETH
-                </TabsTrigger>
-              </>
-            )}
-          </TabsList>
+        <Card className="border-border/50 overflow-hidden">
+          <CardContent className="p-0">
 
-          {/* ── XRGE Bridge In (Base → L1) ───────────────────── */}
-          <TabsContent value="xrge-in" className="space-y-6 mt-6">
-            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-4">
-              <p className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">XRGE → RougeChain L1</span> — Lock your XRGE on Base into the bridge vault, then receive XRGE on RougeChain.
-              </p>
+            {/* Direction toggle */}
+            <div className="grid grid-cols-2 border-b border-border">
+              <button
+                onClick={() => setDirection("deposit")}
+                className={`flex items-center justify-center gap-2 py-3.5 text-sm font-medium transition-colors ${direction === "deposit" ? "bg-primary/10 text-primary border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                <ArrowDownToLine className="w-4 h-4" />
+                Deposit
+              </button>
+              <button
+                onClick={() => setDirection("withdraw")}
+                className={`flex items-center justify-center gap-2 py-3.5 text-sm font-medium transition-colors ${direction === "withdraw" ? "bg-primary/10 text-primary border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                <ArrowUpFromLine className="w-4 h-4" />
+                Withdraw
+              </button>
             </div>
 
-            <Card className="border-cyan-500/20">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Deposit XRGE to Bridge</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {!evmAddress ? (
-                  <Button onClick={connectEvm} variant="outline" className="gap-2 w-full">
-                    <Wallet className="w-4 h-4" />
-                    Connect Base Wallet (MetaMask)
-                  </Button>
-                ) : (
-                  <div className="flex items-center gap-2 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2">
-                    <div className="w-2 h-2 rounded-full bg-green-500" />
-                    <span className="text-sm text-muted-foreground">Connected:</span>
-                    <span className="font-mono text-sm">{evmAddress.slice(0, 6)}...{evmAddress.slice(-4)}</span>
-                  </div>
-                )}
-                <div className="space-y-2">
-                  <Label>Amount (XRGE)</Label>
-                  <Input
-                    type="number"
-                    min="1"
-                    placeholder="100"
-                    value={xrgeDepositAmount}
-                    onChange={(e) => setXrgeDepositAmount(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>RougeChain Recipient (auto-filled)</Label>
-                  <Input
-                    readOnly
-                    value={rougechainPubkey ? `${rougechainPubkey.slice(0, 20)}...` : "Connect RougeChain wallet"}
-                    className="font-mono text-xs text-muted-foreground"
-                  />
-                </div>
-                <Button
-                  onClick={handleXrgeDeposit}
-                  disabled={xrgeDepositing || !xrgeDepositAmount || !evmAddress || !rougechainPubkey}
-                  className="w-full gap-2"
-                >
-                  {xrgeDepositing ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Bridging XRGE...
-                    </>
-                  ) : (
-                    <>Bridge XRGE to RougeChain</>
+            <div className="p-5 space-y-5">
+
+              {/* Asset selector */}
+              <div className="flex gap-2">
+                {ASSETS.map(a => (
+                  <button
+                    key={a.id}
+                    onClick={() => setAsset(a.id)}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-medium transition-all ${asset === a.id ? "bg-primary text-primary-foreground shadow-sm" : "bg-muted/50 text-muted-foreground hover:bg-muted"}`}
+                  >
+                    <span>{a.icon}</span>
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* From */}
+              <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">From · {fromChain}</span>
+                  {direction === "withdraw" && (
+                    <span className="text-xs text-muted-foreground">Balance: {getL1Balance()}</span>
                   )}
-                </Button>
-                <p className="text-xs text-muted-foreground text-center">
-                  This will approve + deposit in two MetaMask transactions.
-                </p>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* ── XRGE Bridge Out (L1 → Base) ──────────────────── */}
-          <TabsContent value="xrge-out" className="space-y-6 mt-6">
-            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-4">
-              <p className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">RougeChain L1 → XRGE</span> — Burn XRGE on RougeChain, the relayer releases your XRGE from the vault on Base.
-              </p>
-            </div>
-
-            <Card className="border-cyan-500/20">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Withdraw XRGE to Base</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between rounded-md border border-border/50 bg-muted/30 px-4 py-3">
-                  <span className="text-sm text-muted-foreground">Your L1 XRGE Balance</span>
-                  <span className="font-mono font-medium">{xrgeL1Balance.toLocaleString()} XRGE</span>
                 </div>
-                <div className="space-y-2">
-                  <Label>Amount (XRGE)</Label>
+                <div className="flex items-center gap-3">
                   <Input
                     type="number"
-                    min="1"
-                    placeholder="100"
-                    value={xrgeWithdrawAmount}
-                    onChange={(e) => setXrgeWithdrawAmount(e.target.value)}
+                    placeholder="0.0"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="border-0 bg-transparent text-xl font-medium p-0 h-auto focus-visible:ring-0 placeholder:text-muted-foreground/40"
                   />
+                  <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">{fromToken}</span>
                 </div>
-                <div className="space-y-2">
-                  <Label>Receive XRGE at (Base address)</Label>
+              </div>
+
+              {/* Arrow */}
+              <div className="flex justify-center -my-2">
+                <div className="w-9 h-9 rounded-full bg-muted border border-border flex items-center justify-center">
+                  <ArrowDown className="w-4 h-4 text-muted-foreground" />
+                </div>
+              </div>
+
+              {/* To */}
+              <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">To · {toChain}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xl font-medium text-foreground/80">
+                    {amount && !isNaN(parseFloat(amount)) ? parseFloat(amount).toLocaleString(undefined, { maximumFractionDigits: 6 }) : "0.0"}
+                  </span>
+                  <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">{toToken}</span>
+                </div>
+              </div>
+
+              {/* EVM address (for withdrawals) */}
+              {direction === "withdraw" && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Receive at (Base address)</Label>
                   <Input
                     placeholder="0x..."
-                    value={xrgeWithdrawEvmAddr}
-                    onChange={(e) => setXrgeWithdrawEvmAddr(e.target.value)}
-                    className="font-mono"
+                    value={evmTarget}
+                    onChange={(e) => setEvmTarget(e.target.value)}
+                    className="font-mono text-sm"
                   />
                 </div>
+              )}
+
+              {/* Connect wallet / Action button */}
+              {direction === "deposit" && !evmAddress ? (
+                <Button onClick={connectEvm} variant="outline" className="w-full gap-2 h-12">
+                  <Wallet className="w-4 h-4" />
+                  Connect MetaMask (Base Sepolia)
+                </Button>
+              ) : (
                 <Button
-                  onClick={handleXrgeWithdraw}
-                  disabled={xrgeWithdrawing || !xrgeWithdrawAmount || !xrgeWithdrawEvmAddr || xrgeL1Balance < (parseFloat(xrgeWithdrawAmount) || 0)}
-                  className="w-full gap-2"
+                  onClick={direction === "deposit" ? handleDeposit : handleWithdraw}
+                  disabled={processing || !amount || parseFloat(amount) <= 0}
+                  className="w-full h-12 text-base gap-2"
                 >
-                  {xrgeWithdrawing ? (
+                  {processing ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      Submitting...
+                      {step || "Processing..."}
+                    </>
+                  ) : direction === "deposit" ? (
+                    <>
+                      <ArrowDownToLine className="w-4 h-4" />
+                      Bridge {currentAsset.label} to RougeChain
                     </>
                   ) : (
-                    "Bridge XRGE to Base"
+                    <>
+                      <ArrowUpFromLine className="w-4 h-4" />
+                      Bridge {currentAsset.l1Label} to Base
+                    </>
                   )}
                 </Button>
-                <p className="text-xs text-muted-foreground text-center">
-                  The relayer will release XRGE from the vault on Base (may take a few minutes).
-                </p>
-              </CardContent>
-            </Card>
-          </TabsContent>
+              )}
 
-          {/* ── ETH Bridge In (existing) ─────────────────────── */}
-          {config?.enabled && (
-            <TabsContent value="eth-in" className="space-y-6 mt-6">
-              <div className="rounded-lg border border-primary/10 bg-primary/5 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">
-                    <span className="font-medium text-foreground">{bridgeToken === "ETH" ? "ETH → qETH" : "USDC → qUSDC"}</span> — {bridgeToken === "ETH" ? "Send Base Sepolia ETH to the custody address, then claim your qETH on RougeChain." : "Send USDC to the bridge contract, then claim your qUSDC on RougeChain."}
-                  </p>
+              {/* Connected wallet info */}
+              {evmAddress && direction === "deposit" && (
+                <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                  {evmAddress.slice(0, 6)}...{evmAddress.slice(-4)}
                 </div>
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs">Token:</Label>
-                  <Button
-                    size="sm" variant={bridgeToken === "ETH" ? "default" : "outline"}
-                    onClick={() => setBridgeToken("ETH")} className="h-7 px-3 text-xs"
-                  >ETH</Button>
-                  <Button
-                    size="sm" variant={bridgeToken === "USDC" ? "default" : "outline"}
-                    onClick={() => setBridgeToken("USDC")} className="h-7 px-3 text-xs"
-                  >USDC</Button>
-                </div>
-              </div>
+              )}
 
-              <Card className="border-primary/20">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-bold">1</span>
-                    Send ETH to Custody Address
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Input
-                      readOnly
-                      value={config?.custodyAddress || ""}
-                      className="font-mono text-sm"
-                    />
-                    <Button size="icon" variant="outline" onClick={copyCustody}>
-                      {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                    </Button>
-                  </div>
-                  <a
-                    href={`https://sepolia.basescan.org/address/${config?.custodyAddress}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-primary hover:underline flex items-center gap-1"
-                  >
-                    View on Basescan <ExternalLink className="w-3 h-3" />
-                  </a>
-                </CardContent>
-              </Card>
-
-              <Card className="border-primary/20">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-bold">2</span>
-                    Claim qETH on RougeChain
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {!evmAddress ? (
-                    <Button onClick={connectEvm} variant="outline" className="gap-2 w-full">
-                      <Wallet className="w-4 h-4" />
-                      Connect Base Sepolia Wallet
-                    </Button>
-                  ) : (
-                    <div className="flex items-center gap-2 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2">
-                      <div className="w-2 h-2 rounded-full bg-green-500" />
-                      <span className="text-sm text-muted-foreground">Connected:</span>
-                      <span className="font-mono text-sm">{evmAddress.slice(0, 6)}...{evmAddress.slice(-4)}</span>
-                    </div>
-                  )}
-                  <div className="space-y-2">
-                    <Label>Transaction Hash</Label>
-                    <Input
-                      placeholder="0x..."
-                      value={evmTxHash}
-                      onChange={(e) => setEvmTxHash(e.target.value)}
-                      className="font-mono"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Your EVM Address (sender)</Label>
-                    <Input
-                      placeholder="0x... or connect wallet above"
-                      value={evmAddress}
-                      onChange={(e) => setEvmAddress(e.target.value)}
-                      className="font-mono"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>RougeChain Recipient (public key)</Label>
-                    <Input
-                      placeholder="Your RougeChain public key"
-                      value={rougechainPubkey}
-                      onChange={(e) => setRougechainPubkey(e.target.value)}
-                      className="font-mono text-sm"
-                    />
-                    <p className="text-xs text-muted-foreground">Auto-filled from your wallet if connected.</p>
-                  </div>
-                  <Button
-                    onClick={handleClaim}
-                    disabled={claiming || !evmTxHash || !rougechainPubkey}
-                    className="w-full gap-2"
-                  >
-                    {claiming ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Claiming...
-                      </>
-                    ) : (
-                      "Claim qETH"
-                    )}
-                  </Button>
-                </CardContent>
-              </Card>
-
+              {/* Info text */}
               <p className="text-xs text-muted-foreground text-center">
-                Min 0.000001 ETH. 1 ETH ≈ 1,000,000 qETH units. Get Base Sepolia ETH from{" "}
-                <a href="https://www.coinbase.com/faucets/base-ethereum-goerli-faucet" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                  faucets
-                </a>.
+                {direction === "deposit"
+                  ? asset === "XRGE"
+                    ? "Approve + deposit in two MetaMask transactions. 1:1 conversion."
+                    : `Send ${asset} via MetaMask → auto-claim ${currentAsset.l1Label} on RougeChain. 1:1 conversion.`
+                  : "Submit withdrawal → relayer processes on Base (typically < 2 min)."
+                }
               </p>
-            </TabsContent>
-          )}
+            </div>
+          </CardContent>
+        </Card>
 
-          {/* ── ETH Bridge Out (existing) ────────────────────── */}
-          {config?.enabled && (
-            <TabsContent value="eth-out" className="space-y-6 mt-6">
-              <div className="rounded-lg border border-primary/10 bg-primary/5 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">
-                    <span className="font-medium text-foreground">{bridgeToken === "ETH" ? "qETH → ETH" : "qUSDC → USDC"}</span> — {bridgeToken === "ETH" ? "Burn qETH on RougeChain and receive ETH back on Base Sepolia." : "Burn qUSDC on RougeChain and receive USDC back on Base Sepolia."}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs">Token:</Label>
-                  <Button
-                    size="sm" variant={bridgeToken === "ETH" ? "default" : "outline"}
-                    onClick={() => setBridgeToken("ETH")} className="h-7 px-3 text-xs"
-                  >ETH</Button>
-                  <Button
-                    size="sm" variant={bridgeToken === "USDC" ? "default" : "outline"}
-                    onClick={() => setBridgeToken("USDC")} className="h-7 px-3 text-xs"
-                  >USDC</Button>
-                </div>
-              </div>
-
-              <Card className="border-primary/20">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Withdraw {bridgeToken === "ETH" ? "qETH" : "qUSDC"}</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between rounded-md border border-border/50 bg-muted/30 px-4 py-3">
-                    <span className="text-sm text-muted-foreground">Your {bridgeToken === "ETH" ? "qETH" : "qUSDC"} Balance</span>
-                    <span className="font-mono font-medium">
-                      {bridgeToken === "ETH"
-                        ? `${formatQethForDisplay(qethBalance)} qETH`
-                        : `${(qusdcBalance / 1e6).toFixed(2)} qUSDC`
-                      }
-                    </span>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Amount ({bridgeToken === "ETH" ? "qETH" : "qUSDC"})</Label>
-                    <Input
-                      type="number"
-                      step="0.000001"
-                      min="0.000001"
-                      placeholder="0.0005"
-                      value={withdrawAmount}
-                      onChange={(e) => setWithdrawAmount(e.target.value)}
-                    />
-                    {withdrawAmount && !isNaN(parseFloat(withdrawAmount)) && parseFloat(withdrawAmount) > 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        ≈ {parseFloat(withdrawAmount).toFixed(bridgeToken === "USDC" ? 2 : 6)} {bridgeToken} on Base Sepolia
-                      </p>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Receive {bridgeToken} at (Base Sepolia address)</Label>
-                    <Input
-                      placeholder="0x..."
-                      value={withdrawEvmAddress}
-                      onChange={(e) => setWithdrawEvmAddress(e.target.value)}
-                      className="font-mono"
-                    />
-                  </div>
-                  <Button
-                    onClick={handleWithdraw}
-                    disabled={withdrawing || !withdrawAmount || !withdrawEvmAddress || !loadUnifiedWallet()?.signingPrivateKey}
-                    className="w-full gap-2"
-                  >
-                    {withdrawing ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Submitting...
-                      </>
-                    ) : (
-                      `Bridge Out ${bridgeToken === "ETH" ? "qETH" : "qUSDC"}`
-                    )}
-                  </Button>
-                  <p className="text-xs text-muted-foreground text-center">
-                    0.1 XRGE fee. The operator processes withdrawals (may take time on testnet).
-                  </p>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          )}
-        </Tabs>
       </motion.div>
     </div>
   );

@@ -14,6 +14,12 @@ import { ethers } from "hardhat";
 
 const USDC_BASE_SEPOLIA = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 
+async function waitForConfirmation(label: string) {
+    console.log(`  Waiting for ${label} to confirm...`);
+    await new Promise(resolve => setTimeout(resolve, 15000));
+    console.log(`  ${label} confirmed.\n`);
+}
+
 async function main() {
     const [deployer] = await ethers.getSigners();
     console.log("Deployer:", deployer.address);
@@ -32,25 +38,34 @@ async function main() {
         await testToken.waitForDeployment();
         xrgeAddress = await testToken.getAddress();
         console.log("  TestXRGE deployed to:", xrgeAddress);
+        await waitForConfirmation("TestXRGE");
     } else {
         console.log("Using existing XRGE at:", xrgeAddress);
     }
 
     // ── 2. BridgeVault (XRGE bridge) ─────────────────────────────
-    console.log("\nDeploying BridgeVault...");
-    const BridgeVault = await ethers.getContractFactory("BridgeVault");
-    const vault = await BridgeVault.deploy(xrgeAddress);
-    await vault.waitForDeployment();
-    const vaultAddress = await vault.getAddress();
-    console.log("  BridgeVault deployed to:", vaultAddress);
+    let vaultAddress = process.env.BRIDGE_VAULT_ADDRESS || "";
+
+    if (!vaultAddress) {
+        console.log("Deploying BridgeVault...");
+        const BridgeVault = await ethers.getContractFactory("BridgeVault");
+        const vault = await BridgeVault.deploy(xrgeAddress);
+        await vault.waitForDeployment();
+        vaultAddress = await vault.getAddress();
+        console.log("  BridgeVault deployed to:", vaultAddress);
+        await waitForConfirmation("BridgeVault");
+    } else {
+        console.log("Using existing BridgeVault at:", vaultAddress);
+    }
 
     // ── 3. RougeBridge (ETH + USDC bridge) ───────────────────────
-    console.log("\nDeploying RougeBridge...");
+    console.log("Deploying RougeBridge...");
     const RougeBridge = await ethers.getContractFactory("RougeBridge");
     const bridge = await RougeBridge.deploy(deployer.address); // deployer = guardian
     await bridge.waitForDeployment();
     const bridgeAddress = await bridge.getAddress();
     console.log("  RougeBridge deployed to:", bridgeAddress);
+    await waitForConfirmation("RougeBridge");
 
     // ── 4. Configure USDC as supported token ─────────────────────
     console.log("\nConfiguring USDC as supported token on RougeBridge...");

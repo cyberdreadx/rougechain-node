@@ -2,4 +2,5 @@
 /* tslint:disable */
 /* eslint-disable */
 export * as introspection from "./introspection";
+export { Pausable__factory } from "./Pausable__factory";
 export { ReentrancyGuard__factory } from "./ReentrancyGuard__factory";

@@ -54,6 +54,10 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.IERC165__factory>;
     getContractFactory(
+      name: "Pausable",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.Pausable__factory>;
+    getContractFactory(
       name: "ReentrancyGuard",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.ReentrancyGuard__factory>;
@@ -61,6 +65,10 @@ declare module "hardhat/types/runtime" {
       name: "BridgeVault",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.BridgeVault__factory>;
+    getContractFactory(
+      name: "RougeBridge",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.RougeBridge__factory>;
     getContractFactory(
       name: "TestXRGE",
       signerOrOptions?: ethers.Signer | FactoryOptions
@@ -117,6 +125,11 @@ declare module "hardhat/types/runtime" {
       signer?: ethers.Signer
     ): Promise<Contracts.IERC165>;
     getContractAt(
+      name: "Pausable",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.Pausable>;
+    getContractAt(
       name: "ReentrancyGuard",
       address: string | ethers.Addressable,
       signer?: ethers.Signer
@@ -126,6 +139,11 @@ declare module "hardhat/types/runtime" {
       address: string | ethers.Addressable,
       signer?: ethers.Signer
     ): Promise<Contracts.BridgeVault>;
+    getContractAt(
+      name: "RougeBridge",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.RougeBridge>;
     getContractAt(
       name: "TestXRGE",
       address: string | ethers.Addressable,
@@ -173,6 +191,10 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.IERC165>;
     deployContract(
+      name: "Pausable",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.Pausable>;
+    deployContract(
       name: "ReentrancyGuard",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.ReentrancyGuard>;
@@ -180,6 +202,10 @@ declare module "hardhat/types/runtime" {
       name: "BridgeVault",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.BridgeVault>;
+    deployContract(
+      name: "RougeBridge",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.RougeBridge>;
     deployContract(
       name: "TestXRGE",
       signerOrOptions?: ethers.Signer | DeployContractOptions
@@ -236,6 +262,11 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.IERC165>;
     deployContract(
+      name: "Pausable",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.Pausable>;
+    deployContract(
       name: "ReentrancyGuard",
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
@@ -245,6 +276,11 @@ declare module "hardhat/types/runtime" {
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.BridgeVault>;
+    deployContract(
+      name: "RougeBridge",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.RougeBridge>;
     deployContract(
       name: "TestXRGE",
       args: any[],

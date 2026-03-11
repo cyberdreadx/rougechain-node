@@ -268,8 +268,8 @@
       ]
     },
     "C:\\Users\\brand\\Documents\\GitHub\\quantum-vault\\contracts\\contracts\\BridgeVault.sol": {
-      "lastModificationDate": 1772555984487,
-      "contentHash": "3c2cf99290b25ea8204028135c57fddc",
+      "lastModificationDate": 1773178885088,
+      "contentHash": "d83000e6893e936d98382f96918d173b",
       "sourceName": "contracts/BridgeVault.sol",
       "solcConfig": {
         "version": "0.8.20",
@@ -566,6 +566,86 @@
       ],
       "artifacts": [
         "IERC165"
+      ]
+    },
+    "C:\\Users\\brand\\Documents\\GitHub\\quantum-vault\\contracts\\node_modules\\@openzeppelin\\contracts\\utils\\Pausable.sol": {
+      "lastModificationDate": 1772506931357,
+      "contentHash": "0d47b53e10b1985efbb396f937626279",
+      "sourceName": "@openzeppelin/contracts/utils/Pausable.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "../utils/Context.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "Pausable"
+      ]
+    },
+    "C:\\Users\\brand\\Documents\\GitHub\\quantum-vault\\contracts\\contracts\\RougeBridge.sol": {
+      "lastModificationDate": 1773178871129,
+      "contentHash": "20cafb3cbbaf0c4ee4d126da4d3d0097",
+      "sourceName": "contracts/RougeBridge.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/token/ERC20/IERC20.sol",
+        "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol",
+        "@openzeppelin/contracts/access/Ownable.sol",
+        "@openzeppelin/contracts/utils/ReentrancyGuard.sol",
+        "@openzeppelin/contracts/utils/Pausable.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "RougeBridge"
       ]
     }
   }

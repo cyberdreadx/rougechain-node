@@ -2,4 +2,5 @@
 /* tslint:disable */
 /* eslint-disable */
 export type { BridgeVault } from "./BridgeVault";
+export type { RougeBridge } from "./RougeBridge";
 export type { TestXRGE } from "./TestXRGE";

@@ -26,9 +26,13 @@ export type { SafeERC20 } from "./@openzeppelin/contracts/token/ERC20/utils/Safe
 export { SafeERC20__factory } from "./factories/@openzeppelin/contracts/token/ERC20/utils/SafeERC20__factory";
 export type { IERC165 } from "./@openzeppelin/contracts/utils/introspection/IERC165";
 export { IERC165__factory } from "./factories/@openzeppelin/contracts/utils/introspection/IERC165__factory";
+export type { Pausable } from "./@openzeppelin/contracts/utils/Pausable";
+export { Pausable__factory } from "./factories/@openzeppelin/contracts/utils/Pausable__factory";
 export type { ReentrancyGuard } from "./@openzeppelin/contracts/utils/ReentrancyGuard";
 export { ReentrancyGuard__factory } from "./factories/@openzeppelin/contracts/utils/ReentrancyGuard__factory";
 export type { BridgeVault } from "./contracts/BridgeVault";
 export { BridgeVault__factory } from "./factories/contracts/BridgeVault__factory";
+export type { RougeBridge } from "./contracts/RougeBridge";
+export { RougeBridge__factory } from "./factories/contracts/RougeBridge__factory";
 export type { TestXRGE } from "./contracts/TestXRGE";
 export { TestXRGE__factory } from "./factories/contracts/TestXRGE__factory";

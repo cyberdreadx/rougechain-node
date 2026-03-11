@@ -30,6 +30,7 @@ export interface BridgeVaultInterface extends Interface {
       | "depositNonce"
       | "emergencyWithdraw"
       | "owner"
+      | "processedL1Txs"
       | "release"
       | "renounceOwnership"
       | "totalLocked"
@@ -59,6 +60,10 @@ export interface BridgeVaultInterface extends Interface {
     values: [AddressLike]
   ): string;
   encodeFunctionData(functionFragment: "owner", values?: undefined): string;
+  encodeFunctionData(
+    functionFragment: "processedL1Txs",
+    values: [string]
+  ): string;
   encodeFunctionData(
     functionFragment: "release",
     values: [AddressLike, BigNumberish, string]
@@ -91,6 +96,10 @@ export interface BridgeVaultInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "owner", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "processedL1Txs",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "release", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "renounceOwnership",
@@ -239,6 +248,8 @@ export interface BridgeVault extends BaseContract {
 
   owner: TypedContractMethod<[], [string], "view">;
 
+  processedL1Txs: TypedContractMethod<[arg0: string], [boolean], "view">;
+
   release: TypedContractMethod<
     [to: AddressLike, amount: BigNumberish, l1TxId: string],
     [void],
@@ -279,6 +290,9 @@ export interface BridgeVault extends BaseContract {
   getFunction(
     nameOrSignature: "owner"
   ): TypedContractMethod<[], [string], "view">;
+  getFunction(
+    nameOrSignature: "processedL1Txs"
+  ): TypedContractMethod<[arg0: string], [boolean], "view">;
   getFunction(
     nameOrSignature: "release"
   ): TypedContractMethod<

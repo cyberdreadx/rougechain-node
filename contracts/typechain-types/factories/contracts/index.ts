@@ -2,4 +2,5 @@
 /* tslint:disable */
 /* eslint-disable */
 export { BridgeVault__factory } from "./BridgeVault__factory";
+export { RougeBridge__factory } from "./RougeBridge__factory";
 export { TestXRGE__factory } from "./TestXRGE__factory";
