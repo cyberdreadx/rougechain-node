@@ -413,6 +413,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/messenger/messages", get(get_messenger_messages))
         .route("/api/messenger/messages", post(send_messenger_message))
         .route("/api/messenger/messages/read", post(mark_messenger_read))
+        .route("/api/messenger/messages/:id", delete(delete_messenger_message))
         // Name registry
         .route("/api/names/register", post(register_name))
         .route("/api/names/resolve/:name", get(resolve_name))
@@ -2594,6 +2595,17 @@ async fn mark_messenger_read(
     let message_id = body.get("messageId").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     let message = node.mark_message_read(&message_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "success": true, "message": message })))
+}
+
+async fn delete_messenger_message(
+    State(state): State<AppState>,
+    Path(message_id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
+    match node.delete_message(&message_id) {
+        Ok(()) => Ok(Json(serde_json::json!({ "success": true }))),
+        Err(e) => Ok(Json(serde_json::json!({ "success": false, "error": e }))),
+    }
 }
 
 // ============================================

@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint, Paperclip, Image as ImageIcon, Video, EyeOff, Eye, Ban } from "lucide-react";
+import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint, Paperclip, Image as ImageIcon, Video, EyeOff, Eye, Ban, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Conversation, WalletWithPrivateKeys, Message, Wallet, MessageType } from "@/lib/pqc-messenger";
-import { getBotReply, getMessages, sendMessage, isDemoBot, loadDemoBotWallet, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, isWalletBlocked, blockWallet, unblockWallet } from "@/lib/pqc-messenger";
+import { getBotReply, getMessages, sendMessage, deleteMessage, isDemoBot, loadDemoBotWallet, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, isWalletBlocked, blockWallet, unblockWallet } from "@/lib/pqc-messenger";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -55,9 +55,11 @@ const formatMessageDate = (dateInput: string | number | Date | undefined): strin
 const EncryptionDetailsPanel = ({
   message,
   onClose,
+  onDelete,
 }: {
   message: Message;
   onClose: () => void;
+  onDelete?: (messageId: string) => void;
 }) => {
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
@@ -120,9 +122,26 @@ const EncryptionDetailsPanel = ({
               <p className="text-xs text-muted-foreground">ML-KEM-768 + AES-256-GCM</p>
             </div>
           </div>
-          <Button variant="ghost" size="icon" onClick={onClose}>
-            <X className="w-4 h-4" />
-          </Button>
+          <div className="flex items-center gap-1">
+            {onDelete && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                onClick={() => {
+                  if (confirm("Delete this message? This cannot be undone.")) {
+                    onDelete(message.id);
+                    onClose();
+                  }
+                }}
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            )}
+            <Button variant="ghost" size="icon" onClick={onClose}>
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
 
         <ScrollArea className="h-[calc(80vh-80px)]">
@@ -936,6 +955,15 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
           <EncryptionDetailsPanel
             message={selectedMessage}
             onClose={() => setSelectedMessage(null)}
+            onDelete={async (msgId) => {
+              try {
+                await deleteMessage(msgId);
+                setMessages(prev => prev.filter(m => m.id !== msgId));
+                toast.success("Message deleted");
+              } catch {
+                toast.error("Failed to delete message");
+              }
+            }}
           />
         )}
       </AnimatePresence>

@@ -2852,6 +2852,10 @@ impl L1Node {
         self.messenger_store.delete_conversation(conversation_id)
     }
 
+    pub fn delete_message(&self, message_id: &str) -> Result<(), String> {
+        self.messenger_store.delete_message(message_id)
+    }
+
     pub fn list_messages(&self, conversation_id: &str) -> Result<Vec<MessengerMessage>, String> {
         self.messenger_store.list_messages(conversation_id)
     }

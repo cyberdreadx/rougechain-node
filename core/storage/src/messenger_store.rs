@@ -176,6 +176,17 @@ impl MessengerStore {
         Ok(())
     }
 
+    pub fn delete_message(&self, message_id: &str) -> Result<(), String> {
+        let mut state = self.load_state()?;
+        let before = state.messages.len();
+        state.messages.retain(|m| m.id != message_id);
+        if state.messages.len() == before {
+            return Err("Message not found".to_string());
+        }
+        self.save_state(&state)?;
+        Ok(())
+    }
+
     pub fn list_messages(&self, conversation_id: &str) -> Result<Vec<MessengerMessage>, String> {
         let state = self.load_state()?;
         Ok(state
