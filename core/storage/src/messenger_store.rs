@@ -78,12 +78,30 @@ impl MessengerStore {
 
     pub fn register_wallet(&self, wallet: MessengerWallet) -> Result<MessengerWallet, String> {
         let mut state = self.load_state()?;
-        // Remove any existing wallet with same id OR same signing key (prevents duplicates)
+        // Collect old IDs that are being replaced so we can update conversations
+        let mut old_ids: Vec<String> = Vec::new();
         state.wallets.retain(|w| {
-            w.id != wallet.id && 
-            (wallet.signing_public_key.is_empty() || w.signing_public_key != wallet.signing_public_key) &&
-            (wallet.encryption_public_key.is_empty() || w.encryption_public_key != wallet.encryption_public_key)
+            let same_id = w.id == wallet.id;
+            let same_signing = !wallet.signing_public_key.is_empty() && w.signing_public_key == wallet.signing_public_key;
+            let same_enc = !wallet.encryption_public_key.is_empty() && w.encryption_public_key == wallet.encryption_public_key;
+            if same_id || same_signing || same_enc {
+                if w.id != wallet.id {
+                    old_ids.push(w.id.clone());
+                }
+                return false;
+            }
+            true
         });
+        // Update stale participant_ids in all conversations
+        if !old_ids.is_empty() {
+            for conv in &mut state.conversations {
+                for pid in &mut conv.participant_ids {
+                    if old_ids.contains(pid) {
+                        *pid = wallet.id.clone();
+                    }
+                }
+            }
+        }
         state.wallets.push(wallet.clone());
         self.save_state(&state)?;
         Ok(wallet)

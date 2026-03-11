@@ -552,16 +552,17 @@ export async function decryptMessage(
   }
 
   let signatureValid = false;
-  try {
-    const sigPubKeyBytes = hexToBytes(senderSigningPublicKey);
-    const sigBytes = hexToBytes(signature);
-    // Try v0.5 format: signature over the encrypted package
-    signatureValid = ml_dsa65.verify(sigBytes, new TextEncoder().encode(encryptedPackage), sigPubKeyBytes);
-    if (!signatureValid) {
-      signatureValid = ml_dsa65.verify(sigBytes, new TextEncoder().encode(plaintext), sigPubKeyBytes);
+  if (senderSigningPublicKey && signature) {
+    try {
+      const sigPubKeyBytes = hexToBytes(senderSigningPublicKey);
+      const sigBytes = hexToBytes(signature);
+      signatureValid = ml_dsa65.verify(sigBytes, new TextEncoder().encode(encryptedPackage), sigPubKeyBytes);
+      if (!signatureValid) {
+        signatureValid = ml_dsa65.verify(sigBytes, new TextEncoder().encode(plaintext), sigPubKeyBytes);
+      }
+    } catch (e) {
+      console.warn("[Messenger] Signature verification failed (key format mismatch)", e);
     }
-  } catch (e) {
-    console.warn("[Messenger] Signature verification failed (key format mismatch)", e);
   }
 
   return { plaintext, signatureValid };
@@ -828,7 +829,14 @@ export async function getConversations(walletId: string, currentWallet?: Wallet)
         if (w && currentWallet && w.displayName === currentWallet.displayName && !currentIds.has(w.id)) {
           return currentWallet;
         }
-        return w;
+        if (w) return w;
+        // Stale participant ID -- search all wallets for any that previously
+        // used this ID (the backend may have updated it, but older conversations
+        // on-disk could still reference the old value)
+        const fallback = allWallets.find(aw =>
+          aw.id === id || aw.signingPublicKey === id || aw.encryptionPublicKey === id
+        );
+        return fallback;
       })
       .filter((w): w is Wallet => w !== undefined);
 
@@ -975,10 +983,27 @@ export async function getMessages(
         const allWallets = await getWallets();
         sender = allWallets.find(w =>
           w.id === msg.senderWalletId ||
-          w.signingPublicKey === msg.senderWalletId
+          w.signingPublicKey === msg.senderWalletId ||
+          w.encryptionPublicKey === msg.senderWalletId
         );
+        // Last resort: if the sender is the other participant in the conversation,
+        // use the non-self participant (common in 1:1 chats with stale IDs)
+        if (!sender && participants.length >= 2) {
+          const otherParticipant = participants.find(p =>
+            p.id !== recipientWallet.id &&
+            p.signingPublicKey !== recipientWallet.signingPublicKey
+          );
+          if (otherParticipant) sender = otherParticipant;
+        }
       } catch {
-        // Ignore fetch errors
+        // Network error: fall back to the other conversation participant
+        if (participants.length >= 2) {
+          const otherParticipant = participants.find(p =>
+            p.id !== recipientWallet.id &&
+            p.signingPublicKey !== recipientWallet.signingPublicKey
+          );
+          if (otherParticipant) sender = otherParticipant;
+        }
       }
     }
 
@@ -990,7 +1015,6 @@ export async function getMessages(
     const isOwnMessage = msg.senderWalletId === recipientWallet.id ||
       msg.senderWalletId === recipientWallet.signingPublicKey ||
       msg.senderWalletId === recipientWallet.encryptionPublicKey ||
-      // Also check if sender starts with recipient's key prefix
       (recipientWallet.signingPublicKey &&
         msg.senderWalletId?.startsWith(recipientWallet.signingPublicKey.substring(0, 20)));
 
@@ -1000,7 +1024,6 @@ export async function getMessages(
         plaintext = storedPlaintext;
         signatureValid = true;
       } else if (msg.encryptedContent) {
-        // Try decrypting sender-copy (dual-encrypted messages)
         try {
           const decryptData = await decryptMessage(
             msg.encryptedContent,
@@ -1018,16 +1041,16 @@ export async function getMessages(
         plaintext = "[Your encrypted message]";
         signatureValid = true;
       }
-    } else if (senderSigningPublicKey && msg.encryptedContent) {
+    } else if (msg.encryptedContent) {
       try {
         const decryptData = await decryptMessage(
           msg.encryptedContent,
           recipientWallet.encryptionPrivateKey,
-          senderSigningPublicKey,
+          senderSigningPublicKey || "",
           msg.signature
         );
         plaintext = decryptData.plaintext;
-        signatureValid = decryptData.signatureValid;
+        signatureValid = senderSigningPublicKey ? decryptData.signatureValid : false;
 
         if (msg.selfDestruct && !msg.readAt) {
           await fetch(`${apiBase}${MESSENGER_API_PREFIX}/messages/read`, {
