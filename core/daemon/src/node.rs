@@ -858,12 +858,21 @@ impl L1Node {
             return Err(format!("Insufficient XRGE for fee: need {} XRGE", tx_fee));
         }
         let token_upper = token_symbol.to_uppercase();
-        let token_balance = self.get_token_balance(from_public_key, &token_upper)?;
-        if token_balance < amount_units as f64 {
-            return Err(format!(
-                "Insufficient {}: have {}, need {}",
-                token_upper, token_balance, amount_units
-            ));
+        if token_upper == "XRGE" {
+            if xrge_balance - tx_fee < amount_units as f64 {
+                return Err(format!(
+                    "Insufficient XRGE: have {}, need {}",
+                    xrge_balance - tx_fee, amount_units
+                ));
+            }
+        } else {
+            let token_balance = self.get_token_balance(from_public_key, &token_upper)?;
+            if token_balance < amount_units as f64 {
+                return Err(format!(
+                    "Insufficient {}: have {}, need {}",
+                    token_upper, token_balance, amount_units
+                ));
+            }
         }
         let evm = evm_address.trim().to_lowercase();
         let evm = if evm.starts_with("0x") { evm } else { format!("0x{}", evm) };
