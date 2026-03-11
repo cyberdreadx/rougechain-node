@@ -2834,6 +2834,10 @@ impl L1Node {
         self.messenger_store.list_conversations(wallet_id)
     }
 
+    pub fn list_conversations_extended(&self, wallet_id: &str, extra_keys: &[&str]) -> Result<Vec<Conversation>, String> {
+        self.messenger_store.list_conversations_extended(wallet_id, extra_keys)
+    }
+
     pub fn create_conversation(
         &self,
         created_by: &str,

@@ -2516,7 +2516,13 @@ async fn get_messenger_conversations(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let node = &state.node;
     let wallet_id = query.get("walletId").cloned().unwrap_or_default();
-    let conversations = node.list_conversations(&wallet_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let signing_key = query.get("signingPublicKey").cloned().unwrap_or_default();
+    let encryption_key = query.get("encryptionPublicKey").cloned().unwrap_or_default();
+    let extra_keys: Vec<&str> = [signing_key.as_str(), encryption_key.as_str()]
+        .into_iter()
+        .filter(|k| !k.is_empty())
+        .collect();
+    let conversations = node.list_conversations_extended(&wallet_id, &extra_keys).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "success": true, "conversations": conversations })))
 }
 

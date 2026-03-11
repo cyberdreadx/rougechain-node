@@ -773,7 +773,10 @@ export async function deleteConversation(conversationId: string): Promise<void> 
 export async function getConversations(walletId: string, currentWallet?: Wallet): Promise<Conversation[]> {
   const apiBase = getMessengerApiBase();
   if (!apiBase) return [];
-  const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/conversations?walletId=${encodeURIComponent(walletId)}`, {
+  const params = new URLSearchParams({ walletId });
+  if (currentWallet?.signingPublicKey) params.set("signingPublicKey", currentWallet.signingPublicKey);
+  if (currentWallet?.encryptionPublicKey) params.set("encryptionPublicKey", currentWallet.encryptionPublicKey);
+  const response = await fetch(`${apiBase}${MESSENGER_API_PREFIX}/conversations?${params.toString()}`, {
     headers: getCoreApiHeaders(),
   });
   if (!response.ok) return [];

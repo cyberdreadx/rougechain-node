@@ -90,11 +90,24 @@ impl MessengerStore {
     }
 
     pub fn list_conversations(&self, wallet_id: &str) -> Result<Vec<Conversation>, String> {
+        self.list_conversations_extended(wallet_id, &[])
+    }
+
+    pub fn list_conversations_extended(&self, wallet_id: &str, extra_keys: &[&str]) -> Result<Vec<Conversation>, String> {
         let state = self.load_state()?;
-        // Collect all IDs that belong to this wallet (UUID, signing key, encryption key)
         let mut matching_ids: Vec<String> = vec![wallet_id.to_string()];
+        for key in extra_keys {
+            if !key.is_empty() {
+                matching_ids.push(key.to_string());
+            }
+        }
+        // Find ALL wallets that match by id, signing key, or encryption key
         for w in &state.wallets {
-            if w.id == wallet_id || w.signing_public_key == wallet_id || w.encryption_public_key == wallet_id {
+            let is_match = w.id == wallet_id
+                || w.signing_public_key == wallet_id
+                || w.encryption_public_key == wallet_id
+                || extra_keys.iter().any(|k| !k.is_empty() && (w.signing_public_key == *k || w.encryption_public_key == *k));
+            if is_match {
                 matching_ids.push(w.id.clone());
                 if !w.signing_public_key.is_empty() {
                     matching_ids.push(w.signing_public_key.clone());
@@ -104,10 +117,31 @@ impl MessengerStore {
                 }
             }
         }
+        // Also resolve each conversation participant through the wallet store
+        // to catch ID changes (e.g., wallet re-registered with different UUID)
+        let my_keys: Vec<String> = matching_ids.clone();
         Ok(state
             .conversations
             .into_iter()
-            .filter(|c| c.participant_ids.iter().any(|id| matching_ids.contains(id)))
+            .filter(|c| {
+                c.participant_ids.iter().any(|pid| {
+                    if my_keys.contains(pid) {
+                        return true;
+                    }
+                    // Check if this participant_id resolves to a wallet with our keys
+                    for w in &state.wallets {
+                        if w.id == *pid || w.signing_public_key == *pid || w.encryption_public_key == *pid {
+                            if my_keys.contains(&w.id)
+                                || my_keys.contains(&w.signing_public_key)
+                                || my_keys.contains(&w.encryption_public_key)
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                })
+            })
             .collect())
     }
 
