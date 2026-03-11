@@ -205,7 +205,9 @@ export async function getXrgeBridgeConfig(): Promise<XrgeBridgeConfig> {
     return {
       enabled: data.enabled === true,
       vaultAddress: data.vaultAddress,
-      tokenAddress: data.tokenAddress || (data.chainId === 8453 ? XRGE_TOKEN_ADDRESS : XRGE_TOKEN_ADDRESS_TESTNET),
+      tokenAddress: (data.chainId === 8453 || data.chainId === undefined)
+        ? (data.tokenAddress || XRGE_TOKEN_ADDRESS)
+        : XRGE_TOKEN_ADDRESS_TESTNET,
       chainId: data.chainId ?? BASE_SEPOLIA_CHAIN_ID,
     };
   } catch {

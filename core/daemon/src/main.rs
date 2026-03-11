@@ -105,6 +105,7 @@ struct AppState {
     bridge_withdraw_store: std::sync::Arc<BridgeWithdrawStore>,
     bridge_relayer_secret: Option<String>,
     xrge_bridge_vault: Option<String>,
+    xrge_bridge_token: String,
 }
 
 #[derive(Clone)]
@@ -272,6 +273,10 @@ async fn main() -> Result<(), String> {
         bridge_withdraw_store,
         bridge_relayer_secret: std::env::var("BRIDGE_RELAYER_SECRET").ok().filter(|s| !s.is_empty()),
         xrge_bridge_vault: std::env::var("XRGE_BRIDGE_VAULT").ok().filter(|s| !s.is_empty()),
+        xrge_bridge_token: std::env::var("XRGE_BRIDGE_TOKEN")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "0xF9e744a43608AB7D64a106df84e52915e8Efa27E".to_string()),
     };
     
     eprintln!("[core-daemon] WebSocket broadcaster initialized");
@@ -4342,7 +4347,7 @@ async fn xrge_bridge_config(State(state): State<AppState>) -> Json<serde_json::V
     Json(serde_json::json!({
         "enabled": enabled,
         "vaultAddress": state.xrge_bridge_vault,
-        "tokenAddress": "0x147120faEC9277ec02d957584CFCD92B56A24317",
+        "tokenAddress": state.xrge_bridge_token,
         "chainId": 84532,
     }))
 }
