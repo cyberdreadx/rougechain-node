@@ -49,28 +49,34 @@ const ConversationList = ({ conversations, selectedId, currentWalletId, currentW
   };
 
   const getOtherParticipant = (conversation: Conversation) => {
-    return conversation.participants?.find(p =>
+    let other = conversation.participants?.find(p =>
       !myIds.has(p.id) &&
       !myIds.has(p.signingPublicKey) &&
       !myIds.has(p.encryptionPublicKey)
     );
+    if (!other && currentWalletName && conversation.participants && conversation.participants.length === 2) {
+      other = conversation.participants.find(p => p.displayName !== currentWalletName);
+    }
+    return other;
   };
 
   const getConversationName = (conversation: Conversation): string => {
-    if (conversation.name) return conversation.name;
-
     if (isSelfConversation(conversation)) return "Note to Self";
-    
+
     const other = getOtherParticipant(conversation);
-    if (!other) return "Unknown";
-    
-    const genericNames = ["My Wallet", "Unknown", ""];
-    if (genericNames.includes(other.displayName || "")) {
-      const addr = other.signingPublicKey || other.encryptionPublicKey || other.id || "";
-      return addr.length > 12 ? `${addr.substring(0, 12)}...` : addr || "Unknown";
+
+    if (other) {
+      const genericNames = ["My Wallet", "Unknown", ""];
+      if (genericNames.includes(other.displayName || "")) {
+        const addr = other.signingPublicKey || other.encryptionPublicKey || other.id || "";
+        return addr.length > 12 ? `${addr.substring(0, 12)}...` : addr || "Unknown";
+      }
+      return other.displayName || "Unknown";
     }
-    
-    return other.displayName || "Unknown";
+
+    if (conversation.name && conversation.name !== currentWalletName) return conversation.name;
+
+    return conversation.isGroup ? (conversation.name || "Group") : "Unknown";
   };
   
   const getConversationAddress = (conversation: Conversation): string => {

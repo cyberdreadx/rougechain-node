@@ -217,7 +217,9 @@ export default function MessengerTab({ wallet }: Props) {
                         if (!other && wallet.displayName && convo.participants?.length === 2) {
                             other = convo.participants.find((p: any) => p.displayName !== wallet.displayName);
                         }
-                        const displayName = isNoteToSelf ? "Note to Self" : (convo.name || other?.displayName || "Unknown");
+                        const displayName = isNoteToSelf
+                            ? "Note to Self"
+                            : (other?.displayName || (convo.name && convo.name !== wallet.displayName ? convo.name : null) || "Unknown");
                         return (
                             <div
                                 key={convo.id}
