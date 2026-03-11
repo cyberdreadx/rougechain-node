@@ -15,6 +15,7 @@
 
 - [Overview](running-a-node/README.md)
 - [Installation](running-a-node/installation.md)
+- [Docker](running-a-node/docker.md)
 - [Configuration](running-a-node/configuration.md)
 - [Mining](running-a-node/mining.md)
 

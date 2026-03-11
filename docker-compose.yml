@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  node:
+    build: .
+    image: rougechain/node:latest
+    container_name: rougechain-node
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-5100}:5100"
+    volumes:
+      - chain-data:/data
+    environment:
+      - QV_CORS_ORIGINS=${QV_CORS_ORIGINS:-}
+      - QV_PEERS=${QV_PEERS:-https://testnet.rougechain.io/api}
+    command:
+      - "--mine"
+      - "--peers"
+      - "${QV_PEERS:-https://testnet.rougechain.io/api}"
+      - "--chain-id"
+      - "${CHAIN_ID:-rougechain-devnet-1}"
+
+volumes:
+  chain-data:
+    driver: local

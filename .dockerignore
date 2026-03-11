@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+target
+*.log
+.env
+.env.*
+contracts/.env
+browser-extension/dist
+sdk/dist

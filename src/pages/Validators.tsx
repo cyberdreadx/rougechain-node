@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Shield, Info, Zap, TrendingUp, Lock, Wallet, RefreshCw } from "lucide-react";
+import { Shield, Info, Zap, TrendingUp, Lock, Wallet, RefreshCw, Server, Copy, Check } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ValidatorDashboard } from "@/components/validators/ValidatorDashboard";
@@ -8,6 +8,59 @@ import { STAKE_REQUIREMENTS, TIER_BENEFITS, formatStake, ValidatorTier } from "@
 import { loadUnifiedWallet, UnifiedWallet } from "@/lib/unified-wallet";
 import { getWalletBalance } from "@/lib/pqc-wallet";
 import { Link } from "react-router-dom";
+
+function RunNodeCta() {
+  const [copied, setCopied] = useState(false);
+  const dockerCmd = "docker run -d -p 5100:5100 -v qv-data:/data rougechain/node";
+
+  const copyCommand = () => {
+    navigator.clipboard.writeText(dockerCmd);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <Card className="bg-gradient-to-br from-primary/10 to-cyan-500/5 border-primary/30">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Server className="w-4 h-4 text-primary" />
+          Run a Node
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          Strengthen the network by running your own node. Stake XRGE to earn block
+          rewards and transaction fees.
+        </p>
+        <div className="relative">
+          <pre className="bg-background/80 border border-border rounded-lg p-3 pr-10 text-xs font-mono overflow-x-auto whitespace-pre-wrap break-all">
+            {dockerCmd}
+          </pre>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="absolute top-1.5 right-1.5 h-7 w-7 p-0"
+            onClick={copyCommand}
+          >
+            {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+          </Button>
+        </div>
+        <div className="flex gap-2">
+          <Button asChild size="sm" variant="outline" className="flex-1 text-xs">
+            <a href="https://docs.rougechain.io/running-a-node/installation.html" target="_blank" rel="noopener noreferrer">
+              Full Guide
+            </a>
+          </Button>
+          <Button asChild size="sm" className="flex-1 text-xs">
+            <a href="https://github.com/cyberdreadx/quantum-vault" target="_blank" rel="noopener noreferrer">
+              GitHub
+            </a>
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function Validators() {
   const [wallet, setWallet] = useState<UnifiedWallet | null>(null);
@@ -103,13 +156,16 @@ export default function Validators() {
 
         <div className="grid lg:grid-cols-3 gap-6 md:gap-8">
           {/* Main Dashboard */}
-          <div className="lg:col-span-2 order-2 lg:order-1 min-w-0 overflow-hidden">
+          <div className="lg:col-span-2 order-2 lg:order-1 min-w-0 overflow-hidden space-y-6">
             <ValidatorDashboard
               walletId={walletId}
               signingPublicKey={signingPublicKey}
               signingPrivateKey={signingPrivateKey}
               availableBalance={availableBalance}
             />
+            <div className="lg:hidden">
+              <RunNodeCta />
+            </div>
           </div>
 
           {/* Sidebar - hidden on mobile, cards shown inline above */}
@@ -305,6 +361,9 @@ export default function Validators() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Run a Node CTA */}
+            <RunNodeCta />
           </div>
         </div>
       </main>

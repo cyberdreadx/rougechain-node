@@ -48,8 +48,9 @@ export function ValidatorList({ onSelectValidator }: ValidatorListProps) {
   const loadValidators = async () => {
     try {
       const data = await getValidators();
-      setValidators(data);
-      setTotalStake(data.reduce((sum, v) => sum + v.stakedAmount, 0));
+      const sorted = [...data].sort((a, b) => b.stakedAmount - a.stakedAmount);
+      setValidators(sorted);
+      setTotalStake(sorted.reduce((sum, v) => sum + v.stakedAmount, 0));
     } catch (error) {
       console.error("Failed to load validators:", error);
     } finally {
@@ -93,7 +94,7 @@ export function ValidatorList({ onSelectValidator }: ValidatorListProps) {
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg flex items-center gap-2">
             <Activity className="w-5 h-5 text-primary" />
-            Active Validators
+            Validator Leaderboard
           </CardTitle>
           <Badge variant="outline" className="font-mono">
             {validators.length} total
@@ -122,6 +123,11 @@ export function ValidatorList({ onSelectValidator }: ValidatorListProps) {
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+                      <span className={`text-xs font-bold ${index < 3 ? "text-primary" : "text-muted-foreground"}`}>
+                        {index + 1}
+                      </span>
+                    </div>
                     <div className={`p-2 rounded-lg bg-background/50 ${tierConfig[validator.tier].color}`}>
                       <TierIcon className="w-5 h-5" />
                     </div>
