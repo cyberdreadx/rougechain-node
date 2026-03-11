@@ -721,6 +721,12 @@ impl L1Node {
         total_supply: u64,
         decimals: u8,
     ) -> Result<(TxV1, String), String> {
+        const RESERVED_SYMBOLS: &[&str] = &["XRGE", "QETH", "QUSDC", "ETH", "USDC"];
+        let symbol_upper = token_symbol.to_uppercase();
+        if RESERVED_SYMBOLS.contains(&symbol_upper.as_str()) {
+            return Err(format!("'{}' is a reserved token symbol", token_symbol));
+        }
+
         let tx_fee = TOKEN_CREATION_FEE;
         
         // Check sender has sufficient balance for fee
@@ -1232,15 +1238,17 @@ impl L1Node {
             if deducted_nft > 0.0 { actual_fees_collected += tx.fee.min(deducted_nft); }
         }
         
-        // Persist bridge_withdraw txs for operator to fulfill ETH releases
+        // Persist bridge_withdraw txs for operator to fulfill releases
         if let Some(ref store) = self.opts.bridge_withdraw_store {
             for tx in &block.txs {
                 if tx.tx_type == "bridge_withdraw"
-                    && tx.payload.token_symbol.as_deref() == Some("qETH")
                     && tx.payload.amount.unwrap_or(0) > 0
                 {
                     if let Some(evm_addr) = tx.payload.evm_address.as_ref() {
-                        let tx_id = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
+                        let token = tx.payload.token_symbol.as_deref().unwrap_or("qETH");
+                        let prefix = if token == "XRGE" { "xrge:" } else { "" };
+                        let raw_id = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
+                        let tx_id = format!("{}{}", prefix, raw_id);
                         let amount = tx.payload.amount.unwrap_or(0);
                         let _ = store.add(tx_id.clone(), evm_addr.clone(), amount);
                     }
@@ -2258,6 +2266,13 @@ impl L1Node {
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount - tx.fee;
             }
             "create_token" => {
+                const RESERVED: &[&str] = &["XRGE", "QETH", "QUSDC", "ETH", "USDC"];
+                if let Some(ref sym) = tx.payload.token_symbol {
+                    if RESERVED.contains(&sym.to_uppercase().as_str()) {
+                        eprintln!("[node] Rejecting create_token: reserved symbol '{}'", sym);
+                        return;
+                    }
+                }
                 let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
                 if xrge_bal < tx.fee {
                     eprintln!("[node] Rejecting create_token: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
