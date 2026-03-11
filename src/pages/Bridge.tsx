@@ -186,8 +186,13 @@ const Bridge = () => {
 
         setStep("Claiming on RougeChain...");
         const claim = await claimXrgeBridgeDeposit({ evmTxHash: depositTx, evmAddress, amount: (BigInt(Math.floor(amountNum)) * 10n ** 18n).toString(), recipientRougechainPubkey: rougechainPubkey });
-        if (claim.success) toast.success(`Bridged ${amountNum} XRGE to RougeChain!`);
-        else toast.warning(`Deposit sent but L1 claim pending. ${claim.error || ""}`);
+        if (claim.success) {
+          toast.success(`Bridged ${amountNum} XRGE to RougeChain!`);
+          setXrgeL1Balance((prev) => prev + amountNum);
+          setEvmXrgeBalance((prev) => prev - amountNum);
+        } else {
+          toast.warning(`Deposit sent but L1 claim pending. ${claim.error || ""}`);
+        }
       } else {
         if (!config?.custodyAddress) { toast.error("Bridge not configured"); setProcessing(false); return; }
 
@@ -208,8 +213,13 @@ const Bridge = () => {
 
           setStep("Claiming qETH...");
           const claim = await claimBridgeDeposit({ evmTxHash: txHash as string, evmAddress, evmSignature: sig as string, recipientRougechainPubkey: recipient, token: "ETH" });
-          if (claim.success) toast.success(`Claimed ${amountNum} ETH as qETH!`);
-          else toast.error(claim.error || "Claim failed");
+          if (claim.success) {
+            toast.success(`Claimed ${amountNum} ETH as qETH!`);
+            setQethBalance((prev) => prev + humanToQeth(amountNum));
+            setEvmEthBalance((prev) => prev - amountNum);
+          } else {
+            toast.error(claim.error || "Claim failed");
+          }
         } else {
           setStep("Sending USDC to bridge...");
           const usdcAddr = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
@@ -226,13 +236,17 @@ const Bridge = () => {
 
           setStep("Claiming qUSDC...");
           const claim = await claimBridgeDeposit({ evmTxHash: txHash as string, evmAddress, evmSignature: sig as string, recipientRougechainPubkey: recipient, token: "USDC" });
-          if (claim.success) toast.success(`Claimed ${amountNum} USDC as qUSDC!`);
-          else toast.error(claim.error || "Claim failed");
+          if (claim.success) {
+            toast.success(`Claimed ${amountNum} USDC as qUSDC!`);
+            setQusdcBalance((prev) => prev + Math.round(amountNum * 1e6));
+            setEvmUsdcBalance((prev) => prev - amountNum);
+          } else {
+            toast.error(claim.error || "Claim failed");
+          }
         }
       }
       setAmount("");
-      refreshBalances();
-      refreshEvmBalances();
+      setTimeout(() => { refreshBalances(); refreshEvmBalances(); }, 3000);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Bridge deposit failed");
     } finally {
@@ -255,13 +269,19 @@ const Bridge = () => {
     setProcessing(true);
 
     try {
+      let success = false;
       if (asset === "XRGE") {
         if (amountNum > xrgeL1Balance) { toast.error("Insufficient XRGE balance"); setProcessing(false); return; }
         setStep("Submitting withdrawal...");
         const signed = createSignedBridgeWithdraw(wallet.signingPublicKey, wallet.signingPrivateKey, amountNum, evmAddr, "XRGE");
         const result = await bridgeWithdrawXrge({ fromPublicKey: wallet.signingPublicKey, amount: amountNum, evmAddress: evmAddr, signature: signed.signature, payload: signed.payload as unknown as Record<string, unknown> });
-        if (result.success) toast.success(`Withdrawal submitted! The relayer will release XRGE on Base.`);
-        else toast.error(result.error || "Withdrawal failed");
+        if (result.success) {
+          toast.success(`Withdrawal submitted! The relayer will release XRGE on Base.`);
+          setXrgeL1Balance((prev) => prev - amountNum);
+          success = true;
+        } else {
+          toast.error(result.error || "Withdrawal failed");
+        }
       } else {
         const isUsdc = asset === "USDC";
         const amountUnits = isUsdc ? Math.round(amountNum * 1e6) : humanToQeth(amountNum);
@@ -272,12 +292,19 @@ const Bridge = () => {
         setStep("Submitting withdrawal...");
         const signed = createSignedBridgeWithdraw(wallet.signingPublicKey, wallet.signingPrivateKey, amountUnits, evmAddr, tokenLabel);
         const result = await bridgeWithdraw({ fromPublicKey: wallet.signingPublicKey, amountUnits, evmAddress: evmAddr, tokenSymbol: tokenLabel, signature: signed.signature, payload: signed.payload as unknown as Record<string, unknown> });
-        if (result.success) toast.success(`Withdrawal submitted! The relayer will send ${asset} to your Base address.`);
-        else toast.error(result.error || "Withdrawal failed");
+        if (result.success) {
+          toast.success(`Withdrawal submitted! The relayer will send ${asset} to your Base address.`);
+          if (isUsdc) setQusdcBalance((prev) => prev - amountUnits);
+          else setQethBalance((prev) => prev - amountUnits);
+          success = true;
+        } else {
+          toast.error(result.error || "Withdrawal failed");
+        }
       }
       setAmount("");
-      refreshBalances();
-      refreshEvmBalances();
+      if (success) {
+        setTimeout(() => { refreshBalances(); refreshEvmBalances(); }, 3000);
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Withdrawal failed");
     } finally {
