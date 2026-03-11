@@ -17,7 +17,6 @@ import {
   bridgeWithdrawXrge,
   type XrgeBridgeConfig,
   USDC_BASE_SEPOLIA,
-  XRGE_TOKEN_ADDRESS,
 } from "@/lib/bridge";
 import { createSignedBridgeWithdraw } from "@/lib/pqc-signer";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
@@ -92,14 +91,17 @@ const Bridge = () => {
       const usdcHex = await window.ethereum.request({ method: "eth_call", params: [{ to: USDC_BASE_SEPOLIA, data: balanceOfSig }, "latest"] }) as string;
       setEvmUsdcBalance(Number(BigInt(usdcHex)) / 1e6);
 
-      const xrgeHex = await window.ethereum.request({ method: "eth_call", params: [{ to: XRGE_TOKEN_ADDRESS, data: balanceOfSig }, "latest"] }) as string;
-      setEvmXrgeBalance(Number(BigInt(xrgeHex)) / 1e18);
+      const xrgeAddr = xrgeConfig?.tokenAddress;
+      if (xrgeAddr) {
+        const xrgeHex = await window.ethereum.request({ method: "eth_call", params: [{ to: xrgeAddr, data: balanceOfSig }, "latest"] }) as string;
+        setEvmXrgeBalance(Number(BigInt(xrgeHex)) / 1e18);
+      }
     } catch (e) {
       console.log("Failed to fetch EVM balances", e);
     }
   };
 
-  useEffect(() => { refreshEvmBalances(); }, [evmAddress]);
+  useEffect(() => { refreshEvmBalances(); }, [evmAddress, xrgeConfig]);
 
   const connectEvm = async () => {
     if (typeof window.ethereum === "undefined") {
@@ -147,8 +149,8 @@ const Bridge = () => {
 
     try {
       if (asset === "XRGE") {
-        if (!xrgeConfig?.vaultAddress) { toast.error("XRGE bridge vault not configured"); setProcessing(false); return; }
-        const tokenAddr = xrgeConfig.tokenAddress || "0x147120faEC9277ec02d957584CFCD92B56A24317";
+        if (!xrgeConfig?.vaultAddress || !xrgeConfig?.tokenAddress) { toast.error("XRGE bridge not fully configured"); setProcessing(false); return; }
+        const tokenAddr = xrgeConfig.tokenAddress;
         const vaultAddr = xrgeConfig.vaultAddress;
         const amountWei = "0x" + (BigInt(Math.floor(amountNum)) * 10n ** 18n).toString(16);
 
