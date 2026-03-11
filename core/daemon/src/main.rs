@@ -2486,28 +2486,52 @@ async fn register_messenger_wallet(
     let node = &state.node;
     let id = body.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     let display_name = body.get("displayName").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let signing_key = body.get("signingPublicKey").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let encryption_key = body.get("encryptionPublicKey").and_then(|v| v.as_str()).unwrap_or_default().to_string();
 
     // Enforce unique display names (case-insensitive)
+    // Also collect old wallet IDs that will be replaced (for name registry update)
+    let mut old_ids_to_update: Vec<String> = Vec::new();
     if let Ok(existing_wallets) = node.list_wallets() {
         let name_lower = display_name.to_lowercase();
         for w in &existing_wallets {
             if w.display_name.to_lowercase() == name_lower && w.id != id {
-                return Ok(Json(serde_json::json!({
-                    "success": false,
-                    "error": format!("Display name '{}' is already taken", display_name)
-                })));
+                // Same display name but different ID -- check if it's the same user (same keys)
+                let same_keys = (!signing_key.is_empty() && w.signing_public_key == signing_key)
+                    || (!encryption_key.is_empty() && w.encryption_public_key == encryption_key);
+                if !same_keys {
+                    return Ok(Json(serde_json::json!({
+                        "success": false,
+                        "error": format!("Display name '{}' is already taken", display_name)
+                    })));
+                }
+            }
+            // Detect wallet entries that will be replaced by register_wallet
+            if w.id != id {
+                let will_replace = (!signing_key.is_empty() && w.signing_public_key == signing_key)
+                    || (!encryption_key.is_empty() && w.encryption_public_key == encryption_key);
+                if will_replace {
+                    old_ids_to_update.push(w.id.clone());
+                }
             }
         }
     }
 
     let wallet = quantum_vault_storage::messenger_store::MessengerWallet {
-        id,
+        id: id.clone(),
         display_name,
-        signing_public_key: body.get("signingPublicKey").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-        encryption_public_key: body.get("encryptionPublicKey").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        signing_public_key: signing_key,
+        encryption_public_key: encryption_key,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
     let wallet = node.register_wallet(wallet).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Update name registry and mail labels that reference old wallet IDs
+    for old_id in &old_ids_to_update {
+        let _ = node.update_name_wallet_id(old_id, &id);
+        let _ = node.update_mail_labels_wallet_id(old_id, &id);
+    }
+
     Ok(Json(serde_json::json!({ "success": true, "wallet": wallet })))
 }
 
@@ -2632,7 +2656,11 @@ async fn resolve_name(
     match entry {
         Some(e) => {
             let wallets = state.node.list_wallets().unwrap_or_default();
-            let wallet = wallets.iter().find(|w| w.id == e.wallet_id);
+            // Try exact ID match first, then fall back to key-based matching
+            let wallet = wallets.iter().find(|w| w.id == e.wallet_id)
+                .or_else(|| wallets.iter().find(|w|
+                    w.signing_public_key == e.wallet_id || w.encryption_public_key == e.wallet_id
+                ));
             Ok(Json(serde_json::json!({
                 "success": true,
                 "entry": e,

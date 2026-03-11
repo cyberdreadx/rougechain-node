@@ -2886,6 +2886,10 @@ impl L1Node {
         self.name_registry.reverse_lookup(wallet_id)
     }
 
+    pub fn update_name_wallet_id(&self, old_id: &str, new_id: &str) -> Result<(), String> {
+        self.name_registry.update_wallet_id(old_id, new_id)
+    }
+
     pub fn release_name(&self, name: &str, wallet_id: &str) -> Result<(), String> {
         self.name_registry.release_name(name, wallet_id)
     }
@@ -2914,6 +2918,10 @@ impl L1Node {
 
     pub fn delete_mail(&self, wallet_id: &str, message_id: &str) -> Result<(), String> {
         self.mail_store.delete_message(wallet_id, message_id)
+    }
+
+    pub fn update_mail_labels_wallet_id(&self, old_id: &str, new_id: &str) -> Result<usize, String> {
+        self.mail_store.update_labels_wallet_id(old_id, new_id)
     }
 
 }

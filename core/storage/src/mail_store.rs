@@ -189,4 +189,35 @@ impl MailStore {
         self.db.flush().map_err(|e| e.to_string())?;
         Ok(())
     }
+
+    pub fn update_labels_wallet_id(&self, old_id: &str, new_id: &str) -> Result<usize, String> {
+        let labels_tree = self.labels_tree()?;
+        let prefix = format!("{}:", old_id);
+        let mut count = 0usize;
+        let mut to_insert: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut to_remove: Vec<String> = Vec::new();
+
+        for item in labels_tree.scan_prefix(prefix.as_bytes()) {
+            let (key_bytes, val) = item.map_err(|e| e.to_string())?;
+            let old_key = String::from_utf8_lossy(&key_bytes).to_string();
+            let mut label: MailLabel = serde_json::from_slice(&val).map_err(|e| e.to_string())?;
+            label.wallet_id = new_id.to_string();
+            let new_key = old_key.replacen(old_id, new_id, 1);
+            let new_bytes = serde_json::to_vec(&label).map_err(|e| e.to_string())?;
+            to_remove.push(old_key);
+            to_insert.push((new_key, new_bytes));
+            count += 1;
+        }
+
+        for key in &to_remove {
+            labels_tree.remove(key.as_bytes()).map_err(|e| e.to_string())?;
+        }
+        for (key, bytes) in &to_insert {
+            labels_tree.insert(key.as_bytes(), bytes.as_slice()).map_err(|e| e.to_string())?;
+        }
+        if count > 0 {
+            self.db.flush().map_err(|e| e.to_string())?;
+        }
+        Ok(count)
+    }
 }

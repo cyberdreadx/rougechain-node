@@ -92,6 +92,24 @@ impl NameRegistry {
         }
     }
 
+    pub fn update_wallet_id(&self, old_id: &str, new_id: &str) -> Result<(), String> {
+        let wallet_tree = self.wallet_tree()?;
+        let name_tree = self.name_tree()?;
+        if let Some(name_bytes) = wallet_tree.get(old_id.as_bytes()).map_err(|e| e.to_string())? {
+            let canonical = String::from_utf8_lossy(&name_bytes).to_string();
+            if let Some(entry_bytes) = name_tree.get(canonical.as_bytes()).map_err(|e| e.to_string())? {
+                let mut entry: NameEntry = serde_json::from_slice(&entry_bytes).map_err(|e| e.to_string())?;
+                entry.wallet_id = new_id.to_string();
+                let new_bytes = serde_json::to_vec(&entry).map_err(|e| e.to_string())?;
+                name_tree.insert(canonical.as_bytes(), new_bytes.as_slice()).map_err(|e| e.to_string())?;
+                wallet_tree.remove(old_id.as_bytes()).map_err(|e| e.to_string())?;
+                wallet_tree.insert(new_id.as_bytes(), canonical.as_bytes()).map_err(|e| e.to_string())?;
+                self.db.flush().map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn release_name(&self, name: &str, wallet_id: &str) -> Result<(), String> {
         let canonical = name.to_lowercase();
         let name_tree = self.name_tree()?;
