@@ -170,7 +170,7 @@ const Bridge = () => {
         const pubkeyHex = Array.from(new TextEncoder().encode(rougechainPubkey)).map(b => b.toString(16).padStart(2, "0")).join("");
         const paddedPubkey = pubkeyHex.padEnd(Math.ceil(pubkeyHex.length / 64) * 64, "0");
         const depositData = "0xf1215d25" + BigInt(amountWei).toString(16).padStart(64, "0") + (64).toString(16).padStart(64, "0") + rougechainPubkey.length.toString(16).padStart(64, "0") + paddedPubkey;
-        const depositTx = await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: vaultAddr, data: depositData, gas: "0x30D40" }] }) as string;
+        const depositTx = await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: vaultAddr, data: depositData, gas: "0x7A120" }] }) as string;
 
         setStep("Waiting for deposit confirmation...");
         let depositConfirmed = false;
