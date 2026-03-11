@@ -1,6 +1,6 @@
 # RougeChain: A Post-Quantum Layer 1 Blockchain
 
-**Version 1.0 -- February 2026**
+**Version 1.1 -- March 2026**
 
 ---
 
@@ -193,9 +193,11 @@ RougeChain supports 19 transaction types within a unified transaction structure:
 | Bridge | `bridge_mint`, `bridge_withdraw` |
 | NFTs | `nft_create_collection`, `nft_mint`, `nft_batch_mint`, `nft_transfer`, `nft_burn`, `nft_lock`, `nft_freeze_collection` |
 
-**Client-Side Signing.** All transactions are signed on the user's device using their ML-DSA-65 private key. The signed transaction is then submitted to any node via the REST API. At no point does a private key leave the client.
+**Client-Side Signing.** All transactions are signed on the user's device using their ML-DSA-65 private key. The signed transaction is then submitted to any node via the REST API. At no point does a private key leave the client. The v2 transaction endpoints enforce this by design -- they accept only pre-signed payloads and reject empty or invalid signatures.
 
 **V2 Signed Payload Format.** An enhanced signing format serializes the payload as sorted-key JSON before signing, producing a canonical representation that prevents signature malleability.
+
+**Nonce Deduplication.** Each node maintains a per-account set of recently seen nonces. Duplicate nonces are rejected at both the mempool admission and block import layers, preventing transaction replay even when timestamps collide.
 
 ### 3.4 Storage
 
@@ -229,9 +231,10 @@ Nodes communicate over HTTP with the following mechanisms:
 
 **Transaction Broadcast.** Submitted transactions are propagated to peers via `POST /api/tx/broadcast`.
 
-**Rate Limiting.** The API implements two-tier rate limiting:
-- **Tier 1 (Validators):** Unlimited throughput for staked validators (authenticated via `X-Validator-Key` header).
-- **Tier 2 (General):** Configurable rate limits for public API consumers.
+**Rate Limiting.** The API implements three-tier rate limiting applied to all endpoints:
+- **Tier 1 (Validators):** Elevated throughput for staked validators. Authentication requires three headers: `X-Validator-Key` (public key), `X-Validator-Sig` (ML-DSA-65 signature over the timestamp), and `X-Validator-Ts` (Unix millisecond timestamp). The signature is verified via `pqc_verify`, and the timestamp must be within a 30-second drift window. This prevents spoofing of validator status.
+- **Tier 2 (Peers):** Moderate limits for registered peer nodes, identified by socket address.
+- **Tier 3 (General):** Configurable rate limits for public API consumers, with separate limits for read (GET) and write (POST) operations.
 
 ### 3.6 Mempool
 
@@ -349,15 +352,37 @@ RougeChain provides a trustless bridge between Ethereum (Base Sepolia) and Rouge
 
 **Replay protection:** Each Ethereum transaction hash is recorded in a persistent `BridgeClaimStore`. A hash can only be claimed once.
 
-### 6.2 Bridge Out (qETH to ETH)
+**EVM Signature Verification.** Bridge claims require an ECDSA signature from the wallet that sent the deposit transaction. The claim message follows a canonical format (`RougeChain bridge claim\nTx: {hash}\nRecipient: {pubkey}`), and the signature is verified via `ecrecover` to ensure the claimant is the original depositor.
 
-1. The user submits a `bridge_withdraw` transaction, burning their qETH and specifying an EVM withdrawal address.
+**Confirmation Requirement.** The node queries the Base Sepolia block number and requires at least 1 confirmation before processing the claim, preventing front-running of unconfirmed transactions.
+
+### 6.2 Multi-Asset Bridge
+
+RougeChain supports bridging multiple asset types:
+
+| Asset | Base Chain | RougeChain Wrapped | Mechanism |
+|---|---|---|---|
+| ETH | Native ETH | qETH | ETH value in tx |
+| USDC | ERC-20 | qUSDC | ERC-20 Transfer event parsing |
+| XRGE | ERC-20 (Base) | XRGE (L1) | BridgeVault lock/release |
+
+For ERC-20 tokens, the bridge parses `Transfer` event logs from the transaction receipt to determine the deposited amount, rather than relying on the transaction's ETH value field.
+
+### 6.3 Bridge Out (Wrapped to Native)
+
+1. The user submits a `bridge_withdraw` transaction, burning their wrapped tokens and specifying an EVM withdrawal address.
 2. The withdrawal request is recorded in the `BridgeWithdrawStore` with a unique transaction ID, the target EVM address, the amount, and a timestamp.
-3. The bridge operator fulfills the withdrawal by sending ETH on Base Sepolia and then marking the withdrawal as complete.
+3. The bridge relayer (authenticated via a shared secret) fulfills the withdrawal by releasing tokens on Base and then marking the withdrawal as complete.
 
-### 6.3 Security Model
+### 6.4 Security Model
 
-The bridge operates under a custody model where a designated operator address holds the ETH collateral. On-chain verification of Ethereum transactions ensures that qETH can only be minted against real, confirmed deposits. The separation of bridge-in (automated verification) and bridge-out (operator fulfillment) limits the attack surface.
+The bridge operates under a custody model where a designated operator address holds the collateral. Security layers include:
+- **On-chain verification** of Ethereum transactions against Base Sepolia RPC.
+- **ECDSA signature verification** (ecrecover) to authenticate depositors.
+- **Replay protection** via persistent claim tracking.
+- **Chain ID validation** to prevent cross-chain replay.
+- **Confirmation requirements** to prevent unconfirmed-tx attacks.
+- **Relayer authentication** via shared secret for withdrawal fulfillment.
 
 ---
 
@@ -481,7 +506,9 @@ const { balance } = await window.rougechain.getBalance();
 const { txId } = await window.rougechain.sendTransaction(payload);
 ```
 
-Connected sites are tracked and require explicit user approval.
+Connected sites are tracked and require explicit user approval via a popup window. All transactions submitted through the provider are signed client-side using `ml_dsa65.sign()` before being sent to the node.
+
+**Provider Authenticity.** The injected provider object carries a `Symbol.for("rougechain:authentic")` token that dApps can check to verify they are communicating with the genuine extension, not a malicious imitation. The provider is defined with `Object.defineProperty` (non-writable, non-configurable) and unconditionally overwrites any pre-existing definitions to prevent injection attacks.
 
 ### 9.3 REST API
 
@@ -515,6 +542,8 @@ All cryptographic primitives used by RougeChain are standardized by NIST at Secu
 
 Private keys are generated and stored exclusively on the user's device. The browser extension encrypts keys at rest using PBKDF2 (600,000 iterations) with AES-256-GCM. Transaction signing occurs locally; only the signed transaction is transmitted to the network.
 
+Legacy API endpoints that previously accepted raw private keys for server-side signing are disabled in production and return HTTP 410 (Gone). They are accessible only in local development mode via the `--dev` flag.
+
 ### 10.3 Validator Accountability
 
 The slashing mechanism penalizes validators for protocol violations by confiscating 10% of their stake and jailing them for 20 blocks. The slash count is permanently recorded, providing a public accountability record. Jailed validators are excluded from proposer selection until their jail period expires.
@@ -522,19 +551,42 @@ The slashing mechanism penalizes validators for protocol violations by confiscat
 ### 10.4 Network Resilience
 
 - **Mempool limits** (2,000 transactions) prevent memory exhaustion.
-- **Rate limiting** with validator-tier exemptions protects public endpoints.
+- **Three-tier rate limiting** with cryptographic validator authentication protects all endpoints.
+- **Block pagination** caps API responses to prevent unbounded data dumps.
 - **Exponential backoff** on peer sync failures prevents cascade overloads.
 - **Adaptive polling** reduces unnecessary network traffic during quiet periods.
+- **Nonce deduplication** prevents transaction replay at both mempool and block import layers.
 
-### 10.5 Bridge Security
+### 10.5 Block Import Verification
 
-- **On-chain verification** of Ethereum transactions prevents fraudulent minting.
-- **Replay protection** via persistent claim tracking ensures each ETH deposit can only mint qETH once.
-- **Operator separation** limits bridge withdrawal to authorized operators.
+When importing blocks from peers, the node performs the following verification:
 
-### 10.6 Messenger Privacy
+1. **Height continuity** -- The block must extend the current tip by exactly one.
+2. **Hash chain** -- The block's `prev_hash` must match the current tip hash.
+3. **Proposer signature** -- The `proposer_sig` is verified against `proposer_pub_key` using `pqc_verify`, and the block hash is recomputed to ensure integrity.
+4. **Active validator check** -- The `proposer_pub_key` must belong to an actively staked validator.
+5. **Transaction signatures** -- All transactions are verified in parallel (using Rayon) across three signature formats (V2 signed payload, V1 new format, V1 legacy format). If any transaction fails all three verification methods, the entire block is rejected.
+
+### 10.6 Bridge Security
+
+- **On-chain verification** of Ethereum transactions via Base Sepolia RPC prevents fraudulent minting.
+- **ECDSA signature verification** (ecrecover) authenticates that the claimant is the original depositor.
+- **Chain ID validation** ensures claims target the correct network.
+- **Confirmation requirements** prevent claims against unconfirmed transactions.
+- **Replay protection** via persistent claim tracking ensures each deposit can only be claimed once.
+- **Relayer authentication** via shared secret restricts withdrawal fulfillment to authorized operators.
+
+### 10.7 Messenger Privacy
 
 Messages are encrypted end-to-end using post-quantum key encapsulation. The server stores only ciphertext and cannot decrypt message contents. Message signatures provide authentication without exposing plaintext to intermediaries.
+
+### 10.8 dApp Provider Security
+
+The browser extension's injected provider (`window.rougechain`) defends against page-level tampering:
+- **Unconditional injection** overwrites any malicious pre-definitions.
+- **Non-writable, non-configurable** property descriptor prevents post-injection modification.
+- **Authenticity token** (`Symbol.for("rougechain:authentic")`) allows dApps to verify they are communicating with the genuine extension.
+- **Approval popups** require explicit user consent for connect, sign, and send operations.
 
 ---
 
