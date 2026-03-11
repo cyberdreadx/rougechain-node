@@ -17,6 +17,8 @@ import {
   createSignedNftBurn,
   createSignedNftLock,
   createSignedNftFreezeCollection,
+  createSignedTokenMetadataUpdate,
+  createSignedTokenMetadataClaim,
 } from "./signer.js";
 import type {
   WalletKeys,
@@ -287,7 +289,8 @@ export class RougeChain {
       params.name,
       params.symbol,
       params.totalSupply,
-      params.fee
+      params.fee,
+      params.image
     );
     return this.submitTx("/v2/token/create", tx);
   }
@@ -327,24 +330,22 @@ export class RougeChain {
     wallet: WalletKeys,
     params: TokenMetadataUpdateParams
   ): Promise<ApiResponse> {
-    try {
-      const data = await this.post<ApiResponse>("/token/metadata/update", {
-        token_symbol: params.symbol,
-        from_public_key: wallet.publicKey,
-        from_private_key: wallet.privateKey,
-        image: params.image,
-        description: params.description,
-        website: params.website,
-        twitter: params.twitter,
-        discord: params.discord,
-      });
-      return data;
-    } catch (e) {
-      return {
-        success: false,
-        error: e instanceof Error ? e.message : String(e),
-      };
-    }
+    const tx = createSignedTokenMetadataUpdate(wallet, params.symbol, {
+      image: params.image,
+      description: params.description,
+      website: params.website,
+      twitter: params.twitter,
+      discord: params.discord,
+    });
+    return this.submitTx("/v2/token/metadata/update", tx);
+  }
+
+  async claimTokenMetadata(
+    wallet: WalletKeys,
+    tokenSymbol: string
+  ): Promise<ApiResponse> {
+    const tx = createSignedTokenMetadataClaim(wallet, tokenSymbol);
+    return this.submitTx("/v2/token/metadata/claim", tx);
   }
 }
 

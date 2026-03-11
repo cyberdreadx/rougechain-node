@@ -54,7 +54,7 @@ const { balance } = await rc.getBalance(wallet.publicKey);
 |---------|-----------|-------------|
 | **Wallet** | — | ML-DSA-65 keypair generation, import/export, client-side signing |
 | **Transfers** | `rc` | Send XRGE or custom tokens, burn tokens |
-| **Token Creation** | `rc` | Launch new tokens with one call |
+| **Token Creation** | `rc` | Launch new tokens with on-chain logo support |
 | **Staking** | `rc` | Stake/unstake XRGE for validation |
 | **DEX** | `rc.dex` | AMM pools, swaps with slippage protection, liquidity |
 | **NFTs** | `rc.nft` | RC-721 collections, mint, batch mint, royalties, freeze |
@@ -89,11 +89,20 @@ await rc.transfer(wallet, { to: recipient, amount: 100 });
 // Send custom token
 await rc.transfer(wallet, { to: recipient, amount: 50, token: "MYTOKEN" });
 
-// Create a new token (costs 10 XRGE)
+// Create a new token (costs 100 XRGE)
 await rc.createToken(wallet, {
   name: "My Token",
   symbol: "MTK",
   totalSupply: 1_000_000,
+  image: "https://example.com/logo.png", // optional — URL or data:image/webp;base64,...
+});
+
+// Update token metadata (creator only)
+await rc.updateTokenMetadata(wallet, {
+  symbol: "MTK",
+  image: "data:image/webp;base64,UklGR...", // base64 logos persist on-chain
+  description: "A community token",
+  website: "https://mytoken.io",
 });
 
 // Burn tokens

@@ -8,6 +8,8 @@ export {
   verifyTransaction,
   serializePayload,
   createSignedBridgeWithdraw,
+  createSignedTokenMetadataUpdate,
+  createSignedTokenMetadataClaim,
   BURN_ADDRESS,
   isBurnAddress,
 } from "./signer.js";

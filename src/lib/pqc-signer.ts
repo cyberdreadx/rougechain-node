@@ -32,7 +32,7 @@ function bytesToHex(bytes: Uint8Array): string {
  * Transaction payload structure for signing
  */
 export interface TransactionPayload {
-  type: "transfer" | "create_token" | "swap" | "create_pool" | "add_liquidity" | "remove_liquidity" | "stake" | "unstake" | "faucet"
+  type: "transfer" | "create_token" | "update_token_metadata" | "claim_token_metadata" | "swap" | "create_pool" | "add_liquidity" | "remove_liquidity" | "stake" | "unstake" | "faucet"
   | "nft_create_collection" | "nft_mint" | "nft_batch_mint" | "nft_transfer" | "nft_burn" | "nft_lock" | "nft_freeze_collection"
   | "bridge_withdraw";
   from: string;
@@ -77,6 +77,10 @@ export interface TransactionPayload {
   names?: string[];
   uris?: string[];
   batchAttributes?: unknown[];
+  // Token metadata
+  website?: string;
+  twitter?: string;
+  discord?: string;
 }
 
 /**
@@ -201,6 +205,56 @@ export function createSignedTokenCreation(
   };
 
   return signTransaction(payload, creatorPrivateKey, creatorPublicKey);
+}
+
+/**
+ * Create a signed token metadata update
+ */
+export function createSignedTokenMetadataUpdate(
+  publicKey: string,
+  privateKey: string,
+  tokenSymbol: string,
+  metadata: {
+    image?: string;
+    description?: string;
+    website?: string;
+    twitter?: string;
+    discord?: string;
+  }
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "update_token_metadata",
+    from: publicKey,
+    token_symbol: tokenSymbol,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+    ...(metadata.image !== undefined ? { image: metadata.image } : {}),
+    ...(metadata.description !== undefined ? { description: metadata.description } : {}),
+    ...(metadata.website !== undefined ? { website: metadata.website } : {}),
+    ...(metadata.twitter !== undefined ? { twitter: metadata.twitter } : {}),
+    ...(metadata.discord !== undefined ? { discord: metadata.discord } : {}),
+  };
+
+  return signTransaction(payload, privateKey, publicKey);
+}
+
+/**
+ * Create a signed token metadata claim (for tokens created before metadata system)
+ */
+export function createSignedTokenMetadataClaim(
+  publicKey: string,
+  privateKey: string,
+  tokenSymbol: string
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "claim_token_metadata",
+    from: publicKey,
+    token_symbol: tokenSymbol,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+
+  return signTransaction(payload, privateKey, publicKey);
 }
 
 /**

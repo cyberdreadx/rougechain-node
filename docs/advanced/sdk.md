@@ -83,7 +83,7 @@ await rc.getBurnedTokens();
 ```typescript
 await rc.transfer(wallet, { to: recipient, amount: 100 });
 await rc.transfer(wallet, { to: recipient, amount: 50, token: 'MYTOKEN' });
-await rc.createToken(wallet, { name: 'My Token', symbol: 'MTK', totalSupply: 1_000_000 });
+await rc.createToken(wallet, { name: 'My Token', symbol: 'MTK', totalSupply: 1_000_000, image: 'https://example.com/logo.png' });
 await rc.burn(wallet, 500, 1, 'XRGE');
 await rc.faucet(wallet);
 ```

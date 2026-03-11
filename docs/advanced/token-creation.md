@@ -21,8 +21,26 @@ Create custom tokens on RougeChain. Tokens can be traded on the built-in AMM/DEX
    - **Name** — Full name (e.g., "My Token")
    - **Symbol** — Ticker symbol (e.g., "MTK")
    - **Total Supply** — Maximum supply
-   - **Decimals** — Decimal places (typically 8)
+   - **Logo** — Upload an image or paste a URL (optional)
 4. Confirm and sign the transaction
+
+Uploaded logos are compressed to WebP (max 256×256, ≤100 KB) and stored on-chain as base64 data URIs. They display across the wallet, swap, pools, and explorer.
+
+### Via SDK
+
+```typescript
+import { RougeChain, Wallet } from "@rougechain/sdk";
+
+const rc = new RougeChain("https://testnet.rougechain.io/api");
+const wallet = Wallet.generate();
+
+await rc.createToken(wallet, {
+  name: "My Token",
+  symbol: "MTK",
+  totalSupply: 1_000_000,
+  image: "https://example.com/logo.png", // or a data:image/webp;base64,... URI
+});
+```
 
 ### Via v2 API
 
@@ -35,7 +53,8 @@ curl -X POST https://testnet.rougechain.io/api/v2/token/create \
       "name": "My Token",
       "symbol": "MTK",
       "totalSupply": 1000000,
-      "decimals": 8
+      "decimals": 8,
+      "image": "https://example.com/logo.png"
     },
     "nonce": 1706745600000,
     "signature": "your-ml-dsa65-signature-hex"
@@ -107,6 +126,39 @@ Tokens are automatically listed on the DEX once a liquidity pool is created. Use
 - Swap between your token and XRGE
 - Add/remove liquidity
 - View price charts and pool stats
+
+## Token Metadata
+
+Every token has on-chain metadata that the creator can manage:
+
+| Field | Description |
+|-------|-------------|
+| `image` | Logo URL or base64 data URI |
+| `description` | Token description |
+| `website` | Project website |
+| `twitter` | X/Twitter handle |
+| `discord` | Discord invite link |
+
+### Updating Metadata
+
+Only the original creator can update metadata:
+
+```typescript
+await rc.updateTokenMetadata(wallet, {
+  symbol: "MTK",
+  image: "data:image/webp;base64,UklGR...",
+  description: "A community token for...",
+  website: "https://mytoken.io",
+  twitter: "@mytoken",
+  discord: "discord.gg/mytoken",
+});
+```
+
+Logo images can be:
+- **URLs** — `https://...`, `ipfs://...`
+- **Data URIs** — `data:image/webp;base64,...` (stored directly on-chain, persists forever)
+
+The web UI provides an **Upload** button that compresses images to WebP and stores them as base64 on-chain.
 
 ## Token Standards
 

@@ -30,7 +30,9 @@ export type TransactionType =
   | "nft_burn"
   | "nft_lock"
   | "nft_freeze_collection"
-  | "bridge_withdraw";
+  | "bridge_withdraw"
+  | "update_token_metadata"
+  | "claim_token_metadata";
 
 export interface TransactionPayload {
   type: TransactionType;
@@ -72,6 +74,9 @@ export interface TransactionPayload {
   names?: string[];
   uris?: string[];
   batchAttributes?: unknown[];
+  website?: string;
+  twitter?: string;
+  discord?: string;
 }
 
 export interface SignedTransaction {
@@ -333,6 +338,8 @@ export interface CreateTokenParams {
   symbol: string;
   totalSupply: number;
   fee?: number;
+  /** Token logo — URL or data URI (base64). Stored on-chain in token metadata. */
+  image?: string;
 }
 
 export interface SwapParams {

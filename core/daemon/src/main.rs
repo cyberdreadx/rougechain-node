@@ -424,6 +424,8 @@ fn build_http_router(state: AppState) -> Router {
         // Secure v2 endpoints (client-side signing)
         .route("/api/v2/transfer", post(v2_transfer))
         .route("/api/v2/token/create", post(v2_create_token))
+        .route("/api/v2/token/metadata/update", post(v2_update_token_metadata))
+        .route("/api/v2/token/metadata/claim", post(v2_claim_token_metadata))
         .route("/api/v2/pool/create", post(v2_create_pool))
         .route("/api/v2/pool/add-liquidity", post(v2_add_liquidity))
         .route("/api/v2/pool/remove-liquidity", post(v2_remove_liquidity))
@@ -2929,6 +2931,68 @@ async fn v2_create_token(
         "token_symbol": token_symbol,
         "message": "Token creation transaction submitted"
     })))
+}
+
+async fn v2_update_token_metadata(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let _ = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    let node = &state.node;
+    let payload = &body.payload;
+
+    let token_symbol = payload.get("token_symbol").and_then(|v| v.as_str()).unwrap_or_default();
+    if token_symbol.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "token_symbol is required"}))));
+    }
+
+    match node.is_token_creator(token_symbol, &body.public_key) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"success": false, "error": "Only the token creator can update metadata"}))));
+        }
+        Err(e) => {
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"success": false, "error": e}))));
+        }
+    }
+
+    let image = payload.get("image").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let description = payload.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let website = payload.get("website").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let twitter = payload.get("twitter").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let discord = payload.get("discord").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    match node.update_token_metadata(token_symbol, &body.public_key, image, description, website, twitter, discord) {
+        Ok(()) => Ok(Json(serde_json::json!({
+            "success": true,
+            "message": "Token metadata updated successfully"
+        }))),
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e})))),
+    }
+}
+
+async fn v2_claim_token_metadata(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let _ = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    let node = &state.node;
+    let payload = &body.payload;
+
+    let token_symbol = payload.get("token_symbol").and_then(|v| v.as_str()).unwrap_or_default();
+    if token_symbol.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "token_symbol is required"}))));
+    }
+
+    match node.claim_token_metadata(token_symbol, &body.public_key) {
+        Ok(()) => Ok(Json(serde_json::json!({
+            "success": true,
+            "message": "Token metadata claimed successfully. You can now update it."
+        }))),
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e})))),
+    }
 }
 
 async fn v2_create_pool(

@@ -75,7 +75,8 @@ export function createSignedTokenCreation(
   tokenName: string,
   tokenSymbol: string,
   initialSupply: number,
-  fee = 10
+  fee = 10,
+  image?: string
 ): SignedTransaction {
   return buildAndSign(wallet, {
     type: "create_token",
@@ -83,6 +84,39 @@ export function createSignedTokenCreation(
     token_symbol: tokenSymbol,
     initial_supply: initialSupply,
     fee,
+    ...(image ? { image } : {}),
+  });
+}
+
+export function createSignedTokenMetadataUpdate(
+  wallet: WalletKeys,
+  tokenSymbol: string,
+  metadata: {
+    image?: string;
+    description?: string;
+    website?: string;
+    twitter?: string;
+    discord?: string;
+  }
+): SignedTransaction {
+  return buildAndSign(wallet, {
+    type: "update_token_metadata",
+    token_symbol: tokenSymbol,
+    ...(metadata.image !== undefined ? { image: metadata.image } : {}),
+    ...(metadata.description !== undefined ? { description: metadata.description } : {}),
+    ...(metadata.website !== undefined ? { website: metadata.website } : {}),
+    ...(metadata.twitter !== undefined ? { twitter: metadata.twitter } : {}),
+    ...(metadata.discord !== undefined ? { discord: metadata.discord } : {}),
+  });
+}
+
+export function createSignedTokenMetadataClaim(
+  wallet: WalletKeys,
+  tokenSymbol: string
+): SignedTransaction {
+  return buildAndSign(wallet, {
+    type: "claim_token_metadata",
+    token_symbol: tokenSymbol,
   });
 }
 

@@ -25,6 +25,8 @@ import {
   createSignedNftBurn,
   createSignedNftLock,
   createSignedNftFreezeCollection,
+  createSignedTokenMetadataUpdate,
+  createSignedTokenMetadataClaim,
   BURN_ADDRESS,
 } from "./pqc-signer";
 
@@ -360,50 +362,13 @@ export async function claimTokenMetadata(
   privateKey: string,
   tokenSymbol: string
 ): Promise<ApiResponse> {
-  const baseUrl = getNodeApiBaseUrl();
-  if (!baseUrl) {
-    return { success: false, error: "API not configured" };
-  }
-
-  try {
-    const res = await fetch(`${baseUrl}/token/metadata/claim`, {
-      method: "POST",
-      headers: {
-        ...getCoreApiHeaders(),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        token_symbol: tokenSymbol,
-        from_public_key: publicKey,
-        from_private_key: privateKey,
-      }),
-    });
-    
-    // Handle non-OK responses
-    if (!res.ok) {
-      const text = await res.text();
-      return { success: false, error: `Server error (${res.status}): ${text || 'No response'}` };
-    }
-    
-    const text = await res.text();
-    if (!text) {
-      return { success: false, error: "Empty response from server" };
-    }
-    
-    try {
-      const data = JSON.parse(text);
-      return data;
-    } catch {
-      return { success: false, error: `Invalid JSON response: ${text.substring(0, 100)}` };
-    }
-  } catch (e) {
-    return { success: false, error: `Request failed: ${e}` };
-  }
+  const signedTx = createSignedTokenMetadataClaim(publicKey, privateKey, tokenSymbol);
+  return submitSignedTx("/v2/token/metadata/claim", signedTx);
 }
 
 /**
  * Update token metadata (only token creator can do this)
- * Note: This requires the private key to prove ownership
+ * Uses v2 signed endpoint — private key never sent to server.
  */
 export async function updateTokenMetadata(
   publicKey: string,
@@ -417,35 +382,13 @@ export async function updateTokenMetadata(
     discord?: string;
   }
 ): Promise<ApiResponse> {
-  const baseUrl = getNodeApiBaseUrl();
-  if (!baseUrl) {
-    return { success: false, error: "API not configured" };
-  }
-
-  try {
-    const res = await fetch(`${baseUrl}/token/metadata/update`, {
-      method: "POST",
-      headers: {
-        ...getCoreApiHeaders(),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        token_symbol: tokenSymbol,
-        from_public_key: publicKey,
-        from_private_key: privateKey,
-        image: metadata.image,
-        description: metadata.description,
-        website: metadata.website,
-        twitter: metadata.twitter,
-        discord: metadata.discord,
-      }),
-    });
-    
-    const data = await res.json();
-    return data;
-  } catch (e) {
-    return { success: false, error: `Request failed: ${e}` };
-  }
+  const signedTx = createSignedTokenMetadataUpdate(
+    publicKey,
+    privateKey,
+    tokenSymbol,
+    metadata
+  );
+  return submitSignedTx("/v2/token/metadata/update", signedTx);
 }
 
 // ===== NFT API =====
