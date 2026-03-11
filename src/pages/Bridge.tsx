@@ -154,14 +154,20 @@ const Bridge = () => {
 
         setStep("Approving XRGE...");
         const approveData = `0x095ea7b3${vaultAddr.slice(2).padStart(64, "0")}${BigInt(amountWei).toString(16).padStart(64, "0")}`;
-        await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: tokenAddr, data: approveData }] });
-        await new Promise(r => setTimeout(r, 5000));
+        const approveTxHash = await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: tokenAddr, data: approveData }] }) as string;
+
+        setStep("Waiting for approval confirmation...");
+        for (let i = 0; i < 30; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          const receipt = await window.ethereum.request({ method: "eth_getTransactionReceipt", params: [approveTxHash] });
+          if (receipt) break;
+        }
 
         setStep("Depositing to vault...");
         const pubkeyHex = Array.from(new TextEncoder().encode(rougechainPubkey)).map(b => b.toString(16).padStart(2, "0")).join("");
         const paddedPubkey = pubkeyHex.padEnd(Math.ceil(pubkeyHex.length / 64) * 64, "0");
         const depositData = "0x0efe6a8b" + BigInt(amountWei).toString(16).padStart(64, "0") + (64).toString(16).padStart(64, "0") + rougechainPubkey.length.toString(16).padStart(64, "0") + paddedPubkey;
-        const depositTx = await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: vaultAddr, data: depositData }] });
+        const depositTx = await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: vaultAddr, data: depositData, gas: "0x30D40" }] });
 
         setStep("Claiming on RougeChain...");
         const claim = await claimXrgeBridgeDeposit({ evmTxHash: depositTx as string, evmAddress, amount: (BigInt(Math.floor(amountNum)) * 10n ** 18n).toString(), recipientRougechainPubkey: rougechainPubkey });
