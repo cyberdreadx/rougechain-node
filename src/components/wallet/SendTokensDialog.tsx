@@ -12,7 +12,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { sendTransaction, getWalletBalance, WalletBalance, BASE_TRANSFER_FEE } from "@/lib/pqc-wallet";
+import { getWalletBalance, WalletBalance, BASE_TRANSFER_FEE } from "@/lib/pqc-wallet";
+import { secureTransfer } from "@/lib/secure-api";
 import { qethToHuman, humanToQeth, formatQethForDisplay } from "@/hooks/use-eth-price";
 import PqcQrScanner from "./PqcQrScanner";
 
@@ -119,14 +120,17 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
 
     setSending(true);
     try {
-      await sendTransaction(
-        wallet.signingPrivateKey,
+      const result = await secureTransfer(
         wallet.signingPublicKey,
-        parsed.address, // Use parsed address without prefix
+        wallet.signingPrivateKey,
+        parsed.address,
         amountToSend,
-        selectedToken,
-        memo || undefined
+        BASE_TRANSFER_FEE,
+        selectedToken
       );
+      if (!result.success) {
+        throw new Error(result.error || "Transfer failed");
+      }
 
       // Transaction submitted - now wait for it to be mined
       setSending(false);

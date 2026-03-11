@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -6,6 +6,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
 import { Footer } from "@/components/Footer";
+import { loadUnifiedWallet, isWalletLocked } from "@/lib/unified-wallet";
+import { registerWalletOnNode } from "@/lib/pqc-messenger";
 import Index from "./pages/Index";
 import Blockchain from "./pages/Blockchain";
 import Messenger from "./pages/Messenger";
@@ -28,6 +30,24 @@ import Privacy from "./pages/Privacy";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
+
+function WalletAutoRegister() {
+  const registered = useRef(false);
+  useEffect(() => {
+    if (registered.current || isWalletLocked()) return;
+    registered.current = true;
+    const w = loadUnifiedWallet();
+    if (w?.encryptionPublicKey) {
+      registerWalletOnNode({
+        id: w.id,
+        displayName: w.displayName,
+        signingPublicKey: w.signingPublicKey,
+        encryptionPublicKey: w.encryptionPublicKey,
+      }).catch(() => {});
+    }
+  }, []);
+  return null;
+}
 
 // Scroll to top on route change
 function ScrollToTop() {
@@ -56,6 +76,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        <WalletAutoRegister />
         <ScrollToTop />
         <div className="min-h-screen flex flex-col">
           <Sidebar>

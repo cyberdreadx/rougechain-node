@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { createToken, TOKEN_CREATION_FEE, WalletBalance } from "@/lib/pqc-wallet";
+import { TOKEN_CREATION_FEE, WalletBalance } from "@/lib/pqc-wallet";
 import { secureCreateToken } from "@/lib/secure-api";
 import { fileToLogoDataUri } from "@/lib/image-utils";
 

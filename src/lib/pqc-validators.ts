@@ -1,4 +1,5 @@
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
+import { secureStake, secureUnstake } from "@/lib/secure-api";
 
 export type ValidatorTier = "standard" | "operator" | "genesis";
 export type ValidatorStatus = "pending" | "active" | "jailed" | "unbonding" | "inactive";
@@ -113,7 +114,7 @@ const COMMISSION_BY_TIER: Record<ValidatorTier, number> = {
   genesis: 0.15,
 };
 
-// Register as a validator
+// Register as a validator (v2 client-side signing)
 export async function registerValidator(
   walletId: string,
   signingPublicKey: string,
@@ -121,23 +122,9 @@ export async function registerValidator(
   stakeAmount: number,
   tier: ValidatorTier = "standard"
 ): Promise<Validator> {
-  const apiBase = getCoreApiBaseUrl();
-  if (!apiBase) {
-    throw new Error("Mainnet API is not configured");
-  }
-  const response = await fetch(`${apiBase}/stake/submit`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
-    body: JSON.stringify({
-      fromPrivateKey: signingPrivateKey,
-      fromPublicKey: signingPublicKey,
-      amount: stakeAmount,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => null);
-    throw new Error(errorBody?.error || "Failed to submit stake transaction");
+  const result = await secureStake(signingPublicKey, signingPrivateKey, stakeAmount);
+  if (!result.success) {
+    throw new Error(result.error || "Failed to submit stake transaction");
   }
 
   const resolvedTier = getTierFromStake(stakeAmount) || tier;
@@ -407,6 +394,7 @@ export async function getValidatorStats(validatorId: string): Promise<ValidatorS
 }
 
 // Unstake tokens
+// Unstake tokens (v2 client-side signing)
 export async function unstake(
   validatorId: string,
   signingPublicKey: string,
@@ -417,23 +405,9 @@ export async function unstake(
   newStatus: ValidatorStatus;
   newTier: ValidatorTier;
 }> {
-  const apiBase = getCoreApiBaseUrl();
-  if (!apiBase) {
-    throw new Error("Mainnet API is not configured");
-  }
-  const response = await fetch(`${apiBase}/unstake/submit`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
-    body: JSON.stringify({
-      fromPrivateKey: signingPrivateKey,
-      fromPublicKey: signingPublicKey,
-      amount,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => null);
-    throw new Error(errorBody?.error || "Failed to submit unstake transaction");
+  const result = await secureUnstake(signingPublicKey, signingPrivateKey, amount);
+  if (!result.success) {
+    throw new Error(result.error || "Failed to submit unstake transaction");
   }
 
   const validators = await getValidators();
