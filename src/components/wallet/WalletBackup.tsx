@@ -10,7 +10,10 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
-  FileKey2
+  FileKey2,
+  Copy,
+  Check,
+  Share2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +50,30 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
   const [vaultConfirm, setVaultConfirm] = useState("");
   const [vaultProcessing, setVaultProcessing] = useState(false);
 
+  const [exportedData, setExportedData] = useState<string | null>(null);
+  const [exportFileName, setExportFileName] = useState("");
+  const [copied, setCopied] = useState(false);
+  const triggerDownload = (data: string, fileName: string): boolean => {
+    try {
+      const blob = new Blob([data], { type: "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      // Delay revoke so the browser has time to start the download
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 3000);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const handleExport = async () => {
     if (!wallet) return;
     
@@ -67,22 +94,48 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
     setIsProcessing(true);
     try {
       const encrypted = await encryptWallet(wallet, password);
-      
-      // Create downloadable file
-      const blob = new Blob([encrypted], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `xrge-wallet-backup-${wallet.displayName.replace(/\s+/g, "-")}-${Date.now()}.pqcbackup`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      
-      toast.success("Wallet exported successfully", {
-        description: "Store your backup file and password securely"
-      });
-      
+      const fileName = `xrge-wallet-backup-${wallet.displayName.replace(/\s+/g, "-")}-${Date.now()}.pqcbackup`;
+
+      // Try native File System Access API first (Chrome/Edge on desktop)
+      if ("showSaveFilePicker" in window) {
+        try {
+          const handle = await (window as any).showSaveFilePicker({
+            suggestedName: fileName,
+            types: [{ description: "PQC Wallet Backup", accept: { "application/octet-stream": [".pqcbackup"] } }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(encrypted);
+          await writable.close();
+          toast.success("Wallet exported successfully", {
+            description: "Store your backup file and password securely"
+          });
+          setPassword("");
+          setConfirmPassword("");
+          setIsProcessing(false);
+          return;
+        } catch (e: any) {
+          if (e?.name === "AbortError") {
+            setIsProcessing(false);
+            return;
+          }
+          // Fall through to other methods
+        }
+      }
+
+      // Try standard download link
+      const downloaded = triggerDownload(encrypted, fileName);
+
+      if (downloaded) {
+        toast.success("Wallet exported successfully", {
+          description: "Store your backup file and password securely"
+        });
+      }
+
+      // Always show the backup data as fallback so users can copy it
+      // (mobile browsers often silently block programmatic downloads)
+      setExportedData(encrypted);
+      setExportFileName(fileName);
+
       setPassword("");
       setConfirmPassword("");
     } catch (error) {
@@ -92,6 +145,31 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
       });
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleCopyBackup = async () => {
+    if (!exportedData) return;
+    try {
+      await navigator.clipboard.writeText(exportedData);
+      setCopied(true);
+      toast.success("Backup copied to clipboard");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("Failed to copy");
+    }
+  };
+
+  const handleShareBackup = async () => {
+    if (!exportedData) return;
+    try {
+      const file = new File([exportedData], exportFileName, { type: "application/octet-stream" });
+      await navigator.share({ files: [file], title: "XRGE Wallet Backup" });
+      toast.success("Backup shared successfully");
+    } catch (e: any) {
+      if (e?.name !== "AbortError") {
+        toast.error("Share failed — try copying instead");
+      }
     }
   };
 
@@ -319,6 +397,39 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
                 </>
               )}
             </Button>
+
+            {exportedData && (
+              <div className="space-y-3 pt-2 border-t border-border">
+                <div className="p-3 rounded-lg bg-success/10 border border-success/20">
+                  <div className="flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-success shrink-0 mt-0.5" />
+                    <div className="text-xs text-muted-foreground">
+                      <p className="font-medium text-foreground mb-1">Backup Ready</p>
+                      <p>
+                        If the download didn't start automatically, use the buttons
+                        below to save your backup.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1" onClick={handleCopyBackup}>
+                    {copied ? <Check className="w-4 h-4 mr-2" /> : <Copy className="w-4 h-4 mr-2" />}
+                    {copied ? "Copied!" : "Copy Backup"}
+                  </Button>
+                  {"share" in navigator && (
+                    <Button variant="outline" className="flex-1" onClick={handleShareBackup}>
+                      <Share2 className="w-4 h-4 mr-2" />
+                      Share File
+                    </Button>
+                  )}
+                  <Button variant="outline" className="flex-1" onClick={() => triggerDownload(exportedData, exportFileName)}>
+                    <Download className="w-4 h-4 mr-2" />
+                    Retry
+                  </Button>
+                </div>
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="import" className="p-4 pt-2 space-y-4">
