@@ -1072,5 +1072,13 @@ export async function getMessages(
     });
   }
 
-  return decryptedMessages;
+  // Filter out expired self-destruct messages client-side
+  const now = Date.now();
+  return decryptedMessages.filter(m => {
+    if (!m.selfDestruct || !m.readAt) return true;
+    const readTime = new Date(m.readAt).getTime();
+    if (isNaN(readTime)) return true;
+    const ttl = (m.destructAfterSeconds ?? 30) * 1000;
+    return now < readTime + ttl;
+  });
 }

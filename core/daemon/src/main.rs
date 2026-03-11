@@ -297,6 +297,26 @@ async fn main() -> Result<(), String> {
         });
     }
 
+    // Background: clean up expired self-destruct messages every 30s
+    {
+        let cleanup_node = node.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(StdDuration::from_secs(30));
+            loop {
+                interval.tick().await;
+                match cleanup_node.cleanup_expired_messages() {
+                    Ok(n) if n > 0 => {
+                        eprintln!("[messenger] cleaned up {} expired self-destruct message(s)", n);
+                    }
+                    Err(e) => {
+                        eprintln!("[messenger] cleanup error: {}", e);
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+
     eprintln!("[core-daemon] building API router...");
     let api_router = build_http_router(app_state.clone());
     eprintln!("[core-daemon] binding API server...");
@@ -2552,6 +2572,7 @@ async fn send_messenger_message(
         destruct_after_seconds: body.get("destructAfterSeconds").and_then(|v| v.as_u64()),
         created_at: chrono::Utc::now().to_rfc3339(),
         is_read: false,
+        read_at: None,
         message_type: body.get("messageType").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
         spoiler: body.get("spoiler").and_then(|v| v.as_bool()).unwrap_or(false),
     };

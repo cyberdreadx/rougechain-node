@@ -1,0 +1,96 @@
+﻿cargo :    Compiling 
+generic-array v0.14.7
+At line:1 char:32
++ $env:CARGO_TERM_COL
+OR="never"; cargo 
+build --release 2>&1 
+| Out-File  ...
++                    
+            ~~~~~~~~~
+~~~~~~~~~~~~~~~~~
+    + CategoryInfo   
+           : NotSpe  
+  cified: (   Comp   
+ iling generic-ar    
+ray v0.14.7:Stri    
+ng) [], RemoteEx    
+ception
+    + FullyQualified 
+   ErrorId : Native  
+  CommandError
+ 
+   Compiling 
+synstructure v0.13.2
+   Compiling 
+windows-sys v0.60.2
+   Compiling 
+zerovec-derive 
+v0.11.2
+   Compiling 
+tokio-macros v2.6.0
+   Compiling 
+displaydoc v0.2.5
+   Compiling 
+futures-macro v0.3.31
+   Compiling 
+serde_derive v1.0.228
+   Compiling 
+rand_chacha v0.3.1
+   Compiling 
+tracing-attributes 
+v0.1.31
+   Compiling 
+prost-derive v0.12.6
+   Compiling 
+serde_json v1.0.149
+   Compiling 
+crossbeam-utils 
+v0.8.21
+   Compiling 
+windows-sys v0.52.0
+   Compiling digest 
+v0.9.0
+   Compiling 
+block-buffer v0.7.3
+   Compiling 
+thiserror-impl 
+v1.0.69
+   Compiling 
+thiserror v1.0.69
+   Compiling winapi 
+v0.3.9
+   Compiling base64 
+v0.21.7
+   Compiling 
+prettyplease v0.2.37
+   Compiling 
+regex-syntax v0.8.8
+   Compiling subtle 
+v2.6.1
+   Compiling mime 
+v0.3.17
+error: failed to run 
+custom build command 
+for `generic-array 
+v0.14.7`
+
+Caused by:
+  could not execute 
+process `C:\Users\bra
+nd\Documents\GitHub\q
+uantum-vault\core\tar
+get\release\build\gen
+eric-array-05087771ca
+51db62\build-script-b
+uild` (never 
+executed)
+
+Caused by:
+  An Application 
+Control policy has 
+blocked this file. 
+(os error 4551)
+warning: build 
+failed, waiting for 
+other jobs to 
+finish...

@@ -2860,6 +2860,10 @@ impl L1Node {
         self.messenger_store.mark_message_read(message_id)
     }
 
+    pub fn cleanup_expired_messages(&self) -> Result<usize, String> {
+        self.messenger_store.cleanup_expired_messages()
+    }
+
     // --- Name Registry ---
 
     pub fn register_name(&self, name: &str, wallet_id: &str) -> Result<NameEntry, String> {

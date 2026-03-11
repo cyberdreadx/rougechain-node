@@ -34,6 +34,8 @@ pub struct MessengerMessage {
     pub destruct_after_seconds: Option<u64>,
     pub created_at: String,
     pub is_read: bool,
+    #[serde(default)]
+    pub read_at: Option<String>,
     #[serde(default = "default_message_type")]
     pub message_type: String, // "text", "image", "video"
     #[serde(default)]
@@ -159,9 +161,13 @@ impl MessengerStore {
     pub fn mark_message_read(&self, message_id: &str) -> Result<MessengerMessage, String> {
         let mut state = self.load_state()?;
         let mut updated = None;
+        let now = chrono::Utc::now().to_rfc3339();
         for message in state.messages.iter_mut() {
             if message.id == message_id {
                 message.is_read = true;
+                if message.read_at.is_none() {
+                    message.read_at = Some(now);
+                }
                 updated = Some(message.clone());
                 break;
             }
@@ -171,6 +177,41 @@ impl MessengerStore {
             return Ok(message);
         }
         Err("message not found".to_string())
+    }
+
+    /// Remove self-destruct messages that have been read and whose timer has expired.
+    /// Returns the number of messages deleted.
+    pub fn cleanup_expired_messages(&self) -> Result<usize, String> {
+        let mut state = self.load_state()?;
+        let now = chrono::Utc::now();
+        let before = state.messages.len();
+
+        state.messages.retain(|m| {
+            if !m.self_destruct {
+                return true; // keep non-self-destruct messages
+            }
+            let read_at = match &m.read_at {
+                Some(ts) => ts,
+                None => return true, // not read yet — keep
+            };
+            let parsed = match chrono::DateTime::parse_from_rfc3339(read_at) {
+                Ok(dt) => dt.with_timezone(&chrono::Utc),
+                Err(_) => return true, // unparseable timestamp — keep to be safe
+            };
+            let ttl_secs = m.destruct_after_seconds.unwrap_or(30);
+            let deadline = parsed + chrono::Duration::seconds(ttl_secs as i64);
+            if now >= deadline {
+                false // expired — delete
+            } else {
+                true // still within TTL — keep
+            }
+        });
+
+        let removed = before - state.messages.len();
+        if removed > 0 {
+            self.save_state(&state)?;
+        }
+        Ok(removed)
     }
 
 
