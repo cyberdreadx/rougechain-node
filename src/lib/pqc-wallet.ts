@@ -362,6 +362,9 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
             const p = txV1.payload;
             const amount = (p.amount || 0) as number;
             const tokenSymbol = (p.token_symbol || p.tokenSymbol || "qETH") as string;
+            const isQethToken = tokenSymbol === "qETH";
+            const displayAmount = isQethToken ? amount / 1_000_000 : amount;
+            const displayStr = isQethToken ? displayAmount.toFixed(6).replace(/\.?0+$/, '') : displayAmount.toLocaleString();
 
             const tx: Transaction = {
               type: "transfer",
@@ -370,7 +373,7 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
               amount: amount,
               symbol: tokenSymbol,
               timestamp: blockV1.header.time,
-              memo: txType === "bridge_mint" ? `Bridge deposit: ${amount} ${tokenSymbol}` : `Bridge withdrawal: ${amount} ${tokenSymbol}`,
+              memo: txType === "bridge_mint" ? `Bridge deposit: ${displayStr} ${tokenSymbol}` : `Bridge withdrawal: ${displayStr} ${tokenSymbol}`,
               fee: txV1.fee,
               feeRecipient: proposerPubKey,
             };
@@ -609,11 +612,14 @@ export async function getWalletTransactions(publicKey: string): Promise<WalletTr
 
     const counterparty = isSender ? tx.to : tx.from;
 
+    const txSymbol = tx.symbol || "XRGE";
+    const txAmount = txSymbol === "qETH" ? (tx.amount / 1_000_000).toFixed(6).replace(/\.?0+$/, '') : tx.amount.toString();
+
     walletTxs.push({
       id: block.hash.slice(0, 16),
       type,
-      amount: tx.amount.toString(),
-      symbol: tx.symbol || "XRGE",
+      amount: txAmount,
+      symbol: txSymbol,
       address: truncateAddress(counterparty),
       timeLabel: formatTimestamp(tx.timestamp),
       timestamp: tx.timestamp,
