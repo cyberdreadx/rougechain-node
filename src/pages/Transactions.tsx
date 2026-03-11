@@ -318,8 +318,8 @@ const Transactions = () => {
 
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
           <div className="space-y-2">
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-foreground">Transaction Feed</h1>
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              <h1 className="text-xl sm:text-2xl font-bold text-foreground">Transaction Feed</h1>
               <Badge variant="outline">{getNetworkLabel()}</Badge>
               {/* WebSocket connection status */}
               <div className="flex items-center gap-1.5" title={`Connection: ${connectionType}`}>
@@ -543,9 +543,9 @@ const Transactions = () => {
 
             {/* Pagination Controls */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between pt-4 border-t border-border">
-                <div className="text-sm text-muted-foreground">
-                  Showing {startIndex + 1}-{Math.min(startIndex + ITEMS_PER_PAGE, filteredTxs.length)} of {filteredTxs.length} transactions
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-4 border-t border-border">
+                <div className="text-xs sm:text-sm text-muted-foreground">
+                  Showing {startIndex + 1}-{Math.min(startIndex + ITEMS_PER_PAGE, filteredTxs.length)} of {filteredTxs.length}
                 </div>
                 <div className="flex items-center gap-2">
                   <Button

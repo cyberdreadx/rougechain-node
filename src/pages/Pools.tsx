@@ -2,9 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Droplets, TrendingUp, Loader2, Info, Minus, BarChart3, ArrowDownUp, Shield } from "lucide-react";
-import xrgeLogo from "@/assets/xrge-logo.webp";
-import qethLogo from "@/assets/qeth-logo.png";
 import { Button } from "@/components/ui/button";
+import { TokenIcon } from "@/components/ui/token-icon";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -31,6 +30,7 @@ import { secureCreatePool, secureAddLiquidity, secureRemoveLiquidity } from "@/l
 import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
 import SwapWidget from "@/components/messenger/SwapWidget";
 import { formatTokenAmount } from "@/hooks/use-eth-price";
+import { useTokenMetadata } from "@/hooks/use-token-metadata";
 
 interface Pool {
   pool_id: string;
@@ -50,6 +50,7 @@ interface Token {
 }
 
 const Pools = () => {
+  const { getTokenImage } = useTokenMetadata();
   const [pools, setPools] = useState<Pool[]>([]);
   const [tokens, setTokens] = useState<Token[]>([]);
   const [lpBalances, setLpBalances] = useState<Record<string, number>>({});
@@ -292,22 +293,6 @@ const Pools = () => {
     return formatTokenAmount(n, symbol);
   };
 
-  const TokenIcon = ({ symbol, size = 32 }: { symbol: string; size?: number }) => {
-    if (symbol === "XRGE") {
-      return <img src={xrgeLogo} alt="XRGE" className="rounded-full" style={{ width: size, height: size }} />;
-    }
-    if (symbol === "qETH") {
-      return <img src={qethLogo} alt="qETH" className="rounded-full" style={{ width: size, height: size }} />;
-    }
-    return (
-      <div 
-        className="rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold"
-        style={{ width: size, height: size }}
-      >
-        {symbol.charAt(0)}
-      </div>
-    );
-  };
 
   // Show cyberpunk loader during pool operations
   if (actionLoading) {
@@ -326,30 +311,31 @@ const Pools = () => {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-6"
         >
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h1 className="text-2xl font-bold">Liquidity Pools</h1>
-                <div className="flex items-center gap-1 text-xs text-green-500 bg-green-500/10 px-2 py-0.5 rounded-full">
+                <div className="flex items-center gap-1 text-xs text-green-500 bg-green-500/10 px-2 py-0.5 rounded-full whitespace-nowrap">
                   <Shield className="w-3 h-3" />
                   <span>Secure</span>
                 </div>
               </div>
-              <p className="text-muted-foreground">Provide liquidity and earn fees</p>
+              <p className="text-muted-foreground text-sm">Provide liquidity and earn fees</p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 shrink-0">
               <Button
                 variant="default"
+                size="sm"
                 onClick={() => setShowSwapWidget(true)}
                 disabled={!wallet}
               >
-                <ArrowDownUp className="w-4 h-4 mr-2" />
+                <ArrowDownUp className="w-4 h-4 mr-1.5" />
                 Swap
               </Button>
               <Dialog open={showCreatePool} onOpenChange={setShowCreatePool}>
                 <DialogTrigger asChild>
-                  <Button variant="outline" disabled={!wallet}>
-                    <Plus className="w-4 h-4 mr-2" />
+                  <Button variant="outline" size="sm" disabled={!wallet}>
+                    <Plus className="w-4 h-4 mr-1.5" />
                     New Pool
                   </Button>
                 </DialogTrigger>
@@ -445,18 +431,18 @@ const Pools = () => {
               {pools.map((pool) => (
                 <Card key={pool.pool_id} className="bg-card/50 backdrop-blur border-primary/20">
                   <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="flex -space-x-2">
-                          <TokenIcon symbol={pool.token_a} size={32} />
-                          <TokenIcon symbol={pool.token_b} size={32} />
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="flex -space-x-2 shrink-0">
+                          <TokenIcon symbol={pool.token_a} size={32} imageUrl={getTokenImage(pool.token_a)} />
+                          <TokenIcon symbol={pool.token_b} size={32} imageUrl={getTokenImage(pool.token_b)} />
                         </div>
-                        <div>
-                          <CardTitle className="text-lg">{pool.token_a}/{pool.token_b}</CardTitle>
+                        <div className="min-w-0">
+                          <CardTitle className="text-lg truncate">{pool.token_a}/{pool.token_b}</CardTitle>
                           <CardDescription>Fee: {(pool.fee_rate * 100).toFixed(1)}%</CardDescription>
                         </div>
                       </div>
-                      <Badge variant="secondary">
+                      <Badge variant="secondary" className="text-xs shrink-0">
                         TVL: {formatNumber(pool.reserve_a, pool.token_a)} + {formatNumber(pool.reserve_b, pool.token_b)}
                       </Badge>
                     </div>
@@ -481,7 +467,7 @@ const Pools = () => {
                       </div>
                     </div>
                     
-                    <div className="flex gap-2 mt-4">
+                    <div className="flex flex-wrap gap-2 mt-4">
                       <Link to={`/pool/${pool.pool_id}`}>
                         <Button size="sm" variant="secondary">
                           <BarChart3 className="w-3 h-3 mr-1" />

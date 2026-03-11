@@ -185,7 +185,8 @@ export function createSignedTokenCreation(
   tokenName: string,
   tokenSymbol: string,
   initialSupply: number,
-  fee: number = 10
+  fee: number = 10,
+  image?: string
 ): SignedTransaction {
   const payload: TransactionPayload = {
     type: "create_token",
@@ -196,6 +197,7 @@ export function createSignedTokenCreation(
     fee,
     timestamp: Date.now(),
     nonce: generateNonce(),
+    ...(image ? { image } : {}),
   };
 
   return signTransaction(payload, creatorPrivateKey, creatorPublicKey);

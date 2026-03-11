@@ -400,7 +400,7 @@ const Bridge = () => {
                         <span>{a.icon}</span>
                         {a.label}
                       </div>
-                      <span className={`text-[10px] font-normal ${asset === a.id ? "text-primary-foreground/70" : "text-muted-foreground/60"}`}>
+                      <span className={`text-[10px] font-normal truncate max-w-full px-1 ${asset === a.id ? "text-primary-foreground/70" : "text-muted-foreground/60"}`}>
                         {balLabel}
                       </span>
                     </button>
@@ -475,9 +475,10 @@ const Bridge = () => {
 
               {/* Connect wallet / Action button */}
               {direction === "deposit" && !evmAddress ? (
-                <Button onClick={connectEvm} variant="outline" className="w-full gap-2 h-12">
-                  <Wallet className="w-4 h-4" />
-                  Connect MetaMask (Base Sepolia)
+                <Button onClick={connectEvm} variant="outline" className="w-full gap-2 h-12 whitespace-nowrap text-sm">
+                  <Wallet className="w-4 h-4 shrink-0" />
+                  <span className="hidden sm:inline">Connect MetaMask (Base Sepolia)</span>
+                  <span className="sm:hidden">Connect MetaMask</span>
                 </Button>
               ) : (
                 <Button

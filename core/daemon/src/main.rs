@@ -2878,6 +2878,7 @@ async fn v2_create_token(
     let token_name = payload.get("token_name").and_then(|v| v.as_str()).unwrap_or_default();
     let token_symbol = payload.get("token_symbol").and_then(|v| v.as_str()).unwrap_or_default();
     let initial_supply = payload.get("initial_supply").and_then(|v| v.as_u64()).unwrap_or(0);
+    let token_image = payload.get("image").and_then(|v| v.as_str()).map(|s| s.to_string());
     let fee = 100.0_f64; // Server-enforced token creation fee
 
     if token_name.is_empty() || token_symbol.is_empty() {
@@ -2914,7 +2915,15 @@ async fn v2_create_token(
     
     node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
-    
+
+    let _ = node.register_token_metadata(
+        token_symbol,
+        token_name,
+        &body.public_key,
+        token_image,
+        None,
+    );
+
     Ok(Json(serde_json::json!({
         "success": true,
         "token_symbol": token_symbol,

@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { ArrowDownUp, Settings, Info, Loader2, RefreshCw, ChevronDown, AlertTriangle, Shield } from "lucide-react";
-import xrgeLogo from "@/assets/xrge-logo.webp";
-import qethLogo from "@/assets/qeth-logo.png";
 import { Button } from "@/components/ui/button";
+import { TokenIcon } from "@/components/ui/token-icon";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -30,6 +29,7 @@ import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { secureSwap } from "@/lib/secure-api";
 import { formatTokenAmount, isQeth, humanToQeth, qethToHuman } from "@/hooks/use-eth-price";
 import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
+import { useTokenMetadata } from "@/hooks/use-token-metadata";
 
 interface Token {
   symbol: string;
@@ -55,24 +55,9 @@ interface Pool {
   fee_rate: number;
 }
 
-const TokenIcon = ({ symbol, size = 20 }: { symbol: string; size?: number }) => {
-  if (symbol === "XRGE") {
-    return <img src={xrgeLogo} alt="XRGE" className="rounded-full" style={{ width: size, height: size }} />;
-  }
-  if (symbol === "qETH") {
-    return <img src={qethLogo} alt="qETH" className="rounded-full" style={{ width: size, height: size }} />;
-  }
-  return (
-    <div 
-      className="rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold"
-      style={{ width: size, height: size }}
-    >
-      {symbol.charAt(0)}
-    </div>
-  );
-};
 
 const Swap = () => {
+  const { getTokenImage } = useTokenMetadata();
   const [tokens, setTokens] = useState<Token[]>([]);
   const [tokenIn, setTokenIn] = useState<string>("XRGE");
   const [tokenOut, setTokenOut] = useState<string>("");
@@ -366,7 +351,7 @@ const Swap = () => {
                       {tokens.map(t => (
                         <SelectItem key={t.symbol} value={t.symbol} disabled={t.symbol === tokenOut}>
                           <div className="flex items-center gap-2">
-                            <TokenIcon symbol={t.symbol} size={16} />
+                            <TokenIcon symbol={t.symbol} size={16} imageUrl={getTokenImage(t.symbol)} />
                             <span>{t.symbol}</span>
                           </div>
                         </SelectItem>
@@ -422,7 +407,7 @@ const Swap = () => {
                       {tokens.map(t => (
                         <SelectItem key={t.symbol} value={t.symbol} disabled={t.symbol === tokenIn}>
                           <div className="flex items-center gap-2">
-                            <TokenIcon symbol={t.symbol} size={16} />
+                            <TokenIcon symbol={t.symbol} size={16} imageUrl={getTokenImage(t.symbol)} />
                             <span>{t.symbol}</span>
                           </div>
                         </SelectItem>
@@ -469,7 +454,7 @@ const Swap = () => {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Route</span>
-                    <span className="text-xs">{quote.path.join(" → ")}</span>
+                    <span className="text-xs truncate max-w-[200px] sm:max-w-none">{quote.path.join(" → ")}</span>
                   </div>
                 </div>
               )}

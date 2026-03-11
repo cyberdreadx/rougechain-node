@@ -476,7 +476,7 @@ const AddressDetail = () => {
                           <span>{"\u2014"}</span>
                         )}
                       </div>
-                      <div className="grid grid-cols-3 gap-3 text-sm">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
                         <div>
                           <div className="text-xs text-muted-foreground">Amount</div>
                           <div className="font-mono">
@@ -606,9 +606,9 @@ const AddressDetail = () => {
               </div>
 
               {totalPages > 1 && (
-                <div className="flex items-center justify-between pt-4 border-t border-border mt-4">
-                  <div className="text-sm text-muted-foreground">
-                    Showing {startIndex + 1}-{Math.min(startIndex + ITEMS_PER_PAGE, transactions.length)} of {transactions.length} transactions
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-4 border-t border-border mt-4">
+                  <div className="text-xs sm:text-sm text-muted-foreground">
+                    Showing {startIndex + 1}-{Math.min(startIndex + ITEMS_PER_PAGE, transactions.length)} of {transactions.length}
                   </div>
                   <div className="flex items-center gap-2">
                     <Button

@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { motion } from "framer-motion";
-import { X, Plus, Loader2, AlertCircle, Coins, CheckCircle2 } from "lucide-react";
+import { X, Plus, Loader2, AlertCircle, Coins, CheckCircle2, ImageIcon, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { createToken, TOKEN_CREATION_FEE, WalletBalance } from "@/lib/pqc-wallet";
+import { secureCreateToken } from "@/lib/secure-api";
+import { fileToLogoDataUri } from "@/lib/image-utils";
 
 interface CreateTokenDialogProps {
   wallet: {
@@ -21,12 +23,32 @@ const CreateTokenDialog = ({ wallet, balances, onClose, onSuccess }: CreateToken
   const [tokenName, setTokenName] = useState("");
   const [tokenSymbol, setTokenSymbol] = useState("");
   const [totalSupply, setTotalSupply] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [createdToken, setCreatedToken] = useState<{ address: string; symbol: string } | null>(null);
 
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
   const hasEnoughFee = xrgeBalance >= TOKEN_CREATION_FEE;
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingImage(true);
+    try {
+      const dataUri = await fileToLogoDataUri(file);
+      setImageUrl(dataUri);
+    } catch (err) {
+      toast.error("Failed to process image", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setUploadingImage(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   const handleCreate = async () => {
     setError("");
@@ -59,17 +81,26 @@ const CreateTokenDialog = ({ wallet, balances, onClose, onSuccess }: CreateToken
 
     setCreating(true);
     try {
-      const { tokenAddress } = await createToken(
-        wallet.signingPrivateKey,
+      const sym = tokenSymbol.trim().toUpperCase();
+      const trimmedImage = imageUrl.trim() || undefined;
+
+      const result = await secureCreateToken(
         wallet.signingPublicKey,
+        wallet.signingPrivateKey,
         tokenName.trim(),
-        tokenSymbol.trim().toUpperCase(),
+        sym,
         supply,
-        18
+        100,
+        trimmedImage
       );
 
-      setCreatedToken({ address: tokenAddress, symbol: tokenSymbol.trim().toUpperCase() });
-      toast.success(`Token ${tokenSymbol.toUpperCase()} created!`);
+      if (!result.success) {
+        throw new Error(result.error || "Token creation failed");
+      }
+
+      const tokenAddress = `token:${wallet.signingPublicKey.slice(0, 16)}:${sym.toLowerCase()}`;
+      setCreatedToken({ address: tokenAddress, symbol: sym });
+      toast.success(`Token ${sym} created!`);
     } catch (err) {
       console.error("Token creation error:", err);
       setError(err instanceof Error ? err.message : "Failed to create token");
@@ -191,6 +222,75 @@ const CreateTokenDialog = ({ wallet, balances, onClose, onSuccess }: CreateToken
                 <p className="text-xs text-muted-foreground mt-1">
                   You will receive all tokens at creation
                 </p>
+              </div>
+
+              <div>
+                <Label className="flex items-center gap-1.5">
+                  <ImageIcon className="w-3.5 h-3.5" />
+                  Logo <span className="text-muted-foreground font-normal">(optional)</span>
+                </Label>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    disabled={uploadingImage}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    {uploadingImage ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                    ) : (
+                      <Upload className="w-4 h-4 mr-1.5" />
+                    )}
+                    Upload
+                  </Button>
+                  <span className="text-xs text-muted-foreground">or</span>
+                  <Input
+                    value={imageUrl.startsWith("data:") ? "" : imageUrl}
+                    onChange={(e) => setImageUrl(e.target.value)}
+                    placeholder="https://example.com/logo.png"
+                    className="flex-1"
+                    disabled={uploadingImage}
+                  />
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
+                {imageUrl && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <img
+                      src={imageUrl}
+                      alt="Token logo preview"
+                      className="w-10 h-10 rounded-full object-cover border border-border bg-secondary"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      onLoad={(e) => { (e.target as HTMLImageElement).style.display = "block"; }}
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-xs text-muted-foreground">
+                        {imageUrl.startsWith("data:") ? "Uploaded (stored on-chain)" : "URL preview"}
+                      </span>
+                      {imageUrl.startsWith("data:") && (
+                        <span className="text-[10px] text-muted-foreground/60">
+                          {Math.round(imageUrl.length * 0.75 / 1024)} KB
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="ml-auto h-6 w-6"
+                      onClick={() => setImageUrl("")}
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                )}
               </div>
 
               {error && (

@@ -98,8 +98,8 @@ const CollectionsList = () => {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-6"
         >
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-foreground">NFT Explorer</h1>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <h1 className="text-xl sm:text-2xl font-bold text-foreground">NFT Explorer</h1>
             <Badge variant="outline">{getNetworkLabel()}</Badge>
             {!loading && (
               <Badge variant="secondary">{collections.length} collection{collections.length !== 1 ? "s" : ""}</Badge>
@@ -328,7 +328,7 @@ const CollectionDetail = ({ collectionId }: { collectionId: string }) => {
             </div>
           </Card>
 
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
             <Card>
               <CardContent className="pt-4">
                 <div className="flex items-center gap-2 text-muted-foreground mb-1">

@@ -222,16 +222,16 @@ const BlockDetail = () => {
               disabled={blockHeight <= 0}
               onClick={() => navigate(`/block/${blockHeight - 1}`)}
             >
-              <ChevronLeft className="w-4 h-4 mr-1" />
-              Previous Block
+              <ChevronLeft className="w-4 h-4 sm:mr-1" />
+              <span className="hidden sm:inline">Previous</span>
             </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={() => navigate(`/block/${blockHeight + 1}`)}
             >
-              Next Block
-              <ChevronRight className="w-4 h-4 ml-1" />
+              <span className="hidden sm:inline">Next</span>
+              <ChevronRight className="w-4 h-4 sm:ml-1" />
             </Button>
           </div>
         </div>
@@ -477,16 +477,18 @@ const BlockDetail = () => {
             disabled={blockHeight <= 0}
             onClick={() => navigate(`/block/${blockHeight - 1}`)}
           >
-            <ChevronLeft className="w-4 h-4 mr-1" />
-            Previous Block
+            <ChevronLeft className="w-4 h-4 sm:mr-1" />
+            <span className="hidden sm:inline">Previous Block</span>
+            <span className="sm:hidden">Prev</span>
           </Button>
           <Button
             variant="outline"
             size="sm"
             onClick={() => navigate(`/block/${blockHeight + 1}`)}
           >
-            Next Block
-            <ChevronRight className="w-4 h-4 ml-1" />
+            <span className="hidden sm:inline">Next Block</span>
+            <span className="sm:hidden">Next</span>
+            <ChevronRight className="w-4 h-4 sm:ml-1" />
           </Button>
         </div>
       </main>

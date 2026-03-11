@@ -9,9 +9,9 @@ import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import SwapWidget from "@/components/messenger/SwapWidget";
-import xrgeLogo from "@/assets/xrge-logo.webp";
-import qethLogo from "@/assets/qeth-logo.png";
 import { formatTokenAmount } from "@/hooks/use-eth-price";
+import { TokenIcon } from "@/components/ui/token-icon";
+import { useTokenMetadata } from "@/hooks/use-token-metadata";
 
 interface Pool {
   pool_id: string;
@@ -66,22 +66,6 @@ const formatNumber = (n: number, symbol?: string): string => {
   return formatTokenAmount(n, symbol);
 };
 
-const TokenIcon = ({ symbol, size = 24 }: { symbol: string; size?: number }) => {
-  if (symbol === "XRGE") {
-    return <img src={xrgeLogo} alt="XRGE" className="rounded-full" style={{ width: size, height: size }} />;
-  }
-  if (symbol === "qETH") {
-    return <img src={qethLogo} alt="qETH" className="rounded-full" style={{ width: size, height: size }} />;
-  }
-  return (
-    <div
-      className="rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold"
-      style={{ width: size, height: size }}
-    >
-      {symbol.charAt(0)}
-    </div>
-  );
-};
 
 const formatAddress = (addr: string): string => {
   if (addr.length <= 16) return addr;
@@ -130,6 +114,7 @@ const getEventLabel = (event: PoolEvent, pool: Pool | null): string => {
 };
 
 const PoolDetail = () => {
+  const { getTokenImage } = useTokenMetadata();
   const { poolId } = useParams<{ poolId: string }>();
   const [pool, setPool] = useState<Pool | null>(null);
   const [prices, setPrices] = useState<PriceSnapshot[]>([]);
@@ -234,35 +219,35 @@ const PoolDetail = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background p-6">
+    <div className="min-h-screen bg-background p-3 sm:p-6">
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <Link to="/pools">
-              <Button variant="ghost" size="icon">
+              <Button variant="ghost" size="icon" className="shrink-0">
                 <ArrowLeft className="w-4 h-4" />
               </Button>
             </Link>
-            <div className="flex items-center gap-3">
-              <div className="flex -space-x-2">
-                <TokenIcon symbol={pool.token_a} size={36} />
-                <TokenIcon symbol={pool.token_b} size={36} />
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex -space-x-2 shrink-0">
+                <TokenIcon symbol={pool.token_a} size={36} imageUrl={getTokenImage(pool.token_a)} />
+                <TokenIcon symbol={pool.token_b} size={36} imageUrl={getTokenImage(pool.token_b)} />
               </div>
-              <div>
-                <h1 className="text-2xl font-bold">{pool.token_a}/{pool.token_b}</h1>
-                <p className="text-sm text-muted-foreground">Pool ID: {pool.pool_id}</p>
+              <div className="min-w-0">
+                <h1 className="text-xl sm:text-2xl font-bold truncate">{pool.token_a}/{pool.token_b}</h1>
+                <p className="text-xs sm:text-sm text-muted-foreground truncate">Pool ID: {pool.pool_id}</p>
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Button
               variant="default"
               size="sm"
               onClick={() => setShowSwapWidget(true)}
               disabled={!wallet?.signingPrivateKey}
             >
-              <ArrowUpDown className="w-4 h-4 mr-2" />
+              <ArrowUpDown className="w-4 h-4 mr-1.5" />
               Swap
             </Button>
             <Badge variant="secondary">Fee: {(pool.fee_rate * 100).toFixed(1)}%</Badge>

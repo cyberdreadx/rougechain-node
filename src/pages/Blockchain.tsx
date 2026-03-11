@@ -330,26 +330,26 @@ const Blockchain = () => {
                       <span className="text-xs text-muted-foreground">
                         Showing {sortedChain.length === 0 ? 0 : startIndex + 1}-{endIndex} of {sortedChain.length}
                       </span>
-                      <span className="text-[10px] text-muted-foreground">•</span>
-                      <span className="text-xs text-muted-foreground">Page {safePage} of {totalPages}</span>
+                      <span className="text-[10px] text-muted-foreground hidden sm:inline">•</span>
+                      <span className="text-xs text-muted-foreground hidden sm:inline">Page {safePage} of {totalPages}</span>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <div className="flex items-center rounded-full border border-border bg-background p-0.5">
                         <button
                           type="button"
                           onClick={() => setViewMode("table")}
-                          className={`px-3 py-1 text-[11px] rounded-full transition ${viewMode === "table" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                          className={`px-2 sm:px-3 py-1 text-[11px] rounded-full transition ${viewMode === "table" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
                             }`}
                         >
-                          Compact table
+                          Table
                         </button>
                         <button
                           type="button"
                           onClick={() => setViewMode("grid")}
-                          className={`px-3 py-1 text-[11px] rounded-full transition ${viewMode === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                          className={`px-2 sm:px-3 py-1 text-[11px] rounded-full transition ${viewMode === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
                             }`}
                         >
-                          Visual grid
+                          Grid
                         </button>
                       </div>
                       <select

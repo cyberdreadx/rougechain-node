@@ -261,12 +261,12 @@ const TransactionDetail = () => {
       <div className="absolute bottom-0 right-0 w-full max-w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />
 
       <main className="relative z-10 max-w-6xl mx-auto px-4 py-10">
-        <div className="flex items-center gap-3 mb-6">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-6">
           <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
-            <ArrowLeft className="w-4 h-4 mr-2" />
+            <ArrowLeft className="w-4 h-4 mr-1.5" />
             Back
           </Button>
-          <h1 className="text-2xl font-bold text-foreground">Transaction Details</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-foreground">Transaction Details</h1>
           <Badge variant={badgeVariantForType(txType)}>{labelForType(txType)}</Badge>
         </div>
 

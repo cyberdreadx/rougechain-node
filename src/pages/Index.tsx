@@ -66,7 +66,7 @@ const LiveNetworkStatus = () => {
     <motion.div
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex items-center justify-center gap-6 mb-8"
+      className="flex flex-wrap items-center justify-center gap-3 sm:gap-6 mb-8"
     >
       <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-black/40 border border-primary/30 backdrop-blur-sm">
         <div className="relative">

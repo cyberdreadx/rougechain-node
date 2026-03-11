@@ -17,8 +17,8 @@ import { secureSwap } from "@/lib/secure-api";
 import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
 import { useXRGEPrice } from "@/hooks/use-xrge-price";
 import { formatUsd } from "@/lib/price-service";
-import xrgeLogo from "@/assets/xrge-logo.webp";
-import qethLogo from "@/assets/qeth-logo.png";
+import { TokenIcon } from "@/components/ui/token-icon";
+import { useTokenMetadata } from "@/hooks/use-token-metadata";
 
 interface Token {
   symbol: string;
@@ -38,24 +38,9 @@ interface SwapWidgetProps {
   onClose: () => void;
 }
 
-const TokenIcon = ({ symbol, size = 16 }: { symbol: string; size?: number }) => {
-  if (symbol === "XRGE") {
-    return <img src={xrgeLogo} alt="XRGE" className="rounded-full" style={{ width: size, height: size }} />;
-  }
-  if (symbol === "qETH") {
-    return <img src={qethLogo} alt="qETH" className="rounded-full" style={{ width: size, height: size }} />;
-  }
-  return (
-    <div 
-      className="rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold"
-      style={{ width: size, height: size }}
-    >
-      {symbol.charAt(0)}
-    </div>
-  );
-};
 
 const SwapWidget = ({ walletPublicKey, walletPrivateKey, onClose }: SwapWidgetProps) => {
+  const { getTokenImage } = useTokenMetadata();
   const [tokens, setTokens] = useState<Token[]>([]);
   const [tokenIn, setTokenIn] = useState<string>("XRGE");
   const [tokenOut, setTokenOut] = useState<string>("");
@@ -292,7 +277,7 @@ const SwapWidget = ({ walletPublicKey, walletPrivateKey, onClose }: SwapWidgetPr
                   {tokens.map(t => (
                     <SelectItem key={t.symbol} value={t.symbol} disabled={t.symbol === tokenOut}>
                       <div className="flex items-center gap-2">
-                        <TokenIcon symbol={t.symbol} />
+                        <TokenIcon symbol={t.symbol} imageUrl={getTokenImage(t.symbol)} />
                         <span>{t.symbol}</span>
                       </div>
                     </SelectItem>
@@ -342,7 +327,7 @@ const SwapWidget = ({ walletPublicKey, walletPrivateKey, onClose }: SwapWidgetPr
                   {tokens.map(t => (
                     <SelectItem key={t.symbol} value={t.symbol} disabled={t.symbol === tokenIn}>
                       <div className="flex items-center gap-2">
-                        <TokenIcon symbol={t.symbol} />
+                        <TokenIcon symbol={t.symbol} imageUrl={getTokenImage(t.symbol)} />
                         <span>{t.symbol}</span>
                       </div>
                     </SelectItem>

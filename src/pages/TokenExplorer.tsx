@@ -26,8 +26,7 @@ import { useTokenPrices } from "@/hooks/use-token-prices";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { claimTokenMetadata } from "@/lib/secure-api";
 import UpdateTokenMetadataDialog from "@/components/wallet/UpdateTokenMetadataDialog";
-import xrgeLogo from "@/assets/xrge-logo.webp";
-import qethLogo from "@/assets/qeth-logo.png";
+import { TokenIcon } from "@/components/ui/token-icon";
 import { formatTokenAmount } from "@/hooks/use-eth-price";
 
 // Discord logo component
@@ -229,22 +228,9 @@ const TokenExplorer = () => {
     }
   };
 
-  const renderIcon = () => {
-    if (symbol === "XRGE") {
-      return <img src={xrgeLogo} alt="XRGE" className="w-16 h-16 rounded-full" />;
-    }
-    if (symbol === "qETH") {
-      return <img src={qethLogo} alt="qETH" className="w-16 h-16 rounded-full" />;
-    }
-    if (metadata?.image) {
-      return <img src={metadata.image} alt={symbol} className="w-16 h-16 rounded-full object-cover bg-secondary" />;
-    }
-    return (
-      <div className="w-16 h-16 rounded-full bg-secondary flex items-center justify-center text-2xl font-bold text-primary">
-        {symbol?.charAt(0)}
-      </div>
-    );
-  };
+  const renderIcon = () => (
+    <TokenIcon symbol={symbol} size={64} imageUrl={metadata?.image} />
+  );
 
   // Simple SVG chart
   const renderChart = () => {

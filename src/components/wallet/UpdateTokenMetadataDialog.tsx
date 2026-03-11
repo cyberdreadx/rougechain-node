@@ -1,12 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { X, Image, Globe, FileText, Loader2, Check, AlertCircle } from "lucide-react";
+import { X, Image, Globe, FileText, Loader2, Check, AlertCircle, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { updateTokenMetadata, getTokenMetadata, TokenMetadata } from "@/lib/secure-api";
+import { fileToLogoDataUri } from "@/lib/image-utils";
 
 interface UpdateTokenMetadataDialogProps {
   tokenSymbol: string;
@@ -25,6 +26,8 @@ const UpdateTokenMetadataDialog = ({
 }: UpdateTokenMetadataDialogProps) => {
   const [loading, setLoading] = useState(false);
   const [loadingMetadata, setLoadingMetadata] = useState(true);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [image, setImage] = useState("");
   const [description, setDescription] = useState("");
   const [website, setWebsite] = useState("");
@@ -55,6 +58,23 @@ const UpdateTokenMetadataDialog = ({
     }
     loadMetadata();
   }, [tokenSymbol, walletPublicKey]);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingImage(true);
+    try {
+      const dataUri = await fileToLogoDataUri(file);
+      setImage(dataUri);
+    } catch (err) {
+      toast.error("Failed to process image", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setUploadingImage(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   const handleSubmit = async () => {
     if (!isCreator) {
@@ -150,18 +170,74 @@ const UpdateTokenMetadataDialog = ({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="image" className="flex items-center gap-2">
+                <Label className="flex items-center gap-2">
                   <Image className="w-4 h-4" />
-                  Image URL
+                  Logo
                 </Label>
-                <Input
-                  id="image"
-                  placeholder="https://... or ipfs://..."
-                  value={image}
-                  onChange={(e) => setImage(e.target.value)}
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    disabled={uploadingImage}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    {uploadingImage ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                    ) : (
+                      <Upload className="w-4 h-4 mr-1.5" />
+                    )}
+                    Upload
+                  </Button>
+                  <span className="text-xs text-muted-foreground">or</span>
+                  <Input
+                    placeholder="https://... or ipfs://..."
+                    value={image.startsWith("data:") ? "" : image}
+                    onChange={(e) => setImage(e.target.value)}
+                    className="flex-1"
+                    disabled={uploadingImage}
+                  />
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleFileUpload}
                 />
+                {image && (
+                  <div className="flex items-center gap-2">
+                    <img
+                      src={image}
+                      alt="Token logo"
+                      className="w-10 h-10 rounded-full object-cover border border-border bg-secondary"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      onLoad={(e) => { (e.target as HTMLImageElement).style.display = "block"; }}
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-xs text-muted-foreground">
+                        {image.startsWith("data:") ? "Uploaded (stored on-chain)" : "URL"}
+                      </span>
+                      {image.startsWith("data:") && (
+                        <span className="text-[10px] text-muted-foreground/60">
+                          {Math.round(image.length * 0.75 / 1024)} KB
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="ml-auto h-6 w-6"
+                      onClick={() => setImage("")}
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                )}
                 <p className="text-xs text-muted-foreground">
-                  Supports HTTP, HTTPS, IPFS, or data URIs
+                  Upload an image or paste a URL. Uploaded images are compressed and stored on-chain as base64.
                 </p>
               </div>
 

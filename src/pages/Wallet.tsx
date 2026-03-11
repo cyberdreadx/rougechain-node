@@ -686,7 +686,7 @@ const Wallet = () => {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">Quick actions</h3>
             </div>
-            <div className={`grid gap-2 ${isMainnet ? 'grid-cols-4' : 'grid-cols-5'}`}>
+            <div className={`grid gap-2 ${isMainnet ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3 sm:grid-cols-5'}`}>
               <Button
                 variant="outline"
                 className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"

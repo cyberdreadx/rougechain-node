@@ -1,8 +1,7 @@
 import { motion } from "framer-motion";
 import { TrendingUp, TrendingDown, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import xrgeLogo from "@/assets/xrge-logo.webp";
-import qethLogo from "@/assets/qeth-logo.png";
+import { TokenIcon } from "@/components/ui/token-icon";
 
 interface Asset {
   id: string;
@@ -26,50 +25,9 @@ interface AssetListProps {
 }
 
 const AssetList = ({ assets = [], emptyActionLabel, onEmptyAction, emptyHint, onAssetClick }: AssetListProps) => {
-  const renderIcon = (asset: Asset) => {
-    // XRGE always uses the built-in logo
-    if (asset.symbol === "XRGE") {
-      return (
-        <img 
-          src={xrgeLogo} 
-          alt="XRGE" 
-          className="w-10 h-10 rounded-full object-cover"
-        />
-      );
-    }
-    if (asset.symbol === "qETH") {
-      return (
-        <img 
-          src={qethLogo} 
-          alt="qETH" 
-          className="w-10 h-10 rounded-full object-cover"
-        />
-      );
-    }
-    
-    // Use token's on-chain image if available
-    if (asset.imageUrl) {
-      return (
-        <img 
-          src={asset.imageUrl} 
-          alt={asset.symbol}
-          className="w-10 h-10 rounded-full object-cover bg-secondary"
-          onError={(e) => {
-            // Fallback to letter icon on image load error
-            e.currentTarget.style.display = 'none';
-            e.currentTarget.nextElementSibling?.classList.remove('hidden');
-          }}
-        />
-      );
-    }
-    
-    // Default: letter icon
-    return (
-      <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center text-lg font-bold text-primary group-hover:bg-primary/20 transition-colors">
-        {asset.icon}
-      </div>
-    );
-  };
+  const renderIcon = (asset: Asset) => (
+    <TokenIcon symbol={asset.symbol} size={40} imageUrl={asset.imageUrl} />
+  );
 
   return (
     <motion.div
