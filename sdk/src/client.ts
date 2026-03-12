@@ -544,6 +544,7 @@ class DexClient {
     return this.rc.post<SwapQuote>("/swap/quote", {
       pool_id: params.poolId,
       token_in: params.tokenIn,
+      token_out: params.tokenOut,
       amount_in: params.amountIn,
     });
   }

@@ -454,6 +454,7 @@ export interface XrgeBridgeWithdrawParams {
 export interface SwapQuoteParams {
   poolId: string;
   tokenIn: string;
+  tokenOut: string;
   amountIn: number;
 }
 
