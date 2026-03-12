@@ -206,6 +206,16 @@ export interface PoolStats {
   tvl: number;
 }
 
+export interface PriceSnapshot {
+  pool_id: string;
+  timestamp: number;
+  block_height: number;
+  reserve_a: number;
+  reserve_b: number;
+  price_a_in_b: number;
+  price_b_in_a: number;
+}
+
 // ===== NFTs =====
 
 export interface NftCollection {

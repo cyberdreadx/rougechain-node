@@ -64,6 +64,7 @@ import type {
   MessengerWallet,
   MessengerConversation,
   MessengerMessage,
+  PriceSnapshot,
 } from "./types.js";
 
 type FetchFn = typeof globalThis.fetch;
@@ -532,8 +533,11 @@ class DexClient {
     return data.events;
   }
 
-  async getPoolPrices(poolId: string): Promise<unknown> {
-    return this.rc.get(`/pool/${poolId}/prices`);
+  async getPriceHistory(poolId: string): Promise<PriceSnapshot[]> {
+    const data = await this.rc.get<{ prices: PriceSnapshot[] }>(
+      `/pool/${poolId}/prices`
+    );
+    return data.prices;
   }
 
   async getPoolStats(poolId: string): Promise<PoolStats> {

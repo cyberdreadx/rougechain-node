@@ -112,6 +112,22 @@ await rc.burn(wallet, 500);
 ## DEX (`rc.dex`)
 
 ```typescript
+// List all pools
+const pools = await rc.dex.getPools();
+
+// Get a single pool
+const pool = await rc.dex.getPool("XRGE-MTK");
+
+// Get price history (PriceSnapshot[]) — for building charts
+const prices = await rc.dex.getPriceHistory("XRGE-MTK");
+// Each snapshot: { pool_id, timestamp, block_height, reserve_a, reserve_b, price_a_in_b, price_b_in_a }
+
+// Get pool stats (volume, trade count)
+const stats = await rc.dex.getPoolStats("XRGE-MTK");
+
+// Get pool events (swaps, adds, removes)
+const events = await rc.dex.getPoolEvents("XRGE-MTK");
+
 // Get a swap quote
 const quote = await rc.dex.quote({
   poolId: "XRGE-MTK",
@@ -330,6 +346,7 @@ import type {
   Block, Transaction, TokenMetadata, NftCollection,
   NftToken, LiquidityPool, BalanceResponse, Validator,
   BridgeConfig, MailMessage, MessengerMessage, WalletKeys,
+  PriceSnapshot, PoolEvent, PoolStats, SwapQuote,
 } from "@rougechain/sdk";
 ```
 

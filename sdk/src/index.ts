@@ -33,6 +33,7 @@ export type {
   SwapQuote,
   PoolEvent,
   PoolStats,
+  PriceSnapshot,
   NftCollection,
   NftToken,
   Validator,

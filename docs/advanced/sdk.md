@@ -98,10 +98,18 @@ await rc.unstake(wallet, { amount: 500 });
 ### DEX (`rc.dex`)
 
 ```typescript
+// Pool queries
 await rc.dex.getPools();
 await rc.dex.getPool('XRGE-MTK');
+await rc.dex.getPriceHistory('XRGE-MTK');  // PriceSnapshot[] — for building charts
+await rc.dex.getPoolStats('XRGE-MTK');     // volume, swap counts (total + 24h)
+await rc.dex.getPoolEvents('XRGE-MTK');    // swap/add/remove event history
+
+// Quote & swap
 await rc.dex.quote({ poolId: 'XRGE-MTK', tokenIn: 'XRGE', tokenOut: 'MTK', amountIn: 100 });
 await rc.dex.swap(wallet, { tokenIn: 'XRGE', tokenOut: 'MTK', amountIn: 100, minAmountOut: 95 });
+
+// Liquidity
 await rc.dex.createPool(wallet, { tokenA: 'XRGE', tokenB: 'MTK', amountA: 10000, amountB: 5000 });
 await rc.dex.addLiquidity(wallet, { poolId: 'XRGE-MTK', amountA: 1000, amountB: 500 });
 await rc.dex.removeLiquidity(wallet, { poolId: 'XRGE-MTK', lpAmount: 100 });
