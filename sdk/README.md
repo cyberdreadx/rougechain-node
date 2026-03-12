@@ -116,6 +116,7 @@ await rc.burn(wallet, 500);
 const quote = await rc.dex.quote({
   poolId: "XRGE-MTK",
   tokenIn: "XRGE",
+  tokenOut: "MTK",
   amountIn: 100,
 });
 console.log(`You'll receive ${quote.amount_out} MTK`);

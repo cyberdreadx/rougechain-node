@@ -100,7 +100,7 @@ await rc.unstake(wallet, { amount: 500 });
 ```typescript
 await rc.dex.getPools();
 await rc.dex.getPool('XRGE-MTK');
-await rc.dex.quote({ poolId: 'XRGE-MTK', tokenIn: 'XRGE', amountIn: 100 });
+await rc.dex.quote({ poolId: 'XRGE-MTK', tokenIn: 'XRGE', tokenOut: 'MTK', amountIn: 100 });
 await rc.dex.swap(wallet, { tokenIn: 'XRGE', tokenOut: 'MTK', amountIn: 100, minAmountOut: 95 });
 await rc.dex.createPool(wallet, { tokenA: 'XRGE', tokenB: 'MTK', amountA: 10000, amountB: 5000 });
 await rc.dex.addLiquidity(wallet, { poolId: 'XRGE-MTK', amountA: 1000, amountB: 500 });
