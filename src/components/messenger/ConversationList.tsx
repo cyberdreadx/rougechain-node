@@ -6,6 +6,23 @@ import type { Conversation } from "@/lib/pqc-messenger";
 import { deleteConversation } from "@/lib/pqc-messenger";
 import { toast } from "sonner";
 
+function formatRelativeTime(dateStr: string): string {
+  try {
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return "";
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return "now";
+    if (diffMin < 60) return `${diffMin}m`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h`;
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay < 7) return `${diffDay}d`;
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  } catch { return ""; }
+}
+
 interface ConversationListProps {
   conversations: Conversation[];
   selectedId?: string;
@@ -132,19 +149,32 @@ const ConversationList = ({ conversations, selectedId, currentWalletId, currentW
               )}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-medium text-foreground truncate">
-                {getConversationName(conversation)}
-              </p>
-              {getConversationAddress(conversation) && (
-                <p className="text-xs text-muted-foreground font-mono truncate">
-                  {getConversationAddress(conversation)}
+              <div className="flex items-center gap-2">
+                <p className={`font-medium truncate ${(conversation.unreadCount ?? 0) > 0 ? "text-foreground" : "text-foreground"}`}>
+                  {getConversationName(conversation)}
+                </p>
+                {(conversation.unreadCount ?? 0) > 0 && (
+                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                    {conversation.unreadCount! > 9 ? "9+" : conversation.unreadCount}
+                  </span>
+                )}
+              </div>
+              {conversation.lastMessagePreview ? (
+                <p className="text-xs text-muted-foreground truncate">
+                  {conversation.lastMessagePreview}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Lock className="w-3 h-3" />
+                  End-to-end encrypted
                 </p>
               )}
-              <p className="text-xs text-muted-foreground flex items-center gap-1">
-                <Lock className="w-3 h-3" />
-                End-to-end encrypted
-              </p>
             </div>
+            {conversation.lastMessageAt && (
+              <span className="text-[10px] text-muted-foreground flex-shrink-0 self-start mt-1">
+                {formatRelativeTime(conversation.lastMessageAt)}
+              </span>
+            )}
             <Button
               variant="ghost"
               size="icon"

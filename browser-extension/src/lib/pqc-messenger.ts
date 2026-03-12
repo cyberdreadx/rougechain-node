@@ -52,6 +52,10 @@ export interface Conversation {
     participantIds?: string[];
     participants?: Wallet[];
     lastMessage?: Message;
+    lastMessageAt?: string;
+    lastSenderId?: string;
+    lastMessagePreview?: string;
+    unreadCount?: number;
 }
 
 const MESSENGER_API_PREFIX = "/messenger";
@@ -756,5 +760,9 @@ function normalizeConversation(raw: any): Conversation {
             signingPublicKey: p.signing_public_key || p.signingPublicKey || "",
             encryptionPublicKey: p.encryption_public_key || p.encryptionPublicKey || "",
         })),
+        lastMessageAt: raw.last_message_at || raw.lastMessageAt,
+        lastSenderId: raw.last_sender_id || raw.lastSenderId,
+        lastMessagePreview: raw.last_message_preview || raw.lastMessagePreview,
+        unreadCount: raw.unread_count ?? raw.unreadCount,
     };
 }

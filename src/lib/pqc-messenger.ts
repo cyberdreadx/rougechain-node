@@ -48,6 +48,10 @@ export interface Conversation {
   participantIds?: string[];
   participants?: Wallet[];
   lastMessage?: Message;
+  lastMessageAt?: string;
+  lastSenderId?: string;
+  lastMessagePreview?: string;
+  unreadCount?: number;
 }
 
 const WALLET_STORAGE_KEY = "pqc_messenger_wallet";
@@ -820,6 +824,10 @@ export async function getConversations(walletId: string, currentWallet?: Wallet)
     createdAt?: string;
     participant_ids?: string[];
     participantIds?: string[];
+    last_message_at?: string;
+    last_sender_id?: string;
+    last_message_preview?: string;
+    unread_count?: number;
   }) => {
     const participantIds = conv.participant_ids || conv.participantIds || [];
     const participants = participantIds
@@ -830,9 +838,6 @@ export async function getConversations(walletId: string, currentWallet?: Wallet)
           return currentWallet;
         }
         if (w) return w;
-        // Stale participant ID -- search all wallets for any that previously
-        // used this ID (the backend may have updated it, but older conversations
-        // on-disk could still reference the old value)
         const fallback = allWallets.find(aw =>
           aw.id === id || aw.signingPublicKey === id || aw.encryptionPublicKey === id
         );
@@ -848,6 +853,10 @@ export async function getConversations(walletId: string, currentWallet?: Wallet)
       createdAt: conv.created_at || conv.createdAt || new Date().toISOString(),
       participantIds,
       participants,
+      lastMessageAt: conv.last_message_at,
+      lastSenderId: conv.last_sender_id,
+      lastMessagePreview: conv.last_message_preview,
+      unreadCount: conv.unread_count,
     };
   });
 

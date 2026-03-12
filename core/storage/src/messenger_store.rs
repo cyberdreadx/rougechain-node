@@ -278,6 +278,88 @@ impl MessengerStore {
     }
 
 
+    pub fn list_conversations_with_activity(
+        &self,
+        wallet_id: &str,
+        extra_keys: &[&str],
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let state = self.load_state()?;
+        let mut matching_ids: Vec<String> = vec![wallet_id.to_string()];
+        for key in extra_keys {
+            if !key.is_empty() {
+                matching_ids.push(key.to_string());
+            }
+        }
+        for w in &state.wallets {
+            let is_match = w.id == wallet_id
+                || w.signing_public_key == wallet_id
+                || w.encryption_public_key == wallet_id
+                || extra_keys.iter().any(|k| !k.is_empty() && (w.signing_public_key == *k || w.encryption_public_key == *k));
+            if is_match {
+                matching_ids.push(w.id.clone());
+                if !w.signing_public_key.is_empty() { matching_ids.push(w.signing_public_key.clone()); }
+                if !w.encryption_public_key.is_empty() { matching_ids.push(w.encryption_public_key.clone()); }
+            }
+        }
+        let my_keys: Vec<String> = matching_ids.clone();
+
+        let conversations: Vec<&Conversation> = state
+            .conversations
+            .iter()
+            .filter(|c| {
+                c.participant_ids.iter().any(|pid| {
+                    if my_keys.contains(pid) { return true; }
+                    for w in &state.wallets {
+                        if w.id == *pid || w.signing_public_key == *pid || w.encryption_public_key == *pid {
+                            if my_keys.contains(&w.id)
+                                || my_keys.contains(&w.signing_public_key)
+                                || my_keys.contains(&w.encryption_public_key)
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                })
+            })
+            .collect();
+
+        let result: Vec<serde_json::Value> = conversations
+            .iter()
+            .map(|c| {
+                let last_msg = state.messages.iter()
+                    .filter(|m| m.conversation_id == c.id)
+                    .max_by(|a, b| a.created_at.cmp(&b.created_at));
+
+                let unread: u64 = state.messages.iter()
+                    .filter(|m| {
+                        m.conversation_id == c.id
+                            && !m.is_read
+                            && !my_keys.contains(&m.sender_wallet_id)
+                    })
+                    .count() as u64;
+
+                let mut val = serde_json::to_value(c).unwrap_or_default();
+                if let Some(msg) = last_msg {
+                    val["last_message_at"] = serde_json::json!(msg.created_at);
+                    val["last_sender_id"] = serde_json::json!(msg.sender_wallet_id);
+                    let preview = if msg.message_type == "image" {
+                        "[Image]".to_string()
+                    } else if msg.message_type == "video" {
+                        "[Video]".to_string()
+                    } else {
+                        "[Encrypted message]".to_string()
+                    };
+                    val["last_message_preview"] = serde_json::json!(preview);
+                }
+                val["unread_count"] = serde_json::json!(unread);
+                val
+            })
+            .collect();
+
+        Ok(result)
+    }
+
     fn load_state(&self) -> Result<MessengerState, String> {
         let raw = fs::read_to_string(&self.path).map_err(|e| e.to_string())?;
         serde_json::from_str::<MessengerState>(&raw).map_err(|e| e.to_string())

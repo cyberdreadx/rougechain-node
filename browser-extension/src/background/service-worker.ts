@@ -36,6 +36,120 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === "auto-lock") {
         chrome.storage.local.remove("pqc-unified-wallet");
     }
+    if (alarm.name === "messenger-poll") {
+        pollForNewMessages();
+    }
+});
+
+// ─── Messenger notification polling ─────────────────────
+
+const NOTIF_SNAPSHOT_KEY = "rougechain-notif-snapshot";
+
+async function getFullWalletData(): Promise<{
+    id: string; displayName: string;
+    signingPublicKey: string; encryptionPublicKey: string;
+} | null> {
+    return new Promise((resolve) => {
+        chrome.storage.local.get("pqc-unified-wallet", (data) => {
+            const raw = data["pqc-unified-wallet"];
+            if (!raw) { resolve(null); return; }
+            try {
+                const w = JSON.parse(raw);
+                resolve({
+                    id: w.id,
+                    displayName: w.displayName,
+                    signingPublicKey: w.signingPublicKey,
+                    encryptionPublicKey: w.encryptionPublicKey,
+                });
+            } catch { resolve(null); }
+        });
+    });
+}
+
+async function loadSnapshot(): Promise<Record<string, string>> {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(NOTIF_SNAPSHOT_KEY, (data) => {
+            try {
+                resolve(data[NOTIF_SNAPSHOT_KEY] ? JSON.parse(data[NOTIF_SNAPSHOT_KEY]) : {});
+            } catch { resolve({}); }
+        });
+    });
+}
+
+async function saveSnapshot(snapshot: Record<string, string>): Promise<void> {
+    return new Promise((resolve) => {
+        chrome.storage.local.set({ [NOTIF_SNAPSHOT_KEY]: JSON.stringify(snapshot) }, resolve);
+    });
+}
+
+async function pollForNewMessages() {
+    const wallet = await getFullWalletData();
+    if (!wallet) return;
+
+    const baseUrl = await getApiBaseUrl();
+    const messengerBase = baseUrl.replace(/\/api$/, "/api/messenger");
+
+    try {
+        const params = new URLSearchParams({ walletId: wallet.id });
+        if (wallet.signingPublicKey) params.set("signingPublicKey", wallet.signingPublicKey);
+        if (wallet.encryptionPublicKey) params.set("encryptionPublicKey", wallet.encryptionPublicKey);
+
+        const res = await fetch(`${messengerBase}/conversations?${params.toString()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const conversations = data.conversations || [];
+
+        const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
+        const prevSnapshot = await loadSnapshot();
+        const newSnapshot: Record<string, string> = {};
+
+        // Fetch all wallets for display name resolution
+        let allWallets: Array<{ id: string; display_name?: string; displayName?: string; signing_public_key?: string; signingPublicKey?: string }> = [];
+        try {
+            const walletsRes = await fetch(`${messengerBase}/wallets`);
+            if (walletsRes.ok) {
+                const wd = await walletsRes.json();
+                allWallets = wd.wallets || wd || [];
+            }
+        } catch { /* ignore */ }
+
+        for (const conv of conversations) {
+            const ts = conv.last_message_at || "";
+            const senderId = conv.last_sender_id || "";
+            newSnapshot[conv.id] = ts;
+
+            if (!ts || !senderId) continue;
+            if (myIds.has(senderId)) continue;
+
+            const prevTs = prevSnapshot[conv.id];
+            if (prevTs !== undefined && ts > prevTs) {
+                const senderWallet = allWallets.find((w: any) =>
+                    w.id === senderId ||
+                    (w.signing_public_key || w.signingPublicKey) === senderId ||
+                    (w.encryption_public_key || w.encryptionPublicKey) === senderId
+                );
+                const senderName = (senderWallet as any)?.display_name || (senderWallet as any)?.displayName || "Someone";
+                const preview = conv.last_message_preview || "New encrypted message";
+
+                chrome.notifications.create(`msg-${conv.id}-${Date.now()}`, {
+                    type: "basic",
+                    iconUrl: "icons/icon-128.png",
+                    title: senderName,
+                    message: preview,
+                    priority: 1,
+                });
+            }
+        }
+
+        await saveSnapshot(newSnapshot);
+    } catch (err) {
+        console.warn("Messenger poll failed:", err);
+    }
+}
+
+chrome.notifications.onClicked.addListener((notifId) => {
+    chrome.notifications.clear(notifId);
+    chrome.action.openPopup?.();
 });
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -53,6 +167,12 @@ chrome.runtime.onConnect.addListener((port) => {
             chrome.alarms.create("auto-lock", { delayInMinutes: minutes });
         });
 
+        chrome.alarms.get("messenger-poll", (existing) => {
+            if (!existing) {
+                chrome.alarms.create("messenger-poll", { periodInMinutes: 0.25 });
+            }
+        });
+
         port.onDisconnect.addListener(() => {
             // Popup closed — alarm continues running
         });
@@ -63,6 +183,7 @@ chrome.runtime.onConnect.addListener((port) => {
 
 chrome.runtime.onInstalled.addListener(() => {
     console.log("RougeChain Wallet Extension installed");
+    chrome.alarms.create("messenger-poll", { periodInMinutes: 0.25 });
 });
 
 // ─── Storage helpers ─────────────────────────────────────

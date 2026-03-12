@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Conversation, WalletWithPrivateKeys, Message, Wallet, MessageType } from "@/lib/pqc-messenger";
 import { getBotReply, getMessages, sendMessage, deleteMessage, isDemoBot, loadDemoBotWallet, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, isWalletBlocked, blockWallet, unblockWallet } from "@/lib/pqc-messenger";
+import { playNotificationSound, loadNotificationSettings } from "@/lib/notifications";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -561,13 +562,18 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
       // Track new messages that arrived after initial load (not from current user)
       if (!isInitialLoad && msgs.length > 0) {
         const newIds = new Set<string>();
+        const myIdSet = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
         msgs.forEach(msg => {
-          if (!seenMessageIdsRef.current.has(msg.id) && msg.senderWalletId !== wallet.id) {
+          if (!seenMessageIdsRef.current.has(msg.id) && !myIdSet.has(msg.senderWalletId)) {
             newIds.add(msg.id);
           }
         });
         if (newIds.size > 0) {
           setNewMessageIds(prev => new Set([...prev, ...newIds]));
+          const settings = loadNotificationSettings();
+          if (settings.enabled && settings.sound) {
+            playNotificationSound();
+          }
         }
       }
 

@@ -2547,7 +2547,7 @@ async fn get_messenger_conversations(
         .into_iter()
         .filter(|k| !k.is_empty())
         .collect();
-    let conversations = node.list_conversations_extended(&wallet_id, &extra_keys).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conversations = node.list_conversations_with_activity(&wallet_id, &extra_keys).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "success": true, "conversations": conversations })))
 }
 

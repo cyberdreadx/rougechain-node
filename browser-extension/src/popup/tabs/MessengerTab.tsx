@@ -233,11 +233,22 @@ export default function MessengerTab({ wallet }: Props) {
                                         <MessageCircle className={`w-4 h-4 ${isNoteToSelf ? "text-amber-500" : "text-primary"}`} />
                                     </div>
                                     <div className="min-w-0 flex-1">
-                                        <p className="text-xs font-medium text-foreground truncate">
-                                            {displayName}
-                                        </p>
-                                        <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-                                            <Lock className="w-2.5 h-2.5" /> End-to-end encrypted
+                                        <div className="flex items-center gap-1.5">
+                                            <p className="text-xs font-medium text-foreground truncate">
+                                                {displayName}
+                                            </p>
+                                            {(convo.unreadCount ?? 0) > 0 && (
+                                                <span className="flex-shrink-0 w-4 h-4 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center">
+                                                    {convo.unreadCount! > 9 ? "9+" : convo.unreadCount}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <p className="text-[10px] text-muted-foreground truncate">
+                                            {convo.lastMessagePreview || (
+                                                <span className="flex items-center gap-1">
+                                                    <Lock className="w-2.5 h-2.5" /> Encrypted
+                                                </span>
+                                            )}
                                         </p>
                                     </div>
                                 </button>

@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw, ArrowDownUp, Copy, KeyRound, UserCircle } from "lucide-react";
+import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw, ArrowDownUp, Copy, KeyRound, UserCircle, Bell, BellOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -26,6 +26,14 @@ import {
   toMessengerWallet,
   fromMessengerWallet
 } from "@/lib/unified-wallet";
+import {
+  requestNotificationPermission,
+  hasNotificationPermission,
+  detectNewActivity,
+  loadNotificationSettings,
+  saveNotificationSettings,
+  type ConversationActivity,
+} from "@/lib/notifications";
 
 const Messenger = () => {
   const [wallet, setWallet] = useState<UnifiedWallet | null>(null);
@@ -45,6 +53,9 @@ const Messenger = () => {
   const [vaultSettings, setVaultSettings] = useState<VaultSettings>(() => getVaultSettings());
   const [showNamePrompt, setShowNamePrompt] = useState(false);
   const [promptName, setPromptName] = useState("");
+  const [notifEnabled, setNotifEnabled] = useState(() => loadNotificationSettings().enabled);
+  const activitySnapshotRef = useRef<Map<string, string>>(new Map());
+  const allWalletsRef = useRef<Wallet[]>([]);
 
   // Load wallet from localStorage on mount
   useEffect(() => {
@@ -74,6 +85,7 @@ const Messenger = () => {
           encryptionPublicKey: wallet.encryptionPublicKey,
         }).catch(() => {});
       }
+      requestNotificationPermission().catch(() => {});
       loadConversations();
       loadContacts();
       const interval = setInterval(() => {
@@ -87,11 +99,19 @@ const Messenger = () => {
     setVaultSettings(getVaultSettings());
   }, []);
 
+  const resolveDisplayName = useCallback((senderId: string): string => {
+    const w = allWalletsRef.current.find(w =>
+      w.id === senderId || w.signingPublicKey === senderId || w.encryptionPublicKey === senderId
+    );
+    return w?.displayName || "Someone";
+  }, []);
+
   const loadConversations = async () => {
     if (!wallet) return;
     try {
       const convs = await getConversations(wallet.id, toMessengerWallet(wallet) as Parameters<typeof getConversations>[1]);
       const blocked = new Set(getBlockedWalletIds());
+      const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
       const myWalletData = {
         id: wallet.id,
         displayName: wallet.displayName,
@@ -118,6 +138,32 @@ const Messenger = () => {
         ) || conv.participantIds?.some(id => blocked.has(id));
         if (!hasBlockedParticipant) filtered.push(conv);
       }
+
+      // Detect new messages and fire notifications
+      const activity: ConversationActivity[] = filtered.map(c => ({
+        conversationId: c.id,
+        lastMessageAt: c.lastMessageAt,
+        lastSenderId: c.lastSenderId,
+        lastMessagePreview: c.lastMessagePreview,
+        unreadCount: c.unreadCount,
+      }));
+      activitySnapshotRef.current = detectNewActivity(
+        activity,
+        activitySnapshotRef.current,
+        myIds,
+        resolveDisplayName,
+        (convId) => {
+          const conv = filtered.find(c => c.id === convId);
+          if (conv) setSelectedConversation(conv);
+        }
+      );
+
+      filtered.sort((a, b) => {
+        const tsA = a.lastMessageAt || a.createdAt || "";
+        const tsB = b.lastMessageAt || b.createdAt || "";
+        return tsB.localeCompare(tsA);
+      });
+
       setConversations(filtered);
     } catch (error) {
       console.error("Failed to load conversations:", error);
@@ -127,6 +173,7 @@ const Messenger = () => {
   const loadContacts = async () => {
     try {
       const wallets = await getWallets();
+      allWalletsRef.current = wallets;
       const blocked = new Set(getBlockedWalletIds());
       const filtered = wallets.filter(w =>
         w.id !== wallet?.id &&
@@ -422,6 +469,27 @@ const Messenger = () => {
             title="Backup Wallet"
           >
             <Download className="w-4 h-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              const settings = loadNotificationSettings();
+              const toggled = !settings.enabled;
+              saveNotificationSettings({ ...settings, enabled: toggled });
+              setNotifEnabled(toggled);
+              if (toggled) {
+                requestNotificationPermission().then(granted => {
+                  if (granted) toast.success("Notifications enabled");
+                  else toast.info("Notifications enabled (desktop blocked by browser)");
+                });
+              } else {
+                toast.info("Notifications muted");
+              }
+            }}
+            title={notifEnabled ? "Mute notifications" : "Enable notifications"}
+          >
+            {notifEnabled ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4 text-muted-foreground" />}
           </Button>
           <Button
             variant="ghost"
