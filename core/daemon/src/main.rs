@@ -3594,11 +3594,15 @@ async fn v2_nft_create_collection(
         signed_payload: Some(signed_payload),
     };
 
+    let creator_short = if body.public_key.len() >= 16 { &body.public_key[..16] } else { &body.public_key };
+    let collection_id = format!("col:{}:{}", creator_short, symbol.to_uppercase());
+
     state.node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     Ok(Json(serde_json::json!({
         "success": true,
+        "collection_id": collection_id,
         "message": "NFT collection creation submitted"
     })))
 }

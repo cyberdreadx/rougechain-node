@@ -369,6 +369,30 @@ class NftClient {
     );
   }
 
+  /**
+   * Poll until a collection exists on-chain (i.e. the create tx has been mined).
+   * Useful after `createCollection` since the tx goes to the mempool first.
+   * @returns the collection once found, or throws after the timeout.
+   */
+  async waitForCollection(
+    collectionId: string,
+    opts: { timeoutMs?: number; pollMs?: number } = {}
+  ): Promise<NftCollection> {
+    const timeout = opts.timeoutMs ?? 30_000;
+    const poll = opts.pollMs ?? 1_000;
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      try {
+        return await this.getCollection(collectionId);
+      } catch {
+        await new Promise((r) => setTimeout(r, poll));
+      }
+    }
+    throw new Error(
+      `Collection "${collectionId}" not found after ${timeout}ms — the create transaction may not have been mined yet`
+    );
+  }
+
   async getTokens(
     collectionId: string,
     opts: { limit?: number; offset?: number } = {}
