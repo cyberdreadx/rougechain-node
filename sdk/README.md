@@ -257,7 +257,12 @@ End-to-end encrypted messaging with media and self-destruct support.
 
 ```typescript
 // Register wallet for messaging
-await rc.messenger.registerWallet(wallet.publicKey, "Alice");
+await rc.messenger.registerWallet({
+  id: wallet.publicKey,
+  displayName: "Alice",
+  signingPublicKey: wallet.publicKey,
+  encryptionPublicKey: encPubKey,
+});
 
 // Create a conversation
 const result = await rc.messenger.createConversation([
@@ -265,13 +270,23 @@ const result = await rc.messenger.createConversation([
   recipientPubKey,
 ]);
 
-// Send an encrypted message
+// Fetch conversations (with extended key matching)
+const convos = await rc.messenger.getConversations(wallet.publicKey, {
+  signingPublicKey: wallet.publicKey,
+  encryptionPublicKey: encPubKey,
+});
+
+// Send an encrypted message (with optional self-destruct)
 await rc.messenger.sendMessage(conversationId, wallet.publicKey, encryptedContent, {
   selfDestruct: true,
+  destructAfterSeconds: 30,
 });
 
 // Read messages
 const messages = await rc.messenger.getMessages(conversationId);
+
+// Delete a message
+await rc.messenger.deleteMessage(messageId);
 ```
 
 ## Low-Level Signing

@@ -30,7 +30,7 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | **Browser Extensions** | Chrome/Firefox wallet extensions with vault lock |
 | **PWA Support** | Installable progressive web app for mobile and desktop |
 | **SDK** | `@rougechain/sdk` npm package for building dApps |
-| **Open Source** | Fully open source Rust backend and React frontend |
+| **Open Source** | [Apache 2.0 licensed](https://github.com/cyberdreadx/rougechain-node) node software |
 
 ## Quick Links
 
@@ -42,6 +42,7 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 - [Browser Extensions](advanced/browser-extensions.md)
 - [SDK](advanced/sdk.md)
 - [Architecture](advanced/architecture.md)
+- [GitHub (Node Source)](https://github.com/cyberdreadx/rougechain-node)
 
 ## Network Info
 

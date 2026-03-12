@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity, Zap, ExternalLink, TrendingUp, TrendingDown, ArrowDownUp, Droplets, Coins, Image, Cable, Mail as MailIcon } from "lucide-react";
+import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity, Zap, ExternalLink, TrendingUp, TrendingDown, ArrowDownUp, Droplets, Coins, Image, Cable, Mail as MailIcon, Server, Github } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState, useCallback } from "react";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
@@ -162,33 +162,43 @@ const LiveFeatureGrid = () => {
     { icon: MessageSquareLock, title: "Messenger", desc: "E2E encrypted chat", stat: null, link: "/messenger", color: "text-success", bg: "bg-success/10" },
     { icon: MailIcon, title: "Mail", desc: "On-chain encrypted mail", stat: null, link: "/mail", color: "text-accent", bg: "bg-accent/10" },
     { icon: Shield, title: "Validators", desc: "Stake & validate", stat: stats.validatorCount > 0 ? `${stats.validatorCount} active` : null, link: "/validators", color: "text-amber-400", bg: "bg-amber-400/10" },
-    { icon: Network, title: "Core Node", desc: "Node dashboard", stat: null, link: "/node", color: "text-primary", bg: "bg-primary/10" },
-    { icon: Activity, title: "Tx Feed", desc: "Live transactions", stat: null, link: "/transactions", color: "text-accent", bg: "bg-accent/10" },
+    { icon: Server, title: "Run a Node", desc: "Strengthen the network", stat: null, link: "/validators", color: "text-green-400", bg: "bg-green-400/10" },
+    { icon: Github, title: "Open Source", desc: "Apache 2.0 licensed", stat: null, link: "https://github.com/cyberdreadx/rougechain-node", color: "text-foreground", bg: "bg-foreground/10", external: true },
   ];
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mb-16">
-      {features.map((f, i) => (
-        <motion.div
-          key={f.title}
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15 + i * 0.03 }}
-        >
-          <Link to={f.link}>
-            <div className="group h-full p-4 rounded-xl bg-card border border-border hover:border-primary/40 transition-all duration-200 hover:shadow-md hover:shadow-primary/5">
-              <div className={`w-10 h-10 rounded-lg ${f.bg} flex items-center justify-center mb-3 group-hover:scale-110 transition-transform`}>
-                <f.icon className={`w-5 h-5 ${f.color}`} />
-              </div>
-              <h3 className="text-sm font-semibold text-foreground mb-0.5">{f.title}</h3>
-              <p className="text-xs text-muted-foreground leading-tight">{f.desc}</p>
-              {f.stat && (
-                <p className="text-xs font-mono text-primary mt-2">{f.stat}</p>
-              )}
+      {features.map((f, i) => {
+        const card = (
+          <div className="group h-full p-4 rounded-xl bg-card border border-border hover:border-primary/40 transition-all duration-200 hover:shadow-md hover:shadow-primary/5">
+            <div className={`w-10 h-10 rounded-lg ${f.bg} flex items-center justify-center mb-3 group-hover:scale-110 transition-transform`}>
+              <f.icon className={`w-5 h-5 ${f.color}`} />
             </div>
-          </Link>
-        </motion.div>
-      ))}
+            <h3 className="text-sm font-semibold text-foreground mb-0.5 flex items-center gap-1">
+              {f.title}
+              {"external" in f && f.external && <ExternalLink className="w-3 h-3 opacity-40" />}
+            </h3>
+            <p className="text-xs text-muted-foreground leading-tight">{f.desc}</p>
+            {f.stat && (
+              <p className="text-xs font-mono text-primary mt-2">{f.stat}</p>
+            )}
+          </div>
+        );
+        return (
+          <motion.div
+            key={f.title}
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 + i * 0.03 }}
+          >
+            {"external" in f && f.external ? (
+              <a href={f.link} target="_blank" rel="noopener noreferrer">{card}</a>
+            ) : (
+              <Link to={f.link}>{card}</Link>
+            )}
+          </motion.div>
+        );
+      })}
     </div>
   );
 };
@@ -252,7 +262,7 @@ const Index = () => {
           </h1>
 
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-4">
-            A post-quantum Layer 1 blockchain with ML-DSA signatures, Rust core, and modern UI.
+            An open-source, post-quantum Layer 1 blockchain with ML-DSA signatures, Rust core, and modern UI.
           </p>
 
           <p className="text-sm text-primary/80 max-w-xl mx-auto mb-8 font-mono">

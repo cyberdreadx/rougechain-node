@@ -38,8 +38,8 @@ curl http://127.0.0.1:5100/api/stats | python3 -m json.tool
 For a persistent production setup, clone the repo and use `docker-compose`:
 
 ```bash
-git clone https://github.com/cyberdreadx/quantum-vault
-cd quantum-vault
+git clone https://github.com/cyberdreadx/rougechain-node
+cd rougechain-node
 ```
 
 Optionally create a `.env` file to override defaults:
@@ -155,7 +155,7 @@ curl http://127.0.0.1:5100/api/validators
 ## Updating
 
 ```bash
-cd quantum-vault
+cd rougechain-node
 git pull
 docker compose build
 docker compose up -d

@@ -11,7 +11,7 @@ import { Link } from "react-router-dom";
 
 function RunNodeCta() {
   const [copied, setCopied] = useState(false);
-  const dockerCmd = "docker run -d -p 5100:5100 -v qv-data:/data rougechain/node";
+  const dockerCmd = "git clone https://github.com/cyberdreadx/rougechain-node && cd rougechain-node && docker compose up -d";
 
   const copyCommand = () => {
     navigator.clipboard.writeText(dockerCmd);
@@ -52,7 +52,7 @@ function RunNodeCta() {
             </a>
           </Button>
           <Button asChild size="sm" className="flex-1 text-xs">
-            <a href="https://github.com/cyberdreadx/quantum-vault" target="_blank" rel="noopener noreferrer">
+            <a href="https://github.com/cyberdreadx/rougechain-node" target="_blank" rel="noopener noreferrer">
               GitHub
             </a>
           </Button>

@@ -46,8 +46,8 @@ CHAIN_ID=rougechain-devnet-1
 Then start:
 
 ```bash
-git clone https://github.com/cyberdreadx/quantum-vault
-cd quantum-vault
+git clone https://github.com/cyberdreadx/rougechain-node
+cd rougechain-node
 docker compose up -d
 ```
 
@@ -60,8 +60,8 @@ docker compose logs -f node
 ### Build the image locally
 
 ```bash
-git clone https://github.com/cyberdreadx/quantum-vault
-cd quantum-vault
+git clone https://github.com/cyberdreadx/rougechain-node
+cd rougechain-node
 docker build -t rougechain/node .
 ```
 
@@ -97,8 +97,8 @@ xcode-select --install
 
 ```bash
 # Clone the repository
-git clone https://github.com/cyberdreadx/quantum-vault
-cd quantum-vault/core
+git clone https://github.com/cyberdreadx/rougechain-node
+cd rougechain-node/core
 
 # Build release binary
 cargo build --release -p quantum-vault-daemon
@@ -157,7 +157,7 @@ After first run, data is stored at:
 ## Updating
 
 ```bash
-cd quantum-vault
+cd rougechain-node
 git pull
 cd core
 cargo build --release -p quantum-vault-daemon

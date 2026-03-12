@@ -840,22 +840,29 @@ class MessengerClient {
     return data.wallets ?? [];
   }
 
-  async registerWallet(walletId: string, displayName?: string, encryptionPublicKey?: string): Promise<ApiResponse> {
+  async registerWallet(opts: {
+    id: string;
+    displayName: string;
+    signingPublicKey: string;
+    encryptionPublicKey: string;
+  }): Promise<ApiResponse> {
     try {
-      const data = await this.rc.post<Record<string, unknown>>("/messenger/wallets/register", {
-        wallet_id: walletId,
-        display_name: displayName,
-        encryption_public_key: encryptionPublicKey,
-      });
-      return { success: data.success === true, error: data.error as string | undefined };
+      const data = await this.rc.post<Record<string, unknown>>("/messenger/wallets/register", opts);
+      return { success: data.success === true, error: data.error as string | undefined, data };
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
 
-  async getConversations(walletId: string): Promise<MessengerConversation[]> {
+  async getConversations(
+    walletId: string,
+    opts: { signingPublicKey?: string; encryptionPublicKey?: string } = {}
+  ): Promise<MessengerConversation[]> {
+    const params = new URLSearchParams({ walletId });
+    if (opts.signingPublicKey) params.set("signingPublicKey", opts.signingPublicKey);
+    if (opts.encryptionPublicKey) params.set("encryptionPublicKey", opts.encryptionPublicKey);
     const data = await this.rc.get<{ conversations: MessengerConversation[] }>(
-      `/messenger/conversations?walletId=${encodeURIComponent(walletId)}`
+      `/messenger/conversations?${params.toString()}`
     );
     return data.conversations ?? [];
   }
@@ -882,7 +889,12 @@ class MessengerClient {
     conversationId: string,
     sender: string,
     encryptedContent: string,
-    opts: { mediaType?: string; mediaData?: string; selfDestruct?: boolean } = {}
+    opts: {
+      mediaType?: string;
+      mediaData?: string;
+      selfDestruct?: boolean;
+      destructAfterSeconds?: number;
+    } = {}
   ): Promise<ApiResponse> {
     try {
       const data = await this.rc.post<Record<string, unknown>>("/messenger/messages", {
@@ -892,8 +904,22 @@ class MessengerClient {
         media_type: opts.mediaType,
         media_data: opts.mediaData,
         self_destruct: opts.selfDestruct,
+        destruct_after_seconds: opts.destructAfterSeconds,
       });
       return { success: data.success === true, error: data.error as string | undefined, data };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  async deleteMessage(messageId: string): Promise<ApiResponse> {
+    try {
+      const res = await this.rc.fetchFn(
+        `${this.rc.baseUrl}/messenger/messages/${encodeURIComponent(messageId)}`,
+        { method: "DELETE", headers: this.rc.headers }
+      );
+      const data = (await res.json()) as Record<string, unknown>;
+      return { success: data.success === true, error: data.error as string | undefined };
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) };
     }

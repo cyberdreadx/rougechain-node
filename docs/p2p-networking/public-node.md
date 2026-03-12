@@ -16,8 +16,8 @@ Run a RougeChain node that is publicly accessible and participates fully in the 
 ### 1. Build and Install
 
 ```bash
-git clone https://github.com/cyberdreadx/quantum-vault
-cd quantum-vault/core
+git clone https://github.com/cyberdreadx/rougechain-node
+cd rougechain-node/core
 cargo build --release -p quantum-vault-daemon
 sudo cp target/release/quantum-vault-daemon /usr/local/bin/
 ```

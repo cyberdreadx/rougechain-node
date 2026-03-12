@@ -53,7 +53,7 @@ export function Footer() {
               </li>
               <li>
                 <a
-                  href="https://github.com/cyberdreadx/quantum-vault"
+                  href="https://github.com/cyberdreadx/rougechain-node"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm text-muted-foreground hover:text-red-400 flex items-center gap-1.5 transition-colors"
@@ -140,7 +140,7 @@ export function Footer() {
               <DiscordLogo className="w-4 h-4" />
             </a>
             <a
-              href="https://github.com/cyberdreadx/quantum-vault"
+              href="https://github.com/cyberdreadx/rougechain-node"
               target="_blank"
               rel="noopener noreferrer"
               className="text-muted-foreground hover:text-red-400 transition-colors"

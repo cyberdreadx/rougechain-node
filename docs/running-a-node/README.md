@@ -2,6 +2,8 @@
 
 Run your own RougeChain node to participate in the network, validate transactions, and earn rewards.
 
+The node software is **open source** under the [Apache 2.0 license](https://github.com/cyberdreadx/rougechain-node).
+
 ## Node Types
 
 | Type | Description | Requires |
@@ -13,8 +15,11 @@ Run your own RougeChain node to participate in the network, validate transaction
 ## Quick Start
 
 ```bash
+# Clone the public repo
+git clone https://github.com/cyberdreadx/rougechain-node
+cd rougechain-node/core
+
 # Build the daemon
-cd core
 cargo build --release -p quantum-vault-daemon
 
 # Run a syncing node

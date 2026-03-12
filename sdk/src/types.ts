@@ -300,9 +300,10 @@ export interface SendMailParams {
 // ===== Messenger =====
 
 export interface MessengerWallet {
-  wallet_id: string;
-  display_name?: string;
-  encryption_public_key?: string;
+  id: string;
+  displayName: string;
+  signingPublicKey: string;
+  encryptionPublicKey: string;
   created_at: number;
 }
 
@@ -310,6 +311,10 @@ export interface MessengerConversation {
   id: string;
   participants: string[];
   created_at: number;
+  last_message_at?: string;
+  last_sender_id?: string;
+  last_message_preview?: string;
+  unread_count?: number;
 }
 
 export interface MessengerMessage {
@@ -320,6 +325,7 @@ export interface MessengerMessage {
   media_type?: string;
   media_data?: string;
   self_destruct?: boolean;
+  destruct_after_seconds?: number;
   read?: boolean;
   created_at: number;
 }
