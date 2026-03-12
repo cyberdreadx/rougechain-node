@@ -9,8 +9,20 @@ import type {
 export const BURN_ADDRESS =
   "XRGE_BURN_0x000000000000000000000000000000000000000000000000000000000000DEAD";
 
+function sortKeysDeep(obj: unknown): unknown {
+  if (Array.isArray(obj)) return obj.map(sortKeysDeep);
+  if (obj !== null && typeof obj === "object") {
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(obj).sort()) {
+      sorted[key] = sortKeysDeep((obj as Record<string, unknown>)[key]);
+    }
+    return sorted;
+  }
+  return obj;
+}
+
 export function serializePayload(payload: TransactionPayload): Uint8Array {
-  const json = JSON.stringify(payload, Object.keys(payload).sort());
+  const json = JSON.stringify(sortKeysDeep(payload));
   return new TextEncoder().encode(json);
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "@rougechain/sdk",
-  "version": "0.3.1",
+  "version": "0.3.4",
   "description": "Official SDK for RougeChain — post-quantum Layer 1 blockchain secured by ML-DSA-65",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -40,8 +40,8 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@noble/post-quantum": "^0.2.0",
-    "@noble/hashes": "^1.4.0"
+    "@noble/post-quantum": "~0.5.4",
+    "@noble/hashes": "~2.0.0"
   },
   "devDependencies": {
     "tsup": "^8.0.0",

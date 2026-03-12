@@ -100,11 +100,24 @@ export function generateNonce(): string {
   return bytesToHex(bytes);
 }
 
+function sortKeysDeep(obj: unknown): unknown {
+  if (Array.isArray(obj)) return obj.map(sortKeysDeep);
+  if (obj !== null && typeof obj === "object") {
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(obj).sort()) {
+      sorted[key] = sortKeysDeep((obj as Record<string, unknown>)[key]);
+    }
+    return sorted;
+  }
+  return obj;
+}
+
 /**
- * Serialize a transaction payload to bytes for signing
+ * Serialize a transaction payload to bytes for signing.
+ * Keys are sorted recursively to match serde_json's BTreeMap ordering on the server.
  */
 export function serializePayload(payload: TransactionPayload): Uint8Array {
-  const json = JSON.stringify(payload, Object.keys(payload).sort());
+  const json = JSON.stringify(sortKeysDeep(payload));
   return new TextEncoder().encode(json);
 }
 

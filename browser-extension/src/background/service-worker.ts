@@ -23,6 +23,22 @@ function bytesToHex(bytes: Uint8Array): string {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
+function sortKeysDeep(obj: unknown): unknown {
+    if (Array.isArray(obj)) return obj.map(sortKeysDeep);
+    if (obj !== null && typeof obj === "object") {
+        const sorted: Record<string, unknown> = {};
+        for (const key of Object.keys(obj).sort()) {
+            sorted[key] = sortKeysDeep((obj as Record<string, unknown>)[key]);
+        }
+        return sorted;
+    }
+    return obj;
+}
+
+function serializePayload(payload: Record<string, unknown>): string {
+    return JSON.stringify(sortKeysDeep(payload));
+}
+
 function signPayload(payloadJson: string, privateKeyHex: string): string {
     const messageBytes = new TextEncoder().encode(payloadJson);
     const secretKey = hexToBytes(privateKeyHex);
@@ -429,7 +445,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         return;
                     }
 
-                    const signedPayload = JSON.stringify(payload, Object.keys(payload).sort());
+                    const signedPayload = serializePayload(payload as Record<string, unknown>);
                     const signSig = signPayload(signedPayload, wallet.privateKey);
                     sendResponse({
                         result: {
@@ -475,7 +491,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         nonce: crypto.randomUUID(),
                     };
 
-                    const txPayloadJson = JSON.stringify(txPayload, Object.keys(txPayload).sort());
+                    const txPayloadJson = serializePayload(txPayload);
                     const txSig = signPayload(txPayloadJson, wallet.privateKey);
 
                     const res = await fetch(`${baseUrl}/v2/tx/submit`, {
