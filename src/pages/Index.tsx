@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity, Zap, ExternalLink, TrendingUp, TrendingDown, ArrowDownUp, Droplets, Coins, Image, Cable, Mail as MailIcon, Server, Github } from "lucide-react";
+import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity, Zap, ExternalLink, TrendingUp, TrendingDown, ArrowDownUp, Droplets, Coins, Image, Cable, Mail as MailIcon, Server, Github, Chrome } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState, useCallback } from "react";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
