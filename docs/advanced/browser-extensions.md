@@ -6,8 +6,7 @@ RougeChain provides browser extensions that serve as quantum-safe wallets, simil
 
 | Extension | Description | Store |
 |-----------|-------------|-------|
-| **RougeChain Wallet** | Primary browser extension | [Chrome Web Store](https://chromewebstore.google.com) |
-| **rougechain-wallet** | Secondary extension | Chrome Web Store |
+| **RougeChain Wallet** | Primary browser extension | [Chrome Web Store](https://chromewebstore.google.com/detail/rougechain-wallet/ilkbgjgphhaolfdjkfefdfiifipmhakj) |
 
 ## Features
 

@@ -360,7 +360,7 @@ import type {
 
 - [Website](https://rougechain.io)
 - [Documentation](https://docs.rougechain.io)
-- [Chrome Extension](https://chromewebstore.google.com/detail/rougechain-wallet)
+- [Chrome Extension](https://chromewebstore.google.com/detail/rougechain-wallet/ilkbgjgphhaolfdjkfefdfiifipmhakj)
 - [GitHub](https://github.com/cyberdreadx/quantum-vault)
 
 ## License
