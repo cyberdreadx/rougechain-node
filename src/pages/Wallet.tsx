@@ -12,7 +12,9 @@ import {
   Wifi,
   WifiOff,
   TrendingUp,
-  TrendingDown
+  TrendingDown,
+  Puzzle,
+  ExternalLink
 } from "lucide-react";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { useTokenPrices } from "@/hooks/use-token-prices";
@@ -868,6 +870,26 @@ const Wallet = () => {
               onEmptyAction={() => setShowReceive(true)}
             />
             <SecurityStatus />
+
+            {/* Chrome Extension Promo */}
+            <motion.a
+              href="https://chromewebstore.google.com/detail/rougechain-wallet/ilkbgjgphhaolfdjkfefdfiifipmhakj"
+              target="_blank"
+              rel="noopener noreferrer"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.35 }}
+              className="flex items-center gap-3 p-4 rounded-xl bg-card border border-primary/30 hover:border-primary/60 hover:bg-primary/5 transition-all group"
+            >
+              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                <Puzzle className="w-5 h-5 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-foreground">RougeChain Wallet Extension</p>
+                <p className="text-xs text-muted-foreground">Chrome · Edge · Brave · Firefox · Arc · Opera</p>
+              </div>
+              <ExternalLink className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />
+            </motion.a>
           </motion.div>
         )}
       </main>
