@@ -63,6 +63,18 @@ export function Footer() {
                   <ExternalLink className="w-3 h-3 opacity-50" />
                 </a>
               </li>
+              <li>
+                <a
+                  href="https://chromewebstore.google.com/detail/rougechain-wallet/ilkbgjgphhaolfdjkfefdfiifipmhakj"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-muted-foreground hover:text-red-400 flex items-center gap-1.5 transition-colors"
+                >
+                  <Puzzle className="w-3.5 h-3.5" />
+                  Chrome Extension
+                  <ExternalLink className="w-3 h-3 opacity-50" />
+                </a>
+              </li>
             </ul>
           </div>
 
