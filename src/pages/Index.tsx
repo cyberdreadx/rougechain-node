@@ -8,13 +8,18 @@ import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { useXRGEPrice } from "@/hooks/use-xrge-price";
 import { formatUsd } from "@/lib/price-service";
 import xrgeLogo from "@/assets/xrge-logo.webp";
+import ss1 from "/store-assets/screenshot_1_wallet.png";
+import ss2 from "/store-assets/screenshot_2_chat.png";
+import ss3 from "/store-assets/screenshot_3_mail.png";
+import ss4 from "/store-assets/screenshot_4_tokens.png";
+import ss5 from "/store-assets/screenshot_5_create.png";
 
 const EXT_SCREENSHOTS = [
-  { src: "/store-assets/screenshot_1_wallet.png", label: "Wallet" },
-  { src: "/store-assets/screenshot_2_chat.png",   label: "Messenger" },
-  { src: "/store-assets/screenshot_3_mail.png",   label: "Mail" },
-  { src: "/store-assets/screenshot_4_tokens.png", label: "Tokens" },
-  { src: "/store-assets/screenshot_5_create.png", label: "Create Token" },
+  { src: ss1, label: "Wallet" },
+  { src: ss2, label: "Messenger" },
+  { src: ss3, label: "Mail" },
+  { src: ss4, label: "Tokens" },
+  { src: ss5, label: "Create Token" },
 ];
 
 const EXT_BROWSERS = [
