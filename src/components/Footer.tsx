@@ -1,4 +1,4 @@
-import { Github, ExternalLink, BookOpen, Shield } from "lucide-react";
+import { Github, ExternalLink, BookOpen, Shield, Puzzle } from "lucide-react";
 
 // X (formerly Twitter) logo
 const XLogo = ({ className }: { className?: string }) => (
