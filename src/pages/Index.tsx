@@ -323,7 +323,7 @@ const Index = () => {
   const { priceUsd, priceChange24h, volume24h, liquidity, loading: priceLoading } = useXRGEPrice(60_000);
 
   return (
-    <div className="min-h-screen bg-background relative overflow-hidden">
+    <div className="min-h-screen bg-background relative">
 
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
