@@ -333,12 +333,76 @@ const Index = () => {
                   <span className="px-2 py-0.5 rounded-full bg-accent/20 text-accent text-xs font-mono font-bold border border-accent/30">FREE</span>
                 </div>
                 <p className="text-sm text-muted-foreground mb-3 max-w-lg">
-                  Your quantum-safe browser wallet. Send XRGE, chat with end-to-end encryption, access encrypted mail, and sign transactions — all from Chrome, Edge, or Brave.
+                  Your quantum-safe browser wallet. Send XRGE, chat with end-to-end encryption, access encrypted mail, and sign transactions — all from Chrome, Edge, Brave, Firefox, Arc, or Opera.
                 </p>
-                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mb-3">
                   {["ML-DSA-65 Signing", "E2E Messenger", "PQC Mail", "Auto-lock Vault"].map(f => (
                     <span key={f} className="px-2 py-0.5 rounded bg-card border border-border text-xs text-muted-foreground font-mono">
                       {f}
+                    </span>
+                  ))}
+                </div>
+                {/* Browser compatibility badges */}
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                  {[
+                    {
+                      name: "Chrome",
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+                          <path d="M12 0C8.21 0 4.831 1.757 2.632 4.501l3.953 6.848A5.454 5.454 0 0 1 12 6.545h10.691A12 12 0 0 0 12 0zM1.931 5.47A11.943 11.943 0 0 0 0 12c0 6.012 4.42 10.991 10.189 11.864l3.953-6.847a5.45 5.45 0 0 1-6.865-2.29zm13.342 2.166a5.446 5.446 0 0 1 1.45 7.09l.002.001h-.002l-5.344 9.257c.206.01.413.016.621.016 6.627 0 12-5.373 12-12 0-1.54-.29-3.011-.818-4.364zM12 10.545a1.455 1.455 0 1 0 0 2.91 1.455 1.455 0 0 0 0-2.91z"/>
+                        </svg>
+                      ),
+                      color: "text-yellow-400",
+                    },
+                    {
+                      name: "Edge",
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+                          <path d="M21.86 17.86A10.29 10.29 0 0 1 12 22.29a10.25 10.25 0 0 1-7.17-2.9c-.94-.9-.21-2.3 1.03-2.16a5.98 5.98 0 0 0 5.68-1.93H6.75a.75.75 0 0 1-.68-1.07l.88-1.9a6 6 0 0 0-1.32-6.7C4.2 4.3 3.67 2.13 5.56 1.28A11.97 11.97 0 0 1 12 0c5.65 0 10.42 3.9 11.66 9.15.35 1.5.28 2.75-.14 3.9h-9.4a3 3 0 0 0 2.83 2H21a.75.75 0 0 1 .68 1.07l-.88 1.9z"/>
+                        </svg>
+                      ),
+                      color: "text-blue-400",
+                    },
+                    {
+                      name: "Brave",
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+                          <path d="M20.443 8.29l.398-1.56-1.032-.93.084-.61-1.873-.437-.73 1.097-1.048.11-.26-.765-2.25-.437-.366.492-.366-.492-2.25.437-.26.765-1.048-.11-.73-1.097-1.873.437.084.61-1.032.93.398 1.56-.61.992.526 1.42-.26.798.786 1.15v1.1l-.787.593.262.83-.507.655.13.961 1.61 1.066.323.93 1.005.13.548.767h1.31l.548-.768 1.005-.13.323-.93 1.61-1.065.13-.961-.507-.655.262-.83-.787-.593v-1.1l.786-1.15-.26-.798.526-1.42-.61-.992z"/>
+                        </svg>
+                      ),
+                      color: "text-orange-400",
+                    },
+                    {
+                      name: "Firefox",
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+                          <path d="M21.805 7.32c-.24-.56-.795-1.43-1.21-1.75.34.66.535 1.345.615 1.96-.895-2.22-2.41-3.115-3.63-5.06-.065-.1-.13-.2-.19-.31-.035-.06-.065-.12-.09-.18a1.56 1.56 0 0 1-.13-.49.03.03 0 0 0-.025-.03.04.04 0 0 0-.025.005c-.005 0-.005.005-.01.005l.005-.01C14.24.46 11.76-.445 9.47.21 7.62.735 6.08 1.87 5.015 3.395a9.17 9.17 0 0 1 3.455-.495c1.315.065 2.565.455 3.65 1.13-.625-.065-1.255-.055-1.87.025-2.185.27-4.2 1.45-5.465 3.235a7.84 7.84 0 0 0-1.03 2.185c-.41 1.39-.37 2.78.025 4.125C4.27 16.385 6.59 19.075 9.73 20.24c2.94 1.08 6.395.725 8.995-1.055 2.895-1.98 4.415-5.41 3.825-8.895a7.83 7.83 0 0 0-.745-2.97z"/>
+                        </svg>
+                      ),
+                      color: "text-orange-500",
+                    },
+                    {
+                      name: "Arc",
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+                          <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm4.5 14.5l-9-9 1.414-1.414 9 9L16.5 16.5z"/>
+                        </svg>
+                      ),
+                      color: "text-purple-400",
+                    },
+                    {
+                      name: "Opera",
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+                          <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm0 2.824c1.508 0 2.93.39 4.166 1.072C14.848 5.235 13.944 7.383 13.944 12s.904 6.765 2.222 8.104A9.158 9.158 0 0 1 12 21.176 9.176 9.176 0 0 1 2.824 12 9.176 9.176 0 0 1 12 2.824zm0 1.37C9.298 4.194 7.15 7.755 7.15 12s2.148 7.806 4.85 7.806c2.703 0 4.85-3.561 4.85-7.806S14.703 4.194 12 4.194z"/>
+                        </svg>
+                      ),
+                      color: "text-red-400",
+                    },
+                  ].map(b => (
+                    <span key={b.name} className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-card border border-border text-xs text-muted-foreground hover:border-accent/40 transition-colors">
+                      <span className={b.color}>{b.icon}</span>
+                      {b.name}
                     </span>
                   ))}
                 </div>
@@ -357,7 +421,7 @@ const Index = () => {
                     <ExternalLink className="w-4 h-4 opacity-70" />
                   </Button>
                 </a>
-                <p className="text-xs text-muted-foreground text-center mt-2">Also works on Edge & Brave</p>
+                <p className="text-xs text-muted-foreground text-center mt-2">Manifest V3 · 6 browsers</p>
               </div>
             </div>
           </div>
