@@ -308,6 +308,61 @@ const Index = () => {
         {/* Feature Cards */}
         <LiveFeatureGrid />
 
+        {/* Browser Extension Promo Banner */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35 }}
+          className="mb-16"
+        >
+          <div className="relative rounded-2xl overflow-hidden border border-accent/30 bg-gradient-to-br from-accent/10 via-card to-primary/10">
+            {/* Glow blobs */}
+            <div className="absolute top-0 right-0 w-64 h-64 bg-accent/10 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute bottom-0 left-0 w-48 h-48 bg-primary/10 rounded-full blur-3xl pointer-events-none" />
+
+            <div className="relative z-10 flex flex-col sm:flex-row items-center gap-6 p-6 sm:p-8">
+              {/* Icon */}
+              <div className="flex-shrink-0 w-16 h-16 rounded-2xl bg-accent/20 border border-accent/30 flex items-center justify-center shadow-lg shadow-accent/10">
+                <Chrome className="w-8 h-8 text-accent" />
+              </div>
+
+              {/* Text */}
+              <div className="flex-1 text-center sm:text-left">
+                <div className="flex items-center justify-center sm:justify-start gap-2 mb-1">
+                  <h2 className="text-lg font-bold text-foreground">RougeChain Wallet Extension</h2>
+                  <span className="px-2 py-0.5 rounded-full bg-accent/20 text-accent text-xs font-mono font-bold border border-accent/30">FREE</span>
+                </div>
+                <p className="text-sm text-muted-foreground mb-3 max-w-lg">
+                  Your quantum-safe browser wallet. Send XRGE, chat with end-to-end encryption, access encrypted mail, and sign transactions — all from Chrome, Edge, or Brave.
+                </p>
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                  {["ML-DSA-65 Signing", "E2E Messenger", "PQC Mail", "Auto-lock Vault"].map(f => (
+                    <span key={f} className="px-2 py-0.5 rounded bg-card border border-border text-xs text-muted-foreground font-mono">
+                      {f}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* CTA */}
+              <div className="flex-shrink-0">
+                <a
+                  href="https://chromewebstore.google.com/detail/rougechain-wallet/ilkbgjgphhaolfdjkfefdfiifipmhakj"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Button size="lg" className="gap-2 bg-accent hover:bg-accent/90 text-accent-foreground shadow-lg shadow-accent/20 font-semibold whitespace-nowrap">
+                    <Chrome className="w-5 h-5" />
+                    Add to Chrome
+                    <ExternalLink className="w-4 h-4 opacity-70" />
+                  </Button>
+                </a>
+                <p className="text-xs text-muted-foreground text-center mt-2">Also works on Edge & Brave</p>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+
         {/* XRGE Chart Section */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
