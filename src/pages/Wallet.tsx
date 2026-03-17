@@ -12,7 +12,9 @@ import {
   Wifi,
   WifiOff,
   TrendingUp,
-  TrendingDown
+  TrendingDown,
+  Puzzle,
+  ExternalLink
 } from "lucide-react";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { useTokenPrices } from "@/hooks/use-token-prices";
