@@ -27,8 +27,7 @@ use winterfell::{
 use winterfell::crypto::hashers::Blake3_256;
 
 use super::shielded_air::{
-    ShieldedTransferAir, COL_BIT_ACC, COL_FEE, COL_INPUT, COL_OUTPUT_1, COL_OUTPUT_2, TRACE_LEN,
-    TRACE_WIDTH,
+    ShieldedTransferAir, COL_BIT_ACC, COL_FEE, COL_OUTPUT_1, COL_OUTPUT_2, TRACE_LEN,
 };
 use super::ShieldedTransferInputs;
 
