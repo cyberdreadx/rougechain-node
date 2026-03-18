@@ -19,6 +19,9 @@ import {
   createSignedNftFreezeCollection,
   createSignedTokenMetadataUpdate,
   createSignedTokenMetadataClaim,
+  createSignedShield,
+  createSignedShieldedTransfer,
+  createSignedUnshield,
 } from "./signer.js";
 import type {
   WalletKeys,
@@ -65,7 +68,12 @@ import type {
   MessengerConversation,
   MessengerMessage,
   PriceSnapshot,
+  ShieldParams,
+  ShieldedTransferParams,
+  UnshieldParams,
+  ShieldedStats,
 } from "./types.js";
+import { createShieldedNote, type ShieldedNote } from "./shielded.js";
 
 type FetchFn = typeof globalThis.fetch;
 
@@ -86,6 +94,7 @@ export class RougeChain {
   public readonly bridge: BridgeClient;
   public readonly mail: MailClient;
   public readonly messenger: MessengerClient;
+  public readonly shielded: ShieldedClient;
 
   constructor(baseUrl: string, options: RougeChainOptions = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
@@ -100,6 +109,7 @@ export class RougeChain {
     this.bridge = new BridgeClient(this);
     this.mail = new MailClient(this);
     this.messenger = new MessengerClient(this);
+    this.shielded = new ShieldedClient(this);
   }
 
   // ===== Internal helpers =====
@@ -965,3 +975,80 @@ class MessengerClient {
     }
   }
 }
+
+// ===== Shielded Sub-client =====
+
+class ShieldedClient {
+  constructor(private readonly rc: RougeChain) {}
+
+  // Queries
+
+  async getStats(): Promise<ShieldedStats> {
+    return this.rc.get<ShieldedStats>("/shielded/stats");
+  }
+
+  async isNullifierSpent(
+    nullifierHex: string
+  ): Promise<{ spent: boolean }> {
+    return this.rc.get<{ spent: boolean }>(
+      `/shielded/nullifier/${encodeURIComponent(nullifierHex)}`
+    );
+  }
+
+  // Write operations
+
+  /**
+   * Shield public XRGE into a private note.
+   * Creates the commitment client-side, submits to the chain.
+   *
+   * @returns The ShieldedNote (keep this locally — it's the only way to spend the note)
+   */
+  async shield(
+    wallet: WalletKeys,
+    params: ShieldParams
+  ): Promise<ApiResponse & { note?: ShieldedNote }> {
+    const note = createShieldedNote(params.amount, wallet.publicKey);
+    const tx = createSignedShield(wallet, params.amount, note.commitment);
+    const result = await this.rc.submitTx("/v2/shielded/shield", tx);
+    if (result.success) {
+      return { ...result, note };
+    }
+    return result;
+  }
+
+  /**
+   * Transfer between shielded notes (private → private).
+   * Requires a pre-generated STARK proof.
+   */
+  async transfer(
+    wallet: WalletKeys,
+    params: ShieldedTransferParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedShieldedTransfer(
+      wallet,
+      params.nullifiers,
+      params.outputCommitments,
+      params.proof,
+      params.shieldedFee
+    );
+    return this.rc.submitTx("/v2/shielded/transfer", tx);
+  }
+
+  /**
+   * Unshield a private note back to public XRGE.
+   * Requires a STARK proof of note ownership.
+   */
+  async unshield(
+    wallet: WalletKeys,
+    params: UnshieldParams
+  ): Promise<ApiResponse> {
+    const tx = createSignedUnshield(
+      wallet,
+      params.nullifiers,
+      params.amount,
+      params.proof
+    );
+    return this.rc.submitTx("/v2/shielded/unshield", tx);
+  }
+}
+

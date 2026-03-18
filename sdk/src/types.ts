@@ -32,7 +32,10 @@ export type TransactionType =
   | "nft_freeze_collection"
   | "bridge_withdraw"
   | "update_token_metadata"
-  | "claim_token_metadata";
+  | "claim_token_metadata"
+  | "shield"
+  | "shielded_transfer"
+  | "unshield";
 
 export interface TransactionPayload {
   type: TransactionType;
@@ -475,4 +478,38 @@ export interface TokenMetadataUpdateParams {
   website?: string;
   twitter?: string;
   discord?: string;
+}
+
+// ===== Shielded Transactions =====
+
+export interface ShieldParams {
+  /** Amount to shield (integer XRGE) */
+  amount: number;
+}
+
+export interface ShieldedTransferParams {
+  /** Nullifiers of consumed input notes (hex) */
+  nullifiers: string[];
+  /** Commitments for output notes (hex) */
+  outputCommitments: string[];
+  /** STARK proof bytes (hex) */
+  proof: string;
+  /** Fee paid from the shielded pool */
+  shieldedFee?: number;
+}
+
+export interface UnshieldParams {
+  /** Nullifiers of consumed notes (hex) */
+  nullifiers: string[];
+  /** Amount to unshield (integer XRGE) */
+  amount: number;
+  /** STARK proof bytes (hex) */
+  proof: string;
+}
+
+export interface ShieldedStats {
+  success: boolean;
+  commitment_count: number;
+  nullifier_count: number;
+  active_notes: number;
 }

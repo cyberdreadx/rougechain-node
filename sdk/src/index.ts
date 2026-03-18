@@ -10,11 +10,22 @@ export {
   createSignedBridgeWithdraw,
   createSignedTokenMetadataUpdate,
   createSignedTokenMetadataClaim,
+  createSignedShield,
+  createSignedShieldedTransfer,
+  createSignedUnshield,
   BURN_ADDRESS,
   isBurnAddress,
 } from "./signer.js";
 
 export { generateNonce, hexToBytes, bytesToHex } from "./utils.js";
+
+export {
+  computeCommitment,
+  computeNullifier,
+  generateRandomness,
+  createShieldedNote,
+} from "./shielded.js";
+export type { ShieldedNote } from "./shielded.js";
 
 export type {
   WalletKeys,
@@ -65,4 +76,8 @@ export type {
   MessengerWallet,
   MessengerConversation,
   MessengerMessage,
+  ShieldParams,
+  ShieldedTransferParams,
+  UnshieldParams,
+  ShieldedStats,
 } from "./types.js";

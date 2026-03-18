@@ -360,3 +360,48 @@ export function createSignedNftFreezeCollection(
     fee: 0.1,
   });
 }
+
+// ===== Shielded transaction builders =====
+
+export function createSignedShield(
+  wallet: WalletKeys,
+  amount: number,
+  commitment: string
+): SignedTransaction {
+  return buildAndSign(wallet, {
+    type: "shield",
+    amount,
+    commitment,
+  } as any);
+}
+
+export function createSignedShieldedTransfer(
+  wallet: WalletKeys,
+  nullifiers: string[],
+  outputCommitments: string[],
+  proof: string,
+  shieldedFee?: number
+): SignedTransaction {
+  return buildAndSign(wallet, {
+    type: "shielded_transfer",
+    nullifiers,
+    output_commitments: outputCommitments,
+    proof,
+    fee: shieldedFee ?? 0,
+  } as any);
+}
+
+export function createSignedUnshield(
+  wallet: WalletKeys,
+  nullifiers: string[],
+  amount: number,
+  proof: string
+): SignedTransaction {
+  return buildAndSign(wallet, {
+    type: "unshield",
+    nullifiers,
+    amount,
+    proof,
+  } as any);
+}
+
