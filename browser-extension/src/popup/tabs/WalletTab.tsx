@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Send, Download, Droplets, Copy, Check, TrendingUp, ArrowDownUp } from "lucide-react";
+import { RefreshCw, Send, Download, Droplets, Copy, Check, TrendingUp, ArrowDownUp, Shield } from "lucide-react";
 import type { UnifiedWallet } from "../../lib/unified-wallet";
 import {
     getWalletBalance,
@@ -8,8 +8,12 @@ import {
     truncateAddress,
     formatTimestamp,
     TOKEN_SYMBOL,
+    getShieldedStats,
+    createShieldedNote,
     type WalletBalance,
     type WalletTransaction,
+    type ShieldedStats,
+    type ShieldedNote,
 } from "../../lib/pqc-wallet";
 
 interface Props {
@@ -28,6 +32,12 @@ export default function WalletTab({ wallet }: Props) {
     const [sendAmount, setSendAmount] = useState("");
     const [sendMemo, setSendMemo] = useState("");
     const [isSending, setIsSending] = useState(false);
+    const [showShield, setShowShield] = useState(false);
+    const [shieldAmount, setShieldAmount] = useState("");
+    const [isShielding, setIsShielding] = useState(false);
+    const [shieldedNote, setShieldedNote] = useState<ShieldedNote | null>(null);
+    const [shieldedStats, setShieldedStats] = useState<ShieldedStats | null>(null);
+    const [noteCopied, setNoteCopied] = useState(false);
 
     const refreshData = useCallback(async (showSpinner = true) => {
         if (showSpinner) setIsLoading(true);
@@ -41,6 +51,11 @@ export default function WalletTab({ wallet }: Props) {
         } catch (err) {
             console.error("Failed to load wallet data:", err);
         }
+        // Also fetch shielded stats
+        try {
+            const stats = await getShieldedStats();
+            setShieldedStats(stats);
+        } catch { /* ignore */ }
         setIsLoading(false);
     }, [wallet.signingPublicKey]);
 
@@ -125,6 +140,16 @@ export default function WalletTab({ wallet }: Props) {
                     {copied ? <Check className="w-2.5 h-2.5 text-success" /> : <Copy className="w-2.5 h-2.5" />}
                 </button>
 
+                {/* Shielded note count */}
+                {shieldedStats && shieldedStats.active_notes > 0 && (
+                    <div className="flex items-center gap-1 mt-1">
+                        <Shield className="w-2.5 h-2.5 text-primary" />
+                        <span className="text-[10px] text-primary font-medium">
+                            {shieldedStats.active_notes} shielded note{shieldedStats.active_notes !== 1 ? 's' : ''}
+                        </span>
+                    </div>
+                )}
+
                 {/* Action buttons */}
                 <div className="flex gap-2 mt-3">
                     <button
@@ -145,6 +170,12 @@ export default function WalletTab({ wallet }: Props) {
                         className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-accent/20 text-accent-foreground text-xs font-semibold hover:bg-accent/30 active:scale-[0.97] transition-all disabled:opacity-50"
                     >
                         <Droplets className={`w-3.5 h-3.5 ${isClaiming ? "animate-spin" : ""}`} /> Faucet
+                    </button>
+                    <button
+                        onClick={() => { setShowShield(!showShield); setShieldedNote(null); }}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 active:scale-[0.97] transition-all"
+                    >
+                        <Shield className="w-3.5 h-3.5" /> Shield
                     </button>
                 </div>
             </div>
@@ -182,6 +213,131 @@ export default function WalletTab({ wallet }: Props) {
                     >
                         {isSending ? "Signing & Sending..." : `Send ${TOKEN_SYMBOL}`}
                     </button>
+                </div>
+            )}
+
+            {/* Shield form */}
+            {showShield && (
+                <div className="p-3 border-b border-border bg-card/80 space-y-2">
+                    {shieldedNote ? (
+                        /* Success — show note */
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-1.5 text-xs text-success">
+                                <Check className="w-3.5 h-3.5" />
+                                <span className="font-semibold">Shielded {shieldedNote.value} XRGE</span>
+                            </div>
+                            <p className="text-[10px] text-warning">⚠️ Save this note data — it's the ONLY way to unshield!</p>
+                            <div className="bg-muted/50 rounded-lg p-2 border border-border text-[9px] font-mono text-foreground break-all space-y-1">
+                                <div><span className="text-muted-foreground">commitment:</span> {shieldedNote.commitment}</div>
+                                <div><span className="text-muted-foreground">nullifier:</span> {shieldedNote.nullifier}</div>
+                                <div><span className="text-muted-foreground">randomness:</span> {shieldedNote.randomness}</div>
+                                <div><span className="text-muted-foreground">value:</span> {shieldedNote.value} XRGE</div>
+                            </div>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => {
+                                        navigator.clipboard.writeText(JSON.stringify(shieldedNote, null, 2));
+                                        setNoteCopied(true);
+                                        setTimeout(() => setNoteCopied(false), 2000);
+                                    }}
+                                    className="flex-1 py-2 rounded-lg bg-secondary text-secondary-foreground text-xs font-medium hover:bg-secondary/80 transition-colors"
+                                >
+                                    {noteCopied ? "Copied!" : "Copy Note"}
+                                </button>
+                                <button
+                                    onClick={() => { setShowShield(false); setShieldedNote(null); refreshData(); }}
+                                    className="flex-1 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+                                >
+                                    Done
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        /* Input form */
+                        <>
+                            <p className="text-[10px] text-muted-foreground">Convert public XRGE to a private shielded note</p>
+                            <div className="flex gap-2">
+                                <input
+                                    type="number"
+                                    placeholder="Amount (whole XRGE)"
+                                    value={shieldAmount}
+                                    onChange={e => setShieldAmount(e.target.value)}
+                                    min="1"
+                                    step="1"
+                                    className="flex-1 px-3 py-2 rounded-lg bg-input border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                                />
+                                <button
+                                    onClick={() => setShieldAmount(Math.max(0, Math.floor(xrgeBalance - 1)).toString())}
+                                    className="px-2 py-2 rounded-lg bg-secondary text-xs text-foreground hover:bg-secondary/80 transition-colors"
+                                >
+                                    Max
+                                </button>
+                            </div>
+                            <div className="text-[10px] text-muted-foreground flex justify-between">
+                                <span>Available: {xrgeBalance.toLocaleString()} {TOKEN_SYMBOL}</span>
+                                <span>Fee: 1 XRGE</span>
+                            </div>
+                            <button
+                                onClick={async () => {
+                                    const amt = parseInt(shieldAmount);
+                                    if (!amt || amt <= 0) return;
+                                    if (amt + 1 > xrgeBalance) return;
+                                    setIsShielding(true);
+                                    try {
+                                        const note = await createShieldedNote(amt, wallet.signingPublicKey);
+                                        // Submit shield tx
+                                        const { sendTransaction: sendTx } = await import("../../lib/pqc-wallet");
+                                        const { getCoreApiBaseUrl, getCoreApiHeaders } = await import("../../lib/network");
+                                        const baseUrl = getCoreApiBaseUrl();
+                                        const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
+
+                                        // Build, sign, submit
+                                        const payload = {
+                                            type: "shield",
+                                            from: wallet.signingPublicKey,
+                                            amount: amt,
+                                            commitment: note.commitment,
+                                            timestamp: Date.now(),
+                                            nonce: Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, "0")).join(""),
+                                        };
+                                        const sortKeysDeep = (obj: any): any => {
+                                            if (Array.isArray(obj)) return obj.map(sortKeysDeep);
+                                            if (obj && typeof obj === "object") {
+                                                const sorted: any = {};
+                                                for (const k of Object.keys(obj).sort()) sorted[k] = sortKeysDeep(obj[k]);
+                                                return sorted;
+                                            }
+                                            return obj;
+                                        };
+                                        const payloadBytes = new TextEncoder().encode(JSON.stringify(sortKeysDeep(payload)));
+                                        const privBytes = new Uint8Array(wallet.signingPrivateKey.length / 2);
+                                        for (let i = 0; i < privBytes.length; i++) privBytes[i] = parseInt(wallet.signingPrivateKey.slice(i*2, i*2+2), 16);
+                                        const sig = ml_dsa65.sign(payloadBytes, privBytes);
+                                        const sigHex = Array.from(sig).map(b => b.toString(16).padStart(2, "0")).join("");
+
+                                        const res = await fetch(`${baseUrl}/v2/shielded/shield`, {
+                                            method: "POST",
+                                            headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
+                                            body: JSON.stringify({ payload, signature: sigHex, public_key: wallet.signingPublicKey }),
+                                        });
+                                        const data = await res.json();
+                                        if (!data.success) throw new Error(data.error || "Shield failed");
+
+                                        setShieldedNote(note);
+                                        setShieldAmount("");
+                                    } catch (err) {
+                                        console.error("Shield failed:", err);
+                                        alert(`Shield failed: ${err instanceof Error ? err.message : err}`);
+                                    }
+                                    setIsShielding(false);
+                                }}
+                                disabled={isShielding || !shieldAmount || parseInt(shieldAmount) <= 0}
+                                className="w-full py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                            >
+                                {isShielding ? "Shielding..." : `Shield ${TOKEN_SYMBOL}`}
+                            </button>
+                        </>
+                    )}
                 </div>
             )}
 

@@ -34,7 +34,8 @@ function bytesToHex(bytes: Uint8Array): string {
 export interface TransactionPayload {
   type: "transfer" | "create_token" | "update_token_metadata" | "claim_token_metadata" | "swap" | "create_pool" | "add_liquidity" | "remove_liquidity" | "stake" | "unstake" | "faucet"
   | "nft_create_collection" | "nft_mint" | "nft_batch_mint" | "nft_transfer" | "nft_burn" | "nft_lock" | "nft_freeze_collection"
-  | "bridge_withdraw";
+  | "bridge_withdraw"
+  | "shield" | "shielded_transfer" | "unshield";
   from: string;
   to?: string;
   amount?: number;
@@ -81,6 +82,11 @@ export interface TransactionPayload {
   website?: string;
   twitter?: string;
   discord?: string;
+  // Shielded transaction fields
+  commitment?: string;
+  nullifiers?: string[];
+  output_commitments?: string[];
+  proof?: string;
 }
 
 /**
@@ -626,4 +632,65 @@ export function createSignedBridgeWithdraw(
  */
 export function isBurnAddress(address: string): boolean {
   return address === BURN_ADDRESS;
+}
+
+// ============================================
+// Shielded transaction signing helpers
+// ============================================
+
+export function createSignedShield(
+  publicKey: string,
+  privateKey: string,
+  amount: number,
+  commitment: string
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "shield",
+    from: publicKey,
+    amount,
+    commitment,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  return signTransaction(payload, privateKey, publicKey);
+}
+
+export function createSignedShieldedTransfer(
+  publicKey: string,
+  privateKey: string,
+  nullifiers: string[],
+  outputCommitments: string[],
+  proof: string,
+  fee: number = 0
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "shielded_transfer",
+    from: publicKey,
+    nullifiers,
+    output_commitments: outputCommitments,
+    proof,
+    fee,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  return signTransaction(payload, privateKey, publicKey);
+}
+
+export function createSignedUnshield(
+  publicKey: string,
+  privateKey: string,
+  nullifiers: string[],
+  amount: number,
+  proof: string
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "unshield",
+    from: publicKey,
+    nullifiers,
+    amount,
+    proof,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  return signTransaction(payload, privateKey, publicKey);
 }

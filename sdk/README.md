@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>Build quantum-safe dApps on RougeChain</strong><br />
-  Transfers · DEX · NFTs · Bridge · Mail · Messenger
+  Transfers · DEX · NFTs · Shielded Transactions · Bridge · Mail · Messenger
 </p>
 
 <p align="center">
@@ -58,7 +58,8 @@ const { balance } = await rc.getBalance(wallet.publicKey);
 | **Staking** | `rc` | Stake/unstake XRGE for validation |
 | **DEX** | `rc.dex` | AMM pools, swaps with slippage protection, liquidity |
 | **NFTs** | `rc.nft` | RC-721 collections, mint, batch mint, royalties, freeze |
-| **Bridge** | `rc.bridge` | ETH ↔ qETH, USDC ↔ qUSDC, XRGE bridge (Base Sepolia) |
+| **Shielded** | `rc.shielded` | Private transfers with zk-STARK proofs, shield/unshield XRGE |
+| **Bridge** | `rc.bridge` | ETH ↔ qETH, USDC ↔ qUSDC, XRGE bridge (Base Sepolia) |\r
 | **Mail** | `rc.mail` | On-chain encrypted email (`@rouge.quant`) |
 | **Messenger** | `rc.messenger` | E2E encrypted messaging with self-destruct |
 
@@ -306,6 +307,45 @@ const messages = await rc.messenger.getMessages(conversationId);
 await rc.messenger.deleteMessage(messageId);
 ```
 
+## Shielded Transactions (`rc.shielded`)
+
+Private value transfers using zk-STARK proofs. Shield XRGE into private notes, transfer privately, and unshield back to public balance.
+
+```typescript
+import { createShieldedNote, computeCommitment, computeNullifier } from "@rougechain/sdk";
+
+// Shield 100 XRGE into a private note
+const { note } = await rc.shielded.shield(wallet, { amount: 100 });
+// ⚠️ Save `note` securely — losing it means losing the funds!
+// note = { commitment, nullifier, value, randomness, ownerPubKey }
+
+// Check pool stats
+const stats = await rc.shielded.getStats();
+// { commitment_count, nullifier_count, active_notes }
+
+// Check if a nullifier has been spent
+const { spent } = await rc.shielded.isNullifierSpent(note.nullifier);
+
+// Private transfer (requires STARK proof from Rust prover)
+await rc.shielded.transfer(wallet, {
+  nullifiers: [note.nullifier],
+  outputCommitments: [recipientCommitment],
+  proof: starkProofHex,
+});
+
+// Unshield back to public balance
+await rc.shielded.unshield(wallet, {
+  nullifiers: [note.nullifier],
+  amount: 100,
+  proof: starkProofHex,
+});
+
+// Client-side crypto primitives
+const randomness = generateRandomness();
+const commitment = computeCommitment(100, wallet.publicKey, randomness);
+const nullifier = computeNullifier(randomness, commitment);
+```
+
 ## Low-Level Signing
 
 For advanced use cases:
@@ -347,6 +387,8 @@ import type {
   NftToken, LiquidityPool, BalanceResponse, Validator,
   BridgeConfig, MailMessage, MessengerMessage, WalletKeys,
   PriceSnapshot, PoolEvent, PoolStats, SwapQuote,
+  ShieldParams, ShieldedTransferParams, UnshieldParams, ShieldedStats,
+  ShieldedNote,
 } from "@rougechain/sdk";
 ```
 

@@ -14,7 +14,8 @@ import {
   TrendingUp,
   TrendingDown,
   Puzzle,
-  ExternalLink
+  ExternalLink,
+  Shield
 } from "lucide-react";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { useTokenPrices } from "@/hooks/use-token-prices";
@@ -50,6 +51,7 @@ import SendTokensDialog from "@/components/wallet/SendTokensDialog";
 import ReceiveDialog from "@/components/wallet/ReceiveDialog";
 import CreateTokenDialog from "@/components/wallet/CreateTokenDialog";
 import TokenDetailDialog from "@/components/wallet/TokenDetailDialog";
+import ShieldDialog from "@/components/wallet/ShieldDialog";
 import { 
   UnifiedWallet,
   VaultSettings,
@@ -76,6 +78,7 @@ const Wallet = () => {
   const [minting, setMinting] = useState(false);
   const [showSend, setShowSend] = useState(false);
   const [showReceive, setShowReceive] = useState(false);
+  const [showShield, setShowShield] = useState(false);
   const [showCreateToken, setShowCreateToken] = useState(false);
   const [showBackup, setShowBackup] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState<{
@@ -700,7 +703,7 @@ const Wallet = () => {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">Quick actions</h3>
             </div>
-            <div className={`grid gap-2 ${isMainnet ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3 sm:grid-cols-5'}`}>
+            <div className={`grid gap-2 ${isMainnet ? 'grid-cols-3 sm:grid-cols-5' : 'grid-cols-3 sm:grid-cols-6'}`}>
               <Button
                 variant="outline"
                 className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
@@ -752,6 +755,18 @@ const Wallet = () => {
                   <Plus className="w-4 h-4 text-primary" />
                 </div>
                 <span className="text-[10px]">Create</span>
+              </Button>
+
+              <Button
+                variant="outline"
+                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
+                onClick={() => setShowShield(true)}
+                disabled={xrgeBalance <= 1}
+              >
+                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
+                  <Shield className="w-4 h-4 text-primary" />
+                </div>
+                <span className="text-[10px]">Shield</span>
               </Button>
               
               <Button
@@ -903,6 +918,21 @@ const Wallet = () => {
             onClose={() => setShowSend(false)}
             onSuccess={() => {
               setShowSend(false);
+              refreshWalletData();
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Shield Dialog */}
+      <AnimatePresence>
+        {showShield && wallet && (
+          <ShieldDialog
+            wallet={wallet}
+            xrgeBalance={xrgeBalance}
+            onClose={() => setShowShield(false)}
+            onSuccess={() => {
+              setShowShield(false);
               refreshWalletData();
             }}
           />

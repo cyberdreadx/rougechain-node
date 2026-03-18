@@ -358,3 +358,67 @@ export async function claimFaucet(publicKey: string): Promise<any> {
     invalidate("blocks");
     return res.json();
 }
+
+// ===== Shielded Transactions =====
+
+export interface ShieldedStats {
+    commitment_count: number;
+    nullifier_count: number;
+    active_notes: number;
+}
+
+export async function getShieldedStats(): Promise<ShieldedStats> {
+    const baseUrl = getCoreApiBaseUrl();
+    if (!baseUrl) return { commitment_count: 0, nullifier_count: 0, active_notes: 0 };
+    try {
+        const res = await fetch(`${baseUrl}/shielded/stats`, { headers: getCoreApiHeaders() });
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        return data;
+    } catch {
+        return { commitment_count: 0, nullifier_count: 0, active_notes: 0 };
+    }
+}
+
+// Client-side commitment crypto (mirrors Rust commitment.rs)
+const COMMITMENT_DOMAIN = new TextEncoder().encode("ROUGECHAIN_COMMITMENT_V1");
+const NULLIFIER_DOMAIN = new TextEncoder().encode("ROUGECHAIN_NULLIFIER_V1");
+
+function hexToU8(hex: string): Uint8Array {
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    return bytes;
+}
+function u8ToHex(bytes: Uint8Array): string {
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+function u64ToBytes(v: number): Uint8Array {
+    const buf = new Uint8Array(8);
+    new DataView(buf.buffer).setBigUint64(0, BigInt(v), false);
+    return buf;
+}
+function concat(...a: Uint8Array[]): Uint8Array {
+    const out = new Uint8Array(a.reduce((s, x) => s + x.length, 0));
+    let o = 0; for (const x of a) { out.set(x, o); o += x.length; }
+    return out;
+}
+async function sha256(data: Uint8Array): Promise<Uint8Array> {
+    return new Uint8Array(await crypto.subtle.digest("SHA-256", data.buffer as ArrayBuffer));
+}
+
+export interface ShieldedNote {
+    commitment: string;
+    nullifier: string;
+    value: number;
+    randomness: string;
+    ownerPubKey: string;
+}
+
+export async function createShieldedNote(value: number, ownerPubKey: string): Promise<ShieldedNote> {
+    const randBytes = new Uint8Array(32); crypto.getRandomValues(randBytes);
+    const randomness = u8ToHex(randBytes);
+    const commitment = u8ToHex(await sha256(concat(COMMITMENT_DOMAIN, u64ToBytes(value), hexToU8(ownerPubKey), randBytes)));
+    const nullifier = u8ToHex(await sha256(concat(NULLIFIER_DOMAIN, randBytes, hexToU8(commitment))));
+    return { commitment, nullifier, value, randomness, ownerPubKey };
+}
+

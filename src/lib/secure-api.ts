@@ -27,6 +27,8 @@ import {
   createSignedNftFreezeCollection,
   createSignedTokenMetadataUpdate,
   createSignedTokenMetadataClaim,
+  createSignedShield,
+  createSignedUnshield,
   BURN_ADDRESS,
 } from "./pqc-signer";
 
@@ -584,4 +586,56 @@ export async function getNftsByOwner(pubkey: string): Promise<ApiResponse<NftTok
   } catch (e) {
     return { success: false, error: `Request failed: ${e}` };
   }
+}
+
+// ===== Shielded Transaction API =====
+
+export interface ShieldedStats {
+  success: boolean;
+  commitment_count: number;
+  nullifier_count: number;
+  active_notes: number;
+}
+
+/**
+ * Get shielded pool stats (commitment & nullifier counts)
+ */
+export async function getShieldedStats(): Promise<ApiResponse<ShieldedStats>> {
+  const baseUrl = getNodeApiBaseUrl();
+  if (!baseUrl) return { success: false, error: "API not configured" };
+
+  try {
+    const res = await fetch(`${baseUrl}/shielded/stats`, { headers: getCoreApiHeaders() });
+    const data = await res.json();
+    return { success: true, data };
+  } catch (e) {
+    return { success: false, error: `Request failed: ${e}` };
+  }
+}
+
+/**
+ * Shield XRGE into a private note (client-side signing)
+ */
+export async function secureShield(
+  publicKey: string,
+  privateKey: string,
+  amount: number,
+  commitment: string
+): Promise<ApiResponse> {
+  const signedTx = createSignedShield(publicKey, privateKey, amount, commitment);
+  return submitSignedTx("/v2/shielded/shield", signedTx);
+}
+
+/**
+ * Unshield a private note back to public XRGE (client-side signing)
+ */
+export async function secureUnshield(
+  publicKey: string,
+  privateKey: string,
+  nullifiers: string[],
+  amount: number,
+  proof: string
+): Promise<ApiResponse> {
+  const signedTx = createSignedUnshield(publicKey, privateKey, nullifiers, amount, proof);
+  return submitSignedTx("/v2/shielded/unshield", signedTx);
 }
