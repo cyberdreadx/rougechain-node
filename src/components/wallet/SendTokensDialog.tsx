@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Send, Loader2, AlertCircle, CheckCircle2, ChevronDown, QrCode } from "lucide-react";
+import { X, Send, Loader2, AlertCircle, CheckCircle2, ChevronDown, QrCode, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,9 +13,12 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { getWalletBalance, WalletBalance, BASE_TRANSFER_FEE } from "@/lib/pqc-wallet";
-import { secureTransfer } from "@/lib/secure-api";
+import { secureTransfer, secureShield } from "@/lib/secure-api";
 import { qethToHuman, humanToQeth, formatQethForDisplay } from "@/hooks/use-eth-price";
 import PqcQrScanner from "./PqcQrScanner";
+import xrgeLogo from "@/assets/xrge-logo.webp";
+import { createShieldedNote } from "@/lib/shielded-crypto";
+import { saveNote } from "@/lib/note-store";
 
 interface SendTokensDialogProps {
   wallet: {
@@ -71,6 +74,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
   const [showScanner, setShowScanner] = useState(false);
+  const [shieldedSend, setShieldedSend] = useState(false);
 
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
   const rawSelectedBalance = balances.find(b => b.symbol === selectedToken)?.balance || 0;
@@ -120,6 +124,33 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
 
     setSending(true);
     try {
+      if (shieldedSend && selectedToken === "XRGE") {
+        // Shielded send: create note owned by recipient
+        const note = await createShieldedNote(amountToSend, parsed.address);
+        const result = await secureShield(
+          wallet.signingPublicKey,
+          wallet.signingPrivateKey,
+          amountToSend,
+          note.commitment
+        );
+        if (!result.success) {
+          throw new Error(result.error || "Shielded transfer failed");
+        }
+        // Save note for recipient reference (they'll need to import it)
+        // Show the note data so sender can share with recipient
+        toast.success(`Shielded ${amountToSend} XRGE to recipient`, {
+          description: "Share the note data with the recipient so they can unshield",
+          duration: 8000,
+        });
+        // Copy note to clipboard for sharing
+        try {
+          await navigator.clipboard.writeText(JSON.stringify(note));
+          toast.info("Note copied to clipboard — share with recipient", { duration: 5000 });
+        } catch { /* clipboard may fail */ }
+        onSuccess();
+        return;
+      }
+
       const result = await secureTransfer(
         wallet.signingPublicKey,
         wallet.signingPrivateKey,
@@ -223,9 +254,13 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
                     return (
                       <SelectItem key={token.symbol} value={token.symbol}>
                         <div className="flex items-center gap-2">
-                          <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs font-bold">
-                            {token.icon || token.symbol.charAt(0)}
-                          </span>
+                          {token.symbol === "XRGE" ? (
+                            <img src={xrgeLogo} alt="XRGE" className="w-6 h-6 rounded-full" />
+                          ) : (
+                            <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs font-bold">
+                              {token.symbol.charAt(0)}
+                            </span>
+                          )}
                           <span>{token.symbol}</span>
                           <span className="text-muted-foreground text-xs">
                             ({balStr})
@@ -322,6 +357,35 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
             </div>
           </div>
 
+          {/* Shielded Send Toggle */}
+          {selectedToken === "XRGE" && (
+            <div
+              onClick={() => setShieldedSend(!shieldedSend)}
+              className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                shieldedSend
+                  ? "border-primary/50 bg-primary/5"
+                  : "border-border bg-muted/30 hover:bg-muted/50"
+              }`}
+            >
+              <div className={`w-9 h-5 rounded-full transition-colors relative ${
+                shieldedSend ? "bg-primary" : "bg-muted-foreground/30"
+              }`}>
+                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                  shieldedSend ? "translate-x-4" : "translate-x-0.5"
+                }`} />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5 text-primary" />
+                  <span className="text-sm font-medium">Send Shielded</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Private transfer — recipient imports note to unshield
+                </p>
+              </div>
+            </div>
+          )}
+
           <div>
             <Label htmlFor="memo">Memo (Optional)</Label>
             <Input
@@ -358,13 +422,16 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
             ) : (
               <>
                 <Send className="w-4 h-4 mr-2" />
-                Send {selectedToken}
+                {shieldedSend && selectedToken === "XRGE" ? "Send Shielded" : `Send ${selectedToken}`}
               </>
             )}
           </Button>
 
           <p className="text-xs text-center text-muted-foreground">
-            Transaction will be mined and signed with ML-DSA-65
+            {shieldedSend && selectedToken === "XRGE"
+              ? "Transaction will be shielded with zk-STARK proof"
+              : "Transaction will be mined and signed with ML-DSA-65"
+            }
           </p>
         </div>
       </motion.div>
