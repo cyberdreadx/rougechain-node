@@ -468,6 +468,12 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/nft/collection/:id/tokens", get(nft_get_collection_tokens))
         .route("/api/nft/token/:collection_id/:token_id", get(nft_get_token))
         .route("/api/nft/owner/:pubkey", get(nft_get_owner_nfts))
+        // Shielded transaction endpoints
+        .route("/api/v2/shielded/shield", post(v2_shield))
+        .route("/api/v2/shielded/transfer", post(v2_shielded_transfer))
+        .route("/api/v2/shielded/unshield", post(v2_unshield))
+        .route("/api/shielded/stats", get(shielded_stats))
+        .route("/api/shielded/nullifier/:hash", get(shielded_nullifier_check))
         .route("/api/bridge/config", get(bridge_config))
         .route("/api/bridge/claim", post(bridge_claim))
         .route("/api/bridge/withdraw", post(bridge_withdraw))
@@ -4818,3 +4824,264 @@ fn default_data_dir(node_name: &str) -> PathBuf {
         .unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".quantum-vault").join(node_name)
 }
+
+// ============================================
+// Shielded Transaction Handlers (Phase 2)
+// ============================================
+
+/// Shield: Convert public XRGE balance into a shielded note commitment
+async fn v2_shield(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    let node = &state.node;
+    let payload = &body.payload;
+
+    let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
+    let commitment = payload.get("commitment").and_then(|v| v.as_str()).unwrap_or_default();
+    let fee = 1.0_f64;
+
+    if amount == 0 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "amount must be greater than zero"}))));
+    }
+    if commitment.is_empty() || commitment.len() != 64 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "commitment must be a 64-char hex string (32 bytes)"}))));
+    }
+
+    // Balance check
+    let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < amount as f64 + fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false,
+            "error": format!("insufficient XRGE: have {:.4}, need {:.4}", bal, amount as f64 + fee)
+        }))));
+    }
+
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "shield".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            shielded_commitment: Some(commitment.to_string()),
+            shielded_value: Some(amount),
+            ..Default::default()
+        },
+        fee,
+        sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
+    };
+
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Shield transaction submitted",
+        "commitment": commitment
+    })))
+}
+
+/// Shielded Transfer: Private note-to-note transfer with STARK proof
+async fn v2_shielded_transfer(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    let node = &state.node;
+    let payload = &body.payload;
+
+    let nullifiers: Vec<String> = payload.get("nullifiers")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    let output_commitments: Vec<String> = payload.get("output_commitments")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    let proof_hex = payload.get("proof").and_then(|v| v.as_str()).unwrap_or_default();
+    let shielded_fee = payload.get("fee").and_then(|v| v.as_u64()).unwrap_or(0);
+    let fee = 1.0_f64;
+
+    // Validate inputs
+    if nullifiers.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "at least one nullifier required"}))));
+    }
+    if output_commitments.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "at least one output commitment required"}))));
+    }
+    if proof_hex.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "STARK proof is required"}))));
+    }
+
+    // Check nullifiers aren't already spent
+    for nullifier in &nullifiers {
+        match node.is_nullifier_spent(nullifier) {
+            Ok(true) => {
+                return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                    "success": false,
+                    "error": format!("double-spend detected: nullifier {} already spent", &nullifier[..16.min(nullifier.len())])
+                }))));
+            }
+            Err(e) => {
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"success": false, "error": e}))));
+            }
+            _ => {}
+        }
+    }
+
+    // Fee balance check
+    let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false,
+            "error": format!("insufficient XRGE for fee: have {:.4}, need {:.4}", bal, fee)
+        }))));
+    }
+
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "shielded_transfer".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            shielded_nullifiers: Some(nullifiers),
+            shielded_output_commitments: Some(output_commitments),
+            shielded_proof: Some(proof_hex.to_string()),
+            shielded_fee: Some(shielded_fee),
+            ..Default::default()
+        },
+        fee,
+        sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
+    };
+
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Shielded transfer submitted"
+    })))
+}
+
+/// Unshield: Convert a shielded note back to public XRGE balance
+async fn v2_unshield(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    let node = &state.node;
+    let payload = &body.payload;
+
+    let nullifiers: Vec<String> = payload.get("nullifiers")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
+    let proof_hex = payload.get("proof").and_then(|v| v.as_str()).unwrap_or_default();
+    let fee = 1.0_f64;
+
+    if nullifiers.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "nullifier required to unshield"}))));
+    }
+    if amount == 0 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "amount must be greater than zero"}))));
+    }
+    if proof_hex.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "STARK proof is required"}))));
+    }
+
+    // Check nullifiers aren't already spent
+    for nullifier in &nullifiers {
+        match node.is_nullifier_spent(nullifier) {
+            Ok(true) => {
+                return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                    "success": false,
+                    "error": format!("nullifier {} already spent", &nullifier[..16.min(nullifier.len())])
+                }))));
+            }
+            Err(e) => {
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"success": false, "error": e}))));
+            }
+            _ => {}
+        }
+    }
+
+    // Fee balance check
+    let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false,
+            "error": format!("insufficient XRGE for fee: have {:.4}, need {:.4}", bal, fee)
+        }))));
+    }
+
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "unshield".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            shielded_nullifiers: Some(nullifiers),
+            shielded_value: Some(amount),
+            shielded_proof: Some(proof_hex.to_string()),
+            ..Default::default()
+        },
+        fee,
+        sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
+    };
+
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Unshield transaction submitted",
+        "amount": amount
+    })))
+}
+
+/// Read-only: Get shielded pool statistics
+async fn shielded_stats(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let node = &state.node;
+    let commitment_count = node.get_commitment_count();
+    let nullifier_count = node.get_nullifier_count();
+
+    Json(serde_json::json!({
+        "success": true,
+        "commitment_count": commitment_count,
+        "nullifier_count": nullifier_count,
+        "active_notes": commitment_count.saturating_sub(nullifier_count)
+    }))
+}
+
+/// Read-only: Check if a nullifier has been spent
+async fn shielded_nullifier_check(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Json<serde_json::Value> {
+    let node = &state.node;
+    match node.is_nullifier_spent(&hash) {
+        Ok(spent) => Json(serde_json::json!({
+            "success": true,
+            "nullifier": hash,
+            "spent": spent
+        })),
+        Err(e) => Json(serde_json::json!({
+            "success": false,
+            "error": e
+        })),
+    }
+}
+

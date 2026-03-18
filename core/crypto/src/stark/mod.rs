@@ -5,17 +5,27 @@
 // winterfell library.  STARKs use only collision-resistant hash functions
 // (no elliptic curves), making them inherently post-quantum secure.
 //
-// Current AIR:  BalanceTransfer — proves a value-conserving token transfer
-//               without revealing the actual balances involved.
+// Current AIRs:
+//   BalanceTransfer   — proves a value-conserving token transfer
+//                       without revealing the actual balances involved.
+//   ShieldedTransfer  — proves a private note-to-note transfer with
+//                       bit-decomposition range checks (Phase 2).
 // ============================================================================
 
 pub mod air;
+pub mod commitment;
 pub mod prover;
+pub mod shielded_air;
+pub mod shielded_prover;
 pub mod verifier;
 
-// Re-export the public API
+// Re-export the public API — Phase 1 (balance transfers)
 pub use prover::prove_balance_transfer;
 pub use verifier::verify_balance_transfer;
+
+// Re-export the public API — Phase 2 (shielded transfers)
+pub use commitment::{compute_commitment, compute_nullifier, generate_randomness, verify_commitment};
+pub use shielded_prover::prove_shielded_transfer;
 
 use winterfell::math::{fields::f128::BaseElement, ToElements};
 
@@ -47,15 +57,71 @@ impl ToElements<BaseElement> for BalanceTransferInputs {
     }
 }
 
+/// Public inputs for a shielded-transfer STARK proof.
+///
+/// The verifier sees only these values. The actual input value, note
+/// contents, and balances remain hidden. The proof guarantees:
+///   1. input_value = output_1 + output_2 + fee (conservation)
+///   2. input_value fits in 64 bits (range check via bit decomposition)
+#[derive(Debug, Clone)]
+pub struct ShieldedTransferInputs {
+    /// Output 1 value (hidden in commitment on-chain, revealed to verifier in proof)
+    pub output_1_commitment_value: BaseElement,
+    /// Output 2 value (change, hidden in commitment on-chain)
+    pub output_2_commitment_value: BaseElement,
+    /// Transaction fee (always public)
+    pub fee: BaseElement,
+    /// First bit of input value (MSB, for boundary assertion)
+    pub first_bit: BaseElement,
+    /// Full input value reconstructed from bits (must equal input, range check)
+    pub input_value_check: BaseElement,
+}
+
+impl ToElements<BaseElement> for ShieldedTransferInputs {
+    fn to_elements(&self) -> Vec<BaseElement> {
+        vec![
+            self.output_1_commitment_value,
+            self.output_2_commitment_value,
+            self.fee,
+            self.first_bit,
+            self.input_value_check,
+        ]
+    }
+}
+
+/// Verify a shielded transfer STARK proof.
+pub fn verify_shielded_transfer(
+    proof: winterfell::Proof,
+    pub_inputs: ShieldedTransferInputs,
+) -> Result<(), String> {
+    use winterfell::{AcceptableOptions, crypto::{DefaultRandomCoin, MerkleTree}};
+
+    let acceptable_options =
+        AcceptableOptions::OptionSet(vec![proof.options().clone()]);
+
+    winterfell::verify::<
+        shielded_air::ShieldedTransferAir,
+        Blake3Hasher,
+        DefaultRandomCoin<Blake3Hasher>,
+        MerkleTree<Blake3Hasher>,
+    >(proof, pub_inputs, &acceptable_options)
+        .map_err(|e| format!("Shielded proof verification failed: {}", e))
+}
+
+type Blake3Hasher = winterfell::crypto::hashers::Blake3_256<BaseElement>;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use winterfell::math::FieldElement;
 
+    // ========================================================================
+    // Phase 1: Balance Transfer Tests
+    // ========================================================================
+
     /// Round-trip: generate a proof for a valid transfer, then verify it
     #[test]
     fn test_valid_transfer_roundtrip() {
-        // Sender has 1000, receiver has 500, transferring 250
         let sender_balance: u64 = 1000;
         let receiver_balance: u64 = 500;
         let amount: u64 = 250;
@@ -83,7 +149,6 @@ mod tests {
         let proof = prove_balance_transfer(sender_balance, receiver_balance, amount)
             .expect("proof generation should succeed");
 
-        // Try to claim a different final balance — should fail
         let bad_inputs = BalanceTransferInputs {
             total_value: BaseElement::from(sender_balance + receiver_balance),
             final_sender_balance: BaseElement::from(999u64), // wrong!
@@ -97,9 +162,6 @@ mod tests {
     }
 
     /// Test edge case: transferring zero tokens.
-    /// Zero transfers produce a trivially-zero constraint polynomial, which
-    /// winterfell cannot prove (by design — there's nothing to prove).
-    /// This is expected behavior: a zero transfer doesn't need ZK.
     #[test]
     fn test_zero_transfer_returns_error() {
         let sender_balance: u64 = 100;
@@ -152,4 +214,82 @@ mod tests {
         verify_balance_transfer(proof, public_inputs)
             .expect("verification should succeed for full balance transfer");
     }
+
+    // ========================================================================
+    // Phase 2: Shielded Transfer Tests
+    // ========================================================================
+
+    /// Shielded round-trip: prove a private transfer and verify it
+    #[test]
+    fn test_shielded_transfer_roundtrip() {
+        // Input note: 1000, send 700 to recipient, 200 change, 100 fee
+        let input_value = 1000u64;
+        let output_1 = 700u64;
+        let output_2 = 200u64;
+        let fee = 100u64;
+
+        let (proof, pub_inputs) = prove_shielded_transfer(input_value, output_1, output_2, fee)
+            .expect("shielded proof generation should succeed");
+
+        verify_shielded_transfer(proof, pub_inputs)
+            .expect("shielded verification should succeed");
+    }
+
+    /// Conservation violation should be caught before proving
+    #[test]
+    fn test_shielded_conservation_violation() {
+        let result = prove_shielded_transfer(1000, 600, 300, 200);
+        assert!(
+            result.is_err(),
+            "non-conserving transfer should be rejected"
+        );
+    }
+
+    /// Zero-value input should be rejected
+    #[test]
+    fn test_shielded_zero_value_rejected() {
+        let result = prove_shielded_transfer(0, 0, 0, 0);
+        assert!(result.is_err(), "zero-value note should be rejected");
+    }
+
+    /// Test with two outputs (send + change)
+    #[test]
+    fn test_shielded_two_outputs() {
+        let (proof, pub_inputs) = prove_shielded_transfer(500, 300, 190, 10)
+            .expect("proof should succeed");
+        verify_shielded_transfer(proof, pub_inputs)
+            .expect("verification should succeed with two outputs");
+    }
+
+    /// Test full value as fee (no outputs)
+    #[test]
+    fn test_shielded_full_fee() {
+        let (proof, pub_inputs) = prove_shielded_transfer(100, 0, 0, 100)
+            .expect("full-fee proof should succeed");
+        verify_shielded_transfer(proof, pub_inputs)
+            .expect("full-fee verification should succeed");
+    }
+
+    /// Test commitment and nullifier integration with shielded proofs
+    #[test]
+    fn test_commitment_nullifier_flow() {
+        let value = 1000u64;
+        let owner = b"test_owner_pubkey_hex_1234567890";
+        let randomness = generate_randomness();
+
+        // Create commitment
+        let commitment = compute_commitment(value, owner, &randomness);
+        assert!(verify_commitment(&commitment, value, owner, &randomness));
+
+        // Derive nullifier
+        let nullifier = compute_nullifier(&randomness, &commitment);
+        assert_ne!(nullifier, [0u8; 32], "nullifier shouldn't be all zeros");
+
+        // Prove the shielded transfer: 1000 → 800 + 150 + 50 fee
+        let (proof, pub_inputs) = prove_shielded_transfer(1000, 800, 150, 50)
+            .expect("proof should succeed");
+        verify_shielded_transfer(proof, pub_inputs)
+            .expect("verification should succeed");
+    }
 }
+

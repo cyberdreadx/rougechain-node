@@ -9,9 +9,11 @@ use quantum_vault_consensus::{compute_selection_seed, fetch_entropy, select_prop
 use quantum_vault_crypto::{bytes_to_hex, pqc_keygen, pqc_sign, pqc_verify, sha256};
 use quantum_vault_storage::bridge_withdraw_store::BridgeWithdrawStore;
 use quantum_vault_storage::chain_store::ChainStore;
+use quantum_vault_storage::commitment_store::CommitmentStore;
 use quantum_vault_storage::mail_store::{MailLabel, MailMessage, MailStore};
 use quantum_vault_storage::messenger_store::{Conversation, MessengerMessage, MessengerStore, MessengerWallet};
 use quantum_vault_storage::name_registry::{NameEntry, NameRegistry};
+use quantum_vault_storage::nullifier_store::NullifierStore;
 use quantum_vault_storage::token_metadata_store::{TokenMetadata, TokenMetadataStore};
 use quantum_vault_storage::validator_store::{ValidatorState, ValidatorStore};
 use quantum_vault_types::{
@@ -60,6 +62,8 @@ pub struct L1Node {
     nft_store: NftStore,
     name_registry: NameRegistry,
     mail_store: MailStore,
+    commitment_store: CommitmentStore,
+    nullifier_store: NullifierStore,
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
     verified_tx_ids: Arc<Mutex<HashSet<String>>>,
@@ -85,6 +89,8 @@ impl L1Node {
         let nft_store = NftStore::new(&opts.data_dir)?;
         let name_registry = NameRegistry::new(&opts.data_dir)?;
         let mail_store = MailStore::new(&opts.data_dir)?;
+        let commitment_store = CommitmentStore::new(&opts.data_dir)?;
+        let nullifier_store = NullifierStore::new(&opts.data_dir)?;
         let keys = Self::load_or_create_keys(&opts.data_dir)?;
         Ok(Self {
             node_id: uuid::Uuid::new_v4().to_string(),
@@ -98,6 +104,8 @@ impl L1Node {
             nft_store,
             name_registry,
             mail_store,
+            commitment_store,
+            nullifier_store,
             keys: Arc::new(Mutex::new(keys)),
             mempool: Arc::new(Mutex::new(HashMap::new())),
             verified_tx_ids: Arc::new(Mutex::new(HashSet::new())),
@@ -355,6 +363,19 @@ impl L1Node {
             }
         }
         Ok(result)
+    }
+
+    // Shielded transaction public API
+    pub fn is_nullifier_spent(&self, nullifier_hex: &str) -> Result<bool, String> {
+        self.nullifier_store.is_spent(nullifier_hex)
+    }
+
+    pub fn get_commitment_count(&self) -> usize {
+        self.commitment_store.count()
+    }
+
+    pub fn get_nullifier_count(&self) -> usize {
+        self.nullifier_store.count()
     }
 
     /// Find the original creator of a token by scanning blockchain history
@@ -1835,6 +1856,9 @@ impl L1Node {
 
                 Self::apply_nft_balance_effects(&mut balances, tx);
 
+                // Apply shielded state effects (commitment/nullifier stores)
+                self.apply_shielded_state_effects(tx);
+
                 let sum_after: f64 = balances.values().sum();
                 let fee_delta = sum_before - sum_after;
                 if fee_delta > 0.0 {
@@ -2074,6 +2098,52 @@ impl L1Node {
                 let bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
                 if bal < tx.fee { return; }
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+            }
+            _ => {}
+        }
+    }
+
+    /// Apply shielded transaction state effects (commitment/nullifier stores).
+    /// Called during block processing and balance rebuild.
+    fn apply_shielded_state_effects(&self, tx: &TxV1) {
+        match tx.tx_type.as_str() {
+            "shield" => {
+                // Insert the new commitment into the commitment store
+                if let Some(commitment) = tx.payload.shielded_commitment.as_ref() {
+                    if let Err(e) = self.commitment_store.insert(commitment) {
+                        eprintln!("[node] Failed to insert shield commitment: {}", e);
+                    }
+                }
+            }
+            "shielded_transfer" => {
+                // 1. Mark nullifiers as spent (double-spend prevention)
+                if let Some(nullifiers) = tx.payload.shielded_nullifiers.as_ref() {
+                    for nullifier in nullifiers {
+                        if let Err(e) = self.nullifier_store.mark_spent(nullifier) {
+                            eprintln!("[node] Shielded transfer nullifier error: {}", e);
+                            return;
+                        }
+                    }
+                }
+                // 2. Insert new output commitments
+                if let Some(commitments) = tx.payload.shielded_output_commitments.as_ref() {
+                    for commitment in commitments {
+                        if let Err(e) = self.commitment_store.insert(commitment) {
+                            eprintln!("[node] Failed to insert output commitment: {}", e);
+                        }
+                    }
+                }
+            }
+            "unshield" => {
+                // Mark the spent note's nullifier
+                if let Some(nullifiers) = tx.payload.shielded_nullifiers.as_ref() {
+                    for nullifier in nullifiers {
+                        if let Err(e) = self.nullifier_store.mark_spent(nullifier) {
+                            eprintln!("[node] Unshield nullifier error: {}", e);
+                            return;
+                        }
+                    }
+                }
             }
             _ => {}
         }
@@ -2392,6 +2462,35 @@ impl L1Node {
                 }
             }
             "slash" => {}
+            // Shielded transactions: fee deduction only (state is handled separately)
+            "shield" => {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                let shield_amount = tx.payload.shielded_value.unwrap_or(0) as f64;
+                if xrge_bal < shield_amount + tx.fee {
+                    eprintln!("[node] Rejecting shield: insufficient XRGE ({:.4} < {:.4})", xrge_bal, shield_amount + tx.fee);
+                    return;
+                }
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= shield_amount + tx.fee;
+            }
+            "unshield" => {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting unshield: insufficient XRGE for fee");
+                    return;
+                }
+                let unshield_amount = tx.payload.shielded_value.unwrap_or(0) as f64;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += unshield_amount;
+            }
+            "shielded_transfer" => {
+                // Fee is deducted from public balance (fee is always public)
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting shielded_transfer: insufficient XRGE for fee");
+                    return;
+                }
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+            }
             _ => {}
         }
     }

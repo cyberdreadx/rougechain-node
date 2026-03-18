@@ -210,14 +210,14 @@ Each block consists of a versioned header, a list of transactions, the proposer'
 
 ### 3.3 Transaction Model
 
-RougeChain supports 18 transaction types within a unified transaction structure:
+RougeChain supports 21 transaction types within a unified transaction structure:
 
 **TxV1:**
 
 | Field | Type | Description |
 |---|---|---|
 | version | u32 | Transaction version |
-| tx_type | String | One of the 18 supported types |
+| tx_type | String | One of the 21 supported types |
 | from_pub_key | String | Sender's ML-DSA-65 public key |
 | nonce | u64 | Replay protection counter |
 | payload | TxPayload | Type-specific data |
@@ -235,6 +235,7 @@ RougeChain supports 18 transaction types within a unified transaction structure:
 | AMM / DEX | `create_pool`, `add_liquidity`, `remove_liquidity`, `swap` |
 | Bridge | `bridge_mint`, `bridge_withdraw` |
 | NFTs | `nft_create_collection`, `nft_mint`, `nft_batch_mint`, `nft_transfer`, `nft_burn`, `nft_lock`, `nft_freeze_collection` |
+| Shielded | `shield`, `shielded_transfer`, `unshield` |
 
 > **Note:** The faucet is implemented as a `transfer` transaction with a `faucet: true` flag in the payload, signed by the node operator's key. It is not a separate transaction type.
 
@@ -326,6 +327,52 @@ This is a deliberate tradeoff. A minimal L1 with application logic delegated to 
 
 Future iterations may modularize components as the ecosystem matures and developer tooling enables permissionless application deployment.
 
+### 3.9 Shielded Transactions
+
+RougeChain supports private value transfers through a note-based shielded transaction system built on its zk-STARK proof infrastructure. Shielded transactions hide transfer amounts and account balances behind cryptographic commitments while preserving on-chain verifiability.
+
+**Commitment Scheme.** A shielded note is represented as a SHA-256 commitment:
+
+```
+commitment = SHA-256("ROUGECHAIN_COMMITMENT_V1" || value || owner_pubkey || randomness)
+```
+
+The `value` and `randomness` are private — only the commitment hash is stored on-chain. Two notes with the same value produce different commitments due to the random blinding factor.
+
+**Double-Spend Prevention.** Each note has a unique nullifier derived from its randomness:
+
+```
+nullifier = SHA-256("ROUGECHAIN_NULLIFIER_V1" || randomness || commitment)
+```
+
+When a note is consumed, its nullifier is published on-chain. If a nullifier already exists in the nullifier set, the transaction is rejected as a double-spend. The nullifier does not reveal which commitment it corresponds to.
+
+**STARK Proof of Value Conservation.** Every shielded transfer includes a zk-STARK proof that the sum of input note values equals the sum of output note values plus the fee:
+
+```
+input_value = output_value_1 + output_value_2 + fee
+```
+
+The proof uses a 5-column, 64-row arithmetic execution trace:
+
+| Column | Purpose |
+|---|---|
+| input_value | Value of consumed note (constant) |
+| output_1 | Recipient value (constant) |
+| output_2 | Change value (constant) |
+| fee | Transaction fee (public) |
+| bit_accumulator | Bit-decomposition range check |
+
+The 64-row trace performs MSB-first bit decomposition of the input value, proving it fits within 64 bits. This prevents overflow attacks where an adversary could create notes with astronomical values by exploiting finite field arithmetic.
+
+**Transaction Lifecycle:**
+
+1. **Shield** (`shield`): Deducts XRGE from the sender's public balance and stores a commitment on-chain. The note details (value, randomness) are kept by the sender.
+2. **Shielded Transfer** (`shielded_transfer`): Consumes one or more input notes by publishing their nullifiers, creates new output commitments, and includes a STARK proof that value is conserved. Neither the input nor output values are revealed.
+3. **Unshield** (`unshield`): Publishes a nullifier to consume a shielded note and credits the equivalent XRGE to the sender's public balance, with a STARK proof of note ownership.
+
+**Proof Size Tradeoff.** Shielded transfer STARK proofs are approximately 50–100 KB each, compared to ~5.3 KB for a standard transfer (including the 3.3 KB ML-DSA signature). This is an inherent characteristic of STARKs — transparency and quantum resistance come at the cost of larger proofs. Future rollup batching (Phase 3) will amortize this by aggregating hundreds of shielded proofs into a single on-chain proof.
+
 ---
 
 ## 4. Tokenomics
@@ -363,6 +410,9 @@ All operations on RougeChain require an XRGE fee. The fee schedule is designed t
 | NFT transfer | 1 |
 | NFT lock / unlock | 0.1 |
 | NFT collection freeze | 0.1 |
+| Shield (public → private) | 1 |
+| Shielded transfer | 1 |
+| Unshield (private → public) | 1 |
 
 ### 4.3 Fee Distribution
 

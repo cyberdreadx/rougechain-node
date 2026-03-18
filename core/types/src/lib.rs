@@ -70,6 +70,21 @@ pub struct TxPayload {
     pub nft_batch_uris: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nft_batch_attributes: Option<Vec<serde_json::Value>>,
+    // Shielded transaction fields (Phase 2)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shielded_nullifiers: Option<Vec<String>>,         // Hex nullifiers of consumed notes
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shielded_output_commitments: Option<Vec<String>>, // Hex output commitments
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shielded_proof: Option<String>,                   // Hex-encoded STARK proof
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shielded_fee: Option<u64>,                        // Fee (public)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shielded_commitment: Option<String>,              // Single commitment (for shield/unshield)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shielded_value: Option<u64>,                      // Value being shielded/unshielded
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shielded_randomness: Option<String>,              // Hex randomness (for unshield proof)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

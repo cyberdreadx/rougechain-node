@@ -1663,6 +1663,7 @@ name = "quantum-vault-crypto"
 version = "0.1.0"
 dependencies = [
  "fips204",
+ "getrandom 0.2.17",
  "hex",
  "quantum-vault-types",
  "rand",
