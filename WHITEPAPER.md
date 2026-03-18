@@ -147,7 +147,7 @@ The verifier only sees the final balances (public inputs). The initial balances 
 | Signing Speed | ~0.1 ms | ~0.05 ms | ~1 ms |
 | Verification Speed | ~0.3 ms | ~0.1 ms | ~0.5 ms |
 
-The trade-off is size: ML-DSA-65 signatures and keys are larger than their classical counterparts. RougeChain's protocol and storage layer are designed to handle this overhead efficiently.
+The trade-off is size: ML-DSA-65 signatures and keys are significantly larger than their classical counterparts. This is an inherent property of all lattice-based post-quantum schemes, not a flaw in RougeChain's design. Section 3.7 details the concrete impact and mitigation strategy.
 
 ---
 
@@ -285,13 +285,60 @@ Nodes communicate over HTTP with the following mechanisms:
 
 The mempool holds up to **2,000 pending transactions** in a hash map keyed by transaction hash. When the mempool is full, the oldest transactions are evicted (FIFO). Duplicate transactions are rejected. All transactions in the mempool are included in the next block produced by the local node, then drained.
 
+### 3.7 Signature Size and Scaling
+
+Post-quantum signatures are larger than classical signatures. This is an inherent property of lattice-based cryptography and applies to every NIST-standardized PQ signature scheme. RougeChain confronts this tradeoff directly.
+
+**Size Reality:**
+
+| Scheme | Public Key | Signature | Per-Tx Overhead |
+|---|---|---|---|
+| ECDSA (Ethereum) | 33 bytes | 64 bytes | ~97 bytes |
+| Ed25519 (Solana) | 32 bytes | 64 bytes | ~96 bytes |
+| ML-DSA-65 (RougeChain) | 1,952 bytes | 3,309 bytes | ~5,261 bytes |
+
+A RougeChain transaction carries approximately **54× more signature data** than an Ethereum transaction. This directly impacts block size, storage growth, and network bandwidth.
+
+**Impact Analysis:**
+
+| Metric | Classical Chain | RougeChain | Factor |
+|---|---|---|---|
+| Per-transaction overhead | ~100 bytes | ~5.3 KB | ~54× |
+| 1,000-tx block (signatures only) | ~100 KB | ~5.3 MB | ~54× |
+| Annual storage (1 tx/sec) | ~3 GB | ~162 GB | ~54× |
+
+This is significant but manageable. Modern consumer hardware handles these volumes, and the numbers are comparable to chains with high-throughput blocks (Solana averages 100+ MB/min).
+
+**Mitigation Strategy:**
+
+1. **Transaction batching.** Multiple operations can share a single signature by bundling them into a single transaction payload, amortizing the 3.3 KB cost across many operations.
+2. **Network-layer compression.** Block data is compressible at the transport layer. Signature bytes exhibit low entropy and compress well with standard algorithms (zstd/lz4), reducing actual bandwidth by 30-50%.
+3. **Pruning and archival.** Full signature data is required only for verification. Fully validated blocks can be pruned to headers + state roots for archival nodes.
+4. **zk-STARK rollups (Phase 3).** The primary long-term scaling path. Off-chain transactions are batched and verified via a single STARK proof posted on-chain. A rollup proof of ~100 KB can attest to thousands of transactions, making per-transaction amortized cost smaller than even classical chains.
+
+**Context.** This size increase is the cost of quantum resistance. Every post-quantum signature scheme — including SLH-DSA (SPHINCS+), which produces even larger signatures at ~17 KB — faces this tradeoff. Chains that defer PQ migration will eventually pay the same cost, but under adversarial conditions during an emergency hard fork. RougeChain pays it now, by design.
+
+### 3.8 Design Philosophy: Vertically Integrated L1
+
+RougeChain intentionally adopts a vertically integrated L1 design, embedding a DEX, NFT standard, bridge, messenger, name service, and mail system directly into the base protocol. This approach increases protocol complexity but enables immediate usability without reliance on external smart contract layers or third-party infrastructure.
+
+This is a deliberate tradeoff. A minimal L1 with application logic delegated to L2 reduces base-layer attack surface but creates bootstrap dependency — a new chain with no dApps has no users, and no users means no dApps. By shipping core financial and communication primitives at the protocol level, RougeChain provides a complete, functional network from genesis block one.
+
+Future iterations may modularize components as the ecosystem matures and developer tooling enables permissionless application deployment.
+
 ---
 
 ## 4. Tokenomics
 
 ### 4.1 XRGE (RougeCoin)
 
-XRGE is the native token of RougeChain, used for transaction fees, staking, governance weight, and as the base trading pair in the DEX.
+XRGE is not merely a utility token — it is the economic backbone of a quantum-resistant network. As classical cryptographic systems face an approaching expiration date, XRGE represents a unit of value secured by post-quantum primitives from inception. Every fee paid, every stake deposited, and every trade executed on RougeChain is denominated in a token whose underlying security does not degrade as quantum computing advances.
+
+XRGE serves four functions on the network:
+- **Transaction fees.** Every operation on RougeChain requires XRGE, creating baseline demand proportional to network activity.
+- **Validator staking.** XRGE is staked to participate in consensus. Validators earn fee revenue proportional to their stake, aligning economic incentive with network security.
+- **Base trading pair.** XRGE is the default routing token in the DEX's multi-hop swap engine, making it the liquidity backbone of on-chain trading.
+- **Governance weight.** Staked XRGE determines voting power in protocol decisions, ensuring that those most invested in the network's security have the strongest voice.
 
 | Property | Value |
 |---|---|
@@ -386,7 +433,7 @@ Any user may create a pool by specifying two tokens and initial deposit amounts.
 
 ## 6. ETH Bridge
 
-RougeChain provides a trustless bridge between Ethereum (Base Sepolia) and RougeChain via a wrapped token called **qETH**.
+RougeChain provides a verified custody bridge between Ethereum (Base Sepolia) and RougeChain via a wrapped token called **qETH**. The bridge prioritizes verifiable correctness and replay protection over full trust minimization in its current design.
 
 ### 6.1 Bridge In (ETH to qETH)
 
@@ -421,7 +468,7 @@ For ERC-20 tokens, the bridge parses `Transfer` event logs from the transaction 
 
 ### 6.4 Security Model
 
-The bridge operates under a custody model where a designated operator address holds the collateral. Security layers include:
+The bridge operates under a verified custody model where a designated operator address holds the collateral. This is an honest assessment: the current bridge is not fully trustless. It requires trust in the bridge operator to fulfill withdrawals. Full trust minimization (via on-chain light clients or zk-STARK bridge proofs) is a planned upgrade. Current security layers include:
 - **On-chain verification** of Ethereum transactions against Base Sepolia RPC.
 - **ECDSA signature verification** (ecrecover) to authenticate depositors.
 - **Replay protection** via persistent claim tracking.
