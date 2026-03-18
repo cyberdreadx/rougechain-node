@@ -857,7 +857,7 @@ export async function getTotalSupply(symbol: string = "XRGE"): Promise<number> {
 
   for (const { tx } of transactions) {
     if (tx.symbol === symbol) {
-      if (tx.type === "mint" || tx.from === "FAUCET" || tx.from === "GENESIS") {
+      if (tx.type === "mint" || tx.from === "FAUCET" || tx.from === "GENESIS" || tx.from === "BRIDGE") {
         supply += tx.amount;
       }
       // Devnet/Testnet node: faucet uses miner keys and transfer txs.
@@ -878,4 +878,44 @@ export async function getTotalSupply(symbol: string = "XRGE"): Promise<number> {
 export async function getRemainingSupply(): Promise<number> {
   const minted = await getTotalSupply("XRGE");
   return TOTAL_SUPPLY - minted;
+}
+
+/**
+ * Get the actual circulating supply from the backend.
+ * Uses /token/{symbol}/holders which correctly accounts for:
+ * - Genesis allocation
+ * - Faucet/mining rewards
+ * - Burns
+ * Falls back to summing all wallet balances from /stats.
+ */
+export async function getCirculatingSupply(symbol: string = "XRGE"): Promise<number> {
+  const NODE_API_URL = getCoreApiBaseUrl();
+  if (!NODE_API_URL) return 0;
+
+  try {
+    // Use the token holders endpoint which has correct supply calculation
+    const res = await fetch(`${NODE_API_URL}/token/${symbol}/holders`, {
+      headers: getCoreApiHeaders(),
+    });
+    if (res.ok) {
+      const data = await res.json() as {
+        success: boolean;
+        circulating_supply?: number;
+        total_supply?: number;
+        holders?: Array<{ balance: number }>;
+      };
+      if (data.success && data.circulating_supply !== undefined) {
+        return data.circulating_supply;
+      }
+      // Fallback: sum all holder balances
+      if (data.holders) {
+        return data.holders.reduce((sum, h) => sum + h.balance, 0);
+      }
+    }
+  } catch (err) {
+    console.warn("[Wallet] Failed to get circulating supply from API:", err);
+  }
+
+  // Last resort fallback: use the old method
+  return getTotalSupply(symbol);
 }

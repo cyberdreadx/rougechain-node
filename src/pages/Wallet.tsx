@@ -15,7 +15,8 @@ import {
   TrendingDown,
   Puzzle,
   ExternalLink,
-  Shield
+  Shield,
+  ShieldOff
 } from "lucide-react";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { useTokenPrices } from "@/hooks/use-token-prices";
@@ -36,7 +37,7 @@ import WalletBackup from "@/components/wallet/WalletBackup";
 import { 
   getWalletBalance, 
   getWalletTransactions, 
-  getTotalSupply,
+  getCirculatingSupply,
   TOTAL_SUPPLY,
   TOKEN_NAME,
   CHAIN_ID,
@@ -52,6 +53,8 @@ import ReceiveDialog from "@/components/wallet/ReceiveDialog";
 import CreateTokenDialog from "@/components/wallet/CreateTokenDialog";
 import TokenDetailDialog from "@/components/wallet/TokenDetailDialog";
 import ShieldDialog from "@/components/wallet/ShieldDialog";
+import UnshieldDialog from "@/components/wallet/UnshieldDialog";
+import { getShieldedBalance } from "@/lib/note-store";
 import { 
   UnifiedWallet,
   VaultSettings,
@@ -79,6 +82,7 @@ const Wallet = () => {
   const [showSend, setShowSend] = useState(false);
   const [showReceive, setShowReceive] = useState(false);
   const [showShield, setShowShield] = useState(false);
+  const [showUnshield, setShowUnshield] = useState(false);
   const [showCreateToken, setShowCreateToken] = useState(false);
   const [showBackup, setShowBackup] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState<{
@@ -280,7 +284,7 @@ const Wallet = () => {
       const [newBalances, newTxs, supply] = await Promise.all([
         getWalletBalance(wallet.signingPublicKey),
         getWalletTransactions(wallet.signingPublicKey),
-        getTotalSupply("XRGE"),
+        getCirculatingSupply("XRGE"),
       ]);
       
       setBalances(newBalances);
@@ -694,6 +698,7 @@ const Wallet = () => {
           <WalletCard
               address={wallet.signingPublicKey}
               balance={xrgeBalance.toLocaleString()}
+              shieldedBalance={getShieldedBalance(wallet.signingPublicKey)}
               usdValue={walletUsdValue}
               priceChange24h={priceChange24h}
               isConnected={true}
@@ -703,7 +708,7 @@ const Wallet = () => {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">Quick actions</h3>
             </div>
-            <div className={`grid gap-2 ${isMainnet ? 'grid-cols-3 sm:grid-cols-5' : 'grid-cols-3 sm:grid-cols-6'}`}>
+            <div className={`grid gap-2 ${isMainnet ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-4 sm:grid-cols-7'}`}>
               <Button
                 variant="outline"
                 className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
@@ -767,6 +772,17 @@ const Wallet = () => {
                   <Shield className="w-4 h-4 text-primary" />
                 </div>
                 <span className="text-[10px]">Shield</span>
+              </Button>
+
+              <Button
+                variant="outline"
+                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
+                onClick={() => setShowUnshield(true)}
+              >
+                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
+                  <ShieldOff className="w-4 h-4 text-accent" />
+                </div>
+                <span className="text-[10px]">Unshield</span>
               </Button>
               
               <Button
@@ -933,6 +949,20 @@ const Wallet = () => {
             onClose={() => setShowShield(false)}
             onSuccess={() => {
               setShowShield(false);
+              refreshWalletData();
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Unshield Dialog */}
+      <AnimatePresence>
+        {showUnshield && wallet && (
+          <UnshieldDialog
+            wallet={wallet}
+            onClose={() => setShowUnshield(false)}
+            onSuccess={() => {
+              setShowUnshield(false);
               refreshWalletData();
             }}
           />

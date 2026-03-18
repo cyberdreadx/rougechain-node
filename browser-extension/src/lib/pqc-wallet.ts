@@ -422,3 +422,51 @@ export async function createShieldedNote(value: number, ownerPubKey: string): Pr
     return { commitment, nullifier, value, randomness, ownerPubKey };
 }
 
+// ===== Note Persistence (localStorage) =====
+
+export interface StoredNote extends ShieldedNote {
+    createdAt: number;
+    spent: boolean;
+    spentAt?: number;
+}
+
+const NOTE_STORE_KEY = "pqc-shielded-notes";
+
+function noteStoreKey(): string {
+    // Browser extension doesn't use getActiveNetwork, so just use a static key
+    return NOTE_STORE_KEY;
+}
+
+function loadAllNotes(): StoredNote[] {
+    try {
+        const raw = localStorage.getItem(noteStoreKey());
+        return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+}
+
+function persistNotes(notes: StoredNote[]): void {
+    localStorage.setItem(noteStoreKey(), JSON.stringify(notes));
+}
+
+export function saveNote(note: ShieldedNote): void {
+    const notes = loadAllNotes();
+    if (notes.some(n => n.commitment === note.commitment)) return;
+    notes.push({ ...note, createdAt: Date.now(), spent: false });
+    persistNotes(notes);
+}
+
+export function getActiveNotes(ownerPubKey: string): StoredNote[] {
+    return loadAllNotes().filter(n => n.ownerPubKey === ownerPubKey && !n.spent);
+}
+
+export function getShieldedBalance(ownerPubKey: string): number {
+    return getActiveNotes(ownerPubKey).reduce((sum, n) => sum + n.value, 0);
+}
+
+export function markNoteSpent(nullifier: string): void {
+    const notes = loadAllNotes();
+    const note = notes.find(n => n.nullifier === nullifier);
+    if (note) { note.spent = true; note.spentAt = Date.now(); persistNotes(notes); }
+}
+
+

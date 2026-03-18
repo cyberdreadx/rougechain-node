@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 interface WalletCardProps {
   address?: string | null;
   balance?: string | null;
+  shieldedBalance?: number;
   usdValue?: string | null;
   priceChange24h?: number | null;
   isConnected?: boolean;
@@ -13,7 +14,7 @@ interface WalletCardProps {
   onImport?: () => void;
 }
 
-const WalletCard = ({ address, balance, usdValue, priceChange24h, isConnected = false, onConnect, onImport }: WalletCardProps) => {
+const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24h, isConnected = false, onConnect, onImport }: WalletCardProps) => {
   const [copied, setCopied] = useState(false);
 
   const copyAddress = () => {
@@ -74,6 +75,14 @@ const WalletCard = ({ address, balance, usdValue, priceChange24h, isConnected = 
                 </span>
               )}
             </div>
+            {shieldedBalance && shieldedBalance > 0 ? (
+              <div className="flex items-center gap-1.5 mt-1">
+                <Shield className="w-3.5 h-3.5 text-primary" />
+                <span className="text-sm text-primary font-medium">
+                  {shieldedBalance.toLocaleString()} XRGE shielded
+                </span>
+              </div>
+            ) : null}
           </div>
 
           {/* Address section */}

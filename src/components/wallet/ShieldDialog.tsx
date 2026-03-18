@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { secureShield, getShieldedStats } from "@/lib/secure-api";
+import { secureShield } from "@/lib/secure-api";
 import { createShieldedNote, type ShieldedNote } from "@/lib/shielded-crypto";
+import { saveNote } from "@/lib/note-store";
 
 interface ShieldDialogProps {
   wallet: {
@@ -67,8 +68,11 @@ const ShieldDialog = ({ wallet, xrgeBalance, onClose, onSuccess }: ShieldDialogP
       setConfirming(false);
       setResultNote(note);
 
+      // Auto-save note to local storage
+      saveNote(note);
+
       toast.success(`Shielded ${amountNum} XRGE!`, {
-        description: "Save your note data — it's the only way to unshield"
+        description: "Note auto-saved. You can also copy it for backup."
       });
     } catch (err) {
       console.error("Shield error:", err);
@@ -133,9 +137,9 @@ const ShieldDialog = ({ wallet, xrgeBalance, onClose, onSuccess }: ShieldDialogP
               <span className="font-medium">Successfully shielded {resultNote.value} XRGE</span>
             </div>
 
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-warning/10 text-warning text-sm">
-              <AlertTriangle className="w-5 h-5 flex-shrink-0" />
-              <span>Save this note data! Without it, you cannot unshield your XRGE.</span>
+            <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 text-primary text-sm">
+              <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+              <span>Note auto-saved to your wallet. You can also copy it as backup.</span>
             </div>
 
             <div className="bg-muted/50 rounded-lg p-3 border border-border">

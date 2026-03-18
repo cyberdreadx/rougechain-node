@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Send, Download, Droplets, Copy, Check, TrendingUp, ArrowDownUp, Shield } from "lucide-react";
+import { RefreshCw, Send, Download, Droplets, Copy, Check, TrendingUp, ArrowDownUp, Shield, ShieldOff } from "lucide-react";
 import type { UnifiedWallet } from "../../lib/unified-wallet";
 import {
     getWalletBalance,
@@ -10,10 +10,15 @@ import {
     TOKEN_SYMBOL,
     getShieldedStats,
     createShieldedNote,
+    saveNote,
+    getActiveNotes,
+    markNoteSpent,
+    getShieldedBalance,
     type WalletBalance,
     type WalletTransaction,
     type ShieldedStats,
     type ShieldedNote,
+    type StoredNote,
 } from "../../lib/pqc-wallet";
 
 interface Props {
@@ -38,6 +43,9 @@ export default function WalletTab({ wallet }: Props) {
     const [shieldedNote, setShieldedNote] = useState<ShieldedNote | null>(null);
     const [shieldedStats, setShieldedStats] = useState<ShieldedStats | null>(null);
     const [noteCopied, setNoteCopied] = useState(false);
+    const [showUnshield, setShowUnshield] = useState(false);
+    const [savedNotes, setSavedNotes] = useState<StoredNote[]>([]);
+    const [unshieldingNote, setUnshieldingNote] = useState<string | null>(null);
 
     const refreshData = useCallback(async (showSpinner = true) => {
         if (showSpinner) setIsLoading(true);
@@ -145,7 +153,10 @@ export default function WalletTab({ wallet }: Props) {
                     <div className="flex items-center gap-1 mt-1">
                         <Shield className="w-2.5 h-2.5 text-primary" />
                         <span className="text-[10px] text-primary font-medium">
-                            {shieldedStats.active_notes} shielded note{shieldedStats.active_notes !== 1 ? 's' : ''}
+                            {getShieldedBalance(wallet.signingPublicKey) > 0 
+                              ? `${getShieldedBalance(wallet.signingPublicKey).toLocaleString()} XRGE shielded`
+                              : `${shieldedStats.active_notes} shielded note${shieldedStats.active_notes !== 1 ? 's' : ''}`
+                            }
                         </span>
                     </div>
                 )}
@@ -176,6 +187,12 @@ export default function WalletTab({ wallet }: Props) {
                         className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 active:scale-[0.97] transition-all"
                     >
                         <Shield className="w-3.5 h-3.5" /> Shield
+                    </button>
+                    <button
+                        onClick={() => { setShowUnshield(!showUnshield); setSavedNotes(getActiveNotes(wallet.signingPublicKey)); }}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-accent/10 text-accent text-xs font-semibold hover:bg-accent/20 active:scale-[0.97] transition-all"
+                    >
+                        <ShieldOff className="w-3.5 h-3.5" /> Unshield
                     </button>
                 </div>
             </div>
@@ -323,8 +340,11 @@ export default function WalletTab({ wallet }: Props) {
                                         const data = await res.json();
                                         if (!data.success) throw new Error(data.error || "Shield failed");
 
+                                        // Auto-save note
+                                        saveNote(note);
                                         setShieldedNote(note);
                                         setShieldAmount("");
+                                        setSavedNotes(getActiveNotes(wallet.signingPublicKey));
                                     } catch (err) {
                                         console.error("Shield failed:", err);
                                         alert(`Shield failed: ${err instanceof Error ? err.message : err}`);
@@ -337,6 +357,77 @@ export default function WalletTab({ wallet }: Props) {
                                 {isShielding ? "Shielding..." : `Shield ${TOKEN_SYMBOL}`}
                             </button>
                         </>
+                    )}
+                </div>
+            )}
+
+            {/* Unshield form */}
+            {showUnshield && (
+                <div className="p-3 border-b border-border bg-card/80 space-y-2">
+                    <p className="text-[10px] text-muted-foreground">Unshield notes back to public XRGE balance</p>
+                    {savedNotes.length === 0 ? (
+                        <p className="text-xs text-muted-foreground py-4 text-center">No shielded notes found</p>
+                    ) : (
+                        <div className="space-y-2 max-h-40 overflow-y-auto">
+                            {savedNotes.map(note => (
+                                <div key={note.nullifier} className="p-2 rounded-lg bg-muted/50 border border-border">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm font-bold text-primary">{note.value} XRGE</span>
+                                        <button
+                                            onClick={async () => {
+                                                setUnshieldingNote(note.nullifier);
+                                                try {
+                                                    const { getCoreApiBaseUrl, getCoreApiHeaders } = await import("../../lib/network");
+                                                    const baseUrl = getCoreApiBaseUrl();
+                                                    const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
+                                                    const payload = {
+                                                        type: "unshield",
+                                                        from: wallet.signingPublicKey,
+                                                        nullifiers: [note.nullifier],
+                                                        amount: note.value,
+                                                        proof: note.randomness,
+                                                        timestamp: Date.now(),
+                                                        nonce: Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, "0")).join(""),
+                                                    };
+                                                    const sortKeysDeep = (obj: any): any => {
+                                                        if (Array.isArray(obj)) return obj.map(sortKeysDeep);
+                                                        if (obj && typeof obj === "object") {
+                                                            const sorted: any = {};
+                                                            for (const k of Object.keys(obj).sort()) sorted[k] = sortKeysDeep(obj[k]);
+                                                            return sorted;
+                                                        }
+                                                        return obj;
+                                                    };
+                                                    const payloadBytes = new TextEncoder().encode(JSON.stringify(sortKeysDeep(payload)));
+                                                    const privBytes = new Uint8Array(wallet.signingPrivateKey.length / 2);
+                                                    for (let i = 0; i < privBytes.length; i++) privBytes[i] = parseInt(wallet.signingPrivateKey.slice(i*2, i*2+2), 16);
+                                                    const sig = ml_dsa65.sign(payloadBytes, privBytes);
+                                                    const sigHex = Array.from(sig).map(b => b.toString(16).padStart(2, "0")).join("");
+                                                    const res = await fetch(`${baseUrl}/v2/shielded/unshield`, {
+                                                        method: "POST",
+                                                        headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
+                                                        body: JSON.stringify({ payload, signature: sigHex, public_key: wallet.signingPublicKey }),
+                                                    });
+                                                    const data = await res.json();
+                                                    if (!data.success) throw new Error(data.error || "Unshield failed");
+                                                    markNoteSpent(note.nullifier);
+                                                    setSavedNotes(getActiveNotes(wallet.signingPublicKey));
+                                                    refreshData();
+                                                } catch (err) {
+                                                    alert(`Unshield failed: ${err instanceof Error ? err.message : err}`);
+                                                }
+                                                setUnshieldingNote(null);
+                                            }}
+                                            disabled={!!unshieldingNote}
+                                            className="px-3 py-1 rounded-lg bg-accent text-accent-foreground text-[10px] font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors"
+                                        >
+                                            {unshieldingNote === note.nullifier ? "..." : "Unshield"}
+                                        </button>
+                                    </div>
+                                    <p className="text-[9px] text-muted-foreground font-mono mt-1 truncate">C: {note.commitment.slice(0,16)}…</p>
+                                </div>
+                            ))}
+                        </div>
                     )}
                 </div>
             )}
