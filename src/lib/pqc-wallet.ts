@@ -904,12 +904,16 @@ export async function getCirculatingSupply(symbol: string = "XRGE"): Promise<num
         total_supply?: number;
         holders?: Array<{ balance: number }>;
       };
-      if (data.success && data.circulating_supply !== undefined) {
-        return data.circulating_supply;
-      }
-      // Fallback: sum all holder balances
-      if (data.holders) {
-        return data.holders.reduce((sum, h) => sum + h.balance, 0);
+      if (data.success) {
+        // Prefer summing holder balances (most accurate, avoids native token supply bug)
+        if (data.holders && data.holders.length > 0) {
+          const holderSum = data.holders.reduce((sum, h) => sum + h.balance, 0);
+          if (holderSum > 0) return holderSum;
+        }
+        // Fall back to API-computed circulating supply if positive
+        if (data.circulating_supply !== undefined && data.circulating_supply > 0) {
+          return data.circulating_supply;
+        }
       }
     }
   } catch (err) {

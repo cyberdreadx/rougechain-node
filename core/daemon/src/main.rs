@@ -992,7 +992,12 @@ async fn get_token_holders(
     let node = &state.node;
     
     // Get the original total supply from the create_token transaction
-    let original_supply = node.get_token_original_supply(&symbol).unwrap_or(0);
+    // For native XRGE, use the known total supply (no create_token tx exists)
+    let original_supply = if symbol.eq_ignore_ascii_case("XRGE") {
+        36_000_000_000u64
+    } else {
+        node.get_token_original_supply(&symbol).unwrap_or(0)
+    };
     
     // Get all wallet balances for this symbol
     let wallet_balances = node.get_all_token_balances_for_symbol(&symbol).unwrap_or_default();
@@ -1007,8 +1012,14 @@ async fn get_token_holders(
     // Total supply is the original minted amount
     let total_supply = original_supply as f64;
     
-    // Circulating supply = total - burned
-    let circulating_supply = total_supply - burned;
+    // Circulating supply = sum of all holder balances (most accurate)
+    // Falls back to total - burned if no holders found
+    let wallet_total: f64 = wallet_balances.values().sum();
+    let circulating_supply = if wallet_total > 0.0 {
+        wallet_total + pool_reserves as f64
+    } else {
+        total_supply - burned
+    };
     
     // Build holders list from wallet balances
     let mut holders: Vec<TokenHolder> = wallet_balances
