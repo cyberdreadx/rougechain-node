@@ -1,12 +1,12 @@
 # RougeChain: A Post-Quantum Layer 1 Blockchain
 
-**Version 1.1 -- March 2026**
+**Version 1.2 -- March 2026**
 
 ---
 
 ## Abstract
 
-RougeChain is a Layer 1 blockchain secured entirely by NIST-approved post-quantum cryptographic primitives. Every transaction signature, block proposal, validator attestation, and encrypted message on the network uses ML-DSA-65 (FIPS 204) and ML-KEM-768 (FIPS 203), providing NIST Level 3 security -- equivalent to 192-bit classical strength -- against both classical and quantum adversaries. RougeChain combines a Proof-of-Stake consensus protocol with a full-featured application layer: an automated market maker, cross-chain ETH bridge, NFT standard with on-chain royalties, custom token issuance, and an end-to-end encrypted messenger. The result is a quantum-resistant blockchain that is ready for production use today, not as a future migration target.
+RougeChain is a Layer 1 blockchain secured entirely by NIST-approved post-quantum cryptographic primitives. Every transaction signature, block proposal, validator attestation, and encrypted message on the network uses ML-DSA-65 (FIPS 204) and ML-KEM-768 (FIPS 203), providing NIST Level 3 security -- equivalent to 192-bit classical strength -- against both classical and quantum adversaries. The chain also incorporates zk-STARKs for privacy-preserving transaction verification, completing a fully quantum-resistant cryptographic stack across signatures, encryption, and zero-knowledge proofs. RougeChain combines a Proof-of-Stake consensus protocol with a full-featured application layer: an automated market maker, cross-chain ETH bridge, NFT standard with on-chain royalties, custom token issuance, and an end-to-end encrypted messenger. The result is a quantum-resistant blockchain that is ready for production use today, not as a future migration target.
 
 ---
 
@@ -22,6 +22,7 @@ RougeChain is a Layer 1 blockchain secured entirely by NIST-approved post-quantu
 8. [Encrypted Messenger](#8-encrypted-messenger)
 9. [Developer Ecosystem](#9-developer-ecosystem)
 10. [Security Considerations](#10-security-considerations)
+11. [Roadmap](#11-roadmap)
 
 ---
 
@@ -92,7 +93,49 @@ ML-KEM-768, derived from the CRYSTALS-Kyber family, is used for key exchange in 
 
 SHA-256 is used for block hashes, transaction hashes, and Merkle computation. Grover's algorithm reduces SHA-256 to approximately 128-bit equivalent security against quantum adversaries, which remains well above the threshold for practical attacks.
 
-### 2.4 Comparison with Classical Schemes
+### 2.4 zk-STARKs -- Zero-Knowledge Proofs
+
+RougeChain incorporates a zk-STARK (Zero-Knowledge Scalable Transparent Argument of Knowledge) proof system for privacy-preserving transaction verification. Unlike zk-SNARKs, which rely on elliptic curve pairings vulnerable to Shor's algorithm, STARKs are built entirely on collision-resistant hash functions and are therefore **quantum-resistant by design**.
+
+| Property | zk-SNARKs | zk-STARKs (RougeChain) |
+|---|---|---|
+| Underlying math | Elliptic curve pairings | Hash functions + Reed-Solomon |
+| Trusted setup | Required | Not required (transparent) |
+| Quantum resistance | No | **Yes** |
+| Post-quantum safe | No | **Yes** |
+
+**Implementation.** RougeChain uses Meta's `winterfell` library, a production-grade Rust STARK prover and verifier. The system uses Blake3-256 as the commitment hash function, providing both quantum resistance and high performance.
+
+**Balance Transfer AIR.** The first Algebraic Intermediate Representation (AIR) encodes a balance-transfer circuit that proves a token transfer is valid -- value is conserved, and the sender has sufficient funds -- without revealing the actual balances or transfer amount. The proof is generated over a finite field (128-bit prime), using a 3-column execution trace with the following transition constraints:
+
+```
+sender[next]   = sender[current]   - per_step_amount
+receiver[next] = receiver[current] + per_step_amount
+amount[next]   = amount[current]
+```
+
+The verifier only sees the final balances (public inputs). The initial balances and transfer amount remain private to the prover.
+
+**Security Parameters:**
+
+| Parameter | Value |
+|---|---|
+| Field | 128-bit prime (Goldilocks extension) |
+| Hash function | Blake3-256 |
+| FRI queries | 28 |
+| Blowup factor | 8 |
+| Security level | ~100 bits (conjectured) |
+
+**Quantum Alignment.** Because STARKs rely only on hash-based commitments (Merkle trees via Blake3), they share the same quantum-resistance profile as SHA-256: Grover's algorithm provides at most a quadratic speedup, reducing 256-bit hash security to ~128 bits -- still far beyond practical attack thresholds. This makes RougeChain's entire cryptographic stack quantum-resistant:
+
+| Cryptographic Pillar | Algorithm | Quantum-Safe |
+|---|---|---|
+| Signatures | ML-DSA-65 | Yes |
+| Key exchange | ML-KEM-768 | Yes |
+| Hashing | SHA-256 / Blake3 | Yes |
+| Zero-knowledge proofs | zk-STARKs | Yes |
+
+### 2.5 Comparison with Classical Schemes
 
 | Property | ECDSA (secp256k1) | Ed25519 | ML-DSA-65 |
 |---|---|---|---|
@@ -167,14 +210,14 @@ Each block consists of a versioned header, a list of transactions, the proposer'
 
 ### 3.3 Transaction Model
 
-RougeChain supports 19 transaction types within a unified transaction structure:
+RougeChain supports 18 transaction types within a unified transaction structure:
 
 **TxV1:**
 
 | Field | Type | Description |
 |---|---|---|
 | version | u32 | Transaction version |
-| tx_type | String | One of the 19 supported types |
+| tx_type | String | One of the 18 supported types |
 | from_pub_key | String | Sender's ML-DSA-65 public key |
 | nonce | u64 | Replay protection counter |
 | payload | TxPayload | Type-specific data |
@@ -186,12 +229,14 @@ RougeChain supports 19 transaction types within a unified transaction structure:
 
 | Category | Types |
 |---|---|
-| Transfers | `transfer`, `faucet` |
+| Transfers | `transfer` |
 | Tokens | `create_token` |
 | Staking | `stake`, `unstake`, `slash` |
 | AMM / DEX | `create_pool`, `add_liquidity`, `remove_liquidity`, `swap` |
 | Bridge | `bridge_mint`, `bridge_withdraw` |
 | NFTs | `nft_create_collection`, `nft_mint`, `nft_batch_mint`, `nft_transfer`, `nft_burn`, `nft_lock`, `nft_freeze_collection` |
+
+> **Note:** The faucet is implemented as a `transfer` transaction with a `faucet: true` flag in the payload, signed by the node operator's key. It is not a separate transaction type.
 
 **Client-Side Signing.** All transactions are signed on the user's device using their ML-DSA-65 private key. The signed transaction is then submitted to any node via the REST API. At no point does a private key leave the client. The v2 transaction endpoints enforce this by design -- they accept only pre-signed payloads and reject empty or invalid signatures.
 
@@ -524,6 +569,8 @@ Every node exposes a comprehensive HTTP API supporting all chain operations:
 | NFTs | `/api/nft/collections`, `/api/nft/owner/:pubkey`, `/api/v2/nft/*` |
 | Bridge | `/api/bridge/claim`, `/api/bridge/withdraw` |
 | Messenger | `/api/messenger/wallets`, `/api/messenger/conversations`, `/api/messenger/messages` |
+| Names | `/api/names/register`, `/api/names/resolve/:name`, `/api/names/reverse/:walletId`, `/api/names/release` |
+| Mail | `/api/mail/send`, `/api/mail/inbox`, `/api/mail/sent`, `/api/mail/message/:id` |
 | P2P | `/api/peers`, `/api/peers/register`, `/api/blocks/import` |
 
 ### 9.4 gRPC
@@ -588,6 +635,32 @@ The browser extension's injected provider (`window.rougechain`) defends against 
 - **Authenticity token** (`Symbol.for("rougechain:authentic")`) allows dApps to verify they are communicating with the genuine extension.
 - **Approval popups** require explicit user consent for connect, sign, and send operations.
 
+### 10.9 Zero-Knowledge Proof Security
+
+The zk-STARK proof system provides an additional security dimension: transaction privacy without sacrificing verifiability.
+
+- **Soundness.** A malicious prover cannot construct a valid proof for an invalid statement (e.g., a transfer that creates value from nothing). The FRI protocol ensures that forging a proof requires finding collisions in Blake3-256, which is computationally infeasible.
+- **Zero-knowledge.** The verifier learns nothing beyond the validity of the statement. Initial balances and transfer amounts are never exposed. The proof transcript is statistically indistinguishable from a simulated transcript.
+- **Transparency.** Unlike zk-SNARKs, STARKs require no trusted setup ceremony. There is no "toxic waste" -- the system's security does not depend on any party honestly destroying secret parameters.
+- **Post-quantum safety.** The proof system's security reduces to the collision resistance of Blake3-256, which is unaffected by Shor's algorithm and only quadratically weakened by Grover's algorithm (to ~128-bit security).
+
+---
+
+## 11. Roadmap
+
+RougeChain's cryptographic infrastructure is designed to evolve. The following phases are planned:
+
+| Phase | Feature | Status |
+|---|---|---|
+| 1 | zk-STARK balance transfer proofs | ✅ Complete |
+| 2 | Shielded on-chain transactions with nullifier sets | Planned |
+| 3 | ZK-rollup layer for throughput scaling | Planned |
+| 4 | WASM-compiled prover for browser extension | Planned |
+| -- | SLH-DSA (SPHINCS+) as alternative signature scheme | Planned |
+| -- | Hybrid classical + PQC mode | Planned |
+| -- | Hardware wallet support | Planned |
+| -- | Threshold signatures for multi-sig | Planned |
+
 ---
 
 ## References
@@ -597,6 +670,9 @@ The browser extension's injected provider (`window.rougechain`) defends against 
 3. Shor, P.W. *Polynomial-Time Algorithms for Prime Factorization and Discrete Logarithms on a Quantum Computer.* SIAM Journal on Computing, 1997.
 4. Grover, L.K. *A Fast Quantum Mechanical Algorithm for Database Search.* Proceedings of the 28th Annual ACM Symposium on Theory of Computing, 1996.
 5. Adams, J., et al. *Uniswap V2 Core.* Uniswap, 2020.
+6. Ben-Sasson, E., et al. *Scalable, transparent, and post-quantum secure computational integrity.* IACR Cryptology ePrint Archive, 2018.
+7. Facebook/Meta. *winterfell: A STARK prover and verifier library.* GitHub, 2024. https://github.com/facebook/winterfell
+8. Ben-Sasson, E., et al. *Fast Reed-Solomon Interactive Oracle Proofs of Proximity (FRI).* ICALP 2018.
 
 ---
 

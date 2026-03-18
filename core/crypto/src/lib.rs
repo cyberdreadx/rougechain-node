@@ -5,6 +5,8 @@ use sha2::{Digest, Sha256};
 
 use quantum_vault_types::PQKeypair;
 
+pub mod stark;
+
 // ML-DSA-65 key and signature sizes
 const SK_LEN: usize = 4032;
 const PK_LEN: usize = 1952;

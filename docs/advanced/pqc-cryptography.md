@@ -99,9 +99,48 @@ const valid = ml_dsa65.verify(signature, message, publicKey);
 3. **Side channels** - Library implementations are designed to be constant-time
 4. **Hybrid approach** - Consider adding classical signatures for defense-in-depth
 
+## zk-STARKs (Zero-Knowledge Proofs)
+
+RougeChain includes a zk-STARK proof system for privacy-preserving transaction verification. STARKs are **quantum-resistant by design** — they rely only on hash functions, not elliptic curves.
+
+### How It Works
+
+The STARK module can prove that a balance transfer is valid (value is conserved, sender has sufficient funds) **without revealing** the actual balances or transfer amount. The verifier only sees the final balances.
+
+| Property | Value |
+|----------|-------|
+| Library | [winterfell](https://github.com/facebook/winterfell) (Meta) |
+| Hash function | Blake3-256 |
+| Quantum resistance | ✅ Hash-based (no EC) |
+| Proof type | Balance transfer (value conservation) |
+
+### Usage
+
+```rust
+use quantum_vault_crypto::stark::{
+    prove_balance_transfer, verify_balance_transfer, BalanceTransferInputs,
+};
+use winterfell::math::{fields::f128::BaseElement, FieldElement};
+
+// Prover (knows private balances)
+let proof = prove_balance_transfer(1000, 500, 250).unwrap();
+
+// Verifier (only sees final balances)
+let public_inputs = BalanceTransferInputs {
+    total_value: BaseElement::from(1500u64),
+    final_sender_balance: BaseElement::from(750u64),
+    final_receiver_balance: BaseElement::from(750u64),
+};
+verify_balance_transfer(proof, public_inputs).unwrap();
+```
+
 ## Future Roadmap
 
+- [x] zk-STARK proof system (Phase 1: balance transfer AIR)
+- [ ] zk-STARK Phase 2: shielded transactions on-chain
+- [ ] zk-STARK Phase 3: ZK-rollup layer
 - [ ] SLH-DSA (SPHINCS+) as alternative signature scheme
 - [ ] Hybrid classical+PQC mode
 - [ ] Hardware wallet support
 - [ ] Threshold signatures for multi-sig
+
