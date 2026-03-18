@@ -284,7 +284,7 @@ async function kemEncryptPlaintext(
 ): Promise<{ kemCipherText: string; iv: string; encryptedContent: string }> {
     const { cipherText, sharedSecret } = ml_kem768.encapsulate(encryptionPublicKey);
 
-    const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret, "HKDF", false, ["deriveKey"]);
+    const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret.buffer as ArrayBuffer, "HKDF", false, ["deriveKey"]);
     const aesKey = await crypto.subtle.deriveKey(
         { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("pqc-msg") },
         keyMaterial,
@@ -351,7 +351,7 @@ async function kemDecryptContent(
 ): Promise<string> {
     const sharedSecret = ml_kem768.decapsulate(hexToBytes(kemCipherTextHex), encryptionPrivateKey);
 
-    const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret, "HKDF", false, ["deriveKey"]);
+    const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret.buffer as ArrayBuffer, "HKDF", false, ["deriveKey"]);
     const aesKey = await crypto.subtle.deriveKey(
         { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("pqc-msg") },
         keyMaterial,
@@ -361,9 +361,9 @@ async function kemDecryptContent(
     );
 
     const decrypted = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: hexToBytes(ivHex) },
+        { name: "AES-GCM", iv: hexToBytes(ivHex).buffer as ArrayBuffer },
         aesKey,
-        hexToBytes(encryptedContentHex)
+        hexToBytes(encryptedContentHex).buffer as ArrayBuffer
     );
 
     return new TextDecoder().decode(decrypted);
@@ -512,7 +512,7 @@ export async function getConversations(walletId: string, currentWallet?: Wallet)
                 const conv = normalizeConversation(raw);
                 if ((!conv.participants || conv.participants.length === 0) && conv.participantIds?.length) {
                     conv.participants = conv.participantIds
-                        .map((id: string) => {
+                        .map((id: any) => {
                             if (currentWallet && currentIds.has(id)) return currentWallet;
                             const w = walletMap.get(id);
                             if (w) return w;
@@ -527,10 +527,10 @@ export async function getConversations(walletId: string, currentWallet?: Wallet)
         });
         const blocked = new Set(getBlockedWalletIds());
         if (blocked.size === 0) return all;
-        return all.filter(conv => {
-            const hasBlocked = conv.participants?.some(p =>
+        return all.filter((conv: any) => {
+            const hasBlocked = conv.participants?.some((p: any) =>
                 blocked.has(p.id) || blocked.has(p.signingPublicKey) || blocked.has(p.encryptionPublicKey)
-            ) || conv.participantIds?.some(id => blocked.has(id));
+            ) || conv.participantIds?.some((id: any) => blocked.has(id));
             return !hasBlocked;
         });
     } catch { return []; }
@@ -704,7 +704,7 @@ export async function getMessages(
                 }
             }
 
-            const rawMsgType = (raw.message_type || raw.messageType || "text") as MessageType;
+            const rawMsgType = ((raw as any).message_type || (raw as any).messageType || "text") as MessageType;
 
             const mediaInfo = plaintext !== "[Unable to decrypt]"
                 ? parseMediaPayload(plaintext)
@@ -723,7 +723,7 @@ export async function getMessages(
                 messageType: mediaInfo?.messageType || rawMsgType,
                 mediaUrl: mediaInfo?.mediaUrl,
                 mediaFileName: mediaInfo?.mediaFileName,
-                spoiler: raw.spoiler ?? false,
+                spoiler: (raw as any).spoiler ?? false,
             });
         }
         return messages;
