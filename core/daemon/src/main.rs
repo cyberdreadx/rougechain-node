@@ -1000,8 +1000,12 @@ async fn get_token_holders(
     };
     
     // Get all wallet balances for this symbol
-    let wallet_balances = node.get_all_token_balances_for_symbol(&symbol).unwrap_or_default();
-    let _wallet_total: f64 = wallet_balances.values().sum();
+    // For native XRGE, use the main balances map; for custom tokens, use token_balances
+    let wallet_balances = if symbol.eq_ignore_ascii_case("XRGE") {
+        node.get_all_native_balances().unwrap_or_default()
+    } else {
+        node.get_all_token_balances_for_symbol(&symbol).unwrap_or_default()
+    };
     
     // Get pool reserves for this token (tokens locked in liquidity)
     let pool_reserves = node.get_token_pool_reserves(&symbol).unwrap_or(0);

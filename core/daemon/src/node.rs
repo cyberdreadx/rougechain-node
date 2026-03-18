@@ -365,6 +365,15 @@ impl L1Node {
         Ok(result)
     }
 
+    /// Get all native XRGE balances (from the main balances map, not token_balances)
+    pub fn get_all_native_balances(&self) -> Result<HashMap<String, f64>, String> {
+        let balances = self.balances.lock().map_err(|_| "balance lock")?;
+        Ok(balances.iter()
+            .filter(|(_, b)| **b > 0.0)
+            .map(|(k, v)| (k.clone(), *v))
+            .collect())
+    }
+
     // Shielded transaction public API
     pub fn is_nullifier_spent(&self, nullifier_hex: &str) -> Result<bool, String> {
         self.nullifier_store.is_spent(nullifier_hex)
