@@ -91,6 +91,9 @@ struct Args {
     /// Enable legacy v1 endpoints that accept private keys (UNSAFE — for local dev only)
     #[arg(long)]
     dev: bool,
+    /// Human-readable name for this node (shown on the network globe)
+    #[arg(long, env = "QV_NODE_NAME")]
+    node_name: Option<String>,
 }
 
 #[derive(Clone)]
@@ -114,6 +117,7 @@ struct AppState {
     xrge_bridge_token: String,
     faucet_cooldowns: Arc<tokio::sync::Mutex<HashMap<String, i64>>>,
     dev_mode: bool,
+    node_name: Option<String>,
     response_cache: Arc<RwLock<HashMap<String, (Instant, String)>>>,
     rollup_accumulator: Arc<tokio::sync::Mutex<rollup::RollupAccumulator>>,
 }
@@ -260,7 +264,7 @@ async fn main() -> Result<(), String> {
         .as_ref()
         .map(|p| peer::parse_peers(p))
         .unwrap_or_default();
-    let peer_manager = Arc::new(peer::PeerManager::new(initial_peers.clone(), args.public_url.clone()));
+    let peer_manager = Arc::new(peer::PeerManager::new(initial_peers.clone(), args.public_url.clone(), args.node_name.clone()));
     let ws_broadcaster = Arc::new(WsBroadcaster::new());
     
     let bridge_claim_store = Arc::new(
@@ -289,6 +293,7 @@ async fn main() -> Result<(), String> {
             .unwrap_or_else(|| "0xF9e744a43608AB7D64a106df84e52915e8Efa27E".to_string()),
         faucet_cooldowns: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         dev_mode: args.dev,
+        node_name: args.node_name.clone(),
         response_cache: Arc::new(RwLock::new(HashMap::new())),
         rollup_accumulator: Arc::new(tokio::sync::Mutex::new(rollup::RollupAccumulator::new())),
     };
@@ -762,6 +767,7 @@ struct StatsResponse {
     chain_id: String,
     finalized_height: u64,
     ws_clients: usize,
+    node_name: Option<String>,
 }
 
 async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, StatusCode> {
@@ -781,6 +787,7 @@ async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>,
         chain_id: node.chain_id(),
         finalized_height: finalized,
         ws_clients,
+        node_name: state.node_name.clone(),
     }))
 }
 
@@ -1295,6 +1302,8 @@ async fn get_health(State(state): State<AppState>) -> Result<Json<HealthResponse
 #[derive(Deserialize)]
 struct BlocksQuery {
     limit: Option<usize>,
+    /// Start from this block height (for P2P full-chain sync)
+    from_height: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -1303,12 +1312,21 @@ struct BlocksResponse {
 }
 
 const MAX_BLOCK_PAGE_SIZE: usize = 100;
+/// Higher limit for peer sync requests that need the full chain
+const MAX_SYNC_PAGE_SIZE: usize = 1000;
 
 async fn get_blocks(
     State(state): State<AppState>,
     Query(query): Query<BlocksQuery>,
 ) -> Result<Json<BlocksResponse>, StatusCode> {
     let node = &state.node;
+    // If from_height is provided, return blocks starting from that height (for P2P sync)
+    if let Some(from_height) = query.from_height {
+        let limit = query.limit.unwrap_or(MAX_SYNC_PAGE_SIZE).min(MAX_SYNC_PAGE_SIZE);
+        let all_from = node.get_blocks_from(from_height).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let blocks: Vec<_> = all_from.into_iter().take(limit).collect();
+        return Ok(Json(BlocksResponse { blocks }));
+    }
     let limit = query.limit.unwrap_or(MAX_BLOCK_PAGE_SIZE).min(MAX_BLOCK_PAGE_SIZE);
     let blocks = node.get_recent_blocks(limit).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(BlocksResponse { blocks }))
@@ -2135,21 +2153,32 @@ async fn receive_broadcast_tx(
 }
 
 #[derive(Serialize)]
+struct PeerInfo {
+    url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    node_name: Option<String>,
+}
+
+#[derive(Serialize)]
 struct PeersResponse {
     peers: Vec<String>,
+    peer_details: Vec<PeerInfo>,
     count: usize,
 }
 
 async fn get_peers(State(state): State<AppState>) -> Result<Json<PeersResponse>, StatusCode> {
     let peers = state.peer_manager.get_peers().await;
+    let peer_details = state.peer_manager.get_peer_details().await;
     let count = peers.len();
-    Ok(Json(PeersResponse { peers, count }))
+    Ok(Json(PeersResponse { peers, peer_details, count }))
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RegisterPeerRequest {
     peer_url: String,
+    #[serde(default)]
+    node_name: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -2162,14 +2191,19 @@ async fn register_peer(
     State(state): State<AppState>,
     Json(body): Json<RegisterPeerRequest>,
 ) -> Result<Json<RegisterPeerResponse>, StatusCode> {
-    let added = state.peer_manager.add_peer(body.peer_url.clone()).await;
+    let added = state.peer_manager.add_peer_with_name(body.peer_url.clone(), body.node_name.clone()).await;
     if added {
-        eprintln!("[peer] New peer registered: {}", body.peer_url);
+        let label = body.node_name.as_deref().unwrap_or("unnamed");
+        eprintln!("[peer] New peer registered: {} ({})", body.peer_url, label);
         Ok(Json(RegisterPeerResponse {
             success: true,
             message: "Peer registered".to_string(),
         }))
     } else {
+        // Still update the name if it changed
+        if let Some(name) = body.node_name {
+            state.peer_manager.set_peer_name(&body.peer_url, name).await;
+        }
         Ok(Json(RegisterPeerResponse {
             success: true,
             message: "Peer already known".to_string(),

@@ -255,6 +255,11 @@ impl L1Node {
         self.store.get_recent_blocks(limit)
     }
 
+    /// Get blocks from a given height onward (for P2P full-chain sync)
+    pub fn get_blocks_from(&self, start_height: u64) -> Result<Vec<BlockV1>, String> {
+        self.store.get_blocks_from(start_height)
+    }
+
     /// Import a block from a peer (for P2P sync)
     pub fn import_block(&self, block: BlockV1) -> Result<(), String> {
         let tip = self.store.get_tip()?;

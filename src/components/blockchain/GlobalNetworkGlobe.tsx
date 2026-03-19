@@ -61,9 +61,10 @@ const generateConnections = (
 interface NodeProps {
   position: [number, number, number];
   isValidator?: boolean;
+  name?: string;
 }
 
-const Node = ({ position, isValidator = false }: NodeProps) => {
+const Node = ({ position, isValidator = false, name }: NodeProps) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const glowRef = useRef<THREE.Mesh>(null);
   const [hovered, setHovered] = useState(false);
@@ -82,6 +83,7 @@ const Node = ({ position, isValidator = false }: NodeProps) => {
   // Cyberpunk rouge colors - deep red for validators, magenta for peers
   const coreColor = isValidator ? "#ff1744" : "#d500f9";
   const glowColor = isValidator ? "#ff5252" : "#e040fb";
+  const label = name || (isValidator ? "L1 Node" : "Network Peer");
 
   return (
     <group position={position}>
@@ -110,9 +112,12 @@ const Node = ({ position, isValidator = false }: NodeProps) => {
       {hovered && (
         <Html distanceFactor={10}>
           <div className="bg-black/90 backdrop-blur-sm border border-red-500/50 rounded px-2 py-1 text-xs whitespace-nowrap shadow-lg shadow-red-500/20">
-            <span className="text-red-400">
-              {isValidator ? "L1 Node" : "Network Peer"}
-            </span>
+            <span className="text-red-400 font-bold">{label}</span>
+            {name && (
+              <span className="text-red-400/60 ml-1.5 text-[10px]">
+                {isValidator ? "validator" : "peer"}
+              </span>
+            )}
           </div>
         </Html>
       )}
@@ -344,9 +349,10 @@ const RotatingGroup = ({ children }: { children: React.ReactNode }) => {
 interface NetworkSceneProps {
   nodeCount: number;
   peerCount: number;
+  nodeNames?: string[];
 }
 
-const NetworkScene = ({ nodeCount, peerCount }: NetworkSceneProps) => {
+const NetworkScene = ({ nodeCount, peerCount, nodeNames = [] }: NetworkSceneProps) => {
   const totalNodes = Math.max(nodeCount + peerCount, 3); // At least 3 for visualization
   const nodes = useMemo(() => generateNodePositions(totalNodes, 2), [totalNodes]);
   const connections = useMemo(() => generateConnections(nodes, 0.12), [nodes]);
@@ -368,6 +374,7 @@ const NetworkScene = ({ nodeCount, peerCount }: NetworkSceneProps) => {
             key={i}
             position={pos}
             isValidator={i < nodeCount}
+            name={nodeNames[i]}
           />
         ))}
 
@@ -401,6 +408,12 @@ interface NodeStats {
   network_height: number;
   is_mining: boolean;
   node_id: string;
+  node_name?: string;
+}
+
+interface PeerDetail {
+  url: string;
+  node_name?: string;
 }
 
 const normalizeStats = (data: Record<string, unknown>): NodeStats => ({
@@ -408,10 +421,12 @@ const normalizeStats = (data: Record<string, unknown>): NodeStats => ({
   network_height: Number(data.network_height ?? data.networkHeight ?? 0),
   is_mining: Boolean(data.is_mining ?? data.isMining ?? false),
   node_id: String(data.node_id ?? data.nodeId ?? ""),
+  node_name: (data.node_name ?? data.nodeName) as string | undefined,
 });
 
 const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
   const [nodeStats, setNodeStats] = useState<NodeStats[]>([]);
+  const [peerDetails, setPeerDetails] = useState<PeerDetail[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLive, setIsLive] = useState(false);
   const [isWebglLost, setIsWebglLost] = useState(false);
@@ -449,6 +464,22 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
           setNodeStats(stats);
           setIsLive(stats.length > 0);
         }
+
+        // Also fetch peer details for names
+        try {
+          const peersUrl = configuredUrl ? `${configuredUrl}/api/peers` : "";
+          if (peersUrl) {
+            const peersRes = await fetch(peersUrl, {
+              signal: AbortSignal.timeout(5000),
+              headers: getCoreApiHeaders(),
+            });
+            if (peersRes.ok) {
+              const peersData = await peersRes.json() as { peer_details?: PeerDetail[]; peerDetails?: PeerDetail[] };
+              const details = peersData.peer_details ?? peersData.peerDetails ?? [];
+              if (!cancelled) setPeerDetails(details);
+            }
+          }
+        } catch { /* ignore */ }
       } catch (error) {
         console.error("Failed to fetch nodes:", error);
       } finally {
@@ -488,6 +519,22 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
   const displayNodes = activeNodes > 0 ? activeNodes : 1;
   const displayPeers = totalPeers;
 
+  // Build names list: validator names first, then peer names
+  const nodeNames = useMemo(() => {
+    const names: string[] = [];
+    // Validator/node names from stats
+    for (const s of nodeStats) {
+      names.push(s.node_name || "");
+    }
+    // Ensure at least displayNodes entries for validators
+    while (names.length < displayNodes) names.push("");
+    // Peer names from peer_details
+    for (const pd of peerDetails) {
+      names.push(pd.node_name || "");
+    }
+    return names;
+  }, [nodeStats, peerDetails, displayNodes]);
+
   return (
     <div className={`relative ${className}`}>
       {/* 3D Canvas - behind everything */}
@@ -509,7 +556,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
               setCanvasEl(state.gl.domElement);
             }}
           >
-            <NetworkScene nodeCount={displayNodes} peerCount={displayPeers} />
+            <NetworkScene nodeCount={displayNodes} peerCount={displayPeers} nodeNames={nodeNames} />
           </Canvas>
         )}
       </div>

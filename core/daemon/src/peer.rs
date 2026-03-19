@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use serde::Serialize;
 use tokio::sync::RwLock;
 use tokio::time::sleep;
 
@@ -16,17 +17,21 @@ struct PeerHealth {
 #[derive(Clone)]
 pub struct PeerManager {
     peers: Arc<RwLock<HashSet<String>>>,
+    peer_names: Arc<RwLock<HashMap<String, String>>>,
     health: Arc<RwLock<HashMap<String, PeerHealth>>>,
     self_url: Option<String>,
+    node_name: Option<String>,
 }
 
 impl PeerManager {
-    pub fn new(initial_peers: Vec<String>, self_url: Option<String>) -> Self {
+    pub fn new(initial_peers: Vec<String>, self_url: Option<String>, node_name: Option<String>) -> Self {
         let peers: HashSet<String> = initial_peers.into_iter().collect();
         Self {
             peers: Arc::new(RwLock::new(peers)),
+            peer_names: Arc::new(RwLock::new(HashMap::new())),
             health: Arc::new(RwLock::new(HashMap::new())),
             self_url,
+            node_name,
         }
     }
 
@@ -85,6 +90,37 @@ impl PeerManager {
         let normalized = normalize_peer_url(&peer_url);
         let mut peers = self.peers.write().await;
         peers.insert(normalized)
+    }
+
+    pub async fn add_peer_with_name(&self, peer_url: String, name: Option<String>) -> bool {
+        // Don't add ourselves
+        if let Some(ref self_url) = self.self_url {
+            if peer_url == *self_url {
+                return false;
+            }
+        }
+        let normalized = normalize_peer_url(&peer_url);
+        if let Some(n) = name {
+            let mut names = self.peer_names.write().await;
+            names.insert(normalized.clone(), n);
+        }
+        let mut peers = self.peers.write().await;
+        peers.insert(normalized)
+    }
+
+    pub async fn set_peer_name(&self, peer_url: &str, name: String) {
+        let normalized = normalize_peer_url(peer_url);
+        let mut names = self.peer_names.write().await;
+        names.insert(normalized, name);
+    }
+
+    pub async fn get_peer_details(&self) -> Vec<crate::PeerInfo> {
+        let peers = self.peers.read().await;
+        let names = self.peer_names.read().await;
+        peers.iter().map(|url| crate::PeerInfo {
+            url: url.clone(),
+            node_name: names.get(url).cloned(),
+        }).collect()
     }
 
     pub async fn peer_count(&self) -> usize {
@@ -159,7 +195,13 @@ pub fn parse_peers(peers_str: &str) -> Vec<String> {
 /// Sync blocks from a peer (with genesis reset if needed)
 async fn sync_from_peer(peer_url: &str, node: &L1Node, allow_genesis_reset: bool) -> Result<u64, String> {
     // Fetch peer's blocks
-    let url = format!("{}/blocks?limit=1000", peer_url);
+    // For fresh nodes (no blocks), request from height 0 to get genesis
+    let our_height = node.get_tip_height().unwrap_or(0);
+    let url = if our_height == 0 {
+        format!("{}/blocks?from_height=0&limit=1000", peer_url)
+    } else {
+        format!("{}/blocks?limit=1000", peer_url)
+    };
     let response = reqwest::get(&url)
         .await
         .map_err(|e| format!("Failed to fetch from {}: {}", peer_url, e))?;
@@ -262,11 +304,14 @@ async fn discover_peers(peer_url: &str) -> Result<Vec<String>, String> {
 }
 
 /// Register ourselves with a peer
-async fn register_with_peer(peer_url: &str, our_url: &str) -> Result<(), String> {
+async fn register_with_peer(peer_url: &str, our_url: &str, node_name: Option<&str>) -> Result<(), String> {
     let url = format!("{}/peers/register", peer_url);
     let client = reqwest::Client::new();
     
-    let body = serde_json::json!({ "peerUrl": our_url });
+    let body = serde_json::json!({
+        "peerUrl": our_url,
+        "nodeName": node_name,
+    });
     
     let response = client
         .post(&url)
@@ -309,8 +354,9 @@ pub async fn start_peer_sync(peer_manager: Arc<PeerManager>, node: Arc<L1Node>) 
     
     // Register ourselves with known peers
     if let Some(ref self_url) = peer_manager.self_url {
+        let name = peer_manager.node_name.as_deref();
         for peer in &initial_peers {
-            match register_with_peer(peer, self_url).await {
+            match register_with_peer(peer, self_url, name).await {
                 Ok(()) => eprintln!("[peer] Registered with {}", peer),
                 Err(e) => eprintln!("[peer] Failed to register with {}: {}", peer, e),
             }
