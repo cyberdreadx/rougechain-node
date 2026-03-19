@@ -496,6 +496,20 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/rollup/status", get(rollup_status))
         .route("/api/v2/rollup/batch/:id", get(rollup_get_batch))
         .route("/api/v2/rollup/submit", post(rollup_submit_transfer))
+        // Token locking endpoints
+        .route("/api/locks/:pubkey", get(get_locks))
+        // Token staking endpoints
+        .route("/api/staking/pools", get(get_staking_pools))
+        .route("/api/staking/pool/:pool_id", get(get_staking_pool))
+        .route("/api/staking/stakes/:pubkey", get(get_stakes_by_owner))
+        .route("/api/staking/pool/:pool_id/stakes", get(get_stakes_by_pool))
+        // Governance endpoints
+        .route("/api/governance/proposals", get(get_proposals))
+        .route("/api/governance/proposals/:token", get(get_proposals_by_token))
+        .route("/api/governance/proposal/:id", get(get_proposal_detail))
+        .route("/api/governance/proposal/:id/votes", get(get_proposal_votes))
+        // Allowance endpoints
+        .route("/api/allowances/:pubkey", get(get_allowances))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer({
             let cors_origins = std::env::var("QV_CORS_ORIGINS")
@@ -5228,3 +5242,106 @@ async fn rollup_submit_transfer(
     }
 }
 
+// ============================================================================
+// Web3 Feature Handlers (Token Locking, Staking, Governance, Allowances)
+// ============================================================================
+
+async fn get_locks(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Json<serde_json::Value> {
+    match state.node.get_locks_by_owner(&pubkey) {
+        Ok(locks) => Json(serde_json::json!({ "success": true, "locks": locks })),
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+async fn get_staking_pools(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    match state.node.get_staking_pools() {
+        Ok(pools) => Json(serde_json::json!({ "success": true, "pools": pools })),
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+async fn get_staking_pool(
+    State(state): State<AppState>,
+    Path(pool_id): Path<String>,
+) -> Json<serde_json::Value> {
+    match state.node.get_staking_pool(&pool_id) {
+        Ok(Some(pool)) => Json(serde_json::json!({ "success": true, "pool": pool })),
+        Ok(None) => Json(serde_json::json!({ "success": false, "error": "Pool not found" })),
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+async fn get_stakes_by_owner(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Json<serde_json::Value> {
+    match state.node.get_stakes_by_owner(&pubkey) {
+        Ok(stakes) => Json(serde_json::json!({ "success": true, "stakes": stakes })),
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+async fn get_stakes_by_pool(
+    State(state): State<AppState>,
+    Path(pool_id): Path<String>,
+) -> Json<serde_json::Value> {
+    match state.node.get_stakes_by_pool(&pool_id) {
+        Ok(stakes) => Json(serde_json::json!({ "success": true, "stakes": stakes })),
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+async fn get_proposals(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    match state.node.get_proposals() {
+        Ok(proposals) => Json(serde_json::json!({ "success": true, "proposals": proposals })),
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+async fn get_proposals_by_token(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> Json<serde_json::Value> {
+    match state.node.get_proposals_by_token(&token) {
+        Ok(proposals) => Json(serde_json::json!({ "success": true, "proposals": proposals })),
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+async fn get_proposal_detail(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Json<serde_json::Value> {
+    match state.node.get_proposal(&id) {
+        Ok(Some(p)) => Json(serde_json::json!({ "success": true, "proposal": p })),
+        Ok(None) => Json(serde_json::json!({ "success": false, "error": "Proposal not found" })),
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+async fn get_proposal_votes(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Json<serde_json::Value> {
+    match state.node.get_votes_for_proposal(&id) {
+        Ok(votes) => Json(serde_json::json!({ "success": true, "votes": votes })),
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+async fn get_allowances(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Json<serde_json::Value> {
+    match state.node.get_allowances_by_owner(&pubkey) {
+        Ok(allowances) => Json(serde_json::json!({ "success": true, "allowances": allowances })),
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}

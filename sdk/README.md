@@ -14,7 +14,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@rougechain/sdk"><img src="https://img.shields.io/npm/v/@rougechain/sdk?color=00d2be&label=npm" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/@rougechain/sdk"><img src="https://img.shields.io/npm/dm/@rougechain/sdk?color=00d2be" alt="npm downloads" /></a>
-  <a href="https://github.com/cyberdreadx/quantum-vault/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license" /></a>
+  <a href="https://github.com/cyberdreadx/rougechain-node/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license" /></a>
   <a href="https://docs.rougechain.io"><img src="https://img.shields.io/badge/docs-rougechain-00d2be" alt="docs" /></a>
 </p>
 
@@ -428,7 +428,7 @@ import type {
 - [Website](https://rougechain.io)
 - [Documentation](https://docs.rougechain.io)
 - [Chrome Extension](https://chromewebstore.google.com/detail/rougechain-wallet/ilkbgjgphhaolfdjkfefdfiifipmhakj)
-- [GitHub](https://github.com/cyberdreadx/quantum-vault)
+- [GitHub](https://github.com/cyberdreadx/rougechain-node)
 
 ## License
 

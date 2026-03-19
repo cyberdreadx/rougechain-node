@@ -85,6 +85,39 @@ pub struct TxPayload {
     pub shielded_value: Option<u64>,                      // Value being shielded/unshielded
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shielded_randomness: Option<String>,              // Hex randomness (for unshield proof)
+    // Token locking fields
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_until_height: Option<u64>,                   // Block height when tokens unlock
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_id: Option<String>,                          // Unique lock identifier
+    // Token staking fields (custom token staking pools)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staking_pool_id: Option<String>,                  // Token staking pool identifier
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staking_reward_rate: Option<u64>,                 // Annual reward rate in basis points
+    // Governance fields
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_id: Option<String>,                      // Governance proposal ID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_title: Option<String>,                   // Proposal title
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_description: Option<String>,             // Proposal description
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vote_option: Option<String>,                      // "yes" | "no" | "abstain"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_end_height: Option<u64>,                 // Block height when voting ends
+    // Allowance fields (approve/transferFrom pattern)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spender_pub_key: Option<String>,                  // Approved spender public key
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowance_amount: Option<u64>,                    // Approved spending amount
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_pub_key: Option<String>,                    // Token owner (for transfer_from)
+    // Airdrop fields
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub airdrop_recipients: Option<Vec<String>>,          // List of recipient public keys
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub airdrop_amounts: Option<Vec<u64>>,                // Amounts for each recipient
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -160,4 +160,4 @@ import type { Block, Transaction, Validator, LiquidityPool, NftCollection } from
 
 ## Source
 
-The SDK source code is in the `sdk/` directory of the [quantum-vault repository](https://github.com/cyberdreadx/quantum-vault).
+The SDK source code is in the `sdk/` directory of the [rougechain-node repository](https://github.com/cyberdreadx/rougechain-node).

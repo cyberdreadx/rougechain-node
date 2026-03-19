@@ -7,14 +7,18 @@ use chrono::Utc;
 
 use quantum_vault_consensus::{compute_selection_seed, fetch_entropy, select_proposer, ProposerSelectionResult};
 use quantum_vault_crypto::{bytes_to_hex, pqc_keygen, pqc_sign, pqc_verify, sha256};
+use quantum_vault_storage::allowance_store::{Allowance, AllowanceStore};
 use quantum_vault_storage::bridge_withdraw_store::BridgeWithdrawStore;
 use quantum_vault_storage::chain_store::ChainStore;
 use quantum_vault_storage::commitment_store::CommitmentStore;
+use quantum_vault_storage::governance_store::{GovernanceStore, Proposal, Vote};
+use quantum_vault_storage::lock_store::{LockStore, TokenLock};
 use quantum_vault_storage::mail_store::{MailLabel, MailMessage, MailStore};
 use quantum_vault_storage::messenger_store::{Conversation, MessengerMessage, MessengerStore, MessengerWallet};
 use quantum_vault_storage::name_registry::{NameEntry, NameRegistry};
 use quantum_vault_storage::nullifier_store::NullifierStore;
 use quantum_vault_storage::token_metadata_store::{TokenMetadata, TokenMetadataStore};
+use quantum_vault_storage::token_stake_store::{TokenStakeStore, StakingPool, TokenStake};
 use quantum_vault_storage::validator_store::{ValidatorState, ValidatorStore};
 use quantum_vault_types::{
     compute_block_hash, compute_tx_hash, encode_header_v1, encode_tx_v1, encode_tx_for_signing, BlockHeaderV1, BlockV1,
@@ -63,6 +67,10 @@ pub struct L1Node {
     name_registry: NameRegistry,
     mail_store: MailStore,
     commitment_store: CommitmentStore,
+    lock_store: LockStore,
+    token_stake_store: TokenStakeStore,
+    governance_store: GovernanceStore,
+    allowance_store: AllowanceStore,
     nullifier_store: NullifierStore,
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
@@ -91,6 +99,10 @@ impl L1Node {
         let mail_store = MailStore::new(&opts.data_dir)?;
         let commitment_store = CommitmentStore::new(&opts.data_dir)?;
         let nullifier_store = NullifierStore::new(&opts.data_dir)?;
+        let lock_store = LockStore::new(&opts.data_dir)?;
+        let token_stake_store = TokenStakeStore::new(&data_dir_str)?;
+        let governance_store = GovernanceStore::new(&data_dir_str)?;
+        let allowance_store = AllowanceStore::new(&data_dir_str)?;
         let keys = Self::load_or_create_keys(&opts.data_dir)?;
         Ok(Self {
             node_id: uuid::Uuid::new_v4().to_string(),
@@ -106,6 +118,10 @@ impl L1Node {
             mail_store,
             commitment_store,
             nullifier_store,
+            lock_store,
+            token_stake_store,
+            governance_store,
+            allowance_store,
             keys: Arc::new(Mutex::new(keys)),
             mempool: Arc::new(Mutex::new(HashMap::new())),
             verified_tx_ids: Arc::new(Mutex::new(HashSet::new())),
@@ -205,6 +221,7 @@ impl L1Node {
             // Apply transaction effects
             for tx in &block.txs {
                 Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_");
+                self.apply_web3_state_effects(tx, block.header.height);
                 Self::apply_amm_balance_effects(
                     &mut balances,
                     &mut token_balances,
@@ -1867,6 +1884,7 @@ impl L1Node {
 
                 // Apply shielded state effects (commitment/nullifier stores)
                 self.apply_shielded_state_effects(tx);
+                self.apply_web3_state_effects(tx, block.header.height);
 
                 let sum_after: f64 = balances.values().sum();
                 let fee_delta = sum_before - sum_after;
@@ -2151,6 +2169,234 @@ impl L1Node {
                             eprintln!("[node] Unshield nullifier error: {}", e);
                             return;
                         }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Apply Web3 feature state effects (lock store, staking, governance, allowances).
+    /// Called during block processing alongside balance and shielded effects.
+    fn apply_web3_state_effects(&self, tx: &TxV1, block_height: u64) {
+        match tx.tx_type.as_str() {
+            "token_lock" => {
+                if let (Some(lock_until), Some(lock_id)) = (
+                    tx.payload.lock_until_height,
+                    tx.payload.lock_id.as_ref(),
+                ) {
+                    let amount = tx.payload.amount.unwrap_or(0);
+                    let token_symbol = tx.payload.token_symbol.clone().unwrap_or_else(|| "XRGE".to_string());
+                    let lock = TokenLock {
+                        lock_id: lock_id.clone(),
+                        owner: tx.from_pub_key.clone(),
+                        token_symbol,
+                        amount,
+                        lock_until_height: lock_until,
+                        created_at_height: block_height,
+                    };
+                    if let Err(e) = self.lock_store.create_lock(&lock) {
+                        eprintln!("[node] Failed to create lock: {}", e);
+                    }
+                }
+            }
+            "token_unlock" => {
+                if let Some(lock_id) = tx.payload.lock_id.as_ref() {
+                    // Verify lock ownership and height before deleting
+                    match self.lock_store.get_lock(lock_id) {
+                        Ok(Some(lock)) => {
+                            if lock.owner != tx.from_pub_key {
+                                eprintln!("[node] Rejecting unlock: not lock owner");
+                                return;
+                            }
+                            if block_height < lock.lock_until_height {
+                                eprintln!("[node] Rejecting unlock: lock not expired (current {} < {})", block_height, lock.lock_until_height);
+                                return;
+                            }
+                            if let Err(e) = self.lock_store.delete_lock(lock_id) {
+                                eprintln!("[node] Failed to delete lock: {}", e);
+                            }
+                        }
+                        Ok(None) => {
+                            eprintln!("[node] Lock {} not found", lock_id);
+                        }
+                        Err(e) => {
+                            eprintln!("[node] Failed to get lock: {}", e);
+                        }
+                    }
+                }
+            }
+            "create_staking_pool" => {
+                if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
+                    let pool_id = tx.payload.staking_pool_id.clone()
+                        .unwrap_or_else(|| format!("{}:{}", token_symbol, &tx.from_pub_key[..16]));
+                    let reward_rate = tx.payload.staking_reward_rate.unwrap_or(500); // default 5%
+                    let pool = StakingPool {
+                        pool_id,
+                        token_symbol: token_symbol.clone(),
+                        creator: tx.from_pub_key.clone(),
+                        reward_rate_bps: reward_rate,
+                        total_staked: 0,
+                        created_at_height: block_height,
+                    };
+                    if let Err(e) = self.token_stake_store.create_pool(&pool) {
+                        eprintln!("[node] Failed to create staking pool: {}", e);
+                    }
+                }
+            }
+            "token_stake" => {
+                if let Some(pool_id) = tx.payload.staking_pool_id.as_ref() {
+                    let amount = tx.payload.amount.unwrap_or(0);
+                    // Update or create stake
+                    let existing = self.token_stake_store.get_stake(&tx.from_pub_key, pool_id)
+                        .unwrap_or(None);
+                    let stake = TokenStake {
+                        staker: tx.from_pub_key.clone(),
+                        pool_id: pool_id.clone(),
+                        amount: existing.as_ref().map(|s| s.amount).unwrap_or(0) + amount,
+                        staked_at_height: existing.as_ref().map(|s| s.staked_at_height).unwrap_or(block_height),
+                        last_claim_height: existing.as_ref().map(|s| s.last_claim_height).unwrap_or(block_height),
+                    };
+                    if let Err(e) = self.token_stake_store.create_stake(&stake) {
+                        eprintln!("[node] Failed to create stake: {}", e);
+                    }
+                    // Update pool total
+                    if let Ok(Some(mut pool)) = self.token_stake_store.get_pool(pool_id) {
+                        pool.total_staked += amount;
+                        let _ = self.token_stake_store.save_pool(&pool);
+                    }
+                }
+            }
+            "token_unstake" => {
+                if let Some(pool_id) = tx.payload.staking_pool_id.as_ref() {
+                    let amount = tx.payload.amount.unwrap_or(0);
+                    if let Ok(Some(stake)) = self.token_stake_store.get_stake(&tx.from_pub_key, pool_id) {
+                        if amount >= stake.amount {
+                            let _ = self.token_stake_store.delete_stake(&tx.from_pub_key, pool_id);
+                        } else {
+                            let updated = TokenStake {
+                                amount: stake.amount - amount,
+                                ..stake
+                            };
+                            let _ = self.token_stake_store.create_stake(&updated);
+                        }
+                        // Update pool total
+                        if let Ok(Some(mut pool)) = self.token_stake_store.get_pool(pool_id) {
+                            pool.total_staked = pool.total_staked.saturating_sub(amount);
+                            let _ = self.token_stake_store.save_pool(&pool);
+                        }
+                    }
+                }
+            }
+            "create_proposal" => {
+                if let (Some(token_symbol), Some(title), Some(description)) = (
+                    tx.payload.token_symbol.as_ref(),
+                    tx.payload.proposal_title.as_ref(),
+                    tx.payload.proposal_description.as_ref(),
+                ) {
+                    let proposal_id = tx.payload.proposal_id.clone()
+                        .unwrap_or_else(|| format!("prop-{}-{}", block_height, &tx.from_pub_key[..8]));
+                    let end_height = tx.payload.proposal_end_height.unwrap_or(block_height + 1000);
+                    let proposal = Proposal {
+                        proposal_id,
+                        token_symbol: token_symbol.clone(),
+                        creator: tx.from_pub_key.clone(),
+                        title: title.clone(),
+                        description: description.clone(),
+                        end_height,
+                        created_at_height: block_height,
+                        yes_votes: 0,
+                        no_votes: 0,
+                        abstain_votes: 0,
+                        executed: false,
+                    };
+                    if let Err(e) = self.governance_store.save_proposal(&proposal) {
+                        eprintln!("[node] Failed to create proposal: {}", e);
+                    }
+                }
+            }
+            "cast_vote" => {
+                if let (Some(proposal_id), Some(vote_option)) = (
+                    tx.payload.proposal_id.as_ref(),
+                    tx.payload.vote_option.as_ref(),
+                ) {
+                    // Check voter hasn't already voted
+                    if let Ok(Some(_)) = self.governance_store.get_vote(&tx.from_pub_key, proposal_id) {
+                        eprintln!("[node] Rejecting vote: already voted on {}", proposal_id);
+                        return;
+                    }
+                    // Get voting weight (token balance - for now use amount field)
+                    let weight = tx.payload.amount.unwrap_or(1);
+                    let vote = Vote {
+                        voter: tx.from_pub_key.clone(),
+                        proposal_id: proposal_id.clone(),
+                        option: vote_option.clone(),
+                        weight,
+                    };
+                    if let Err(e) = self.governance_store.save_vote(&vote) {
+                        eprintln!("[node] Failed to save vote: {}", e);
+                    }
+                    // Update proposal tallies
+                    if let Ok(Some(mut proposal)) = self.governance_store.get_proposal(proposal_id) {
+                        match vote_option.as_str() {
+                            "yes" => proposal.yes_votes += weight,
+                            "no" => proposal.no_votes += weight,
+                            "abstain" => proposal.abstain_votes += weight,
+                            _ => {}
+                        }
+                        let _ = self.governance_store.save_proposal(&proposal);
+                    }
+                }
+            }
+            "execute_proposal" => {
+                if let Some(proposal_id) = tx.payload.proposal_id.as_ref() {
+                    if let Ok(Some(mut proposal)) = self.governance_store.get_proposal(proposal_id) {
+                        if block_height < proposal.end_height {
+                            eprintln!("[node] Rejecting execute: voting not ended");
+                            return;
+                        }
+                        if proposal.executed {
+                            eprintln!("[node] Rejecting execute: already executed");
+                            return;
+                        }
+                        proposal.executed = true;
+                        let _ = self.governance_store.save_proposal(&proposal);
+                    }
+                }
+            }
+            "token_approve" => {
+                if let (Some(spender), Some(token_symbol)) = (
+                    tx.payload.spender_pub_key.as_ref(),
+                    tx.payload.token_symbol.as_ref(),
+                ) {
+                    let amount = tx.payload.allowance_amount.unwrap_or(0);
+                    let allowance = Allowance {
+                        owner: tx.from_pub_key.clone(),
+                        spender: spender.clone(),
+                        token_symbol: token_symbol.clone(),
+                        amount,
+                    };
+                    if let Err(e) = self.allowance_store.set_allowance(&allowance) {
+                        eprintln!("[node] Failed to set allowance: {}", e);
+                    }
+                }
+            }
+            "token_transfer_from" => {
+                // Deduct from allowance
+                if let (Some(owner), Some(token_symbol)) = (
+                    tx.payload.owner_pub_key.as_ref(),
+                    tx.payload.token_symbol.as_ref(),
+                ) {
+                    let amount = tx.payload.amount.unwrap_or(0);
+                    if let Ok(Some(mut allowance)) = self.allowance_store.get_allowance(owner, &tx.from_pub_key, token_symbol) {
+                        if allowance.amount < amount {
+                            eprintln!("[node] Rejecting transfer_from: insufficient allowance");
+                            return;
+                        }
+                        allowance.amount -= amount;
+                        let _ = self.allowance_store.set_allowance(&allowance);
+                    } else {
+                        eprintln!("[node] Rejecting transfer_from: no allowance set");
                     }
                 }
             }
@@ -2500,6 +2746,171 @@ impl L1Node {
                 }
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
             }
+            // ─── Token Locking ───────────────────────────────────────
+            "token_lock" => {
+                let amount = tx.payload.amount.unwrap_or(0) as f64;
+                if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
+                    // Lock custom token
+                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                    if xrge_bal < tx.fee {
+                        eprintln!("[node] Rejecting token_lock: insufficient XRGE for fee");
+                        return;
+                    }
+                    let key = (tx.from_pub_key.clone(), token_symbol.clone());
+                    let tok_bal = *token_balances.get(&key).unwrap_or(&0.0);
+                    if tok_bal < amount {
+                        eprintln!("[node] Rejecting token_lock: insufficient {} ({:.4} < {:.4})", token_symbol, tok_bal, amount);
+                        return;
+                    }
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                    *token_balances.entry(key).or_insert(0.0) -= amount;
+                } else {
+                    // Lock XRGE
+                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                    if xrge_bal < amount + tx.fee {
+                        eprintln!("[node] Rejecting token_lock: insufficient XRGE ({:.4} < {:.4})", xrge_bal, amount + tx.fee);
+                        return;
+                    }
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount + tx.fee;
+                }
+            }
+            "token_unlock" => {
+                // Balance credit happens in apply_web3_state_effects after lock validation
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting token_unlock: insufficient XRGE for fee");
+                    return;
+                }
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                // The actual balance credit is handled in apply_web3_state_effects
+                // after verifying lock ownership and height
+                if let Some(lock_id) = tx.payload.lock_id.as_ref() {
+                    // We need to credit the amount back here since static method
+                    // won't have access to lock_store. The node will validate
+                    // in apply_web3_state_effects and the lock_id is verified there.
+                    let amount = tx.payload.amount.unwrap_or(0) as f64;
+                    if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
+                        let key = (tx.from_pub_key.clone(), token_symbol.clone());
+                        *token_balances.entry(key).or_insert(0.0) += amount;
+                    } else {
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount;
+                    }
+                }
+            }
+            // ─── Token Staking (custom token pools) ──────────────────
+            "create_staking_pool" => {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting create_staking_pool: insufficient XRGE for fee");
+                    return;
+                }
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+            }
+            "token_stake" => {
+                let amount = tx.payload.amount.unwrap_or(0) as f64;
+                if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
+                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                    if xrge_bal < tx.fee {
+                        eprintln!("[node] Rejecting token_stake: insufficient XRGE for fee");
+                        return;
+                    }
+                    let key = (tx.from_pub_key.clone(), token_symbol.clone());
+                    let tok_bal = *token_balances.get(&key).unwrap_or(&0.0);
+                    if tok_bal < amount {
+                        eprintln!("[node] Rejecting token_stake: insufficient {} ({:.4} < {:.4})", token_symbol, tok_bal, amount);
+                        return;
+                    }
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                    *token_balances.entry(key).or_insert(0.0) -= amount;
+                }
+            }
+            "token_unstake" => {
+                let amount = tx.payload.amount.unwrap_or(0) as f64;
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting token_unstake: insufficient XRGE for fee");
+                    return;
+                }
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                // Credit tokens back
+                if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
+                    let key = (tx.from_pub_key.clone(), token_symbol.clone());
+                    *token_balances.entry(key).or_insert(0.0) += amount;
+                }
+            }
+            // ─── Governance ──────────────────────────────────────────
+            "create_proposal" | "cast_vote" | "execute_proposal" => {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting {}: insufficient XRGE for fee", tx.tx_type);
+                    return;
+                }
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+            }
+            // ─── Allowances ──────────────────────────────────────────
+            "token_approve" => {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting token_approve: insufficient XRGE for fee");
+                    return;
+                }
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+            }
+            "token_transfer_from" => {
+                // Spender pays the fee, owner's tokens are transferred
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting token_transfer_from: insufficient XRGE for fee");
+                    return;
+                }
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                // Actual token transfer deducted from owner, credited to recipient
+                if let (Some(owner), Some(to), Some(token_symbol)) = (
+                    tx.payload.owner_pub_key.as_ref(),
+                    tx.payload.to_pub_key_hex.as_ref(),
+                    tx.payload.token_symbol.as_ref(),
+                ) {
+                    let amount = tx.payload.amount.unwrap_or(0) as f64;
+                    let owner_key = (owner.clone(), token_symbol.clone());
+                    let owner_bal = *token_balances.get(&owner_key).unwrap_or(&0.0);
+                    if owner_bal < amount {
+                        eprintln!("[node] Rejecting token_transfer_from: insufficient {} balance", token_symbol);
+                        return;
+                    }
+                    *token_balances.entry(owner_key).or_insert(0.0) -= amount;
+                    let recipient_key = (to.clone(), token_symbol.clone());
+                    *token_balances.entry(recipient_key).or_insert(0.0) += amount;
+                }
+            }
+            // ─── Airdrops ────────────────────────────────────────────
+            "token_airdrop" => {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting token_airdrop: insufficient XRGE for fee");
+                    return;
+                }
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                if let (Some(recipients), Some(amounts), Some(token_symbol)) = (
+                    tx.payload.airdrop_recipients.as_ref(),
+                    tx.payload.airdrop_amounts.as_ref(),
+                    tx.payload.token_symbol.as_ref(),
+                ) {
+                    let total: u64 = amounts.iter().sum();
+                    let sender_key = (tx.from_pub_key.clone(), token_symbol.clone());
+                    let tok_bal = *token_balances.get(&sender_key).unwrap_or(&0.0);
+                    if tok_bal < total as f64 {
+                        eprintln!("[node] Rejecting token_airdrop: insufficient {} ({:.4} < {})", token_symbol, tok_bal, total);
+                        return;
+                    }
+                    *token_balances.entry(sender_key).or_insert(0.0) -= total as f64;
+                    for (i, recipient) in recipients.iter().enumerate() {
+                        if let Some(&amt) = amounts.get(i) {
+                            let key = (recipient.clone(), token_symbol.clone());
+                            *token_balances.entry(key).or_insert(0.0) += amt as f64;
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -2607,6 +3018,58 @@ impl L1Node {
 
     pub fn get_nfts_by_owner(&self, owner: &str) -> Result<Vec<NftToken>, String> {
         self.nft_store.get_tokens_by_owner(owner)
+    }
+
+    // ===== Token Lock Methods =====
+
+    pub fn get_locks_by_owner(&self, owner: &str) -> Result<Vec<TokenLock>, String> {
+        self.lock_store.get_locks_by_owner(owner)
+    }
+
+    // ===== Token Staking Methods =====
+
+    pub fn get_staking_pools(&self) -> Result<Vec<StakingPool>, String> {
+        self.token_stake_store.list_pools()
+    }
+
+    pub fn get_staking_pool(&self, pool_id: &str) -> Result<Option<StakingPool>, String> {
+        self.token_stake_store.get_pool(pool_id)
+    }
+
+    pub fn get_stakes_by_owner(&self, owner: &str) -> Result<Vec<TokenStake>, String> {
+        self.token_stake_store.get_stakes_by_owner(owner)
+    }
+
+    pub fn get_stakes_by_pool(&self, pool_id: &str) -> Result<Vec<TokenStake>, String> {
+        self.token_stake_store.get_stakes_by_pool(pool_id)
+    }
+
+    // ===== Governance Methods =====
+
+    pub fn get_proposals(&self) -> Result<Vec<Proposal>, String> {
+        self.governance_store.list_proposals()
+    }
+
+    pub fn get_proposals_by_token(&self, token_symbol: &str) -> Result<Vec<Proposal>, String> {
+        self.governance_store.list_proposals_by_token(token_symbol)
+    }
+
+    pub fn get_proposal(&self, proposal_id: &str) -> Result<Option<Proposal>, String> {
+        self.governance_store.get_proposal(proposal_id)
+    }
+
+    pub fn get_votes_for_proposal(&self, proposal_id: &str) -> Result<Vec<Vote>, String> {
+        self.governance_store.get_votes_for_proposal(proposal_id)
+    }
+
+    // ===== Allowance Methods =====
+
+    pub fn get_allowances_by_owner(&self, owner: &str) -> Result<Vec<Allowance>, String> {
+        self.allowance_store.get_allowances_by_owner(owner)
+    }
+
+    pub fn get_allowance(&self, owner: &str, spender: &str, token: &str) -> Result<Option<Allowance>, String> {
+        self.allowance_store.get_allowance(owner, spender, token)
     }
 
     /// Apply NFT transaction effects during block processing

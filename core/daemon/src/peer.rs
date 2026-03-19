@@ -195,18 +195,19 @@ async fn sync_from_peer(peer_url: &str, node: &L1Node, allow_genesis_reset: bool
     let local_height = node.get_tip_height()?;
     let peer_height = peer_blocks.last().map(|b| b.header.height).unwrap_or(0);
     
-    // Check if we need to reset from genesis (peer has longer chain and our genesis differs)
+    // Check if we need to reset from genesis (peer has longer chain and our genesis differs or we have no genesis)
     if allow_genesis_reset && peer_height > local_height {
         if let Some(peer_genesis) = peer_blocks.first() {
             if peer_genesis.header.height == 0 {
                 let our_genesis = node.get_block(0)?;
-                if let Some(our_gen) = our_genesis {
-                    if our_gen.hash != peer_genesis.hash {
-                        eprintln!("[peer] Genesis mismatch - resetting chain from peer");
-                        // Replace our chain with peer's chain
-                        node.reset_chain(&peer_blocks)?;
-                        return Ok(peer_blocks.len() as u64);
-                    }
+                let should_reset = match our_genesis {
+                    None => true, // Fresh node with no genesis - accept peer chain
+                    Some(our_gen) => our_gen.hash != peer_genesis.hash,
+                };
+                if should_reset {
+                    eprintln!("[peer] Syncing chain from peer genesis");
+                    node.reset_chain(&peer_blocks)?;
+                    return Ok(peer_blocks.len() as u64);
                 }
             }
         }

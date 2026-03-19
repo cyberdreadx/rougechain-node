@@ -47,8 +47,8 @@ RougeChain is a production-ready L1 blockchain powered by NIST-approved post-qua
 
 ```bash
 # Clone the repository
-git clone https://github.com/cyberdreadx/quantum-vault.git
-cd quantum-vault
+git clone https://github.com/cyberdreadx/rougechain-node.git
+cd rougechain-node
 
 # Install frontend dependencies
 npm install
@@ -114,7 +114,7 @@ tmux attach -t daemon     # view logs
 ## Project Structure
 
 ```
-quantum-vault/
+rougechain-node/
 ├── core/                  # Rust L1 node daemon
 │   ├── daemon/            # Main binary (API server, miner, peer sync)
 │   ├── types/             # Shared types and codec helpers

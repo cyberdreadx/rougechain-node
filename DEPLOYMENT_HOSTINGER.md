@@ -31,7 +31,7 @@ rustc --version
 ### Step 3: Clone the Project
 
 ```bash
-git clone https://github.com/cyberdreadx/quantum-vault.git rougechain
+git clone https://github.com/cyberdreadx/rougechain-node.git rougechain
 cd rougechain
 ```
 

@@ -7,8 +7,8 @@ Get started with RougeChain in 5 minutes.
 Visit [rougechain.io](https://rougechain.io) or run locally:
 
 ```bash
-git clone https://github.com/cyberdreadx/quantum-vault
-cd quantum-vault
+git clone https://github.com/cyberdreadx/rougechain-node
+cd rougechain-node
 npm install
 npm run dev
 ```

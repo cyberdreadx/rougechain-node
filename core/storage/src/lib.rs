@@ -1,11 +1,15 @@
+pub mod allowance_store;
 pub mod bridge_claim_store;
 pub mod bridge_withdraw_store;
 pub mod chain_store;
 pub mod commitment_store;
+pub mod governance_store;
+pub mod lock_store;
 pub mod mail_store;
 pub mod messenger_store;
 pub mod name_registry;
 pub mod nullifier_store;
 pub mod state_root;
 pub mod token_metadata_store;
+pub mod token_stake_store;
 pub mod validator_store;
