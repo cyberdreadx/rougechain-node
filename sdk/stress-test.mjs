@@ -97,10 +97,15 @@ function serializePayload(payload) {
 }
 
 function signTransaction(payload, privateKey, publicKey) {
-  const payloadBytes = serializePayload(payload);
+  // Server does: serde_json::to_string(&req.payload) to get verification bytes
+  // serde_json preserves key order from original JSON parse.
+  // So we sort keys, stringify, sign those bytes, and send payload as object (not string).
+  const sorted = sortKeysDeep(payload);
+  const payloadJson = JSON.stringify(sorted);
+  const payloadBytes = new TextEncoder().encode(payloadJson);
   const sig = ml_dsa65.sign(payloadBytes, hexToBytes(privateKey));
   return {
-    payload: JSON.stringify(sortKeysDeep(payload)),
+    payload: sorted,           // sent as JSON object, not string
     signature: bytesToHex(sig),
     public_key: publicKey,
   };
