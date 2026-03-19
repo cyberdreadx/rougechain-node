@@ -392,29 +392,153 @@ export function NodeDashboard() {
         </div>
       )}
 
-      {/* Info Card */}
-      <Card className="bg-primary/5 border-primary/20">
+      {/* ─── How to Run a Node ─── */}
+      <Card className="bg-primary/5 border-primary/20 overflow-hidden">
         <CardContent className="pt-6">
-          <div className="flex items-start gap-4">
-            <Server className="h-6 w-6 text-primary mt-1" />
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center">
+              <Server className="h-5 w-5 text-primary" />
+            </div>
             <div>
-              <h3 className="font-semibold mb-2">Rust Core Daemon</h3>
-              <ul className="text-sm text-muted-foreground space-y-1">
-                <li>• Rust-based daemon with gRPC + HTTP bridge</li>
-                <li>• Post-quantum signatures (ML-DSA-65)</li>
-                <li>• Local disk storage (JSONL chain files + sled state)</li>
-                <li>• Health check at <code className="text-xs bg-background px-1 rounded">/api/health</code></li>
-                <li>• Stats at <code className="text-xs bg-background px-1 rounded">/api/stats</code></li>
-                <li>• Mining is optional (add <code className="text-xs bg-background px-1 rounded">--mine</code>)</li>
-                <li>• Devnet defaults: local testing, not production consensus</li>
-              </ul>
-              {uniqueChains.length > 1 && (
-                <p className="text-xs text-muted-foreground mt-3">
-                  Detected chain IDs: {uniqueChains.join(", ")}
-                </p>
-              )}
+              <h3 className="text-lg font-bold">Run a RougeChain Node</h3>
+              <p className="text-xs text-muted-foreground">Help power the network — it's easier than you think!</p>
             </div>
           </div>
+
+          {/* Requirements */}
+          <div className="mb-6">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">What you need</p>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { label: "A computer or VPS", icon: "💻" },
+                { label: "Rust installed", icon: "🦀" },
+                { label: "Internet connection", icon: "🌐" },
+              ].map(({ label, icon }) => (
+                <span key={label} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-background border border-border text-xs font-medium">
+                  <span>{icon}</span> {label}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {/* Step 1 */}
+            <div className="flex gap-4">
+              <div className="flex flex-col items-center">
+                <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold shrink-0">1</div>
+                <div className="w-px flex-1 bg-border mt-2" />
+              </div>
+              <div className="pb-4">
+                <h4 className="font-semibold text-sm mb-1">Install Rust</h4>
+                <p className="text-xs text-muted-foreground mb-2">
+                  If you don't have Rust yet, run this in your terminal. It takes about 2 minutes.
+                </p>
+                <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
+                  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+                </code>
+              </div>
+            </div>
+
+            {/* Step 2 */}
+            <div className="flex gap-4">
+              <div className="flex flex-col items-center">
+                <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold shrink-0">2</div>
+                <div className="w-px flex-1 bg-border mt-2" />
+              </div>
+              <div className="pb-4">
+                <h4 className="font-semibold text-sm mb-1">Download RougeChain</h4>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Clone the code from GitHub and build it. This takes a few minutes the first time.
+                </p>
+                <div className="space-y-1.5">
+                  <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
+                    git clone https://github.com/cyberdreadx/rougechain-node.git
+                  </code>
+                  <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
+                    cd rougechain-node && cargo build --release
+                  </code>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 3 */}
+            <div className="flex gap-4">
+              <div className="flex flex-col items-center">
+                <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold shrink-0">3</div>
+                <div className="w-px flex-1 bg-border mt-2" />
+              </div>
+              <div className="pb-4">
+                <h4 className="font-semibold text-sm mb-1">Start Your Node 🚀</h4>
+                <p className="text-xs text-muted-foreground mb-2">
+                  That's it! Run this one command. Your node will connect to the testnet, sync the blockchain, and start running.
+                </p>
+                <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
+                  ./target/release/quantum-vault-daemon --api-port 5100 --peers "https://testnet.rougechain.io"
+                </code>
+                <p className="text-xs text-muted-foreground mt-2">
+                  🎉 <strong>You're done!</strong> Your node is now part of the RougeChain network.
+                </p>
+              </div>
+            </div>
+
+            {/* Step 4 - Optional */}
+            <div className="flex gap-4">
+              <div className="flex flex-col items-center">
+                <div className="w-8 h-8 rounded-full bg-muted text-muted-foreground flex items-center justify-center text-sm font-bold shrink-0">✨</div>
+              </div>
+              <div>
+                <h4 className="font-semibold text-sm mb-1">Optional: Name Your Node</h4>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Want your node to show up with a name on the{" "}
+                  <a href="/blockchain" className="text-primary underline">network globe</a>? Add <code className="text-xs bg-background px-1 rounded">--node-name</code>:
+                </p>
+                <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
+                  ./target/release/quantum-vault-daemon --api-port 5100 --node-name "MyAwesomeNode" --peers "https://testnet.rougechain.io"
+                </code>
+              </div>
+            </div>
+          </div>
+
+          {/* Extra options */}
+          <div className="mt-6 pt-4 border-t border-border">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">More Options</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+              <div className="flex items-start gap-2 p-2 rounded-lg bg-background/50">
+                <Zap className="h-3.5 w-3.5 text-orange-400 mt-0.5 shrink-0" />
+                <div>
+                  <span className="font-medium">Mine blocks</span>
+                  <span className="text-muted-foreground"> — add <code className="bg-background px-1 rounded">--mine</code> to earn XRGE</span>
+                </div>
+              </div>
+              <div className="flex items-start gap-2 p-2 rounded-lg bg-background/50">
+                <Database className="h-3.5 w-3.5 text-purple-400 mt-0.5 shrink-0" />
+                <div>
+                  <span className="font-medium">Custom data dir</span>
+                  <span className="text-muted-foreground"> — <code className="bg-background px-1 rounded">--data-dir ./my-data</code></span>
+                </div>
+              </div>
+              <div className="flex items-start gap-2 p-2 rounded-lg bg-background/50">
+                <ShieldCheck className="h-3.5 w-3.5 text-cyan-400 mt-0.5 shrink-0" />
+                <div>
+                  <span className="font-medium">API key auth</span>
+                  <span className="text-muted-foreground"> — <code className="bg-background px-1 rounded">--api-keys "key1,key2"</code></span>
+                </div>
+              </div>
+              <div className="flex items-start gap-2 p-2 rounded-lg bg-background/50">
+                <Users className="h-3.5 w-3.5 text-green-400 mt-0.5 shrink-0" />
+                <div>
+                  <span className="font-medium">Public URL</span>
+                  <span className="text-muted-foreground"> — <code className="bg-background px-1 rounded">--public-url "https://yournode.com"</code></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {uniqueChains.length > 1 && (
+            <p className="text-xs text-muted-foreground mt-4">
+              Detected chain IDs: {uniqueChains.join(", ")}
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>
