@@ -1,5 +1,6 @@
 mod amm;
 mod bridge_verifier;
+mod dashboard;
 mod grpc;
 mod nft_store;
 mod pool_events;
@@ -381,6 +382,7 @@ async fn main() -> Result<(), String> {
 
 fn build_http_router(state: AppState) -> Router {
     Router::new()
+        .route("/", get(dashboard::node_dashboard))
         .route("/api/ws", get(ws_handler))
         .route("/api/stats", get(get_stats))
         .route("/api/burn-address", get(get_burn_address))
@@ -556,7 +558,7 @@ async fn auth_middleware<B>(
         return Ok(next.run(request).await);
     }
     let path = request.uri().path();
-    if path == "/api/health" || path == "/api/stats" {
+    if path == "/" || path == "/api/health" || path == "/api/stats" {
         return Ok(next.run(request).await);
     }
     // v1 endpoints that accept private keys — block unless --dev flag is set

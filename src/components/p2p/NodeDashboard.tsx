@@ -541,6 +541,94 @@ export function NodeDashboard() {
           )}
         </CardContent>
       </Card>
+
+      {/* ─── Become a Validator ─── */}
+      <Card className="bg-orange-500/5 border-orange-500/20 overflow-hidden">
+        <CardContent className="pt-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-xl bg-orange-500/20 flex items-center justify-center">
+              <ShieldCheck className="h-5 w-5 text-orange-500" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold">Become a Validator</h3>
+              <p className="text-xs text-muted-foreground">Earn XRGE rewards by securing the network</p>
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground mb-4">
+            Validators are nodes that create new blocks and earn fees. You need some XRGE tokens staked to become one.
+            Here's how — it only takes a few minutes after your node is running!
+          </p>
+
+          <div className="space-y-4">
+            {/* Step 1 */}
+            <div className="flex gap-4">
+              <div className="flex flex-col items-center">
+                <div className="w-8 h-8 rounded-full bg-orange-500 text-white flex items-center justify-center text-sm font-bold shrink-0">1</div>
+                <div className="w-px flex-1 bg-border mt-2" />
+              </div>
+              <div className="pb-4">
+                <h4 className="font-semibold text-sm mb-1">Create a Wallet</h4>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Go to{" "}
+                  <a href="/wallet" className="text-primary underline">rougechain.io/wallet</a>
+                  {" "}and create a new wallet. <strong>Save your keys somewhere safe!</strong> You'll get a public key (your address) and a private key (your secret).
+                </p>
+              </div>
+            </div>
+
+            {/* Step 2 */}
+            <div className="flex gap-4">
+              <div className="flex flex-col items-center">
+                <div className="w-8 h-8 rounded-full bg-orange-500 text-white flex items-center justify-center text-sm font-bold shrink-0">2</div>
+                <div className="w-px flex-1 bg-border mt-2" />
+              </div>
+              <div className="pb-4">
+                <h4 className="font-semibold text-sm mb-1">Get Some XRGE</h4>
+                <p className="text-xs text-muted-foreground mb-2">
+                  On the testnet, you can get free XRGE from the faucet — just paste your public key on the{" "}
+                  <a href="/wallet" className="text-primary underline">wallet page</a> and click "Request Faucet." You need at least <strong>100 XRGE</strong> to stake.
+                </p>
+              </div>
+            </div>
+
+            {/* Step 3 */}
+            <div className="flex gap-4">
+              <div className="flex flex-col items-center">
+                <div className="w-8 h-8 rounded-full bg-orange-500 text-white flex items-center justify-center text-sm font-bold shrink-0">3</div>
+                <div className="w-px flex-1 bg-border mt-2" />
+              </div>
+              <div className="pb-4">
+                <h4 className="font-semibold text-sm mb-1">Stake Your XRGE</h4>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Go to the{" "}
+                  <a href="/validators" className="text-primary underline">Validators page</a>
+                  {" "}and stake your XRGE. Once staked, your wallet address becomes a <strong>validator</strong> — it can propose new blocks!
+                </p>
+              </div>
+            </div>
+
+            {/* Step 4 */}
+            <div className="flex gap-4">
+              <div className="flex flex-col items-center">
+                <div className="w-8 h-8 rounded-full bg-orange-500 text-white flex items-center justify-center text-sm font-bold shrink-0">4</div>
+              </div>
+              <div>
+                <h4 className="font-semibold text-sm mb-1">Enable Mining ⛏️</h4>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Add <code className="text-xs bg-background px-1 rounded">--mine</code> to your node command. Your node will now create blocks and earn fees!
+                </p>
+                <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
+                  ./target/release/quantum-vault-daemon --api-port 5100 --mine --node-name "MyValidator" --peers "https://testnet.rougechain.io"
+                </code>
+                <p className="text-xs text-muted-foreground mt-2">
+                  💰 <strong>You're earning!</strong> Check your balance on the wallet page or visit <code className="bg-background px-1 rounded text-xs">http://localhost:5100</code> to see your node dashboard.
+                </p>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
