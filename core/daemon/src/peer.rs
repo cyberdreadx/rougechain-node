@@ -329,8 +329,12 @@ pub async fn start_peer_sync(peer_manager: Arc<PeerManager>, node: Arc<L1Node>) 
         let peers = peer_manager.get_active_peers().await;
         let mut had_rate_limit = false;
         
+        // Allow genesis reset if we're still at height 0 (fresh node that hasn't synced yet)
+        let local_height = node.get_tip_height().unwrap_or(0);
+        let needs_genesis_reset = local_height == 0;
+
         for peer in &peers {
-            match sync_from_peer(peer, &node, false).await {
+            match sync_from_peer(peer, &node, needs_genesis_reset).await {
                 Ok(count) if count > 0 => {
                     eprintln!("[peer] Synced {} new blocks from {}", count, peer);
                     peer_manager.record_success(peer).await;
