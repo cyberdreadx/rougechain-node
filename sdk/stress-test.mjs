@@ -78,40 +78,60 @@ function generateWallet() {
   };
 }
 
-function signPayload(privateKey, payload) {
-  const msgBytes = new TextEncoder().encode(payload);
-  const sig = ml_dsa65.sign(msgBytes, hexToBytes(privateKey));
-  return bytesToHex(sig);
+// ─── SDK-compatible signing (must match sortKeysDeep from sdk/src/signer.ts) ──
+
+function sortKeysDeep(obj) {
+  if (Array.isArray(obj)) return obj.map(sortKeysDeep);
+  if (obj !== null && typeof obj === "object") {
+    const sorted = {};
+    for (const key of Object.keys(obj).sort()) {
+      sorted[key] = sortKeysDeep(obj[key]);
+    }
+    return sorted;
+  }
+  return obj;
 }
 
-function createSignedTransfer(from, privateKey, to, amount, fee, token) {
-  const nonce = Date.now() * 1000 + Math.floor(Math.random() * 1000);
-  const payload = JSON.stringify({
+function serializePayload(payload) {
+  return new TextEncoder().encode(JSON.stringify(sortKeysDeep(payload)));
+}
+
+function signTransaction(payload, privateKey, publicKey) {
+  const payloadBytes = serializePayload(payload);
+  const sig = ml_dsa65.sign(payloadBytes, hexToBytes(privateKey));
+  return {
+    payload: JSON.stringify(sortKeysDeep(payload)),
+    signature: bytesToHex(sig),
+    public_key: publicKey,
+  };
+}
+
+function generateNonce() {
+  return Date.now() * 1000 + Math.floor(Math.random() * 1000);
+}
+
+function createSignedTransfer(wallet, to, amount, fee, token) {
+  const payload = {
     type: "transfer",
-    from: from,
+    from: wallet.publicKey,
     to: to,
     amount: amount,
-    fee: fee,
+    fee: fee || 0.1,
     token: token || "XRGE",
-    nonce: nonce,
+    nonce: generateNonce(),
     timestamp: Date.now(),
-  });
-  const signature = signPayload(privateKey, payload);
-  return {
-    tx_type: "transfer",
-    from_pub_key: from,
-    payload: {
-      to_pub_key: to,
-      amount: amount,
-      fee: fee,
-      token_symbol: token || "XRGE",
-      nonce: nonce,
-    },
-    sig: signature,
-    signed_payload: payload,
-    timestamp: Date.now(),
-    chain_id: "rougechain-devnet-1",
   };
+  return signTransaction(payload, wallet.privateKey, wallet.publicKey);
+}
+
+function createSignedFaucet(wallet) {
+  const payload = {
+    type: "faucet",
+    from: wallet.publicKey,
+    nonce: generateNonce(),
+    timestamp: Date.now(),
+  };
+  return signTransaction(payload, wallet.privateKey, wallet.publicKey);
 }
 
 // ─── Stress Test ───────────────────────────────────────────────────────────────
@@ -145,18 +165,8 @@ async function main() {
 
   // 3. Fund sender from faucet
   console.log("💧 Requesting faucet...");
-  const faucetPayload = JSON.stringify({
-    type: "faucet",
-    from: sender.publicKey,
-    nonce: Date.now(),
-    timestamp: Date.now(),
-  });
-  const faucetSig = signPayload(sender.privateKey, faucetPayload);
-  const faucetResult = await post("/v2/faucet", {
-    payload: faucetPayload,
-    signature: faucetSig,
-    public_key: sender.publicKey,
-  });
+  const faucetTx = createSignedFaucet(sender);
+  const faucetResult = await post("/v2/faucet", faucetTx);
   if (faucetResult.success) {
     console.log("   ✅ Faucet funded sender");
   } else {
@@ -194,19 +204,14 @@ async function main() {
     const txStart = performance.now();
     try {
       const tx = createSignedTransfer(
-        sender.publicKey,
-        sender.privateKey,
+        sender,
         receiver.publicKey,
         0.01,     // tiny amount 
         0.1,      // fee
         "XRGE"
       );
       
-      const res = await post("/v2/transfer", {
-        payload: tx.signed_payload,
-        signature: tx.sig,
-        public_key: sender.publicKey,
-      });
+      const res = await post("/v2/transfer", tx);
 
       const latency = performance.now() - txStart;
       latencies.push(latency);
