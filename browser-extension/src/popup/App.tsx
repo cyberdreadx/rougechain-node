@@ -16,6 +16,7 @@ import MailTab from "./tabs/MailTab";
 import SettingsTab from "./tabs/SettingsTab";
 import UnlockScreen from "./components/UnlockScreen";
 import CreateWalletScreen from "./components/CreateWalletScreen";
+import { getCoreApiBaseUrl } from "../lib/network";
 
 type Tab = "wallet" | "tokens" | "nfts" | "messenger" | "mail" | "settings";
 
@@ -85,16 +86,18 @@ export default function App() {
     return (
         <div className="flex flex-col h-full bg-background">
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-card/60 backdrop-blur-sm">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-gradient-to-r from-card/90 via-card to-card/90 backdrop-blur-sm">
                 <div className="flex items-center gap-2.5">
                     <div className="logo-ring w-7 h-7">
                         <img src="/xrge-logo.webp" alt="XRGE" />
                     </div>
                     <span className="text-sm font-bold text-gradient-quantum tracking-tight">RougeChain</span>
                 </div>
-                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-success/10 border border-success/20">
-                    <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-                    <span className="text-[10px] text-success font-medium">Devnet</span>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success/10 border border-success/20">
+                    <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse shadow-sm shadow-success/50" />
+                    <span className="text-[10px] text-success font-semibold">
+                        {getCoreApiBaseUrl().includes("testnet") ? "Testnet" : getCoreApiBaseUrl().includes("localhost") ? "Devnet" : "Mainnet"}
+                    </span>
                 </div>
             </div>
 
@@ -120,16 +123,17 @@ export default function App() {
                     <button
                         key={id}
                         onClick={() => setActiveTab(id)}
-                        className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 transition-all relative ${activeTab === id
-                            ? "text-primary"
-                            : "text-muted-foreground hover:text-foreground"
-                            }`}
+                        className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 transition-all duration-200 relative ${
+                            activeTab === id
+                                ? "text-primary"
+                                : "text-muted-foreground hover:text-foreground"
+                        }`}
                     >
                         {activeTab === id && (
-                            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full bg-primary" />
+                            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-10 h-0.5 rounded-full bg-primary shadow-sm shadow-primary/50" />
                         )}
-                        <Icon className="w-4 h-4" />
-                        <span className="text-[10px] font-medium">{label}</span>
+                        <Icon className={`w-4 h-4 transition-transform duration-200 ${activeTab === id ? "scale-110" : ""}`} />
+                        <span className={`text-[10px] ${activeTab === id ? "font-semibold" : "font-medium"}`}>{label}</span>
                     </button>
                 ))}
             </div>

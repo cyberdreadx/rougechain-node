@@ -12,6 +12,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
+use std::sync::RwLock;
 
 use axum::extract::{Path, Query, State};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -111,6 +112,7 @@ struct AppState {
     xrge_bridge_token: String,
     faucet_cooldowns: Arc<tokio::sync::Mutex<HashMap<String, i64>>>,
     dev_mode: bool,
+    response_cache: Arc<RwLock<HashMap<String, (Instant, String)>>>,
 }
 
 #[derive(Clone)]
@@ -284,6 +286,7 @@ async fn main() -> Result<(), String> {
             .unwrap_or_else(|| "0xF9e744a43608AB7D64a106df84e52915e8Efa27E".to_string()),
         faucet_cooldowns: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         dev_mode: args.dev,
+        response_cache: Arc::new(RwLock::new(HashMap::new())),
     };
     
     eprintln!("[core-daemon] WebSocket broadcaster initialized");
@@ -506,6 +509,11 @@ fn build_http_router(state: AppState) -> Router {
                     "http://localhost:5173".parse().unwrap(),
                     "http://localhost:4173".parse().unwrap(),
                     "http://127.0.0.1:5173".parse().unwrap(),
+                    "https://rougechain.io".parse().unwrap(),
+                    "https://www.rougechain.io".parse().unwrap(),
+                    "https://testnet.rougechain.io".parse().unwrap(),
+                    "https://rougee.app".parse().unwrap(),
+                    "https://www.rougee.app".parse().unwrap(),
                 ])),
             }
         })
@@ -1404,7 +1412,8 @@ async fn get_address_transactions(
     Query(query): Query<AddressTxsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let node = &state.node;
-    let blocks = node.get_all_blocks().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let limit_blocks = 500; // Scan recent blocks instead of entire chain
+    let blocks = node.get_recent_blocks(limit_blocks).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut items: Vec<serde_json::Value> = Vec::new();
     for block in &blocks {
         for tx in &block.txs {
@@ -1469,7 +1478,8 @@ async fn get_txs(
     Query(query): Query<TxsQuery>,
 ) -> Result<Json<TxsResponse>, StatusCode> {
     let node = &state.node;
-    let blocks = node.get_all_blocks().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let scan_limit = 500; // Scan recent blocks instead of entire chain
+    let blocks = node.get_recent_blocks(scan_limit).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut items = Vec::new();
     for block in blocks {
         for tx in block.txs.iter() {
@@ -1491,7 +1501,7 @@ async fn get_txs(
     Ok(Json(TxsResponse { txs: paged, total }))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BlocksSummaryResponse {
     success: bool,
@@ -1502,7 +1512,7 @@ struct BlocksSummaryResponse {
     points: Vec<BlocksSummaryPoint>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct BlocksSummaryPoint {
     timestamp: u64,
     blocks: u64,
@@ -1523,7 +1533,27 @@ async fn get_blocks_summary(
     };
     let now = chrono::Utc::now().timestamp_millis() as u64;
     let start_time = now.saturating_sub(range_ms);
-    let blocks = node.get_all_blocks().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Use cached summary if available and fresh (5 second TTL)
+    {
+        let cache = state.response_cache.read().unwrap();
+        let cache_key = format!("blocks_summary_{}", range);
+        if let Some((cached_at, cached_json)) = cache.get(&cache_key) {
+            if cached_at.elapsed() < StdDuration::from_secs(5) {
+                if let Ok(resp) = serde_json::from_str::<BlocksSummaryResponse>(cached_json) {
+                    return Ok(Json(resp));
+                }
+            }
+        }
+    }
+
+    // Scan enough blocks to cover the time range (estimate: 1 block per second max)
+    let max_blocks_for_range = match range {
+        "1h" => 3600usize,
+        "7d" => 500,  // 7 days is too many, cap at 500 most recent
+        _ => 500,     // 24h
+    };
+    let blocks = node.get_recent_blocks(max_blocks_for_range).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut buckets: std::collections::BTreeMap<u64, (u64, u64)> = std::collections::BTreeMap::new();
     let mut t = start_time;
     while t <= now {
@@ -1544,14 +1574,24 @@ async fn get_blocks_summary(
         .into_iter()
         .map(|(timestamp, (blocks, transactions))| BlocksSummaryPoint { timestamp, blocks, transactions })
         .collect();
-    Ok(Json(BlocksSummaryResponse {
+    let response = BlocksSummaryResponse {
         success: true,
         range: range.to_string(),
         interval_ms,
         start_time,
         end_time: now,
         points,
-    }))
+    };
+
+    // Cache the response
+    if let Ok(json) = serde_json::to_string(&response) {
+        let cache_key = format!("blocks_summary_{}", range);
+        if let Ok(mut cache) = state.response_cache.write() {
+            cache.insert(cache_key, (Instant::now(), json));
+        }
+    }
+
+    Ok(Json(response))
 }
 
 #[derive(Serialize)]
