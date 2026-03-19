@@ -80,4 +80,8 @@ export type {
   ShieldedTransferParams,
   UnshieldParams,
   ShieldedStats,
+  RollupStatus,
+  RollupBatchResult,
+  RollupSubmitParams,
+  RollupSubmitResult,
 } from "./types.js";

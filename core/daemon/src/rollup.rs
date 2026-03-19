@@ -10,13 +10,12 @@
 // ============================================================================
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use quantum_vault_crypto::stark::{
     prove_rollup_batch, verify_rollup_batch,
-    RollupTransfer, RollupBatchInputs,
+    RollupTransfer,
 };
 use quantum_vault_storage::state_root::{compute_state_root, apply_transfers_and_compute_root};
 

@@ -26,6 +26,7 @@ quantum-vault-storage = { path = "../storage" }
 sled = "0.34"
 eth-ecdsa-verifier = "0.1"
 rayon = "1.10"
+sha2 = "0.10"
 
 [build-dependencies]
 tonic-build = "0.11"

@@ -72,6 +72,10 @@ import type {
   ShieldedTransferParams,
   UnshieldParams,
   ShieldedStats,
+  RollupStatus,
+  RollupBatchResult,
+  RollupSubmitParams,
+  RollupSubmitResult,
 } from "./types.js";
 import { createShieldedNote, type ShieldedNote } from "./shielded.js";
 
@@ -357,6 +361,29 @@ export class RougeChain {
   ): Promise<ApiResponse> {
     const tx = createSignedTokenMetadataClaim(wallet, tokenSymbol);
     return this.submitTx("/v2/token/metadata/claim", tx);
+  }
+
+  // ===== Rollup =====
+
+  /** Get the current rollup accumulator status. */
+  async getRollupStatus(): Promise<RollupStatus> {
+    const data = await this.get<{ rollup: RollupStatus }>("/v2/rollup/status");
+    return data.rollup;
+  }
+
+  /** Submit a transfer into the rollup batch accumulator. */
+  async submitRollupTransfer(
+    params: RollupSubmitParams
+  ): Promise<RollupSubmitResult> {
+    return this.post<RollupSubmitResult>("/v2/rollup/submit", params);
+  }
+
+  /** Get the result of a completed rollup batch by ID. */
+  async getRollupBatch(batchId: number): Promise<RollupBatchResult> {
+    const data = await this.get<{ batch: RollupBatchResult }>(
+      `/v2/rollup/batch/${batchId}`
+    );
+    return data.batch;
   }
 }
 

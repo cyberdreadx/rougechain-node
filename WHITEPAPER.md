@@ -1,12 +1,12 @@
 # RougeChain: A Post-Quantum Layer 1 Blockchain
 
-**Version 1.2 -- March 2026**
+**Version 1.3 -- March 2026**
 
 ---
 
 ## Abstract
 
-RougeChain is a Layer 1 blockchain secured entirely by NIST-approved post-quantum cryptographic primitives. Every transaction signature, block proposal, validator attestation, and encrypted message on the network uses ML-DSA-65 (FIPS 204) and ML-KEM-768 (FIPS 203), providing NIST Level 3 security -- equivalent to 192-bit classical strength -- against both classical and quantum adversaries. The chain also incorporates zk-STARKs for privacy-preserving transaction verification, completing a fully quantum-resistant cryptographic stack across signatures, encryption, and zero-knowledge proofs. RougeChain combines a Proof-of-Stake consensus protocol with a full-featured application layer: an automated market maker, cross-chain ETH bridge, NFT standard with on-chain royalties, custom token issuance, and an end-to-end encrypted messenger. The result is a quantum-resistant blockchain that is ready for production use today, not as a future migration target.
+RougeChain is a Layer 1 blockchain secured entirely by NIST-approved post-quantum cryptographic primitives. Every transaction signature, block proposal, validator attestation, and encrypted message on the network uses ML-DSA-65 (FIPS 204) and ML-KEM-768 (FIPS 203), providing NIST Level 3 security -- equivalent to 192-bit classical strength -- against both classical and quantum adversaries. The chain incorporates zk-STARKs for privacy-preserving transaction verification and rollup batch proving, completing a fully quantum-resistant cryptographic stack across signatures, encryption, and zero-knowledge proofs. RougeChain combines a Proof-of-Stake consensus protocol with a full-featured application layer: an automated market maker, cross-chain bridge with cryptographic deposit verification, NFT standard with on-chain royalties, custom token issuance, zk-STARK rollups for throughput scaling, and an end-to-end encrypted messenger. The result is a quantum-resistant blockchain that is ready for production use today, not as a future migration target.
 
 ---
 
@@ -134,6 +134,33 @@ The verifier only sees the final balances (public inputs). The initial balances 
 | Key exchange | ML-KEM-768 | Yes |
 | Hashing | SHA-256 / Blake3 | Yes |
 | Zero-knowledge proofs | zk-STARKs | Yes |
+
+#### Rollup Batch AIR (Phase 3)
+
+The second AIR encodes a **batch transfer circuit** for zk-STARK rollups. It proves that N balance transfers executed off-chain are valid -- value is conserved for each transfer, no account is overdrafted, and the state root transitions correctly -- using a single proof that can be posted on-chain.
+
+The rollup AIR uses a 5-column execution trace:
+
+```
+sender_before | sender_after | receiver_after | amount | running_hash
+```
+
+**Transition Constraints:**
+
+1. **Value conservation:** `sender_after = sender_before - amount`
+2. **Running hash accumulation:** `running_hash[i+1] = running_hash[i] + sender_before[i] * amount[i]` (degree 2)
+3. **Cross-check redundancy:** Additional constraint for proof soundness
+
+**Boundary Assertions:**
+
+| Column | Step | Value |
+|---|---|---|
+| running_hash | First | pre_state_root |
+| running_hash | Last | post_state_root |
+
+The state root is a SHA-256 Merkle tree computed from the sorted set of all account balances, using domain-separated hashing (`ROUGECHAIN_STATE_V1` for leaf nodes, `ROUGECHAIN_NODE_V1` for internal nodes).
+
+**Rollup Accumulator.** The daemon includes a `RollupAccumulator` that batches up to 32 transfers (or flushes after 5 seconds), executes them off-chain, computes the state root transition, generates a STARK proof, and self-verifies the proof before including it in the next L1 block. A single rollup proof of ~100 KB can attest to 32 transfer operations, reducing per-transaction amortized proof cost by 32×.
 
 ### 2.5 Comparison with Classical Schemes
 
@@ -481,26 +508,34 @@ Any user may create a pool by specifying two tokens and initial deposit amounts.
 
 ---
 
-## 6. ETH Bridge
+## 6. Cross-Chain Bridge
 
-RougeChain provides a verified custody bridge between Ethereum (Base Sepolia) and RougeChain via a wrapped token called **qETH**. The bridge prioritizes verifiable correctness and replay protection over full trust minimization in its current design.
+RougeChain provides a **cryptographically verified cross-chain bridge** between Base (Ethereum L2) and RougeChain. The bridge supports both Base Mainnet and Base Sepolia, with automatic network detection. It implements two layers of deposit verification: EVM receipt validation and SHA-256 commitment nullifiers for double-claim prevention.
 
-### 6.1 Bridge In (ETH to qETH)
+### 6.1 Multi-Network Support
 
-1. The user sends ETH to the bridge custody address on Base Sepolia.
-2. The user submits the Ethereum transaction hash to RougeChain's bridge API.
-3. The RougeChain node verifies the transaction on-chain by querying the Base Sepolia RPC endpoint.
-4. Upon verification, the node creates a `bridge_mint` transaction, minting qETH to the user's RougeChain address at a 1:1 ratio.
+The bridge dynamically selects the correct chain configuration based on the daemon's `/bridge/config` response:
 
-**Replay protection:** Each Ethereum transaction hash is recorded in a persistent `BridgeClaimStore`. A hash can only be claimed once.
+| Network | Chain ID | XRGE Contract | USDC Contract |
+|---|---|---|---|
+| Base Mainnet | 8453 | 0x147120...24317 | 0x833589...02913 |
+| Base Sepolia | 84532 | 0xF9e744...Efa27E | 0x036CbD...3dCF7e |
+
+### 6.2 Bridge In (Base → RougeChain)
+
+1. The user sends ETH, USDC, or XRGE to the bridge custody address (or vault contract) on Base.
+2. The user submits the Base transaction hash to RougeChain's bridge API.
+3. The RougeChain node performs **two-layer verification**:
+   - **Layer 1 (Receipt Verification):** Queries the Base RPC for the transaction receipt, verifying tx status (`0x1`), recipient matches custody/vault, sender matches the claimed address, and minimum confirmation count is met.
+   - **Layer 2 (Commitment Nullifier):** Computes a SHA-256 commitment hash of the deposit (`SHA-256("ROUGECHAIN_BRIDGE_V1" || tx_hash || evm_address || amount)`) and checks it against the nullifier set. Duplicate commitments are rejected.
+4. For XRGE vault deposits, the node additionally verifies the `BridgeDeposit` event in the transaction logs, matching the indexed sender address.
+5. Upon verification, the node creates a `bridge_mint` transaction, minting the wrapped asset to the user's RougeChain address.
+
+**Replay protection:** Each deposit commitment hash is stored persistently. A deposit can only be claimed once, even across node restarts.
 
 **EVM Signature Verification.** Bridge claims require an ECDSA signature from the wallet that sent the deposit transaction. The claim message follows a canonical format (`RougeChain bridge claim\nTx: {hash}\nRecipient: {pubkey}`), and the signature is verified via `ecrecover` to ensure the claimant is the original depositor.
 
-**Confirmation Requirement.** The node queries the Base Sepolia block number and requires at least 1 confirmation before processing the claim, preventing front-running of unconfirmed transactions.
-
-### 6.2 Multi-Asset Bridge
-
-RougeChain supports bridging multiple asset types:
+### 6.3 Multi-Asset Bridge
 
 | Asset | Base Chain | RougeChain Wrapped | Mechanism |
 |---|---|---|---|
@@ -510,21 +545,37 @@ RougeChain supports bridging multiple asset types:
 
 For ERC-20 tokens, the bridge parses `Transfer` event logs from the transaction receipt to determine the deposited amount, rather than relying on the transaction's ETH value field.
 
-### 6.3 Bridge Out (Wrapped to Native)
+### 6.4 Bridge Out (RougeChain → Base)
 
 1. The user submits a `bridge_withdraw` transaction, burning their wrapped tokens and specifying an EVM withdrawal address.
 2. The withdrawal request is recorded in the `BridgeWithdrawStore` with a unique transaction ID, the target EVM address, the amount, and a timestamp.
-3. The bridge relayer (authenticated via a shared secret) fulfills the withdrawal by releasing tokens on Base and then marking the withdrawal as complete.
+3. The bridge relayer fulfills the withdrawal on Base, then marks it complete via the authenticated API.
 
-### 6.4 Security Model
+### 6.5 Hardened Relayer
 
-The bridge operates under a verified custody model where a designated operator address holds the collateral. This is an honest assessment: the current bridge is not fully trustless. It requires trust in the bridge operator to fulfill withdrawals. Full trust minimization (via on-chain light clients or zk-STARK bridge proofs) is a planned upgrade. Current security layers include:
-- **On-chain verification** of Ethereum transactions against Base Sepolia RPC.
+The bridge relayer (v2) implements production-grade withdrawal processing:
+
+- **Nonce management:** Manual nonce tracking prevents stuck transactions from blocking the queue.
+- **Retry with exponential backoff:** Failed RPC calls are retried up to 3 times (1s → 2s → 4s delays).
+- **Gas estimation:** Uses `estimateGas` with a 10% buffer instead of hardcoded gas limits.
+- **Double-spend protection:** Processed withdrawal IDs are tracked in-memory across poll cycles.
+- **Graceful shutdown:** SIGTERM/SIGINT handlers wait for in-flight transactions before exiting.
+- **Health logging:** Stats (uptime, fulfilled count, failure count) are logged every 60 poll cycles.
+- **Configurable confirmations:** Withdrawals wait for N block confirmations (default: 2) before marking fulfilled.
+
+### 6.6 Security Model
+
+The bridge operates under a verified custody model with cryptographic deposit verification. Current security layers include:
+
+- **EVM receipt verification** against Base RPC (tx status, recipient, sender, confirmations).
+- **SHA-256 commitment nullifiers** prevent double-claiming deposits.
+- **BridgeDeposit event verification** for XRGE vault deposits (log parsing + sender matching).
 - **ECDSA signature verification** (ecrecover) to authenticate depositors.
-- **Replay protection** via persistent claim tracking.
 - **Chain ID validation** to prevent cross-chain replay.
-- **Confirmation requirements** to prevent unconfirmed-tx attacks.
 - **Relayer authentication** via shared secret for withdrawal fulfillment.
+- **Nonce management and retry logic** for reliable withdrawal processing.
+
+Full trust minimization via on-chain STARK bridge proofs (where a STARK proof attests to the validity of Base block headers and deposit inclusion) is architecturally supported and planned as a future upgrade.
 
 ---
 
@@ -665,6 +716,7 @@ Every node exposes a comprehensive HTTP API supporting all chain operations:
 | DEX | `/api/pools`, `/api/swap`, `/api/pool/create` |
 | NFTs | `/api/nft/collections`, `/api/nft/owner/:pubkey`, `/api/v2/nft/*` |
 | Bridge | `/api/bridge/claim`, `/api/bridge/withdraw` |
+| Rollup | `/api/v2/rollup/status`, `/api/v2/rollup/submit`, `/api/v2/rollup/batch/:id` |
 | Messenger | `/api/messenger/wallets`, `/api/messenger/conversations`, `/api/messenger/messages` |
 | Names | `/api/names/register`, `/api/names/resolve/:name`, `/api/names/reverse/:walletId`, `/api/names/release` |
 | Mail | `/api/mail/send`, `/api/mail/inbox`, `/api/mail/sent`, `/api/mail/message/:id` |
@@ -713,11 +765,13 @@ When importing blocks from peers, the node performs the following verification:
 
 ### 10.6 Bridge Security
 
-- **On-chain verification** of Ethereum transactions via Base Sepolia RPC prevents fraudulent minting.
+- **Two-layer deposit verification:** EVM receipt validation (tx status, recipient, sender, confirmations) combined with SHA-256 commitment nullifiers to prevent double-claiming.
+- **BridgeDeposit event verification** for XRGE vault deposits via transaction log parsing.
 - **ECDSA signature verification** (ecrecover) authenticates that the claimant is the original depositor.
-- **Chain ID validation** ensures claims target the correct network.
-- **Confirmation requirements** prevent claims against unconfirmed transactions.
-- **Replay protection** via persistent claim tracking ensures each deposit can only be claimed once.
+- **Chain ID validation** ensures claims target the correct network (Base Mainnet 8453 or Sepolia 84532).
+- **Confirmation requirements** prevent claims against unconfirmed transactions (configurable, default: 2).
+- **Replay protection** via persistent commitment nullifier tracking ensures each deposit can only be claimed once.
+- **Hardened relayer** with nonce management, exponential retry, gas estimation, and graceful shutdown.
 - **Relayer authentication** via shared secret restricts withdrawal fulfillment to authorized operators.
 
 ### 10.7 Messenger Privacy
@@ -750,9 +804,11 @@ RougeChain's cryptographic infrastructure is designed to evolve. The following p
 | Phase | Feature | Status |
 |---|---|---|
 | 1 | zk-STARK balance transfer proofs | ✅ Complete |
-| 2 | Shielded on-chain transactions with nullifier sets | Planned |
-| 3 | ZK-rollup layer for throughput scaling | Planned |
+| 2 | Shielded on-chain transactions with nullifier sets | ✅ Complete |
+| 3 | ZK-rollup layer for throughput scaling | ✅ Complete |
+| 3b | STARK bridge deposit verification | ✅ Complete |
 | 4 | WASM-compiled prover for browser extension | Planned |
+| -- | Fully trustless STARK bridge (Base light client) | Planned |
 | -- | SLH-DSA (SPHINCS+) as alternative signature scheme | Planned |
 | -- | Hybrid classical + PQC mode | Planned |
 | -- | Hardware wallet support | Planned |

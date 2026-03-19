@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>Build quantum-safe dApps on RougeChain</strong><br />
-  Transfers · DEX · NFTs · Shielded Transactions · Bridge · Mail · Messenger
+  Transfers · DEX · NFTs · Shielded Transactions · Bridge · Rollups · Mail · Messenger
 </p>
 
 <p align="center">
@@ -59,7 +59,8 @@ const { balance } = await rc.getBalance(wallet.publicKey);
 | **DEX** | `rc.dex` | AMM pools, swaps with slippage protection, liquidity |
 | **NFTs** | `rc.nft` | RC-721 collections, mint, batch mint, royalties, freeze |
 | **Shielded** | `rc.shielded` | Private transfers with zk-STARK proofs, shield/unshield XRGE |
-| **Bridge** | `rc.bridge` | ETH ↔ qETH, USDC ↔ qUSDC, XRGE bridge (Base Sepolia) |\r
+| **Bridge** | `rc.bridge` | ETH ↔ qETH, USDC ↔ qUSDC, XRGE bridge (Base Mainnet/Sepolia) |
+| **Rollup** | `rc` | zk-STARK batch proofs, rollup status, submit transfers |
 | **Mail** | `rc.mail` | On-chain encrypted email (`@rouge.quant`) |
 | **Messenger** | `rc.messenger` | E2E encrypted messaging with self-destruct |
 
@@ -244,6 +245,29 @@ await rc.bridge.withdrawXrge(wallet, {
 });
 ```
 
+## Rollup (zk-STARK Batch Proofs)
+
+Submit transfers to the rollup accumulator for batched STARK proving. Transfers are collected into batches of up to 32 and proven with a single zk-STARK proof.
+
+```typescript
+// Check rollup status
+const status = await rc.getRollupStatus();
+// { pending_transfers, completed_batches, current_state_root, ... }
+
+// Submit a transfer to the rollup batch
+const result = await rc.submitRollupTransfer({
+  sender: wallet.publicKey,
+  receiver: recipientPubKey,
+  amount: 100,
+  fee: 1,
+});
+// result.queued = true (waiting for batch) or result.batch_completed = true
+
+// Get a completed batch result
+const batch = await rc.getRollupBatch(1);
+// { batch_id, transfer_count, proof_size_bytes, proof_time_ms, verified, ... }
+```
+
 ## Mail (`rc.mail`)
 
 On-chain encrypted email with `@rouge.quant` addresses.
@@ -389,6 +413,7 @@ import type {
   PriceSnapshot, PoolEvent, PoolStats, SwapQuote,
   ShieldParams, ShieldedTransferParams, UnshieldParams, ShieldedStats,
   ShieldedNote,
+  RollupStatus, RollupBatchResult, RollupSubmitParams, RollupSubmitResult,
 } from "@rougechain/sdk";
 ```
 

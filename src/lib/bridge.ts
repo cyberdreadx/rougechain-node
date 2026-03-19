@@ -1,13 +1,36 @@
 /**
- * Bridge: Base Sepolia testnet ETH → RougeChain qETH
- * User sends ETH to custody address, then claims qETH on RougeChain.
+ * Bridge: Base (Mainnet or Sepolia) ↔ RougeChain
+ *
+ * Supports:
+ *   - ETH bridge (Base ETH → qETH)
+ *   - USDC bridge (Base USDC → qUSDC)
+ *   - XRGE bridge (Base XRGE ↔ L1 XRGE via BridgeVault)
+ *
+ * Network auto-detection: reads chainId from daemon /bridge/config
+ * and selects the correct addresses and explorer URLs.
  */
 
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
 
+// ── Chain configs ───────────────────────────────────────────────
+
+export const BASE_MAINNET_CHAIN_ID = 8453;
 export const BASE_SEPOLIA_CHAIN_ID = 84532;
 
-/** Base Sepolia config for wallet connection */
+/** Base Mainnet chain config for wallet connection */
+export const baseMainnet = {
+  chainId: BASE_MAINNET_CHAIN_ID,
+  name: "Base",
+  nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://mainnet.base.org"] },
+  },
+  blockExplorers: {
+    default: { name: "Basescan", url: "https://basescan.org" },
+  },
+};
+
+/** Base Sepolia chain config for wallet connection */
 export const baseSepolia = {
   chainId: BASE_SEPOLIA_CHAIN_ID,
   name: "Base Sepolia",
@@ -20,31 +43,109 @@ export const baseSepolia = {
   },
 };
 
+/** Get the correct chain config for a given chainId */
+export function getBaseChainConfig(chainId: number) {
+  return chainId === BASE_MAINNET_CHAIN_ID ? baseMainnet : baseSepolia;
+}
+
+/** Get the block explorer URL for a given chainId */
+export function getExplorerUrl(chainId: number): string {
+  return chainId === BASE_MAINNET_CHAIN_ID
+    ? "https://basescan.org"
+    : "https://sepolia.basescan.org";
+}
+
+/** Get a tx explorer link */
+export function getExplorerTxUrl(chainId: number, txHash: string): string {
+  return `${getExplorerUrl(chainId)}/tx/${txHash}`;
+}
+
+// ── Token addresses by network ──────────────────────────────────
+
+const TOKEN_ADDRESSES: Record<number, { usdc: string; xrge: string }> = {
+  [BASE_MAINNET_CHAIN_ID]: {
+    usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    xrge: "0x147120faEC9277ec02d957584CFCD92B56A24317",
+  },
+  [BASE_SEPOLIA_CHAIN_ID]: {
+    usdc: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    xrge: "0xF9e744a43608AB7D64a106df84e52915e8Efa27E",
+  },
+};
+
+export function getUsdcAddress(chainId: number): string {
+  return TOKEN_ADDRESSES[chainId]?.usdc || TOKEN_ADDRESSES[BASE_SEPOLIA_CHAIN_ID].usdc;
+}
+
+export function getXrgeAddress(chainId: number): string {
+  return TOKEN_ADDRESSES[chainId]?.xrge || TOKEN_ADDRESSES[BASE_SEPOLIA_CHAIN_ID].xrge;
+}
+
+// ── Convenience exports (backward compat) ───────────────────────
+
+export const USDC_BASE_SEPOLIA = TOKEN_ADDRESSES[BASE_SEPOLIA_CHAIN_ID].usdc;
+export const XRGE_TOKEN_ADDRESS = TOKEN_ADDRESSES[BASE_MAINNET_CHAIN_ID].xrge;
+export const XRGE_TOKEN_ADDRESS_TESTNET = TOKEN_ADDRESSES[BASE_SEPOLIA_CHAIN_ID].xrge;
+
+// ── ABIs ────────────────────────────────────────────────────────
+
+/** Minimal ERC-20 ABI for approve + balanceOf */
+export const ERC20_ABI = [
+  "function approve(address spender, uint256 amount) external returns (bool)",
+  "function balanceOf(address account) external view returns (uint256)",
+  "function allowance(address owner, address spender) external view returns (uint256)",
+  "function decimals() external view returns (uint8)",
+  "function symbol() external view returns (string)",
+] as const;
+
+/** BridgeVault ABI */
+export const BRIDGE_VAULT_ABI = [
+  "function deposit(uint256 amount, string rougechainPubkey) external",
+  "function release(address to, uint256 amount, string l1TxId) external",
+  "function totalLocked() external view returns (uint256)",
+  "function vaultBalance() external view returns (uint256)",
+  "function xrgeToken() external view returns (address)",
+  "event BridgeDeposit(address indexed sender, uint256 amount, string rougechainPubkey, uint256 nonce)",
+  "event BridgeRelease(address indexed recipient, uint256 amount, string l1TxId)",
+] as const;
+
+// ── Bridge config ───────────────────────────────────────────────
+
 export interface BridgeConfig {
   enabled: boolean;
   custodyAddress?: string;
   chainId: number;
+  supportedTokens?: string[];
 }
 
 /**
- * Fetch bridge configuration (custody address, enabled status).
+ * Fetch bridge configuration from daemon.
+ * Auto-detects mainnet vs testnet from the returned chainId.
  */
 export async function getBridgeConfig(): Promise<BridgeConfig> {
   const baseUrl = getCoreApiBaseUrl();
   if (!baseUrl) {
     return { enabled: false, chainId: BASE_SEPOLIA_CHAIN_ID };
   }
-  const res = await fetch(`${baseUrl}/bridge/config`, {
-    headers: getCoreApiHeaders(),
-  });
-  if (!res.ok) return { enabled: false, chainId: BASE_SEPOLIA_CHAIN_ID };
-  const data = await res.json().catch(() => ({}));
-  return {
-    enabled: data.enabled === true,
-    custodyAddress: data.custodyAddress,
-    chainId: data.chainId ?? BASE_SEPOLIA_CHAIN_ID,
-  };
+  try {
+    const res = await fetch(`${baseUrl}/bridge/config`, {
+      headers: getCoreApiHeaders(),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return { enabled: false, chainId: BASE_SEPOLIA_CHAIN_ID };
+    const data = await res.json().catch(() => ({}));
+    return {
+      enabled: data.enabled === true,
+      custodyAddress: data.custodyAddress,
+      chainId: data.chainId ?? BASE_SEPOLIA_CHAIN_ID,
+      supportedTokens: data.supportedTokens,
+    };
+  } catch {
+    return { enabled: false, chainId: BASE_SEPOLIA_CHAIN_ID };
+  }
 }
+
+// ── ETH/USDC Bridge (claim + withdraw) ──────────────────────────
 
 export interface BridgeClaimParams {
   evmTxHash: string;
@@ -79,8 +180,7 @@ export interface BridgeWithdrawResult {
 }
 
 /**
- * Bridge out: burn qETH on RougeChain and request ETH release to Base Sepolia.
- * Creates a pending withdrawal for the operator to fulfill.
+ * Bridge out: burn qETH on RougeChain and request ETH release to Base.
  */
 export async function bridgeWithdraw(params: BridgeWithdrawParams): Promise<BridgeWithdrawResult> {
   const baseUrl = getCoreApiBaseUrl();
@@ -121,8 +221,8 @@ export async function bridgeWithdraw(params: BridgeWithdrawParams): Promise<Brid
 }
 
 /**
- * Claim qETH on RougeChain after depositing ETH on Base Sepolia.
- * Verifies the EVM tx and mints qETH to the recipient.
+ * Claim qETH on RougeChain after depositing ETH on Base.
+ * The daemon verifies the EVM tx receipt on-chain before minting.
  */
 export async function claimBridgeDeposit(params: BridgeClaimParams): Promise<BridgeClaimResult> {
   const baseUrl = getCoreApiBaseUrl();
@@ -148,38 +248,7 @@ export async function claimBridgeDeposit(params: BridgeClaimParams): Promise<Bri
   };
 }
 
-/** USDC on Base Sepolia (Circle's testnet USDC) */
-export const USDC_BASE_SEPOLIA = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
-
-// ============================================================
-// XRGE Bridge (Base ↔ RougeChain L1 via BridgeVault)
-// ============================================================
-
-/** XRGE on Base mainnet */
-export const XRGE_TOKEN_ADDRESS = "0x147120faEC9277ec02d957584CFCD92B56A24317";
-
-/** XRGE on Base Sepolia (testnet) */
-export const XRGE_TOKEN_ADDRESS_TESTNET = "0xF9e744a43608AB7D64a106df84e52915e8Efa27E";
-
-/** Minimal ERC-20 ABI for approve + balanceOf */
-export const ERC20_ABI = [
-  "function approve(address spender, uint256 amount) external returns (bool)",
-  "function balanceOf(address account) external view returns (uint256)",
-  "function allowance(address owner, address spender) external view returns (uint256)",
-  "function decimals() external view returns (uint8)",
-  "function symbol() external view returns (string)",
-] as const;
-
-/** BridgeVault ABI (only the functions we call) */
-export const BRIDGE_VAULT_ABI = [
-  "function deposit(uint256 amount, string rougechainPubkey) external",
-  "function release(address to, uint256 amount, string l1TxId) external",
-  "function totalLocked() external view returns (uint256)",
-  "function vaultBalance() external view returns (uint256)",
-  "function xrgeToken() external view returns (address)",
-  "event BridgeDeposit(address indexed sender, uint256 amount, string rougechainPubkey, uint256 nonce)",
-  "event BridgeRelease(address indexed recipient, uint256 amount, string l1TxId)",
-] as const;
+// ── XRGE Bridge (Base ↔ RougeChain via BridgeVault) ─────────────
 
 export interface XrgeBridgeConfig {
   enabled: boolean;
@@ -189,7 +258,8 @@ export interface XrgeBridgeConfig {
 }
 
 /**
- * Fetch XRGE bridge configuration from the L1 node.
+ * Fetch XRGE bridge configuration from daemon.
+ * Auto-selects correct token address based on chainId.
  */
 export async function getXrgeBridgeConfig(): Promise<XrgeBridgeConfig> {
   const baseUrl = getCoreApiBaseUrl();
@@ -199,16 +269,16 @@ export async function getXrgeBridgeConfig(): Promise<XrgeBridgeConfig> {
   try {
     const res = await fetch(`${baseUrl}/bridge/xrge/config`, {
       headers: getCoreApiHeaders(),
+      signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return { enabled: false, chainId: BASE_SEPOLIA_CHAIN_ID };
     const data = await res.json().catch(() => ({}));
+    const chainId = data.chainId ?? BASE_SEPOLIA_CHAIN_ID;
     return {
       enabled: data.enabled === true,
       vaultAddress: data.vaultAddress,
-      tokenAddress: (data.chainId === 8453 || data.chainId === undefined)
-        ? (data.tokenAddress || XRGE_TOKEN_ADDRESS)
-        : XRGE_TOKEN_ADDRESS_TESTNET,
-      chainId: data.chainId ?? BASE_SEPOLIA_CHAIN_ID,
+      tokenAddress: data.tokenAddress || getXrgeAddress(chainId),
+      chainId,
     };
   } catch {
     return { enabled: false, chainId: BASE_SEPOLIA_CHAIN_ID };
@@ -216,19 +286,15 @@ export async function getXrgeBridgeConfig(): Promise<XrgeBridgeConfig> {
 }
 
 export interface XrgeBridgeDepositParams {
-  /** EVM tx hash of the vault deposit */
   evmTxHash: string;
-  /** User's EVM address */
   evmAddress: string;
-  /** Amount deposited (raw 18-decimal units as string) */
   amount: string;
-  /** Recipient's RougeChain L1 public key */
   recipientRougechainPubkey: string;
 }
 
 /**
- * After depositing XRGE into the vault on Base, call this to notify
- * the L1 node which will credit XRGE to the recipient's L1 wallet.
+ * After depositing XRGE into the vault on Base, notify the L1 node
+ * to credit XRGE to the recipient's L1 wallet.
  */
 export async function claimXrgeBridgeDeposit(
   params: XrgeBridgeDepositParams
@@ -256,11 +322,8 @@ export async function claimXrgeBridgeDeposit(
 }
 
 export interface XrgeBridgeWithdrawParams {
-  /** Signer public key on L1 */
   fromPublicKey: string;
-  /** Amount to bridge out (in L1 XRGE units) */
   amount: number;
-  /** Destination EVM address on Base */
   evmAddress: string;
   signature?: string;
   payload?: Record<string, unknown>;
@@ -301,4 +364,3 @@ export async function bridgeWithdrawXrge(
     error: data.error,
   };
 }
-

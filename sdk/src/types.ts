@@ -513,3 +513,42 @@ export interface ShieldedStats {
   nullifier_count: number;
   active_notes: number;
 }
+
+// ===== Rollup =====
+
+export interface RollupStatus {
+  pending_transfers: number;
+  completed_batches: number;
+  next_batch_id: number;
+  max_batch_size: number;
+  batch_timeout_secs: number;
+  current_state_root: string;
+  accounts_tracked: number;
+}
+
+export interface RollupBatchResult {
+  batch_id: number;
+  transfer_count: number;
+  total_fees: number;
+  pre_state_root: string;
+  post_state_root: string;
+  proof_size_bytes: number;
+  proof_time_ms: number;
+  verified: boolean;
+}
+
+export interface RollupSubmitParams {
+  sender: string;
+  receiver: string;
+  amount: number;
+  fee?: number;
+}
+
+export interface RollupSubmitResult {
+  success: boolean;
+  queued: boolean;
+  batch_completed: boolean;
+  batch?: RollupBatchResult;
+  pending_transfers?: number;
+  max_batch_size?: number;
+}

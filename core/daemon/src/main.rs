@@ -1,4 +1,5 @@
 mod amm;
+mod bridge_verifier;
 mod grpc;
 mod nft_store;
 mod pool_events;

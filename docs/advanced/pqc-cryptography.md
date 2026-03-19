@@ -134,13 +134,62 @@ let public_inputs = BalanceTransferInputs {
 verify_balance_transfer(proof, public_inputs).unwrap();
 ```
 
+## zk-STARK Rollup Batch Proofs (Phase 3)
+
+The rollup system batches multiple transfers into a single STARK proof, dramatically reducing on-chain verification costs.
+
+### Rollup AIR (5-Column Trace)
+
+```
+sender_before | sender_after | receiver_after | amount | running_hash
+```
+
+**Constraints:**
+1. Value conservation: `sender_after = sender_before - amount`
+2. Running hash accumulation: `hash[i+1] = hash[i] + sender_before[i] * amount[i]`
+3. Cross-check redundancy
+
+**Boundary Assertions:** `running_hash` transitions from `pre_state_root` to `post_state_root`
+
+### State Root
+
+SHA-256 Merkle tree from sorted account balances with domain separation:
+- Leaf: `SHA-256("ROUGECHAIN_STATE_V1" || address || balance_le_bytes)`
+- Node: `SHA-256("ROUGECHAIN_NODE_V1" || left || right)`
+
+### Rollup API
+
+```bash
+# Check rollup status
+curl https://testnet.rougechain.io/api/v2/rollup/status
+
+# Submit transfer to rollup batch
+curl -X POST https://testnet.rougechain.io/api/v2/rollup/submit \
+  -H "Content-Type: application/json" \
+  -d '{"sender":"pubkey1","receiver":"pubkey2","amount":100,"fee":1}'
+
+# Get completed batch result
+curl https://testnet.rougechain.io/api/v2/rollup/batch/1
+```
+
+## Bridge Verification (STARK Bridge)
+
+Deposits from Base are cryptographically verified before minting:
+
+1. **EVM Receipt Verification** — tx status, recipient, sender, confirmations
+2. **SHA-256 Commitment Nullifiers** — `SHA-256("ROUGECHAIN_BRIDGE_V1" || tx_hash || address || amount)` prevents double-claims
+3. **BridgeDeposit Event Verification** — for XRGE vault deposits (log parsing)
+
 ## Future Roadmap
 
 - [x] zk-STARK proof system (Phase 1: balance transfer AIR)
-- [ ] zk-STARK Phase 2: shielded transactions on-chain
-- [ ] zk-STARK Phase 3: ZK-rollup layer
+- [x] zk-STARK Phase 2: shielded transactions on-chain
+- [x] zk-STARK Phase 3: ZK-rollup layer
+- [x] STARK bridge deposit verification
+- [ ] Fully trustless STARK bridge (Base light client)
 - [ ] SLH-DSA (SPHINCS+) as alternative signature scheme
 - [ ] Hybrid classical+PQC mode
 - [ ] Hardware wallet support
 - [ ] Threshold signatures for multi-sig
+- [ ] WASM-compiled prover for browser extension
 
