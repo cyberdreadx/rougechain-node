@@ -15,6 +15,8 @@
 pub mod air;
 pub mod commitment;
 pub mod prover;
+pub mod rollup_air;
+pub mod rollup_prover;
 pub mod shielded_air;
 pub mod shielded_prover;
 pub mod verifier;
@@ -26,6 +28,9 @@ pub use verifier::verify_balance_transfer;
 // Re-export the public API — Phase 2 (shielded transfers)
 pub use commitment::{compute_commitment, compute_nullifier, generate_randomness, verify_commitment};
 pub use shielded_prover::prove_shielded_transfer;
+
+// Re-export the public API — Phase 3 (rollup batches)
+pub use rollup_prover::{prove_rollup_batch, RollupTransfer};
 
 use winterfell::math::{fields::f128::BaseElement, ToElements};
 
@@ -109,6 +114,55 @@ pub fn verify_shielded_transfer(
 }
 
 type Blake3Hasher = winterfell::crypto::hashers::Blake3_256<BaseElement>;
+
+/// Public inputs for a rollup batch STARK proof.
+///
+/// The verifier only sees these values — never the individual transfer
+/// details. The proof guarantees:
+///   1. Every transfer in the batch conserves value
+///   2. No sender overdrafts
+///   3. The state root transitions from pre → post correctly
+#[derive(Debug, Clone)]
+pub struct RollupBatchInputs {
+    /// State root before the batch
+    pub pre_state_root: BaseElement,
+    /// State root after the batch
+    pub post_state_root: BaseElement,
+    /// Number of transfers in the batch
+    pub batch_size: BaseElement,
+    /// Total fees collected from all transfers
+    pub total_fees: BaseElement,
+}
+
+impl ToElements<BaseElement> for RollupBatchInputs {
+    fn to_elements(&self) -> Vec<BaseElement> {
+        vec![
+            self.pre_state_root,
+            self.post_state_root,
+            self.batch_size,
+            self.total_fees,
+        ]
+    }
+}
+
+/// Verify a rollup batch STARK proof.
+pub fn verify_rollup_batch(
+    proof: winterfell::Proof,
+    pub_inputs: RollupBatchInputs,
+) -> Result<(), String> {
+    use winterfell::{AcceptableOptions, crypto::{DefaultRandomCoin, MerkleTree}};
+
+    let acceptable_options =
+        AcceptableOptions::OptionSet(vec![proof.options().clone()]);
+
+    winterfell::verify::< 
+        rollup_air::RollupBatchAir,
+        Blake3Hasher,
+        DefaultRandomCoin<Blake3Hasher>,
+        MerkleTree<Blake3Hasher>,
+    >(proof, pub_inputs, &acceptable_options)
+        .map_err(|e| format!("Rollup batch proof verification failed: {}", e))
+}
 
 #[cfg(test)]
 mod tests {
@@ -290,6 +344,106 @@ mod tests {
             .expect("proof should succeed");
         verify_shielded_transfer(proof, pub_inputs)
             .expect("verification should succeed");
+    }
+
+    // ========================================================================
+    // Phase 3: Rollup Batch Tests
+    // ========================================================================
+
+    /// Rollup round-trip: prove a batch of transfers and verify
+    #[test]
+    fn test_rollup_batch_roundtrip() {
+        let transfers = vec![
+            RollupTransfer {
+                sender_before: 1000,
+                receiver_before: 500,
+                amount: 200,
+                fee: 10,
+            },
+            RollupTransfer {
+                sender_before: 800,
+                receiver_before: 300,
+                amount: 100,
+                fee: 5,
+            },
+            RollupTransfer {
+                sender_before: 2000,
+                receiver_before: 0,
+                amount: 500,
+                fee: 20,
+            },
+        ];
+
+        let pre_root = [1u8; 32];
+        let post_root = [2u8; 32];
+
+        let (proof, pub_inputs) = prove_rollup_batch(&transfers, &pre_root, &post_root)
+            .expect("rollup proof generation should succeed");
+
+        verify_rollup_batch(proof, pub_inputs)
+            .expect("rollup verification should succeed");
+    }
+
+    /// Empty batch should be rejected
+    #[test]
+    fn test_rollup_empty_batch_rejected() {
+        let pre_root = [1u8; 32];
+        let post_root = [2u8; 32];
+        let result = prove_rollup_batch(&[], &pre_root, &post_root);
+        assert!(result.is_err(), "empty batch should be rejected");
+    }
+
+    /// Overdraft should be rejected before proving
+    #[test]
+    fn test_rollup_overdraft_rejected() {
+        let transfers = vec![
+            RollupTransfer {
+                sender_before: 100,
+                receiver_before: 0,
+                amount: 200,  // More than sender has
+                fee: 0,
+            },
+        ];
+        let result = prove_rollup_batch(&transfers, &[1u8; 32], &[2u8; 32]);
+        assert!(result.is_err(), "overdraft should be rejected");
+    }
+
+    /// Single transfer batch should work
+    #[test]
+    fn test_rollup_single_transfer() {
+        let transfers = vec![
+            RollupTransfer {
+                sender_before: 500,
+                receiver_before: 100,
+                amount: 50,
+                fee: 1,
+            },
+        ];
+
+        let (proof, pub_inputs) = prove_rollup_batch(&transfers, &[10u8; 32], &[20u8; 32])
+            .expect("single transfer rollup should succeed");
+
+        verify_rollup_batch(proof, pub_inputs)
+            .expect("single transfer rollup verification should succeed");
+    }
+
+    /// Large batch (16 transfers) should work
+    #[test]
+    fn test_rollup_large_batch() {
+        let transfers: Vec<RollupTransfer> = (0..16).map(|i| {
+            RollupTransfer {
+                sender_before: 10000 + i * 100,
+                receiver_before: 500 + i * 50,
+                amount: 50 + i * 10,
+                fee: 1,
+            }
+        }).collect();
+
+        let (proof, pub_inputs) = prove_rollup_batch(&transfers, &[42u8; 32], &[99u8; 32])
+            .expect("large batch rollup should succeed");
+
+        verify_rollup_batch(proof, pub_inputs)
+            .expect("large batch rollup verification should succeed");
     }
 }
 

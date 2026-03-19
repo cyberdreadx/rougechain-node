@@ -13,3 +13,4 @@ hex = "0.4"
 tokio = { version = "1", features = ["sync"] }
 quantum-vault-types = { path = "../types" }
 quantum-vault-crypto = { path = "../crypto" }
+sha2 = "0.10"

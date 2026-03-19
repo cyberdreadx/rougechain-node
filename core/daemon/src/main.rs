@@ -5,6 +5,7 @@ mod pool_events;
 mod node;
 mod peer;
 mod pool_store;
+mod rollup;
 mod websocket;
 
 use std::collections::{HashMap, VecDeque};
@@ -113,6 +114,7 @@ struct AppState {
     faucet_cooldowns: Arc<tokio::sync::Mutex<HashMap<String, i64>>>,
     dev_mode: bool,
     response_cache: Arc<RwLock<HashMap<String, (Instant, String)>>>,
+    rollup_accumulator: Arc<tokio::sync::Mutex<rollup::RollupAccumulator>>,
 }
 
 #[derive(Clone)]
@@ -287,6 +289,7 @@ async fn main() -> Result<(), String> {
         faucet_cooldowns: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         dev_mode: args.dev,
         response_cache: Arc::new(RwLock::new(HashMap::new())),
+        rollup_accumulator: Arc::new(tokio::sync::Mutex::new(rollup::RollupAccumulator::new())),
     };
     
     eprintln!("[core-daemon] WebSocket broadcaster initialized");
@@ -488,6 +491,10 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/bridge/xrge/withdraw", post(xrge_bridge_withdraw))
         .route("/api/bridge/xrge/withdrawals", get(xrge_bridge_withdrawals))
         .route("/api/bridge/xrge/withdrawals/:tx_id", delete(xrge_bridge_fulfill))
+        // Rollup endpoints (Phase 3)
+        .route("/api/v2/rollup/status", get(rollup_status))
+        .route("/api/v2/rollup/batch/:id", get(rollup_get_batch))
+        .route("/api/v2/rollup/submit", post(rollup_submit_transfer))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer({
             let cors_origins = std::env::var("QV_CORS_ORIGINS")
@@ -5138,6 +5145,85 @@ async fn shielded_nullifier_check(
             "success": false,
             "error": e
         })),
+    }
+}
+
+// ============================================================================
+// Rollup Handlers (Phase 3)
+// ============================================================================
+
+async fn rollup_status(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let acc = state.rollup_accumulator.lock().await;
+    let status = acc.status();
+    Json(serde_json::json!({
+        "success": true,
+        "rollup": status
+    }))
+}
+
+async fn rollup_get_batch(
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+) -> impl IntoResponse {
+    let acc = state.rollup_accumulator.lock().await;
+    match acc.get_batch(id) {
+        Some(batch) => Json(serde_json::json!({
+            "success": true,
+            "batch": batch
+        })),
+        None => Json(serde_json::json!({
+            "success": false,
+            "error": format!("Batch {} not found", id)
+        })),
+    }
+}
+
+#[derive(Deserialize)]
+struct RollupSubmitRequest {
+    sender: String,
+    receiver: String,
+    amount: u64,
+    #[serde(default)]
+    fee: u64,
+}
+
+async fn rollup_submit_transfer(
+    State(state): State<AppState>,
+    Json(body): Json<RollupSubmitRequest>,
+) -> impl IntoResponse {
+    let transfer = rollup::PendingTransfer {
+        sender: body.sender,
+        receiver: body.receiver,
+        amount: body.amount,
+        fee: body.fee,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+
+    let mut acc = state.rollup_accumulator.lock().await;
+    let batch_result = acc.add_transfer(transfer);
+
+    match batch_result {
+        Some(result) => Json(serde_json::json!({
+            "success": true,
+            "queued": false,
+            "batch_completed": true,
+            "batch": result
+        })),
+        None => {
+            let status = acc.status();
+            Json(serde_json::json!({
+                "success": true,
+                "queued": true,
+                "batch_completed": false,
+                "pending_transfers": status.pending_transfers,
+                "max_batch_size": status.max_batch_size
+            }))
+        }
     }
 }
 
