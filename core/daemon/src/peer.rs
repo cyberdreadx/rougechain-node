@@ -67,8 +67,8 @@ impl PeerManager {
         });
         entry.consecutive_failures += 1;
         let backoff = std::cmp::min(
-            10 * 2u64.pow(entry.consecutive_failures.min(8)),
-            600, // max 10 minutes
+            5 * 2u64.pow(entry.consecutive_failures.min(5)),
+            120, // max 2 minutes (was 10 minutes)
         );
         entry.next_retry = Instant::now() + Duration::from_secs(backoff);
         entry.consecutive_failures == 1
@@ -317,9 +317,9 @@ pub async fn start_peer_sync(peer_manager: Arc<PeerManager>, node: Arc<L1Node>) 
     }
     
     let mut discovery_counter = 0u32;
-    let mut backoff_secs = 10u64;
-    const MIN_SYNC_INTERVAL: u64 = 10;
-    const MAX_SYNC_INTERVAL: u64 = 60;
+    let mut backoff_secs = 3u64;
+    const MIN_SYNC_INTERVAL: u64 = 3;
+    const MAX_SYNC_INTERVAL: u64 = 15;
     
     // Continuous sync loop
     loop {
@@ -337,7 +337,7 @@ pub async fn start_peer_sync(peer_manager: Arc<PeerManager>, node: Arc<L1Node>) 
                 }
                 Ok(_) => {
                     peer_manager.record_success(peer).await;
-                    backoff_secs = std::cmp::min(backoff_secs + 5, MAX_SYNC_INTERVAL);
+                    backoff_secs = std::cmp::min(backoff_secs + 2, MAX_SYNC_INTERVAL);
                 }
                 Err(e) => {
                     if e.contains("429") || e.contains("Too Many Requests") {
