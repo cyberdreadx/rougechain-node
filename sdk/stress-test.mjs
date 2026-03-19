@@ -46,22 +46,16 @@ function randomHex(bytes) {
 import { createRequire } from "module";
 let ml_dsa65;
 try {
-  const mod = await import("@noble/post-quantum/ml-dsa");
+  const mod = await import("@noble/post-quantum/ml-dsa.js");
   ml_dsa65 = mod.ml_dsa65;
 } catch {
   try {
     const require = createRequire(import.meta.url);
-    const mod = require("@noble/post-quantum/ml-dsa");
+    const mod = require("@noble/post-quantum/ml-dsa.js");
     ml_dsa65 = mod.ml_dsa65;
   } catch {
-    try {
-      const mod = await import("@noble/post-quantum");
-      ml_dsa65 = mod.ml_dsa65;
-    } catch {
-      console.error("❌ Cannot import @noble/post-quantum. Run: npm install @noble/post-quantum");
-      console.error("   Then try: node --experimental-specifier-resolution=node stress-test.mjs");
-      process.exit(1);
-    }
+    console.error("❌ Cannot import @noble/post-quantum. Run: npm install @noble/post-quantum");
+    process.exit(1);
   }
 }
 
