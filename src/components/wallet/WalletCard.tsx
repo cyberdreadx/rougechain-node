@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
-import { Shield, Copy, ExternalLink, Wallet, TrendingUp, TrendingDown, Upload } from "lucide-react";
-import { useState } from "react";
+import { Shield, Copy, ExternalLink, Wallet, TrendingUp, TrendingDown, Upload, Puzzle } from "lucide-react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 
 interface WalletCardProps {
@@ -12,10 +12,21 @@ interface WalletCardProps {
   isConnected?: boolean;
   onConnect?: () => void;
   onImport?: () => void;
+  onConnectExtension?: () => void;
 }
 
-const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24h, isConnected = false, onConnect, onImport }: WalletCardProps) => {
+const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24h, isConnected = false, onConnect, onImport, onConnectExtension }: WalletCardProps) => {
   const [copied, setCopied] = useState(false);
+  const [extensionDetected, setExtensionDetected] = useState(false);
+
+  useEffect(() => {
+    // Check if the RougeChain Wallet extension is installed
+    const check = () => setExtensionDetected(!!(window as any).rougechain?.isRougeChain);
+    check();
+    // The extension fires this event after injecting the provider
+    window.addEventListener("rougechain#initialized", check);
+    return () => window.removeEventListener("rougechain#initialized", check);
+  }, []);
 
   const copyAddress = () => {
     if (address) {
@@ -135,17 +146,36 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
           <p className="text-sm text-muted-foreground mb-4">
             Connect your wallet to view balance and transact with quantum-safe security
           </p>
-          <div className="flex items-center justify-center gap-3">
-            {onConnect && (
-              <Button onClick={onConnect} className="bg-primary hover:bg-primary/90">
-                Create Wallet
+          <div className="flex flex-col items-center gap-3 w-full max-w-xs mx-auto">
+            {extensionDetected && onConnectExtension && (
+              <Button onClick={onConnectExtension} className="w-full bg-primary hover:bg-primary/90 gap-2">
+                <Puzzle className="w-4 h-4" />
+                Connect Extension
               </Button>
             )}
-            {onImport && (
-              <Button onClick={onImport} variant="outline" className="gap-2">
-                <Upload className="w-4 h-4" />
-                Import Wallet
-              </Button>
+            <div className="flex items-center gap-3">
+              {onConnect && (
+                <Button onClick={onConnect} variant={extensionDetected ? "outline" : "default"} className={extensionDetected ? "" : "bg-primary hover:bg-primary/90"}>
+                  Create Wallet
+                </Button>
+              )}
+              {onImport && (
+                <Button onClick={onImport} variant="outline" className="gap-2">
+                  <Upload className="w-4 h-4" />
+                  Import
+                </Button>
+              )}
+            </div>
+            {!extensionDetected && (
+              <a
+                href="https://chromewebstore.google.com/detail/rougechain-wallet/ilkbgjgphhaolfdjkfefdfiifipmhakj"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-muted-foreground hover:text-primary transition-colors flex items-center gap-1"
+              >
+                <Puzzle className="w-3 h-3" />
+                Get RougeChain Wallet Extension
+              </a>
             )}
           </div>
         </div>

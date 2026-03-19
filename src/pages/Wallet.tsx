@@ -375,6 +375,44 @@ const Wallet = () => {
     toast.info("Wallet disconnected");
   };
 
+  const connectExtensionWallet = async () => {
+    try {
+      const provider = (window as any).rougechain;
+      if (!provider?.isRougeChain) {
+        toast.error("RougeChain Wallet extension not found", {
+          description: "Install it from the Chrome Web Store",
+        });
+        return;
+      }
+      setLoading(true);
+      const result = await provider.connect() as { publicKey: string };
+      if (!result?.publicKey) {
+        throw new Error("Extension did not return a public key");
+      }
+      const extensionWallet: UnifiedWallet = {
+        id: `ext-${Date.now()}`,
+        displayName: "Extension Wallet",
+        createdAt: Date.now(),
+        signingPublicKey: result.publicKey,
+        signingPrivateKey: "", // signing stays in the extension
+        encryptionPublicKey: "",
+        encryptionPrivateKey: "",
+        version: 2,
+      };
+      saveUnifiedWallet(extensionWallet);
+      setWallet(extensionWallet);
+      toast.success("Extension wallet connected!", {
+        description: `${result.publicKey.slice(0, 8)}...${result.publicKey.slice(-4)}`,
+      });
+    } catch (error) {
+      console.error("Extension connect failed:", error);
+      const msg = error instanceof Error ? error.message : "Failed to connect extension";
+      toast.error("Failed to connect extension", { description: msg });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleUnlock = async () => {
     if (!unlockPassword.trim()) {
       toast.error("Enter your vault password");
@@ -684,6 +722,7 @@ const Wallet = () => {
               isConnected={false}
               onConnect={createNewWallet}
               onImport={() => setShowBackup(true)}
+              onConnectExtension={connectExtensionWallet}
             />
 
             <SecurityStatus />
