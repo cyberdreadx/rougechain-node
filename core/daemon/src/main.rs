@@ -2933,7 +2933,8 @@ async fn v2_transfer(
         version: 1,
         tx_type: "transfer".to_string(),
         from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        nonce: payload.get("nonce").and_then(|v| v.as_u64())
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() as u64),
         payload: TxPayload {
             to_pub_key_hex: Some(to.to_string()),
             amount: Some(amount as u64),
