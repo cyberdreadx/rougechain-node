@@ -171,7 +171,7 @@ const Wallet = () => {
             return;
           }
           const res = await fetch(`${NODE_API_URL}/stats`, {
-            signal: AbortSignal.timeout(2000), // 2 second timeout
+            signal: AbortSignal.timeout(8000), // 8 second timeout (API can be slow under load)
             headers: getCoreApiHeaders(),
           });
           if (res.ok) {

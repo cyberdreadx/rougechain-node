@@ -80,7 +80,7 @@ export function useBlockchainWs(options: UseBlockchainWsOptions = {}): UseBlockc
       if (!apiBase) return;
       
       const res = await fetch(`${apiBase}/stats`, {
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(8000),
       });
       
       if (res.ok) {

@@ -141,7 +141,7 @@ const LiveNetworkStatus = () => {
 
       const res = await fetch(`${baseUrl}/stats`, {
         headers: getCoreApiHeaders(),
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(10000),
       });
 
       if (res.ok) {
@@ -248,11 +248,11 @@ const LiveFeatureGrid = () => {
       if (!base) return;
       const h = getCoreApiHeaders();
       const fetches = await Promise.allSettled([
-        fetch(`${base}/stats`, { headers: h, signal: AbortSignal.timeout(4000) }).then(r => r.json()),
-        fetch(`${base}/pools`, { headers: h, signal: AbortSignal.timeout(4000) }).then(r => r.json()),
-        fetch(`${base}/tokens`, { headers: h, signal: AbortSignal.timeout(4000) }).then(r => r.json()),
-        fetch(`${base}/nft/collections`, { headers: h, signal: AbortSignal.timeout(4000) }).then(r => r.json()),
-        fetch(`${base}/validators`, { headers: h, signal: AbortSignal.timeout(4000) }).then(r => r.json()),
+        fetch(`${base}/stats`, { headers: h, signal: AbortSignal.timeout(10000) }).then(r => r.json()),
+        fetch(`${base}/pools`, { headers: h, signal: AbortSignal.timeout(10000) }).then(r => r.json()),
+        fetch(`${base}/tokens`, { headers: h, signal: AbortSignal.timeout(10000) }).then(r => r.json()),
+        fetch(`${base}/nft/collections`, { headers: h, signal: AbortSignal.timeout(10000) }).then(r => r.json()),
+        fetch(`${base}/validators`, { headers: h, signal: AbortSignal.timeout(10000) }).then(r => r.json()),
       ]);
       const s = fetches[0].status === "fulfilled" ? fetches[0].value : {};
       const p = fetches[1].status === "fulfilled" ? fetches[1].value : {};

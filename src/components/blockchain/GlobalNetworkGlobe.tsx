@@ -434,7 +434,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
         for (const url of targets) {
           try {
             const res = await fetch(url, {
-              signal: AbortSignal.timeout(800),
+              signal: AbortSignal.timeout(5000),
               headers: getCoreApiHeaders(),
             });
             if (res.ok) {
