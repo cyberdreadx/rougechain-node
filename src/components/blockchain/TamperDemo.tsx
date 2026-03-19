@@ -185,9 +185,9 @@ export function TamperDemo({ chain }: TamperDemoProps) {
         </div>
 
         {/* Original data */}
-        <div className="p-3 rounded-lg bg-muted/50 border border-border">
+        <div className="p-3 rounded-lg bg-muted/50 border border-border overflow-hidden">
           <p className="text-xs text-muted-foreground mb-1">Original Data</p>
-          <p className="text-sm font-mono text-foreground">{selectedBlock.data}</p>
+          <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-all max-h-24 overflow-y-auto leading-relaxed">{selectedBlock.data}</pre>
         </div>
 
         {/* Tamper input */}
