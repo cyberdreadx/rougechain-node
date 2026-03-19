@@ -2784,7 +2784,7 @@ impl L1Node {
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
                 // The actual balance credit is handled in apply_web3_state_effects
                 // after verifying lock ownership and height
-                if let Some(lock_id) = tx.payload.lock_id.as_ref() {
+                if let Some(_lock_id) = tx.payload.lock_id.as_ref() {
                     // We need to credit the amount back here since static method
                     // won't have access to lock_store. The node will validate
                     // in apply_web3_state_effects and the lock_id is verified there.
