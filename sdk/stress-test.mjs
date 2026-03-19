@@ -43,17 +43,25 @@ function randomHex(bytes) {
 
 // ─── Wallet keygen via @noble/post-quantum ─────────────────────────────────────
 
+import { createRequire } from "module";
 let ml_dsa65;
 try {
   const mod = await import("@noble/post-quantum/ml-dsa");
   ml_dsa65 = mod.ml_dsa65;
 } catch {
   try {
-    const mod = await import("../node_modules/@noble/post-quantum/esm/ml-dsa.js");
+    const require = createRequire(import.meta.url);
+    const mod = require("@noble/post-quantum/ml-dsa");
     ml_dsa65 = mod.ml_dsa65;
-  } catch (e) {
-    console.error("❌ Cannot import @noble/post-quantum. Run: npm install @noble/post-quantum");
-    process.exit(1);
+  } catch {
+    try {
+      const mod = await import("@noble/post-quantum");
+      ml_dsa65 = mod.ml_dsa65;
+    } catch {
+      console.error("❌ Cannot import @noble/post-quantum. Run: npm install @noble/post-quantum");
+      console.error("   Then try: node --experimental-specifier-resolution=node stress-test.mjs");
+      process.exit(1);
+    }
   }
 }
 
