@@ -111,8 +111,9 @@ function signTransaction(payload, privateKey, publicKey) {
   };
 }
 
+let _nonceCounter = Date.now() * 1000;
 function generateNonce() {
-  return Date.now() * 1000 + Math.floor(Math.random() * 1000);
+  return ++_nonceCounter;
 }
 
 function createSignedTransfer(wallet, to, amount, fee, token) {
