@@ -427,7 +427,6 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
         const configuredUrl = configuredBase ? configuredBase.replace(/\/api$/, "") : "";
         const apiBases = [
           configuredUrl,
-          ...[5100, 5101, 5102, 5103, 5104].map((apiPort) => `http://127.0.0.1:${apiPort}`),
         ].filter(Boolean);
 
         const targets = apiBases.map((base) => `${base}/api/stats`);

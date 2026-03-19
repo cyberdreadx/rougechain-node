@@ -90,28 +90,7 @@ const Blockchain = () => {
             return;
           }
         } catch (error) {
-          // If configured URL fails, try local ports as fallback
-          if (NODE_API_URL === "http://localhost:5100/api") {
-            console.warn(`Failed to fetch from ${NODE_API_URL}, trying local ports...`, error);
-            for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
-              try {
-                const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks?limit=500`, {
-                  signal: AbortSignal.timeout(2000),
-                  headers: getCoreApiHeaders(),
-                });
-                if (res.ok) {
-                  const data = await res.json() as { blocks: BlockV1[] };
-                  const converted = data.blocks.map(convertBlock);
-                  setChain(converted);
-                  setNodeConnected(true);
-                  setIsLoading(false);
-                  return;
-                }
-              } catch {
-                // Try next port
-              }
-            }
-          }
+          console.warn(`Failed to fetch from ${NODE_API_URL}`, error);
         }
 
         // No nodes found

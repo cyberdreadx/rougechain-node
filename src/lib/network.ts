@@ -12,10 +12,11 @@ export function getActiveNetwork(): NetworkType {
 
 export function getCoreApiBaseUrl(): string {
   const network = getActiveNetwork();
+  const isProduction = typeof window !== "undefined" && !window.location.hostname.includes("localhost") && !window.location.hostname.includes("127.0.0.1");
   const defaultUrl =
     import.meta.env.VITE_CORE_API_URL ||
     import.meta.env.VITE_NODE_API_URL ||
-    "http://localhost:5101/api";
+    (isProduction ? "https://testnet.rougechain.io/api" : "http://localhost:5101/api");
   const mainnetUrl =
     (import.meta.env.VITE_CORE_API_URL_MAINNET as string | undefined) ||
     (import.meta.env.VITE_NODE_API_URL_MAINNET as string | undefined);

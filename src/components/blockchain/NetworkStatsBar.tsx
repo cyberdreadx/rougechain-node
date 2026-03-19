@@ -53,16 +53,6 @@ const NetworkStatsBar = () => {
       };
 
       let blocks = await fetchBlocks(NODE_API_URL);
-      if (!blocks && isLocal) {
-        for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
-          try {
-            blocks = await fetchBlocks(`http://127.0.0.1:${apiPort}/api`);
-            if (blocks) break;
-          } catch {
-            // Try next port
-          }
-        }
-      }
 
       if (blocks && blocks.length > 0) {
         const totalBlocks = blocks.length;

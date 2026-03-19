@@ -56,28 +56,7 @@ const NetworkHistoryChart = () => {
           }
         }
       } catch (error) {
-        if (isLocal) {
-          // Fallback: Try to fetch from any running local node
-          for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
-            try {
-              const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks/summary?range=${timeRange}`, {
-                signal: AbortSignal.timeout(2000),
-                headers: getCoreApiHeaders(),
-              });
-              if (res.ok) {
-                const data = await res.json() as { success: boolean; points: SummaryPoint[] };
-                if (data.success && Array.isArray(data.points)) {
-                  summaryPoints = data.points;
-                }
-                break;
-              }
-            } catch {
-              // Try next port
-            }
-          }
-        } else {
-          console.warn(`Failed to fetch from ${NODE_API_URL}:`, error);
-        }
+        console.warn(`Failed to fetch from ${NODE_API_URL}:`, error);
       }
 
       if (summaryPoints.length > 0) {
@@ -109,26 +88,7 @@ const NetworkHistoryChart = () => {
           blocks = data.blocks;
         }
       } catch (error) {
-        if (isLocal) {
-          // Fallback: Try to fetch from any running local node
-          for (const apiPort of [5100, 5101, 5102, 5103, 5104]) {
-            try {
-              const res = await fetch(`http://127.0.0.1:${apiPort}/api/blocks`, {
-                signal: AbortSignal.timeout(2000),
-                headers: getCoreApiHeaders(),
-              });
-              if (res.ok) {
-                const data = await res.json() as { blocks: Array<{ header: { time: number; height: number }; txs: unknown[] }> };
-                blocks = data.blocks;
-                break;
-              }
-            } catch {
-              // Try next port
-            }
-          }
-        } else {
-          console.warn(`Failed to fetch from ${NODE_API_URL}:`, error);
-        }
+        console.warn(`Failed to fetch blocks from ${NODE_API_URL}:`, error);
       }
 
       if (blocks && blocks.length > 0) {
