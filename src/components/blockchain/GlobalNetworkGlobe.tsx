@@ -536,7 +536,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
   const activeNodes = nodeStats.length;
   // Use validator count from API if available, otherwise fall back to connected stats
   const displayNodes = validatorCount > 0 ? validatorCount : (activeNodes > 0 ? activeNodes : 1);
-  const displayPeers = Math.max(totalPeers - (validatorCount > 0 ? validatorCount - 1 : 0), 0);
+  const displayPeers = totalPeers;
 
   // Build names list: validator names first, then peer names
   const nodeNames = useMemo(() => {
