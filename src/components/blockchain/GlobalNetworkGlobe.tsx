@@ -427,6 +427,7 @@ const normalizeStats = (data: Record<string, unknown>): NodeStats => ({
 const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
   const [nodeStats, setNodeStats] = useState<NodeStats[]>([]);
   const [peerDetails, setPeerDetails] = useState<PeerDetail[]>([]);
+  const [validatorCount, setValidatorCount] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [isLive, setIsLive] = useState(false);
   const [isWebglLost, setIsWebglLost] = useState(false);
@@ -480,6 +481,23 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
             }
           }
         } catch { /* ignore */ }
+
+        // Fetch validator count from /api/validators
+        try {
+          const valUrl = configuredUrl ? `${configuredUrl}/api/validators` : "";
+          if (valUrl) {
+            const valRes = await fetch(valUrl, {
+              signal: AbortSignal.timeout(5000),
+              headers: getCoreApiHeaders(),
+            });
+            if (valRes.ok) {
+              const valData = await valRes.json() as { validators?: unknown[] };
+              if (!cancelled && valData.validators) {
+                setValidatorCount(valData.validators.length);
+              }
+            }
+          }
+        } catch { /* ignore */ }
       } catch (error) {
         console.error("Failed to fetch nodes:", error);
       } finally {
@@ -516,8 +534,9 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
 
   const totalPeers = nodeStats.reduce((sum, s) => sum + s.connected_peers, 0);
   const activeNodes = nodeStats.length;
-  const displayNodes = activeNodes > 0 ? activeNodes : 1;
-  const displayPeers = totalPeers;
+  // Use validator count from API if available, otherwise fall back to connected stats
+  const displayNodes = validatorCount > 0 ? validatorCount : (activeNodes > 0 ? activeNodes : 1);
+  const displayPeers = Math.max(totalPeers - (validatorCount > 0 ? validatorCount - 1 : 0), 0);
 
   // Build names list: validator names first, then peer names
   const nodeNames = useMemo(() => {
