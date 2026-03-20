@@ -8,7 +8,7 @@
 
 ## Abstract
 
-RougeChain is a Layer 1 blockchain secured entirely by NIST-approved post-quantum cryptographic primitives. Every transaction signature, block proposal, validator attestation, and encrypted message on the network uses ML-DSA-65 (FIPS 204) and ML-KEM-768 (FIPS 203), providing NIST Level 3 security -- equivalent to 192-bit classical strength -- against both classical and quantum adversaries. The chain incorporates zk-STARKs for privacy-preserving transaction verification and rollup batch proving, completing a fully quantum-resistant cryptographic stack across signatures, encryption, and zero-knowledge proofs. RougeChain combines a Proof-of-Stake consensus protocol with a full-featured application layer: an automated market maker, cross-chain bridge with cryptographic deposit verification, NFT standard with on-chain royalties, custom token issuance, zk-STARK rollups for throughput scaling, and an end-to-end encrypted messenger. The result is a quantum-resistant blockchain that is ready for production use today, not as a future migration target.
+RougeChain is a Layer 1 blockchain built on NIST-standardized post-quantum cryptographic primitives for signatures and encryption, with hash-based systems for proofs and commitments. Every transaction signature, block proposal, validator attestation, and encrypted message on the network uses ML-DSA-65 (FIPS 204) and ML-KEM-768 (FIPS 203), providing NIST Level 3 security -- equivalent to 192-bit classical strength -- against both classical and quantum adversaries. The chain incorporates zk-STARKs for privacy-preserving transaction verification and rollup batch proving, completing a fully quantum-resistant cryptographic stack across signatures, encryption, and zero-knowledge proofs. RougeChain combines a Proof-of-Stake consensus protocol with a full-featured application layer: an automated market maker, cross-chain bridge with cryptographic deposit verification, NFT standard with on-chain royalties, custom token issuance, zk-STARK rollups for throughput scaling, and an end-to-end encrypted messenger. The result is a quantum-resistant blockchain that is ready for production use today, not as a future migration target.
 
 ---
 
@@ -40,7 +40,7 @@ Quantum computing is advancing rapidly. IBM, Google, and other organizations hav
 
 1. **Harvest now, decrypt later.** Adversaries can record blockchain transactions today and retroactively forge signatures once quantum hardware matures. Public keys exposed on-chain become permanent attack surfaces.
 
-2. **Migration inertia.** Transitioning a live blockchain's signature scheme is extraordinarily difficult. Chains that wait until quantum computers arrive will face emergency hard forks under adversarial conditions.
+2. **Migration inertia.** Transitioning a live blockchain's signature scheme is extraordinarily difficult. Chains that wait until quantum computers arrive will face emergency hard forks under adversarial conditions -- upgrading core cryptography while an attacker is actively exploiting the vulnerability they are trying to patch. Migration under attack is not an engineering challenge; it is a catastrophic failure scenario.
 
 ### 1.3 The Solution
 
@@ -350,11 +350,9 @@ This is significant but manageable. Modern consumer hardware handles these volum
 
 ### 3.8 Design Philosophy: Vertically Integrated L1
 
-RougeChain intentionally adopts a vertically integrated L1 design, embedding a DEX, NFT standard, bridge, messenger, name service, and mail system directly into the base protocol. This approach increases protocol complexity but enables immediate usability without reliance on external smart contract layers or third-party infrastructure.
+RougeChain intentionally adopts a vertically integrated L1 design, embedding a DEX, NFT standard, bridge, messenger, name service, and mail system directly into the base protocol. RougeChain embeds financial, identity, communication, and privacy primitives directly at the protocol layer to eliminate bootstrap dependency on external applications. A new chain with no dApps has no users, and no users means no dApps -- by shipping core primitives at the protocol level, RougeChain provides a complete, functional network from genesis block one.
 
-This is a deliberate tradeoff. A minimal L1 with application logic delegated to L2 reduces base-layer attack surface but creates bootstrap dependency — a new chain with no dApps has no users, and no users means no dApps. By shipping core financial and communication primitives at the protocol level, RougeChain provides a complete, functional network from genesis block one.
-
-Future iterations may modularize components as the ecosystem matures and developer tooling enables permissionless application deployment.
+This increases protocol complexity but enables immediate usability without reliance on external smart contract layers or third-party infrastructure. Future iterations may modularize components as the ecosystem matures and developer tooling enables permissionless application deployment.
 
 ### 3.9 Shielded Transactions
 
@@ -594,7 +592,7 @@ The bridge's trust model is explicit. The following table documents what is veri
 
 **Current model:** The bridge operates under a **verified custody model** — deposits are cryptographically verified but withdrawal fulfillment depends on a trusted relayer. This is comparable to early-stage bridges on other L1s (e.g., Polygon PoS bridge, Arbitrum's initial sequencer trust).
 
-**Target model:** Fully trustless operation via on-chain STARK proofs of Base block headers, removing reliance on the Base RPC endpoint and enabling permissionless withdrawal fulfillment.
+**Target model:** Fully trustless operation via on-chain STARK proofs of Base block headers, removing reliance on the Base RPC endpoint and enabling permissionless withdrawal fulfillment. The long-term goal is complete removal of trusted relayer dependency through on-chain verification of Base state via STARK proofs -- at which point the bridge becomes as trustless as the chain itself.
 
 ---
 
@@ -751,7 +749,7 @@ A gRPC interface is available for high-performance node-to-node communication an
 
 ### 10.1 Cryptographic Security
 
-All cryptographic primitives used by RougeChain are standardized by NIST at Security Level 3, providing 192-bit classical security and at least 128-bit quantum security. The lattice-based problems underlying ML-DSA-65 and ML-KEM-768 have been studied extensively and are considered resistant to all known quantum and classical attacks.
+RougeChain targets NIST Level 3 security for signatures and encryption (~192-bit classical, ~128-bit quantum), while STARK proofs provide ~100-bit soundness -- all of which remain well beyond practical attack feasibility. The lattice-based problems underlying ML-DSA-65 and ML-KEM-768 have been studied extensively and are considered resistant to all known quantum and classical attacks. Blake3, used for STARK commitments, is not itself NIST-standardized but provides equivalent collision resistance; the overall proof system's security reduces to hash collision resistance, which is unaffected by Shor's algorithm.
 
 ### 10.2 Client-Side Key Management
 

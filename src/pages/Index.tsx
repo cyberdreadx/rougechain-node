@@ -377,16 +377,16 @@ const Index = () => {
           </motion.div>
 
           <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-4">
-            Welcome to{" "}
-            <span className="text-gradient-quantum">RougeChain</span>
+            <span className="text-gradient-quantum">Post-quantum</span>{" "}
+            from genesis.
           </h1>
 
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-4">
-            An open-source, post-quantum Layer 1 blockchain with ML-DSA signatures, Rust core, and modern UI.
+          <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-3">
+            The Layer 1 built after the quantum threat was already taken seriously. Every signature, every transaction, every encrypted message — secured by NIST-standardized lattice cryptography, not as a future patch.
           </p>
 
-          <p className="text-sm text-primary/80 max-w-xl mx-auto mb-8 font-mono">
-            Join the testnet now - create a wallet, claim XRGE, and help stress-test the network before mainnet.
+          <p className="text-sm text-muted-foreground/70 max-w-xl mx-auto mb-8">
+            Every major chain will eventually face a forced cryptographic migration. RougeChain is built so it never has to do it under attack.
           </p>
 
           <div className="flex items-center justify-center gap-3 flex-wrap">
@@ -416,12 +416,16 @@ const Index = () => {
                 Buy XRGE
               </Button>
             </a>
-            <Link to="/node">
+            <a
+              href="/RougeChain-Whitepaper.pdf"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               <Button size="lg" variant="outline" className="gap-2">
-                <Network className="w-5 h-5" />
-                View Core Node
+                <Shield className="w-5 h-5" />
+                Whitepaper
               </Button>
-            </Link>
+            </a>
           </div>
         </motion.div>
 
