@@ -53,9 +53,14 @@ Set `client_max_body_size` to at least 50M to support messenger media uploads.
   --mine \
   --host 127.0.0.1 \
   --api-port 5100 \
+  --node-name "MyNode" \
   --peers "https://testnet.rougechain.io" \
   --public-url "https://mynode.rougechain.example.com"
 ```
+
+> **Why `--public-url` is required:** Without it, your node syncs blocks but never tells other nodes "I exist." It stays invisible — it won't appear on the [network globe](https://rougechain.io/blockchain), other nodes can't sync from it, and it won't receive direct block broadcasts. The `--public-url` must be the URL that other nodes on the internet can reach.
+
+Once running, visit `http://127.0.0.1:5100` in your browser to see the **built-in node dashboard** with live block height, peers, mining status, and fees.
 
 ### 4. Run as a Service
 

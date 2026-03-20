@@ -18,6 +18,22 @@ Your node will:
 3. Build the local chain state
 4. Start receiving new blocks in real-time
 
+> **⚠️ Important: Your node is syncing but INVISIBLE to the network.**
+>
+> Without `--public-url`, your node pulls blocks from peers but **never registers itself**. Other nodes won't know it exists, and it won't appear on the [network globe](https://rougechain.io/blockchain).
+>
+> To be discoverable, add `--public-url` with your node's reachable address:
+>
+> ```bash
+> ./quantum-vault-daemon \
+>   --api-port 5100 \
+>   --node-name "MyNode" \
+>   --public-url "https://your-server.com:5100" \
+>   --peers "https://testnet.rougechain.io"
+> ```
+>
+> If running locally without a public IP, your node works fine for personal use — it just won't be visible to the rest of the network.
+
 ## Connect to Multiple Peers
 
 For better reliability, connect to multiple peers:
