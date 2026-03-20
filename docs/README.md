@@ -4,7 +4,7 @@ Welcome to **RougeChain** — a post-quantum secure Layer 1 blockchain built wit
 
 ## What is RougeChain?
 
-RougeChain is the first blockchain designed from the ground up to be resistant to quantum computer attacks. It uses:
+RougeChain is among the first blockchains designed from the ground up to be resistant to quantum computer attacks. It uses:
 
 - **ML-DSA-65** (CRYSTALS-Dilithium) for digital signatures
 - **ML-KEM-768** (CRYSTALS-Kyber) for key encapsulation

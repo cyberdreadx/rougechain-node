@@ -1,6 +1,8 @@
 # RougeChain: A Post-Quantum Layer 1 Blockchain
 
-**Version 1.3 -- March 2026**
+**Version 1.4 -- March 2026**
+
+> **RougeChain is a post-quantum Layer 1 blockchain where every signature, every transaction, and every encrypted message is secured by NIST-approved lattice cryptography — not as a future upgrade, but as the foundation.**
 
 ---
 
@@ -576,6 +578,23 @@ The bridge operates under a verified custody model with cryptographic deposit ve
 - **Nonce management and retry logic** for reliable withdrawal processing.
 
 Full trust minimization via on-chain STARK bridge proofs (where a STARK proof attests to the validity of Base block headers and deposit inclusion) is architecturally supported and planned as a future upgrade.
+
+### 6.7 Trust Assumptions
+
+The bridge's trust model is explicit. The following table documents what is verified cryptographically versus what requires operational trust:
+
+| Component | Verification Method | Trust Assumption |
+|---|---|---|
+| Deposit occurred on Base | EVM receipt verification via RPC | Relies on Base RPC endpoint returning honest data |
+| Depositor identity | ECDSA ecrecover of signed claim | Cryptographic — no trust required |
+| Double-claim prevention | SHA-256 commitment nullifier set | Cryptographic — no trust required |
+| XRGE vault deposits | BridgeDeposit event log parsing | Relies on correct contract deployment |
+| Withdrawal fulfillment | Relayer executes on Base | Requires trusted relayer operator |
+| Cross-chain consistency | Chain ID validation | Cryptographic — no trust required |
+
+**Current model:** The bridge operates under a **verified custody model** — deposits are cryptographically verified but withdrawal fulfillment depends on a trusted relayer. This is comparable to early-stage bridges on other L1s (e.g., Polygon PoS bridge, Arbitrum's initial sequencer trust).
+
+**Target model:** Fully trustless operation via on-chain STARK proofs of Base block headers, removing reliance on the Base RPC endpoint and enabling permissionless withdrawal fulfillment.
 
 ---
 
