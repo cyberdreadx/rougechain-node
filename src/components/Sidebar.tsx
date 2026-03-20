@@ -20,6 +20,7 @@ import {
   Image,
   Search,
   FileText,
+  ChevronDown,
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY } from "@/lib/network";
@@ -124,8 +125,20 @@ export function Sidebar({ children }: SidebarProps) {
   const location = useLocation();
   const [expanded, setExpanded] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [chainId, setChainId] = useState<string | null>(null);
   const [networkLabel, setNetworkLabel] = useState<string>(() => getNetworkLabel());
+
+  const toggleGroup = (title: string) => {
+    setCollapsedGroups((prev) => ({ ...prev, [title]: !prev[title] }));
+  };
+
+  const isGroupCollapsed = (group: NavGroup) => {
+    if (!group.title) return false; // Home group always visible
+    // Auto-expand if the active route is in this group
+    if (group.items.some((item) => location.pathname === item.to)) return false;
+    return collapsedGroups[group.title] ?? false;
+  };
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -209,17 +222,30 @@ export function Sidebar({ children }: SidebarProps) {
       <GlobalSearch visible={expanded || isMobile} />
 
       {/* Navigation Links */}
-      <nav className="flex-1 py-1 px-2 space-y-0.5 overflow-y-auto">
-        {navGroups.map((group) => (
+      <nav className="flex-1 py-1 px-2 space-y-px overflow-y-auto">
+        {navGroups.map((group) => {
+          const collapsed = isGroupCollapsed(group);
+          return (
           <div key={group.title || "home"}>
             {group.title && (
-              <div className={cn(
-                "px-3 pt-3 pb-1 transition-all duration-300",
-                (expanded || isMobile) ? "opacity-100" : "opacity-0 h-0 pt-0 pb-0 overflow-hidden"
-              )}>
+              <button
+                onClick={() => toggleGroup(group.title)}
+                className={cn(
+                  "w-full flex items-center justify-between px-3 pt-2 pb-0.5 transition-all duration-300",
+                  (expanded || isMobile) ? "opacity-100" : "opacity-0 h-0 pt-0 pb-0 overflow-hidden"
+                )}
+              >
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">{group.title}</span>
-              </div>
+                <ChevronDown className={cn(
+                  "w-3 h-3 text-muted-foreground/40 transition-transform duration-200",
+                  collapsed && "-rotate-90"
+                )} />
+              </button>
             )}
+            <div className={cn(
+              "transition-all duration-200 overflow-hidden",
+              collapsed ? "max-h-0 opacity-0" : "max-h-96 opacity-100"
+            )}>
             {group.items.map((item) => {
               const isActive = location.pathname === item.to;
               const Icon = item.icon;
@@ -229,13 +255,13 @@ export function Sidebar({ children }: SidebarProps) {
                   to={item.to}
                   onClick={() => isMobile && setMobileOpen(false)}
                   className={cn(
-                    "flex items-center gap-3 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200",
+                    "flex items-center gap-3 px-3 py-1 rounded-lg text-[13px] font-medium transition-all duration-200",
                     isActive
                       ? "bg-primary/10 text-primary"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted"
                   )}
                 >
-                  <Icon className="w-5 h-5 flex-shrink-0" />
+                  <Icon className="w-4 h-4 flex-shrink-0" />
                   <span className={cn(
                     "whitespace-nowrap overflow-hidden transition-all duration-300",
                     (expanded || isMobile) ? "opacity-100 w-auto" : "opacity-0 w-0"
@@ -245,11 +271,13 @@ export function Sidebar({ children }: SidebarProps) {
                 </NavLink>
               );
             })}
+            </div>
           </div>
-        ))}
+          );
+        })}
         
         <div className={cn(
-          "px-3 pt-3 pb-1 transition-all duration-300",
+          "px-3 pt-2 pb-0.5 transition-all duration-300",
           (expanded || isMobile) ? "opacity-100" : "opacity-0 h-0 pt-0 pb-0 overflow-hidden"
         )}>
           <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Resources</span>
@@ -258,9 +286,9 @@ export function Sidebar({ children }: SidebarProps) {
           href="https://docs.rougechain.io"
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-3 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted"
+          className="flex items-center gap-3 px-3 py-1 rounded-lg text-[13px] font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted"
         >
-          <BookOpen className="w-5 h-5 flex-shrink-0" />
+          <BookOpen className="w-4 h-4 flex-shrink-0" />
           <span className={cn(
             "whitespace-nowrap overflow-hidden transition-all duration-300 flex items-center gap-1",
             (expanded || isMobile) ? "opacity-100 w-auto" : "opacity-0 w-0"
@@ -273,9 +301,9 @@ export function Sidebar({ children }: SidebarProps) {
           href="/RougeChain-Whitepaper.pdf"
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-3 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted"
+          className="flex items-center gap-3 px-3 py-1 rounded-lg text-[13px] font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted"
         >
-          <FileText className="w-5 h-5 flex-shrink-0" />
+          <FileText className="w-4 h-4 flex-shrink-0" />
           <span className={cn(
             "whitespace-nowrap overflow-hidden transition-all duration-300 flex items-center gap-1",
             (expanded || isMobile) ? "opacity-100 w-auto" : "opacity-0 w-0"
