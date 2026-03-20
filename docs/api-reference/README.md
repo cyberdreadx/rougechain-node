@@ -13,6 +13,17 @@ For the public testnet:
 https://testnet.rougechain.io/api
 ```
 
+## Address Format
+
+All API endpoints expect **raw hex public keys** — do NOT include the `xrge:` display prefix.
+
+```
+✅ /api/balance/d67d8da279755a...
+❌ /api/balance/xrge:d67d8da279755a...
+```
+
+The `xrge:` prefix is a UI display format only. Strip it before making API calls.
+
 ## Endpoints Overview
 
 ### System

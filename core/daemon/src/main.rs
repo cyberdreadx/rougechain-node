@@ -1761,8 +1761,11 @@ async fn create_pool(
     
     let signed_tx = TxV1 { sig, ..tx };
     
+    let tx_clone = signed_tx.clone();
     node.add_tx_to_mempool(signed_tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
     
     Ok(Json(CreatePoolResponse {
         success: true,
@@ -1819,8 +1822,11 @@ async fn add_liquidity(
     
     let signed_tx = TxV1 { sig, ..tx };
     
+    let tx_clone = signed_tx.clone();
     node.add_tx_to_mempool(signed_tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
     
     Ok(Json(serde_json::json!({
         "success": true,
@@ -1866,8 +1872,11 @@ async fn remove_liquidity(
     
     let signed_tx = TxV1 { sig, ..tx };
     
+    let tx_clone = signed_tx.clone();
     node.add_tx_to_mempool(signed_tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
     
     Ok(Json(serde_json::json!({
         "success": true,
@@ -1987,8 +1996,11 @@ async fn execute_swap(
     
     let signed_tx = TxV1 { sig, ..tx };
     
+    let tx_clone = signed_tx.clone();
     node.add_tx_to_mempool(signed_tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
     
     Ok(Json(serde_json::json!({
         "success": true,
@@ -3044,8 +3056,11 @@ async fn v2_transfer(
         signed_payload: Some(signed_payload),
     };
     
+    let tx_clone = tx.clone();
     node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
     
     Ok(Json(serde_json::json!({
         "success": true,
@@ -3102,8 +3117,11 @@ async fn v2_create_token(
         signed_payload: Some(signed_payload),
     };
     
+    let tx_clone = tx.clone();
     node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
 
     let _ = node.register_token_metadata(
         token_symbol,
@@ -3270,8 +3288,11 @@ async fn v2_create_pool(
         signed_payload: Some(signed_payload),
     };
     
+    let tx_clone = tx.clone();
     node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
     
     Ok(Json(serde_json::json!({
         "success": true,
@@ -3353,8 +3374,11 @@ async fn v2_add_liquidity(
         signed_payload: Some(signed_payload),
     };
     
+    let tx_clone = tx.clone();
     node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
     
     Ok(Json(serde_json::json!({
         "success": true,
@@ -3422,8 +3446,11 @@ async fn v2_remove_liquidity(
         signed_payload: Some(signed_payload),
     };
     
+    let tx_clone = tx.clone();
     node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
     
     Ok(Json(serde_json::json!({
         "success": true,
@@ -3507,8 +3534,11 @@ async fn v2_execute_swap(
         signed_payload: Some(signed_payload),
     };
     
+    let tx_clone = tx.clone();
     node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
     
     Ok(Json(serde_json::json!({
         "success": true,
@@ -3556,8 +3586,11 @@ async fn v2_stake(
         signed_payload: Some(signed_payload),
     };
     
+    let tx_clone = tx.clone();
     node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
     
     Ok(Json(serde_json::json!({
         "success": true,
@@ -3620,8 +3653,11 @@ async fn v2_unstake(
         signed_payload: Some(signed_payload),
     };
     
+    let tx_clone = tx.clone();
     node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
     
     Ok(Json(serde_json::json!({
         "success": true,
@@ -3717,8 +3753,11 @@ async fn v2_nft_create_collection(
     let creator_short = if body.public_key.len() >= 16 { &body.public_key[..16] } else { &body.public_key };
     let collection_id = format!("col:{}:{}", creator_short, symbol.to_uppercase());
 
+    let tx_clone = tx.clone();
     state.node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -3781,8 +3820,11 @@ async fn v2_nft_mint(
         signed_payload: Some(signed_payload),
     };
 
+    let tx_clone = tx.clone();
     state.node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -3856,8 +3898,11 @@ async fn v2_nft_batch_mint(
         signed_payload: Some(signed_payload),
     };
 
+    let tx_clone = tx.clone();
     state.node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -3930,8 +3975,11 @@ async fn v2_nft_transfer(
         signed_payload: Some(signed_payload),
     };
 
+    let tx_clone = tx.clone();
     state.node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -3984,8 +4032,11 @@ async fn v2_nft_burn(
         signed_payload: Some(signed_payload),
     };
 
+    let tx_clone = tx.clone();
     state.node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -4040,8 +4091,11 @@ async fn v2_nft_lock(
         signed_payload: Some(signed_payload),
     };
 
+    let tx_clone = tx.clone();
     state.node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -4094,8 +4148,11 @@ async fn v2_nft_freeze_collection(
         signed_payload: Some(signed_payload),
     };
 
+    let tx_clone = tx.clone();
     state.node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -4990,8 +5047,11 @@ async fn v2_shield(
         signed_payload: Some(signed_payload),
     };
 
+    let tx_clone = tx.clone();
     node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -5075,8 +5135,11 @@ async fn v2_shielded_transfer(
         signed_payload: Some(signed_payload),
     };
 
+    let tx_clone = tx.clone();
     node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -5154,8 +5217,11 @@ async fn v2_unshield(
         signed_payload: Some(signed_payload),
     };
 
+    let tx_clone = tx.clone();
     node.add_tx_to_mempool(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
 
     Ok(Json(serde_json::json!({
         "success": true,
