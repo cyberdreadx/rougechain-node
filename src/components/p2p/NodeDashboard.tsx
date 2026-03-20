@@ -57,6 +57,7 @@ const normalizeHealth = (data: Record<string, unknown>): DaemonHealth => ({
 
 export function NodeDashboard() {
   const [daemonStats, setDaemonStats] = useState<DaemonInfo[]>([]);
+  const [validatorCount, setValidatorCount] = useState(0);
   const [isChecking, setIsChecking] = useState(true);
   const pollTimer = useRef<number | null>(null);
 
@@ -172,6 +173,23 @@ export function NodeDashboard() {
       setDaemonStats(deduped);
       setIsChecking(false);
 
+      // Fetch validator count from /api/validators
+      try {
+        const valUrl = configuredUrl ? `${configuredUrl}/api/validators` : "";
+        if (valUrl) {
+          const valRes = await fetch(valUrl, {
+            signal: AbortSignal.timeout(5000),
+            headers: getCoreApiHeaders(),
+          });
+          if (valRes.ok) {
+            const valData = await valRes.json() as { validators?: unknown[] };
+            if (!cancelled && valData.validators) {
+              setValidatorCount(valData.validators.length);
+            }
+          }
+        }
+      } catch { /* ignore */ }
+
       if (deduped.length > 0) {
         backoffIndex = 0;
         scheduleNext(60000);
@@ -219,7 +237,7 @@ export function NodeDashboard() {
             <h2 className="text-2xl font-bold">Quantum Vault Core Daemons</h2>
           </div>
           <Badge variant={daemonStats.length > 0 ? "default" : "secondary"} className={daemonStats.length > 0 ? "bg-green-500" : ""}>
-            {isChecking ? "Checking..." : daemonStats.length > 0 ? `${daemonStats.length} Core Node(s) Online` : "No Daemons Detected"}
+            {isChecking ? "Checking..." : daemonStats.length > 0 ? `Network Online · ${validatorCount || daemonStats.length} Validators` : "No Daemons Detected"}
           </Badge>
         </div>
       </div>
@@ -232,8 +250,8 @@ export function NodeDashboard() {
               <div className="flex items-center gap-3">
                 <Server className="h-8 w-8 text-blue-500" />
                 <div>
-                  <p className="text-2xl font-bold">{daemonStats.length}</p>
-                  <p className="text-xs text-muted-foreground">Active Daemons</p>
+                  <p className="text-2xl font-bold">{validatorCount || daemonStats.length}</p>
+                  <p className="text-xs text-muted-foreground">Validators</p>
                 </div>
               </div>
             </CardContent>
