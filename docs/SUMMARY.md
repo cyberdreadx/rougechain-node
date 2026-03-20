@@ -15,6 +15,7 @@
 
 - [Overview](running-a-node/README.md)
 - [Installation](running-a-node/installation.md)
+- [Windows](running-a-node/windows.md)
 - [Docker](running-a-node/docker.md)
 - [Configuration](running-a-node/configuration.md)
 - [Mining](running-a-node/mining.md)
@@ -80,5 +81,14 @@
 
 - [Architecture](advanced/architecture.md)
 - [PQC Cryptography](advanced/pqc-cryptography.md)
+- [PQC Messaging & Mail](advanced/messaging.md)
 - [Browser Extensions](advanced/browser-extensions.md)
 - [SDK](advanced/sdk.md)
+
+---
+
+# Reference
+
+- [Troubleshooting](troubleshooting.md)
+- [Changelog](changelog.md)
+
