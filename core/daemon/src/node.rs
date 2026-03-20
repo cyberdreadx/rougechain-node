@@ -164,8 +164,29 @@ impl L1Node {
         self.rebuild_nft_state()?;
         self.rebuild_balances()?;
         self.rebuild_token_balances()?;
+        self.rebuild_proposer_counts()?;
         let tip = self.store.get_tip()?;
         *self.finalized_height.lock().map_err(|_| "finality lock")? = tip.height;
+        Ok(())
+    }
+
+    /// Scan all historical blocks and rebuild blocks_proposed counts for each validator
+    fn rebuild_proposer_counts(&self) -> Result<(), String> {
+        let blocks = self.store.get_all_blocks()?;
+        if blocks.is_empty() {
+            return Ok(());
+        }
+        let mut counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        for block in &blocks {
+            *counts.entry(block.header.proposer_pub_key.clone()).or_insert(0) += 1;
+        }
+        for (pub_key, count) in &counts {
+            if let Ok(Some(mut vstate)) = self.validator_store.get_validator(pub_key) {
+                vstate.blocks_proposed = *count;
+                let _ = self.validator_store.set_validator(pub_key, &vstate);
+            }
+        }
+        eprintln!("[node] Rebuilt proposer counts from {} blocks ({} proposers)", blocks.len(), counts.len());
         Ok(())
     }
 
