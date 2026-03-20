@@ -349,6 +349,13 @@ impl L1Node {
         // Only persist after state was applied successfully
         self.store.append_block(&block)?;
         
+        // Track proposer stats for imported blocks too
+        let proposer_key = block.header.proposer_pub_key.clone();
+        if let Ok(Some(mut vstate)) = self.validator_store.get_validator(&proposer_key) {
+            vstate.blocks_proposed += 1;
+            let _ = self.validator_store.set_validator(&proposer_key, &vstate);
+        }
+        
         eprintln!("[node] Imported block {} from peer", block.header.height);
         Ok(())
     }
@@ -1110,6 +1117,7 @@ impl L1Node {
             slash_count: 0,
             jailed_until: 0,
             entropy_contributions: 0,
+            blocks_proposed: 0,
         });
         state.entropy_contributions += 1;
         self.validator_store.set_validator(public_key, &state)?;
@@ -1126,7 +1134,7 @@ impl L1Node {
                 continue;
             }
             if state.jailed_until > tip {
-                validators.push((public_key, ValidatorState { stake: state.stake, slash_count: state.slash_count, jailed_until: state.jailed_until, entropy_contributions: state.entropy_contributions }));
+                validators.push((public_key, ValidatorState { stake: state.stake, slash_count: state.slash_count, jailed_until: state.jailed_until, entropy_contributions: state.entropy_contributions, blocks_proposed: state.blocks_proposed }));
             } else {
                 validators.push((public_key, state.clone()));
             }
@@ -1259,6 +1267,14 @@ impl L1Node {
         self.apply_balance_block(&block)?;
         self.apply_validator_block(&block)?;
         *self.finalized_height.lock().map_err(|_| "finality lock")? = block.header.height;
+        
+        // Track proposer stats
+        let proposer_key = block.header.proposer_pub_key.clone();
+        if let Ok(Some(mut vstate)) = self.validator_store.get_validator(&proposer_key) {
+            vstate.blocks_proposed += 1;
+            let _ = self.validator_store.set_validator(&proposer_key, &vstate);
+        }
+        
         Ok(Some(block))
     }
 
@@ -2962,6 +2978,7 @@ impl L1Node {
                 slash_count: 0,
                 jailed_until: 0,
                 entropy_contributions: 0,
+                blocks_proposed: 0,
             })
         };
         match tx.tx_type.as_str() {

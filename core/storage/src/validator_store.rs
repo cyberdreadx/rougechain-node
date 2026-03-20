@@ -8,6 +8,8 @@ pub struct ValidatorState {
     pub slash_count: u32,
     pub jailed_until: u64,
     pub entropy_contributions: u64,
+    #[serde(default)]
+    pub blocks_proposed: u64,
 }
 
 #[derive(Clone)]

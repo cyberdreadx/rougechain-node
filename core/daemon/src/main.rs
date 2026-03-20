@@ -2401,6 +2401,7 @@ struct ValidatorInfo {
     slash_count: u32,
     jailed_until: u64,
     entropy_contributions: u64,
+    blocks_proposed: u64,
 }
 
 async fn get_validators(State(state): State<AppState>) -> Result<Json<ValidatorsResponse>, StatusCode> {
@@ -2422,6 +2423,7 @@ async fn get_validators(State(state): State<AppState>) -> Result<Json<Validators
             slash_count: state.slash_count,
             jailed_until: state.jailed_until,
             entropy_contributions: state.entropy_contributions,
+            blocks_proposed: state.blocks_proposed,
         }
     }).collect();
     Ok(Json(ValidatorsResponse {
