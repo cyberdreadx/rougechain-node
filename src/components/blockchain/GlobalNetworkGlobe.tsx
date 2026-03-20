@@ -428,6 +428,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
   const [nodeStats, setNodeStats] = useState<NodeStats[]>([]);
   const [peerDetails, setPeerDetails] = useState<PeerDetail[]>([]);
   const [validatorCount, setValidatorCount] = useState(0);
+  const [validatorKeys, setValidatorKeys] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLive, setIsLive] = useState(false);
   const [isWebglLost, setIsWebglLost] = useState(false);
@@ -491,9 +492,13 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
               headers: getCoreApiHeaders(),
             });
             if (valRes.ok) {
-              const valData = await valRes.json() as { validators?: unknown[] };
+              const valData = await valRes.json() as { validators?: { publicKey?: string; public_key?: string }[] };
               if (!cancelled && valData.validators) {
                 setValidatorCount(valData.validators.length);
+                setValidatorKeys(valData.validators.map(v => {
+                  const key = v.publicKey || v.public_key || "";
+                  return key ? `${key.slice(0, 6)}...${key.slice(-4)}` : "";
+                }));
               }
             }
           }
@@ -541,9 +546,16 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
   // Build names list: validator names first, then peer names
   const nodeNames = useMemo(() => {
     const names: string[] = [];
-    // Validator/node names from stats
-    for (const s of nodeStats) {
-      names.push(s.node_name || "");
+    // Use validator keys as names for validator dots
+    if (validatorKeys.length > 0) {
+      for (const key of validatorKeys) {
+        names.push(key ? `Validator ${key}` : "");
+      }
+    } else {
+      // Fallback: use node stats names
+      for (const s of nodeStats) {
+        names.push(s.node_name || "");
+      }
     }
     // Ensure at least displayNodes entries for validators
     while (names.length < displayNodes) names.push("");
@@ -552,7 +564,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
       names.push(pd.node_name || "");
     }
     return names;
-  }, [nodeStats, peerDetails, displayNodes]);
+  }, [nodeStats, peerDetails, displayNodes, validatorKeys]);
 
   return (
     <div className={`relative ${className}`}>
