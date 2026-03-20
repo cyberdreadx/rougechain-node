@@ -25,7 +25,7 @@ The first peer(s) you connect to act as seeds for discovery. From them, your nod
 
 ```bash
 # Single seed
-./quantum-vault-daemon --peers "https://testnet.rougechain.io"
+./quantum-vault-daemon --peers "https://testnet.rougechain.io/api"
 
 # Multiple seeds for redundancy
 ./quantum-vault-daemon --peers "https://testnet.rougechain.io,https://backup.example.com"
@@ -38,7 +38,7 @@ To make your node discoverable by others, set `--public-url`:
 ```bash
 ./quantum-vault-daemon \
   --api-port 5100 \
-  --peers "https://testnet.rougechain.io" \
+  --peers "https://testnet.rougechain.io/api" \
   --public-url "https://mynode.example.com"
 ```
 

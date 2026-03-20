@@ -422,6 +422,24 @@ export function NodeDashboard() {
           </div>
 
           <div className="space-y-4">
+            {/* Docker option */}
+            <div className="flex gap-4">
+              <div className="flex flex-col items-center">
+                <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold shrink-0">⚡</div>
+                <div className="w-px flex-1 bg-border mt-2" />
+              </div>
+              <div className="pb-4">
+                <h4 className="font-semibold text-sm mb-1">Option A: Docker (Fastest)</h4>
+                <p className="text-xs text-muted-foreground mb-2">
+                  No Rust needed — one command and you're running.
+                </p>
+                <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all whitespace-pre-wrap">
+                  docker run -d --name rougechain-node -p 5100:5100 -v qv-data:/data rougechain/node --mine --peers https://testnet.rougechain.io/api
+                </code>
+                <p className="text-xs text-muted-foreground mt-2">Skip to step 3 once it's running!</p>
+              </div>
+            </div>
+
             {/* Step 1 */}
             <div className="flex gap-4">
               <div className="flex flex-col items-center">
@@ -429,7 +447,7 @@ export function NodeDashboard() {
                 <div className="w-px flex-1 bg-border mt-2" />
               </div>
               <div className="pb-4">
-                <h4 className="font-semibold text-sm mb-1">Install Rust</h4>
+                <h4 className="font-semibold text-sm mb-1">Option B: Install Rust</h4>
                 <p className="text-xs text-muted-foreground mb-2">
                   If you don't have Rust yet, run this in your terminal. It takes about 2 minutes.
                 </p>
@@ -446,7 +464,7 @@ export function NodeDashboard() {
                 <div className="w-px flex-1 bg-border mt-2" />
               </div>
               <div className="pb-4">
-                <h4 className="font-semibold text-sm mb-1">Download RougeChain</h4>
+                <h4 className="font-semibold text-sm mb-1">Download & Build</h4>
                 <p className="text-xs text-muted-foreground mb-2">
                   Clone the code from GitHub and build it. This takes a few minutes the first time.
                 </p>
@@ -455,7 +473,7 @@ export function NodeDashboard() {
                     git clone https://github.com/cyberdreadx/rougechain-node.git
                   </code>
                   <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
-                    cd rougechain-node && cargo build --release
+                    cd rougechain-node/core && cargo build --release -p quantum-vault-daemon
                   </code>
                 </div>
               </div>
@@ -473,7 +491,7 @@ export function NodeDashboard() {
                   That's it! Run this one command. Your node will connect to the testnet, sync the blockchain, and start running.
                 </p>
                 <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
-                  ./target/release/quantum-vault-daemon --api-port 5100 --peers "https://testnet.rougechain.io"
+                  ./target/release/quantum-vault-daemon --api-port 5100 --peers "https://testnet.rougechain.io/api"
                 </code>
                 <p className="text-xs text-muted-foreground mt-2">
                   🎉 <strong>You're done!</strong> Your node is now part of the RougeChain network.
@@ -493,7 +511,7 @@ export function NodeDashboard() {
                   <a href="/blockchain" className="text-primary underline">network globe</a>? Add <code className="text-xs bg-background px-1 rounded">--node-name</code>:
                 </p>
                 <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
-                  ./target/release/quantum-vault-daemon --api-port 5100 --node-name "MyAwesomeNode" --peers "https://testnet.rougechain.io"
+                  ./target/release/quantum-vault-daemon --api-port 5100 --node-name "MyAwesomeNode" --peers "https://testnet.rougechain.io/api"
                 </code>
               </div>
             </div>
@@ -587,7 +605,7 @@ export function NodeDashboard() {
                 <h4 className="font-semibold text-sm mb-1">Get Some XRGE</h4>
                 <p className="text-xs text-muted-foreground mb-2">
                   On the testnet, you can get free XRGE from the faucet — just paste your public key on the{" "}
-                  <a href="/wallet" className="text-primary underline">wallet page</a> and click "Request Faucet." You need at least <strong>100 XRGE</strong> to stake.
+                  <a href="/wallet" className="text-primary underline">wallet page</a> and click "Request Faucet." You need at least <strong>1,000 XRGE</strong> to stake.
                 </p>
               </div>
             </div>
@@ -619,7 +637,7 @@ export function NodeDashboard() {
                   Add <code className="text-xs bg-background px-1 rounded">--mine</code> to your node command. Your node will now create blocks and earn fees!
                 </p>
                 <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
-                  ./target/release/quantum-vault-daemon --api-port 5100 --mine --node-name "MyValidator" --peers "https://testnet.rougechain.io"
+                  ./target/release/quantum-vault-daemon --api-port 5100 --mine --node-name "MyValidator" --peers "https://testnet.rougechain.io/api"
                 </code>
                 <p className="text-xs text-muted-foreground mt-2">
                   💰 <strong>You're earning!</strong> Check your balance on the wallet page or visit <code className="bg-background px-1 rounded text-xs">http://localhost:5100</code> to see your node dashboard.

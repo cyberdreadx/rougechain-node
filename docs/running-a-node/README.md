@@ -25,13 +25,13 @@ cargo build --release -p quantum-vault-daemon
 # Run a syncing node
 ./target/release/quantum-vault-daemon \
   --api-port 5100 \
-  --peers "https://testnet.rougechain.io"
+  --peers "https://testnet.rougechain.io/api"
 
 # Run a mining node
 ./target/release/quantum-vault-daemon \
   --mine \
   --api-port 5100 \
-  --peers "https://testnet.rougechain.io"
+  --peers "https://testnet.rougechain.io/api"
 ```
 
 ## Verify It's Working

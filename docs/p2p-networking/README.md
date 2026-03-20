@@ -36,7 +36,7 @@ RougeChain uses a peer-to-peer network for block propagation, transaction broadc
 ```bash
 ./quantum-vault-daemon \
   --api-port 5100 \
-  --peers "https://testnet.rougechain.io"
+  --peers "https://testnet.rougechain.io/api"
 ```
 
 ### As a Mining Node
@@ -45,7 +45,7 @@ RougeChain uses a peer-to-peer network for block propagation, transaction broadc
 ./quantum-vault-daemon \
   --mine \
   --api-port 5100 \
-  --peers "https://testnet.rougechain.io"
+  --peers "https://testnet.rougechain.io/api"
 ```
 
 ## Peer Discovery
@@ -61,7 +61,7 @@ Nodes automatically discover new peers every 30 seconds by:
 ```bash
 ./quantum-vault-daemon \
   --api-port 5100 \
-  --peers "https://testnet.rougechain.io" \
+  --peers "https://testnet.rougechain.io/api" \
   --public-url "https://mynode.example.com"
 ```
 

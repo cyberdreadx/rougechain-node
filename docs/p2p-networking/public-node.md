@@ -54,7 +54,7 @@ Set `client_max_body_size` to at least 50M to support messenger media uploads.
   --host 127.0.0.1 \
   --api-port 5100 \
   --node-name "MyNode" \
-  --peers "https://testnet.rougechain.io" \
+  --peers "https://testnet.rougechain.io/api" \
   --public-url "https://mynode.rougechain.example.com"
 ```
 
@@ -74,7 +74,7 @@ After=network.target
 [Service]
 Type=simple
 User=rougechain
-ExecStart=/usr/local/bin/quantum-vault-daemon --mine --host 127.0.0.1 --api-port 5100 --peers "https://testnet.rougechain.io" --public-url "https://mynode.rougechain.example.com"
+ExecStart=/usr/local/bin/quantum-vault-daemon --mine --host 127.0.0.1 --api-port 5100 --peers "https://testnet.rougechain.io/api" --public-url "https://mynode.rougechain.example.com"
 Restart=always
 RestartSec=5
 LimitNOFILE=65535
@@ -119,7 +119,7 @@ Restrict write access with API keys:
 
 ### Rate Limiting
 
-The node has built-in rate limiting (default: 120 requests/minute). Adjust as needed:
+The node has built-in rate limiting (disabled by default). Enable it for public-facing nodes:
 
 ```bash
 ./quantum-vault-daemon --rate-limit-per-minute 60

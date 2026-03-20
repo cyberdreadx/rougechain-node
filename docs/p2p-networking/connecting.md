@@ -9,7 +9,7 @@ The simplest way to join the network:
 ```bash
 ./quantum-vault-daemon \
   --api-port 5100 \
-  --peers "https://testnet.rougechain.io"
+  --peers "https://testnet.rougechain.io/api"
 ```
 
 Your node will:
@@ -29,7 +29,7 @@ Your node will:
 >   --api-port 5100 \
 >   --node-name "MyNode" \
 >   --public-url "https://your-server.com:5100" \
->   --peers "https://testnet.rougechain.io"
+>   --peers "https://testnet.rougechain.io/api"
 > ```
 >
 > If running locally without a public IP, your node works fine for personal use — it just won't be visible to the rest of the network.

@@ -10,7 +10,7 @@ Start your node with the `--mine` flag:
 ./quantum-vault-daemon --mine --api-port 5100
 ```
 
-This tells the node to produce blocks at the configured interval (default: 1000ms).
+This tells the node to produce blocks at the configured interval (default: 400ms).
 
 ## Requirements
 
@@ -32,7 +32,7 @@ This tells the node to produce blocks at the configured interval (default: 1000m
 
 | Parameter | Default | Flag |
 |-----------|---------|------|
-| Block time | 1000ms | `--block-time-ms` |
+| Block time | 400ms | `--block-time-ms` |
 
 ```bash
 # Slower blocks (5 seconds)
@@ -50,7 +50,7 @@ To mine as part of the network (not solo):
 ./quantum-vault-daemon \
   --mine \
   --api-port 5100 \
-  --peers "https://testnet.rougechain.io" \
+  --peers "https://testnet.rougechain.io/api" \
   --public-url "https://mynode.example.com"
 ```
 

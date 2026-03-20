@@ -1,6 +1,6 @@
 # API Reference
 
-The RougeChain node exposes a REST API on the configured `--api-port` (default: 5100).
+The RougeChain node exposes a REST API on the configured `--api-port` (default: 5101).
 
 ## Base URL
 
@@ -131,12 +131,7 @@ curl -H "X-API-Key: your-api-key" https://testnet.rougechain.io/api/stats
 
 ## Rate Limiting
 
-Default limits:
-- Read endpoints: 120 requests/minute
-- Write endpoints: 30 requests/minute
-
-Rate limit headers are included in responses:
-```
-X-RateLimit-Limit: 120
-X-RateLimit-Remaining: 115
-```
+Rate limiting is disabled by default (`--rate-limit-per-minute 0`). When enabled, the node supports tiered limits:
+- **Tier 1 (Validators):** Proven via `X-Validator-Key` header + signature
+- **Tier 2 (Registered peers):** Recognized by IP
+- **Tier 3 (Public):** Separate limits for read and write endpoints

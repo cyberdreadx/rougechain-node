@@ -70,7 +70,7 @@ While staking alone makes you a validator, running a node ensures you're online 
 ./quantum-vault-daemon \
   --mine \
   --api-port 5100 \
-  --peers "https://testnet.rougechain.io" \
+  --peers "https://testnet.rougechain.io/api" \
   --public-url "https://mynode.example.com"
 ```
 

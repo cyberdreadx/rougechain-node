@@ -6,18 +6,18 @@ All node configuration is done via command-line flags or environment variables.
 
 | Flag | Env Variable | Default | Description |
 |------|--------------|---------|-------------|
-| `--host` | - | `127.0.0.1` | Bind address for API/gRPC |
-| `--port` | - | `4100` | gRPC port |
-| `--api-port` | - | `5100` | HTTP API port |
+| `--host` | - | `127.0.0.1` | Bind address for API/gRPC. Use `0.0.0.0` for public nodes |
+| `--port` | - | `4101` | gRPC port |
+| `--api-port` | - | `5101` | HTTP API port |
 | `--chain-id` | - | `rougechain-devnet-1` | Chain identifier |
-| `--block-time-ms` | - | `1000` | Block production interval (ms) |
+| `--block-time-ms` | - | `400` | Block production interval (ms) |
 | `--mine` | - | `false` | Enable block production |
 | `--node-name` | `QV_NODE_NAME` | - | Human-readable name shown on the network globe |
 | `--data-dir` | - | `~/.quantum-vault/core-node` | Data storage directory |
 | `--peers` | `QV_PEERS` | - | Comma-separated peer URLs |
 | `--public-url` | `QV_PUBLIC_URL` | - | This node's public URL for peer discovery |
 | `--api-keys` | `QV_API_KEYS` | - | Comma-separated API keys |
-| `--rate-limit-per-minute` | - | `120` | Rate limit for API requests |
+| `--rate-limit-per-minute` | - | `0` (unlimited) | Rate limit for API requests |
 
 ## Examples
 
@@ -32,7 +32,7 @@ All node configuration is done via command-line flags or environment variables.
 ```bash
 ./quantum-vault-daemon \
   --api-port 5100 \
-  --peers "https://testnet.rougechain.io"
+  --peers "https://testnet.rougechain.io/api"
 ```
 
 ### Public Mining Node
@@ -43,7 +43,7 @@ All node configuration is done via command-line flags or environment variables.
   --host 0.0.0.0 \
   --api-port 5100 \
   --node-name "MyNode" \
-  --peers "https://testnet.rougechain.io" \
+  --peers "https://testnet.rougechain.io/api" \
   --public-url "https://mynode.example.com"
 ```
 
@@ -71,7 +71,7 @@ Once running, visit `http://localhost:5100` in your browser to see the **built-i
 You can also use environment variables:
 
 ```bash
-export QV_PEERS="https://testnet.rougechain.io"
+export QV_PEERS="https://testnet.rougechain.io/api"
 export QV_PUBLIC_URL="https://mynode.example.com"
 export QV_NODE_NAME="MyNode"
 export QV_API_KEYS="key1,key2,key3"
@@ -101,7 +101,7 @@ After=network.target
 [Service]
 Type=simple
 User=rougechain
-ExecStart=/opt/rougechain/quantum-vault-daemon --mine --host 0.0.0.0 --api-port 5100 --node-name "MyNode" --public-url "https://mynode.example.com" --peers "https://testnet.rougechain.io"
+ExecStart=/opt/rougechain/quantum-vault-daemon --mine --host 0.0.0.0 --api-port 5100 --node-name "MyNode" --public-url "https://mynode.example.com" --peers "https://testnet.rougechain.io/api"
 Restart=always
 RestartSec=5
 

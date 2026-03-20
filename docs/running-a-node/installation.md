@@ -125,7 +125,7 @@ quantum-vault-daemon 0.1.0
 ```bash
 ./target/release/quantum-vault-daemon \
   --api-port 5100 \
-  --peers "https://testnet.rougechain.io"
+  --peers "https://testnet.rougechain.io/api"
 ```
 
 ### Option B: Start Local Devnet
@@ -223,7 +223,7 @@ Common CLI-only flags:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--host` | `127.0.0.1` | Bind address |
+| `--host` | `127.0.0.1` | Bind address. Use `0.0.0.0` for public nodes |
 | `--api-port` | `5101` | REST API port |
 | `--mine` | off | Enable block production |
 | `--data-dir` | `~/.quantum-vault/core-node/` | Chain data directory |
