@@ -55,7 +55,14 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 
 ### XRGE
 
-The native token of RougeChain is **XRGE** (pronounced "rouge").
+**XRGE is the native token that powers transactions, secures the network through staking, and fuels the post-quantum economy.**
+
+| Role | How it works |
+|------|-------------|
+| **Gas Token** | Every transaction pays fees in XRGE. Fees go to the block proposer. |
+| **Staking Primitive** | Validators must stake XRGE to propose blocks. More stake = more proposals = more rewards. |
+| **DeFi Base Pair** | AMM liquidity pools trade against XRGE. It's the default quote currency on the built-in DEX. |
+| **Bridge Asset** | XRGE exists on both RougeChain (native) and Base (ERC-20) via the cross-chain bridge. |
 
 ### qETH
 

@@ -18,6 +18,10 @@ GET /api/peers
     "https://testnet.rougechain.io/api",
     "https://node2.example.com/api"
   ],
+  "peer_details": [
+    { "url": "https://testnet.rougechain.io/api", "node_name": "RougeChain Primary" },
+    { "url": "https://node2.example.com/api", "node_name": "My Cool Node" }
+  ],
   "count": 2
 }
 ```
@@ -37,9 +41,12 @@ Content-Type: application/json
 
 ```json
 {
-  "peerUrl": "https://mynode.example.com"
+  "peerUrl": "https://mynode.example.com",
+  "nodeName": "My Validator Node"
 }
 ```
+
+The `nodeName` field is optional. If provided, it will be displayed on the network globe at [rougechain.io/blockchain](https://rougechain.io/blockchain).
 
 ### Response
 

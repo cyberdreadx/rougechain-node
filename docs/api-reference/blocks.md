@@ -5,14 +5,15 @@ Endpoints for querying block data on RougeChain.
 ## Get Blocks
 
 ```http
-GET /api/blocks?limit=50&offset=0
+GET /api/blocks?limit=50&from_height=0
 ```
 
 ### Query Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `limit` | number | 50 | Maximum blocks to return |
+| `limit` | number | 50 | Maximum blocks to return (max 100, up to 1000 for sync) |
+| `from_height` | number | - | Start from this block height (used for P2P sync) |
 | `offset` | number | 0 | Pagination offset |
 
 ### Response

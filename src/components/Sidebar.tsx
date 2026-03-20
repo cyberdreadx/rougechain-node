@@ -209,7 +209,7 @@ export function Sidebar({ children }: SidebarProps) {
       <GlobalSearch visible={expanded || isMobile} />
 
       {/* Navigation Links */}
-      <nav className="flex-1 py-2 px-2 space-y-0.5 overflow-y-auto">
+      <nav className="flex-1 py-1 px-2 space-y-0.5 overflow-y-auto">
         {navGroups.map((group) => (
           <div key={group.title || "home"}>
             {group.title && (
@@ -229,7 +229,7 @@ export function Sidebar({ children }: SidebarProps) {
                   to={item.to}
                   onClick={() => isMobile && setMobileOpen(false)}
                   className={cn(
-                    "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
+                    "flex items-center gap-3 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200",
                     isActive
                       ? "bg-primary/10 text-primary"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted"
@@ -255,10 +255,10 @@ export function Sidebar({ children }: SidebarProps) {
           <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Resources</span>
         </div>
         <a
-          href="https://ai-integrations.gitbook.io/rougechain-post-quantum/"
+          href="https://docs.rougechain.io"
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted"
+          className="flex items-center gap-3 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted"
         >
           <BookOpen className="w-5 h-5 flex-shrink-0" />
           <span className={cn(
@@ -273,7 +273,7 @@ export function Sidebar({ children }: SidebarProps) {
           href="/RougeChain-Whitepaper.pdf"
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted"
+          className="flex items-center gap-3 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted"
         >
           <FileText className="w-5 h-5 flex-shrink-0" />
           <span className={cn(
@@ -318,7 +318,7 @@ export function Sidebar({ children }: SidebarProps) {
 
       {/* Mobile Sidebar */}
       <aside className={cn(
-        "fixed left-0 top-0 z-50 h-screen w-64 bg-background border-r border-border flex flex-col transition-transform duration-300 md:hidden",
+        "fixed left-0 top-0 z-50 h-screen w-60 bg-background border-r border-border flex flex-col transition-transform duration-300 md:hidden",
         mobileOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <SidebarContent isMobile />
