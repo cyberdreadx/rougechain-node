@@ -66,55 +66,101 @@ interface NodeProps {
 
 const Node = ({ position, isValidator = false, name }: NodeProps) => {
   const meshRef = useRef<THREE.Mesh>(null);
-  const glowRef = useRef<THREE.Mesh>(null);
+  const innerGlowRef = useRef<THREE.Mesh>(null);
+  const outerGlowRef = useRef<THREE.Mesh>(null);
+  const haloRef = useRef<THREE.Mesh>(null);
+  const ringRef = useRef<THREE.Mesh>(null);
   const [hovered, setHovered] = useState(false);
 
+  // Each node gets a unique phase offset based on position
+  const phase = useMemo(() => position[0] * 3.7 + position[1] * 2.3 + position[2] * 1.1, [position]);
+
   useFrame((state) => {
-    const pulse = 1 + Math.sin(state.clock.elapsedTime * 2.5) * 0.15;
+    const t = state.clock.elapsedTime;
+    const pulse = 1 + Math.sin(t * 2.5 + phase) * 0.12;
+    const breathe = 0.8 + Math.sin(t * 1.5 + phase) * 0.2;
+
     if (meshRef.current) {
       meshRef.current.scale.setScalar(pulse);
+      meshRef.current.rotation.y = t * 0.3 + phase;
+      meshRef.current.rotation.x = Math.sin(t * 0.2) * 0.1;
     }
-    if (glowRef.current) {
-      glowRef.current.scale.setScalar(pulse * 1.8);
-      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.15 + Math.sin(state.clock.elapsedTime * 3) * 0.1;
+    if (innerGlowRef.current) {
+      innerGlowRef.current.scale.setScalar(pulse * 1.6);
+      (innerGlowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.25 * breathe;
+    }
+    if (outerGlowRef.current) {
+      outerGlowRef.current.scale.setScalar(pulse * 2.8);
+      (outerGlowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.08 * breathe;
+    }
+    if (haloRef.current) {
+      haloRef.current.scale.setScalar(pulse * 4.0);
+      (haloRef.current.material as THREE.MeshBasicMaterial).opacity = 0.04 + Math.sin(t * 4 + phase) * 0.02;
+    }
+    if (ringRef.current) {
+      ringRef.current.rotation.x = Math.PI / 2 + Math.sin(t * 0.8 + phase) * 0.3;
+      ringRef.current.rotation.z = t * 0.5 + phase;
+      ringRef.current.scale.setScalar(pulse * 1.2);
     }
   });
 
-  // Cyberpunk rouge colors - deep red for validators, magenta for peers
+  // Rich cyberpunk colors
   const coreColor = isValidator ? "#ff1744" : "#d500f9";
-  const glowColor = isValidator ? "#ff5252" : "#e040fb";
+  const midGlow = isValidator ? "#ff5252" : "#e040fb";
+  const outerColor = isValidator ? "#ff8a80" : "#ea80fc";
   const label = name || (isValidator ? "L1 Node" : "Network Peer");
+  const coreSize = isValidator ? 0.07 : 0.04;
 
   return (
     <group position={position}>
-      {/* Outer glow */}
-      <mesh ref={glowRef}>
-        <sphereGeometry args={[isValidator ? 0.12 : 0.06, 12, 12]} />
-        <meshBasicMaterial color={glowColor} transparent opacity={0.2} />
+      {/* Faint outer halo */}
+      <mesh ref={haloRef}>
+        <sphereGeometry args={[coreSize * 4, 16, 16]} />
+        <meshBasicMaterial color={outerColor} transparent opacity={0.04} />
+      </mesh>
+
+      {/* Outer glow sphere */}
+      <mesh ref={outerGlowRef}>
+        <sphereGeometry args={[coreSize * 2.5, 16, 16]} />
+        <meshBasicMaterial color={midGlow} transparent opacity={0.08} />
+      </mesh>
+
+      {/* Inner glow sphere */}
+      <mesh ref={innerGlowRef}>
+        <sphereGeometry args={[coreSize * 1.5, 20, 20]} />
+        <meshBasicMaterial color={coreColor} transparent opacity={0.25} />
       </mesh>
       
-      {/* Core node */}
+      {/* Orbiting ring for validators */}
+      {isValidator && (
+        <mesh ref={ringRef}>
+          <torusGeometry args={[coreSize * 1.8, 0.004, 8, 32]} />
+          <meshBasicMaterial color={midGlow} transparent opacity={0.5} />
+        </mesh>
+      )}
+
+      {/* Core node - high-detail icosahedron */}
       <mesh
         ref={meshRef}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
       >
-        <dodecahedronGeometry args={[isValidator ? 0.06 : 0.035, 0]} />
+        <icosahedronGeometry args={[coreSize, isValidator ? 1 : 0]} />
         <meshStandardMaterial
           color={hovered ? "#ffffff" : coreColor}
           emissive={coreColor}
-          emissiveIntensity={hovered ? 1.2 : 0.7}
-          metalness={0.8}
-          roughness={0.2}
+          emissiveIntensity={hovered ? 1.8 : 1.0}
+          metalness={0.9}
+          roughness={0.1}
         />
       </mesh>
       
       {hovered && (
         <Html distanceFactor={10}>
-          <div className="bg-black/90 backdrop-blur-sm border border-red-500/50 rounded px-2 py-1 text-xs whitespace-nowrap shadow-lg shadow-red-500/20">
-            <span className="text-red-400 font-bold">{label}</span>
+          <div className="bg-black/95 backdrop-blur-md border border-red-500/60 rounded-lg px-3 py-1.5 text-xs whitespace-nowrap shadow-xl shadow-red-500/30">
+            <span className="text-red-300 font-bold">{label}</span>
             {name && (
-              <span className="text-red-400/60 ml-1.5 text-[10px]">
+              <span className="text-red-400/50 ml-2 text-[10px] uppercase tracking-wider">
                 {isValidator ? "validator" : "peer"}
               </span>
             )}
@@ -467,7 +513,8 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
           setIsLive(stats.length > 0);
         }
 
-        // Also fetch peer details for names
+        // Also fetch peer details for names + check their mining status
+        let discoveredPeerUrls: string[] = [];
         try {
           const peersUrl = configuredUrl ? `${configuredUrl}/api/peers` : "";
           if (peersUrl) {
@@ -476,12 +523,37 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
               headers: getCoreApiHeaders(),
             });
             if (peersRes.ok) {
-              const peersData = await peersRes.json() as { peer_details?: PeerDetail[]; peerDetails?: PeerDetail[] };
+              const peersData = await peersRes.json() as { peers?: string[]; peer_details?: PeerDetail[]; peerDetails?: PeerDetail[] };
               const details = peersData.peer_details ?? peersData.peerDetails ?? [];
               if (!cancelled) setPeerDetails(details);
+              // Collect peer URLs for stats check
+              if (peersData.peers) {
+                discoveredPeerUrls = peersData.peers.map(u => u.replace(/\/+$/, "").replace(/\/api$/, ""));
+              }
             }
           }
         } catch { /* ignore */ }
+
+        // Query each peer's stats to get accurate mining count
+        for (const peerBase of discoveredPeerUrls) {
+          try {
+            const peerStatsRes = await fetch(`${peerBase}/api/stats`, {
+              signal: AbortSignal.timeout(3000),
+              headers: getCoreApiHeaders(),
+            });
+            if (peerStatsRes.ok) {
+              const peerData = await peerStatsRes.json() as Record<string, unknown>;
+              const peerStat = normalizeStats(peerData);
+              // Avoid duplicates by node_id
+              if (!stats.some(s => s.node_id && s.node_id === peerStat.node_id)) {
+                stats.push(peerStat);
+              }
+            }
+          } catch { /* peer unreachable */ }
+        }
+        if (!cancelled) {
+          setNodeStats([...stats]);
+        }
 
         // Fetch validator count from /api/validators
         try {
