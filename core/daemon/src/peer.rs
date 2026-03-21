@@ -427,6 +427,27 @@ pub async fn start_peer_sync(peer_manager: Arc<PeerManager>, node: Arc<L1Node>) 
                     Err(_) => {}
                 }
             }
+
+            // Auto-discover peer names by querying their /api/stats
+            let unnamed_peers: Vec<String> = {
+                let names = peer_manager.peer_names.read().await;
+                let peers = peer_manager.peers.read().await;
+                peers.iter().filter(|p| !names.contains_key(*p)).cloned().collect()
+            };
+            for peer_url in &unnamed_peers {
+                let stats_url = format!("{}/stats", peer_url);
+                let client = reqwest::Client::new();
+                if let Ok(resp) = client.get(&stats_url).timeout(Duration::from_secs(3)).send().await {
+                    if let Ok(data) = resp.json::<serde_json::Value>().await {
+                        if let Some(name) = data.get("node_name").or_else(|| data.get("nodeName")).and_then(|v| v.as_str()) {
+                            if !name.is_empty() {
+                                peer_manager.set_peer_name(peer_url, name.to_string()).await;
+                                eprintln!("[peer] Discovered name for {}: {}", peer_url, name);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
