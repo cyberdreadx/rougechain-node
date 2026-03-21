@@ -19,6 +19,8 @@ import PqcQrScanner from "./PqcQrScanner";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { createShieldedNote } from "@/lib/shielded-crypto";
 import { saveNote } from "@/lib/note-store";
+import { isRougeAddress } from "@/lib/address";
+import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 
 interface SendTokensDialogProps {
   wallet: {
@@ -43,6 +45,11 @@ const parseXrgeAddress = (input: string): { valid: boolean; address: string; err
     return { valid: false, address: "", error: "Recipient address required" };
   }
 
+  // Accept rouge1... Bech32m addresses
+  if (isRougeAddress(trimmed)) {
+    return { valid: true, address: trimmed };
+  }
+
   // Check for xrge: prefix (case-insensitive)
   const prefixMatch = trimmed.match(/^xrge:/i);
   const rawAddress = prefixMatch ? trimmed.slice(5) : trimmed;
@@ -50,7 +57,7 @@ const parseXrgeAddress = (input: string): { valid: boolean; address: string; err
   // Check for valid hex characters
   const hexRegex = /^[A-Fa-f0-9]+$/;
   if (!hexRegex.test(rawAddress)) {
-    return { valid: false, address: rawAddress, error: "Invalid address format — expected hex-encoded public key" };
+    return { valid: false, address: rawAddress, error: "Invalid address — use rouge1... address or hex public key" };
   }
 
   // Validate the address length (ML-DSA-65 public keys are 3904 hex chars)
@@ -58,7 +65,7 @@ const parseXrgeAddress = (input: string): { valid: boolean; address: string; err
     return {
       valid: false,
       address: rawAddress,
-      error: `Address too short (${rawAddress.length} chars) — expected ${ML_DSA65_PUBKEY_HEX_LEN} hex characters for a full ML-DSA-65 public key`,
+      error: `Address too short (${rawAddress.length} chars) — use a rouge1... address or full public key`,
     };
   }
 
@@ -94,6 +101,26 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
       return;
     }
 
+    // If it's a rouge1... address, resolve to pubkey via daemon
+    let resolvedAddress = parsed.address;
+    if (isRougeAddress(parsed.address)) {
+      try {
+        const apiBase = getCoreApiBaseUrl();
+        const res = await fetch(`${apiBase}/resolve/${parsed.address}`, {
+          headers: getCoreApiHeaders(),
+        });
+        const data = await res.json();
+        if (!data.success || !data.publicKey) {
+          setError("Could not resolve address — recipient not found on chain");
+          return;
+        }
+        resolvedAddress = data.publicKey;
+      } catch {
+        setError("Failed to resolve address — check network connection");
+        return;
+      }
+    }
+
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum <= 0) {
       setError("Invalid amount");
@@ -117,7 +144,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
     }
 
     // Prevent sending to self
-    if (parsed.address === wallet.signingPublicKey) {
+    if (resolvedAddress === wallet.signingPublicKey) {
       setError("Cannot send to your own address");
       return;
     }
@@ -126,7 +153,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
     try {
       if (shieldedSend && selectedToken === "XRGE") {
         // Shielded send: create note owned by recipient
-        const note = await createShieldedNote(amountToSend, parsed.address);
+        const note = await createShieldedNote(amountToSend, resolvedAddress);
         const result = await secureShield(
           wallet.signingPublicKey,
           wallet.signingPrivateKey,
@@ -154,7 +181,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
       const result = await secureTransfer(
         wallet.signingPublicKey,
         wallet.signingPrivateKey,
-        parsed.address,
+        resolvedAddress,
         amountToSend,
         BASE_TRANSFER_FEE,
         selectedToken
@@ -293,7 +320,7 @@ const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDi
                 id="recipient"
                 value={recipient}
                 onChange={(e) => setRecipient(e.target.value)}
-                placeholder="xrge:... or public key"
+                placeholder="rouge1... or public key"
                 className={`font-mono text-sm pr-10 ${recipient && !isAddressValid ? "border-destructive" : ""
                   } ${recipient && isAddressValid ? "border-success" : ""}`}
               />

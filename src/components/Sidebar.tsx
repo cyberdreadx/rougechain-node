@@ -25,6 +25,8 @@ import {
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY } from "@/lib/network";
 import { cn } from "@/lib/utils";
+import { pubkeyToAddress, isRougeAddress, formatAddress } from "@/lib/address";
+import { loadUnifiedWallet } from "@/lib/unified-wallet";
 
 interface NavItem {
   to: string;
@@ -88,6 +90,8 @@ function GlobalSearch({ visible }: { visible: boolean }) {
     if (!q) return;
     if (/^\d+$/.test(q)) {
       navigate(`/block/${q}`);
+    } else if (q.startsWith("rouge1")) {
+      navigate(`/address/${q}`);
     } else if (q.length === 64 && /^[0-9a-fA-F]+$/.test(q)) {
       navigate(`/tx/${q}`);
     } else if (q.length > 100) {
@@ -128,6 +132,16 @@ export function Sidebar({ children }: SidebarProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [chainId, setChainId] = useState<string | null>(null);
   const [networkLabel, setNetworkLabel] = useState<string>(() => getNetworkLabel());
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Derive wallet address
+  useEffect(() => {
+    const wallet = loadUnifiedWallet();
+    if (wallet?.signingPublicKey) {
+      pubkeyToAddress(wallet.signingPublicKey).then(setWalletAddress).catch(() => {});
+    }
+  }, []);
 
   const toggleGroup = (title: string) => {
     setCollapsedGroups((prev) => ({ ...prev, [title]: !prev[title] }));
@@ -217,6 +231,28 @@ export function Sidebar({ children }: SidebarProps) {
           <span className="font-medium text-foreground truncate">{networkLabel}</span>
         </div>
       </div>
+
+      {/* Wallet Address */}
+      {walletAddress && (
+        <div className={cn(
+          "px-3 py-2 border-b border-border transition-all duration-300",
+          (expanded || isMobile) ? "opacity-100 h-auto" : "opacity-0 h-0 py-0 overflow-hidden"
+        )}>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(walletAddress);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            }}
+            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg bg-card border border-border text-xs hover:bg-muted transition-colors cursor-pointer"
+            title={walletAddress}
+          >
+            <Wallet className="w-3 h-3 flex-shrink-0 text-primary" />
+            <span className="font-mono text-foreground/80 truncate">{formatAddress(walletAddress)}</span>
+            <span className="ml-auto text-[10px] text-muted-foreground">{copied ? "✓" : "Copy"}</span>
+          </button>
+        </div>
+      )}
 
       {/* Global Search */}
       <GlobalSearch visible={expanded || isMobile} />
