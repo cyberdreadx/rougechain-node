@@ -471,7 +471,10 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
     };
   }, [canvasEl]);
 
-  const totalPeers = nodeStats.reduce((sum, s) => sum + s.connected_peers, 0);
+  // Use unique peer count from peer_details to avoid double-counting
+  const totalPeers = peerDetails.length > 0
+    ? peerDetails.length
+    : (nodeStats.length > 0 ? nodeStats[0].connected_peers : 0);
   const activeNodes = nodeStats.length;
   // Use validator count from API if available, otherwise fall back to connected stats
   const displayNodes = validatorCount > 0 ? validatorCount : (activeNodes > 0 ? activeNodes : 1);
