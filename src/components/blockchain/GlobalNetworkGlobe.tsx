@@ -66,95 +66,48 @@ interface NodeProps {
 
 const Node = ({ position, isValidator = false, name }: NodeProps) => {
   const meshRef = useRef<THREE.Mesh>(null);
-  const innerGlowRef = useRef<THREE.Mesh>(null);
-  const outerGlowRef = useRef<THREE.Mesh>(null);
-  const haloRef = useRef<THREE.Mesh>(null);
-  const ringRef = useRef<THREE.Mesh>(null);
+  const glowRef = useRef<THREE.Mesh>(null);
   const [hovered, setHovered] = useState(false);
 
-  // Each node gets a unique phase offset based on position
-  const phase = useMemo(() => position[0] * 3.7 + position[1] * 2.3 + position[2] * 1.1, [position]);
+  const phase = useMemo(() => position[0] * 3.7 + position[1] * 2.3, [position]);
 
   useFrame((state) => {
     const t = state.clock.elapsedTime;
-    const pulse = 1 + Math.sin(t * 2.5 + phase) * 0.12;
-    const breathe = 0.8 + Math.sin(t * 1.5 + phase) * 0.2;
-
+    const pulse = 1 + Math.sin(t * 3 + phase) * 0.15;
     if (meshRef.current) {
       meshRef.current.scale.setScalar(pulse);
-      meshRef.current.rotation.y = t * 0.3 + phase;
-      meshRef.current.rotation.x = Math.sin(t * 0.2) * 0.1;
     }
-    if (innerGlowRef.current) {
-      innerGlowRef.current.scale.setScalar(pulse * 1.6);
-      (innerGlowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.25 * breathe;
-    }
-    if (outerGlowRef.current) {
-      outerGlowRef.current.scale.setScalar(pulse * 2.8);
-      (outerGlowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.08 * breathe;
-    }
-    if (haloRef.current) {
-      haloRef.current.scale.setScalar(pulse * 4.0);
-      (haloRef.current.material as THREE.MeshBasicMaterial).opacity = 0.04 + Math.sin(t * 4 + phase) * 0.02;
-    }
-    if (ringRef.current) {
-      ringRef.current.rotation.x = Math.PI / 2 + Math.sin(t * 0.8 + phase) * 0.3;
-      ringRef.current.rotation.z = t * 0.5 + phase;
-      ringRef.current.scale.setScalar(pulse * 1.2);
+    if (glowRef.current) {
+      glowRef.current.scale.setScalar(pulse * 1.4);
+      (glowRef.current.material as THREE.MeshBasicMaterial).opacity =
+        0.35 + Math.sin(t * 4 + phase) * 0.1;
     }
   });
 
-  // Rich cyberpunk colors
-  const coreColor = isValidator ? "#ff1744" : "#d500f9";
-  const midGlow = isValidator ? "#ff5252" : "#e040fb";
-  const outerColor = isValidator ? "#ff8a80" : "#ea80fc";
-  const label = name || (isValidator ? "L1 Node" : "Network Peer");
-  const coreSize = isValidator ? 0.07 : 0.04;
+  const coreColor = isValidator ? "#ff2244" : "#cc44ff";
+  const glowColor = isValidator ? "#ff4466" : "#dd66ff";
+  const label = name || (isValidator ? "L1 Validator" : "Network Peer");
+  // Small, tight sizes — validators slightly larger
+  const size = isValidator ? 0.04 : 0.025;
 
   return (
     <group position={position}>
-      {/* Faint outer halo */}
-      <mesh ref={haloRef}>
-        <sphereGeometry args={[coreSize * 4, 16, 16]} />
-        <meshBasicMaterial color={outerColor} transparent opacity={0.04} />
+      {/* Tight glow — just slightly larger than core */}
+      <mesh ref={glowRef}>
+        <sphereGeometry args={[size * 1.8, 12, 12]} />
+        <meshBasicMaterial color={glowColor} transparent opacity={0.35} />
       </mesh>
 
-      {/* Outer glow sphere */}
-      <mesh ref={outerGlowRef}>
-        <sphereGeometry args={[coreSize * 2.5, 16, 16]} />
-        <meshBasicMaterial color={midGlow} transparent opacity={0.08} />
-      </mesh>
-
-      {/* Inner glow sphere */}
-      <mesh ref={innerGlowRef}>
-        <sphereGeometry args={[coreSize * 1.5, 20, 20]} />
-        <meshBasicMaterial color={coreColor} transparent opacity={0.25} />
-      </mesh>
-      
-      {/* Orbiting ring for validators */}
-      {isValidator && (
-        <mesh ref={ringRef}>
-          <torusGeometry args={[coreSize * 1.8, 0.004, 8, 32]} />
-          <meshBasicMaterial color={midGlow} transparent opacity={0.5} />
-        </mesh>
-      )}
-
-      {/* Core node - high-detail icosahedron */}
+      {/* Bright core — small, high emissive */}
       <mesh
         ref={meshRef}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
       >
-        <icosahedronGeometry args={[coreSize, isValidator ? 1 : 0]} />
-        <meshStandardMaterial
-          color={hovered ? "#ffffff" : coreColor}
-          emissive={coreColor}
-          emissiveIntensity={hovered ? 1.8 : 1.0}
-          metalness={0.9}
-          roughness={0.1}
-        />
+        <sphereGeometry args={[size, 16, 16]} />
+        <meshBasicMaterial color={hovered ? "#ffffff" : coreColor} />
       </mesh>
-      
+
       {hovered && (
         <Html distanceFactor={10}>
           <div className="bg-black/95 backdrop-blur-md border border-red-500/60 rounded-lg px-3 py-1.5 text-xs whitespace-nowrap shadow-xl shadow-red-500/30">
@@ -287,7 +240,7 @@ const ConnectionLine = ({ start, end, index }: ConnectionLineProps) => {
       {/* The curved line - deep red/magenta glow */}
       {/* @ts-ignore - R3F line element */}
       <line geometry={geometry} frustumCulled={false}>
-        <lineBasicMaterial color="#ff1744" transparent opacity={0.15} />
+        <lineBasicMaterial color="#ff3355" transparent opacity={0.4} />
       </line>
       
       {/* Primary energy particle - hot red */}
@@ -331,31 +284,31 @@ const GlobeWireframe = () => {
       meshRef.current.rotation.y += 0.0008;
     }
     if (innerGlowRef.current) {
-      const pulse = 0.03 + Math.sin(state.clock.elapsedTime * 0.5) * 0.01;
+      const pulse = 0.04 + Math.sin(state.clock.elapsedTime * 0.5) * 0.015;
       (innerGlowRef.current.material as THREE.MeshBasicMaterial).opacity = pulse;
     }
   });
 
   return (
     <group>
-      {/* Dark wireframe grid */}
+      {/* Wireframe grid — slightly brighter */}
       <mesh ref={meshRef}>
-        <sphereGeometry args={[1.96, 48, 48]} />
+        <sphereGeometry args={[1.96, 36, 36]} />
         <meshBasicMaterial
-          color="#ff1744"
+          color="#ff2244"
           wireframe
           transparent
-          opacity={0.06}
+          opacity={0.08}
         />
       </mesh>
       
       {/* Inner atmospheric glow */}
       <mesh ref={innerGlowRef}>
-        <sphereGeometry args={[2.1, 32, 32]} />
+        <sphereGeometry args={[2.05, 32, 32]} />
         <meshBasicMaterial
           color="#ff1744"
           transparent
-          opacity={0.03}
+          opacity={0.04}
           side={THREE.BackSide}
         />
       </mesh>
