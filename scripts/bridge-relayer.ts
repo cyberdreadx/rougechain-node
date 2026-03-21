@@ -159,15 +159,37 @@ function resetNonce() {
 // ── API calls ───────────────────────────────────────────────────
 
 interface EthWithdrawal {
-  tx_id: string;
-  evm_address: string;
-  amount_units: number;
+  txId?: string;
+  tx_id?: string;
+  evmAddress?: string;
+  evm_address?: string;
+  amountUnits?: number;
+  amount_units?: number;
 }
 
 interface XrgeWithdrawal {
-  tx_id: string;
-  evm_address: string;
+  txId?: string;
+  tx_id?: string;
+  evmAddress?: string;
+  evm_address?: string;
   amount: number;
+}
+
+/** Normalize a withdrawal from either camelCase or snake_case API response */
+function normalizeEthWithdrawal(w: EthWithdrawal): { tx_id: string; evm_address: string; amount_units: number } {
+  return {
+    tx_id: w.txId || w.tx_id || "",
+    evm_address: w.evmAddress || w.evm_address || "",
+    amount_units: w.amountUnits || w.amount_units || 0,
+  };
+}
+
+function normalizeXrgeWithdrawal(w: XrgeWithdrawal): { tx_id: string; evm_address: string; amount: number } {
+  return {
+    tx_id: w.txId || w.tx_id || "",
+    evm_address: w.evmAddress || w.evm_address || "",
+    amount: w.amount || 0,
+  };
 }
 
 async function fetchEthWithdrawals(): Promise<EthWithdrawal[]> {
@@ -284,7 +306,8 @@ async function main() {
       const balance = await publicClient.getBalance({ address: account.address });
       console.log(`[ETH] Pending: ${withdrawals.length}, Balance: ${(Number(balance) / 1e18).toFixed(6)} ETH`);
 
-      for (const w of withdrawals) {
+      for (const raw of withdrawals) {
+        const w = normalizeEthWithdrawal(raw);
         if (isShuttingDown) break;
         if (processedTxIds.has(w.tx_id) || inFlightTxIds.has(w.tx_id)) continue;
         inFlightTxIds.add(w.tx_id);
@@ -365,7 +388,8 @@ async function main() {
 
       console.log(`[XRGE] Pending: ${withdrawals.length}`);
 
-      for (const w of withdrawals) {
+      for (const raw of withdrawals) {
+        const w = normalizeXrgeWithdrawal(raw);
         if (isShuttingDown) break;
         if (processedTxIds.has(w.tx_id) || inFlightTxIds.has(w.tx_id)) continue;
         inFlightTxIds.add(w.tx_id);
