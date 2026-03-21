@@ -10,6 +10,7 @@ rand = "0.8"
 fips204 = "0.4"
 quantum-vault-types = { path = "../types" }
 getrandom = "0.2"
+bech32 = "0.11"
 
 # zk-STARK proof system (quantum-resistant, hash-based)
 winterfell = "0.13"

@@ -121,6 +121,8 @@ struct AppState {
     node_name: Option<String>,
     response_cache: Arc<RwLock<HashMap<String, (Instant, String)>>>,
     rollup_accumulator: Arc<tokio::sync::Mutex<rollup::RollupAccumulator>>,
+    /// Address registry: SHA-256(pubkey) hex → pubkey hex
+    address_registry: Arc<RwLock<HashMap<String, String>>>,
 }
 
 #[derive(Clone)]
@@ -297,6 +299,7 @@ async fn main() -> Result<(), String> {
         node_name: args.node_name.clone(),
         response_cache: Arc::new(RwLock::new(HashMap::new())),
         rollup_accumulator: Arc::new(tokio::sync::Mutex::new(rollup::RollupAccumulator::new())),
+        address_registry: Arc::new(RwLock::new(HashMap::new())),
     };
     
     eprintln!("[core-daemon] WebSocket broadcaster initialized");
@@ -503,6 +506,8 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/rollup/status", get(rollup_status))
         .route("/api/v2/rollup/batch/:id", get(rollup_get_batch))
         .route("/api/v2/rollup/submit", post(rollup_submit_transfer))
+        // Address resolution
+        .route("/api/resolve/:input", get(resolve_address))
         // Token locking endpoints
         .route("/api/locks/:pubkey", get(get_locks))
         // Token staking endpoints
@@ -1634,6 +1639,70 @@ async fn get_blocks_summary(
     }
 
     Ok(Json(response))
+}
+
+// ── Address resolution ──────────────────────────────────────────
+
+async fn resolve_address(
+    State(state): State<AppState>,
+    Path(input): Path<String>,
+) -> Json<serde_json::Value> {
+    use quantum_vault_crypto::{pub_key_to_address, is_rouge_address, address_to_hash, bytes_to_hex};
+
+    // Lazily populate registry from all known balances
+    {
+        let registry = state.address_registry.read().unwrap();
+        if registry.is_empty() {
+            drop(registry);
+            if let Ok(all_balances) = state.node.get_all_native_balances() {
+                let mut reg = state.address_registry.write().unwrap();
+                for pubkey in all_balances.keys() {
+                    if let Ok(addr) = pub_key_to_address(pubkey) {
+                        if let Ok(hash) = address_to_hash(&addr) {
+                            reg.insert(bytes_to_hex(&hash), pubkey.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if is_rouge_address(&input) {
+        if let Ok(hash) = address_to_hash(&input) {
+            let hash_hex = bytes_to_hex(&hash);
+            let registry = state.address_registry.read().unwrap();
+            if let Some(pubkey) = registry.get(&hash_hex) {
+                let balance = state.node.get_balance(pubkey).unwrap_or(0.0);
+                return Json(serde_json::json!({
+                    "success": true,
+                    "address": input,
+                    "publicKey": pubkey,
+                    "balance": balance,
+                }));
+            }
+        }
+        Json(serde_json::json!({ "success": false, "error": "Address not found" }))
+    } else {
+        let balance = state.node.get_balance(&input).unwrap_or(0.0);
+        match pub_key_to_address(&input) {
+            Ok(addr) => {
+                if let Ok(hash) = address_to_hash(&addr) {
+                    let mut reg = state.address_registry.write().unwrap();
+                    reg.insert(bytes_to_hex(&hash), input.clone());
+                }
+                Json(serde_json::json!({
+                    "success": true,
+                    "address": addr,
+                    "publicKey": input,
+                    "balance": balance,
+                }))
+            }
+            Err(e) => Json(serde_json::json!({
+                "success": false,
+                "error": format!("Invalid public key: {}", e),
+            })),
+        }
+    }
 }
 
 #[derive(Serialize)]
