@@ -1,6 +1,6 @@
 # RougeChain: A Post-Quantum Layer 1 Blockchain
 
-**Version 1.4 -- March 2026**
+**Version 1.5 -- March 2026**
 
 > **RougeChain is a post-quantum Layer 1 blockchain where every signature, every transaction, and every encrypted message is secured by NIST-approved lattice cryptography — not as a future upgrade, but as the foundation.**
 
@@ -136,6 +136,7 @@ The verifier only sees the final balances (public inputs). The initial balances 
 | Key exchange | ML-KEM-768 | Yes |
 | Hashing | SHA-256 / Blake3 | Yes |
 | Zero-knowledge proofs | zk-STARKs | Yes |
+| Consensus entropy | ANU QRNG | Yes |
 
 #### Rollup Batch AIR (Phase 3)
 
@@ -184,17 +185,20 @@ The trade-off is size: ML-DSA-65 signatures and keys are significantly larger th
 
 ### 3.1 Consensus: Proof of Stake
 
-RougeChain uses a Proof-of-Stake consensus mechanism with weighted proposer selection.
+RougeChain uses a Proof-of-Stake consensus mechanism with quantum-weighted proposer selection.
 
-**Proposer Selection.** For each block height, a proposer is selected from the active validator set using a deterministic weighted random function:
+**Proposer Selection.** For each block height, a proposer is selected from the active validator set using a deterministic weighted random function seeded by quantum randomness:
 
 ```
+entropy = ANU_QRNG() || fallback: CSPRNG()
 seed = SHA-256(entropy || prev_block_hash || height)
 index = seed[0..16] mod total_stake
 proposer = validator at cumulative stake index
 ```
 
-Validators contribute entropy to the selection process, and the combination of local entropy, the previous block hash, and the current height ensures unpredictability while remaining deterministic and verifiable.
+**Quantum Entropy Source.** The entropy for proposer selection is sourced from the [ANU Quantum Random Number Generator](https://qrng.anu.edu.au/) (Australian National University), which derives true randomness from quantum vacuum fluctuations — the inherent uncertainty in the electromagnetic field of a vacuum, measured via homodyne detection of squeezed quantum states of light. This provides provably unpredictable randomness that cannot be reproduced or predicted by any classical or quantum algorithm. If the QRNG API is unavailable (2-second timeout), the node falls back to a local cryptographically secure pseudorandom number generator (CSPRNG). The entropy source (`"quantum"` or `"local"`) is recorded with each proposer selection and visible on the validator dashboard.
+
+The combination of quantum entropy, the previous block hash, and the current height ensures that proposer selection is both unpredictable and deterministic — any node with the same inputs will arrive at the same proposer.
 
 **Voting.** Consensus proceeds in two rounds:
 1. **Prevote** -- Validators sign a prevote for the proposed block.

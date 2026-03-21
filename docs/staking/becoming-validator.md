@@ -97,10 +97,10 @@ Your total stake accumulates.
 Proposer selection uses three factors:
 
 1. **Stake weight** — Higher stake gives proportionally higher probability
-2. **Quantum entropy** — Ensures unpredictable selection
-3. **Round-robin fallback** — Guarantees all validators eventually participate
+2. **Quantum entropy** — Sourced from [ANU QRNG](https://qrng.anu.edu.au/) (quantum vacuum fluctuations); falls back to local CSPRNG if unavailable
+3. **Block context** — Previous block hash and height are mixed into the seed for deterministic verifiability
 
-This means even validators with the minimum stake will produce blocks, just less frequently.
+This means even validators with the minimum stake will produce blocks, just less frequently. The entropy source (`"quantum"` or `"local"`) is visible on the validator dashboard.
 
 ## Leaving the Validator Set
 

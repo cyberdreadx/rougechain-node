@@ -22,11 +22,12 @@ This tells the node to produce blocks at the configured interval (default: 400ms
 
 ## How Block Production Works
 
-1. **Validator selection** — Each block slot, the network selects a proposer based on stake weight and quantum entropy
+1. **Validator selection** — Each block slot, the network selects a proposer based on stake weight and quantum entropy sourced from [ANU QRNG](https://qrng.anu.edu.au/) (with local CSPRNG fallback)
 2. **Block assembly** — The selected validator collects pending transactions from the mempool
 3. **Signing** — The block is signed with the validator's ML-DSA-65 key
-4. **Propagation** — The signed block is broadcast to all peers via `POST /api/blocks/import`
-5. **Verification** — Receiving nodes verify the signature and block validity before accepting
+4. **Voting** — Validators automatically submit prevote and precommit attestations for each block
+5. **Propagation** — The signed block is broadcast to all peers via `POST /api/blocks/import`
+6. **Verification** — Receiving nodes verify the signature and block validity before accepting
 
 ## Block Timing
 
