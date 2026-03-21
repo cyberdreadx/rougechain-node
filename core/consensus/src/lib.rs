@@ -56,7 +56,32 @@ pub fn select_proposer(
     None
 }
 
+/// Fetch entropy from ANU Quantum RNG (quantum vacuum fluctuations).
+/// Falls back to local CSPRNG if the API is unreachable.
 pub fn fetch_entropy() -> (String, String) {
+    // Try ANU QRNG first (free, no API key required)
+    match ureq::get("https://qrng.anu.edu.au/API/jsonI.php?length=1&type=hex16&size=32")
+        .timeout(std::time::Duration::from_secs(2))
+        .call()
+    {
+        Ok(resp) => {
+            if let Ok(body) = resp.into_string() {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    if let Some(data) = json["data"].as_array() {
+                        if let Some(hex_str) = data.first().and_then(|v| v.as_str()) {
+                            let cleaned = hex_str.trim().to_lowercase();
+                            if cleaned.len() >= 32 {
+                                return (cleaned, "quantum".to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Err(_) => { /* QRNG unreachable, fall through to local */ }
+    }
+
+    // Fallback: local CSPRNG
     let mut buf = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut buf);
     (hex::encode(buf), "local".to_string())
