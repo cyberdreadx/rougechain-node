@@ -377,7 +377,8 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
           }
         } catch { /* ignore */ }
 
-        // Query each peer's stats to get accurate mining count
+        // Query each peer's stats to get accurate mining count + discover names
+        const updatedDetails = [...(peerDetails ?? [])];
         for (const peerBase of discoveredPeerUrls) {
           try {
             const peerStatsRes = await fetch(`${peerBase}/api/stats`, {
@@ -391,11 +392,23 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
               if (!stats.some(s => s.node_id && s.node_id === peerStat.node_id)) {
                 stats.push(peerStat);
               }
+              // Back-fill peer name from stats into peer_details
+              const peerName = (peerData.node_name ?? peerData.nodeName) as string | undefined;
+              if (peerName) {
+                const peerApiUrl = `${peerBase}/api`;
+                const match = updatedDetails.find(d => d.url === peerApiUrl || d.url === peerBase);
+                if (match && !match.node_name) {
+                  match.node_name = peerName;
+                } else if (!match) {
+                  updatedDetails.push({ url: peerApiUrl, node_name: peerName });
+                }
+              }
             }
           } catch { /* peer unreachable */ }
         }
         if (!cancelled) {
           setNodeStats([...stats]);
+          setPeerDetails(updatedDetails);
         }
 
         // Fetch validator count from /api/validators
