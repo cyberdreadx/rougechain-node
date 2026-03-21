@@ -170,23 +170,56 @@ impl L1Node {
         Ok(())
     }
 
-    /// Scan all historical blocks and rebuild blocks_proposed counts for each validator
+    /// Scan all historical blocks and rebuild blocks_proposed counts for each validator.
+    /// Block headers use node ephemeral keys as proposer, not validator staking keys,
+    /// so we assign unmatched blocks to the highest-staked validator.
     fn rebuild_proposer_counts(&self) -> Result<(), String> {
         let blocks = self.store.get_all_blocks()?;
         if blocks.is_empty() {
             return Ok(());
         }
+
+        // Reset all validators' blocks_proposed to 0 first
+        if let Ok(all_validators) = self.validator_store.list_validators() {
+            for (pub_key, mut vstate) in all_validators {
+                vstate.blocks_proposed = 0;
+                let _ = self.validator_store.set_validator(&pub_key, &vstate);
+            }
+        }
+
+        // Count blocks per unique proposer key
         let mut counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
         for block in &blocks {
             *counts.entry(block.header.proposer_pub_key.clone()).or_insert(0) += 1;
         }
+
+        let mut matched = 0u64;
+        let mut unmatched = 0u64;
+
         for (pub_key, count) in &counts {
             if let Ok(Some(mut vstate)) = self.validator_store.get_validator(pub_key) {
-                vstate.blocks_proposed = *count;
+                vstate.blocks_proposed += *count;
                 let _ = self.validator_store.set_validator(pub_key, &vstate);
+                matched += count;
+            } else {
+                unmatched += count;
             }
         }
-        eprintln!("[node] Rebuilt proposer counts from {} blocks ({} proposers)", blocks.len(), counts.len());
+
+        // Assign unmatched blocks to the highest-staked validator (the node key != validator key case)
+        if unmatched > 0 {
+            if let Ok(validators) = self.validator_store.list_validators() {
+                if let Some((top_key, _)) = validators.iter().max_by_key(|(_, v)| v.stake) {
+                    if let Ok(Some(mut vstate)) = self.validator_store.get_validator(top_key) {
+                        vstate.blocks_proposed += unmatched;
+                        let _ = self.validator_store.set_validator(top_key, &vstate);
+                        eprintln!("[node] Assigned {} unmatched blocks to top validator {}...", unmatched, &top_key[..16.min(top_key.len())]);
+                    }
+                }
+            }
+        }
+
+        eprintln!("[node] Rebuilt proposer counts from {} blocks ({} matched, {} assigned to top validator)", blocks.len(), matched, unmatched);
         Ok(())
     }
 
@@ -370,11 +403,20 @@ impl L1Node {
         // Only persist after state was applied successfully
         self.store.append_block(&block)?;
         
-        // Track proposer stats for imported blocks too
+        // Track proposer stats for imported blocks — node key may differ from validator key
         let proposer_key = block.header.proposer_pub_key.clone();
         if let Ok(Some(mut vstate)) = self.validator_store.get_validator(&proposer_key) {
             vstate.blocks_proposed += 1;
             let _ = self.validator_store.set_validator(&proposer_key, &vstate);
+        } else {
+            if let Ok(validators) = self.validator_store.list_validators() {
+                if let Some((top_key, _)) = validators.iter().max_by_key(|(_, v)| v.stake) {
+                    if let Ok(Some(mut vstate)) = self.validator_store.get_validator(top_key) {
+                        vstate.blocks_proposed += 1;
+                        let _ = self.validator_store.set_validator(top_key, &vstate);
+                    }
+                }
+            }
         }
         
         eprintln!("[node] Imported block {} from peer", block.header.height);
@@ -1289,11 +1331,21 @@ impl L1Node {
         self.apply_validator_block(&block)?;
         *self.finalized_height.lock().map_err(|_| "finality lock")? = block.header.height;
         
-        // Track proposer stats
+        // Track proposer stats — node key may differ from validator staking key
         let proposer_key = block.header.proposer_pub_key.clone();
         if let Ok(Some(mut vstate)) = self.validator_store.get_validator(&proposer_key) {
             vstate.blocks_proposed += 1;
             let _ = self.validator_store.set_validator(&proposer_key, &vstate);
+        } else {
+            // Fallback: assign to highest-staked validator
+            if let Ok(validators) = self.validator_store.list_validators() {
+                if let Some((top_key, _)) = validators.iter().max_by_key(|(_, v)| v.stake) {
+                    if let Ok(Some(mut vstate)) = self.validator_store.get_validator(top_key) {
+                        vstate.blocks_proposed += 1;
+                        let _ = self.validator_store.set_validator(top_key, &vstate);
+                    }
+                }
+            }
         }
         
         Ok(Some(block))
