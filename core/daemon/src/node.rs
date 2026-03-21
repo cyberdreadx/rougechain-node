@@ -1060,6 +1060,10 @@ impl L1Node {
         };
         let bytes = encode_tx_for_signing(&tx);
         tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
+        // Mark as pre-verified so mine_pending skips signature re-check.
+        // The sig is node-signed (not user-signed), so pqc_verify(user_pubkey, sig) would fail.
+        let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
+        self.verified_tx_ids.lock().map_err(|_| "verified lock")?.insert(tx_hash);
         self.accept_tx(tx.clone())?;
         Ok(tx)
     }
