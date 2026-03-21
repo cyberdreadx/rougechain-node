@@ -130,187 +130,77 @@ interface ConnectionLineProps {
   index: number;
 }
 
-// Energy particle for traveling along connections
-const EnergyParticle = ({ 
-  curve, 
-  speed, 
-  offset, 
-  color, 
-  size 
-}: { 
-  curve: THREE.QuadraticBezierCurve3; 
-  speed: number; 
-  offset: number; 
+// Lightweight single-dot particle for connections
+const LightParticle = ({ curve, speed, offset, color }: {
+  curve: THREE.QuadraticBezierCurve3;
+  speed: number;
+  offset: number;
   color: string;
-  size: number;
 }) => {
-  const groupRef = useRef<THREE.Group>(null);
-  const coreRef = useRef<THREE.Mesh>(null);
-  const glowRef = useRef<THREE.Mesh>(null);
-  const trailRef = useRef<THREE.Mesh>(null);
+  const ref = useRef<THREE.Mesh>(null);
 
   useFrame((state) => {
-    const time = state.clock.elapsedTime;
-    const t = ((time * speed + offset) % 1);
-    
-    if (groupRef.current) {
-      const pos = curve.getPoint(t);
-      groupRef.current.position.copy(pos);
-      
-      // Look in direction of travel
-      const tangent = curve.getTangent(t);
-      groupRef.current.quaternion.setFromUnitVectors(
-        new THREE.Vector3(0, 0, 1),
-        tangent
-      );
-    }
-    
-    // Pulsing glow effect
-    const pulse = 0.8 + Math.sin(time * 8 + offset * 10) * 0.2;
-    const fade = Math.sin(t * Math.PI); // Fade at endpoints
-    
-    if (coreRef.current) {
-      coreRef.current.scale.setScalar(size * pulse * fade);
-      (coreRef.current.material as THREE.MeshBasicMaterial).opacity = fade;
-    }
-    
-    if (glowRef.current) {
-      glowRef.current.scale.setScalar(size * 2.5 * pulse * fade);
-      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = fade * 0.4;
-    }
-    
-    if (trailRef.current) {
-      trailRef.current.scale.set(size * 0.5, size * 0.5, size * 4 * fade);
-      (trailRef.current.material as THREE.MeshBasicMaterial).opacity = fade * 0.3;
-    }
+    if (!ref.current) return;
+    const t = ((state.clock.elapsedTime * speed + offset) % 1);
+    const pos = curve.getPoint(t);
+    ref.current.position.copy(pos);
+    const fade = Math.sin(t * Math.PI);
+    ref.current.scale.setScalar(fade);
+    (ref.current.material as THREE.MeshBasicMaterial).opacity = fade * 0.9;
   });
 
   return (
-    <group ref={groupRef}>
-      {/* Bright core */}
-      <mesh ref={coreRef}>
-        <octahedronGeometry args={[0.02, 0]} />
-        <meshBasicMaterial color={color} transparent opacity={1} />
-      </mesh>
-      
-      {/* Outer glow */}
-      <mesh ref={glowRef}>
-        <sphereGeometry args={[0.02, 8, 8]} />
-        <meshBasicMaterial color={color} transparent opacity={0.4} />
-      </mesh>
-      
-      {/* Trailing energy */}
-      <mesh ref={trailRef} position={[0, 0, -0.03]}>
-        <coneGeometry args={[0.015, 0.08, 6]} />
-        <meshBasicMaterial color={color} transparent opacity={0.3} />
-      </mesh>
-    </group>
+    <mesh ref={ref}>
+      <sphereGeometry args={[0.018, 6, 6]} />
+      <meshBasicMaterial color={color} transparent opacity={0.9} />
+    </mesh>
   );
 };
 
-// Animated curved connection with traveling energy pulses
+// Connection line with single traveling dot
 const ConnectionLine = ({ start, end, index }: ConnectionLineProps) => {
-  // Create curved path that arcs above the globe surface
   const { curve, points } = useMemo(() => {
     const startVec = new THREE.Vector3(...start);
     const endVec = new THREE.Vector3(...end);
-    
-    // Calculate midpoint and push it outward for the arc
     const mid = new THREE.Vector3().addVectors(startVec, endVec).multiplyScalar(0.5);
     const distance = startVec.distanceTo(endVec);
-    const arcHeight = 0.3 + distance * 0.15;
-    mid.normalize().multiplyScalar(2 + arcHeight);
-    
+    mid.normalize().multiplyScalar(2 + 0.3 + distance * 0.15);
     const curve = new THREE.QuadraticBezierCurve3(startVec, mid, endVec);
-    const points = curve.getPoints(40);
+    const points = curve.getPoints(20);
     return { curve, points };
   }, [start, end]);
 
-  const geometry = useMemo(() => {
-    return new THREE.BufferGeometry().setFromPoints(points);
-  }, [points]);
-
-  // Vary the visual properties based on index
-  const baseOffset = (index * 0.17) % 1;
-  const speed1 = 0.25 + (index % 5) * 0.04;
-  const speed2 = 0.2 + ((index + 2) % 5) * 0.04;
+  const geometry = useMemo(() => new THREE.BufferGeometry().setFromPoints(points), [points]);
+  const speed = 0.2 + (index % 5) * 0.04;
+  const offset = (index * 0.17) % 1;
 
   return (
     <group>
-      {/* The curved line - deep red/magenta glow */}
       {/* @ts-ignore - R3F line element */}
       <line geometry={geometry} frustumCulled={false}>
         <lineBasicMaterial color="#ff3355" transparent opacity={0.4} />
       </line>
-      
-      {/* Primary energy particle - hot red */}
-      <EnergyParticle 
-        curve={curve} 
-        speed={speed1} 
-        offset={baseOffset} 
-        color="#ff1744"
-        size={1}
-      />
-      
-      {/* Secondary energy particle - neon magenta */}
-      <EnergyParticle 
-        curve={curve} 
-        speed={speed2} 
-        offset={baseOffset + 0.5} 
-        color="#ff4081"
-        size={0.7}
-      />
-      
-      {/* Occasional third particle - electric purple */}
-      {index % 4 === 0 && (
-        <EnergyParticle 
-          curve={curve} 
-          speed={0.35} 
-          offset={baseOffset + 0.33} 
-          color="#e040fb"
-          size={0.5}
-        />
-      )}
+      <LightParticle curve={curve} speed={speed} offset={offset} color="#ff1744" />
     </group>
   );
 };
 
 const GlobeWireframe = () => {
   const meshRef = useRef<THREE.Mesh>(null);
-  const innerGlowRef = useRef<THREE.Mesh>(null);
 
-  useFrame((state) => {
-    if (meshRef.current) {
-      meshRef.current.rotation.y += 0.0008;
-    }
-    if (innerGlowRef.current) {
-      const pulse = 0.04 + Math.sin(state.clock.elapsedTime * 0.5) * 0.015;
-      (innerGlowRef.current.material as THREE.MeshBasicMaterial).opacity = pulse;
-    }
+  useFrame(() => {
+    if (meshRef.current) meshRef.current.rotation.y += 0.0008;
   });
 
   return (
     <group>
-      {/* Wireframe grid — slightly brighter */}
       <mesh ref={meshRef}>
-        <sphereGeometry args={[1.96, 36, 36]} />
-        <meshBasicMaterial
-          color="#ff2244"
-          wireframe
-          transparent
-          opacity={0.08}
-        />
+        <sphereGeometry args={[1.96, 32, 32]} />
+        <meshBasicMaterial color="#ff2244" wireframe transparent opacity={0.08} />
       </mesh>
-      
-      {/* Inner atmospheric glow */}
-      <mesh ref={innerGlowRef}>
-        <sphereGeometry args={[2.05, 32, 32]} />
-        <meshBasicMaterial
-          color="#ff1744"
-          transparent
-          opacity={0.04}
-          side={THREE.BackSide}
-        />
+      <mesh>
+        <sphereGeometry args={[2.05, 24, 24]} />
+        <meshBasicMaterial color="#ff1744" transparent opacity={0.04} side={THREE.BackSide} />
       </mesh>
     </group>
   );
@@ -327,7 +217,7 @@ const EarthSurface = () => {
   }, [texture]);
   return (
     <mesh>
-      <sphereGeometry args={[1.9, 64, 64]} />
+      <sphereGeometry args={[1.9, 48, 48]} />
       <meshStandardMaterial map={texture} roughness={0.9} metalness={0.05} />
     </mesh>
   );
