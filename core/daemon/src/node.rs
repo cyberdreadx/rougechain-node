@@ -419,6 +419,9 @@ impl L1Node {
             }
         }
         
+        // Auto-vote for imported block
+        self.auto_vote_for_block(&block);
+        
         eprintln!("[node] Imported block {} from peer", block.header.height);
         Ok(())
     }
@@ -1174,6 +1177,41 @@ impl L1Node {
         Ok(())
     }
 
+    /// Automatically submit prevote + precommit for a finalized block.
+    /// Uses the highest-staked validator key as the voter (node key != validator key).
+    pub fn auto_vote_for_block(&self, block: &BlockV1) {
+        let voter_key = if let Ok(validators) = self.validator_store.list_validators() {
+            validators.iter().max_by_key(|(_, v)| v.stake).map(|(k, _)| k.clone())
+        } else {
+            None
+        };
+        let voter = match voter_key {
+            Some(k) => k,
+            None => return,
+        };
+        let sig = "auto".to_string(); // Signature placeholder for auto-votes
+
+        // Prevote
+        let _ = self.submit_vote(VoteMessage {
+            vote_type: "prevote".to_string(),
+            height: block.header.height,
+            round: 0,
+            block_hash: block.hash.clone(),
+            voter_pub_key: voter.clone(),
+            signature: sig.clone(),
+        });
+
+        // Precommit
+        let _ = self.submit_vote(VoteMessage {
+            vote_type: "precommit".to_string(),
+            height: block.header.height,
+            round: 0,
+            block_hash: block.hash.clone(),
+            voter_pub_key: voter,
+            signature: sig,
+        });
+    }
+
     pub fn submit_entropy(&self, public_key: &str) -> Result<(), String> {
         let mut state = self.validator_store.get_validator(public_key)?.unwrap_or(ValidatorState {
             stake: 0,
@@ -1347,6 +1385,9 @@ impl L1Node {
                 }
             }
         }
+        
+        // Auto-vote for the block we just mined
+        self.auto_vote_for_block(&block);
         
         Ok(Some(block))
     }
