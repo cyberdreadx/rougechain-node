@@ -461,6 +461,18 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
   // Build names list: validator names first, then peer names
   const nodeNames = useMemo(() => {
     const names: string[] = [];
+
+    // Build a name lookup from all sources
+    const nameMap = new Map<string, string>();
+    // From peer_details (daemon peer_names)
+    for (const pd of peerDetails) {
+      if (pd.node_name && pd.url) nameMap.set(pd.url, pd.node_name);
+    }
+    // From nodeStats (per-peer /api/stats responses)
+    for (const s of nodeStats) {
+      if (s.node_name && s.node_id) nameMap.set(s.node_id, s.node_name);
+    }
+
     // Use validator keys as names for validator dots
     if (validatorKeys.length > 0) {
       for (const key of validatorKeys) {
@@ -474,12 +486,32 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
     }
     // Ensure at least displayNodes entries for validators
     while (names.length < displayNodes) names.push("");
-    // Peer names from peer_details
+
+    // Peer names: prefer peer_details, fill gaps from nodeStats
+    const usedNames = new Set(names.filter(Boolean));
     for (const pd of peerDetails) {
-      names.push(pd.node_name || "");
+      const n = pd.node_name || "";
+      names.push(n);
+      if (n) usedNames.add(n);
     }
+
+    // If we have more peers than peerDetails entries, fill from nodeStats names
+    const peerCount = totalPeers;
+    while (names.length < displayNodes + peerCount) {
+      // Try to find an unused name from nodeStats
+      let found = "";
+      for (const s of nodeStats) {
+        if (s.node_name && !usedNames.has(s.node_name)) {
+          found = s.node_name;
+          usedNames.add(found);
+          break;
+        }
+      }
+      names.push(found);
+    }
+
     return names;
-  }, [nodeStats, peerDetails, displayNodes, validatorKeys]);
+  }, [nodeStats, peerDetails, displayNodes, validatorKeys, totalPeers]);
 
   return (
     <div className={`relative ${className}`}>
