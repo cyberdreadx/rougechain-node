@@ -1389,6 +1389,22 @@ impl L1Node {
         // Auto-vote for the block we just mined
         self.auto_vote_for_block(&block);
         
+        // Track quantum entropy contributions
+        let (_, entropy_source) = fetch_entropy();
+        if entropy_source == "quantum" {
+            // Credit the proposing validator (or highest-staked fallback)
+            let credit_key = if self.validator_store.get_validator(&proposer_key).ok().flatten().is_some() {
+                proposer_key.clone()
+            } else if let Ok(validators) = self.validator_store.list_validators() {
+                validators.iter().max_by_key(|(_, v)| v.stake).map(|(k, _)| k.clone()).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            if !credit_key.is_empty() {
+                let _ = self.submit_entropy(&credit_key);
+            }
+        }
+        
         Ok(Some(block))
     }
 
