@@ -377,7 +377,9 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
               if (!cancelled) setPeerDetails(details);
               // Collect peer URLs for stats check
               if (peersData.peers) {
-                discoveredPeerUrls = peersData.peers.map(u => u.replace(/\/+$/, "").replace(/\/api$/, ""));
+                discoveredPeerUrls = peersData.peers
+                  .map(u => u.replace(/\/+$/, "").replace(/\/api$/, ""))
+                  .filter(u => !u.includes("127.0.0.1") && !u.includes("localhost"));
               }
             }
           }
