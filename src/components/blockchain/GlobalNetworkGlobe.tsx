@@ -242,7 +242,13 @@ interface NetworkSceneProps {
 }
 
 const NetworkScene = ({ nodeCount, peerCount, nodeNames = [] }: NetworkSceneProps) => {
-  const totalNodes = Math.max(nodeCount + peerCount, 3); // At least 3 for visualization
+  const rawTotal = Math.max(nodeCount + peerCount, 3);
+  // Lock in the max node count so positions never reset on poll fluctuations
+  const stableCountRef = useRef(rawTotal);
+  if (rawTotal > stableCountRef.current) {
+    stableCountRef.current = rawTotal;
+  }
+  const totalNodes = stableCountRef.current;
   const nodes = useMemo(() => generateNodePositions(totalNodes, 2), [totalNodes]);
   const connections = useMemo(() => generateConnections(nodes, 0.12), [nodes]);
 
