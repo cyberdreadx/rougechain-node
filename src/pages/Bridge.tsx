@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { baseSepolia } from "viem/chains";
+import { getBaseChainConfig, getUsdcAddress, BASE_SEPOLIA_CHAIN_ID } from "@/lib/bridge";
 import {
   getBridgeConfig,
   claimBridgeDeposit,
@@ -17,7 +17,6 @@ import {
   claimXrgeBridgeDeposit,
   bridgeWithdrawXrge,
   type XrgeBridgeConfig,
-  USDC_BASE_SEPOLIA,
 } from "@/lib/bridge";
 import { createSignedBridgeWithdraw } from "@/lib/pqc-signer";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
@@ -89,7 +88,7 @@ const Bridge = () => {
 
       const balanceOfSig = "0x70a08231" + evmAddress.slice(2).padStart(64, "0");
 
-      const usdcHex = await window.ethereum.request({ method: "eth_call", params: [{ to: USDC_BASE_SEPOLIA, data: balanceOfSig }, "latest"] }) as string;
+      const usdcHex = await window.ethereum.request({ method: "eth_call", params: [{ to: usdcAddress, data: balanceOfSig }, "latest"] }) as string;
       setEvmUsdcBalance(Number(BigInt(usdcHex)) / 1e6);
 
       const xrgeAddr = xrgeConfig?.tokenAddress;
@@ -104,23 +103,29 @@ const Bridge = () => {
 
   useEffect(() => { refreshEvmBalances(); }, [evmAddress, xrgeConfig]);
 
+  // Detect chain from daemon config
+  const detectedChainId = config?.chainId ?? xrgeConfig?.chainId ?? BASE_SEPOLIA_CHAIN_ID;
+  const chainConfig = getBaseChainConfig(detectedChainId);
+  const chainLabel = chainConfig.name; // "Base" or "Base Sepolia"
+  const usdcAddress = getUsdcAddress(detectedChainId);
+
   const connectEvm = async () => {
     if (typeof window.ethereum === "undefined") {
       toast.error("Install MetaMask or another Web3 wallet");
       return;
     }
     try {
-      const chainIdHex = `0x${baseSepolia.id.toString(16)}`;
+      const chainIdHex = `0x${detectedChainId.toString(16)}`;
       await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: chainIdHex }] }).catch(async () => {
         await window.ethereum.request({
           method: "wallet_addEthereumChain",
-          params: [{ chainId: chainIdHex, chainName: baseSepolia.name, nativeCurrency: baseSepolia.nativeCurrency, rpcUrls: [baseSepolia.rpcUrls.default.http[0]], blockExplorerUrls: [baseSepolia.blockExplorers.default.url] }],
+          params: [{ chainId: chainIdHex, chainName: chainConfig.name, nativeCurrency: chainConfig.nativeCurrency, rpcUrls: [chainConfig.rpcUrls.default.http[0]], blockExplorerUrls: [chainConfig.blockExplorers.default.url] }],
         });
       });
       const accounts = await window.ethereum.request({ method: "eth_requestAccounts" }) as string[];
       setEvmAddress(accounts[0]);
       setEvmTarget(accounts[0]);
-      toast.success("Connected to Base Sepolia");
+      toast.success(`Connected to ${chainLabel}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to connect");
     }
@@ -222,7 +227,7 @@ const Bridge = () => {
           }
         } else {
           setStep("Sending USDC to bridge...");
-          const usdcAddr = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+          const usdcAddr = usdcAddress;
           const usdcAmount = "0x" + (BigInt(Math.round(amountNum * 1e6))).toString(16);
           const transferData = `0xa9059cbb${config.custodyAddress.slice(2).padStart(64, "0")}${BigInt(usdcAmount).toString(16).padStart(64, "0")}`;
           const txHash = await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: usdcAddr, data: transferData }] });
@@ -334,8 +339,8 @@ const Bridge = () => {
     );
   }
 
-  const fromChain = direction === "deposit" ? "Base Sepolia" : "RougeChain";
-  const toChain = direction === "deposit" ? "RougeChain" : "Base Sepolia";
+  const fromChain = direction === "deposit" ? chainLabel : "RougeChain";
+  const toChain = direction === "deposit" ? "RougeChain" : chainLabel;
   const fromToken = direction === "deposit" ? currentAsset.label : currentAsset.l1Label;
   const toToken = direction === "deposit" ? currentAsset.l1Label : currentAsset.label;
 
@@ -477,7 +482,7 @@ const Bridge = () => {
               {direction === "deposit" && !evmAddress ? (
                 <Button onClick={connectEvm} variant="outline" className="w-full gap-2 h-12 whitespace-nowrap text-sm">
                   <Wallet className="w-4 h-4 shrink-0" />
-                  <span className="hidden sm:inline">Connect MetaMask (Base Sepolia)</span>
+                  <span className="hidden sm:inline">Connect MetaMask ({chainLabel})</span>
                   <span className="sm:hidden">Connect MetaMask</span>
                 </Button>
               ) : (
