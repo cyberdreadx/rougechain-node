@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { Shield, Copy, ExternalLink, Wallet, TrendingUp, TrendingDown, Upload, Puzzle } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { pubkeyToAddress, formatAddress } from "@/lib/address";
 
 interface WalletCardProps {
   address?: string | null;
@@ -18,6 +19,7 @@ interface WalletCardProps {
 const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24h, isConnected = false, onConnect, onImport, onConnectExtension }: WalletCardProps) => {
   const [copied, setCopied] = useState(false);
   const [extensionDetected, setExtensionDetected] = useState(false);
+  const [rougeAddress, setRougeAddress] = useState<string | null>(null);
 
   useEffect(() => {
     // Check if the RougeChain Wallet extension is installed
@@ -28,18 +30,27 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
     return () => window.removeEventListener("rougechain#initialized", check);
   }, []);
 
-  const copyAddress = () => {
+  // Derive rouge1... address from public key
+  useEffect(() => {
     if (address) {
-      const fullAddress = `xrge:${address}`;
-      navigator.clipboard.writeText(fullAddress);
+      pubkeyToAddress(address).then(setRougeAddress).catch(() => {});
+    }
+  }, [address]);
+
+  const copyAddress = () => {
+    const textToCopy = rougeAddress || address;
+    if (textToCopy) {
+      navigator.clipboard.writeText(textToCopy);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
   };
 
-  const truncatedAddress = address 
-    ? `xrge:${address.slice(0, 6)}...${address.slice(-4)}` 
-    : null;
+  const truncatedAddress = rougeAddress
+    ? formatAddress(rougeAddress)
+    : address
+      ? `${address.slice(0, 8)}...${address.slice(-4)}`
+      : null;
 
   return (
     <motion.div
