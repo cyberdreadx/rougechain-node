@@ -469,6 +469,7 @@ fn build_http_router(state: AppState) -> Router {
         // Token allowance endpoints (ERC-20 approve/transferFrom)
         .route("/api/v2/token/approve", post(v2_token_approve))
         .route("/api/v2/token/transfer-from", post(v2_token_transfer_from))
+        .route("/api/v2/token/freeze", post(v2_token_freeze))
         .route("/api/token/allowance", get(get_token_allowance))
         .route("/api/token/allowances", get(get_token_allowances))
         .route("/api/v2/pool/create", post(v2_create_pool))
@@ -849,6 +850,7 @@ struct TokenMetadataResponse {
     discord: Option<String>,
     created_at: i64,
     updated_at: i64,
+    frozen: bool,
 }
 
 #[derive(Serialize)]
@@ -875,6 +877,7 @@ async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensR
                     discord: t.discord,
                     created_at: t.created_at,
                     updated_at: t.updated_at,
+                    frozen: t.frozen,
                 })
                 .collect();
             Ok(Json(AllTokensResponse {
@@ -3109,6 +3112,16 @@ async fn v2_transfer(
     }
     if amount <= 0.0 {
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "amount must be greater than zero"}))));
+    }
+
+    // Freeze check: reject transfers of frozen tokens (XRGE cannot be frozen)
+    if token != "XRGE" {
+        if let Ok(true) = node.is_token_frozen(token) {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("Token {} is frozen — transfers are paused by the creator", token)
+            }))));
+        }
     }
 
     // Balance check
@@ -5765,4 +5778,45 @@ async fn get_account_nonce(
         "nonce": current,
         "next_nonce": current + 1
     }))
+}
+
+async fn v2_token_freeze(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let public_key = body.get("public_key").and_then(|v| v.as_str())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "missing public_key"}))))?;
+    let payload_str = body.get("payload").and_then(|v| v.as_str())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "missing payload"}))))?;
+    let _signature = body.get("signature").and_then(|v| v.as_str())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "missing signature"}))))?;
+
+    let payload: serde_json::Value = serde_json::from_str(payload_str)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("invalid payload: {}", e)}))))?;
+
+    let symbol = payload.get("tokenSymbol").or_else(|| payload.get("token_symbol"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "missing tokenSymbol"}))))?;
+    let frozen = payload.get("frozen").and_then(|v| v.as_bool()).unwrap_or(true);
+
+    // Verify caller is the creator
+    let node = &state.node;
+    match node.is_token_creator(symbol, public_key) {
+        Ok(true) => {}
+        Ok(false) => return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({
+            "success": false, "error": "only the token creator can freeze/unfreeze"
+        })))),
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            "success": false, "error": e
+        })))),
+    }
+
+    node.set_token_frozen(symbol, frozen)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "symbol": symbol,
+        "frozen": frozen
+    })))
 }

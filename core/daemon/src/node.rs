@@ -799,6 +799,7 @@ impl L1Node {
             discord: None,
             created_at: now,
             updated_at: now,
+            frozen: false,
         };
         self.token_metadata_store.set_metadata(&metadata)?;
         Ok(token_id)
@@ -836,6 +837,7 @@ impl L1Node {
             discord: discord.or(existing.discord),
             created_at: existing.created_at,
             updated_at: now,
+            frozen: existing.frozen,
         };
         self.token_metadata_store.set_metadata(&updated)
     }
@@ -3948,5 +3950,16 @@ impl L1Node {
     pub fn update_mail_labels_wallet_id(&self, old_id: &str, new_id: &str) -> Result<usize, String> {
         self.mail_store.update_labels_wallet_id(old_id, new_id)
     }
+
+    // ===== Token freeze/pause =====
+
+    pub fn is_token_frozen(&self, symbol: &str) -> Result<bool, String> {
+        self.token_metadata_store.is_frozen(symbol)
+    }
+
+    pub fn set_token_frozen(&self, symbol: &str, frozen: bool) -> Result<(), String> {
+        self.token_metadata_store.set_frozen(symbol, frozen)
+    }
+
 
 }

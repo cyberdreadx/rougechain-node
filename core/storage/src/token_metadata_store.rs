@@ -18,6 +18,8 @@ pub struct TokenMetadata {
     pub discord: Option<String>,
     pub created_at: i64,           // Timestamp when token was created
     pub updated_at: i64,           // Timestamp of last metadata update
+    #[serde(default)]
+    pub frozen: bool,              // Creator can freeze all transfers
 }
 
 impl TokenMetadata {
@@ -104,6 +106,26 @@ impl TokenMetadataStore {
         match self.get_metadata(symbol)? {
             Some(metadata) => Ok(metadata.creator == public_key),
             None => Ok(false),
+        }
+    }
+
+    /// Check if a token is frozen
+    pub fn is_frozen(&self, symbol: &str) -> Result<bool, String> {
+        match self.get_metadata(symbol)? {
+            Some(m) => Ok(m.frozen),
+            None => Ok(false),
+        }
+    }
+
+    /// Set the frozen state for a token (only creator should call this)
+    pub fn set_frozen(&self, symbol: &str, frozen: bool) -> Result<(), String> {
+        match self.get_metadata(symbol)? {
+            Some(mut meta) => {
+                meta.frozen = frozen;
+                meta.updated_at = chrono::Utc::now().timestamp();
+                self.set_metadata(&meta)
+            }
+            None => Err(format!("Token {} not found", symbol)),
         }
     }
 
