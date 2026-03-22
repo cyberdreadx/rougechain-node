@@ -10,6 +10,8 @@ export {
   createSignedBridgeWithdraw,
   createSignedTokenMetadataUpdate,
   createSignedTokenMetadataClaim,
+  createSignedTokenApproval,
+  createSignedTokenTransferFrom,
   createSignedShield,
   createSignedShieldedTransfer,
   createSignedUnshield,
@@ -91,4 +93,6 @@ export type {
   RollupBatchResult,
   RollupSubmitParams,
   RollupSubmitResult,
+  ApproveParams,
+  TransferFromParams,
 } from "./types.js";

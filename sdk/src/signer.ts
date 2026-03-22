@@ -132,6 +132,36 @@ export function createSignedTokenMetadataClaim(
   });
 }
 
+export function createSignedTokenApproval(
+  wallet: WalletKeys,
+  spender: string,
+  tokenSymbol: string,
+  amount: number
+): SignedTransaction {
+  return buildAndSign(wallet, {
+    type: "approve",
+    spender,
+    token_symbol: tokenSymbol,
+    amount,
+  });
+}
+
+export function createSignedTokenTransferFrom(
+  wallet: WalletKeys,
+  owner: string,
+  to: string,
+  tokenSymbol: string,
+  amount: number
+): SignedTransaction {
+  return buildAndSign(wallet, {
+    type: "transfer_from",
+    owner,
+    to,
+    token_symbol: tokenSymbol,
+    amount,
+  });
+}
+
 export function createSignedSwap(
   wallet: WalletKeys,
   tokenIn: string,

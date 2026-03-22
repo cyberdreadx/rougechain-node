@@ -124,6 +124,50 @@ export async function secureCreateToken(
 }
 
 /**
+ * Approve a spender to transfer tokens on your behalf (client-side signing)
+ */
+export async function secureApproveToken(
+  ownerPublicKey: string,
+  ownerPrivateKey: string,
+  spenderPublicKey: string,
+  tokenSymbol: string,
+  amount: number
+): Promise<ApiResponse<{ spender: string; token_symbol: string; amount: number }>> {
+  const { createSignedTokenApproval } = await import("./pqc-signer");
+  const signedTx = createSignedTokenApproval(
+    ownerPublicKey,
+    ownerPrivateKey,
+    spenderPublicKey,
+    tokenSymbol,
+    amount
+  );
+  return submitSignedTx("/v2/token/approve", signedTx) as Promise<ApiResponse<{ spender: string; token_symbol: string; amount: number }>>;
+}
+
+/**
+ * Transfer tokens from an owner using an existing allowance (client-side signing)
+ */
+export async function secureTransferFrom(
+  spenderPublicKey: string,
+  spenderPrivateKey: string,
+  ownerPublicKey: string,
+  recipientPublicKey: string,
+  tokenSymbol: string,
+  amount: number
+): Promise<ApiResponse<{ from: string; to: string; amount: number }>> {
+  const { createSignedTokenTransferFrom } = await import("./pqc-signer");
+  const signedTx = createSignedTokenTransferFrom(
+    spenderPublicKey,
+    spenderPrivateKey,
+    ownerPublicKey,
+    recipientPublicKey,
+    tokenSymbol,
+    amount
+  );
+  return submitSignedTx("/v2/token/transfer-from", signedTx) as Promise<ApiResponse<{ from: string; to: string; amount: number }>>;
+}
+
+/**
  * Execute a swap securely (client-side signing)
  */
 export async function secureSwap(

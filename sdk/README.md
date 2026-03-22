@@ -55,6 +55,7 @@ const { balance } = await rc.getBalance(wallet.publicKey);
 | **Wallet** | — | ML-DSA-65 keypair generation, import/export, client-side signing |
 | **Transfers** | `rc` | Send XRGE or custom tokens, burn tokens |
 | **Token Creation** | `rc` | Launch new tokens with on-chain logo support |
+| **Token Allowances** | `rc` | ERC-20 style approve/transferFrom for DeFi composability |
 | **Staking** | `rc` | Stake/unstake XRGE for validation |
 | **DEX** | `rc.dex` | AMM pools, swaps with slippage protection, liquidity |
 | **NFTs** | `rc.nft` | RC-721 collections, mint, batch mint, royalties, freeze |

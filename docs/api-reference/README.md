@@ -98,6 +98,18 @@ All v2 endpoints accept pre-signed transactions. Private keys never leave the cl
 | `/api/v2/stake` | POST | Stake tokens |
 | `/api/v2/unstake` | POST | Unstake tokens |
 | `/api/v2/faucet` | POST | Request faucet |
+| `/api/v2/token/approve` | POST | Approve token allowance |
+| `/api/v2/token/transfer-from` | POST | Transfer using allowance |
+
+### Token Allowances (ERC-20 Style)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v2/token/approve` | POST | Approve a spender to use your tokens |
+| `/api/v2/token/transfer-from` | POST | Transfer tokens from owner using allowance |
+| `/api/token/allowance?owner=&spender=&token=` | GET | Check specific allowance amount |
+| `/api/token/allowances?owner=` | GET | List all allowances by owner |
+| `/api/token/allowances?spender=` | GET | List all allowances for a spender |
 
 ### P2P
 

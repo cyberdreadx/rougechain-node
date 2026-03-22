@@ -724,6 +724,7 @@ impl L1Node {
             symbol: existing.symbol,
             name: existing.name,
             creator: existing.creator,
+            token_id: existing.token_id,
             image: image.or(existing.image),
             description: description.or(existing.description),
             website: website.or(existing.website),
@@ -733,6 +734,23 @@ impl L1Node {
             updated_at: now,
         };
         self.token_metadata_store.set_metadata(&updated)
+    }
+
+    // ===== Allowance Methods =====
+
+    /// Get allowance for a specific owner/spender/token combination
+    pub fn get_allowance(&self, owner: &str, spender: &str, token: &str) -> Result<Option<quantum_vault_storage::allowance_store::Allowance>, String> {
+        self.allowance_store.get_allowance(owner, spender, token)
+    }
+
+    /// Get all allowances granted by an owner
+    pub fn get_allowances_by_owner(&self, owner: &str) -> Result<Vec<quantum_vault_storage::allowance_store::Allowance>, String> {
+        self.allowance_store.get_allowances_by_owner(owner)
+    }
+
+    /// Get all allowances granted to a spender
+    pub fn get_allowances_for_spender(&self, spender: &str) -> Result<Vec<quantum_vault_storage::allowance_store::Allowance>, String> {
+        self.allowance_store.get_allowances_for_spender(spender)
     }
 
     // ===== AMM/DEX Methods =====
@@ -1499,6 +1517,105 @@ impl L1Node {
             let after_nft = balances.values().sum::<f64>();
             let deducted_nft = before_nft - after_nft;
             if deducted_nft > 0.0 { actual_fees_collected += tx.fee.min(deducted_nft); }
+
+            // Handle allowance transactions (approve / transfer_from)
+            match tx.tx_type.as_str() {
+                "approve" => {
+                    let spender = match tx.payload.spender_pub_key.as_ref() {
+                        Some(s) if !s.is_empty() => s,
+                        _ => { eprintln!("[node] Rejecting approve: missing spender"); continue; }
+                    };
+                    let symbol = match tx.payload.token_symbol.as_ref() {
+                        Some(s) if !s.is_empty() => s.trim().to_uppercase(),
+                        _ => { eprintln!("[node] Rejecting approve: missing token_symbol"); continue; }
+                    };
+                    let amount = tx.payload.allowance_amount.unwrap_or(0);
+
+                    // Fee guard
+                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                    if xrge_bal < tx.fee {
+                        eprintln!("[node] Rejecting approve: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
+                        continue;
+                    }
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                    actual_fees_collected += tx.fee;
+
+                    let allowance = quantum_vault_storage::allowance_store::Allowance {
+                        owner: tx.from_pub_key.clone(),
+                        spender: spender.clone(),
+                        token_symbol: symbol.clone(),
+                        amount,
+                    };
+                    if let Err(e) = self.allowance_store.set_allowance(&allowance) {
+                        eprintln!("[node] Failed to set allowance: {}", e);
+                    }
+                }
+                "transfer_from" => {
+                    let owner = match tx.payload.owner_pub_key.as_ref() {
+                        Some(o) if !o.is_empty() => o,
+                        _ => { eprintln!("[node] Rejecting transfer_from: missing owner"); continue; }
+                    };
+                    let to = match tx.payload.to_pub_key_hex.as_ref() {
+                        Some(t) if !t.is_empty() => t,
+                        _ => { eprintln!("[node] Rejecting transfer_from: missing recipient"); continue; }
+                    };
+                    let symbol = match tx.payload.token_symbol.as_ref() {
+                        Some(s) if !s.is_empty() => s.trim().to_uppercase(),
+                        _ => { eprintln!("[node] Rejecting transfer_from: missing token_symbol"); continue; }
+                    };
+                    let amount = tx.payload.amount.unwrap_or(0);
+                    if amount == 0 {
+                        eprintln!("[node] Rejecting transfer_from: zero amount");
+                        continue;
+                    }
+
+                    // Fee guard (spender pays gas)
+                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                    if xrge_bal < tx.fee {
+                        eprintln!("[node] Rejecting transfer_from: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
+                        continue;
+                    }
+
+                    // Check allowance
+                    let current_allowance = self.allowance_store
+                        .get_allowance(owner, &tx.from_pub_key, &symbol)
+                        .unwrap_or(None)
+                        .map(|a| a.amount)
+                        .unwrap_or(0);
+                    if current_allowance < amount {
+                        eprintln!("[node] Rejecting transfer_from: allowance {} < amount {}", current_allowance, amount);
+                        continue;
+                    }
+
+                    // Check owner's token balance
+                    let owner_key = (owner.clone(), symbol.clone());
+                    let owner_bal = *token_balances.get(&owner_key).unwrap_or(&0.0);
+                    if owner_bal < amount as f64 {
+                        eprintln!("[node] Rejecting transfer_from: owner {} balance {:.4} < {}", symbol, owner_bal, amount);
+                        continue;
+                    }
+
+                    // Execute: deduct fee from spender, move tokens owner→recipient, decrement allowance
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                    actual_fees_collected += tx.fee;
+
+                    *token_balances.entry(owner_key).or_insert(0.0) -= amount as f64;
+                    let recipient_key = (to.clone(), symbol.clone());
+                    *token_balances.entry(recipient_key).or_insert(0.0) += amount as f64;
+
+                    // Decrement allowance
+                    let new_allowance = quantum_vault_storage::allowance_store::Allowance {
+                        owner: owner.clone(),
+                        spender: tx.from_pub_key.clone(),
+                        token_symbol: symbol.clone(),
+                        amount: current_allowance - amount,
+                    };
+                    if let Err(e) = self.allowance_store.set_allowance(&new_allowance) {
+                        eprintln!("[node] Failed to update allowance: {}", e);
+                    }
+                }
+                _ => {}
+            }
         }
         
         // Persist bridge_withdraw txs for operator to fulfill releases
@@ -3264,16 +3381,6 @@ impl L1Node {
 
     pub fn get_votes_for_proposal(&self, proposal_id: &str) -> Result<Vec<Vote>, String> {
         self.governance_store.get_votes_for_proposal(proposal_id)
-    }
-
-    // ===== Allowance Methods =====
-
-    pub fn get_allowances_by_owner(&self, owner: &str) -> Result<Vec<Allowance>, String> {
-        self.allowance_store.get_allowances_by_owner(owner)
-    }
-
-    pub fn get_allowance(&self, owner: &str, spender: &str, token: &str) -> Result<Option<Allowance>, String> {
-        self.allowance_store.get_allowance(owner, spender, token)
     }
 
     /// Apply NFT transaction effects during block processing

@@ -35,6 +35,7 @@ export interface TransactionPayload {
   type: "transfer" | "create_token" | "update_token_metadata" | "claim_token_metadata" | "swap" | "create_pool" | "add_liquidity" | "remove_liquidity" | "stake" | "unstake" | "faucet"
   | "nft_create_collection" | "nft_mint" | "nft_batch_mint" | "nft_transfer" | "nft_burn" | "nft_lock" | "nft_freeze_collection"
   | "bridge_withdraw"
+  | "approve" | "transfer_from"
   | "shield" | "shielded_transfer" | "unshield";
   from: string;
   to?: string;
@@ -87,6 +88,9 @@ export interface TransactionPayload {
   nullifiers?: string[];
   output_commitments?: string[];
   proof?: string;
+  // Allowance fields (approve/transferFrom)
+  spender?: string;
+  owner?: string;
 }
 
 /**
@@ -276,6 +280,55 @@ export function createSignedTokenMetadataClaim(
   };
 
   return signTransaction(payload, privateKey, publicKey);
+}
+
+/**
+ * Create a signed token approval (ERC-20 style approve)
+ */
+export function createSignedTokenApproval(
+  ownerPublicKey: string,
+  ownerPrivateKey: string,
+  spenderPublicKey: string,
+  tokenSymbol: string,
+  amount: number
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "approve",
+    from: ownerPublicKey,
+    spender: spenderPublicKey,
+    token_symbol: tokenSymbol,
+    amount,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+
+  return signTransaction(payload, ownerPrivateKey, ownerPublicKey);
+}
+
+/**
+ * Create a signed transferFrom transaction (ERC-20 style)
+ * Spender transfers tokens from owner to recipient using existing allowance
+ */
+export function createSignedTokenTransferFrom(
+  spenderPublicKey: string,
+  spenderPrivateKey: string,
+  ownerPublicKey: string,
+  recipientPublicKey: string,
+  tokenSymbol: string,
+  amount: number
+): SignedTransaction {
+  const payload: TransactionPayload = {
+    type: "transfer_from",
+    from: spenderPublicKey,
+    owner: ownerPublicKey,
+    to: recipientPublicKey,
+    token_symbol: tokenSymbol,
+    amount,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+
+  return signTransaction(payload, spenderPrivateKey, spenderPublicKey);
 }
 
 /**

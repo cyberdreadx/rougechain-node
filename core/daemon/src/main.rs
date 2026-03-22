@@ -464,6 +464,11 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/token/create", post(v2_create_token))
         .route("/api/v2/token/metadata/update", post(v2_update_token_metadata))
         .route("/api/v2/token/metadata/claim", post(v2_claim_token_metadata))
+        // Token allowance endpoints (ERC-20 approve/transferFrom)
+        .route("/api/v2/token/approve", post(v2_token_approve))
+        .route("/api/v2/token/transfer-from", post(v2_token_transfer_from))
+        .route("/api/token/allowance", get(get_token_allowance))
+        .route("/api/token/allowances", get(get_token_allowances))
         .route("/api/v2/pool/create", post(v2_create_pool))
         .route("/api/v2/pool/add-liquidity", post(v2_add_liquidity))
         .route("/api/v2/pool/remove-liquidity", post(v2_remove_liquidity))
@@ -3294,6 +3299,191 @@ async fn v2_claim_token_metadata(
         }))),
         Err(e) => Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e})))),
     }
+}
+// ===== Token Allowance Handlers =====
+
+async fn v2_token_approve(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let node = &state.node;
+    let payload = &body.payload;
+
+    let spender = payload.get("spender").and_then(|v| v.as_str()).unwrap_or_default();
+    let token_symbol = payload.get("token_symbol").and_then(|v| v.as_str()).unwrap_or_default();
+    let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    if spender.is_empty() || token_symbol.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "spender and token_symbol required"}))));
+    }
+
+    let fee = 1.0_f64;
+    let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE for fee: {:.4} < {:.4}", bal, fee)}))));
+    }
+
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "approve".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            spender_pub_key: Some(spender.to_string()),
+            token_symbol: Some(token_symbol.to_string()),
+            allowance_amount: Some(amount),
+            ..Default::default()
+        },
+        fee,
+        sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
+    };
+
+    let tx_clone = tx.clone();
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": format!("Approval of {} {} for spender submitted", amount, token_symbol),
+        "spender": spender,
+        "token_symbol": token_symbol,
+        "amount": amount
+    })))
+}
+
+async fn v2_token_transfer_from(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let node = &state.node;
+    let payload = &body.payload;
+
+    let owner = payload.get("owner").and_then(|v| v.as_str()).unwrap_or_default();
+    let to = payload.get("to").and_then(|v| v.as_str()).unwrap_or_default();
+    let token_symbol = payload.get("token_symbol").and_then(|v| v.as_str()).unwrap_or_default();
+    let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    if owner.is_empty() || to.is_empty() || token_symbol.is_empty() || amount == 0 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "owner, to, token_symbol, and amount (>0) required"}))));
+    }
+
+    // Check allowance
+    let sym_upper = token_symbol.trim().to_uppercase();
+    let current = node.get_allowance(owner, &body.public_key, &sym_upper)
+        .unwrap_or(None)
+        .map(|a| a.amount)
+        .unwrap_or(0);
+    if current < amount {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient allowance: have {}, need {}", current, amount)}))));
+    }
+
+    let fee = 1.0_f64;
+    let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE for fee: {:.4} < {:.4}", bal, fee)}))));
+    }
+
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "transfer_from".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        payload: TxPayload {
+            owner_pub_key: Some(owner.to_string()),
+            to_pub_key_hex: Some(to.to_string()),
+            token_symbol: Some(token_symbol.to_string()),
+            amount: Some(amount),
+            ..Default::default()
+        },
+        fee,
+        sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
+    };
+
+    let tx_clone = tx.clone();
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": format!("TransferFrom of {} {} submitted", amount, token_symbol),
+        "from": owner,
+        "to": to,
+        "amount": amount
+    })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AllowanceQuery {
+    owner: Option<String>,
+    spender: Option<String>,
+    token: Option<String>,
+}
+
+async fn get_token_allowance(
+    State(state): State<AppState>,
+    Query(params): Query<AllowanceQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let owner = params.owner.as_deref().unwrap_or_default();
+    let spender = params.spender.as_deref().unwrap_or_default();
+    let token = params.token.as_deref().unwrap_or_default();
+
+    if owner.is_empty() || spender.is_empty() || token.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "owner, spender, and token query params required"}))));
+    }
+
+    let allowance = state.node.get_allowance(owner, spender, &token.to_uppercase())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
+
+    Ok(Json(serde_json::json!({
+        "owner": owner,
+        "spender": spender,
+        "token": token.to_uppercase(),
+        "amount": allowance.map(|a| a.amount).unwrap_or(0)
+    })))
+}
+
+async fn get_token_allowances(
+    State(state): State<AppState>,
+    Query(params): Query<AllowanceQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let owner = params.owner.as_deref().unwrap_or_default();
+    let spender = params.spender.as_deref().unwrap_or_default();
+
+    if owner.is_empty() && spender.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "owner or spender query param required"}))));
+    }
+
+    let allowances = if !owner.is_empty() {
+        state.node.get_allowances_by_owner(owner)
+    } else {
+        state.node.get_allowances_for_spender(spender)
+    }.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
+
+    let items: Vec<serde_json::Value> = allowances.iter().map(|a| {
+        serde_json::json!({
+            "owner": a.owner,
+            "spender": a.spender,
+            "token_symbol": a.token_symbol,
+            "amount": a.amount
+        })
+    }).collect();
+
+    Ok(Json(serde_json::json!({
+        "allowances": items,
+        "count": items.len()
+    })))
 }
 
 async fn v2_create_pool(

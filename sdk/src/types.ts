@@ -33,6 +33,8 @@ export type TransactionType =
   | "bridge_withdraw"
   | "update_token_metadata"
   | "claim_token_metadata"
+  | "approve"
+  | "transfer_from"
   | "shield"
   | "shielded_transfer"
   | "unshield";
@@ -80,6 +82,9 @@ export interface TransactionPayload {
   website?: string;
   twitter?: string;
   discord?: string;
+  // Allowance fields
+  spender?: string;
+  owner?: string;
 }
 
 export interface SignedTransaction {
@@ -478,6 +483,19 @@ export interface TokenMetadataUpdateParams {
   website?: string;
   twitter?: string;
   discord?: string;
+}
+
+export interface ApproveParams {
+  spender: string;
+  tokenSymbol: string;
+  amount: number;
+}
+
+export interface TransferFromParams {
+  owner: string;
+  to: string;
+  tokenSymbol: string;
+  amount: number;
 }
 
 // ===== Shielded Transactions =====
