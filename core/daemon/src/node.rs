@@ -1998,6 +1998,16 @@ impl L1Node {
 
     #[allow(dead_code)]
     fn apply_balance_tx(&self, tx: &TxV1) -> Result<(), String> {
+        // Pre-validate create_token at consensus level (has access to metadata store)
+        if tx.tx_type == "create_token" {
+            if let Some(ref sym) = tx.payload.token_symbol {
+                let sym_upper = sym.trim().to_uppercase();
+                if let Ok(Some(_)) = self.token_metadata_store.get_metadata(&sym_upper) {
+                    eprintln!("[node] Rejecting create_token: symbol '{}' already exists", sym_upper);
+                    return Ok(()); // silently drop duplicate (already mined)
+                }
+            }
+        }
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
         let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
@@ -2800,10 +2810,39 @@ impl L1Node {
             "create_token" => {
                 const RESERVED: &[&str] = &["XRGE", "QETH", "QUSDC", "ETH", "USDC"];
                 if let Some(ref sym) = tx.payload.token_symbol {
-                    if RESERVED.contains(&sym.to_uppercase().as_str()) {
+                    let sym_trimmed = sym.trim();
+                    let sym_upper = sym_trimmed.to_uppercase();
+
+                    // Reserved symbol check
+                    if RESERVED.contains(&sym_upper.as_str()) {
                         eprintln!("[node] Rejecting create_token: reserved symbol '{}'", sym);
                         return;
                     }
+
+                    // Symbol length: 1-10 chars
+                    let char_count = sym_trimmed.chars().count();
+                    if char_count == 0 || char_count > 10 {
+                        eprintln!("[node] Rejecting create_token: symbol must be 1-10 chars (got {})", char_count);
+                        return;
+                    }
+
+                    // No whitespace in symbol
+                    if sym_trimmed.contains(char::is_whitespace) {
+                        eprintln!("[node] Rejecting create_token: symbol contains whitespace");
+                        return;
+                    }
+
+                    // Name length: 1-64 chars
+                    if let Some(ref name) = tx.payload.token_name {
+                        let name_len = name.trim().chars().count();
+                        if name_len == 0 || name_len > 64 {
+                            eprintln!("[node] Rejecting create_token: name must be 1-64 chars (got {})", name_len);
+                            return;
+                        }
+                    }
+                } else {
+                    eprintln!("[node] Rejecting create_token: missing symbol");
+                    return;
                 }
                 let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
                 if xrge_bal < tx.fee {
@@ -2814,7 +2853,7 @@ impl L1Node {
                 
                 if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
                     let total_supply = tx.payload.token_total_supply.unwrap_or(0) as f64;
-                    let creator_key = (tx.from_pub_key.clone(), token_symbol.clone());
+                    let creator_key = (tx.from_pub_key.clone(), token_symbol.trim().to_uppercase());
                     *token_balances.entry(creator_key).or_insert(0.0) += total_supply;
                 }
             }

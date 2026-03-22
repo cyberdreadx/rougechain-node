@@ -3159,9 +3159,37 @@ async fn v2_create_token(
     if token_name.is_empty() || token_symbol.is_empty() {
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "token_name and token_symbol are required"}))));
     }
+
+    // Symbol validation: 1-10 chars, no leading/trailing whitespace
+    let sym_trimmed = token_symbol.trim();
+    if sym_trimmed.is_empty() || sym_trimmed.chars().count() > 10 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "token_symbol must be 1-10 characters"}))));
+    }
+    if sym_trimmed.contains(char::is_whitespace) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "token_symbol cannot contain whitespace"}))));
+    }
+
+    // Name validation: 1-64 chars
+    let name_trimmed = token_name.trim();
+    if name_trimmed.is_empty() || name_trimmed.chars().count() > 64 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "token_name must be 1-64 characters"}))));
+    }
+
+    // Duplicate symbol check
+    let sym_upper = sym_trimmed.to_uppercase();
+    if let Ok(Some(_)) = node.get_token_metadata(&sym_upper) {
+        return Err((StatusCode::CONFLICT, Json(serde_json::json!({"success": false, "error": format!("Token symbol '{}' already exists", sym_upper)}))));
+    }
+
     if initial_supply == 0 {
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "initial_supply must be greater than zero"}))));
     }
+
+    // Generate deterministic token ID
+    use sha2::{Sha256, Digest};
+    let token_id_input = format!("{}:{}:{}", body.public_key, sym_upper, chrono::Utc::now().timestamp_millis());
+    let token_id_hash = Sha256::digest(token_id_input.as_bytes());
+    let token_id = hex::encode(&token_id_hash[..16]); // 32-char hex ID
 
     let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
     if bal < fee {
@@ -3204,7 +3232,8 @@ async fn v2_create_token(
 
     Ok(Json(serde_json::json!({
         "success": true,
-        "token_symbol": token_symbol,
+        "token_symbol": sym_upper,
+        "token_id": token_id,
         "message": "Token creation transaction submitted"
     })))
 }
