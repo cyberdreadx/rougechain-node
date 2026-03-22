@@ -21,6 +21,8 @@ import { Badge } from "@/components/ui/badge";
 import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/network";
 import { toast } from "sonner";
 import { formatTokenAmount } from "@/hooks/use-eth-price";
+import { RougeAddressLink } from "@/components/RougeAddressLink";
+import { useRougeAddress } from "@/hooks/useRougeAddress";
 
 const ITEMS_PER_PAGE = 20;
 
@@ -116,6 +118,7 @@ const labelForType = (type: string) => {
 
 const AddressDetail = () => {
   const { pubkey } = useParams<{ pubkey: string }>();
+  const { display: rougeAddr, full: rougeAddrFull } = useRougeAddress(pubkey);
   const [balanceData, setBalanceData] = useState<BalanceData | null>(null);
   const [transactions, setTransactions] = useState<AddressTx[]>([]);
   const [totalTxs, setTotalTxs] = useState(0);
@@ -264,14 +267,34 @@ const AddressDetail = () => {
                 <h1 className="text-2xl font-bold text-foreground">Address</h1>
                 <Badge variant="outline">{getNetworkLabel()}</Badge>
               </div>
+              {rougeAddr && (
+                <div className="flex items-center gap-2">
+                  <code className="text-sm font-mono text-primary break-all">
+                    {rougeAddr}
+                  </code>
+                  {rougeAddrFull && (
+                    <button
+                      onClick={() => copyToClipboard(rougeAddrFull)}
+                      className="p-1 hover:bg-secondary rounded transition-colors shrink-0"
+                      title="Copy rouge1 address"
+                    >
+                      {copiedValue === rougeAddrFull ? (
+                        <Check className="w-3.5 h-3.5 text-green-500" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5 text-muted-foreground" />
+                      )}
+                    </button>
+                  )}
+                </div>
+              )}
               <div className="flex items-center gap-2">
-                <code className="text-sm font-mono text-muted-foreground break-all">
+                <code className="text-xs font-mono text-muted-foreground break-all">
                   {pubkey}
                 </code>
                 <button
                   onClick={() => copyToClipboard(pubkey ?? "")}
                   className="p-1 hover:bg-secondary rounded transition-colors shrink-0"
-                  title="Copy address"
+                  title="Copy public key"
                 >
                   {copiedValue === pubkey ? (
                     <Check className="w-3.5 h-3.5 text-green-500" />
@@ -466,12 +489,7 @@ const AddressDetail = () => {
                       <div className="text-sm font-mono">
                         <div className="text-xs text-muted-foreground">Counterparty</div>
                         {counterparty ? (
-                          <Link
-                            to={`/address/${counterparty}`}
-                            className="text-primary hover:underline"
-                          >
-                            {truncateHash(counterparty, 10, 8)}
-                          </Link>
+                          <RougeAddressLink pubkey={counterparty} />
                         ) : (
                           <span>{"\u2014"}</span>
                         )}
@@ -572,12 +590,7 @@ const AddressDetail = () => {
                           </td>
                           <td className="py-2 px-2 font-mono">
                             {counterparty ? (
-                              <Link
-                                to={`/address/${counterparty}`}
-                                className="text-primary hover:underline"
-                              >
-                                {truncateHash(counterparty)}
-                              </Link>
+                              <RougeAddressLink pubkey={counterparty} />
                             ) : (
                               "\u2014"
                             )}

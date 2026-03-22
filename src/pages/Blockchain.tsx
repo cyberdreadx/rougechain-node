@@ -4,6 +4,7 @@ import { Shield, Blocks, RotateCcw, CheckCircle2, XCircle, Wifi, WifiOff } from 
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
+import { RougeAddressLink } from "@/components/RougeAddressLink";
 import PQCInfo from "@/components/blockchain/PQCInfo";
 import { QuantumThreatPanel } from "@/components/blockchain/QuantumThreatPanel";
 import { TamperDemo } from "@/components/blockchain/TamperDemo";
@@ -402,7 +403,7 @@ const Blockchain = () => {
                             <td className="py-2 px-2 text-muted-foreground">{formatAge(block.timestamp)}</td>
                             <td className="py-2 px-2 text-right font-mono">{getTxCount(block)}</td>
                             <td className="py-2 px-2 font-mono"><Link to={`/block/${block.index}`} className="text-primary/80 hover:underline">{truncateHash(block.hash)}</Link></td>
-                            <td className="py-2 px-2 font-mono"><Link to={`/address/${block.signerPublicKey}`} className="hover:underline text-accent">{truncateHash(block.signerPublicKey, 8, 6)}</Link></td>
+                            <td className="py-2 px-2"><RougeAddressLink pubkey={block.signerPublicKey} className="text-accent" /></td>
                           </tr>
                         ))}
                       </tbody>
@@ -424,7 +425,7 @@ const Blockchain = () => {
                           </div>
                           <div>
                             <p className="text-muted-foreground">Proposer</p>
-                            <p className="font-mono text-accent">{truncateHash(block.signerPublicKey, 8, 6)}</p>
+                            <p className="font-mono text-accent"><RougeAddressLink pubkey={block.signerPublicKey} /></p>
                           </div>
                           <div className="col-span-2">
                             <p className="text-muted-foreground">Hash</p>

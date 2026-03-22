@@ -19,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/network";
 import { toast } from "sonner";
 import { formatTokenAmount } from "@/hooks/use-eth-price";
+import { RougeAddressLink } from "@/components/RougeAddressLink";
 
 interface BlockTransaction {
   txId: string;
@@ -313,12 +314,7 @@ const BlockDetail = () => {
             <div>
               <p className="text-xs text-muted-foreground mb-1">Proposer</p>
               <div className="flex items-center gap-2 bg-background rounded border border-border p-2">
-                <Link
-                  to={`/address/${block.proposer}`}
-                  className="text-xs font-mono flex-1 break-all text-primary hover:underline"
-                >
-                  {block.proposer}
-                </Link>
+                <RougeAddressLink pubkey={block.proposer} className="text-xs flex-1 break-all" />
                 <CopyButton value={block.proposer} />
               </div>
             </div>
@@ -374,19 +370,15 @@ const BlockDetail = () => {
                           <div>
                             <div className="text-xs text-muted-foreground">From</div>
                             {from && from !== "FAUCET" ? (
-                              <Link to={`/address/${from}`} className="font-mono text-xs text-primary hover:underline">
-                                {truncateHash(from, 8, 6)}
-                              </Link>
+                              <RougeAddressLink pubkey={from} className="text-xs" />
                             ) : (
-                              <span className="font-mono text-xs">{from || "\u2014"}</span>
+                              <span className="font-mono text-xs">{from || "—"}</span>
                             )}
                           </div>
                           <div>
                             <div className="text-xs text-muted-foreground">To</div>
                             {to ? (
-                              <Link to={`/address/${to}`} className="font-mono text-xs text-primary hover:underline">
-                                {truncateHash(to, 8, 6)}
-                              </Link>
+                              <RougeAddressLink pubkey={to} className="text-xs" />
                             ) : (
                               <span className="font-mono text-xs">{"\u2014"}</span>
                             )}
@@ -434,20 +426,16 @@ const BlockDetail = () => {
                             <td className="py-2 px-2">
                               <Badge variant="secondary">{labelForType(isFaucet ? "faucet" : type)}</Badge>
                             </td>
-                            <td className="py-2 px-2 font-mono">
+                            <td className="py-2 px-2">
                               {from && from !== "FAUCET" ? (
-                                <Link to={`/address/${from}`} className="text-primary hover:underline" title={from}>
-                                  {truncateHash(from)}
-                                </Link>
+                                <RougeAddressLink pubkey={from} />
                               ) : (
                                 <span title={from}>{from || "\u2014"}</span>
                               )}
                             </td>
-                            <td className="py-2 px-2 font-mono">
+                            <td className="py-2 px-2">
                               {to ? (
-                                <Link to={`/address/${to}`} className="text-primary hover:underline" title={to}>
-                                  {truncateHash(to)}
-                                </Link>
+                                <RougeAddressLink pubkey={to} />
                               ) : (
                                 "\u2014"
                               )}

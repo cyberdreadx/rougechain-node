@@ -10,6 +10,7 @@ import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/net
 import { toast } from "sonner";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { formatTokenAmount } from "@/hooks/use-eth-price";
+import { RougeAddressLink } from "@/components/RougeAddressLink";
 
 const ITEMS_PER_PAGE = 20;
 
@@ -413,7 +414,7 @@ const Transactions = () => {
                   <div className="text-sm font-mono">
                     <div className="text-xs text-muted-foreground">From</div>
                     <div className="flex items-center gap-2">
-                      <span title={tx.from}>{truncateHash(tx.from || "—", 10, 8)}</span>
+                      {tx.from && tx.from !== "FAUCET" ? <RougeAddressLink pubkey={tx.from} /> : <span>{tx.from || "—"}</span>}
                       {tx.from && (
                         <button
                           onClick={(e) => { e.stopPropagation(); copyToClipboard(tx.from); }}
@@ -428,7 +429,7 @@ const Transactions = () => {
                   <div className="text-sm font-mono">
                     <div className="text-xs text-muted-foreground">To</div>
                     <div className="flex items-center gap-2">
-                      <span title={tx.to}>{truncateHash(tx.to || "—", 10, 8)}</span>
+                      {tx.to ? <RougeAddressLink pubkey={tx.to} /> : <span>—</span>}
                       {tx.to && (
                         <button
                           onClick={(e) => { e.stopPropagation(); copyToClipboard(tx.to); }}
@@ -511,16 +512,16 @@ const Transactions = () => {
                       <td className="py-2 px-2 font-mono">
                         <div className="flex items-center gap-1">
                           {tx.from && tx.from !== "FAUCET" ? (
-                            <Link to={`/address/${tx.from}`} onClick={(e) => e.stopPropagation()} className="hover:text-primary" title={tx.from}>{truncateHash(tx.from)}</Link>
+                            <RougeAddressLink pubkey={tx.from} />
                           ) : (
-                            <span title={tx.from || "—"}>{truncateHash(tx.from || "—")}</span>
+                            <span title={tx.from || "—"}>{tx.from || "—"}</span>
                           )}
                         </div>
                       </td>
                       <td className="py-2 px-2 font-mono">
                         <div className="flex items-center gap-1">
                           {tx.to ? (
-                            <Link to={`/address/${tx.to}`} onClick={(e) => e.stopPropagation()} className="hover:text-primary" title={tx.to}>{truncateHash(tx.to)}</Link>
+                            <RougeAddressLink pubkey={tx.to} />
                           ) : (
                             <span>—</span>
                           )}
@@ -652,7 +653,11 @@ const Transactions = () => {
               <div>
                 <p className="text-xs text-muted-foreground mb-1">From</p>
                 <div className="flex items-center gap-2 bg-background rounded border border-border p-2">
-                  <code className="text-xs font-mono flex-1 break-all">{selectedTx.from || "—"}</code>
+                  {selectedTx.from && selectedTx.from !== "FAUCET" ? (
+                    <RougeAddressLink pubkey={selectedTx.from} className="text-xs flex-1 break-all" />
+                  ) : (
+                    <code className="text-xs font-mono flex-1 break-all">{selectedTx.from || "\u2014"}</code>
+                  )}
                   {selectedTx.from && (
                     <button onClick={() => copyToClipboard(selectedTx.from)} className="p-1 hover:bg-secondary rounded">
                       {copiedAddress === selectedTx.from ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
@@ -665,7 +670,11 @@ const Transactions = () => {
               <div>
                 <p className="text-xs text-muted-foreground mb-1">To</p>
                 <div className="flex items-center gap-2 bg-background rounded border border-border p-2">
-                  <code className="text-xs font-mono flex-1 break-all">{selectedTx.to || "—"}</code>
+                  {selectedTx.to ? (
+                    <RougeAddressLink pubkey={selectedTx.to} className="text-xs flex-1 break-all" />
+                  ) : (
+                    <code className="text-xs font-mono flex-1 break-all">{"\u2014"}</code>
+                  )}
                   {selectedTx.to && (
                     <button onClick={() => copyToClipboard(selectedTx.to)} className="p-1 hover:bg-secondary rounded">
                       {copiedAddress === selectedTx.to ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
