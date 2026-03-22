@@ -28,6 +28,7 @@ import { claimTokenMetadata } from "@/lib/secure-api";
 import UpdateTokenMetadataDialog from "@/components/wallet/UpdateTokenMetadataDialog";
 import { TokenIcon } from "@/components/ui/token-icon";
 import { formatTokenAmount } from "@/hooks/use-eth-price";
+import { useRougeAddress } from "@/hooks/useRougeAddress";
 
 // Discord logo component
 const DiscordLogo = ({ className }: { className?: string }) => (
@@ -86,6 +87,13 @@ interface TokenTransaction {
   timestamp: number;
   block_height: number;
 }
+
+// Inline component for async rouge1 address display
+const RougeAddr = ({ pubkey, len }: { pubkey: string; len?: number }) => {
+  const { display, full } = useRougeAddress(pubkey);
+  if (pubkey.startsWith("Liquidity") || pubkey.startsWith("rouge1")) return <>{pubkey.length > (len || 24) ? `${pubkey.slice(0, len || 20)}...` : pubkey}</>;
+  return <>{display}</>;
+};
 
 const TokenExplorer = () => {
   const { symbol } = useParams<{ symbol: string }>();
@@ -560,7 +568,7 @@ const TokenExplorer = () => {
                       <p className="font-mono text-xs truncate">
                         {holder.address.startsWith("Liquidity")
                           ? holder.address
-                          : `${holder.address.substring(0, 20)}...`}
+                          : <Link to={`/address/${holder.address}`} className="hover:text-primary transition-colors"><RougeAddr pubkey={holder.address} /></Link>}
                       </p>
                     </div>
                     <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-4 pl-7 sm:pl-0">
@@ -608,7 +616,7 @@ const TokenExplorer = () => {
                       </span>
                       <div className="min-w-0">
                         <p className="font-mono text-xs truncate">
-                          {tx.from.substring(0, 16)}...
+                          <RougeAddr pubkey={tx.from} />
                         </p>
                         <p className="text-xs text-muted-foreground">
                           #{tx.block_height} • {new Date(tx.timestamp < 1e12 ? tx.timestamp * 1000 : tx.timestamp).toLocaleDateString()}
@@ -637,7 +645,9 @@ const TokenExplorer = () => {
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-2">
-                <p className="font-mono text-xs truncate flex-1">{metadata.creator}</p>
+                <Link to={`/address/${metadata.creator}`} className="font-mono text-xs truncate flex-1 hover:text-primary transition-colors">
+                  <RougeAddr pubkey={metadata.creator} />
+                </Link>
                 <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleCopy(metadata.creator)}>
                   <Copy className="w-3 h-3" />
                 </Button>
