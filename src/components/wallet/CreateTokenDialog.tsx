@@ -131,7 +131,7 @@ const CreateTokenDialog = ({ wallet, balances, onClose, onSuccess }: CreateToken
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md bg-card rounded-2xl border border-border p-6 shadow-xl"
+        className="w-full max-w-md bg-card rounded-2xl border border-border p-6 shadow-xl max-h-[85vh] flex flex-col overflow-hidden"
       >
         {createdToken ? (
           /* Success state */
@@ -158,9 +158,8 @@ const CreateTokenDialog = ({ wallet, balances, onClose, onSuccess }: CreateToken
             </Button>
           </div>
         ) : (
-          /* Creation form */
           <>
-            <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-4 shrink-0">
               <div className="flex items-center gap-2">
                 <Plus className="w-5 h-5 text-primary" />
                 <h2 className="text-xl font-bold text-foreground">Create Token</h2>
@@ -170,6 +169,7 @@ const CreateTokenDialog = ({ wallet, balances, onClose, onSuccess }: CreateToken
               </Button>
             </div>
 
+            <div className="overflow-y-auto flex-1 -mx-1 px-1">
             {/* Fee notice */}
             <div className={`p-3 rounded-lg mb-4 flex items-center gap-2 ${
               hasEnoughFee 
@@ -341,6 +341,7 @@ const CreateTokenDialog = ({ wallet, balances, onClose, onSuccess }: CreateToken
               <p className="text-xs text-center text-muted-foreground">
                 Token address will be derived from the block hash using quantum-safe cryptography
               </p>
+            </div>
             </div>
           </>
         )}
