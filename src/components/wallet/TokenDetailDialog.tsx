@@ -319,7 +319,7 @@ const TokenDetailDialog = ({
                 className="flex-col h-auto py-3 gap-1.5"
                 onClick={() => {
                   onClose();
-                  onSwap?.();
+                  navigate(`/swap?token=${symbol}`);
                 }}
               >
                 <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center">

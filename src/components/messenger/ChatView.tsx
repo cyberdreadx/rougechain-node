@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint, Paperclip, Image as ImageIcon, Video, EyeOff, Eye, Ban, Trash2 } from "lucide-react";
+import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint, Paperclip, Image as ImageIcon, Video, EyeOff, Eye, Ban, Trash2, DollarSign } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,8 @@ import type { Conversation, WalletWithPrivateKeys, Message, Wallet, MessageType 
 import { getBotReply, getMessages, sendMessage, deleteMessage, isDemoBot, loadDemoBotWallet, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, isWalletBlocked, blockWallet, unblockWallet } from "@/lib/pqc-messenger";
 import { playNotificationSound, loadNotificationSettings } from "@/lib/notifications";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
+import ChatPayment, { PaymentBubble, parsePaymentMessage, encodePaymentMessage } from "./ChatPayment";
+import type { PaymentMessageData } from "./ChatPayment";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -487,6 +489,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
+  const [showPaymentDialog, setShowPaymentDialog] = useState(false);
 
   const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
 
@@ -657,6 +660,14 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
       setEncryptingMessage(messageText);
       pendingMediaPayloadRef.current = null;
     }
+  };
+
+  const handlePaymentSent = async (paymentData: PaymentMessageData) => {
+    // Send payment info as an encrypted message so it appears in the chat
+    const paymentText = encodePaymentMessage(paymentData);
+    setEncryptingMessageType("text");
+    setEncryptingMessage(paymentText);
+    pendingMediaPayloadRef.current = null;
   };
 
   const pendingMediaPayloadRef = useRef<string | null>(null);
@@ -935,6 +946,19 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
           >
             <Paperclip className="w-4 h-4" />
           </Button>
+          {/* Payment button */}
+          {!isSelfConversation && !isRecipientBot && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowPaymentDialog(true)}
+              disabled={isSending || !!encryptingMessage}
+              title="Send payment"
+              className="flex-shrink-0 text-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10"
+            >
+              <DollarSign className="w-4 h-4" />
+            </Button>
+          )}
           <Input
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
@@ -972,6 +996,20 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
                 toast.error("Failed to delete message");
               }
             }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Payment dialog */}
+      <AnimatePresence>
+        {showPaymentDialog && recipient && !isSelfConversation && (
+          <ChatPayment
+            walletPublicKey={wallet.signingPublicKey}
+            walletPrivateKey={(wallet as any).signingPrivateKey || (wallet as any).privateKey || ""}
+            recipientPublicKey={recipient.signingPublicKey || recipient.encryptionPublicKey || recipient.id}
+            recipientName={recipient.displayName || "Unknown"}
+            onClose={() => setShowPaymentDialog(false)}
+            onPaymentSent={handlePaymentSent}
           />
         )}
       </AnimatePresence>
@@ -1257,13 +1295,19 @@ const MessageBubble = ({
                   <p className="text-[10px] opacity-50 mt-1">{message.mediaFileName}</p>
                 )}
               </div>
-            ) : (
-              <p className={`text-sm whitespace-pre-wrap break-words min-w-0 transition-all duration-300 ${isSpoiler ? "blur-md" : ""}`}>
-                {message.plaintext?.startsWith("[Unable") ? (
-                  <span className="text-muted-foreground italic break-words">{message.plaintext}</span>
-                ) : message.plaintext}
-              </p>
-            )}
+            ) : (() => {
+              const paymentData = message.plaintext ? parsePaymentMessage(message.plaintext) : null;
+              if (paymentData) {
+                return <PaymentBubble payment={paymentData} isOwn={isOwn} />;
+              }
+              return (
+                <p className={`text-sm whitespace-pre-wrap break-words min-w-0 transition-all duration-300 ${isSpoiler ? "blur-md" : ""}`}>
+                  {message.plaintext?.startsWith("[Unable") ? (
+                    <span className="text-muted-foreground italic break-words">{message.plaintext}</span>
+                  ) : message.plaintext}
+                </p>
+              );
+            })()}
           </div>
         </div>
         <div className={`flex items-center gap-1 mt-1 text-xs ${isOwn ? "justify-end" : ""}`}>

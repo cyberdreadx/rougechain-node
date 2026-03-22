@@ -34,6 +34,7 @@ import {
   saveNotificationSettings,
   type ConversationActivity,
 } from "@/lib/notifications";
+import { useRougeAddress } from "@/hooks/useRougeAddress";
 
 const Messenger = () => {
   const [wallet, setWallet] = useState<UnifiedWallet | null>(null);
@@ -56,6 +57,7 @@ const Messenger = () => {
   const [notifEnabled, setNotifEnabled] = useState(() => loadNotificationSettings().enabled);
   const activitySnapshotRef = useRef<Map<string, string>>(new Map());
   const allWalletsRef = useRef<Wallet[]>([]);
+  const { display: walletRougeAddr } = useRougeAddress(wallet?.signingPublicKey);
 
   // Load wallet from localStorage on mount
   useEffect(() => {
@@ -428,8 +430,8 @@ const Messenger = () => {
               }}
               title="Click to copy full address"
             >
-              <span className="truncate max-w-[100px] sm:max-w-[180px]">
-                {wallet.signingPublicKey.substring(0, 12)}...
+              <span className="truncate max-w-[120px] sm:max-w-[200px]">
+                {walletRougeAddr || `${wallet.signingPublicKey.substring(0, 12)}...`}
               </span>
               <Copy className="w-3 h-3 flex-shrink-0" />
             </button>
