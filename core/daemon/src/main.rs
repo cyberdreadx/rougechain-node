@@ -405,6 +405,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/txs", get(get_txs))
         .route("/api/tx/:hash", get(get_tx_by_hash))
         .route("/api/tx/:hash/receipt", get(get_tx_receipt))
+        .route("/api/account/:pubkey/nonce", get(get_account_nonce))
         .route("/api/address/:public_key/transactions", get(get_address_transactions))
         .route("/api/blocks/summary", get(get_blocks_summary))
         .route("/api/balance/:public_key", get(get_balance))
@@ -3140,8 +3141,7 @@ async fn v2_transfer(
         version: 1,
         tx_type: "transfer".to_string(),
         from_pub_key: body.public_key.clone(),
-        nonce: payload.get("nonce").and_then(|v| v.as_u64())
-            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() as u64),
+        nonce: state.node.get_next_nonce(&body.public_key),
         payload: TxPayload {
             to_pub_key_hex: Some(to.to_string()),
             amount: Some(amount as u64),
@@ -5753,4 +5753,16 @@ async fn get_allowances(
         Ok(allowances) => Json(serde_json::json!({ "success": true, "allowances": allowances })),
         Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
     }
+}
+
+async fn get_account_nonce(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Json<serde_json::Value> {
+    let current = state.node.get_account_nonce(&pubkey);
+    Json(serde_json::json!({
+        "success": true,
+        "nonce": current,
+        "next_nonce": current + 1
+    }))
 }

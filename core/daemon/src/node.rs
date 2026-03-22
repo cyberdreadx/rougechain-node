@@ -84,8 +84,8 @@ pub struct L1Node {
     burned_tokens: Arc<Mutex<HashMap<String, f64>>>,  // Total burned per token symbol
     votes: Arc<Mutex<Vec<VoteMessage>>>,
     finalized_height: Arc<Mutex<u64>>,
-    /// Per-account nonce dedup: maps account pubkey to set of recently seen nonces
-    used_nonces: Arc<Mutex<HashMap<String, HashSet<u64>>>>,
+    /// Per-account sequential nonce (persisted in sled)
+    nonce_db: sled::Tree,
 }
 
 impl L1Node {
@@ -117,7 +117,11 @@ impl L1Node {
             .map_err(|e| format!("open receipt DB: {}", e))?;
         let receipt_store = ReceiptStore::new(&receipt_db)?;
         let keys = Self::load_or_create_keys(&opts.data_dir)?;
-        Ok(Self {
+            let nonce_db = sled::open(opts.data_dir.join("nonce-db"))
+                .map_err(|e| format!("open nonce DB: {}", e))?
+                .open_tree("account_nonces")
+                .map_err(|e| format!("open nonce tree: {}", e))?;
+            Ok(Self {
             node_id: uuid::Uuid::new_v4().to_string(),
             opts,
             store,
@@ -145,7 +149,7 @@ impl L1Node {
             burned_tokens: Arc::new(Mutex::new(HashMap::new())),
             votes: Arc::new(Mutex::new(Vec::new())),
             finalized_height: Arc::new(Mutex::new(0)),
-            used_nonces: Arc::new(Mutex::new(HashMap::new())),
+            nonce_db,
         })
     }
 
@@ -915,7 +919,7 @@ impl L1Node {
         use quantum_vault_crypto::{sha256, bytes_to_hex};
         use quantum_vault_types::encode_tx_v1;
         
-        self.check_nonce_replay(&tx.from_pub_key, tx.nonce)?;
+        self.check_nonce_valid(&tx.from_pub_key, tx.nonce)?;
 
         let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
         
@@ -1543,27 +1547,56 @@ impl L1Node {
         Ok(Some(block))
     }
 
-    fn check_nonce_replay(&self, from_pub_key: &str, nonce: u64) -> Result<(), String> {
-        let mut nonces = self.used_nonces.lock().map_err(|_| "nonce lock")?;
-        let account_nonces = nonces.entry(from_pub_key.to_string()).or_default();
-
-        if account_nonces.contains(&nonce) {
-            return Err("Duplicate nonce — possible replay".to_string());
+    /// Get the current nonce for an account (0 if never used)
+    pub fn get_account_nonce(&self, pubkey: &str) -> u64 {
+        match self.nonce_db.get(pubkey.as_bytes()) {
+            Ok(Some(bytes)) => {
+                let arr: [u8; 8] = bytes.as_ref().try_into().unwrap_or([0u8; 8]);
+                u64::from_be_bytes(arr)
+            }
+            _ => 0,
         }
+    }
 
-        account_nonces.insert(nonce);
+    /// Get the next nonce to use for a new tx from this account
+    pub fn get_next_nonce(&self, pubkey: &str) -> u64 {
+        self.get_account_nonce(pubkey) + 1
+    }
 
-        // Prune old nonces to prevent unbounded growth (keep last 1000)
-        if account_nonces.len() > 1000 {
-            let min_nonce = *account_nonces.iter().min().unwrap();
-            account_nonces.remove(&min_nonce);
+    /// Validate that tx nonce is strictly greater than the current stored nonce,
+    /// then update the stored nonce. Gap-tolerant: allows nonce > current+1 for
+    /// backward compatibility with timestamp-based nonces during migration.
+    fn validate_and_increment_nonce(&self, from_pub_key: &str, nonce: u64) -> Result<(), String> {
+        let current = self.get_account_nonce(from_pub_key);
+        if nonce <= current {
+            return Err(format!(
+                "Invalid nonce: must be > {}, got {} (account: {}...)",
+                current,
+                nonce,
+                &from_pub_key[..16.min(from_pub_key.len())]
+            ));
         }
+        self.nonce_db
+            .insert(from_pub_key.as_bytes(), &nonce.to_be_bytes())
+            .map_err(|e| format!("nonce store: {}", e))?;
+        Ok(())
+    }
 
+    /// Validate nonce without incrementing (for mempool acceptance)
+    fn check_nonce_valid(&self, from_pub_key: &str, nonce: u64) -> Result<(), String> {
+        let current = self.get_account_nonce(from_pub_key);
+        if nonce <= current {
+            return Err(format!(
+                "Invalid nonce: must be > {}, got {}",
+                current,
+                nonce,
+            ));
+        }
         Ok(())
     }
 
     fn accept_tx(&self, tx: TxV1) -> Result<(), String> {
-        self.check_nonce_replay(&tx.from_pub_key, tx.nonce)?;
+        self.check_nonce_valid(&tx.from_pub_key, tx.nonce)?;
         let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
         let mut mempool = self.mempool.lock().map_err(|_| "mempool lock")?;
         if mempool.len() >= MAX_MEMPOOL {
@@ -1593,6 +1626,8 @@ impl L1Node {
         for tx in &block.txs {
             let before = balances.values().sum::<f64>();
             Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key);
+            // Commit sequential nonce for this sender
+            let _ = self.nonce_db.insert(tx.from_pub_key.as_bytes(), &tx.nonce.to_be_bytes());
             let after = balances.values().sum::<f64>();
             let deducted = before - after;
             if deducted > 0.0 { actual_fees_collected += tx.fee.min(deducted); }
