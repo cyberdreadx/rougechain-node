@@ -323,4 +323,77 @@ export const PaymentBubble = ({
   );
 };
 
+// ─── Payment Requests ─────────────────────────────────────────
+
+export interface RequestMessageData {
+  type: "request";
+  token: string;
+  amount: number;
+  memo?: string;
+}
+
+export function parseRequestMessage(text: string): RequestMessageData | null {
+  if (!text.startsWith("REQUEST:")) return null;
+  try {
+    return JSON.parse(text.slice(8));
+  } catch {
+    return null;
+  }
+}
+
+export function encodeRequestMessage(data: RequestMessageData): string {
+  return `REQUEST:${JSON.stringify(data)}`;
+}
+
+export const PaymentRequestBubble = ({
+  request,
+  isOwn,
+  onAccept,
+}: {
+  request: RequestMessageData;
+  isOwn: boolean;
+  onAccept?: () => void;
+}) => {
+  const { getTokenImage } = useTokenMetadata();
+
+  return (
+    <div className="rounded-xl overflow-hidden border max-w-[260px] bg-gradient-to-br from-amber-500/15 to-amber-500/5 border-amber-500/30">
+      <div className="px-4 py-3 flex items-center gap-3">
+        <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center">
+          <TokenIcon symbol={request.token} size={24} imageUrl={getTokenImage(request.token)} />
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">{isOwn ? "You requested" : "Requested"}</p>
+          <p className="text-xl font-bold">
+            {request.amount} <span className="text-sm font-medium text-muted-foreground">{request.token}</span>
+          </p>
+        </div>
+      </div>
+      {request.memo && (
+        <div className="px-4 pb-2">
+          <p className="text-xs text-muted-foreground italic">"{request.memo}"</p>
+        </div>
+      )}
+      {!isOwn && onAccept && (
+        <div className="px-4 pb-3">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onAccept();
+            }}
+            className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold transition-colors"
+          >
+            Pay {request.amount} {request.token}
+          </button>
+        </div>
+      )}
+      <div className="px-4 py-1.5 text-[10px] flex items-center gap-1 bg-amber-500/10 text-amber-600">
+        <DollarSign className="w-3 h-3" />
+        <span>Payment Request</span>
+      </div>
+    </div>
+  );
+};
+
 export default ChatPayment;
+

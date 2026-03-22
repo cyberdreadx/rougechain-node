@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint, Paperclip, Image as ImageIcon, Video, EyeOff, Eye, Ban, Trash2, DollarSign } from "lucide-react";
+import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint, Paperclip, Image as ImageIcon, Video, EyeOff, Eye, Ban, Trash2, DollarSign, Search, Reply } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,8 +10,10 @@ import type { Conversation, WalletWithPrivateKeys, Message, Wallet, MessageType 
 import { getBotReply, getMessages, sendMessage, deleteMessage, isDemoBot, loadDemoBotWallet, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, isWalletBlocked, blockWallet, unblockWallet } from "@/lib/pqc-messenger";
 import { playNotificationSound, loadNotificationSettings } from "@/lib/notifications";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
-import ChatPayment, { PaymentBubble, parsePaymentMessage, encodePaymentMessage } from "./ChatPayment";
-import type { PaymentMessageData } from "./ChatPayment";
+import ChatPayment, { PaymentBubble, parsePaymentMessage, encodePaymentMessage, parseRequestMessage, encodeRequestMessage, PaymentRequestBubble } from "./ChatPayment";
+import type { PaymentMessageData, RequestMessageData } from "./ChatPayment";
+import { ReactionPicker, ReactionBadges, aggregateReactions, isSystemMessage, encodeReactionMessage } from "./ChatReactions";
+import { QuotedMessage, ReplyComposer, parseReplyMessage, encodeReplyMessage } from "./ChatReply";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -490,8 +492,22 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
+  const [showRequestMode, setShowRequestMode] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [reactingTo, setReactingTo] = useState<string | null>(null); // message ID
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
 
   const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
+
+  // Aggregate reactions and filter system messages
+  const reactionMap = useMemo(() => aggregateReactions(messages, myIds), [messages]);
+  const visibleMessages = useMemo(() =>
+    messages.filter(m => !isSystemMessage(m.plaintext))
+      .filter(m => !searchQuery || m.plaintext?.toLowerCase().includes(searchQuery.toLowerCase())),
+    [messages, searchQuery]
+  );
+
 
   const isSelfConversation = conversation.name === "Note to Self" ||
     (conversation.participants?.every(p =>
@@ -663,11 +679,41 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
   };
 
   const handlePaymentSent = async (paymentData: PaymentMessageData) => {
-    // Send payment info as an encrypted message so it appears in the chat
     const paymentText = encodePaymentMessage(paymentData);
     setEncryptingMessageType("text");
     setEncryptingMessage(paymentText);
     pendingMediaPayloadRef.current = null;
+  };
+
+  const handleSendReaction = (messageId: string, emoji: string) => {
+    const reactionText = encodeReactionMessage({ type: "reaction", messageId, emoji });
+    setEncryptingMessageType("text");
+    setEncryptingMessage(reactionText);
+    pendingMediaPayloadRef.current = null;
+    setReactingTo(null);
+  };
+
+  const handleSendReply = () => {
+    if (!replyingTo || !newMessage.trim()) return;
+    const replyText = encodeReplyMessage({
+      type: "reply",
+      replyTo: replyingTo.id,
+      replyPreview: (replyingTo.plaintext || "").slice(0, 80),
+      text: newMessage.trim(),
+    });
+    setNewMessage("");
+    setReplyingTo(null);
+    setEncryptingMessageType("text");
+    setEncryptingMessage(replyText);
+    pendingMediaPayloadRef.current = null;
+  };
+
+  const handleSendRequest = (amount: number, token: string, memo?: string) => {
+    const requestText = encodeRequestMessage({ type: "request", token, amount, memo });
+    setEncryptingMessageType("text");
+    setEncryptingMessage(requestText);
+    pendingMediaPayloadRef.current = null;
+    setShowRequestMode(false);
   };
 
   const pendingMediaPayloadRef = useRef<string | null>(null);
@@ -818,43 +864,81 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
         )}
       </div>
 
+      {/* Search bar */}
+      <AnimatePresence>
+        {showSearch && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="px-3 py-2 border-b border-border bg-muted/30 overflow-hidden"
+          >
+            <div className="flex items-center gap-2">
+              <Search className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search messages..."
+                className="h-8 text-sm"
+                autoFocus
+              />
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setShowSearch(false); setSearchQuery(""); }}>
+                <X className="w-3 h-3" />
+              </Button>
+            </div>
+            {searchQuery && <p className="text-[10px] text-muted-foreground mt-1">{visibleMessages.length} result{visibleMessages.length !== 1 ? "s" : ""}</p>}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Messages */}
       <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 space-y-4">
         {isLoading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
           </div>
-        ) : messages.length === 0 && !encryptingMessage ? (
+        ) : visibleMessages.length === 0 && !encryptingMessage ? (
           <div className="flex items-center justify-center h-full text-muted-foreground">
             <div className="text-center">
               <Lock className="w-12 h-12 mx-auto mb-3 opacity-50" />
-              <p>Start the conversation</p>
-              <p className="text-xs mt-1">Messages are end-to-end encrypted</p>
+              <p>{searchQuery ? "No messages match" : "Start the conversation"}</p>
+              <p className="text-xs mt-1">{searchQuery ? "Try a different search" : "Messages are end-to-end encrypted"}</p>
             </div>
           </div>
         ) : (
           <AnimatePresence mode="popLayout">
-            {messages.map((msg, index) => (
-              <MessageBubble
-                key={msg.id}
-                message={msg}
-                isOwn={
-                  msg.senderWalletId === wallet.id ||
-                  msg.senderWalletId === wallet.signingPublicKey ||
-                  msg.senderWalletId === wallet.encryptionPublicKey
-                }
-                index={index}
-                onTap={() => setSelectedMessage(msg)}
-                isNew={newMessageIds.has(msg.id)}
-                onAnimationComplete={() => {
-                  setNewMessageIds(prev => {
-                    const next = new Set(prev);
-                    next.delete(msg.id);
-                    return next;
-                  });
-                }}
-              />
-            ))}
+            {visibleMessages.map((msg, index) => {
+              const isOwn = msg.senderWalletId === wallet.id ||
+                msg.senderWalletId === wallet.signingPublicKey ||
+                msg.senderWalletId === wallet.encryptionPublicKey;
+              return (
+                <div key={msg.id} className="relative">
+                  <MessageBubble
+                    message={msg}
+                    isOwn={isOwn}
+                    index={index}
+                    onTap={() => setSelectedMessage(msg)}
+                    isNew={newMessageIds.has(msg.id)}
+                    onAnimationComplete={() => {
+                      setNewMessageIds(prev => {
+                        const next = new Set(prev);
+                        next.delete(msg.id);
+                        return next;
+                      });
+                    }}
+                    reactions={reactionMap.get(msg.id)}
+                    onReact={(emoji) => handleSendReaction(msg.id, emoji)}
+                    onReply={() => setReplyingTo(msg)}
+                    reactingTo={reactingTo}
+                    onToggleReactionPicker={(id) => setReactingTo(reactingTo === id ? null : id)}
+                    onAcceptRequest={msg.plaintext && parseRequestMessage(msg.plaintext) && !isOwn ? () => {
+                      const req = parseRequestMessage(msg.plaintext!);
+                      if (req) setShowPaymentDialog(true);
+                    } : undefined}
+                  />
+                </div>
+              );
+            })}
             {encryptingMessage && (
               <EncryptionAnimation
                 key="encrypting"
@@ -959,21 +1043,38 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
               <DollarSign className="w-4 h-4" />
             </Button>
           )}
+          {/* Search toggle */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setShowSearch(!showSearch)}
+            title="Search messages"
+            className="flex-shrink-0"
+          >
+            <Search className="w-4 h-4" />
+          </Button>
           <Input
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            placeholder={stagedMedia ? "Add a caption (optional)..." : "Type a message..."}
+            placeholder={replyingTo ? "Type your reply..." : stagedMedia ? "Add a caption (optional)..." : "Type a message..."}
             className="flex-1"
-            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                if (replyingTo) handleSendReply();
+                else handleSend();
+              }
+            }}
             disabled={isSending || !!encryptingMessage}
           />
           <Button
-            onClick={handleSend}
+            onClick={replyingTo ? handleSendReply : handleSend}
             disabled={(!newMessage.trim() && !stagedMedia) || isSending || !!encryptingMessage}
             size="icon"
           >
             {isSending || encryptingMessage ? (
               <Loader2 className="w-4 h-4 animate-spin" />
+            ) : replyingTo ? (
+              <Reply className="w-4 h-4" />
             ) : (
               <Send className="w-4 h-4" />
             )}
@@ -1199,6 +1300,12 @@ const MessageBubble = ({
   onTap,
   isNew = false,
   onAnimationComplete,
+  reactions,
+  onReact,
+  onReply,
+  reactingTo,
+  onToggleReactionPicker,
+  onAcceptRequest,
 }: {
   message: Message;
   isOwn: boolean;
@@ -1206,10 +1313,16 @@ const MessageBubble = ({
   onTap: () => void;
   isNew?: boolean;
   onAnimationComplete?: () => void;
+  reactions?: { emoji: string; count: number; myReaction: boolean }[];
+  onReact?: (emoji: string) => void;
+  onReply?: () => void;
+  reactingTo?: string | null;
+  onToggleReactionPicker?: (id: string) => void;
+  onAcceptRequest?: () => void;
 }) => {
   const [showDecryptAnimation, setShowDecryptAnimation] = useState(isNew && !isOwn);
-
   const [spoilerRevealed, setSpoilerRevealed] = useState(false);
+  const [showActions, setShowActions] = useState(false);
   const isSpoiler = message.spoiler && !spoilerRevealed;
 
   if (showDecryptAnimation && onAnimationComplete) {
@@ -1224,107 +1337,182 @@ const MessageBubble = ({
     );
   }
 
+  // Check for special message types
+  const replyData = message.plaintext ? parseReplyMessage(message.plaintext) : null;
+  const requestData = message.plaintext ? parseRequestMessage(message.plaintext) : null;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.02 }}
       className={`flex ${isOwn ? "justify-end" : "justify-start"}`}
+      onMouseEnter={() => setShowActions(true)}
+      onMouseLeave={() => setShowActions(false)}
     >
-      <motion.div
-        whileHover={{ scale: 1.01 }}
-        whileTap={{ scale: 0.98 }}
-        onClick={onTap}
-        className={`max-w-[85%] sm:max-w-[80%] rounded-2xl px-4 py-2 cursor-pointer transition-shadow hover:shadow-lg break-words ${isOwn
-          ? "bg-primary text-primary-foreground rounded-br-md hover:shadow-primary/20"
-          : "bg-muted text-foreground rounded-bl-md hover:shadow-accent/20"
-          }`}
-      >
-        {!isOwn && (
-          <p className="text-xs font-medium mb-1 opacity-70">
-            {message.senderDisplayName}
-          </p>
-        )}
-        {/* Media or text content */}
-        <div className="relative">
-          {isSpoiler && (
+      <div className="relative">
+        {/* Action buttons (reply/react) */}
+        <AnimatePresence>
+          {showActions && !isSpoiler && (
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="absolute inset-0 z-10 flex items-center justify-center rounded-lg cursor-pointer"
-              onClick={(e) => {
-                e.stopPropagation();
-                setSpoilerRevealed(true);
-              }}
-              style={{ backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)" }}
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              className={`absolute top-0 z-20 flex gap-0.5 ${isOwn ? "left-0 -translate-x-full pr-1" : "right-0 translate-x-full pl-1"}`}
             >
-              <div className="flex flex-col items-center gap-1 px-3 py-2">
-                <EyeOff className="w-5 h-5 opacity-70" />
-                <span className="text-xs font-medium opacity-70">
-                  {message.messageType !== "text" ? "SPOILER" : "Click to reveal"}
-                </span>
-              </div>
+              {onReply && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onReply(); }}
+                  className="p-1 rounded-full bg-muted/80 hover:bg-muted border border-border text-muted-foreground hover:text-foreground transition-colors"
+                  title="Reply"
+                >
+                  <Reply className="w-3 h-3" />
+                </button>
+              )}
+              {onToggleReactionPicker && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onToggleReactionPicker(message.id); }}
+                  className="p-1 rounded-full bg-muted/80 hover:bg-muted border border-border text-muted-foreground hover:text-foreground transition-colors"
+                  title="React"
+                >
+                  <span className="text-xs leading-none">😊</span>
+                </button>
+              )}
             </motion.div>
           )}
-          <div className={isSpoiler ? "select-none" : ""}>
-            {message.mediaUrl && message.messageType === "image" ? (
-              <div className="my-1">
-                <img
-                  src={message.mediaUrl}
-                  alt={message.mediaFileName || "Image"}
-                  className={`max-w-full rounded-lg max-h-[300px] object-contain cursor-pointer transition-all duration-300 ${isSpoiler ? "blur-xl scale-[0.98]" : ""}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!isSpoiler) window.open(message.mediaUrl, "_blank");
-                  }}
-                />
-                {message.mediaFileName && !isSpoiler && (
-                  <p className="text-[10px] opacity-50 mt-1">{message.mediaFileName}</p>
-                )}
-              </div>
-            ) : message.mediaUrl && message.messageType === "video" ? (
-              <div className="my-1">
-                <video
-                  src={isSpoiler ? undefined : message.mediaUrl}
-                  controls={!isSpoiler}
-                  className={`max-w-full rounded-lg max-h-[300px] transition-all duration-300 ${isSpoiler ? "blur-xl scale-[0.98]" : ""}`}
-                  onClick={(e) => e.stopPropagation()}
-                  poster={isSpoiler ? undefined : undefined}
-                />
-                {message.mediaFileName && !isSpoiler && (
-                  <p className="text-[10px] opacity-50 mt-1">{message.mediaFileName}</p>
-                )}
-              </div>
-            ) : (() => {
-              const paymentData = message.plaintext ? parsePaymentMessage(message.plaintext) : null;
-              if (paymentData) {
-                return <PaymentBubble payment={paymentData} isOwn={isOwn} />;
-              }
-              return (
-                <p className={`text-sm whitespace-pre-wrap break-words min-w-0 transition-all duration-300 ${isSpoiler ? "blur-md" : ""}`}>
-                  {message.plaintext?.startsWith("[Unable") ? (
-                    <span className="text-muted-foreground italic break-words">{message.plaintext}</span>
-                  ) : message.plaintext}
-                </p>
-              );
-            })()}
+        </AnimatePresence>
+
+        {/* Reaction picker */}
+        <AnimatePresence>
+          {reactingTo === message.id && onReact && (
+            <ReactionPicker
+              onSelect={onReact}
+              onClose={() => onToggleReactionPicker?.(message.id)}
+              position={isOwn ? "above" : "above"}
+            />
+          )}
+        </AnimatePresence>
+
+        <motion.div
+          whileHover={{ scale: 1.01 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={onTap}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            onToggleReactionPicker?.(message.id);
+          }}
+          className={`max-w-[85%] sm:max-w-[80%] rounded-2xl px-4 py-2 cursor-pointer transition-shadow hover:shadow-lg break-words ${isOwn
+            ? "bg-primary text-primary-foreground rounded-br-md hover:shadow-primary/20"
+            : "bg-muted text-foreground rounded-bl-md hover:shadow-accent/20"
+            }`}
+        >
+          {!isOwn && (
+            <p className="text-xs font-medium mb-1 opacity-70">
+              {message.senderDisplayName}
+            </p>
+          )}
+
+          {/* Quoted reply */}
+          {replyData && (
+            <QuotedMessage preview={replyData.replyPreview} isOwn={isOwn} />
+          )}
+
+          {/* Media or text content */}
+          <div className="relative">
+            {isSpoiler && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="absolute inset-0 z-10 flex items-center justify-center rounded-lg cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSpoilerRevealed(true);
+                }}
+                style={{ backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)" }}
+              >
+                <div className="flex flex-col items-center gap-1 px-3 py-2">
+                  <EyeOff className="w-5 h-5 opacity-70" />
+                  <span className="text-xs font-medium opacity-70">
+                    {message.messageType !== "text" ? "SPOILER" : "Click to reveal"}
+                  </span>
+                </div>
+              </motion.div>
+            )}
+            <div className={isSpoiler ? "select-none" : ""}>
+              {message.mediaUrl && message.messageType === "image" ? (
+                <div className="my-1">
+                  <img
+                    src={message.mediaUrl}
+                    alt={message.mediaFileName || "Image"}
+                    className={`max-w-full rounded-lg max-h-[300px] object-contain cursor-pointer transition-all duration-300 ${isSpoiler ? "blur-xl scale-[0.98]" : ""}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!isSpoiler) window.open(message.mediaUrl, "_blank");
+                    }}
+                  />
+                  {message.mediaFileName && !isSpoiler && (
+                    <p className="text-[10px] opacity-50 mt-1">{message.mediaFileName}</p>
+                  )}
+                </div>
+              ) : message.mediaUrl && message.messageType === "video" ? (
+                <div className="my-1">
+                  <video
+                    src={isSpoiler ? undefined : message.mediaUrl}
+                    controls={!isSpoiler}
+                    className={`max-w-full rounded-lg max-h-[300px] transition-all duration-300 ${isSpoiler ? "blur-xl scale-[0.98]" : ""}`}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  {message.mediaFileName && !isSpoiler && (
+                    <p className="text-[10px] opacity-50 mt-1">{message.mediaFileName}</p>
+                  )}
+                </div>
+              ) : (() => {
+                const paymentData = message.plaintext ? parsePaymentMessage(message.plaintext) : null;
+                if (paymentData) {
+                  return <PaymentBubble payment={paymentData} isOwn={isOwn} />;
+                }
+                if (requestData) {
+                  return <PaymentRequestBubble request={requestData} isOwn={isOwn} onAccept={onAcceptRequest} />;
+                }
+                if (replyData) {
+                  return (
+                    <p className={`text-sm whitespace-pre-wrap break-words min-w-0 transition-all duration-300 ${isSpoiler ? "blur-md" : ""}`}>
+                      {replyData.text}
+                    </p>
+                  );
+                }
+                return (
+                  <p className={`text-sm whitespace-pre-wrap break-words min-w-0 transition-all duration-300 ${isSpoiler ? "blur-md" : ""}`}>
+                    {message.plaintext?.startsWith("[Unable") ? (
+                      <span className="text-muted-foreground italic break-words">{message.plaintext}</span>
+                    ) : message.plaintext}
+                  </p>
+                );
+              })()}
+            </div>
           </div>
-        </div>
-        <div className={`flex items-center gap-1 mt-1 text-xs ${isOwn ? "justify-end" : ""}`}>
-          <span className="opacity-60">
-            {formatMessageTime(message.createdAt)}
-          </span>
-          {message.selfDestruct && (
-            <Timer className="w-3 h-3 text-destructive" />
+
+          {/* Reaction badges */}
+          {reactions && reactions.length > 0 && (
+            <ReactionBadges reactions={reactions} onReact={onReact} />
           )}
-          {message.signatureValid ? (
-            <CheckCircle2 className="w-3 h-3 text-success" />
-          ) : (
-            <XCircle className="w-3 h-3 text-destructive" />
-          )}
-        </div>
-        <p className="text-[10px] opacity-40 mt-0.5 text-right">Tap for details</p>
-      </motion.div>
+
+          <div className={`flex items-center gap-1 mt-1 text-xs ${isOwn ? "justify-end" : ""}`}>
+            <span className="opacity-60">
+              {formatMessageTime(message.createdAt)}
+            </span>
+            {message.selfDestruct && (
+              <Timer className="w-3 h-3 text-destructive" />
+            )}
+            {message.signatureValid ? (
+              <CheckCircle2 className="w-3 h-3 text-success" />
+            ) : (
+              <XCircle className="w-3 h-3 text-destructive" />
+            )}
+          </div>
+          <p className="text-[10px] opacity-40 mt-0.5 text-right">Tap for details</p>
+        </motion.div>
+      </div>
     </motion.div>
   );
 };
