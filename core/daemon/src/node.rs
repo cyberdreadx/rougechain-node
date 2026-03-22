@@ -94,6 +94,12 @@ impl L1Node {
         let pool_store = PoolStore::new(&opts.data_dir)?;
         let pool_event_store = PoolEventStore::new(&opts.data_dir)?;
         let token_metadata_store = TokenMetadataStore::new(&data_dir_str)?;
+        // Backfill token_id for existing tokens (migration)
+        match token_metadata_store.migrate_token_ids() {
+            Ok(0) => {},
+            Ok(n) => eprintln!("[startup] Migrated {} token(s) with new token_id", n),
+            Err(e) => eprintln!("[startup] Token ID migration failed: {}", e),
+        }
         let nft_store = NftStore::new(&opts.data_dir)?;
         let name_registry = NameRegistry::new(&opts.data_dir)?;
         let mail_store = MailStore::new(&opts.data_dir)?;
@@ -627,7 +633,7 @@ impl L1Node {
         }
         
         // Register the metadata
-        self.register_token_metadata(symbol, symbol, &creator, None, None)
+        self.register_token_metadata(symbol, symbol, &creator, None, None).map(|_| ())
     }
 
     // ===== Burn Methods =====
@@ -674,12 +680,14 @@ impl L1Node {
         creator: &str,
         image: Option<String>,
         description: Option<String>,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         let now = Utc::now().timestamp_millis();
+        let token_id = TokenMetadata::generate_token_id(creator, symbol, now);
         let metadata = TokenMetadata {
             symbol: symbol.to_uppercase(),
             name: name.to_string(),
             creator: creator.to_string(),
+            token_id: token_id.clone(),
             image,
             description,
             website: None,
@@ -688,7 +696,8 @@ impl L1Node {
             created_at: now,
             updated_at: now,
         };
-        self.token_metadata_store.set_metadata(&metadata)
+        self.token_metadata_store.set_metadata(&metadata)?;
+        Ok(token_id)
     }
     
     /// Update token metadata (only creator can update)

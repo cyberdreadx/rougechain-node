@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Sha256, Digest};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -8,6 +9,8 @@ pub struct TokenMetadata {
     pub symbol: String,
     pub name: String,
     pub creator: String,           // Public key of token creator (has update authority)
+    #[serde(default)]
+    pub token_id: String,          // Deterministic SHA-256 ID: hex(SHA-256(creator:symbol:created_at))[..32]
     pub image: Option<String>,     // Image URL (IPFS, HTTP, or data URI)
     pub description: Option<String>,
     pub website: Option<String>,
@@ -15,6 +18,15 @@ pub struct TokenMetadata {
     pub discord: Option<String>,
     pub created_at: i64,           // Timestamp when token was created
     pub updated_at: i64,           // Timestamp of last metadata update
+}
+
+impl TokenMetadata {
+    /// Generate a deterministic token ID from creator + symbol + created_at
+    pub fn generate_token_id(creator: &str, symbol: &str, created_at: i64) -> String {
+        let input = format!("{}:{}:{}", creator, symbol.to_uppercase(), created_at);
+        let hash = Sha256::digest(input.as_bytes());
+        hex::encode(&hash[..16]) // 32-char hex ID
+    }
 }
 
 /// Persistent store for token metadata
@@ -28,6 +40,21 @@ impl TokenMetadataStore {
         let path = Path::new(data_dir).join("token-metadata-db");
         let db = sled::open(&path).map_err(|e| format!("Failed to open token metadata db: {}", e))?;
         Ok(Self { db: Arc::new(db) })
+    }
+
+    /// Backfill token_id for existing tokens that don't have one
+    pub fn migrate_token_ids(&self) -> Result<u32, String> {
+        let mut migrated = 0u32;
+        let all = self.get_all()?;
+        for mut meta in all {
+            if meta.token_id.is_empty() {
+                meta.token_id = TokenMetadata::generate_token_id(&meta.creator, &meta.symbol, meta.created_at);
+                self.set_metadata(&meta)?;
+                migrated += 1;
+                eprintln!("[migration] Assigned token_id {} to {}", meta.token_id, meta.symbol);
+            }
+        }
+        Ok(migrated)
     }
 
     /// Create or update token metadata (only creator can update)
@@ -96,3 +123,4 @@ impl TokenMetadataStore {
         Ok(())
     }
 }
+

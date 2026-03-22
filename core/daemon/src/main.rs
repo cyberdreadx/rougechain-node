@@ -3185,11 +3185,6 @@ async fn v2_create_token(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "initial_supply must be greater than zero"}))));
     }
 
-    // Generate deterministic token ID
-    use sha2::{Sha256, Digest};
-    let token_id_input = format!("{}:{}:{}", body.public_key, sym_upper, chrono::Utc::now().timestamp_millis());
-    let token_id_hash = Sha256::digest(token_id_input.as_bytes());
-    let token_id = hex::encode(&token_id_hash[..16]); // 32-char hex ID
 
     let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
     if bal < fee {
@@ -3222,13 +3217,13 @@ async fn v2_create_token(
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
 
-    let _ = node.register_token_metadata(
-        token_symbol,
-        token_name,
+    let token_id = node.register_token_metadata(
+        &sym_upper,
+        name_trimmed,
         &body.public_key,
         token_image,
         None,
-    );
+    ).unwrap_or_default();
 
     Ok(Json(serde_json::json!({
         "success": true,
