@@ -105,7 +105,9 @@ interface LegacyBlockchainWallet {
 }
 
 // Derive encryption key from password using PBKDF2
-async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+const PBKDF2_ITERATIONS = 600_000; // Aligned with browser extension
+
+async function deriveKey(password: string, salt: Uint8Array, iterations = PBKDF2_ITERATIONS): Promise<CryptoKey> {
   const encoder = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
@@ -119,7 +121,7 @@ async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey>
     {
       name: "PBKDF2",
       salt: salt.buffer as ArrayBuffer,
-      iterations: 100000,
+      iterations,
       hash: "SHA-256"
     },
     keyMaterial,
@@ -154,7 +156,7 @@ export async function encryptWallet(wallet: UnifiedWallet, password: string): Pr
   return btoa(String.fromCharCode(...combined));
 }
 
-// Decrypt wallet data
+// Decrypt wallet data (tries current 600K iterations, falls back to legacy 100K)
 export async function decryptWallet(encryptedData: string, password: string): Promise<UnifiedWallet> {
   // Decode base64
   const combined = Uint8Array.from(atob(encryptedData), c => c.charCodeAt(0));
@@ -163,17 +165,32 @@ export async function decryptWallet(encryptedData: string, password: string): Pr
   const salt = combined.slice(0, 16);
   const iv = combined.slice(16, 28);
   const encrypted = combined.slice(28);
-  
-  const key = await deriveKey(password, salt);
-  
+
+  // Try current iteration count first
+  try {
+    const key = await deriveKey(password, salt, PBKDF2_ITERATIONS);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      key,
+      encrypted
+    );
+    const walletData = JSON.parse(new TextDecoder().decode(decrypted));
+    if (!walletData.version || walletData.version === 1) {
+      return migrateFromV1(walletData);
+    }
+    return walletData as UnifiedWallet;
+  } catch {
+    // Fall through to legacy iteration count
+  }
+
+  // Legacy fallback: try 100K iterations (pre-alignment vaults)
+  const legacyKey = await deriveKey(password, salt, 100_000);
   const decrypted = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv },
-    key,
+    legacyKey,
     encrypted
   );
-  
-  const decoder = new TextDecoder();
-  const walletData = JSON.parse(decoder.decode(decrypted));
+  const walletData = JSON.parse(new TextDecoder().decode(decrypted));
   
   // Handle legacy format (v1)
   if (!walletData.version || walletData.version === 1) {

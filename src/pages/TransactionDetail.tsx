@@ -8,6 +8,8 @@ import {
   Loader2,
   FileQuestion,
   Activity,
+  XCircle,
+  ScrollText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -56,6 +58,25 @@ interface TxData {
     payload?: TxPayload;
     fee?: number;
   };
+  receipt?: TxReceipt | null;
+}
+
+interface TxLog {
+  event: string;
+  topics: string[];
+  data: string;
+}
+
+interface TxReceipt {
+  tx_hash: string;
+  block_height: number;
+  block_hash: string;
+  index: number;
+  status: string | { Success?: null; Failed?: string };
+  fee_paid: number;
+  gas_used: number;
+  logs: TxLog[];
+  timestamp: number;
 }
 
 const formatAge = (timestamp: number) => {
@@ -159,6 +180,7 @@ const TransactionDetail = () => {
               blockHash: data.blockHash ?? "",
               blockTime: data.blockTime ?? Date.now(),
               tx: data.tx ?? {},
+              receipt: data.receipt ?? null,
             });
             return;
           }
@@ -271,15 +293,34 @@ const TransactionDetail = () => {
           <Badge variant={badgeVariantForType(txType)}>{labelForType(txType)}</Badge>
         </div>
 
-        <div className="rounded-lg border border-green-500/30 bg-green-500/5 p-3 flex items-center gap-3 mb-6">
-          <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
-          <div>
-            <p className="text-sm font-medium text-green-500">Confirmed</p>
-            <p className="text-xs text-muted-foreground">
-              This transaction has been included in block #{txData.blockHeight.toLocaleString()}
-            </p>
-          </div>
-        </div>
+        {(() => {
+          const receipt = txData.receipt;
+          const isSuccess = !receipt || receipt.status === "Success" || (typeof receipt.status === "object" && "Success" in receipt.status);
+          const failReason = typeof receipt?.status === "object" && receipt.status.Failed ? receipt.status.Failed : null;
+          return (
+            <div className={`rounded-lg border p-3 flex items-center gap-3 mb-6 ${
+              isSuccess
+                ? "border-green-500/30 bg-green-500/5"
+                : "border-red-500/30 bg-red-500/5"
+            }`}>
+              {isSuccess ? (
+                <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+              ) : (
+                <XCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+              )}
+              <div>
+                <p className={`text-sm font-medium ${isSuccess ? "text-green-500" : "text-red-500"}`}>
+                  {isSuccess ? "Success" : "Failed"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {isSuccess
+                    ? `This transaction has been included in block #${txData.blockHeight.toLocaleString()}`
+                    : `Transaction failed: ${failReason || "unknown error"}`}
+                </p>
+              </div>
+            </div>
+          );
+        })()}
 
         <Card className="mb-6">
           <CardHeader>
@@ -299,10 +340,21 @@ const TransactionDetail = () => {
 
             <div>
               <p className="text-xs text-muted-foreground mb-1">Status</p>
-              <Badge variant="outline" className="border-green-500/50 text-green-500">
-                <CheckCircle2 className="w-3 h-3 mr-1" />
-                Confirmed
-              </Badge>
+              {(() => {
+                const receipt = txData.receipt;
+                const isSuccess = !receipt || receipt.status === "Success" || (typeof receipt.status === "object" && "Success" in receipt.status);
+                return isSuccess ? (
+                  <Badge variant="outline" className="border-green-500/50 text-green-500">
+                    <CheckCircle2 className="w-3 h-3 mr-1" />
+                    Success
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="border-red-500/50 text-red-500">
+                    <XCircle className="w-3 h-3 mr-1" />
+                    Failed
+                  </Badge>
+                );
+              })()}
             </div>
 
             <div>
@@ -486,6 +538,47 @@ const TransactionDetail = () => {
                   </div>
                 </div>
               )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Receipt Event Logs */}
+        {txData.receipt && txData.receipt.logs && txData.receipt.logs.length > 0 && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <ScrollText className="w-4 h-4" />
+                Event Logs ({txData.receipt.logs.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {txData.receipt.logs.map((log: TxLog, i: number) => (
+                <div key={i} className="rounded-lg border border-border bg-background/60 p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-[10px]">
+                      #{i}
+                    </Badge>
+                    <span className="text-sm font-medium text-primary">{log.event}</span>
+                  </div>
+                  {log.topics.length > 0 && (
+                    <div>
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Topics</p>
+                      {log.topics.map((topic, ti) => (
+                        <div key={ti} className="flex items-center gap-2 py-0.5">
+                          <span className="text-[10px] text-muted-foreground w-4">[{ti}]</span>
+                          <code className="text-xs font-mono text-foreground break-all">{topic}</code>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {log.data && (
+                    <div>
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Data</p>
+                      <code className="text-xs font-mono text-muted-foreground break-all">{log.data}</code>
+                    </div>
+                  )}
+                </div>
+              ))}
             </CardContent>
           </Card>
         )}

@@ -321,7 +321,7 @@ const WalletBackup = ({ wallet, onClose, onImport }: WalletBackupProps) => {
                 <div className="text-xs text-muted-foreground">
                   <p className="font-medium text-foreground mb-1">AES-256-GCM Encryption</p>
                   <p>
-                    Your wallet will be encrypted with PBKDF2 (100k iterations) + AES-256-GCM. 
+                    Your wallet will be encrypted with PBKDF2 (600k iterations) + AES-256-GCM. 
                     Store your password securely—it cannot be recovered.
                   </p>
                 </div>
