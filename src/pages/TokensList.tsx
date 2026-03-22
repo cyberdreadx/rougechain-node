@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/network";
+import { RougeAddressLink } from "@/components/RougeAddressLink";
 
 const DiscordLogo = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" className={className} fill="currentColor">
@@ -39,11 +40,7 @@ interface TokenInfo {
   created_at: number;
 }
 
-const truncateAddress = (addr: string, left = 10, right = 6) => {
-  if (!addr) return "";
-  if (addr.length <= left + right + 3) return addr;
-  return `${addr.slice(0, left)}...${addr.slice(-right)}`;
-};
+
 
 const truncateText = (text: string, maxLen: number) => {
   if (!text || text.length <= maxLen) return text;
@@ -194,12 +191,7 @@ const TokensList = () => {
                               </div>
                             </td>
                             <td className="py-3 px-2">
-                              <Link
-                                to={`/address/${token.creator}`}
-                                className="font-mono text-xs text-primary hover:underline"
-                              >
-                                {truncateAddress(token.creator, 8, 4)}
-                              </Link>
+                              <RougeAddressLink pubkey={token.creator} className="text-xs" />
                             </td>
                             <td className="py-3 px-2 text-muted-foreground text-xs max-w-[200px]">
                               {truncateText(token.description || "", 60)}
@@ -330,12 +322,7 @@ const TokensList = () => {
 
                       <div className="text-xs text-muted-foreground">
                         <span>Creator: </span>
-                        <Link
-                          to={`/address/${token.creator}`}
-                          className="font-mono text-primary hover:underline"
-                        >
-                          {truncateAddress(token.creator, 8, 4)}
-                        </Link>
+                        <RougeAddressLink pubkey={token.creator} />
                       </div>
 
                       {token.description && (

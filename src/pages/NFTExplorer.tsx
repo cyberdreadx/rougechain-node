@@ -19,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/network";
+import { RougeAddressLink } from "@/components/RougeAddressLink";
 
 interface NFTCollection {
   collection_id: string;
@@ -43,11 +44,7 @@ interface NFTToken {
 
 const TOKENS_PER_PAGE = 50;
 
-const truncateAddress = (addr: string, left = 10, right = 6) => {
-  if (!addr) return "";
-  if (addr.length <= left + right + 3) return addr;
-  return `${addr.slice(0, left)}...${addr.slice(-right)}`;
-};
+
 
 const NFTExplorer = () => {
   const { collectionId } = useParams<{ collectionId?: string }>();
@@ -159,7 +156,7 @@ const CollectionsList = () => {
                       <div className="text-xs text-muted-foreground">
                         <span>Creator: </span>
                         <span className="font-mono text-foreground">
-                          {truncateAddress(collection.creator, 8, 4)}
+                          <RougeAddressLink pubkey={collection.creator} />
                         </span>
                       </div>
 
@@ -365,12 +362,7 @@ const CollectionDetail = ({ collectionId }: { collectionId: string }) => {
                   <Users className="w-4 h-4" />
                   <span className="text-xs">Creator</span>
                 </div>
-                <Link
-                  to={`/address/${collection.creator}`}
-                  className="text-sm font-mono text-primary hover:underline truncate block"
-                >
-                  {truncateAddress(collection.creator, 8, 4)}
-                </Link>
+                <RougeAddressLink pubkey={collection.creator} className="text-sm truncate block" />
               </CardContent>
             </Card>
 
@@ -435,12 +427,7 @@ const CollectionDetail = ({ collectionId }: { collectionId: string }) => {
                         <p className="text-sm font-medium truncate">{token.name}</p>
                         <div className="text-xs text-muted-foreground">
                           <span>Owner: </span>
-                          <Link
-                            to={`/address/${token.owner}`}
-                            className="font-mono text-primary hover:underline"
-                          >
-                            {truncateAddress(token.owner, 8, 4)}
-                          </Link>
+                          <RougeAddressLink pubkey={token.owner} />
                         </div>
                       </div>
                     ))}
