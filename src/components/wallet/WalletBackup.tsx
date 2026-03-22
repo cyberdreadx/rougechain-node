@@ -5,6 +5,7 @@ import {
   Upload, 
   X, 
   Key, 
+  KeyRound,
   Shield, 
   AlertTriangle,
   CheckCircle2,
@@ -13,7 +14,8 @@ import {
   FileKey2,
   Copy,
   Check,
-  Share2
+  Share2,
+  Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,6 +51,12 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
   const [vaultPassword, setVaultPassword] = useState("");
   const [vaultConfirm, setVaultConfirm] = useState("");
   const [vaultProcessing, setVaultProcessing] = useState(false);
+  const [showSeedPhrase, setShowSeedPhrase] = useState(false);
+  const [seedCopied, setSeedCopied] = useState(false);
+  const [seedImportPhrase, setSeedImportPhrase] = useState("");
+  const [seedImportError, setSeedImportError] = useState("");
+  const [isRecovering, setIsRecovering] = useState(false);
+  const [showSeedImport, setShowSeedImport] = useState(false);
 
   const [exportedData, setExportedData] = useState<string | null>(null);
   const [exportFileName, setExportFileName] = useState("");
@@ -285,18 +293,24 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
           </Button>
         </div>
 
-        <Tabs defaultValue={importOnly ? "import" : "export"} className="w-full">
+        <Tabs defaultValue={importOnly ? "import" : (wallet?.mnemonic ? "seed" : "export")} className="w-full">
           {!importOnly ? (
-            <TabsList className="grid w-full grid-cols-3 m-4 mb-0" style={{ width: "calc(100% - 2rem)" }}>
-              <TabsTrigger value="export" className="gap-2">
+            <TabsList className={`grid w-full m-4 mb-0 ${wallet?.mnemonic ? 'grid-cols-4' : 'grid-cols-3'}`} style={{ width: "calc(100% - 2rem)" }}>
+              {wallet?.mnemonic && (
+                <TabsTrigger value="seed" className="gap-1.5">
+                  <KeyRound className="w-4 h-4" />
+                  Seed
+                </TabsTrigger>
+              )}
+              <TabsTrigger value="export" className="gap-1.5">
                 <Download className="w-4 h-4" />
                 Export
               </TabsTrigger>
-              <TabsTrigger value="import" className="gap-2">
+              <TabsTrigger value="import" className="gap-1.5">
                 <Upload className="w-4 h-4" />
                 Import
               </TabsTrigger>
-              <TabsTrigger value="vault" className="gap-2">
+              <TabsTrigger value="vault" className="gap-1.5">
                 <Shield className="w-4 h-4" />
                 Vault
               </TabsTrigger>
@@ -309,6 +323,85 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
               </div>
             </div>
           )}
+
+          {/* Seed Phrase Tab */}
+          <TabsContent value="seed" className="p-4 pt-2 space-y-4">
+            <div className="p-3 rounded-lg bg-warning/10 border border-warning/20">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
+                <div className="text-xs text-muted-foreground">
+                  <p className="font-medium text-warning mb-1">Recovery Phrase</p>
+                  <p>
+                    Never share your recovery phrase. Anyone with these words can access your wallet and funds.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {showSeedPhrase ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-2">
+                  {wallet?.mnemonic?.split(" ").map((word, i) => (
+                    <div key={i} className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-muted/50 border border-border">
+                      <span className="text-[10px] text-muted-foreground w-5 text-right">{i + 1}.</span>
+                      <span className="text-xs font-mono text-foreground">{word}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={async () => {
+                      if (wallet?.mnemonic) {
+                        await navigator.clipboard.writeText(wallet.mnemonic);
+                        setSeedCopied(true);
+                        toast.success("Recovery phrase copied");
+                        setTimeout(() => setSeedCopied(false), 2000);
+                      }
+                    }}
+                  >
+                    {seedCopied ? <Check className="w-4 h-4 mr-2" /> : <Copy className="w-4 h-4 mr-2" />}
+                    {seedCopied ? "Copied!" : "Copy Phrase"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => setShowSeedPhrase(false)}
+                  >
+                    <EyeOff className="w-4 h-4 mr-2" />
+                    Hide
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="p-6 rounded-lg bg-muted/30 border border-border flex flex-col items-center gap-3">
+                  <KeyRound className="w-8 h-8 text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground text-center">
+                    {wallet?.mnemonic?.split(" ").length || 24} words · tap below to reveal
+                  </p>
+                </div>
+                <Button className="w-full" onClick={() => setShowSeedPhrase(true)}>
+                  <Eye className="w-4 h-4 mr-2" />
+                  Reveal Recovery Phrase
+                </Button>
+              </div>
+            )}
+
+            <div className="p-3 rounded-lg bg-accent/10 border border-accent/20">
+              <div className="flex items-start gap-2">
+                <Shield className="w-4 h-4 text-accent shrink-0 mt-0.5" />
+                <div className="text-xs text-muted-foreground">
+                  <p className="font-medium text-foreground mb-1">Quantum-Safe Derivation</p>
+                  <p>
+                    Your seed phrase is derived using BIP-39 → HKDF-SHA256 → ML-DSA-65.
+                    This provides 128-bit post-quantum security.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </TabsContent>
 
           <TabsContent value="export" className="p-4 pt-2 space-y-4">
             {/* Current wallet info */}
@@ -515,6 +608,81 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
                 </>
               )}
             </Button>
+
+            {/* Seed Phrase Recovery */}
+            <div className="pt-3 border-t border-border space-y-3">
+              <button
+                onClick={() => setShowSeedImport(!showSeedImport)}
+                className="w-full text-sm text-primary hover:text-primary/80 transition-colors flex items-center justify-center gap-2"
+              >
+                <KeyRound className="w-4 h-4" />
+                {showSeedImport ? "Hide seed phrase import" : "Import from seed phrase instead"}
+              </button>
+              {showSeedImport && (
+                <div className="space-y-2">
+                  <textarea
+                    placeholder="Enter your 24-word recovery phrase..."
+                    value={seedImportPhrase}
+                    onChange={e => { setSeedImportPhrase(e.target.value); setSeedImportError(""); }}
+                    rows={3}
+                    className="w-full px-3 py-2 rounded-lg bg-input border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none font-mono"
+                  />
+                  {seedImportError && (
+                    <p className="text-xs text-destructive">{seedImportError}</p>
+                  )}
+                  <Button
+                    className="w-full"
+                    variant="outline"
+                    disabled={!seedImportPhrase.trim() || isRecovering}
+                    onClick={async () => {
+                      const trimmed = seedImportPhrase.trim().toLowerCase();
+                      const words = trimmed.split(/\s+/);
+                      if (words.length !== 12 && words.length !== 24) {
+                        setSeedImportError("Seed phrase must be 12 or 24 words");
+                        return;
+                      }
+                      setIsRecovering(true);
+                      try {
+                        const { validateMnemonic, keypairFromMnemonic } = await import("@/lib/mnemonic");
+                        if (!validateMnemonic(trimmed)) {
+                          setSeedImportError("Invalid seed phrase — check for typos");
+                          setIsRecovering(false);
+                          return;
+                        }
+                        const { publicKey, secretKey } = keypairFromMnemonic(trimmed);
+                        const { generateEncryptionKeypair } = await import("@/lib/pqc-messenger");
+                        const encKeys = generateEncryptionKeypair();
+                        const recoveredWallet: UnifiedWallet = {
+                          id: `wallet-${Date.now()}`,
+                          displayName: "Recovered Wallet",
+                          createdAt: Date.now(),
+                          signingPublicKey: publicKey,
+                          signingPrivateKey: secretKey,
+                          encryptionPublicKey: encKeys.publicKey,
+                          encryptionPrivateKey: encKeys.privateKey,
+                          version: 2,
+                          mnemonic: trimmed,
+                        };
+                        onImport(recoveredWallet);
+                        toast.success("Wallet recovered from seed phrase!");
+                        onClose();
+                      } catch (err) {
+                        console.error("Recovery failed:", err);
+                        setSeedImportError("Recovery failed — please try again");
+                      } finally {
+                        setIsRecovering(false);
+                      }
+                    }}
+                  >
+                    {isRecovering ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Recovering...</>
+                    ) : (
+                      <><KeyRound className="w-4 h-4 mr-2" /> Recover from Seed Phrase</>
+                    )}
+                  </Button>
+                </div>
+              )}
+            </div>
           </TabsContent>
 
           <TabsContent value="vault" className="p-4 pt-2 space-y-4">
