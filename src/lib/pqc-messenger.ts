@@ -386,6 +386,7 @@ function getMessengerApiBase(): string | null {
 export async function registerWalletOnNode(wallet: Wallet): Promise<void> {
   const apiBase = getMessengerApiBase();
   if (!apiBase) return;
+  const privacy = getPrivacySettings();
   await fetch(`${apiBase}${MESSENGER_API_PREFIX}/wallets/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
@@ -394,6 +395,7 @@ export async function registerWalletOnNode(wallet: Wallet): Promise<void> {
       displayName: wallet.displayName,
       signingPublicKey: wallet.signingPublicKey,
       encryptionPublicKey: wallet.encryptionPublicKey,
+      discoverable: privacy.discoverable,
     }),
   });
 }

@@ -3812,6 +3812,10 @@ impl L1Node {
         self.messenger_store.list_wallets()
     }
 
+    pub fn list_discoverable_wallets(&self) -> Result<Vec<MessengerWallet>, String> {
+        self.messenger_store.list_discoverable_wallets()
+    }
+
     pub fn register_wallet(&self, wallet: MessengerWallet) -> Result<MessengerWallet, String> {
         self.messenger_store.register_wallet(wallet)
     }

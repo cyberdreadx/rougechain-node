@@ -396,6 +396,7 @@ fn unmap_wallet(wallet: &Wallet) -> quantum_vault_storage::messenger_store::Mess
         signing_public_key: wallet.signing_public_key.clone(),
         encryption_public_key: wallet.encryption_public_key.clone(),
         created_at: wallet.created_at.clone(),
+        discoverable: true,
     }
 }
 

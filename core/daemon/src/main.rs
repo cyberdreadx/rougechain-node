@@ -2702,7 +2702,7 @@ async fn submit_entropy(
 
 async fn get_messenger_wallets(State(state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
     let node = &state.node;
-    let wallets = node.list_wallets().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let wallets = node.list_discoverable_wallets().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "success": true, "wallets": wallets })))
 }
 
@@ -2750,6 +2750,7 @@ async fn register_messenger_wallet(
         signing_public_key: signing_key,
         encryption_public_key: encryption_key,
         created_at: chrono::Utc::now().to_rfc3339(),
+        discoverable: body.get("discoverable").and_then(|v| v.as_bool()).unwrap_or(true),
     };
     let wallet = node.register_wallet(wallet).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

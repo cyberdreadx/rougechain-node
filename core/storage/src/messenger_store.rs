@@ -11,6 +11,12 @@ pub struct MessengerWallet {
     pub signing_public_key: String,
     pub encryption_public_key: String,
     pub created_at: String,
+    #[serde(default = "default_discoverable")]
+    pub discoverable: bool,
+}
+
+fn default_discoverable() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +80,11 @@ impl MessengerStore {
 
     pub fn list_wallets(&self) -> Result<Vec<MessengerWallet>, String> {
         Ok(self.load_state()?.wallets)
+    }
+
+    /// Only return wallets that opted into discovery (discoverable = true).
+    pub fn list_discoverable_wallets(&self) -> Result<Vec<MessengerWallet>, String> {
+        Ok(self.load_state()?.wallets.into_iter().filter(|w| w.discoverable).collect())
     }
 
     pub fn register_wallet(&self, wallet: MessengerWallet) -> Result<MessengerWallet, String> {
