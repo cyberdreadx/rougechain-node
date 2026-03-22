@@ -580,15 +580,48 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
         </p>
       </div>
 
-      {/* Legend - bottom left */}
-      <div className="absolute bottom-4 left-4 z-20 pointer-events-none flex flex-col gap-2">
-        <div className="flex items-center gap-2 text-xs">
-          <div className="w-3 h-3 rounded-sm bg-[#ff1744] shrink-0 shadow-sm shadow-red-500/50" />
-          <span className="text-red-400/80">L1 Validators</span>
-        </div>
-        <div className="flex items-center gap-2 text-xs">
-          <div className="w-3 h-3 rounded-sm bg-[#d500f9] shrink-0 shadow-sm shadow-fuchsia-500/50" />
-          <span className="text-fuchsia-400/80">Network Peers</span>
+      {/* Node & Peer List - bottom left */}
+      <div className="absolute bottom-4 left-4 z-20 pointer-events-auto max-w-[220px]">
+        <div className="bg-black/80 backdrop-blur-md border border-red-500/20 rounded-lg px-3 py-2.5 shadow-lg">
+          <p className="text-[10px] text-red-400/60 uppercase tracking-wider font-mono mb-2">Active Nodes</p>
+          <div className="max-h-[120px] overflow-y-auto space-y-1.5 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-red-500/20">
+            {/* Validators */}
+            {Array.from({ length: displayNodes }).map((_, i) => {
+              const name = nodeNames[i] || `Validator ${i + 1}`;
+              const isMining = nodeStats[i]?.is_mining;
+              return (
+                <div key={`v-${i}`} className="flex items-center gap-2 text-[11px]">
+                  <div className="w-2 h-2 rounded-full bg-[#ff1744] shrink-0 shadow-sm shadow-red-500/50" />
+                  <span className="text-red-300/80 truncate font-mono">{name}</span>
+                  {isMining && (
+                    <span className="text-[9px] text-amber-400/70 ml-auto shrink-0">⛏</span>
+                  )}
+                </div>
+              );
+            })}
+            {/* Peers */}
+            {Array.from({ length: displayPeers }).map((_, i) => {
+              const peerIdx = displayNodes + i;
+              const name = nodeNames[peerIdx] || peerDetails[i]?.node_name || `Peer ${i + 1}`;
+              return (
+                <div key={`p-${i}`} className="flex items-center gap-2 text-[11px]">
+                  <div className="w-2 h-2 rounded-full bg-[#d500f9] shrink-0 shadow-sm shadow-fuchsia-500/50" />
+                  <span className="text-fuchsia-300/80 truncate font-mono">{name}</span>
+                </div>
+              );
+            })}
+          </div>
+          {/* Color legend */}
+          <div className="flex items-center gap-4 mt-2 pt-2 border-t border-red-500/10">
+            <div className="flex items-center gap-1.5 text-[10px]">
+              <div className="w-2 h-2 rounded-full bg-[#ff1744]" />
+              <span className="text-red-400/60">Validator</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px]">
+              <div className="w-2 h-2 rounded-full bg-[#d500f9]" />
+              <span className="text-fuchsia-400/60">Peer</span>
+            </div>
+          </div>
         </div>
       </div>
 

@@ -182,7 +182,11 @@ const NetworkStatsBar = () => {
     {
       icon: Clock,
       label: "Avg Block Time",
-      value: stats.avgBlockTime > 0 ? `${stats.avgBlockTime}s` : "—",
+      value: stats.avgBlockTime > 0
+        ? stats.avgBlockTime < 60 ? `${stats.avgBlockTime}s`
+          : stats.avgBlockTime < 3600 ? `${Math.round(stats.avgBlockTime / 60)}m`
+            : `${(stats.avgBlockTime / 3600).toFixed(1)}h`
+        : "—",
       color: "text-muted-foreground",
     },
     {
