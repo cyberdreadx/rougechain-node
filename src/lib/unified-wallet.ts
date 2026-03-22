@@ -5,6 +5,7 @@
 import { getActiveNetwork } from "./network";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
+import { generateMnemonic, keypairFromMnemonic } from "./mnemonic";
 
 // Expected key sizes (bytes) for FIPS 204 / FIPS 203
 const ML_DSA65_SECRET_KEY_BYTES = 4032;
@@ -76,6 +77,9 @@ export interface UnifiedWallet {
   
   // Metadata
   version: number;
+  
+  // Mnemonic seed phrase (optional — legacy wallets won't have this)
+  mnemonic?: string;
 }
 
 export interface VaultSettings {

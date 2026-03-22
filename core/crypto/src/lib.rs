@@ -37,6 +37,20 @@ pub fn pqc_keygen() -> PQKeypair {
     }
 }
 
+/// Deterministic keygen from a 32-byte seed.
+/// Used for mnemonic-derived wallets: BIP-39 mnemonic → HKDF → this seed → keypair.
+pub fn pqc_keygen_from_seed(seed: &[u8; 32]) -> PQKeypair {
+    use rand::SeedableRng;
+    let mut rng = rand_chacha::ChaCha20Rng::from_seed(*seed);
+    let (pk, sk) = ml_dsa_65::try_keygen_with_rng(&mut rng)
+        .expect("keygen should not fail with seeded RNG");
+    PQKeypair {
+        algorithm: "ML-DSA-65".to_string(),
+        public_key_hex: bytes_to_hex(&pk.into_bytes()),
+        secret_key_hex: bytes_to_hex(&sk.into_bytes()),
+    }
+}
+
 pub fn pqc_sign(secret_key_hex: &str, message: &[u8]) -> Result<String, String> {
     let sk_bytes = hex_to_bytes(secret_key_hex)?;
     let sk_array: [u8; SK_LEN] = sk_bytes.as_slice().try_into()

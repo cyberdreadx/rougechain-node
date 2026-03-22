@@ -1702,6 +1702,7 @@ dependencies = [
  "hex",
  "quantum-vault-types",
  "rand",
+ "rand_chacha",
  "sha2 0.10.9",
  "winterfell",
 ]

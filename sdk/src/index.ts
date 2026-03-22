@@ -4,6 +4,13 @@ export type { RougeChainOptions } from "./client.js";
 export { Wallet } from "./wallet.js";
 
 export {
+  generateMnemonic,
+  validateMnemonic,
+  mnemonicToMLDSASeed,
+  keypairFromMnemonic,
+} from "./mnemonic.js";
+
+export {
   signTransaction,
   verifyTransaction,
   serializePayload,

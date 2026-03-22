@@ -304,25 +304,10 @@ const Wallet = () => {
   const createNewWallet = async () => {
     setLoading(true);
     try {
-      // Try to create wallet via node API first (for public deployment)
-      let signingPublicKey: string;
-      let signingPrivateKey: string;
-
-      try {
-        const nodeWallet = await createWalletViaNode();
-        signingPublicKey = nodeWallet.publicKey;
-        signingPrivateKey = nodeWallet.privateKey;
-        toast.info("Wallet created via node API");
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        console.warn("[Wallet] Node API wallet creation failed, falling back to local keys:", error);
-        const { keypair } = await generateKeypair();
-        signingPublicKey = keypair.publicKey;
-        signingPrivateKey = keypair.privateKey;
-        toast.info("Node API unavailable, created local wallet", {
-          description: errorMessage,
-        });
-      }
+      // Generate a BIP-39 mnemonic and derive ML-DSA-65 keys from it
+      const { generateMnemonic, keypairFromMnemonic } = await import("@/lib/mnemonic");
+      const mnemonic = generateMnemonic();
+      const { publicKey: signingPublicKey, secretKey: signingPrivateKey } = keypairFromMnemonic(mnemonic);
 
       // Generate encryption keys for messenger E2EE (ML-KEM-768)
       const encryptionKeys = generateEncryptionKeypair();
@@ -336,6 +321,7 @@ const Wallet = () => {
         encryptionPublicKey: encryptionKeys.publicKey,
         encryptionPrivateKey: encryptionKeys.privateKey,
         version: 2,
+        mnemonic,
       };
       
       saveUnifiedWallet(newWallet);
@@ -353,7 +339,7 @@ const Wallet = () => {
       }
 
       toast.success("Quantum-safe wallet created!", {
-        description: "Your wallet is ready to use"
+        description: "Your wallet is ready. Back up your seed phrase!"
       });
     } catch (error) {
       console.error("Failed to create wallet:", error);

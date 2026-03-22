@@ -3,6 +3,7 @@
 export interface WalletKeys {
   publicKey: string;
   privateKey: string;
+  mnemonic?: string;
 }
 
 export interface ApiResponse<T = unknown> {
