@@ -117,7 +117,11 @@ const labelForType = (type: string) => {
 };
 
 const AddressDetail = () => {
-  const { pubkey } = useParams<{ pubkey: string }>();
+  const { pubkey: rawParam } = useParams<{ pubkey: string }>();
+  // If the URL param is a rouge1 address, we can't resolve to hex without a backend endpoint.
+  // For now, detect and handle gracefully. If it's hex, we use it directly.
+  const isRouge1Param = rawParam?.startsWith("rouge1") ?? false;
+  const pubkey = isRouge1Param ? undefined : rawParam;
   const { display: rougeAddr, full: rougeAddrFull } = useRougeAddress(pubkey);
   const [balanceData, setBalanceData] = useState<BalanceData | null>(null);
   const [transactions, setTransactions] = useState<AddressTx[]>([]);
@@ -127,6 +131,13 @@ const AddressDetail = () => {
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Rewrite URL bar to rouge1 when resolved (keeps internal hex routing intact)
+  useEffect(() => {
+    if (rougeAddrFull && rawParam && !isRouge1Param) {
+      window.history.replaceState(null, "", `/address/${rougeAddrFull}`);
+    }
+  }, [rougeAddrFull, rawParam, isRouge1Param]);
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -239,6 +250,30 @@ const AddressDetail = () => {
       setCurrentPage(page);
     }
   };
+
+  // If someone navigated with a rouge1 URL, show fallback
+  if (isRouge1Param) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center space-y-4 max-w-md px-6">
+          <Wallet className="w-12 h-12 text-primary mx-auto" />
+          <h2 className="text-xl font-bold">RougeChain Address</h2>
+          <code className="text-xs font-mono text-primary break-all block bg-card p-3 rounded-lg border border-border">
+            {rawParam}
+          </code>
+          <p className="text-sm text-muted-foreground">
+            This is a valid <code className="text-primary">rouge1</code> address. 
+            To view full details, navigate to this address from a transaction or the search bar using the full public key.
+          </p>
+          <Link to="/transactions">
+            <Button variant="outline">
+              <ArrowLeft className="w-4 h-4 mr-2" /> Back to Transactions
+            </Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
