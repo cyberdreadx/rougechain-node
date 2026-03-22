@@ -147,197 +147,143 @@ const PrivacySettings = ({ onClose, onProfileUpdated }: PrivacySettingsProps) =>
       onClick={onClose}
     >
       <motion.div
-        initial={{ scale: 0.9, y: 20 }}
+        initial={{ scale: 0.95, y: 10 }}
         animate={{ scale: 1, y: 0 }}
-        exit={{ scale: 0.9, y: 20 }}
-        className="bg-card border border-border rounded-xl shadow-2xl max-w-md w-full overflow-hidden"
+        exit={{ scale: 0.95, y: 10 }}
+        className="bg-card border border-border rounded-xl shadow-2xl max-w-sm w-full flex flex-col max-h-[80vh]"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border bg-muted/30">
+        {/* Sticky header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card rounded-t-xl shrink-0">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
-              <Shield className="w-4 h-4 text-primary" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-foreground">Privacy Settings</h3>
-              <p className="text-xs text-muted-foreground">Control your data storage</p>
-            </div>
+            <Shield className="w-4 h-4 text-primary" />
+            <h3 className="font-semibold text-sm text-foreground">Privacy & Security</h3>
           </div>
-          <Button variant="ghost" size="icon" onClick={onClose}>
-            <X className="w-4 h-4" />
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}>
+            <X className="w-3.5 h-3.5" />
           </Button>
         </div>
 
-        <div className="p-4 space-y-4">
-          {/* Profile section */}
-          <div className="p-4 rounded-lg bg-muted/30 border border-border">
-            <div className="flex items-center gap-2 mb-3">
-              <User className="w-4 h-4 text-primary" />
-              <span className="font-medium text-foreground">Profile</span>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <Label htmlFor="displayName" className="text-xs text-muted-foreground">Display Name</Label>
-                <Input
-                  id="displayName"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="Enter your display name"
-                  className="mt-1"
-                />
-              </div>
+        {/* Scrollable content */}
+        <div className="overflow-y-auto flex-1 p-3 space-y-3">
+          {/* Profile — inline name + save */}
+          <div className="p-3 rounded-lg bg-muted/30 border border-border">
+            <Label htmlFor="displayName" className="text-[11px] text-muted-foreground flex items-center gap-1.5 mb-1.5">
+              <User className="w-3 h-3" /> Display Name
+            </Label>
+            <div className="flex gap-2">
+              <Input
+                id="displayName"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Your name"
+                className="h-8 text-sm"
+              />
               <Button
                 size="sm"
                 onClick={handleSaveProfile}
                 disabled={isSaving || !displayName.trim() || displayName === originalName}
-                className="w-full"
+                className="h-8 px-3 shrink-0"
               >
-                {isSaving ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-4 h-4 mr-2" />
-                    Save Profile
-                  </>
-                )}
+                {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
               </Button>
             </div>
           </div>
 
-          {/* Discoverable toggle */}
-          <div className="p-4 rounded-lg bg-muted/30 border border-border">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <Globe className="w-4 h-4 text-primary" />
-                  <span className="font-medium text-foreground">Discoverable</span>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {settings.discoverable
-                    ? "Your wallet appears in the contact picker so anyone on the network can start a chat with you."
-                    : "Your wallet is hidden. Others can only message you if they know your rouge1 address or scan your QR code."
-                  }
-                </p>
-              </div>
-              <Switch
-                checked={settings.discoverable}
-                onCheckedChange={async (enabled) => {
-                  const newSettings = { ...settings, discoverable: enabled };
-                  setSettings(newSettings);
-                  savePrivacySettings(newSettings);
-                  if (enabled) {
-                    // Re-register to make wallet visible
-                    try {
-                      const wallet = loadUnifiedWallet();
-                      if (wallet) {
-                        await registerWalletOnNode({
-                          id: wallet.signingPublicKey,
-                          displayName: wallet.displayName,
-                          signingPublicKey: wallet.signingPublicKey,
-                          encryptionPublicKey: wallet.encryptionPublicKey || "",
-                        });
-                      }
-                    } catch { /* ignore */ }
-                    toast.success("You are now discoverable", {
-                      description: "Others can find you in the New Chat picker",
-                    });
-                  } else {
-                    toast.info("You are now hidden", {
-                      description: "Others need your address to message you",
-                    });
-                  }
-                  onProfileUpdated?.();
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Store sent messages toggle */}
-          <div className="p-4 rounded-lg bg-muted/30 border border-border">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  {settings.storeSentMessages ? (
-                    <Eye className="w-4 h-4 text-primary" />
-                  ) : (
-                    <EyeOff className="w-4 h-4 text-muted-foreground" />
-                  )}
-                  <span className="font-medium text-foreground">Store Sent Messages</span>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {settings.storeSentMessages 
-                    ? "Your sent messages are stored locally so you can read them after refreshing the page."
-                    : "Sent messages will display as \"[Your encrypted message]\" since only the recipient can decrypt them."
-                  }
-                </p>
-              </div>
-              <Switch
-                checked={settings.storeSentMessages}
-                onCheckedChange={handleToggleStorage}
-              />
-            </div>
-          </div>
-
-          {/* Security note */}
-          <div className="p-3 rounded-lg bg-accent/10 border border-accent/20">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-accent shrink-0 mt-0.5" />
-              <div className="text-xs text-muted-foreground">
-                <p className="font-medium text-foreground mb-1">Security Note</p>
-                <p>
-                  Stored messages are kept in your browser's localStorage. They're as secure as your 
-                  private keys (which are also stored locally). If someone accesses your browser, 
-                  they could read both.
+          {/* Toggle row: Discoverable */}
+          <div className="flex items-center justify-between gap-3 p-3 rounded-lg bg-muted/30 border border-border">
+            <div className="flex items-center gap-2 min-w-0">
+              <Globe className="w-4 h-4 text-primary shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground leading-tight">Discoverable</p>
+                <p className="text-[11px] text-muted-foreground leading-tight mt-0.5">
+                  {settings.discoverable ? "Visible in New Chat picker" : "Hidden — address or QR only"}
                 </p>
               </div>
             </div>
+            <Switch
+              checked={settings.discoverable}
+              onCheckedChange={async (enabled) => {
+                const newSettings = { ...settings, discoverable: enabled };
+                setSettings(newSettings);
+                savePrivacySettings(newSettings);
+                if (enabled) {
+                  try {
+                    const wallet = loadUnifiedWallet();
+                    if (wallet) {
+                      await registerWalletOnNode({
+                        id: wallet.signingPublicKey,
+                        displayName: wallet.displayName,
+                        signingPublicKey: wallet.signingPublicKey,
+                        encryptionPublicKey: wallet.encryptionPublicKey || "",
+                      });
+                    }
+                  } catch { /* ignore */ }
+                  toast.success("You are now discoverable");
+                } else {
+                  toast.info("You are now hidden");
+                }
+                onProfileUpdated?.();
+              }}
+            />
           </div>
 
-          {/* Reset encryption keys */}
-          <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20">
-            <div className="flex items-center gap-2 mb-2">
-              <Key className="w-4 h-4 text-destructive" />
-              <span className="font-medium text-foreground">Reset Encryption Keys</span>
+          {/* Toggle row: Store Sent Messages */}
+          <div className="flex items-center justify-between gap-3 p-3 rounded-lg bg-muted/30 border border-border">
+            <div className="flex items-center gap-2 min-w-0">
+              {settings.storeSentMessages ? (
+                <Eye className="w-4 h-4 text-primary shrink-0" />
+              ) : (
+                <EyeOff className="w-4 h-4 text-muted-foreground shrink-0" />
+              )}
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground leading-tight">Store Sent Messages</p>
+                <p className="text-[11px] text-muted-foreground leading-tight mt-0.5">
+                  {settings.storeSentMessages ? "Readable after refresh" : "Shows as encrypted"}
+                </p>
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground mb-3">
-              If you're having decryption issues, resetting your encryption keys will fix future messages.
-              <strong className="text-destructive"> Warning: All old messages will become permanently unreadable.</strong>
+            <Switch
+              checked={settings.storeSentMessages}
+              onCheckedChange={handleToggleStorage}
+            />
+          </div>
+
+          {/* Compact security note */}
+          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-accent/10 border border-accent/20">
+            <AlertTriangle className="w-3.5 h-3.5 text-accent shrink-0 mt-0.5" />
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              Data is stored in localStorage — as secure as your private keys. Anyone with browser access could read both.
             </p>
+          </div>
+
+          {/* Danger zone */}
+          <div className="pt-2 border-t border-border space-y-2">
+            <p className="text-[10px] text-destructive/60 uppercase tracking-wider font-medium">Danger Zone</p>
             <Button
-              variant="destructive"
+              variant="outline"
               size="sm"
-              className="w-full"
+              className="w-full h-8 text-xs border-destructive/30 text-destructive hover:bg-destructive/10"
               onClick={handleResetEncryptionKeys}
               disabled={isResetting}
             >
               {isResetting ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Resetting...
-                </>
+                <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
               ) : (
-                <>
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                  Reset Encryption Keys
-                </>
+                <Key className="w-3.5 h-3.5 mr-1.5" />
               )}
+              Reset Encryption Keys
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full h-8 text-xs text-muted-foreground"
+              onClick={handleClearMessages}
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+              Clear Stored Messages
             </Button>
           </div>
-
-          {/* Clear stored messages */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={handleClearMessages}
-          >
-            <Trash2 className="w-4 h-4 mr-2" />
-            Clear Stored Sent Messages
-          </Button>
         </div>
       </motion.div>
     </motion.div>
