@@ -12,7 +12,7 @@ import PrivacySettings from "@/components/messenger/PrivacySettings";
 import SwapWidget from "@/components/messenger/SwapWidget";
 import WalletBackup from "@/components/wallet/WalletBackup";
 import type { Conversation, Wallet, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
-import { getConversations, getWallets, saveWalletLocally, registerWalletOnNode, getBlockedWalletIds } from "@/lib/pqc-messenger";
+import { getConversations, getWallets, saveWalletLocally, registerWalletOnNode, getBlockedWalletIds, getPrivacySettings } from "@/lib/pqc-messenger";
 import {
   UnifiedWallet,
   VaultSettings,
@@ -79,7 +79,9 @@ const Messenger = () => {
   // Load conversations when wallet is available and ensure wallet is registered
   useEffect(() => {
     if (wallet) {
-      if (wallet.encryptionPublicKey) {
+      // Only auto-register if user has opted into being discoverable
+      const privacySettings = getPrivacySettings();
+      if (wallet.encryptionPublicKey && privacySettings.discoverable) {
         registerWalletOnNode({
           id: wallet.id,
           displayName: wallet.displayName,
@@ -262,6 +264,13 @@ const Messenger = () => {
 
   const handleReregister = async () => {
     if (!wallet || isReregistering) return;
+    const privSettings = getPrivacySettings();
+    if (!privSettings.discoverable) {
+      toast.info("You are hidden", {
+        description: "Enable 'Discoverable' in Privacy Settings to register your wallet on the network",
+      });
+      return;
+    }
     setIsReregistering(true);
     try {
       // Check if wallet has encryption key
@@ -274,7 +283,7 @@ const Messenger = () => {
       }
       console.log("Registering wallet with encryption key:", wallet.encryptionPublicKey.slice(0, 32) + "...");
       await registerWalletOnNode({
-        id: wallet.id, // Use wallet UUID to match conversation participant IDs
+        id: wallet.id,
         displayName: wallet.displayName,
         signingPublicKey: wallet.signingPublicKey,
         encryptionPublicKey: wallet.encryptionPublicKey,
@@ -282,7 +291,6 @@ const Messenger = () => {
       toast.success("Wallet registered!", {
         description: "Your wallet is now visible to other users",
       });
-      // Refresh contacts after re-registration
       loadContacts();
     } catch (error) {
       console.error("Re-registration failed:", error);
@@ -298,28 +306,24 @@ const Messenger = () => {
     if (!wallet || isRegeneratingKeys) return;
     setIsRegeneratingKeys(true);
     try {
-      // Dynamically import to generate fresh FIPS keys
-      const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
+      // Only regenerate encryption keys (ML-KEM-768) — signing keys = wallet identity
       const { ml_kem768 } = await import("@noble/post-quantum/ml-kem.js");
       const bytesToHex = (bytes: Uint8Array) =>
         Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 
-      const sigKeypair = ml_dsa65.keygen();
       const encKeypair = ml_kem768.keygen();
 
       const updated: UnifiedWallet = {
         ...wallet,
-        signingPublicKey: bytesToHex(sigKeypair.publicKey),
-        signingPrivateKey: bytesToHex(sigKeypair.secretKey),
+        // Signing keys stay the same — they ARE your wallet address
         encryptionPublicKey: bytesToHex(encKeypair.publicKey),
         encryptionPrivateKey: bytesToHex(encKeypair.secretKey),
-        version: 4,
       };
 
       saveUnifiedWallet(updated);
       setWallet(updated);
 
-      // Re-register with new public keys
+      // Re-register with new encryption public key
       await registerWalletOnNode({
         id: updated.id,
         displayName: updated.displayName,
@@ -327,8 +331,8 @@ const Messenger = () => {
         encryptionPublicKey: updated.encryptionPublicKey,
       });
 
-      toast.success("Keys regenerated!", {
-        description: "Fresh FIPS 204/203 keys generated and registered. Wallet identity preserved.",
+      toast.success("Encryption keys regenerated!", {
+        description: "Fresh ML-KEM-768 keys registered. Your wallet address is unchanged.",
       });
       loadContacts();
     } catch (error) {

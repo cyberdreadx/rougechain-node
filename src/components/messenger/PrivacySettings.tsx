@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Shield, Eye, EyeOff, Trash2, X, AlertTriangle, User, Save, Loader2, RefreshCw, Key } from "lucide-react";
+import { Shield, Eye, EyeOff, Trash2, X, AlertTriangle, User, Save, Loader2, RefreshCw, Key, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,7 +22,7 @@ interface PrivacySettingsProps {
 }
 
 const PrivacySettings = ({ onClose, onProfileUpdated }: PrivacySettingsProps) => {
-  const [settings, setSettings] = useState<PrivacySettingsType>({ storeSentMessages: true });
+  const [settings, setSettings] = useState<PrivacySettingsType>({ storeSentMessages: true, discoverable: true });
   const [displayName, setDisplayName] = useState("");
   const [originalName, setOriginalName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -205,6 +205,54 @@ const PrivacySettings = ({ onClose, onProfileUpdated }: PrivacySettingsProps) =>
                   </>
                 )}
               </Button>
+            </div>
+          </div>
+
+          {/* Discoverable toggle */}
+          <div className="p-4 rounded-lg bg-muted/30 border border-border">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <Globe className="w-4 h-4 text-primary" />
+                  <span className="font-medium text-foreground">Discoverable</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {settings.discoverable
+                    ? "Your wallet appears in the contact picker so anyone on the network can start a chat with you."
+                    : "Your wallet is hidden. Others can only message you if they know your rouge1 address or scan your QR code."
+                  }
+                </p>
+              </div>
+              <Switch
+                checked={settings.discoverable}
+                onCheckedChange={async (enabled) => {
+                  const newSettings = { ...settings, discoverable: enabled };
+                  setSettings(newSettings);
+                  savePrivacySettings(newSettings);
+                  if (enabled) {
+                    // Re-register to make wallet visible
+                    try {
+                      const wallet = loadUnifiedWallet();
+                      if (wallet) {
+                        await registerWalletOnNode({
+                          id: wallet.signingPublicKey,
+                          displayName: wallet.displayName,
+                          signingPublicKey: wallet.signingPublicKey,
+                          encryptionPublicKey: wallet.encryptionPublicKey || "",
+                        });
+                      }
+                    } catch { /* ignore */ }
+                    toast.success("You are now discoverable", {
+                      description: "Others can find you in the New Chat picker",
+                    });
+                  } else {
+                    toast.info("You are now hidden", {
+                      description: "Others need your address to message you",
+                    });
+                  }
+                  onProfileUpdated?.();
+                }}
+              />
             </div>
           </div>
 

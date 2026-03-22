@@ -256,6 +256,7 @@ function parseMediaPayload(plaintext: string): { mediaUrl: string; mediaFileName
 // Privacy settings interface
 export interface PrivacySettings {
   storeSentMessages: boolean;
+  discoverable: boolean;
 }
 
 // Get privacy settings
@@ -263,13 +264,17 @@ export function getPrivacySettings(): PrivacySettings {
   try {
     const stored = localStorage.getItem(PRIVACY_SETTINGS_KEY);
     if (stored) {
-      return JSON.parse(stored);
+      const parsed = JSON.parse(stored);
+      return {
+        storeSentMessages: parsed.storeSentMessages ?? true,
+        discoverable: parsed.discoverable ?? true,
+      };
     }
   } catch {
     // Ignore parse errors
   }
-  // Default: store sent messages (better UX)
-  return { storeSentMessages: true };
+  // Default: store sent messages (better UX), discoverable ON (backward compat)
+  return { storeSentMessages: true, discoverable: true };
 }
 
 // Save privacy settings
