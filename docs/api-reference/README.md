@@ -15,14 +15,16 @@ https://testnet.rougechain.io/api
 
 ## Address Format
 
-All API endpoints expect **raw hex public keys** — do NOT include the `xrge:` display prefix.
+RougeChain uses **Bech32m** addresses with the `rouge1` prefix (e.g., `rouge1q8f3x7k2m4n9p...`). These are derived from the SHA-256 hash of the raw ML-DSA-65 public key.
+
+All API endpoints expect **raw hex public keys**, not `rouge1` addresses:
 
 ```
 ✅ /api/balance/d67d8da279755a...
-❌ /api/balance/xrge:d67d8da279755a...
+❌ /api/balance/rouge1q8f3x7k2m4n9p...
 ```
 
-The `xrge:` prefix is a UI display format only. Strip it before making API calls.
+The `rouge1` address is a compact display format. Use raw hex pubkeys for API calls.
 
 ## Endpoints Overview
 

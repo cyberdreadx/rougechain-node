@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { toast } from "sonner";
 import { formatTokenAmount } from "@/hooks/use-eth-price";
+import { RougeAddressLink } from "@/components/RougeAddressLink";
 
 interface TxPayload {
   to_pub_key_hex?: string;
@@ -335,12 +336,7 @@ const TransactionDetail = () => {
               <p className="text-xs text-muted-foreground mb-1">From</p>
               <div className="flex items-center gap-2 bg-background rounded border border-border p-2">
                 {from && from !== "FAUCET" ? (
-                  <Link
-                    to={`/address/${from}`}
-                    className="text-xs font-mono flex-1 break-all text-primary hover:underline"
-                  >
-                    {from}
-                  </Link>
+                  <RougeAddressLink pubkey={from} className="text-xs flex-1 break-all" />
                 ) : (
                   <code className="text-xs font-mono flex-1 break-all">{from || "\u2014"}</code>
                 )}
@@ -352,12 +348,7 @@ const TransactionDetail = () => {
               <div>
                 <p className="text-xs text-muted-foreground mb-1">To</p>
                 <div className="flex items-center gap-2 bg-background rounded border border-border p-2">
-                  <Link
-                    to={`/address/${to}`}
-                    className="text-xs font-mono flex-1 break-all text-primary hover:underline"
-                  >
-                    {to}
-                  </Link>
+                  <RougeAddressLink pubkey={to} className="text-xs flex-1 break-all" />
                   <CopyButton value={to} />
                 </div>
               </div>

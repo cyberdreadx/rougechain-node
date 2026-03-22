@@ -9,6 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Conversation, WalletWithPrivateKeys, Message, Wallet, MessageType } from "@/lib/pqc-messenger";
 import { getBotReply, getMessages, sendMessage, deleteMessage, isDemoBot, loadDemoBotWallet, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, isWalletBlocked, blockWallet, unblockWallet } from "@/lib/pqc-messenger";
 import { playNotificationSound, loadNotificationSettings } from "@/lib/notifications";
+import { useRougeAddress } from "@/hooks/useRougeAddress";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -502,6 +503,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
   const isRecipientBot = recipient && !isSelfConversation ? isDemoBot(recipient.id) : false;
   const recipientMainId = recipient?.id || recipient?.signingPublicKey || "";
   const [blocked, setBlocked] = useState(() => recipientMainId ? isWalletBlocked(recipientMainId) : false);
+  const { display: recipientRougeAddr } = useRougeAddress(recipientMainId || undefined);
 
   const handleToggleBlock = () => {
     if (!recipientMainId) return;
@@ -781,8 +783,8 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
               }}
               title="Click to copy recipient address"
             >
-              <span className="truncate max-w-[100px] sm:max-w-[200px] inline-block">
-                {(recipient.signingPublicKey || recipient.encryptionPublicKey || "").substring(0, 16)}...
+              <span className="truncate max-w-[140px] sm:max-w-[240px] inline-block">
+                {recipientRougeAddr || `${(recipient.signingPublicKey || recipient.encryptionPublicKey || "").substring(0, 16)}...`}
               </span>
               <Copy className="w-3 h-3 flex-shrink-0" />
             </button>

@@ -1,53 +1,38 @@
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { X, Copy, Check, Shield, Share2, ChevronLeft, ChevronRight, QrCode } from "lucide-react";
+import { motion } from "framer-motion";
+import { X, Copy, Check, Share2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { toDataURL } from "qrcode";
+import { pubkeyToAddress, formatAddress } from "@/lib/address";
 
 interface ReceiveDialogProps {
   publicKey: string;
   onClose: () => void;
 }
 
-// Convert hex to base64 for more compact encoding
-const hexToBase64 = (hex: string): string => {
-  const bytes = new Uint8Array(hex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
-  return btoa(String.fromCharCode(...bytes));
-};
-
-// Split data into chunks for multi-part QR
-const splitForQR = (data: string, maxChunkSize: number = 1200): string[] => {
-  const chunks: string[] = [];
-  for (let i = 0; i < data.length; i += maxChunkSize) {
-    chunks.push(data.slice(i, i + maxChunkSize));
-  }
-  return chunks;
-};
-
 const ReceiveDialog = ({ publicKey, onClose }: ReceiveDialogProps) => {
-  const [copied, setCopied] = useState(false);
-  const [currentQrIndex, setCurrentQrIndex] = useState(0);
-  const [qrCodes, setQrCodes] = useState<string[]>([]);
-  const [qrError, setQrError] = useState(false);
-  const [simpleQr, setSimpleQr] = useState<string | null>(null);
-  const [showSimpleQr, setShowSimpleQr] = useState(true); // Default to simple QR
+  const [copied, setCopied] = useState<"addr" | "pk" | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [rougeAddr, setRougeAddr] = useState<string | null>(null);
 
-  // Format with xrge prefix
-  const fullAddress = `xrge:${publicKey}`;
-  const displayKey = `xrge:${publicKey.slice(0, 20)}...${publicKey.slice(-20)}`;
-  
-  // Create a short fingerprint of the key for verification
-  const keyFingerprint = publicKey.slice(0, 8) + "..." + publicKey.slice(-8);
-
-  // Generate simple QR (URL that opens wallet with address reference)
+  // Derive the rouge1... address from the pubkey
   useEffect(() => {
-    const generateSimpleQR = async () => {
+    let cancelled = false;
+    pubkeyToAddress(publicKey)
+      .then((addr) => {
+        if (!cancelled) setRougeAddr(addr);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [publicKey]);
+
+  // Generate QR from the rouge1 address (fits in a single standard QR)
+  useEffect(() => {
+    if (!rougeAddr) return;
+    const generateQR = async () => {
       try {
-        // Simple QR contains a URL to the XRGE app/site with a key fingerprint
-        // This is scannable by any phone and provides a way to verify
-        const simpleData = `https://rougechain.io/wallet?addr=${publicKey.slice(0, 32)}`;
-        const qr = await toDataURL(simpleData, {
+        const qr = await toDataURL(rougeAddr, {
           width: 200,
           margin: 2,
           errorCorrectionLevel: "M",
@@ -56,75 +41,48 @@ const ReceiveDialog = ({ publicKey, onClose }: ReceiveDialogProps) => {
             light: "#ffffff",
           },
         });
-        setSimpleQr(qr);
-      } catch (err) {
-        console.error("Simple QR error:", err);
-      }
-    };
-    generateSimpleQR();
-  }, [publicKey]);
-
-  // Generate multi-part PQC-QR codes
-  useEffect(() => {
-    const generateQRCodes = async () => {
-      try {
-        // Convert to base64 for more compact encoding
-        const base64Key = hexToBase64(publicKey);
-        const chunks = splitForQR(base64Key, 1000);
-        const totalParts = chunks.length;
-        
-        const qrPromises = chunks.map(async (chunk, index) => {
-          // Format: XRGE:part/total:data
-          const qrData = `XRGE:${index + 1}/${totalParts}:${chunk}`;
-          return await toDataURL(qrData, {
-            width: 200,
-            margin: 1,
-            errorCorrectionLevel: "M",
-            color: {
-              dark: "#000000",
-              light: "#ffffff",
-            },
-          });
-        });
-        
-        const codes = await Promise.all(qrPromises);
-        setQrCodes(codes);
+        setQrDataUrl(qr);
       } catch (err) {
         console.error("QR generation error:", err);
-        setQrError(true);
       }
     };
-    
-    generateQRCodes();
-  }, [publicKey]);
+    generateQR();
+  }, [rougeAddr]);
+
+  const displayAddr = rougeAddr ? formatAddress(rougeAddr, 14, 6) : "";
 
   const copyAddress = () => {
-    navigator.clipboard.writeText(fullAddress);
-    setCopied(true);
-    toast.success("Address copied to clipboard!");
-    setTimeout(() => setCopied(false), 2000);
+    if (!rougeAddr) return;
+    navigator.clipboard.writeText(rougeAddr);
+    setCopied("addr");
+    toast.success("Address copied!");
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const copyPubkey = () => {
+    navigator.clipboard.writeText(publicKey);
+    setCopied("pk");
+    toast.success("Public key copied!");
+    setTimeout(() => setCopied(null), 2000);
   };
 
   const shareAddress = async () => {
+    if (!rougeAddr) return;
     if (navigator.share) {
       try {
         await navigator.share({
-          title: "My XRGE Wallet Address",
-          text: fullAddress,
+          title: "My RougeChain Address",
+          text: rougeAddr,
         });
       } catch (err) {
-        // User cancelled or share failed
         if ((err as Error).name !== "AbortError") {
-          copyAddress(); // Fall back to copy
+          copyAddress();
         }
       }
     } else {
-      copyAddress(); // Fall back to copy
+      copyAddress();
     }
   };
-
-  const nextQr = () => setCurrentQrIndex((i) => (i + 1) % qrCodes.length);
-  const prevQr = () => setCurrentQrIndex((i) => (i - 1 + qrCodes.length) % qrCodes.length);
 
   return (
     <motion.div
@@ -149,142 +107,54 @@ const ReceiveDialog = ({ publicKey, onClose }: ReceiveDialogProps) => {
         </div>
 
         <div className="space-y-4">
-          {/* QR Mode Toggle */}
-          <div className="flex items-center justify-center gap-2 p-1 rounded-lg bg-muted/50">
-            <button
-              onClick={() => setShowSimpleQr(true)}
-              className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-colors ${
-                showSimpleQr ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"
-              }`}
-            >
-              Standard QR
-            </button>
-            <button
-              onClick={() => setShowSimpleQr(false)}
-              className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-colors ${
-                !showSimpleQr ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"
-              }`}
-            >
-              PQC-QR ({qrCodes.length} parts)
-            </button>
-          </div>
-
-          {/* Simple QR Mode */}
-          {showSimpleQr && simpleQr ? (
-            <div className="relative">
-              <div className="bg-white rounded-xl p-3 mx-auto max-w-[200px]">
-                <img
-                  src={simpleQr}
-                  alt="XRGE QR Code"
-                  className="w-full h-auto rounded-lg"
-                />
-              </div>
-              
-              <div className="mt-3 p-3 rounded-lg bg-muted/50 border border-border">
-                <p className="text-[11px] text-muted-foreground text-center">
-                  <span className="font-medium text-foreground">Scan to verify:</span> Opens rougechain.io with address preview
-                </p>
-                <p className="text-[10px] text-muted-foreground text-center mt-1">
-                  Fingerprint: <span className="font-mono">{keyFingerprint}</span>
-                </p>
-              </div>
-            </div>
-          ) : qrCodes.length > 0 && !qrError ? (
-            /* PQC-QR Mode */
-            <div className="relative">
-              {/* QR Code Display */}
-              <div className="bg-white rounded-xl p-3 mx-auto max-w-[220px]">
-                <AnimatePresence mode="wait">
-                  <motion.img
-                    key={currentQrIndex}
-                    src={qrCodes[currentQrIndex]}
-                    alt={`PQC-QR Part ${currentQrIndex + 1}`}
-                    className="w-full h-auto rounded-lg"
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    transition={{ duration: 0.2 }}
-                  />
-                </AnimatePresence>
-              </div>
-              
-              {/* Part indicator - below QR */}
-              <div className="text-center mt-2">
-                <span className="bg-primary/10 text-primary text-xs px-3 py-1 rounded-full">
-                  Part {currentQrIndex + 1} of {qrCodes.length}
-                </span>
-              </div>
-
-              {/* Navigation arrows */}
-              {qrCodes.length > 1 && (
-                <div className="flex items-center justify-between mt-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={prevQr}
-                    className="h-8 px-2"
-                  >
-                    <ChevronLeft className="w-4 h-4 mr-1" />
-                    Prev
-                  </Button>
-                  
-                  {/* Dot indicators */}
-                  <div className="flex gap-1.5">
-                    {qrCodes.map((_, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setCurrentQrIndex(i)}
-                        className={`w-2 h-2 rounded-full transition-colors ${
-                          i === currentQrIndex ? "bg-primary" : "bg-muted-foreground/30"
-                        }`}
-                      />
-                    ))}
-                  </div>
-                  
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={nextQr}
-                    className="h-8 px-2"
-                  >
-                    Next
-                    <ChevronRight className="w-4 h-4 ml-1" />
-                  </Button>
-                </div>
-              )}
-
-              {/* PQC-QR Info */}
-              <div className="mt-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                <p className="text-[11px] text-amber-700 dark:text-amber-400 text-center">
-                  <span className="font-medium">PQC-QR:</span> Requires XRGE wallet scanner to decode
-                </p>
-                <p className="text-[10px] text-muted-foreground text-center mt-1">
-                  Contains full quantum-safe public key
-                </p>
-              </div>
+          {/* QR Code */}
+          {qrDataUrl ? (
+            <div className="bg-white rounded-xl p-3 mx-auto max-w-[200px]">
+              <img
+                src={qrDataUrl}
+                alt="RougeChain Address QR"
+                className="w-full h-auto rounded-lg"
+              />
             </div>
           ) : (
-            <div className="flex items-center justify-center gap-2 p-4 rounded-xl bg-muted/50">
-              <Shield className="w-5 h-5 text-primary" />
-              <div className="text-center">
-                <p className="text-sm font-medium text-primary">Post-Quantum Address</p>
-                <p className="text-[10px] text-muted-foreground">ML-DSA-65 (CRYSTALS-Dilithium)</p>
-              </div>
+            <div className="flex items-center justify-center h-[200px]">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
             </div>
           )}
 
-          {/* Address Display */}
+          {/* Rouge1 Address */}
           <div className="p-3 rounded-xl bg-secondary/50 border border-border">
             <p className="text-[10px] text-muted-foreground mb-1">Wallet Address</p>
-            <p className="font-mono text-[11px] text-foreground break-all leading-relaxed select-all">
-              {displayKey}
+            <p className="font-mono text-sm text-primary break-all leading-relaxed select-all">
+              {rougeAddr ?? displayAddr}
+            </p>
+          </div>
+
+          {/* Public Key (collapsed) */}
+          <div className="p-3 rounded-xl bg-muted/30 border border-border">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] text-muted-foreground">Public Key</p>
+              <button
+                onClick={copyPubkey}
+                className="p-1 hover:bg-secondary rounded transition-colors"
+                title="Copy public key"
+              >
+                {copied === "pk" ? (
+                  <Check className="w-3 h-3 text-green-500" />
+                ) : (
+                  <Copy className="w-3 h-3 text-muted-foreground" />
+                )}
+              </button>
+            </div>
+            <p className="font-mono text-[10px] text-muted-foreground break-all leading-relaxed select-all mt-1">
+              {publicKey.slice(0, 32)}...{publicKey.slice(-16)}
             </p>
           </div>
 
           {/* Action Buttons */}
           <div className="grid grid-cols-2 gap-3">
-            <Button onClick={copyAddress} className="w-full" size="sm" variant={copied ? "default" : "outline"}>
-              {copied ? (
+            <Button onClick={copyAddress} className="w-full" size="sm" variant={copied === "addr" ? "default" : "outline"}>
+              {copied === "addr" ? (
                 <>
                   <Check className="w-4 h-4 mr-1" />
                   Copied!
@@ -292,7 +162,7 @@ const ReceiveDialog = ({ publicKey, onClose }: ReceiveDialogProps) => {
               ) : (
                 <>
                   <Copy className="w-4 h-4 mr-1" />
-                  Copy
+                  Copy Address
                 </>
               )}
             </Button>
@@ -302,12 +172,9 @@ const ReceiveDialog = ({ publicKey, onClose }: ReceiveDialogProps) => {
             </Button>
           </div>
 
-          {/* Scan Instructions */}
-          {!showSimpleQr && qrCodes.length > 1 && (
-            <p className="text-[10px] text-muted-foreground text-center">
-              Scan all {qrCodes.length} QR codes in order with an XRGE-compatible scanner
-            </p>
-          )}
+          <p className="text-[10px] text-muted-foreground text-center">
+            Send XRGE or tokens to this address. Scan the QR code or share the <span className="font-mono">rouge1...</span> address.
+          </p>
         </div>
       </motion.div>
     </motion.div>

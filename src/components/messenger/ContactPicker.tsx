@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import type { Wallet, WalletWithPrivateKeys, Conversation } from "@/lib/pqc-messenger";
 import { createConversation, getOrCreateDemoBot, getWallets } from "@/lib/pqc-messenger";
 import PqcQrScanner from "@/components/wallet/PqcQrScanner";
+import { isRougeAddress } from "@/lib/address";
 
 interface ContactPickerProps {
   contacts: Wallet[];
@@ -15,14 +16,19 @@ interface ContactPickerProps {
   onConversationCreated: (conversation: Conversation) => void;
 }
 
-// Parse xrge: prefixed address or raw public key
+// Parse rouge1... address, xrge: prefixed address, or raw public key
 const parseAddress = (input: string): { valid: boolean; publicKey: string; error?: string } => {
   const trimmed = input.trim();
   if (!trimmed) {
-    return { valid: false, publicKey: "", error: "Enter a public key or xrge: address" };
+    return { valid: false, publicKey: "", error: "Enter a rouge1... address or public key" };
   }
 
-  // Remove xrge: prefix if present
+  // Accept rouge1... Bech32m addresses
+  if (isRougeAddress(trimmed)) {
+    return { valid: true, publicKey: trimmed };
+  }
+
+  // Remove xrge: prefix if present (legacy)
   const prefixMatch = trimmed.match(/^xrge:/i);
   const rawKey = prefixMatch ? trimmed.slice(5) : trimmed;
 
@@ -266,7 +272,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
               className="w-full p-3 rounded-lg border border-dashed border-border hover:border-primary/50 hover:bg-muted/30 transition-all flex items-center justify-center gap-2 text-muted-foreground hover:text-foreground"
             >
               <UserPlus className="w-4 h-4" />
-              <span className="text-sm">Add by public key or xrge: address</span>
+              <span className="text-sm">Add by rouge1 address or public key</span>
             </button>
           ) : (
             <div className="space-y-3">
@@ -290,7 +296,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
 
               <div>
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="manual-address" className="text-xs text-muted-foreground">Public Key or xrge: Address</Label>
+                  <Label htmlFor="manual-address" className="text-xs text-muted-foreground">RougeChain Address or Public Key</Label>
                   <Button
                     type="button"
                     variant="ghost"
@@ -307,7 +313,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
                     id="manual-address"
                     value={manualAddress}
                     onChange={(e) => handleAddressChange(e.target.value)}
-                    placeholder="xrge:... or paste public key"
+                    placeholder="rouge1... or paste public key"
                     className={`font-mono text-xs pr-8 ${
                       manualAddress && !addressValidation?.valid ? "border-destructive" : ""
                     } ${manualAddress && addressValidation?.valid ? "border-success" : ""}`}

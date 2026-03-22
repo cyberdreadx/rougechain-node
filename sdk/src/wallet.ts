@@ -1,5 +1,6 @@
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { bytesToHex, hexToBytes } from "./utils.js";
+import { pubkeyToAddress } from "./address.js";
 import type { WalletKeys } from "./types.js";
 
 export class Wallet implements WalletKeys {
@@ -38,6 +39,14 @@ export class Wallet implements WalletKeys {
   }
 
   /**
+   * Derive the compact Bech32m address from the public key.
+   * Returns a ~63-character `rouge1...` string.
+   */
+  async address(): Promise<string> {
+    return pubkeyToAddress(this.publicKey);
+  }
+
+  /**
    * Verify that the keypair is valid by signing and verifying a test message.
    */
   verify(): boolean {
@@ -50,3 +59,4 @@ export class Wallet implements WalletKeys {
     }
   }
 }
+

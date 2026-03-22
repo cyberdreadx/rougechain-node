@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import type { Conversation } from "@/lib/pqc-messenger";
 import { deleteConversation } from "@/lib/pqc-messenger";
 import { toast } from "sonner";
+import { useRougeAddress } from "@/hooks/useRougeAddress";
 
 function formatRelativeTime(dateStr: string): string {
   try {
@@ -85,23 +86,28 @@ const ConversationList = ({ conversations, selectedId, currentWalletId, currentW
     if (other) {
       const genericNames = ["My Wallet", "Unknown", ""];
       if (genericNames.includes(other.displayName || "")) {
-        const addr = other.signingPublicKey || other.encryptionPublicKey || other.id || "";
-        return addr.length > 12 ? `${addr.substring(0, 12)}...` : addr || "Unknown";
+        return ""; // Will be resolved to rouge1 by the component
       }
-      return other.displayName || "Unknown";
+      return other.displayName || "";
     }
 
     if (conversation.name && conversation.name !== currentWalletName) return conversation.name;
 
-    return conversation.isGroup ? (conversation.name || "Group") : "Unknown";
+    return conversation.isGroup ? (conversation.name || "Group") : "";
   };
   
-  const getConversationAddress = (conversation: Conversation): string => {
-    if (isSelfConversation(conversation)) return "";
+  const getConversationPubkey = (conversation: Conversation): string | undefined => {
+    if (isSelfConversation(conversation)) return undefined;
     const other = getOtherParticipant(conversation);
-    if (!other) return "";
-    const addr = other.signingPublicKey || other.encryptionPublicKey || "";
-    return addr.length > 10 ? `${addr.substring(0, 10)}...` : addr;
+    if (!other) return undefined;
+    return other.signingPublicKey || other.encryptionPublicKey || undefined;
+  };
+
+  // Helper component to resolve rouge1 address for conversation names
+  const ConversationNameDisplay = ({ name, pubkey }: { name: string; pubkey?: string }) => {
+    const { display: rougeAddr } = useRougeAddress(pubkey);
+    const displayName = name || rougeAddr || (pubkey ? `${pubkey.substring(0, 12)}...` : "Unknown");
+    return <p className="font-medium truncate text-foreground">{displayName}</p>;
   };
 
   if (conversations.length === 0) {
@@ -150,9 +156,7 @@ const ConversationList = ({ conversations, selectedId, currentWalletId, currentW
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <p className={`font-medium truncate ${(conversation.unreadCount ?? 0) > 0 ? "text-foreground" : "text-foreground"}`}>
-                  {getConversationName(conversation)}
-                </p>
+                <ConversationNameDisplay name={getConversationName(conversation)} pubkey={getConversationPubkey(conversation)} />
                 {(conversation.unreadCount ?? 0) > 0 && (
                   <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
                     {conversation.unreadCount! > 9 ? "9+" : conversation.unreadCount}

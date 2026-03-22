@@ -64,13 +64,17 @@ const { balance } = await rc.getBalance(wallet.publicKey);
 | **Mail** | `rc.mail` | On-chain encrypted email (`@rouge.quant`) |
 | **Messenger** | `rc.messenger` | E2E encrypted messaging with self-destruct |
 
-## Wallet
+## Wallet & Addresses
 
 ```typescript
-import { Wallet } from "@rougechain/sdk";
+import { Wallet, pubkeyToAddress, isRougeAddress, formatAddress } from "@rougechain/sdk";
 
 // Generate a new post-quantum keypair
 const wallet = Wallet.generate();
+
+// Get the compact rouge1... address (~63 chars vs 3904-char hex pubkey)
+const address = await wallet.address();
+// "rouge1q8f3x7k2m4n9p..."
 
 // Restore from saved keys
 const restored = Wallet.fromKeys(publicKey, privateKey);
@@ -80,6 +84,11 @@ const keys = wallet.toJSON(); // { publicKey, privateKey }
 
 // Verify keypair integrity
 wallet.verify(); // true
+
+// Address utilities
+const addr = await pubkeyToAddress(someHexPubKey);
+const display = formatAddress(addr); // "rouge1q8f3x7...k9m2"
+isRougeAddress("rouge1q8f3x7k2m4..."); // true
 ```
 
 ## Transfers & Tokens

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Html5Qrcode } from "html5-qrcode";
+import { isRougeAddress } from "@/lib/address";
 
 interface PqcQrScannerProps {
   onScan: (publicKey: string) => void;
@@ -119,14 +120,22 @@ const PqcQrScanner = ({ onScan, onClose }: PqcQrScannerProps) => {
       return;
     }
 
-    // 3. Check for raw hex (full public key)
+    // 3. Check for rouge1... Bech32m address
+    if (isRougeAddress(data)) {
+      toast.success("RougeChain address scanned!");
+      // Pass the rouge1 address as-is; the consumer resolves it to a pubkey
+      completeWithKey(data);
+      return;
+    }
+
+    // 4. Check for raw hex (full public key)
     if (/^[a-fA-F0-9]{500,}$/.test(data)) {
       toast.success("Full address scanned!");
       completeWithKey(data);
       return;
     }
 
-    // 4. Check for xrge: prefix
+    // 5. Check for xrge: prefix (legacy)
     if (data.toLowerCase().startsWith("xrge:")) {
       const key = data.slice(5);
       if (key.length >= 100) {
@@ -245,12 +254,18 @@ const PqcQrScanner = ({ onScan, onClose }: PqcQrScannerProps) => {
       toast.error("Please enter an address");
       return;
     }
+
+    // Accept rouge1... Bech32m addresses
+    if (isRougeAddress(input)) {
+      completeWithKey(input);
+      return;
+    }
     
     const key = input.replace(/^xrge:/i, "");
     if (key.length >= 100) {
       completeWithKey(key);
     } else {
-      toast.error("Address too short - please enter the full public key");
+      toast.error("Invalid address — enter a rouge1... address or full public key");
     }
   };
 

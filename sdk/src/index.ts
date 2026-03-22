@@ -20,6 +20,13 @@ export {
 export { generateNonce, hexToBytes, bytesToHex } from "./utils.js";
 
 export {
+  pubkeyToAddress,
+  isRougeAddress,
+  formatAddress,
+  addressToHash,
+} from "./address.js";
+
+export {
   computeCommitment,
   computeNullifier,
   generateRandomness,
