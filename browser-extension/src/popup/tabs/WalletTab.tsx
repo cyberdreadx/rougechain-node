@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { RefreshCw, Send, Download, Droplets, Copy, Check, TrendingUp, ArrowDownUp, Shield, ShieldOff, AlertCircle, X } from "lucide-react";
 import type { UnifiedWallet } from "../../lib/unified-wallet";
+import { pubkeyToAddress, formatAddress, formatIdentity } from "../../lib/address";
 import {
     getWalletBalance,
     getWalletTransactions,
@@ -67,6 +68,7 @@ export default function WalletTab({ wallet }: Props) {
     const [savedNotes, setSavedNotes] = useState<StoredNote[]>([]);
     const [unshieldingNote, setUnshieldingNote] = useState<string | null>(null);
     const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);
+    const [rougeAddress, setRougeAddress] = useState<string>("");
 
     const showToast = (message: string, type: "error" | "success" = "error") => {
         setToast({ message, type });
@@ -100,10 +102,15 @@ export default function WalletTab({ wallet }: Props) {
         return () => clearInterval(interval);
     }, [refreshData]);
 
+    // Compute rouge1 address from signing key
+    useEffect(() => {
+        pubkeyToAddress(wallet.signingPublicKey).then(setRougeAddress).catch(() => {});
+    }, [wallet.signingPublicKey]);
+
     const xrgeBalance = balances.find(b => b.symbol === TOKEN_SYMBOL)?.balance || 0;
 
     const copyAddress = () => {
-        navigator.clipboard.writeText(wallet.signingPublicKey);
+        navigator.clipboard.writeText(rougeAddress || wallet.signingPublicKey);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     };
@@ -188,7 +195,7 @@ export default function WalletTab({ wallet }: Props) {
                             onClick={copyAddress}
                             className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono hover:text-foreground transition-colors mt-0.5"
                         >
-                            {truncateAddress(wallet.signingPublicKey)}
+                            {rougeAddress ? formatAddress(rougeAddress) : truncateAddress(wallet.signingPublicKey)}
                             {copied ? <Check className="w-2.5 h-2.5 text-success" /> : <Copy className="w-2.5 h-2.5" />}
                         </button>
                     </div>
@@ -506,7 +513,7 @@ export default function WalletTab({ wallet }: Props) {
                                         <div className="min-w-0">
                                             <p className="text-xs text-foreground capitalize">{tx.type}</p>
                                             <p className="text-[10px] text-muted-foreground font-mono truncate">
-                                                {truncateAddress(tx.address || "")}
+                                                {formatIdentity(tx.address || "")}
                                             </p>
                                         </div>
                                     </div>
