@@ -13,6 +13,9 @@ import {
   Layers,
   Percent,
   Hash,
+  Send,
+  X,
+  Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +23,8 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/network";
 import { RougeAddressLink } from "@/components/RougeAddressLink";
+import { loadUnifiedWallet } from "@/lib/unified-wallet";
+import { secureTransferNft } from "@/lib/secure-api";
 
 interface NFTCollection {
   collection_id: string;
@@ -77,6 +82,161 @@ const TraitsList = ({ attributes }: { attributes: NFTToken["attributes"] }) => {
     </div>
   );
 };
+
+/** NFT Transfer Dialog with royalty preview */
+const TransferDialog = ({
+  token,
+  collectionId,
+  royaltyBps,
+  royaltyRecipient,
+  onClose,
+  onSuccess,
+}: {
+  token: NFTToken;
+  collectionId: string;
+  royaltyBps: number;
+  royaltyRecipient: string;
+  onClose: () => void;
+  onSuccess: () => void;
+}) => {
+  const [recipient, setRecipient] = useState("");
+  const [salePrice, setSalePrice] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const price = parseFloat(salePrice) || 0;
+  const royaltyPercent = royaltyBps / 100;
+  const royaltyAmount = price > 0 ? (price * royaltyBps) / 10000 : 0;
+  const sellerReceives = price > 0 ? price - royaltyAmount : 0;
+
+  const handleTransfer = async () => {
+    if (!recipient.trim()) {
+      toast.error("Please enter a recipient address");
+      return;
+    }
+    const wallet = loadUnifiedWallet();
+    if (!wallet) {
+      toast.error("Wallet not found");
+      return;
+    }
+    setSending(true);
+    try {
+      const tokenId = typeof token.token_id === "string" ? parseInt(token.token_id) : Number(token.token_id);
+      const res = await secureTransferNft(
+        wallet.signingPublicKey,
+        wallet.signingPrivateKey,
+        collectionId,
+        tokenId,
+        recipient.trim(),
+        price > 0 ? price : undefined
+      );
+      if (res.success) {
+        toast.success("NFT transferred successfully!");
+        onSuccess();
+        onClose();
+      } else {
+        toast.error(res.error || "Transfer failed");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Transfer failed");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-md space-y-4 p-6 relative">
+        <button onClick={onClose} className="absolute top-3 right-3 text-muted-foreground hover:text-foreground">
+          <X className="w-5 h-5" />
+        </button>
+
+        <div>
+          <h3 className="text-lg font-bold">Transfer NFT</h3>
+          <p className="text-sm text-muted-foreground">
+            {token.name} <span className="font-mono text-primary">#{token.token_id}</span>
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Recipient Address</label>
+            <input
+              type="text"
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+              placeholder="rouge1... or public key"
+              className="w-full px-3 py-2 rounded-lg bg-background border border-border text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Sale Price (XRGE) — optional</label>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              value={salePrice}
+              onChange={(e) => setSalePrice(e.target.value)}
+              placeholder="0.00"
+              className="w-full px-3 py-2 rounded-lg bg-background border border-border text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+          </div>
+
+          {/* Royalty breakdown */}
+          {price > 0 && royaltyBps > 0 && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+              <div className="flex items-center gap-1.5 text-sm font-medium text-amber-500">
+                <Info className="w-4 h-4" />
+                Royalty Applies
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <span className="text-muted-foreground">Royalty Rate</span>
+                  <p className="font-mono font-semibold">{royaltyPercent.toFixed(1)}%</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Royalty Amount</span>
+                  <p className="font-mono font-semibold text-amber-500">{royaltyAmount.toFixed(4)} XRGE</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Goes to Creator</span>
+                  <p className="font-mono text-[10px] truncate">
+                    <RougeAddressLink pubkey={royaltyRecipient} />
+                  </p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">You Receive</span>
+                  <p className="font-mono font-semibold text-green-500">{sellerReceives.toFixed(4)} XRGE</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {price > 0 && royaltyBps === 0 && (
+            <div className="rounded-lg border border-green-500/30 bg-green-500/5 p-3 text-xs text-green-500">
+              No royalty on this collection — you receive the full sale price.
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-2 pt-2">
+          <Button variant="outline" onClick={onClose} className="flex-1" disabled={sending}>
+            Cancel
+          </Button>
+          <Button onClick={handleTransfer} className="flex-1" disabled={sending || !recipient.trim()}>
+            {sending ? (
+              <Loader2 className="w-4 h-4 animate-spin mr-2" />
+            ) : (
+              <Send className="w-4 h-4 mr-2" />
+            )}
+            Transfer
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 
 
@@ -225,6 +385,9 @@ const CollectionDetail = ({ collectionId }: { collectionId: string }) => {
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [tokensLoading, setTokensLoading] = useState(false);
+  const [transferTarget, setTransferTarget] = useState<NFTToken | null>(null);
+
+  const wallet = loadUnifiedWallet();
 
   const fetchTokens = useCallback(async (currentOffset: number) => {
     setTokensLoading(true);
@@ -482,6 +645,15 @@ const CollectionDetail = ({ collectionId }: { collectionId: string }) => {
                             <RougeAddressLink pubkey={token.owner} />
                           </div>
                           <TraitsList attributes={token.attributes} />
+                          {wallet && token.owner === wallet.signingPublicKey && (
+                            <button
+                              onClick={() => setTransferTarget(token)}
+                              className="mt-2 w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors"
+                            >
+                              <Send className="w-3 h-3" />
+                              Transfer
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -519,6 +691,18 @@ const CollectionDetail = ({ collectionId }: { collectionId: string }) => {
               )}
             </CardContent>
           </Card>
+
+          {/* Transfer Dialog */}
+          {transferTarget && collection && (
+            <TransferDialog
+              token={transferTarget}
+              collectionId={collectionId}
+              royaltyBps={collection.royalty_bps}
+              royaltyRecipient={collection.creator}
+              onClose={() => setTransferTarget(null)}
+              onSuccess={() => fetchTokens(offset)}
+            />
+          )}
         </motion.div>
       </main>
     </div>
