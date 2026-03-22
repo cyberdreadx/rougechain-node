@@ -221,3 +221,37 @@ pub fn compute_block_hash(header_bytes: &[u8], proposer_sig: &str) -> String {
     hasher.update(proposer_sig.as_bytes());
     hex::encode(hasher.finalize())
 }
+
+/// Compute a unique hash for a single transaction.
+pub fn compute_single_tx_hash(tx: &TxV1) -> String {
+    let bytes = encode_tx_v1(tx);
+    hex::encode(Sha256::digest(&bytes))
+}
+
+// ─── Transaction Receipts ──────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum TxStatus {
+    Success,
+    Failed(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TxLog {
+    pub event_type: String,         // e.g. "transfer", "token_create", "nft_mint"
+    pub data: serde_json::Value,    // Arbitrary event data
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TxReceipt {
+    pub tx_hash: String,
+    pub block_height: u64,
+    pub block_hash: String,
+    pub index: u32,                 // Position in block
+    pub tx_type: String,
+    pub from: String,               // Sender public key
+    pub status: TxStatus,
+    pub fee_paid: f64,
+    pub logs: Vec<TxLog>,
+    pub timestamp: u64,             // Block timestamp
+}

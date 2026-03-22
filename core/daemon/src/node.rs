@@ -17,12 +17,14 @@ use quantum_vault_storage::mail_store::{MailLabel, MailMessage, MailStore};
 use quantum_vault_storage::messenger_store::{Conversation, MessengerMessage, MessengerStore, MessengerWallet};
 use quantum_vault_storage::name_registry::{NameEntry, NameRegistry};
 use quantum_vault_storage::nullifier_store::NullifierStore;
+use quantum_vault_storage::receipt_store::ReceiptStore;
 use quantum_vault_storage::token_metadata_store::{TokenMetadata, TokenMetadataStore};
 use quantum_vault_storage::token_stake_store::{TokenStakeStore, StakingPool, TokenStake};
 use quantum_vault_storage::validator_store::{ValidatorState, ValidatorStore};
 use quantum_vault_types::{
-    compute_block_hash, compute_tx_hash, encode_header_v1, encode_tx_v1, encode_tx_for_signing, BlockHeaderV1, BlockV1,
-    ChainConfig, PQKeypair, SlashPayload, TxPayload, TxV1, VoteMessage,
+    compute_block_hash, compute_single_tx_hash, compute_tx_hash, encode_header_v1, encode_tx_v1,
+    encode_tx_for_signing, BlockHeaderV1, BlockV1, ChainConfig, PQKeypair, SlashPayload,
+    TxLog, TxPayload, TxReceipt, TxStatus, TxV1, VoteMessage,
 };
 
 use crate::amm;
@@ -72,6 +74,7 @@ pub struct L1Node {
     governance_store: GovernanceStore,
     allowance_store: AllowanceStore,
     nullifier_store: NullifierStore,
+    receipt_store: ReceiptStore,
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
     verified_tx_ids: Arc<Mutex<HashSet<String>>>,
@@ -109,6 +112,10 @@ impl L1Node {
         let token_stake_store = TokenStakeStore::new(&data_dir_str)?;
         let governance_store = GovernanceStore::new(&data_dir_str)?;
         let allowance_store = AllowanceStore::new(&data_dir_str)?;
+        // Open receipt store on the same sled DB as chain store
+        let receipt_db = sled::open(opts.data_dir.join("receipt-db"))
+            .map_err(|e| format!("open receipt DB: {}", e))?;
+        let receipt_store = ReceiptStore::new(&receipt_db)?;
         let keys = Self::load_or_create_keys(&opts.data_dir)?;
         Ok(Self {
             node_id: uuid::Uuid::new_v4().to_string(),
@@ -124,6 +131,7 @@ impl L1Node {
             mail_store,
             commitment_store,
             nullifier_store,
+            receipt_store,
             lock_store,
             token_stake_store,
             governance_store,
@@ -409,6 +417,10 @@ impl L1Node {
         // Only persist after state was applied successfully
         self.store.append_block(&block)?;
         
+        // Generate and store transaction receipts
+        let receipts = self.generate_receipts(&block);
+        let _ = self.receipt_store.store_batch(&receipts);
+        
         // Track proposer stats for imported blocks — node key may differ from validator key
         let proposer_key = block.header.proposer_pub_key.clone();
         if let Ok(Some(mut vstate)) = self.validator_store.get_validator(&proposer_key) {
@@ -435,6 +447,94 @@ impl L1Node {
     pub fn get_balance(&self, public_key: &str) -> Result<f64, String> {
         let balances = self.balances.lock().map_err(|_| "balance lock")?;
         Ok(*balances.get(public_key).unwrap_or(&0.0))
+    }
+
+    /// Get a transaction receipt by hash.
+    pub fn get_receipt(&self, tx_hash: &str) -> Result<Option<TxReceipt>, String> {
+        self.receipt_store.get(tx_hash)
+    }
+
+    /// Generate receipts for all transactions in a block.
+    /// Called after successful block application — all txs are assumed successful
+    /// since invalid ones were rejected during signature verification.
+    fn generate_receipts(&self, block: &BlockV1) -> Vec<TxReceipt> {
+        let mut receipts = Vec::with_capacity(block.txs.len());
+        for (index, tx) in block.txs.iter().enumerate() {
+            let tx_hash = compute_single_tx_hash(tx);
+
+            // Build event log based on tx type
+            let log = match tx.tx_type.as_str() {
+                "transfer" => TxLog {
+                    event_type: "transfer".to_string(),
+                    data: serde_json::json!({
+                        "to": tx.payload.to_pub_key_hex,
+                        "amount": tx.payload.amount,
+                    }),
+                },
+                "create_token" => TxLog {
+                    event_type: "token_create".to_string(),
+                    data: serde_json::json!({
+                        "name": tx.payload.token_name,
+                        "symbol": tx.payload.token_symbol,
+                        "total_supply": tx.payload.token_total_supply,
+                    }),
+                },
+                "nft_create_collection" => TxLog {
+                    event_type: "nft_collection_create".to_string(),
+                    data: serde_json::json!({
+                        "symbol": tx.payload.nft_collection_symbol,
+                        "name": tx.payload.nft_collection_name,
+                    }),
+                },
+                "nft_mint" => TxLog {
+                    event_type: "nft_mint".to_string(),
+                    data: serde_json::json!({
+                        "collection": tx.payload.nft_collection_id,
+                        "token_id": tx.payload.nft_token_id,
+                    }),
+                },
+                "nft_transfer" => TxLog {
+                    event_type: "nft_transfer".to_string(),
+                    data: serde_json::json!({
+                        "collection": tx.payload.nft_collection_id,
+                        "token_id": tx.payload.nft_token_id,
+                        "to": tx.payload.to_pub_key_hex,
+                    }),
+                },
+                "create_pool" | "add_liquidity" | "remove_liquidity" | "swap" => TxLog {
+                    event_type: tx.tx_type.clone(),
+                    data: serde_json::json!({
+                        "pool_id": tx.payload.pool_id,
+                        "token_a": tx.payload.token_a_symbol,
+                        "token_b": tx.payload.token_b_symbol,
+                    }),
+                },
+                "stake" | "unstake" => TxLog {
+                    event_type: tx.tx_type.clone(),
+                    data: serde_json::json!({
+                        "amount": tx.payload.amount,
+                    }),
+                },
+                _ => TxLog {
+                    event_type: tx.tx_type.clone(),
+                    data: serde_json::json!({}),
+                },
+            };
+
+            receipts.push(TxReceipt {
+                tx_hash,
+                block_height: block.header.height,
+                block_hash: block.hash.clone(),
+                index: index as u32,
+                tx_type: tx.tx_type.clone(),
+                from: tx.from_pub_key.clone(),
+                status: TxStatus::Success,
+                fee_paid: tx.fee,
+                logs: vec![log],
+                timestamp: block.header.time,
+            });
+        }
+        receipts
     }
 
     pub fn get_token_balance(&self, public_key: &str, token_symbol: &str) -> Result<f64, String> {
@@ -1399,6 +1499,10 @@ impl L1Node {
         self.apply_balance_block(&block)?;
         self.apply_validator_block(&block)?;
         *self.finalized_height.lock().map_err(|_| "finality lock")? = block.header.height;
+        
+        // Generate and store transaction receipts
+        let receipts = self.generate_receipts(&block);
+        let _ = self.receipt_store.store_batch(&receipts);
         
         // Track proposer stats — node key may differ from validator staking key
         let proposer_key = block.header.proposer_pub_key.clone();

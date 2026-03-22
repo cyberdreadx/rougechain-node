@@ -404,6 +404,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/block/:height", get(get_block_by_height))
         .route("/api/txs", get(get_txs))
         .route("/api/tx/:hash", get(get_tx_by_hash))
+        .route("/api/tx/:hash/receipt", get(get_tx_receipt))
         .route("/api/address/:public_key/transactions", get(get_address_transactions))
         .route("/api/blocks/summary", get(get_blocks_summary))
         .route("/api/balance/:public_key", get(get_balance))
@@ -1418,6 +1419,8 @@ async fn get_tx_by_hash(
                 &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
             );
             if tx_id == hash {
+                // Enrich with receipt data if available
+                let receipt = node.get_receipt(&tx_id).ok().flatten();
                 return Ok(Json(serde_json::json!({
                     "success": true,
                     "txId": tx_id,
@@ -1425,6 +1428,7 @@ async fn get_tx_by_hash(
                     "blockHash": block.hash,
                     "blockTime": block.header.time,
                     "tx": tx,
+                    "receipt": receipt,
                 })));
             }
         }
@@ -1437,6 +1441,7 @@ async fn get_tx_by_hash(
                 let tx_id = quantum_vault_crypto::bytes_to_hex(
                     &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
                 );
+                let receipt = node.get_receipt(&tx_id).ok().flatten();
                 return Ok(Json(serde_json::json!({
                     "success": true,
                     "txId": tx_id,
@@ -1444,12 +1449,27 @@ async fn get_tx_by_hash(
                     "blockHash": block.hash,
                     "blockTime": block.header.time,
                     "tx": tx,
+                    "receipt": receipt,
                 })));
             }
         }
     }
 
     Err(StatusCode::NOT_FOUND)
+}
+
+async fn get_tx_receipt(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.node.get_receipt(&hash) {
+        Ok(Some(receipt)) => Ok(Json(serde_json::json!({
+            "success": true,
+            "receipt": receipt,
+        }))),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 #[derive(Deserialize)]
