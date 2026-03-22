@@ -19,9 +19,9 @@ Open `http://localhost:5173` in your browser.
 
 Your wallet is created automatically when you first visit. It includes:
 
-- **Public Key** (ML-DSA-65) - Your address, share freely
-- **Private Key** (ML-DSA-65) - Never share this!
-- **Encryption Key** (ML-KEM-768) - For secure messaging
+- **Address** (`rouge1...`) — Your compact Bech32m address, share freely
+- **Private Key** (ML-DSA-65) — Never share this!
+- **Encryption Key** (ML-KEM-768) — For secure messaging
 
 Keys are stored locally in your browser.
 

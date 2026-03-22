@@ -30,7 +30,7 @@ Each NFT has:
 |----------|-------------|
 | `token_id` | Sequential ID within the collection |
 | `name` | Token name |
-| `owner` | Current owner's public key |
+| `owner` | Current owner's address (`rouge1...`) |
 | `creator` | Original minter |
 | `metadata_uri` | Link to off-chain metadata (IPFS, HTTP) |
 | `attributes` | On-chain key-value attributes |
@@ -41,7 +41,7 @@ Each NFT has:
 
 1. Open the NFT detail page
 2. Click **Transfer**
-3. Enter the recipient's RougeChain public key
+3. Enter the recipient's RougeChain address (`rouge1...`)
 4. Optionally set a sale price (for marketplace tracking)
 5. Confirm
 

@@ -4,7 +4,7 @@
 
 URL: `/address/:pubkey`
 
-Shows comprehensive information for any RougeChain address:
+Shows comprehensive information for any RougeChain address. Addresses are displayed in the compact `rouge1...` Bech32m format throughout the UI, derived from the SHA-256 hash of the raw ML-DSA-65 public key.
 
 ### Balances
 

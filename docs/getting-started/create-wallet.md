@@ -9,16 +9,22 @@ Your RougeChain wallet is automatically created when you first visit the app. He
 | Signing Key | ML-DSA-65 | Sign transactions, prove ownership |
 | Encryption Key | ML-KEM-768 | Encrypt/decrypt messages |
 
-## Your Public Key = Your Address
+## Your Address
 
-Your public key (signing key) is your address on RougeChain. It's safe to share.
+RougeChain uses compact **Bech32m addresses** with the `rouge1` prefix, derived from your ML-DSA-65 public key:
+
+```
+address = bech32m("rouge", SHA-256(signing_public_key))
+```
 
 Example address:
 ```
-9c88d3ec652bb98aea33e601c351e3c597661b1a...
+rouge1q8f3x7k2m4n9pvj5dz6ywl2cg8hs0kw9...
 ```
 
-Addresses are ~2,600 characters (base64 encoded ML-DSA-65 public key).
+Addresses are ~63 characters — much shorter than the raw 3,904-char hex public key. The wallet, extension, and explorer all display this format.
+
+> **Note:** API endpoints still use the raw hex public key internally. The `rouge1` address is for display, sharing, and QR codes.
 
 ## Backup Your Wallet
 
