@@ -3154,6 +3154,7 @@ async fn v2_create_token(
     let token_symbol = payload.get("token_symbol").and_then(|v| v.as_str()).unwrap_or_default();
     let initial_supply = payload.get("initial_supply").and_then(|v| v.as_u64()).unwrap_or(0);
     let token_image = payload.get("image").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let token_description = payload.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
     let fee = 100.0_f64; // Server-enforced token creation fee
 
     if token_name.is_empty() || token_symbol.is_empty() {
@@ -3222,7 +3223,7 @@ async fn v2_create_token(
         name_trimmed,
         &body.public_key,
         token_image,
-        None,
+        token_description,
     ).unwrap_or_default();
 
     Ok(Json(serde_json::json!({

@@ -107,7 +107,8 @@ export async function secureCreateToken(
   tokenSymbol: string,
   initialSupply: number,
   fee: number = 10,
-  image?: string
+  image?: string,
+  description?: string
 ): Promise<ApiResponse<{ token_symbol: string }>> {
   const signedTx = createSignedTokenCreation(
     creatorPublicKey,
@@ -116,7 +117,8 @@ export async function secureCreateToken(
     tokenSymbol,
     initialSupply,
     fee,
-    image
+    image,
+    description
   );
   return submitSignedTx("/v2/token/create", signedTx) as Promise<ApiResponse<{ token_symbol: string }>>;
 }

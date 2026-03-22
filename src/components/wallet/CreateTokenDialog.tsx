@@ -24,6 +24,7 @@ const CreateTokenDialog = ({ wallet, balances, onClose, onSuccess }: CreateToken
   const [tokenSymbol, setTokenSymbol] = useState("");
   const [totalSupply, setTotalSupply] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [description, setDescription] = useState("");
   const [uploadingImage, setUploadingImage] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
@@ -91,7 +92,8 @@ const CreateTokenDialog = ({ wallet, balances, onClose, onSuccess }: CreateToken
         sym,
         supply,
         100,
-        trimmedImage
+        trimmedImage,
+        description.trim() || undefined
       );
 
       if (!result.success) {
@@ -221,6 +223,24 @@ const CreateTokenDialog = ({ wallet, balances, onClose, onSuccess }: CreateToken
                 />
                 <p className="text-xs text-muted-foreground mt-1">
                   You will receive all tokens at creation
+                </p>
+              </div>
+
+              <div>
+                <Label htmlFor="tokenDescription">
+                  Description <span className="text-muted-foreground font-normal">(optional)</span>
+                </Label>
+                <textarea
+                  id="tokenDescription"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Describe what your token does..."
+                  maxLength={500}
+                  rows={3}
+                  className="mt-1.5 w-full px-3 py-2 rounded-lg bg-background border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+                />
+                <p className="text-xs text-muted-foreground mt-1 text-right">
+                  {description.length}/500
                 </p>
               </div>
 
