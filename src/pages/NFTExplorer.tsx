@@ -39,10 +39,44 @@ interface NFTToken {
   token_id: string;
   name: string;
   owner: string;
+  creator?: string;
   locked?: boolean;
+  metadata_uri?: string;
+  attributes?: Record<string, string | number | boolean> | Array<{ trait_type: string; value: string | number }>;
+  minted_at?: number;
 }
 
 const TOKENS_PER_PAGE = 50;
+
+/** Render attributes as trait pills (handles both object and array formats) */
+const TraitsList = ({ attributes }: { attributes: NFTToken["attributes"] }) => {
+  if (!attributes) return null;
+
+  let pairs: [string, string][] = [];
+  if (Array.isArray(attributes)) {
+    pairs = attributes.map((a) => [a.trait_type, String(a.value)]);
+  } else if (typeof attributes === "object") {
+    pairs = Object.entries(attributes).map(([k, v]) => [k, String(v)]);
+  }
+  if (pairs.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1 mt-1.5">
+      {pairs.slice(0, 6).map(([trait, value]) => (
+        <span
+          key={trait}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/10 border border-primary/20 text-[10px]"
+        >
+          <span className="text-muted-foreground">{trait}:</span>
+          <span className="font-medium text-primary">{value}</span>
+        </span>
+      ))}
+      {pairs.length > 6 && (
+        <span className="text-[10px] text-muted-foreground">+{pairs.length - 6} more</span>
+      )}
+    </div>
+  );
+};
 
 
 
@@ -411,23 +445,43 @@ const CollectionDetail = ({ collectionId }: { collectionId: string }) => {
                     {tokens.map((token) => (
                       <div
                         key={token.token_id}
-                        className="rounded-lg border border-border bg-background/60 p-3 space-y-2"
+                        className="rounded-lg border border-border bg-background/60 overflow-hidden hover:border-primary/40 transition-colors"
                       >
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-semibold text-primary font-mono">
-                            #{token.token_id}
-                          </span>
+                        {/* NFT Image */}
+                        <div className="aspect-square bg-secondary/30 relative overflow-hidden">
+                          {token.metadata_uri ? (
+                            <img
+                              src={token.metadata_uri}
+                              alt={token.name}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.display = "none";
+                                (e.target as HTMLImageElement).nextElementSibling?.classList.remove("hidden");
+                              }}
+                            />
+                          ) : null}
+                          <div className={`w-full h-full flex items-center justify-center absolute inset-0 ${token.metadata_uri ? "hidden" : ""}`}>
+                            <ImageIcon className="w-10 h-10 text-muted-foreground/20" />
+                          </div>
                           {token.locked && (
-                            <Badge variant="secondary" className="text-xs">
+                            <Badge variant="secondary" className="absolute top-2 right-2 text-xs bg-background/80 backdrop-blur">
                               <Lock className="w-3 h-3 mr-1" />
                               Locked
                             </Badge>
                           )}
+                          <span className="absolute top-2 left-2 text-xs font-mono font-bold text-primary bg-background/80 backdrop-blur px-1.5 py-0.5 rounded">
+                            #{token.token_id}
+                          </span>
                         </div>
-                        <p className="text-sm font-medium truncate">{token.name}</p>
-                        <div className="text-xs text-muted-foreground">
-                          <span>Owner: </span>
-                          <RougeAddressLink pubkey={token.owner} />
+
+                        {/* NFT Info */}
+                        <div className="p-3 space-y-1.5">
+                          <p className="text-sm font-semibold truncate">{token.name}</p>
+                          <div className="text-xs text-muted-foreground">
+                            <span>Owner: </span>
+                            <RougeAddressLink pubkey={token.owner} />
+                          </div>
+                          <TraitsList attributes={token.attributes} />
                         </div>
                       </div>
                     ))}
