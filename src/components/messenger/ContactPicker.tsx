@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, User, MessageSquare, Loader2, Bot, Sparkles, UserPlus, CheckCircle2, AlertCircle, QrCode, StickyNote } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import type { Wallet, WalletWithPrivateKeys, Conversation } from "@/lib/pqc-messenger";
 import { createConversation, getOrCreateDemoBot, getWallets } from "@/lib/pqc-messenger";
 import PqcQrScanner from "@/components/wallet/PqcQrScanner";
-import { isRougeAddress } from "@/lib/address";
+import { isRougeAddress, pubkeyToAddress, formatAddress } from "@/lib/address";
 
 interface ContactPickerProps {
   contacts: Wallet[];
@@ -52,6 +52,28 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
   const [detectedWallet, setDetectedWallet] = useState<Wallet | null>(null);
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+  const [resolvedAddresses, setResolvedAddresses] = useState<Record<string, string>>({});
+
+  // Resolve rouge1... addresses for contacts
+  useEffect(() => {
+    const resolve = async () => {
+      const map: Record<string, string> = {};
+      for (const contact of contacts) {
+        const key = contact.signingPublicKey || contact.id || "";
+        if (key && !isRougeAddress(key)) {
+          try {
+            map[key] = await pubkeyToAddress(key);
+          } catch {
+            map[key] = key.slice(0, 16) + "...";
+          }
+        } else {
+          map[key] = key;
+        }
+      }
+      setResolvedAddresses(map);
+    };
+    if (contacts.length > 0) resolve();
+  }, [contacts]);
 
   const addressValidation = manualAddress ? parseAddress(manualAddress) : null;
 
@@ -415,12 +437,12 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
                       {/* Show unique identifier if name is generic */}
                       {(contact.displayName === "My Wallet" || !contact.displayName) && (
                         <span className="text-xs text-muted-foreground ml-2">
-                          ({(contact.signingPublicKey || contact.id || "").slice(0, 8)})
+                          ({formatAddress(resolvedAddresses[contact.signingPublicKey || contact.id || ""] || (contact.signingPublicKey || contact.id || "").slice(0, 8), 10, 4)})
                         </span>
                       )}
                     </p>
                     <p className="text-xs text-muted-foreground font-mono truncate">
-                      {(contact.signingPublicKey || contact.encryptionPublicKey || contact.id || "").slice(0, 24)}...
+                      {formatAddress(resolvedAddresses[contact.signingPublicKey || contact.id || ""] || (contact.signingPublicKey || contact.id || "").slice(0, 20) + "...", 14, 4)}
                     </p>
                   </div>
                   {isCreating === contact.id ? (
