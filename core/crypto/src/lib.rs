@@ -51,6 +51,38 @@ pub fn pqc_keygen_from_seed(seed: &[u8; 32]) -> PQKeypair {
     }
 }
 
+/// Derive a child seed from a parent seed + derivation index.
+/// Uses HMAC-SHA256(parent_seed, "RougeChain-HD-v1" || u32_be(index)).
+pub fn derive_child_seed(parent_seed: &[u8; 32], index: u32) -> [u8; 32] {
+    use hmac::{Hmac, Mac};
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac = HmacSha256::new_from_slice(parent_seed)
+        .expect("HMAC can take any key length");
+    mac.update(b"RougeChain-HD-v1");
+    mac.update(&index.to_be_bytes());
+    let result = mac.finalize().into_bytes();
+    let mut child = [0u8; 32];
+    child.copy_from_slice(&result[..32]);
+    child
+}
+
+/// Derive a child keypair from a master seed + index (HD wallet derivation).
+/// index 0 = primary account, 1+ = additional accounts.
+pub fn pqc_derive_child(master_seed: &[u8; 32], index: u32) -> PQKeypair {
+    let child_seed = derive_child_seed(master_seed, index);
+    pqc_keygen_from_seed(&child_seed)
+}
+
+/// Derive a keypair along a BIP-44-like path: "m/purpose'/chain'/account'"
+/// Path components are u32 indices, e.g., [44, 808, 0] for the first account.
+pub fn pqc_derive_path(master_seed: &[u8; 32], path: &[u32]) -> PQKeypair {
+    let mut current_seed = *master_seed;
+    for &index in path {
+        current_seed = derive_child_seed(&current_seed, index);
+    }
+    pqc_keygen_from_seed(&current_seed)
+}
+
 pub fn pqc_sign(secret_key_hex: &str, message: &[u8]) -> Result<String, String> {
     let sk_bytes = hex_to_bytes(secret_key_hex)?;
     let sk_array: [u8; SK_LEN] = sk_bytes.as_slice().try_into()
