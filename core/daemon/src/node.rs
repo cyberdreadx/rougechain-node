@@ -1410,6 +1410,8 @@ impl L1Node {
             jailed_until: 0,
             entropy_contributions: 0,
             blocks_proposed: 0,
+            missed_blocks: 0,
+            total_slashed: 0,
         });
         state.entropy_contributions += 1;
         self.validator_store.set_validator(public_key, &state)?;
@@ -1426,7 +1428,7 @@ impl L1Node {
                 continue;
             }
             if state.jailed_until > tip {
-                validators.push((public_key, ValidatorState { stake: state.stake, slash_count: state.slash_count, jailed_until: state.jailed_until, entropy_contributions: state.entropy_contributions, blocks_proposed: state.blocks_proposed }));
+                validators.push((public_key, ValidatorState { stake: state.stake, slash_count: state.slash_count, jailed_until: state.jailed_until, entropy_contributions: state.entropy_contributions, blocks_proposed: state.blocks_proposed, missed_blocks: state.missed_blocks, total_slashed: state.total_slashed }));
             } else {
                 validators.push((public_key, state.clone()));
             }
@@ -3591,6 +3593,8 @@ impl L1Node {
                 jailed_until: 0,
                 entropy_contributions: 0,
                 blocks_proposed: 0,
+                missed_blocks: 0,
+                total_slashed: 0,
             })
         };
         match tx.tx_type.as_str() {
