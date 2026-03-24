@@ -339,14 +339,21 @@ export interface MessengerConversation {
 export interface MessengerMessage {
   id: string;
   conversation_id: string;
-  sender: string;
+  sender_wallet_id: string;
+  /** @deprecated Use sender_wallet_id */
+  sender?: string;
   encrypted_content: string;
+  signature: string;
+  self_destruct: boolean;
+  destruct_after_seconds?: number;
+  created_at: number | string;
+  is_read: boolean;
+  read_at?: string;
+  message_type: string; // "text" | "image" | "video"
+  spoiler: boolean;
+  /** Legacy — some old messages may have these */
   media_type?: string;
   media_data?: string;
-  self_destruct?: boolean;
-  destruct_after_seconds?: number;
-  read?: boolean;
-  created_at: number;
 }
 
 // ===== Method Params =====

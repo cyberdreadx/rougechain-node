@@ -995,24 +995,26 @@ class MessengerClient {
 
   async sendMessage(
     conversationId: string,
-    sender: string,
+    senderWalletId: string,
     encryptedContent: string,
     opts: {
-      mediaType?: string;
-      mediaData?: string;
+      signature?: string;
+      messageType?: string;
       selfDestruct?: boolean;
       destructAfterSeconds?: number;
+      spoiler?: boolean;
     } = {}
   ): Promise<ApiResponse> {
     try {
       const data = await this.rc.post<Record<string, unknown>>("/messenger/messages", {
-        conversation_id: conversationId,
-        sender,
-        encrypted_content: encryptedContent,
-        media_type: opts.mediaType,
-        media_data: opts.mediaData,
-        self_destruct: opts.selfDestruct,
-        destruct_after_seconds: opts.destructAfterSeconds,
+        conversationId,
+        senderWalletId,
+        encryptedContent,
+        signature: opts.signature ?? "",
+        messageType: opts.messageType ?? "text",
+        selfDestruct: opts.selfDestruct ?? false,
+        destructAfterSeconds: opts.destructAfterSeconds,
+        spoiler: opts.spoiler ?? false,
       });
       return { success: data.success === true, error: data.error as string | undefined, data };
     } catch (e) {
@@ -1036,7 +1038,7 @@ class MessengerClient {
   async markRead(messageId: string): Promise<ApiResponse> {
     try {
       const data = await this.rc.post<Record<string, unknown>>("/messenger/messages/read", {
-        message_id: messageId,
+        messageId,
       });
       return { success: data.success === true, error: data.error as string | undefined };
     } catch (e) {
