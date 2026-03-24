@@ -12,23 +12,25 @@ interface Props {
  * Falls back to truncated hex if address derivation fails.
  */
 export function RougeAddressLink({ pubkey, className = "" }: Props) {
+  const safePk = pubkey ?? "";
   const [display, setDisplay] = useState(() =>
-    pubkey.length > 16 ? `${pubkey.slice(0, 8)}...${pubkey.slice(-4)}` : pubkey
+    safePk.length > 16 ? `${safePk.slice(0, 8)}...${safePk.slice(-4)}` : safePk || "—"
   );
 
   useEffect(() => {
+    if (!safePk) return;
     let cancelled = false;
-    pubkeyToAddress(pubkey)
+    pubkeyToAddress(safePk)
       .then((addr) => {
         if (!cancelled) setDisplay(formatAddress(addr));
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [pubkey]);
+  }, [safePk]);
 
   return (
     <Link
-      to={`/address/${pubkey}`}
+      to={`/address/${safePk}`}
       className={`font-mono text-primary hover:underline ${className}`}
     >
       {display}

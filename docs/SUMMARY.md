@@ -77,12 +77,15 @@
 - [Bridge](api-reference/bridge.md)
 - [NFTs](api-reference/nfts.md)
 - [DEX / AMM](api-reference/dex.md)
+- [Smart Contracts](api-reference/smart-contracts.md)
 
 # Advanced
 
 - [Architecture](advanced/architecture.md)
 - [PQC Cryptography](advanced/pqc-cryptography.md)
 - [PQC Messaging & Mail](advanced/messaging.md)
+- [Smart Contracts (WASM)](advanced/smart-contracts.md)
+- [MCP Server (AI Agents)](advanced/mcp-server.md)
 - [Browser Extensions](advanced/browser-extensions.md)
 - [SDK](advanced/sdk.md)
 

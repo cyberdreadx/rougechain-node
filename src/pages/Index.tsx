@@ -1,6 +1,6 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { Link } from "react-router-dom";
-import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity, Zap, ExternalLink, TrendingUp, TrendingDown, ArrowDownUp, Droplets, Coins, Image, Cable, Mail as MailIcon, Server, Github, Chrome, ChevronLeft, ChevronRight } from "lucide-react";
+import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity, Zap, ExternalLink, TrendingUp, TrendingDown, ArrowDownUp, Droplets, Coins, Image, Cable, Mail as MailIcon, Server, Github, Chrome, ChevronLeft, ChevronRight, Bot, Code } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
@@ -275,6 +275,8 @@ const LiveFeatureGrid = () => {
     { icon: Wallet, title: "Wallet", desc: "Quantum-safe wallet", stat: null, link: "/wallet", color: "text-primary", bg: "bg-primary/10" },
     { icon: ArrowDownUp, title: "Swap", desc: "Instant token swaps", stat: null, link: "/swap", color: "text-primary", bg: "bg-primary/10" },
     { icon: Cable, title: "Bridge", desc: "ETH to XRGE bridge", stat: null, link: "/bridge", color: "text-accent", bg: "bg-accent/10" },
+    { icon: Code, title: "Smart Contracts", desc: "WASM-powered dApps", stat: null, link: "/blockchain", color: "text-cyan-400", bg: "bg-cyan-400/10" },
+    { icon: Bot, title: "MCP Agents", desc: "AI-native blockchain", stat: null, link: "https://github.com/cyberdreadx/rougechain-node/tree/main/mcp-server", color: "text-violet-400", bg: "bg-violet-400/10", external: true },
     { icon: Droplets, title: "Pools", desc: "Liquidity pools", stat: stats.poolCount > 0 ? `${stats.poolCount} pool${stats.poolCount !== 1 ? "s" : ""}` : null, link: "/pools", color: "text-blue-400", bg: "bg-blue-400/10" },
     { icon: Coins, title: "Tokens", desc: "Custom tokens", stat: stats.tokenCount > 0 ? `${stats.tokenCount} token${stats.tokenCount !== 1 ? "s" : ""}` : null, link: "/tokens", color: "text-amber-400", bg: "bg-amber-400/10" },
     { icon: Image, title: "NFTs", desc: "RC-721 collections", stat: stats.nftCount > 0 ? `${stats.nftCount} collection${stats.nftCount !== 1 ? "s" : ""}` : null, link: "/nfts", color: "text-pink-400", bg: "bg-pink-400/10" },
@@ -283,7 +285,7 @@ const LiveFeatureGrid = () => {
     { icon: MailIcon, title: "Mail", desc: "On-chain encrypted mail", stat: null, link: "/mail", color: "text-accent", bg: "bg-accent/10" },
     { icon: Shield, title: "Validators", desc: "Stake & validate", stat: stats.validatorCount > 0 ? `${stats.validatorCount} active` : null, link: "/validators", color: "text-amber-400", bg: "bg-amber-400/10" },
     { icon: Server, title: "Run a Node", desc: "Strengthen the network", stat: null, link: "/validators", color: "text-green-400", bg: "bg-green-400/10" },
-    { icon: Github, title: "Open Source", desc: "Apache 2.0 licensed", stat: null, link: "https://github.com/cyberdreadx/rougechain-node", color: "text-foreground", bg: "bg-foreground/10", external: true },
+    { icon: Github, title: "Open Source", desc: "MIT licensed", stat: null, link: "https://github.com/cyberdreadx/rougechain-node", color: "text-foreground", bg: "bg-foreground/10", external: true },
   ];
 
   return (

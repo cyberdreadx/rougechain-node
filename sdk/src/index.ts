@@ -102,4 +102,9 @@ export type {
   RollupSubmitResult,
   ApproveParams,
   TransferFromParams,
+  ContractMetadata,
+  ContractEvent,
+  ContractCallResult,
+  DeployContractParams,
+  CallContractParams,
 } from "./types.js";
