@@ -139,6 +139,11 @@ impl PeerManager {
         }
         false
     }
+
+    /// Get a copy of the peer name map (URL → node name)
+    pub async fn get_peer_names(&self) -> HashMap<String, String> {
+        self.peer_names.read().await.clone()
+    }
 }
 
 /// Extract hostname or IP from a URL (e.g., "https://example.com:5100" -> "example.com")

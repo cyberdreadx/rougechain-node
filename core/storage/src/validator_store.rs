@@ -10,6 +10,9 @@ pub struct ValidatorState {
     pub entropy_contributions: u64,
     #[serde(default)]
     pub blocks_proposed: u64,
+    /// Human-readable node name (set via --node-name)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// Blocks where this validator was expected to propose but didn't
     #[serde(default)]
     pub missed_blocks: u64,

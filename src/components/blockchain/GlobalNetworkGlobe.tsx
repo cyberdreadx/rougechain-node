@@ -428,10 +428,12 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
               headers: getCoreApiHeaders(),
             });
             if (valRes.ok) {
-              const valData = await valRes.json() as { validators?: { publicKey?: string; public_key?: string }[] };
+              const valData = await valRes.json() as { validators?: { publicKey?: string; public_key?: string; name?: string }[] };
               if (!cancelled && valData.validators) {
                 setValidatorCount(valData.validators.length);
                 setValidatorKeys(valData.validators.map(v => {
+                  // Use name if available, otherwise truncated key
+                  if (v.name) return v.name;
                   const key = v.publicKey || v.public_key || "";
                   return key ? `${key.slice(0, 6)}...${key.slice(-4)}` : "";
                 }));

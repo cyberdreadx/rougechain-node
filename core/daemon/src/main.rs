@@ -2611,6 +2611,8 @@ struct ValidatorsResponse {
 #[serde(rename_all = "camelCase")]
 struct ValidatorInfo {
     public_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
     stake: String,
     status: String,
     slash_count: u32,
@@ -2623,22 +2625,41 @@ async fn get_validators(State(state): State<AppState>) -> Result<Json<Validators
     let node = &state.node;
     let (validators, total) = node.get_validator_set().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let tip = node.get_tip_height().unwrap_or(0);
-    let mapped = validators.into_iter().map(|(public_key, state)| {
-        let status = if state.jailed_until > tip {
+    let our_node_name = state.node_name.clone();
+    // Get our node's public key to match against validators
+    let our_pub_key = node.get_public_key();
+    // Get peer names from peer manager for enrichment
+    let peer_names = state.peer_manager.get_peer_names().await;
+    let mapped = validators.into_iter().map(|(public_key, vstate)| {
+        let status = if vstate.jailed_until > tip {
             "jailed"
-        } else if state.stake > 0 {
+        } else if vstate.stake > 0 {
             "active"
         } else {
             "inactive"
         };
+        // Determine name: stored name > local node_name match > peer name > None
+        let name = vstate.name.clone()
+            .or_else(|| {
+                if let Some(ref our_key) = our_pub_key {
+                    if our_key == &public_key {
+                        return our_node_name.clone();
+                    }
+                }
+                None
+            })
+            .or_else(|| {
+                peer_names.get(&public_key).cloned()
+            });
         ValidatorInfo {
-            public_key: public_key,
-            stake: state.stake.to_string(),
+            public_key,
+            name,
+            stake: vstate.stake.to_string(),
             status: status.to_string(),
-            slash_count: state.slash_count,
-            jailed_until: state.jailed_until,
-            entropy_contributions: state.entropy_contributions,
-            blocks_proposed: state.blocks_proposed,
+            slash_count: vstate.slash_count,
+            jailed_until: vstate.jailed_until,
+            entropy_contributions: vstate.entropy_contributions,
+            blocks_proposed: vstate.blocks_proposed,
         }
     }).collect();
     Ok(Json(ValidatorsResponse {

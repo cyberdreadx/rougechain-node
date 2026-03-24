@@ -285,6 +285,11 @@ impl L1Node {
         Ok(self.store.get_tip()?.height)
     }
 
+    /// Get this node's own public key hex string
+    pub fn get_public_key(&self) -> Option<String> {
+        self.keys.lock().ok().map(|k| k.public_key_hex.clone())
+    }
+
     pub fn get_all_blocks(&self) -> Result<Vec<BlockV1>, String> {
         self.store.get_all_blocks()
     }
@@ -1410,6 +1415,7 @@ impl L1Node {
             jailed_until: 0,
             entropy_contributions: 0,
             blocks_proposed: 0,
+            name: None,
             missed_blocks: 0,
             total_slashed: 0,
         });
@@ -1428,7 +1434,7 @@ impl L1Node {
                 continue;
             }
             if state.jailed_until > tip {
-                validators.push((public_key, ValidatorState { stake: state.stake, slash_count: state.slash_count, jailed_until: state.jailed_until, entropy_contributions: state.entropy_contributions, blocks_proposed: state.blocks_proposed, missed_blocks: state.missed_blocks, total_slashed: state.total_slashed }));
+                validators.push((public_key, ValidatorState { stake: state.stake, slash_count: state.slash_count, jailed_until: state.jailed_until, entropy_contributions: state.entropy_contributions, blocks_proposed: state.blocks_proposed, name: state.name.clone(), missed_blocks: state.missed_blocks, total_slashed: state.total_slashed }));
             } else {
                 validators.push((public_key, state.clone()));
             }
@@ -3635,6 +3641,7 @@ impl L1Node {
                 jailed_until: 0,
                 entropy_contributions: 0,
                 blocks_proposed: 0,
+                name: None,
                 missed_blocks: 0,
                 total_slashed: 0,
             })
