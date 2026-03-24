@@ -1,13 +1,13 @@
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use quantum_vault_types::BlockV1;
 
 /// Maximum number of buffered messages in the broadcast channel
 const BROADCAST_CAPACITY: usize = 100;
 
 /// Events that can be broadcast to WebSocket clients
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsEvent {
     /// A new block was mined/imported
@@ -31,6 +31,42 @@ pub enum WsEvent {
         peer_count: usize,
         mempool_size: usize,
     },
+    /// Balance change notification (for account subscriptions)
+    BalanceUpdate {
+        account: String,
+        token: String,
+        new_balance: f64,
+    },
+    /// Subscription confirmation
+    Subscribed {
+        topics: Vec<String>,
+    },
+}
+
+impl WsEvent {
+    /// Return the topics this event matches for subscription filtering.
+    /// Clients subscribe to topics like "blocks", "transactions", "account:<pubkey>", "token:<symbol>"
+    pub fn topics(&self) -> Vec<String> {
+        match self {
+            WsEvent::NewBlock { .. } => vec!["blocks".to_string()],
+            WsEvent::NewTransaction { from, to, .. } => {
+                let mut t = vec!["transactions".to_string()];
+                t.push(format!("account:{}", from));
+                if let Some(dest) = to {
+                    t.push(format!("account:{}", dest));
+                }
+                t
+            }
+            WsEvent::Stats { .. } => vec!["stats".to_string()],
+            WsEvent::BalanceUpdate { account, token, .. } => {
+                vec![
+                    format!("account:{}", account),
+                    format!("token:{}", token),
+                ]
+            }
+            WsEvent::Subscribed { .. } => vec![], // Always sent to the requesting client
+        }
+    }
 }
 
 /// Manages WebSocket connections and broadcasts

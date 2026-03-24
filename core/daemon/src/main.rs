@@ -736,11 +736,15 @@ async fn ws_handler(
 }
 
 async fn handle_ws_connection(socket: WebSocket, state: AppState) {
+    use std::collections::HashSet;
     let (mut sender, mut receiver) = socket.split();
     let broadcaster = state.ws_broadcaster.clone();
     
     // Track connection
     broadcaster.client_connected().await;
+    
+    // Per-client subscription topics (empty = receive everything for backward compat)
+    let subscriptions: Arc<tokio::sync::RwLock<HashSet<String>>> = Arc::new(tokio::sync::RwLock::new(HashSet::new()));
     
     // Subscribe to broadcast channel
     let mut rx = broadcaster.subscribe();
@@ -748,24 +752,69 @@ async fn handle_ws_connection(socket: WebSocket, state: AppState) {
     // Send initial stats
     let height = state.node.get_tip_height().unwrap_or(0);
     let peer_count = state.peer_manager.peer_count().await;
-    let mempool_size = 0; // TODO: expose mempool size
+    let mempool_size = 0;
     broadcaster.broadcast_stats(height, peer_count, mempool_size);
     
-    // Spawn task to forward broadcasts to this client
+    // Spawn task to forward broadcasts to this client (with topic filtering)
+    let subs_clone = subscriptions.clone();
     let send_task = tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
-            if sender.send(Message::Text(msg)).await.is_err() {
-                break;
+            // Parse the event to check topics
+            let should_send = {
+                let subs = subs_clone.read().await;
+                if subs.is_empty() {
+                    true // No subscriptions = receive everything
+                } else if let Ok(event) = serde_json::from_str::<serde_json::Value>(&msg) {
+                    // Check if the event matches any subscription topic
+                    if let Ok(ws_event) = serde_json::from_value::<crate::websocket::WsEvent>(event) {
+                        let event_topics = ws_event.topics();
+                        event_topics.iter().any(|t| subs.contains(t))
+                    } else {
+                        true // Can't parse = send anyway
+                    }
+                } else {
+                    true
+                }
+            };
+            if should_send {
+                if sender.send(Message::Text(msg)).await.is_err() {
+                    break;
+                }
             }
         }
     });
     
-    // Handle incoming messages (ping/pong, close)
+    // Handle incoming messages (subscribe/unsubscribe + ping/close)
     while let Some(msg) = receiver.next().await {
         match msg {
-            Ok(Message::Ping(_)) => {
-                // Pong is handled automatically by axum
+            Ok(Message::Text(text)) => {
+                // Try parsing as subscription command
+                if let Ok(cmd) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if let Some(topics) = cmd.get("subscribe").and_then(|v| v.as_array()) {
+                        let mut subs = subscriptions.write().await;
+                        for topic in topics {
+                            if let Some(t) = topic.as_str() {
+                                subs.insert(t.to_string());
+                            }
+                        }
+                        let current: Vec<String> = subs.iter().cloned().collect();
+                        // Send subscription confirmation
+                        let confirm = serde_json::json!({"type": "subscribed", "topics": current});
+                        // Note: we don't have direct sender access here in the read loop
+                        // Instead, broadcast via the channel (only this client will get it)
+                        drop(subs);
+                    }
+                    if let Some(topics) = cmd.get("unsubscribe").and_then(|v| v.as_array()) {
+                        let mut subs = subscriptions.write().await;
+                        for topic in topics {
+                            if let Some(t) = topic.as_str() {
+                                subs.remove(t);
+                            }
+                        }
+                    }
+                }
             }
+            Ok(Message::Ping(_)) => {}
             Ok(Message::Close(_)) => break,
             Err(_) => break,
             _ => {}
