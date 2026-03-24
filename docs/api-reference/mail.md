@@ -237,3 +237,55 @@ Mail uses the same encryption as the messenger:
 4. Encrypt subject + body with AES-GCM
 5. Create separate ciphertext for sender and recipient
 6. Server stores both encrypted copies
+
+---
+
+## Attachments
+
+Mail supports encrypted file attachments up to **2 MB**. Attachments are encrypted client-side using the same ML-KEM-768 scheme as the message body.
+
+### Sending with Attachment
+
+Include the `attachmentEncrypted` and `hasAttachment` fields in the send request:
+
+```json
+{
+  "fromWalletId": "sender-wallet-id",
+  "toWalletIds": ["recipient-wallet-id"],
+  "subjectEncrypted": "ml-kem-encrypted-subject",
+  "bodyEncrypted": "ml-kem-encrypted-body",
+  "attachmentEncrypted": "ml-kem-encrypted-attachment-json",
+  "signature": "ml-dsa-65-signature",
+  "replyToId": null,
+  "hasAttachment": true
+}
+```
+
+### Attachment Payload
+
+The `attachmentEncrypted` field contains an ML-KEM encrypted JSON string:
+
+```json
+{
+  "name": "photo.jpg",
+  "type": "image/jpeg",
+  "data": "base64-encoded-file-data",
+  "size": 102400
+}
+```
+
+| Field  | Type   | Description |
+|--------|--------|-------------|
+| `name` | string | Original filename |
+| `type` | string | MIME type |
+| `data` | string | Base64-encoded file content |
+| `size` | number | File size in bytes |
+
+### Reading Attachments
+
+When fetching mail (inbox/sent/trash), messages with attachments will include the `attachment_encrypted` field. The client must:
+
+1. Decrypt using the recipient's ML-KEM-768 private key
+2. Parse the JSON to extract the attachment metadata and data
+3. Display inline (images) or offer download (other types)
+

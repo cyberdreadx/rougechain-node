@@ -171,3 +171,48 @@ GET /api/burn-address
 ```
 
 Send tokens to this address to permanently burn them. Burned amounts are tracked on-chain.
+
+---
+
+## Address Resolution
+
+Resolve between compact `rouge1…` bech32 addresses and full hex public keys.
+
+```http
+GET /api/resolve/:input
+```
+
+Input can be either a `rouge1…` address or a hex public key. The endpoint auto-detects the format.
+
+### Response
+
+```json
+{
+  "success": true,
+  "address": "rouge1q8f3x7k2m4...",
+  "publicKey": "a1b2c3d4e5f6...",
+  "balance": 1000.5
+}
+```
+
+---
+
+## Account Nonce
+
+Get the current and next sequential nonce for a wallet. Used for replay protection in v2 signed transactions.
+
+```http
+GET /api/account/:publicKey/nonce
+```
+
+### Response
+
+```json
+{
+  "success": true,
+  "publicKey": "a1b2c3d4...",
+  "nonce": 5,
+  "next_nonce": 6
+}
+```
+

@@ -73,6 +73,7 @@
 - [Peers](api-reference/peers.md)
 - [Messenger](api-reference/messenger.md)
 - [Mail](api-reference/mail.md)
+- [Push Notifications](api-reference/push-notifications.md)
 - [Bridge](api-reference/bridge.md)
 - [NFTs](api-reference/nfts.md)
 - [DEX / AMM](api-reference/dex.md)
