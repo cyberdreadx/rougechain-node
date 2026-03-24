@@ -225,6 +225,7 @@ async fn main() -> Result<(), String> {
         bridge_withdraw_store: Some(bridge_withdraw_store.clone()),
     })?);
     node.init()?;
+    node.backfill_address_index();
 
     let grpc_addr: SocketAddr = format!("{}:{}", args.host, args.port)
         .parse()
@@ -1676,49 +1677,26 @@ async fn resolve_address(
     State(state): State<AppState>,
     Path(input): Path<String>,
 ) -> Json<serde_json::Value> {
-    use quantum_vault_crypto::{pub_key_to_address, is_rouge_address, address_to_hash, bytes_to_hex};
-
-    // Lazily populate registry from all known balances
-    {
-        let registry = state.address_registry.read().unwrap();
-        if registry.is_empty() {
-            drop(registry);
-            if let Ok(all_balances) = state.node.get_all_native_balances() {
-                let mut reg = state.address_registry.write().unwrap();
-                for pubkey in all_balances.keys() {
-                    if let Ok(addr) = pub_key_to_address(pubkey) {
-                        if let Ok(hash) = address_to_hash(&addr) {
-                            reg.insert(bytes_to_hex(&hash), pubkey.clone());
-                        }
-                    }
-                }
-            }
-        }
-    }
+    use quantum_vault_crypto::{pub_key_to_address, is_rouge_address};
 
     if is_rouge_address(&input) {
-        if let Ok(hash) = address_to_hash(&input) {
-            let hash_hex = bytes_to_hex(&hash);
-            let registry = state.address_registry.read().unwrap();
-            if let Some(pubkey) = registry.get(&hash_hex) {
-                let balance = state.node.get_balance(pubkey).unwrap_or(0.0);
-                return Json(serde_json::json!({
-                    "success": true,
-                    "address": input,
-                    "publicKey": pubkey,
-                    "balance": balance,
-                }));
-            }
+        // rouge1… → pubkey: O(1) persistent lookup
+        if let Some(pubkey) = state.node.resolve_rouge1(&input) {
+            let balance = state.node.get_balance(&pubkey).unwrap_or(0.0);
+            return Json(serde_json::json!({
+                "success": true,
+                "address": input,
+                "publicKey": pubkey,
+                "balance": balance,
+            }));
         }
         Json(serde_json::json!({ "success": false, "error": "Address not found" }))
     } else {
+        // pubkey → rouge1: derive + index for future lookups
         let balance = state.node.get_balance(&input).unwrap_or(0.0);
         match pub_key_to_address(&input) {
             Ok(addr) => {
-                if let Ok(hash) = address_to_hash(&addr) {
-                    let mut reg = state.address_registry.write().unwrap();
-                    reg.insert(bytes_to_hex(&hash), input.clone());
-                }
+                state.node.index_address(&input);
                 Json(serde_json::json!({
                     "success": true,
                     "address": addr,

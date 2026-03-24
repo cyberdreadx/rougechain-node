@@ -86,6 +86,8 @@ pub struct L1Node {
     finalized_height: Arc<Mutex<u64>>,
     /// Per-account sequential nonce (persisted in sled)
     nonce_db: sled::Tree,
+    /// rouge1… address → public key index (persisted in sled)
+    address_db: sled::Tree,
 }
 
 impl L1Node {
@@ -121,6 +123,10 @@ impl L1Node {
                 .map_err(|e| format!("open nonce DB: {}", e))?
                 .open_tree("account_nonces")
                 .map_err(|e| format!("open nonce tree: {}", e))?;
+            let address_db = sled::open(opts.data_dir.join("address-db"))
+                .map_err(|e| format!("open address DB: {}", e))?
+                .open_tree("rouge1_index")
+                .map_err(|e| format!("open address tree: {}", e))?;
             Ok(Self {
             node_id: uuid::Uuid::new_v4().to_string(),
             opts,
@@ -150,6 +156,7 @@ impl L1Node {
             votes: Arc::new(Mutex::new(Vec::new())),
             finalized_height: Arc::new(Mutex::new(0)),
             nonce_db,
+            address_db,
         })
     }
 
@@ -1630,6 +1637,11 @@ impl L1Node {
             Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key);
             // Commit sequential nonce for this sender
             let _ = self.nonce_db.insert(tx.from_pub_key.as_bytes(), &tx.nonce.to_be_bytes());
+            // Index sender and recipient addresses for rouge1 resolution
+            self.index_address(&tx.from_pub_key);
+            if let Some(ref to_pk) = tx.payload.to_pub_key_hex {
+                self.index_address(to_pk);
+            }
             let after = balances.values().sum::<f64>();
             let deducted = before - after;
             if deducted > 0.0 { actual_fees_collected += tx.fee.min(deducted); }
@@ -3961,5 +3973,58 @@ impl L1Node {
         self.token_metadata_store.set_frozen(symbol, frozen)
     }
 
+
+    // ===== Rouge1 address index =====
+
+    /// Index a public key → rouge1 address mapping (idempotent, O(1) write)
+    pub fn index_address(&self, pubkey: &str) {
+        use quantum_vault_crypto::{pub_key_to_address, address_to_hash, bytes_to_hex};
+        if let Ok(addr) = pub_key_to_address(pubkey) {
+            if let Ok(hash) = address_to_hash(&addr) {
+                let hash_hex = bytes_to_hex(&hash);
+                // Store hash → pubkey (for rouge1→pubkey resolution)
+                let _ = self.address_db.insert(hash_hex.as_bytes(), pubkey.as_bytes());
+                // Also store pubkey → rouge1 (for reverse lookup)
+                let _ = self.address_db.insert(pubkey.as_bytes(), addr.as_bytes());
+            }
+        }
+    }
+
+    /// Resolve a rouge1 address to its public key — O(1) persistent lookup
+    pub fn resolve_rouge1(&self, rouge1_address: &str) -> Option<String> {
+        use quantum_vault_crypto::{address_to_hash, bytes_to_hex};
+        if let Ok(hash) = address_to_hash(rouge1_address) {
+            let hash_hex = bytes_to_hex(&hash);
+            if let Ok(Some(val)) = self.address_db.get(hash_hex.as_bytes()) {
+                return String::from_utf8(val.to_vec()).ok();
+            }
+        }
+        None
+    }
+
+    /// Resolve a public key to its rouge1 address — O(1) persistent lookup
+    pub fn resolve_pubkey_to_address(&self, pubkey: &str) -> Option<String> {
+        if let Ok(Some(val)) = self.address_db.get(pubkey.as_bytes()) {
+            return String::from_utf8(val.to_vec()).ok();
+        }
+        None
+    }
+
+    /// Backfill the address index from all known balances (startup migration)
+    pub fn backfill_address_index(&self) {
+        if self.address_db.len() > 10 {
+            return; // Already populated
+        }
+        if let Ok(balances) = self.get_all_native_balances() {
+            let mut count = 0usize;
+            for pubkey in balances.keys() {
+                self.index_address(pubkey);
+                count += 1;
+            }
+            if count > 0 {
+                eprintln!("[startup] Backfilled address index: {} entries", count);
+            }
+        }
+    }
 
 }
