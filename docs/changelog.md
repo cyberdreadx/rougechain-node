@@ -4,6 +4,20 @@ All notable changes to RougeChain.
 
 ---
 
+## Testnet v0.2.1 — March 2026
+
+### Added
+- **Mail Attachments** — Encrypted file attachments (up to 2 MB) via ML-KEM-768
+- **Push Notifications** — PQC-signed Expo push token registration (`/api/push/register`)
+- **Address Resolution** — Convert between `rouge1…` and hex via `/api/resolve/:input`
+- **Account Nonce API** — `GET /api/account/:pubkey/nonce` for replay protection
+- **SDK v0.8.2** — `registerPushToken()`, `unregisterPushToken()`, `resolveAddress()`, `getNonce()`
+
+### Fixed
+- Auto-migration of stale timestamp-based nonces to sequential nonces on node startup
+
+---
+
 ## Testnet v0.2.0 — March 2026
 
 ### Added

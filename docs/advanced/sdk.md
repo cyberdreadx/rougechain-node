@@ -135,6 +135,51 @@ await rc.bridge.claim({ evmTxHash: '0x...', evmAddress: '0x...', evmSignature: '
 await rc.bridge.getWithdrawals();
 ```
 
+### Messenger (`rc.messenger`)
+
+```typescript
+await rc.messenger.getWallets();
+await rc.messenger.registerWallet({ id, displayName, signingPublicKey, encryptionPublicKey });
+await rc.messenger.getConversations(walletId, { signingPublicKey, encryptionPublicKey });
+await rc.messenger.createConversation([pubKeyA, pubKeyB]);
+await rc.messenger.getMessages(conversationId);
+await rc.messenger.sendMessage(conversationId, sender, encryptedContent, { ... });
+```
+
+### Push Notifications
+
+```typescript
+// Register for push notifications (PQC-signed)
+await rc.registerPushToken(publicKey, privateKey, 'ExponentPushToken[xxx]');
+
+// Unregister
+await rc.unregisterPushToken(publicKey, privateKey);
+```
+
+### Address Resolution
+
+```typescript
+// Resolve rouge1… address to public key, or vice versa
+const result = await rc.resolveAddress('rouge1q8f3x...');
+// → { address, publicKey, balance }
+```
+
+### Account Nonce
+
+```typescript
+const nonce = await rc.getNonce(publicKey);
+// → { nonce, next_nonce }
+```
+
+### Token Allowances
+
+```typescript
+// ERC-20 style approve/transferFrom
+await rc.approveAllowance(wallet, { spender, token, amount });
+await rc.transferFrom(wallet, { owner, to, token, amount });
+await rc.freezeToken(wallet, { token, frozen: true });
+```
+
 ## Environment Support
 
 | Environment | Requirements |
@@ -160,4 +205,4 @@ import type { Block, Transaction, Validator, LiquidityPool, NftCollection } from
 
 ## Source
 
-The SDK source code is in the `sdk/` directory of the [rougechain-node repository](https://github.com/cyberdreadx/rougechain-node).
+The SDK source code is in the `sdk/` directory of the [quantum-vault repository](https://github.com/cyberdreadx/quantum-vault).

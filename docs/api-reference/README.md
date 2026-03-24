@@ -24,7 +24,7 @@ All API endpoints expect **raw hex public keys**, not `rouge1` addresses:
 ❌ /api/balance/rouge1q8f3x7k2m4n9p...
 ```
 
-The `rouge1` address is a compact display format. Use raw hex pubkeys for API calls.
+> **Tip:** Use `GET /api/resolve/:input` to convert between `rouge1…` addresses and hex public keys.
 
 ## Endpoints Overview
 
@@ -34,6 +34,8 @@ The `rouge1` address is a compact display format. Use raw hex pubkeys for API ca
 |----------|--------|-------------|
 | `/api/health` | GET | Node health check |
 | `/api/stats` | GET | Network statistics |
+| `/api/ws` | GET | WebSocket for real-time events |
+| `/api/price/xrge` | GET | Current XRGE price |
 
 ### Blockchain
 
@@ -41,32 +43,73 @@ The `rouge1` address is a compact display format. Use raw hex pubkeys for API ca
 |----------|--------|-------------|
 | `/api/blocks` | GET | Get all blocks |
 | `/api/blocks/summary` | GET | Block summary for charts |
+| `/api/block/:height` | GET | Get block by height |
 | `/api/txs` | GET | Get transactions |
+| `/api/tx/:hash` | GET | Get transaction by hash |
+| `/api/tx/:hash/receipt` | GET | Get transaction receipt |
+| `/api/events` | GET | Get all events |
 
-### Wallet
+### Wallet & Accounts
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/wallet/create` | POST | Create new wallet |
-| `/api/balance/:publicKey` | GET | Get balance |
+| `/api/balance/:publicKey` | GET | Get XRGE balance |
+| `/api/balance/:publicKey/:token` | GET | Get token balance |
+| `/api/account/:pubkey/nonce` | GET | Get account nonce |
+| `/api/resolve/:input` | GET | Resolve address ↔ public key |
+| `/api/address/:pubkey/transactions` | GET | Get address transactions |
 | `/api/faucet` | POST | Request testnet tokens |
-| `/api/tx/submit` | POST | Submit transaction |
-
-### Staking
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/validators` | GET | List validators |
-| `/api/stake/submit` | POST | Stake tokens |
-| `/api/unstake/submit` | POST | Unstake tokens |
+| `/api/tx/submit` | POST | Submit transaction (legacy) |
 
 ### Tokens
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/token/create` | POST | Create custom token |
+| `/api/tokens` | GET | List all tokens |
+| `/api/token/:symbol/metadata` | GET | Get token metadata |
+| `/api/token/:symbol/holders` | GET | Get token holders |
+| `/api/token/:symbol/transactions` | GET | Get token transactions |
+| `/api/token/create` | POST | Create token (legacy) |
+| `/api/token/metadata/update` | POST | Update token metadata |
+| `/api/token/metadata/claim` | POST | Claim metadata ownership |
 | `/api/burn-address` | GET | Get official burn address |
 | `/api/burned` | GET | Get burned token stats |
+
+### Token Allowances (ERC-20 Style)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v2/token/approve` | POST | Approve spender allowance |
+| `/api/v2/token/transfer-from` | POST | Transfer using allowance |
+| `/api/v2/token/freeze` | POST | Freeze/unfreeze token transfers |
+| `/api/token/allowance` | GET | Check specific allowance |
+| `/api/token/allowances` | GET | List allowances by owner/spender |
+| `/api/allowances/:pubkey` | GET | List all allowances for a key |
+| `/api/locks/:pubkey` | GET | Get token locks |
+
+### Staking & Validators
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/validators` | GET | List validators |
+| `/api/validators/stats` | GET | Validator vote stats |
+| `/api/selection` | GET | Proposer selection |
+| `/api/finality` | GET | Finality status |
+| `/api/votes` | GET | Vote quorum info |
+| `/api/stake/submit` | POST | Stake tokens (legacy) |
+| `/api/unstake/submit` | POST | Unstake tokens (legacy) |
+| `/api/votes/submit` | POST | Submit validator vote |
+| `/api/entropy/submit` | POST | Submit entropy contribution |
+
+### Token Staking Pools
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/staking/pools` | GET | List all staking pools |
+| `/api/staking/pool/:pool_id` | GET | Get staking pool details |
+| `/api/staking/stakes/:pubkey` | GET | Get stakes by owner |
+| `/api/staking/pool/:pool_id/stakes` | GET | Get stakes in a pool |
 
 ### AMM/DEX
 
@@ -83,6 +126,101 @@ The `rouge1` address is a compact display format. Use raw hex pubkeys for API ca
 | `/api/swap/quote` | POST | Get swap quote |
 | `/api/swap/execute` | POST | Execute swap |
 
+### NFTs
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/nft/collections` | GET | List collections |
+| `/api/nft/collection/:id` | GET | Get collection |
+| `/api/nft/collection/:id/tokens` | GET | Get collection tokens |
+| `/api/nft/token/:coll/:id` | GET | Get specific NFT |
+| `/api/nft/owner/:pubkey` | GET | Get NFTs by owner |
+| `/api/v2/nft/collection/create` | POST | Create collection (v2) |
+| `/api/v2/nft/mint` | POST | Mint NFT (v2) |
+| `/api/v2/nft/batch-mint` | POST | Batch mint (v2) |
+| `/api/v2/nft/transfer` | POST | Transfer NFT (v2) |
+| `/api/v2/nft/burn` | POST | Burn NFT (v2) |
+| `/api/v2/nft/lock` | POST | Lock/unlock NFT (v2) |
+| `/api/v2/nft/freeze-collection` | POST | Freeze collection (v2) |
+
+### Bridge (ETH/USDC + XRGE)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/bridge/config` | GET | ETH/USDC bridge config |
+| `/api/bridge/claim` | POST | Claim bridge deposit |
+| `/api/bridge/withdraw` | POST | Withdraw to EVM |
+| `/api/bridge/withdrawals` | GET | List pending withdrawals |
+| `/api/bridge/withdrawals/:txId` | DELETE | Fulfill withdrawal |
+| `/api/bridge/xrge/config` | GET | XRGE bridge config |
+| `/api/bridge/xrge/claim` | POST | Claim XRGE deposit |
+| `/api/bridge/xrge/withdraw` | POST | Withdraw XRGE to EVM |
+| `/api/bridge/xrge/withdrawals` | GET | List XRGE withdrawals |
+| `/api/bridge/xrge/withdrawals/:txId` | DELETE | Fulfill XRGE withdrawal |
+
+### Shielded Transactions
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v2/shielded/shield` | POST | Shield tokens (make private) |
+| `/api/v2/shielded/transfer` | POST | Private transfer |
+| `/api/v2/shielded/unshield` | POST | Unshield tokens (make public) |
+| `/api/shielded/stats` | GET | Shielded pool statistics |
+| `/api/shielded/nullifier/:hash` | GET | Check nullifier |
+
+### Rollup (Phase 3)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v2/rollup/status` | GET | Rollup status |
+| `/api/v2/rollup/batch/:id` | GET | Get rollup batch |
+| `/api/v2/rollup/submit` | POST | Submit rollup transfer |
+
+### Governance
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/governance/proposals` | GET | List all proposals |
+| `/api/governance/proposals/:token` | GET | Proposals by token |
+| `/api/governance/proposal/:id` | GET | Get proposal details |
+| `/api/governance/proposal/:id/votes` | GET | Get proposal votes |
+
+### Messenger
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/messenger/wallets` | GET | List messenger wallets |
+| `/api/messenger/wallets/register` | POST | Register wallet |
+| `/api/messenger/conversations` | GET/POST | Conversations |
+| `/api/messenger/conversations/:id` | DELETE | Delete conversation |
+| `/api/messenger/messages` | GET/POST | Messages |
+| `/api/messenger/messages/read` | POST | Mark as read |
+| `/api/messenger/messages/:id` | DELETE | Delete message |
+
+### Mail
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/names/register` | POST | Register mail name |
+| `/api/names/resolve/:name` | GET | Resolve name → wallet |
+| `/api/names/reverse/:walletId` | GET | Reverse lookup → name |
+| `/api/names/release` | DELETE | Release a name |
+| `/api/mail/send` | POST | Send encrypted mail (with optional attachment) |
+| `/api/mail/inbox` | GET | Get inbox |
+| `/api/mail/sent` | GET | Get sent mail |
+| `/api/mail/trash` | GET | Get trashed mail |
+| `/api/mail/message/:id` | GET | Get single mail item |
+| `/api/mail/read` | POST | Mark as read |
+| `/api/mail/move` | POST | Move to folder |
+| `/api/mail/:id` | DELETE | Delete permanently |
+
+### Push Notifications
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/push/register` | POST | Register push token (PQC-signed) |
+| `/api/push/unregister` | POST | Unregister push token (PQC-signed) |
+
 ### Secure v2 API (Client-Side Signing)
 
 All v2 endpoints accept pre-signed transactions. Private keys never leave the client.
@@ -91,6 +229,8 @@ All v2 endpoints accept pre-signed transactions. Private keys never leave the cl
 |----------|--------|-------------|
 | `/api/v2/transfer` | POST | Transfer tokens |
 | `/api/v2/token/create` | POST | Create token |
+| `/api/v2/token/metadata/update` | POST | Update token metadata |
+| `/api/v2/token/metadata/claim` | POST | Claim metadata ownership |
 | `/api/v2/pool/create` | POST | Create pool |
 | `/api/v2/pool/add-liquidity` | POST | Add liquidity |
 | `/api/v2/pool/remove-liquidity` | POST | Remove liquidity |
@@ -98,18 +238,6 @@ All v2 endpoints accept pre-signed transactions. Private keys never leave the cl
 | `/api/v2/stake` | POST | Stake tokens |
 | `/api/v2/unstake` | POST | Unstake tokens |
 | `/api/v2/faucet` | POST | Request faucet |
-| `/api/v2/token/approve` | POST | Approve token allowance |
-| `/api/v2/token/transfer-from` | POST | Transfer using allowance |
-
-### Token Allowances (ERC-20 Style)
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v2/token/approve` | POST | Approve a spender to use your tokens |
-| `/api/v2/token/transfer-from` | POST | Transfer tokens from owner using allowance |
-| `/api/token/allowance?owner=&spender=&token=` | GET | Check specific allowance amount |
-| `/api/token/allowances?owner=` | GET | List all allowances by owner |
-| `/api/token/allowances?spender=` | GET | List all allowances for a spender |
 
 ### P2P
 
@@ -119,32 +247,6 @@ All v2 endpoints accept pre-signed transactions. Private keys never leave the cl
 | `/api/peers/register` | POST | Register as peer |
 | `/api/blocks/import` | POST | Import block from peer |
 | `/api/tx/broadcast` | POST | Receive broadcasted tx |
-
-### Messenger
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/messenger/wallets` | GET | List messenger wallets |
-| `/api/messenger/wallets/register` | POST | Register wallet |
-| `/api/messenger/conversations` | GET/POST | Conversations |
-| `/api/messenger/messages` | GET/POST | Messages |
-| `/api/messenger/messages/read` | POST | Mark message as read (self-destruct) |
-
-### Mail
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/names/register` | POST | Register a mail name |
-| `/api/names/lookup` | GET | Look up a name's public keys |
-| `/api/names/reverse` | GET | Reverse lookup (public key → name) |
-| `/api/mail/send` | POST | Send encrypted mail |
-| `/api/mail/inbox` | GET | Get inbox |
-| `/api/mail/sent` | GET | Get sent mail |
-| `/api/mail/trash` | GET | Get trashed mail |
-| `/api/mail/message/:id` | GET | Get single mail item |
-| `/api/mail/read` | POST | Mark mail as read |
-| `/api/mail/move` | POST | Move mail to folder |
-| `/api/mail/:id` | DELETE | Delete mail permanently |
 
 ## Authentication
 
