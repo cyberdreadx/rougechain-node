@@ -10,6 +10,8 @@ pub struct MailMessage {
     pub to_wallet_ids: Vec<String>,
     pub subject_encrypted: String,
     pub body_encrypted: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment_encrypted: Option<String>,
     pub signature: String,
     pub created_at: String,
     pub reply_to_id: Option<String>,

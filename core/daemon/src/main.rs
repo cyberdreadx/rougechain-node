@@ -2965,6 +2965,7 @@ async fn send_mail(
         reply_to_id: body.get("replyToId").and_then(|v| v.as_str()).map(|s| s.to_string()),
         has_attachment: body.get("hasAttachment").and_then(|v| v.as_bool()).unwrap_or(false),
         attachment_hash: body.get("attachmentHash").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        attachment_encrypted: body.get("attachmentEncrypted").and_then(|v| v.as_str()).map(|s| s.to_string()),
     };
     let msg = state.node.send_mail(msg).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "success": true, "message": msg })))

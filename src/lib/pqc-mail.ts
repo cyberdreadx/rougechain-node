@@ -7,12 +7,20 @@ import { encryptMessage, decryptMessage, type WalletWithPrivateKeys, type Wallet
 
 export const MAIL_DOMAIN = "rouge.quant";
 
+export interface MailAttachment {
+  name: string;
+  type: string; // MIME type
+  data: string; // base64
+  size: number;
+}
+
 export interface MailMessage {
   id: string;
   fromWalletId: string;
   toWalletIds: string[];
   subjectEncrypted: string;
   bodyEncrypted: string;
+  attachmentEncrypted?: string;
   signature: string;
   createdAt: string;
   replyToId?: string;
@@ -20,6 +28,7 @@ export interface MailMessage {
   attachmentHash?: string;
   subject?: string;
   body?: string;
+  attachmentData?: MailAttachment;
   signatureValid?: boolean;
   senderName?: string;
 }
@@ -112,6 +121,7 @@ export async function sendMail(
   subject: string,
   body: string,
   replyToId?: string,
+  attachment?: MailAttachment,
 ): Promise<MailMessage> {
   const base = getMailApiBase();
   if (!base) throw new Error("Node not configured");
@@ -160,6 +170,21 @@ export async function sendMail(
     body, primaryRecipientKey, wallet.signingPrivateKey, wallet.encryptionPublicKey,
   );
 
+  // Encrypt attachment if present
+  let attachmentEncrypted: string | undefined;
+  if (attachment) {
+    const attachmentPayload = JSON.stringify({
+      name: attachment.name,
+      type: attachment.type,
+      data: attachment.data,
+      size: attachment.size,
+    });
+    const attachEnc = await encryptMessage(
+      attachmentPayload, primaryRecipientKey, wallet.signingPrivateKey, wallet.encryptionPublicKey,
+    );
+    attachmentEncrypted = attachEnc.encryptedPackage;
+  }
+
   const res = await fetch(`${base}/mail/send`, {
     method: "POST",
     headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
@@ -168,9 +193,10 @@ export async function sendMail(
       toWalletIds,
       subjectEncrypted: subjectEnc.encryptedPackage,
       bodyEncrypted: bodyEnc.encryptedPackage,
+      attachmentEncrypted,
       signature: subjectEnc.signature,
       replyToId,
-      hasAttachment: false,
+      hasAttachment: !!attachment,
     }),
   });
 
@@ -180,6 +206,7 @@ export async function sendMail(
     ...normalizeMailMessage(data.message || data),
     subject,
     body,
+    attachmentData: attachment,
     signatureValid: true,
     senderName: wallet.displayName,
   };
@@ -247,10 +274,21 @@ async function getFolder(wallet: WalletWithPrivateKeys, folder: string): Promise
         body = bodyResult.plaintext;
       } catch { /* */ }
 
+      let attachmentData: MailAttachment | undefined;
+      if (msg.hasAttachment && msg.attachmentEncrypted) {
+        try {
+          const attachResult = await decryptMessage(
+            msg.attachmentEncrypted, wallet.encryptionPrivateKey, senderSigningKey,
+            msg.signature, isSender,
+          );
+          attachmentData = JSON.parse(attachResult.plaintext) as MailAttachment;
+        } catch { /* */ }
+      }
+
       const senderName = await getSenderDisplayName(msg.fromWalletId, allWallets);
 
       items.push({
-        message: { ...msg, subject, body, signatureValid, senderName },
+        message: { ...msg, subject, body, attachmentData, signatureValid, senderName },
         label,
       });
     }
@@ -345,6 +383,7 @@ function normalizeMailMessage(raw: Record<string, unknown>): MailMessage {
     replyToId: (raw.reply_to_id as string) || (raw.replyToId as string),
     hasAttachment: (raw.has_attachment as boolean) || (raw.hasAttachment as boolean) || false,
     attachmentHash: (raw.attachment_hash as string) || (raw.attachmentHash as string),
+    attachmentEncrypted: (raw.attachment_encrypted as string) || (raw.attachmentEncrypted as string),
   };
 }
 

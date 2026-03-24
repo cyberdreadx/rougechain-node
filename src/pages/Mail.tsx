@@ -4,6 +4,7 @@ import {
   Mail as MailIcon, Inbox, SendHorizonal, Trash2, Plus, RefreshCw,
   ArrowLeft, Send, Lock, Loader2, CheckCircle2, XCircle, AtSign,
   Reply, MailOpen, Key, Copy, Settings, ToggleLeft, ToggleRight, Type,
+  Paperclip, Download, X, FileText, Image as ImageIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,7 @@ import {
   registerName, reverseLookup, resolveRecipient,
   MAIL_DOMAIN,
   type MailItem,
+  type MailAttachment,
 } from "@/lib/pqc-mail";
 import {
   UnifiedWallet,
@@ -114,6 +116,7 @@ function ComposeView({
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resolvedTo, setResolvedTo] = useState<string | null>(null);
+  const [attachment, setAttachment] = useState<MailAttachment | null>(null);
 
   useEffect(() => {
     if (!to.trim()) { setResolvedTo(null); return; }
@@ -135,7 +138,7 @@ function ComposeView({
         setIsSending(false);
         return;
       }
-      await sendMail(wallet, [recipientId], subject, body || "(empty)", replyTo?.message.id);
+      await sendMail(wallet, [recipientId], subject, body || "(empty)", replyTo?.message.id, attachment || undefined);
       toast.success("Mail sent!");
       onBack();
     } catch (err: unknown) {
@@ -191,6 +194,59 @@ function ComposeView({
             rows={10}
             className="w-full mt-1 px-3 py-2 rounded-lg bg-input border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
           />
+        </div>
+        {/* Attachment picker */}
+        <div>
+          <div className="flex items-center gap-2">
+            <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary/50 hover:bg-secondary text-xs font-medium text-foreground transition-colors">
+              <Paperclip className="w-3.5 h-3.5" />
+              Attach file
+              <input
+                type="file"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  if (file.size > 2 * 1024 * 1024) {
+                    setError("Attachment too large (max 2 MB)");
+                    return;
+                  }
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    const base64 = (reader.result as string).split(",")[1];
+                    setAttachment({
+                      name: file.name,
+                      type: file.type || "application/octet-stream",
+                      data: base64,
+                      size: file.size,
+                    });
+                    setError(null);
+                  };
+                  reader.readAsDataURL(file);
+                }}
+              />
+            </label>
+            <span className="text-xs text-muted-foreground">Max 2 MB · encrypted with ML-KEM</span>
+          </div>
+          {attachment && (
+            <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-primary/5 border border-primary/20 rounded-lg">
+              {attachment.type.startsWith("image/") ? (
+                <ImageIcon className="w-4 h-4 text-primary flex-shrink-0" />
+              ) : (
+                <FileText className="w-4 h-4 text-primary flex-shrink-0" />
+              )}
+              <span className="text-sm text-foreground truncate flex-1">{attachment.name}</span>
+              <span className="text-xs text-muted-foreground flex-shrink-0">
+                {(attachment.size / 1024).toFixed(1)} KB
+              </span>
+              <button
+                onClick={() => setAttachment(null)}
+                className="text-muted-foreground hover:text-destructive transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
         {error && (
           <div className="px-3 py-2 bg-destructive/10 rounded-lg text-destructive text-sm">{error}</div>
@@ -283,6 +339,31 @@ function ThreadMessage({
         }`}>
           {message.body}
         </div>
+        {message.attachmentData && (
+          <div className="mt-3 p-2 border border-border rounded-lg bg-card/50">
+            <div className="flex items-center gap-2">
+              <Paperclip className="w-3.5 h-3.5 text-primary" />
+              <span className="text-xs font-medium text-foreground truncate">{message.attachmentData.name}</span>
+              <span className="text-xs text-muted-foreground">
+                {(message.attachmentData.size / 1024).toFixed(1)} KB
+              </span>
+              <a
+                href={`data:${message.attachmentData.type};base64,${message.attachmentData.data}`}
+                download={message.attachmentData.name}
+                className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/10 hover:bg-primary/20 text-primary text-xs transition-colors"
+              >
+                <Download className="w-3 h-3" />
+              </a>
+            </div>
+            {message.attachmentData.type.startsWith("image/") && (
+              <img
+                src={`data:${message.attachmentData.type};base64,${message.attachmentData.data}`}
+                alt={message.attachmentData.name}
+                className="mt-2 max-w-full max-h-48 rounded border border-border object-contain"
+              />
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -404,6 +485,32 @@ function ReadView({
                 message.body
               )}
             </div>
+            {message.attachmentData && (
+              <div className="mt-4 p-3 border border-border rounded-lg bg-card/50">
+                <div className="flex items-center gap-2 mb-2">
+                  <Paperclip className="w-4 h-4 text-primary" />
+                  <span className="text-sm font-medium text-foreground">{message.attachmentData.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {(message.attachmentData.size / 1024).toFixed(1)} KB
+                  </span>
+                  <a
+                    href={`data:${message.attachmentData.type};base64,${message.attachmentData.data}`}
+                    download={message.attachmentData.name}
+                    className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded bg-primary/10 hover:bg-primary/20 text-primary text-xs font-medium transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download
+                  </a>
+                </div>
+                {message.attachmentData.type.startsWith("image/") && (
+                  <img
+                    src={`data:${message.attachmentData.type};base64,${message.attachmentData.data}`}
+                    alt={message.attachmentData.name}
+                    className="max-w-full max-h-64 rounded-md border border-border object-contain"
+                  />
+                )}
+              </div>
+            )}
           </div>
         )}
 
