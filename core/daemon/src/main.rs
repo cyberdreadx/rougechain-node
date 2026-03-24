@@ -389,6 +389,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/", get(dashboard::node_dashboard))
         .route("/api/ws", get(ws_handler))
         .route("/api/stats", get(get_stats))
+        .route("/api/fee", get(get_fee_info))
         .route("/api/burn-address", get(get_burn_address))
         .route("/api/burned", get(get_burned_tokens))
         .route("/api/price/xrge", get(get_xrge_price))
@@ -788,6 +789,8 @@ struct StatsResponse {
     finalized_height: u64,
     ws_clients: usize,
     node_name: Option<String>,
+    base_fee: f64,
+    total_fees_burned: f64,
 }
 
 async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, StatusCode> {
@@ -808,6 +811,8 @@ async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>,
         finalized_height: finalized,
         ws_clients,
         node_name: state.node_name.clone(),
+        base_fee: node.get_base_fee(),
+        total_fees_burned: node.get_total_fees_burned(),
     }))
 }
 
@@ -837,6 +842,20 @@ async fn get_burned_tokens(State(state): State<AppState>) -> Result<Json<BurnedT
     Ok(Json(BurnedTokensResponse {
         burned,
         total_xrge_burned: total_xrge,
+    }))
+}
+
+async fn get_fee_info(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let node = &state.node;
+    let base_fee = node.get_base_fee();
+    Json(serde_json::json!({
+        "success": true,
+        "base_fee": base_fee,
+        "priority_fee_suggestion": base_fee * 0.1,
+        "total_fee_suggestion": base_fee * 1.1,
+        "total_fees_burned": node.get_total_fees_burned(),
+        "target_txs_per_block": 10,
+        "fee_floor": 0.001,
     }))
 }
 

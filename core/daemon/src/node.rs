@@ -39,6 +39,12 @@ const JAIL_BLOCKS: u64 = 20;
 const SLASH_DIVISOR: u128 = 10;
 const MAX_MEMPOOL: usize = 2000;
 
+// EIP-1559 dynamic fee constants
+const BASE_FEE_INITIAL: f64 = 0.1;           // Initial base fee (XRGE)
+const BASE_FEE_MAX_CHANGE_DENOM: f64 = 8.0;  // Max 12.5% change per block
+const TARGET_TXS_PER_BLOCK: usize = 10;      // Target block fullness
+const BASE_FEE_FLOOR: f64 = 0.001;           // Minimum base fee
+
 /// The official burn address - tokens sent here are permanently destroyed
 /// This is a deterministic address derived from "QUANTUM_VAULT_BURN_ADDRESS_V1"
 /// No private key can ever be derived for this address
@@ -90,6 +96,10 @@ pub struct L1Node {
     /// rouge1… address → public key index (persisted in sled)
     address_db: sled::Tree,
     push_token_store: PushTokenStore,
+    /// Current EIP-1559 base fee (persisted in sled)
+    fee_db: sled::Tree,
+    /// Running total of burned fees (XRGE)
+    total_fees_burned: Arc<Mutex<f64>>,
 }
 
 impl L1Node {
@@ -130,6 +140,10 @@ impl L1Node {
                 .open_tree("rouge1_index")
                 .map_err(|e| format!("open address tree: {}", e))?;
             let push_token_store = PushTokenStore::new(&opts.data_dir)?;
+            let fee_sled = sled::open(opts.data_dir.join("fee-db"))
+                .map_err(|e| format!("open fee DB: {}", e))?;
+            let fee_db = fee_sled.open_tree("eip1559")
+                .map_err(|e| format!("open fee tree: {}", e))?;
             Ok(Self {
             node_id: uuid::Uuid::new_v4().to_string(),
             opts,
@@ -161,6 +175,8 @@ impl L1Node {
             nonce_db,
             address_db,
             push_token_store,
+            fee_db,
+            total_fees_burned: Arc::new(Mutex::new(0.0)),
         })
     }
 
@@ -319,13 +335,20 @@ impl L1Node {
             let total_fees: f64 = block.txs.iter().map(|tx| tx.fee).sum();
             if total_fees > 0.0 {
                 let stakes = self.get_validator_stakes_at_height(block.header.height)?;
+                let base_fee = self.get_base_fee();
                 Self::distribute_fees(
                     &mut balances,
                     total_fees,
                     &block.header.proposer_pub_key,
                     &stakes,
+                    base_fee,
+                    block.txs.len(),
+                    &self.total_fees_burned,
                 );
             }
+            // Update base fee for next block
+            let next_base_fee = self.calculate_next_base_fee(block.txs.len());
+            self.set_base_fee(next_base_fee);
         }
         
         eprintln!("[node] Chain reset complete - now at height {}", blocks.last().map(|b| b.header.height).unwrap_or(0));
@@ -1667,6 +1690,43 @@ impl L1Node {
     const PROPOSER_FEE_SHARE: f64 = 0.25; // 25% to block proposer
     const VALIDATOR_FEE_SHARE: f64 = 0.75; // 75% split among all validators by stake
 
+    /// Get the current base fee
+    pub fn get_base_fee(&self) -> f64 {
+        self.fee_db.get(b"base_fee").ok().flatten()
+            .and_then(|v| String::from_utf8(v.to_vec()).ok())
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(BASE_FEE_INITIAL)
+    }
+
+    /// Persist base fee
+    fn set_base_fee(&self, fee: f64) {
+        let _ = self.fee_db.insert(b"base_fee", fee.to_string().as_bytes());
+        let _ = self.fee_db.flush();
+    }
+
+    /// Get total fees burned
+    pub fn get_total_fees_burned(&self) -> f64 {
+        *self.total_fees_burned.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Calculate next base fee based on block fullness (EIP-1559)
+    fn calculate_next_base_fee(&self, tx_count: usize) -> f64 {
+        let current = self.get_base_fee();
+        if tx_count == TARGET_TXS_PER_BLOCK {
+            return current; // At target, no change
+        }
+        let delta = if tx_count > TARGET_TXS_PER_BLOCK {
+            // Above target → increase
+            let excess = tx_count - TARGET_TXS_PER_BLOCK;
+            current * (excess as f64) / (TARGET_TXS_PER_BLOCK as f64) / BASE_FEE_MAX_CHANGE_DENOM
+        } else {
+            // Below target → decrease
+            let deficit = TARGET_TXS_PER_BLOCK - tx_count;
+            -(current * (deficit as f64) / (TARGET_TXS_PER_BLOCK as f64) / BASE_FEE_MAX_CHANGE_DENOM)
+        };
+        (current + delta).max(BASE_FEE_FLOOR)
+    }
+
     fn apply_balance_block(&self, block: &BlockV1) -> Result<(), String> {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
         let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
@@ -1837,13 +1897,21 @@ impl L1Node {
         
         // Distribute only actually collected fees
         if actual_fees_collected > 0.0 {
+            let base_fee = self.get_base_fee();
             Self::distribute_fees(
                 &mut balances,
                 actual_fees_collected,
                 &block.header.proposer_pub_key,
                 &self.get_validator_stakes_snapshot()?,
+                base_fee,
+                block.txs.len(),
+                &self.total_fees_burned,
             );
         }
+
+        // EIP-1559: recalculate base fee for next block
+        let next_base_fee = self.calculate_next_base_fee(block.txs.len());
+        self.set_base_fee(next_base_fee);
         
         Ok(())
     }
@@ -2387,11 +2455,15 @@ impl L1Node {
             
             if actual_fees_collected > 0.0 {
                 let stakes = self.get_validator_stakes_at_height(block.header.height)?;
+                let base_fee = self.get_base_fee();
                 Self::distribute_fees(
                     &mut balances,
                     actual_fees_collected,
                     &block.header.proposer_pub_key,
                     &stakes,
+                    base_fee,
+                    block.txs.len(),
+                    &self.total_fees_burned,
                 );
             }
         }
@@ -3020,13 +3092,32 @@ impl L1Node {
         total_fees: f64,
         proposer_pub_key: &str,
         validator_stakes: &BTreeMap<String, u128>,
+        base_fee_per_tx: f64,
+        tx_count: usize,
+        total_fees_burned: &Arc<Mutex<f64>>,
     ) {
-        // Proposer gets 25%
-        let proposer_share = total_fees * Self::PROPOSER_FEE_SHARE;
+        // EIP-1559: burn base_fee portion, distribute only the tip
+        let total_base_fees = base_fee_per_tx * tx_count as f64;
+        let burned = total_base_fees.min(total_fees); // Can't burn more than collected
+        let tip_pool = total_fees - burned;
+
+        // Track burned fees
+        if burned > 0.0 {
+            if let Ok(mut b) = total_fees_burned.lock() {
+                *b += burned;
+            }
+        }
+
+        if tip_pool <= 0.0 {
+            return; // All fees burned, nothing to distribute
+        }
+
+        // Proposer gets 25% of tip
+        let proposer_share = tip_pool * Self::PROPOSER_FEE_SHARE;
         *balances.entry(proposer_pub_key.to_string()).or_insert(0.0) += proposer_share;
         
         // Remaining 75% split among all validators by stake weight
-        let validator_pool = total_fees * Self::VALIDATOR_FEE_SHARE;
+        let validator_pool = tip_pool * Self::VALIDATOR_FEE_SHARE;
         let total_stake: u128 = validator_stakes.values().sum();
         
         if total_stake > 0 {
