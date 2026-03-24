@@ -279,6 +279,32 @@ export class RougeChain {
     return this.get("/burned");
   }
 
+  // ===== Address Resolution =====
+
+  /**
+   * Resolve a rouge1… address to its public key, or a public key to its rouge1 address.
+   * Uses the persistent on-chain address index for O(1) lookups.
+   */
+  async resolveAddress(input: string): Promise<{
+    success: boolean;
+    address?: string;
+    publicKey?: string;
+    balance?: number;
+    error?: string;
+  }> {
+    return this.get(`/resolve/${encodeURIComponent(input)}`);
+  }
+
+  // ===== Nonce =====
+
+  /** Get the current sequential nonce for an account. */
+  async getNonce(publicKey: string): Promise<{
+    nonce: number;
+    next_nonce: number;
+  }> {
+    return this.get(`/account/${encodeURIComponent(publicKey)}/nonce`);
+  }
+
   // ===== Write operations =====
 
   async transfer(
