@@ -1839,7 +1839,7 @@ async fn create_pool(
         version: 1,
         tx_type: "create_pool".to_string(),
         from_pub_key: body.from_public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        nonce: state.node.get_next_nonce(&body.from_public_key),
         payload: TxPayload {
             pool_id: Some(pool_id.clone()),
             token_a_symbol: Some(body.token_a.clone()),
@@ -3238,7 +3238,7 @@ async fn v2_create_token(
         version: 1,
         tx_type: "create_token".to_string(),
         from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        nonce: state.node.get_next_nonce(&body.public_key),
         payload: TxPayload {
             token_name: Some(token_name.to_string()),
             token_symbol: Some(token_symbol.to_string()),
@@ -5356,7 +5356,7 @@ async fn v2_shield(
         version: 1,
         tx_type: "shield".to_string(),
         from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        nonce: state.node.get_next_nonce(&body.public_key),
         payload: TxPayload {
             shielded_commitment: Some(commitment.to_string()),
             shielded_value: Some(amount),
@@ -5442,7 +5442,7 @@ async fn v2_shielded_transfer(
         version: 1,
         tx_type: "shielded_transfer".to_string(),
         from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        nonce: state.node.get_next_nonce(&body.public_key),
         payload: TxPayload {
             shielded_nullifiers: Some(nullifiers),
             shielded_output_commitments: Some(output_commitments),
@@ -5525,7 +5525,7 @@ async fn v2_unshield(
         version: 1,
         tx_type: "unshield".to_string(),
         from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
+        nonce: state.node.get_next_nonce(&body.public_key),
         payload: TxPayload {
             shielded_nullifiers: Some(nullifiers),
             shielded_value: Some(amount),

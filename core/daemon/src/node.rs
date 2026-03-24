@@ -981,7 +981,7 @@ impl L1Node {
             version: 1,
             tx_type: "transfer".to_string(),
             from_pub_key: from_public_key.to_string(),
-            nonce: Utc::now().timestamp_millis() as u64,
+            nonce: self.get_next_nonce(from_public_key),
             payload: TxPayload {
                 to_pub_key_hex: Some(to_public_key.to_string()),
                 amount: Some(amount_u64),
@@ -1068,7 +1068,7 @@ impl L1Node {
             version: 1,
             tx_type: "transfer".to_string(),
             from_pub_key: keys.public_key_hex.clone(),
-            nonce: Utc::now().timestamp_millis() as u64,
+            nonce: self.get_next_nonce(&keys.public_key_hex),
             payload: TxPayload {
                 to_pub_key_hex: Some(recipient_public_key.to_string()),
                 amount: Some(amount),
@@ -1118,7 +1118,7 @@ impl L1Node {
             version: 1,
             tx_type: "bridge_withdraw".to_string(),
             from_pub_key: from_public_key.to_string(),
-            nonce: Utc::now().timestamp_millis() as u64,
+            nonce: self.get_next_nonce(from_public_key),
             payload: TxPayload {
                 amount: Some(amount_units),
                 token_symbol: Some("qETH".to_string()),
@@ -1180,7 +1180,7 @@ impl L1Node {
             version: 1,
             tx_type: "bridge_withdraw".to_string(),
             from_pub_key: from_public_key.to_string(),
-            nonce: Utc::now().timestamp_millis() as u64,
+            nonce: self.get_next_nonce(from_public_key),
             payload: TxPayload {
                 amount: Some(amount_units),
                 token_symbol: Some(token_upper),
@@ -1214,7 +1214,7 @@ impl L1Node {
             version: 1,
             tx_type: "bridge_mint".to_string(),
             from_pub_key: keys.public_key_hex.clone(),
-            nonce: Utc::now().timestamp_millis() as u64,
+            nonce: self.get_next_nonce(&keys.public_key_hex),
             payload: TxPayload {
                 to_pub_key_hex: Some(recipient_public_key.to_string()),
                 amount: Some(amount),
@@ -1257,7 +1257,7 @@ impl L1Node {
             version: 1,
             tx_type: "stake".to_string(),
             from_pub_key: from_public_key.to_string(),
-            nonce: Utc::now().timestamp_millis() as u64,
+            nonce: self.get_next_nonce(from_public_key),
             payload: TxPayload {
                 amount: Some(amount_u64),
                 ..Default::default()
@@ -1290,7 +1290,7 @@ impl L1Node {
             version: 1,
             tx_type: "unstake".to_string(),
             from_pub_key: from_public_key.to_string(),
-            nonce: Utc::now().timestamp_millis() as u64,
+            nonce: self.get_next_nonce(from_public_key),
             payload: TxPayload {
                 amount: Some(amount_u64),
                 ..Default::default()
