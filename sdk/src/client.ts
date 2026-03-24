@@ -305,6 +305,18 @@ export class RougeChain {
     return this.get(`/account/${encodeURIComponent(publicKey)}/nonce`);
   }
 
+  // ===== Push Notifications =====
+
+  /** Register an Expo push token for a wallet to receive notifications. */
+  async registerPushToken(publicKey: string, pushToken: string, platform = "expo"): Promise<ApiResponse> {
+    return this.post("/push/register", { publicKey, pushToken, platform });
+  }
+
+  /** Unregister push notifications for a wallet. */
+  async unregisterPushToken(publicKey: string): Promise<ApiResponse> {
+    return this.post("/push/unregister", { publicKey });
+  }
+
   // ===== Write operations =====
 
   async transfer(

@@ -19,6 +19,7 @@ use quantum_vault_storage::name_registry::{NameEntry, NameRegistry};
 use quantum_vault_storage::nullifier_store::NullifierStore;
 use quantum_vault_storage::receipt_store::ReceiptStore;
 use quantum_vault_storage::token_metadata_store::{TokenMetadata, TokenMetadataStore};
+use quantum_vault_storage::push_token_store::PushTokenStore;
 use quantum_vault_storage::token_stake_store::{TokenStakeStore, StakingPool, TokenStake};
 use quantum_vault_storage::validator_store::{ValidatorState, ValidatorStore};
 use quantum_vault_types::{
@@ -88,6 +89,7 @@ pub struct L1Node {
     nonce_db: sled::Tree,
     /// rouge1… address → public key index (persisted in sled)
     address_db: sled::Tree,
+    push_token_store: PushTokenStore,
 }
 
 impl L1Node {
@@ -127,6 +129,7 @@ impl L1Node {
                 .map_err(|e| format!("open address DB: {}", e))?
                 .open_tree("rouge1_index")
                 .map_err(|e| format!("open address tree: {}", e))?;
+            let push_token_store = PushTokenStore::new(&opts.data_dir)?;
             Ok(Self {
             node_id: uuid::Uuid::new_v4().to_string(),
             opts,
@@ -157,6 +160,7 @@ impl L1Node {
             finalized_height: Arc::new(Mutex::new(0)),
             nonce_db,
             address_db,
+            push_token_store,
         })
     }
 
@@ -4025,6 +4029,33 @@ impl L1Node {
                 eprintln!("[startup] Backfilled address index: {} entries", count);
             }
         }
+    }
+
+    // ===== Push notifications =====
+
+    pub fn register_push_token(&self, public_key: &str, push_token: &str, platform: &str) -> Result<(), String> {
+        use quantum_vault_storage::push_token_store::PushRegistration;
+        self.push_token_store.register(&PushRegistration {
+            public_key: public_key.to_string(),
+            push_token: push_token.to_string(),
+            platform: platform.to_string(),
+            registered_at: chrono::Utc::now().timestamp(),
+        })
+    }
+
+    pub fn unregister_push_token(&self, public_key: &str) -> Result<bool, String> {
+        self.push_token_store.unregister(public_key)
+    }
+
+    pub fn get_push_token(&self, public_key: &str) -> Option<String> {
+        self.push_token_store.get(public_key).ok().flatten().map(|r| r.push_token)
+    }
+
+    pub fn get_push_tokens_for_keys(&self, keys: &[&str]) -> Vec<(String, String)> {
+        self.push_token_store.get_tokens_for_keys(keys)
+            .into_iter()
+            .map(|r| (r.public_key, r.push_token))
+            .collect()
     }
 
 }

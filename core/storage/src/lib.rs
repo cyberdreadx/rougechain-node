@@ -9,6 +9,7 @@ pub mod mail_store;
 pub mod messenger_store;
 pub mod name_registry;
 pub mod nullifier_store;
+pub mod push_token_store;
 pub mod receipt_store;
 pub mod state_root;
 pub mod token_metadata_store;

@@ -517,6 +517,9 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/rollup/submit", post(rollup_submit_transfer))
         // Address resolution
         .route("/api/resolve/:input", get(resolve_address))
+        // Push notification registration
+        .route("/api/push/register", post(push_register))
+        .route("/api/push/unregister", post(push_unregister))
         // Token locking endpoints
         .route("/api/locks/:pubkey", get(get_locks))
         // Token staking endpoints
@@ -1709,6 +1712,46 @@ async fn resolve_address(
                 "error": format!("Invalid public key: {}", e),
             })),
         }
+    }
+}
+
+// ===== Push notification registration =====
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PushRegisterRequest {
+    public_key: String,
+    push_token: String,
+    #[serde(default = "default_platform")]
+    platform: String,
+}
+
+fn default_platform() -> String { "expo".to_string() }
+
+async fn push_register(
+    State(state): State<AppState>,
+    Json(body): Json<PushRegisterRequest>,
+) -> Json<serde_json::Value> {
+    match state.node.register_push_token(&body.public_key, &body.push_token, &body.platform) {
+        Ok(()) => Json(serde_json::json!({ "success": true })),
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PushUnregisterRequest {
+    public_key: String,
+}
+
+async fn push_unregister(
+    State(state): State<AppState>,
+    Json(body): Json<PushUnregisterRequest>,
+) -> Json<serde_json::Value> {
+    match state.node.unregister_push_token(&body.public_key) {
+        Ok(true) => Json(serde_json::json!({ "success": true })),
+        Ok(false) => Json(serde_json::json!({ "success": false, "error": "Not registered" })),
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
     }
 }
 
