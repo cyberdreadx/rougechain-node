@@ -163,6 +163,26 @@ pub struct VoteMessage {
     pub signature: String,
 }
 
+/// A serializable BFT finality proof — aggregated precommit votes that prove
+/// a block was finalized with ≥2/3 validator stake.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FinalityProof {
+    /// Block height this proof covers
+    pub height: u64,
+    /// Block hash that was finalized
+    pub block_hash: String,
+    /// Total stake in the validator set at this height
+    pub total_stake: u128,
+    /// Stake that voted for this block (must be ≥ 2/3 + 1 of total)
+    pub voting_stake: u128,
+    /// Quorum threshold (2/3 + 1)
+    pub quorum_threshold: u128,
+    /// Individual precommit votes that form the proof
+    pub precommit_votes: Vec<VoteMessage>,
+    /// Timestamp when proof was generated
+    pub created_at: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlashPayload {
     pub target_pub_key: String,

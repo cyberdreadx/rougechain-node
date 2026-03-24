@@ -1469,6 +1469,48 @@ impl L1Node {
         Ok((total, quorum, votes))
     }
 
+    /// Generate a BFT finality proof for a given block height.
+    /// Returns None if there aren't enough precommit votes to meet quorum.
+    pub fn generate_finality_proof(&self, height: u64) -> Result<Option<quantum_vault_types::FinalityProof>, String> {
+        let stakes = self.get_validator_stakes()?;
+        let total_stake: u128 = stakes.values().sum();
+        let quorum = if total_stake == 0 { return Ok(None); } else { (total_stake * 2 / 3) + 1 };
+
+        let votes = self.votes.lock().map_err(|_| "votes lock")?;
+        let precommits: Vec<VoteMessage> = votes.iter()
+            .filter(|v| v.height == height && v.vote_type == "precommit")
+            .cloned()
+            .collect();
+
+        // Calculate voting stake (sum of stake for each unique precommit voter)
+        let mut voting_stake: u128 = 0;
+        let mut seen_voters = std::collections::HashSet::new();
+        for vote in &precommits {
+            if seen_voters.insert(vote.voter_pub_key.clone()) {
+                voting_stake += stakes.get(&vote.voter_pub_key).copied().unwrap_or(0);
+            }
+        }
+
+        if voting_stake < quorum {
+            return Ok(None); // Insufficient votes
+        }
+
+        // Get block hash from the votes (they all voted on the same hash)
+        let block_hash = precommits.first()
+            .map(|v| v.block_hash.clone())
+            .unwrap_or_default();
+
+        Ok(Some(quantum_vault_types::FinalityProof {
+            height,
+            block_hash,
+            total_stake,
+            voting_stake,
+            quorum_threshold: quorum,
+            precommit_votes: precommits,
+            created_at: chrono::Utc::now().timestamp_millis() as u64,
+        }))
+    }
+
     pub fn get_vote_stats(&self) -> Result<Vec<(String, f64, f64, u64)>, String> {
         let votes = self.votes.lock().map_err(|_| "votes lock")?;
         let mut stats: HashMap<String, (u64, u64, u64)> = HashMap::new();

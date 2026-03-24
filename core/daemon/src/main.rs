@@ -390,6 +390,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/ws", get(ws_handler))
         .route("/api/stats", get(get_stats))
         .route("/api/fee", get(get_fee_info))
+        .route("/api/finality/:height", get(get_finality_proof))
         .route("/api/burn-address", get(get_burn_address))
         .route("/api/burned", get(get_burned_tokens))
         .route("/api/price/xrge", get(get_xrge_price))
@@ -892,6 +893,27 @@ async fn get_burned_tokens(State(state): State<AppState>) -> Result<Json<BurnedT
         burned,
         total_xrge_burned: total_xrge,
     }))
+}
+
+async fn get_finality_proof(
+    State(state): State<AppState>,
+    Path(height): Path<u64>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let node = &state.node;
+    match node.generate_finality_proof(height) {
+        Ok(Some(proof)) => Ok(Json(serde_json::json!({
+            "success": true,
+            "proof": proof
+        }))),
+        Ok(None) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": format!("No finality proof available for height {}", height)
+        }))),
+        Err(e) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": e
+        }))),
+    }
 }
 
 async fn get_fee_info(State(state): State<AppState>) -> Json<serde_json::Value> {
