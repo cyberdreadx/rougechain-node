@@ -64,6 +64,9 @@ const { balance } = await rc.getBalance(wallet.publicKey);
 | **Rollup** | `rc` | zk-STARK batch proofs, rollup status, submit transfers |
 | **Mail** | `rc.mail` | On-chain encrypted email (`@rouge.quant`) |
 | **Messenger** | `rc.messenger` | E2E encrypted messaging with self-destruct |
+| **Address Resolution** | `rc` | O(1) rouge1↔pubkey resolution via on-chain index |
+| **Push Notifications** | `rc` | PQC-signed push token registration (Expo) |
+| **Token Freeze** | `rc` | Creator-only token freeze/pause |
 
 ## Wallet & Addresses
 
@@ -400,6 +403,39 @@ const payload = {
 
 const signedTx = signTransaction(payload, wallet.privateKey, wallet.publicKey);
 const valid = verifyTransaction(signedTx); // true
+```
+
+## Address Resolution
+
+Resolve between compact `rouge1…` addresses and full hex public keys using the on-chain persistent index.
+
+```typescript
+// rouge1… → public key
+const { publicKey } = await rc.resolveAddress("rouge1q8f3x7k2m4...");
+
+// public key → rouge1…
+const { address } = await rc.resolveAddress(hexPubKey);
+
+// Both return: { success, address, publicKey, balance }
+```
+
+## Push Notifications
+
+Register Expo push tokens for real-time notifications. Requires PQC signature — only the wallet owner can register.
+
+```typescript
+// Register (wallet signs the request with ML-DSA-65)
+await rc.registerPushToken(wallet, expoPushToken);
+
+// Unregister
+await rc.unregisterPushToken(wallet);
+```
+
+## Nonce Management
+
+```typescript
+// Get sequential nonce for an account
+const { nonce, next_nonce } = await rc.getNonce(wallet.publicKey);
 ```
 
 ## Environment Support
