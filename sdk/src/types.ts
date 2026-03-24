@@ -149,6 +149,10 @@ export interface NodeStats {
   last_block_fees: number;
   finalized_height: number;
   ws_clients: number;
+  /** Current EIP-1559 base fee (XRGE) */
+  base_fee: number;
+  /** Total fees burned via EIP-1559 mechanism */
+  total_fees_burned: number;
 }
 
 // ===== Tokens =====
@@ -372,6 +376,56 @@ export interface CreateTokenParams {
   fee?: number;
   /** Token logo — URL or data URI (base64). Stored on-chain in token metadata. */
   image?: string;
+  /** Whether this token supports ongoing minting by the creator */
+  mintable?: boolean;
+  /** Maximum supply cap (only applies if mintable is true) */
+  maxSupply?: number;
+}
+
+export interface MintTokenParams {
+  symbol: string;
+  amount: number;
+  fee?: number;
+}
+
+// ===== EIP-1559 Fee Info =====
+
+export interface FeeInfo {
+  success: boolean;
+  base_fee: number;
+  priority_fee_suggestion: number;
+  total_fee_suggestion: number;
+  total_fees_burned: number;
+  target_txs_per_block: number;
+  fee_floor: number;
+}
+
+// ===== BFT Finality =====
+
+export interface VoteMessage {
+  vote_type: string;
+  height: number;
+  round: number;
+  block_hash: string;
+  voter_pub_key: string;
+  signature: string;
+}
+
+export interface FinalityProof {
+  height: number;
+  block_hash: string;
+  total_stake: number;
+  voting_stake: number;
+  quorum_threshold: number;
+  precommit_votes: VoteMessage[];
+  created_at: number;
+}
+
+// ===== WebSocket Subscriptions =====
+
+export interface WsSubscribeMessage {
+  subscribe?: string[];
+  unsubscribe?: string[];
 }
 
 export interface SwapParams {

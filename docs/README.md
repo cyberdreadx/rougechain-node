@@ -30,6 +30,12 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | **Browser Extensions** | Chrome/Firefox wallet extensions with vault lock |
 | **PWA Support** | Installable progressive web app for mobile and desktop |
 | **SDK** | `@rougechain/sdk` npm package for building dApps |
+| **EIP-1559 Dynamic Fees** | Base fee auto-adjusts per block, fee burning for deflationary pressure |
+| **Token Mint Authority** | Ongoing minting for custom tokens with supply cap enforcement |
+| **Validator Slashing** | Slash penalties for misbehavior, unbonding queue with 100-block delay |
+| **BFT Finality Proofs** | Serializable quorum certificates with ≥2/3 validator stake |
+| **WebSocket Subscriptions** | Topic-based real-time event streaming (blocks, txs, accounts, tokens) |
+| **HD Wallet Derivation** | BIP-44-like PQC key derivation from master seed (HMAC-SHA256) |
 | **Open Source** | [Apache 2.0 licensed](https://github.com/cyberdreadx/rougechain-node) node software |
 
 ## Quick Links
@@ -78,11 +84,14 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 
 | Action | Fee |
 |--------|-----|
-| Transfer | 0.1 XRGE |
+| Transfer | ~0.1 XRGE (base fee, adjusts per block) |
 | Token Creation | 100 XRGE |
 | Pool Creation | 10 XRGE |
 | Swap | 0.3% (to LPs) |
 | Minimum Stake | 1,000 XRGE |
+| Unbonding Period | 100 blocks (~10 minutes) |
+
+> **EIP-1559 Fee Model:** The base fee adjusts ±12.5% per block based on transaction volume (target: 10 txs/block). The base fee portion is **burned**, and only the priority tip goes to validators. Check current fees via `GET /api/fee`.
 
 ### Burn Address
 

@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>Build quantum-safe dApps on RougeChain</strong><br />
-  Transfers · DEX · NFTs · Shielded Transactions · Bridge · Rollups · Mail · Messenger
+  Transfers · DEX · NFTs · Shielded Transactions · Bridge · Rollups · Dynamic Fees · Finality Proofs · WebSocket · Mail · Messenger
 </p>
 
 <p align="center">
@@ -67,6 +67,10 @@ const { balance } = await rc.getBalance(wallet.publicKey);
 | **Address Resolution** | `rc` | O(1) rouge1↔pubkey resolution via on-chain index |
 | **Push Notifications** | `rc` | PQC-signed push token registration (Expo) |
 | **Token Freeze** | `rc` | Creator-only token freeze/pause |
+| **Mintable Tokens** | `rc` | Ongoing token minting with supply cap enforcement |
+| **Dynamic Fees** | `rc` | EIP-1559 base fee, priority tips, fee burning |
+| **Finality Proofs** | `rc` | BFT finality certificates with ≥2/3 validator stake |
+| **WebSocket** | `rc` | Real-time event streaming with topic subscriptions |
 
 ## Wallet & Addresses
 
@@ -122,6 +126,56 @@ await rc.updateTokenMetadata(wallet, {
 
 // Burn tokens
 await rc.burn(wallet, 500);
+
+// Create a mintable token with supply cap
+await rc.createToken(wallet, {
+  name: "Inflation Token",
+  symbol: "INFT",
+  totalSupply: 100_000,
+  mintable: true,
+  maxSupply: 1_000_000,
+});
+
+// Mint additional tokens (creator only)
+await rc.mintTokens(wallet, { symbol: "INFT", amount: 50_000 });
+```
+
+## Dynamic Fees (EIP-1559)
+
+```typescript
+// Get current fee info — base fee adjusts per block
+const fee = await rc.getFeeInfo();
+console.log(`Base fee: ${fee.base_fee} XRGE`);
+console.log(`Suggested total: ${fee.total_fee_suggestion} XRGE`);
+console.log(`Total burned: ${fee.total_fees_burned} XRGE`);
+```
+
+## Finality Proofs
+
+```typescript
+// Get a BFT finality proof for a block height
+const { proof } = await rc.getFinalityProof(42);
+if (proof) {
+  console.log(`Block ${proof.height} finalized with ${proof.voting_stake}/${proof.total_stake} stake`);
+  console.log(`${proof.precommit_votes.length} precommit signatures`);
+}
+```
+
+## WebSocket Subscriptions
+
+```typescript
+// Subscribe to specific topics for real-time events
+const ws = rc.connectWebSocket(["blocks", `account:${wallet.publicKey}`]);
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if (data.type === "new_block") {
+    console.log(`New block #${data.height}`);
+  }
+};
+
+// Available topics: "blocks", "transactions", "stats",
+// "account:<pubkey>", "token:<symbol>"
 ```
 
 ## DEX (`rc.dex`)
@@ -460,6 +514,7 @@ import type {
   ShieldParams, ShieldedTransferParams, UnshieldParams, ShieldedStats,
   ShieldedNote,
   RollupStatus, RollupBatchResult, RollupSubmitParams, RollupSubmitResult,
+  FeeInfo, FinalityProof, MintTokenParams, VoteMessage, WsSubscribeMessage,
 } from "@rougechain/sdk";
 ```
 

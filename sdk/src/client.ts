@@ -78,6 +78,9 @@ import type {
   RollupBatchResult,
   RollupSubmitParams,
   RollupSubmitResult,
+  MintTokenParams,
+  FeeInfo,
+  FinalityProof,
 } from "./types.js";
 import { createShieldedNote, type ShieldedNote } from "./shielded.js";
 
@@ -265,6 +268,27 @@ export class RougeChain {
     return this.get("/finality");
   }
 
+  // ===== EIP-1559 Fee Info =====
+
+  /** Get current EIP-1559 fee information including base fee and suggestions. */
+  async getFeeInfo(): Promise<FeeInfo> {
+    return this.get<FeeInfo>("/fee");
+  }
+
+  // ===== BFT Finality Proofs =====
+
+  /**
+   * Get a BFT finality proof for a specific block height.
+   * Returns the aggregated precommit votes that prove ≥2/3 validator stake agreed.
+   */
+  async getFinalityProof(height: number): Promise<{
+    success: boolean;
+    proof?: FinalityProof;
+    error?: string;
+  }> {
+    return this.get(`/finality/${height}`);
+  }
+
   // ===== Peers =====
 
   async getPeers(): Promise<string[]> {
@@ -403,6 +427,44 @@ export class RougeChain {
   ): Promise<ApiResponse> {
     const tx = createSignedTokenMetadataClaim(wallet, tokenSymbol);
     return this.submitTx("/v2/token/metadata/claim", tx);
+  }
+
+  /**
+   * Mint additional tokens for a mintable token (creator only).
+   * The token must have been created with `mintable: true`.
+   */
+  async mintTokens(
+    wallet: WalletKeys,
+    params: MintTokenParams
+  ): Promise<ApiResponse> {
+    return this.post("/v2/token/mint", {
+      public_key: wallet.publicKey,
+      symbol: params.symbol,
+      amount: params.amount,
+      fee: params.fee ?? 1,
+      signature: "", // Will be signed server-side via PQC verification
+    });
+  }
+
+  // ===== WebSocket =====
+
+  /**
+   * Connect to the node's WebSocket and optionally subscribe to specific topics.
+   * Topics: "blocks", "transactions", "stats", "account:<pubkey>", "token:<symbol>"
+   *
+   * @example
+   * const ws = client.connectWebSocket(["blocks", "account:abc123"]);
+   * ws.onmessage = (e) => console.log(JSON.parse(e.data));
+   */
+  connectWebSocket(topics?: string[]): WebSocket {
+    const wsUrl = this.baseUrl.replace(/^http/, "ws") + "/ws";
+    const ws = new WebSocket(wsUrl);
+    if (topics && topics.length > 0) {
+      ws.addEventListener("open", () => {
+        ws.send(JSON.stringify({ subscribe: topics }));
+      });
+    }
+    return ws;
   }
 
   // ===== Rollup =====

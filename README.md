@@ -11,7 +11,12 @@ RougeChain is a production-ready L1 blockchain powered by NIST-approved post-qua
 - **L1 Node Daemon**: Rust core node with HTTP + gRPC APIs
 - **Client-Side Signing**: Private keys never leave your browser - all transactions signed locally
 - **Token Burning**: Official on-chain burn address with transparent burn tracking
-- **P2P Networking**: Multi-node peering with automatic peer discovery and exponential backoff for unreachable peers
+- **P2P Networking**: Multi-node peering with automatic peer discovery
+- **EIP-1559 Dynamic Fees**: Base fee auto-adjusts per block (±12.5%), base fee burned for deflationary pressure
+- **Token Mint Authority**: Ongoing minting for custom tokens with max supply cap enforcement
+- **Validator Slashing**: Slash penalties for misbehavior, 100-block unbonding queue for unstaking
+- **BFT Finality Proofs**: Serializable quorum certificates with ≥2/3 validator stake
+- **HD Wallet Derivation**: BIP-44-like PQC key derivation from master seed (HMAC-SHA256)
 
 ### DeFi (AMM/DEX)
 - **Liquidity Pools**: Uniswap V2-style constant product AMM
@@ -34,7 +39,7 @@ RougeChain is a production-ready L1 blockchain powered by NIST-approved post-qua
 ### API
 - **Secure v2 API**: Client-side signed transactions (private keys never sent)
 - **Legacy v1 API**: Full RESTful API for wallet creation and transaction submission
-- **WebSocket**: Real-time updates for blocks and transactions
+- **WebSocket**: Real-time updates with topic-based subscriptions (blocks, txs, accounts, tokens)
 
 ## Quick Start
 
