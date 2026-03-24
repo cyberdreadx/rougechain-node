@@ -471,6 +471,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/token/approve", post(v2_token_approve))
         .route("/api/v2/token/transfer-from", post(v2_token_transfer_from))
         .route("/api/v2/token/freeze", post(v2_token_freeze))
+        .route("/api/v2/token/mint", post(v2_token_mint))
         .route("/api/token/allowance", get(get_token_allowance))
         .route("/api/token/allowances", get(get_token_allowances))
         .route("/api/v2/pool/create", post(v2_create_pool))
@@ -855,6 +856,9 @@ struct TokenMetadataResponse {
     created_at: i64,
     updated_at: i64,
     frozen: bool,
+    mintable: bool,
+    max_supply: Option<u64>,
+    total_minted: u64,
 }
 
 #[derive(Serialize)]
@@ -882,6 +886,9 @@ async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensR
                     created_at: t.created_at,
                     updated_at: t.updated_at,
                     frozen: t.frozen,
+                    mintable: t.mintable,
+                    max_supply: t.max_supply,
+                    total_minted: t.total_minted,
                 })
                 .collect();
             Ok(Json(AllTokensResponse {
@@ -3215,6 +3222,8 @@ async fn v2_create_token(
     let initial_supply = payload.get("initial_supply").and_then(|v| v.as_u64()).unwrap_or(0);
     let token_image = payload.get("image").and_then(|v| v.as_str()).map(|s| s.to_string());
     let token_description = payload.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let mintable = payload.get("mintable").and_then(|v| v.as_bool()).unwrap_or(false);
+    let max_supply = payload.get("max_supply").and_then(|v| v.as_u64());
     let fee = 100.0_f64; // Server-enforced token creation fee
 
     if token_name.is_empty() || token_symbol.is_empty() {
@@ -3278,12 +3287,14 @@ async fn v2_create_token(
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
 
-    let token_id = node.register_token_metadata(
+    let token_id = node.register_token_metadata_ext(
         &sym_upper,
         name_trimmed,
         &body.public_key,
         token_image,
         token_description,
+        mintable,
+        max_supply,
     ).unwrap_or_default();
 
     Ok(Json(serde_json::json!({
@@ -5839,5 +5850,102 @@ async fn v2_token_freeze(
         "success": true,
         "symbol": symbol,
         "frozen": frozen
+    })))
+}
+
+async fn v2_token_mint(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use quantum_vault_types::{TxPayload, TxV1};
+
+    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+
+    let node = &state.node;
+    let payload = &body.payload;
+
+    let token_symbol = payload.get("token_symbol").and_then(|v| v.as_str()).unwrap_or_default();
+    let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
+    let fee = 1.0_f64;
+
+    let sym_upper = token_symbol.trim().to_uppercase();
+    if sym_upper.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "token_symbol is required"}))));
+    }
+    if amount == 0 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "amount must be greater than zero"}))));
+    }
+
+    // Verify creator authority
+    match node.is_token_creator(&sym_upper, &body.public_key) {
+        Ok(true) => {}
+        Ok(false) => return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({
+            "success": false, "error": "only the token creator can mint"
+        })))),
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            "success": false, "error": e
+        })))),
+    }
+
+    // Check mintable flag
+    match node.is_token_mintable(&sym_upper) {
+        Ok(true) => {}
+        Ok(false) => return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({
+            "success": false, "error": format!("Token {} is not mintable", sym_upper)
+        })))),
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            "success": false, "error": e
+        })))),
+    }
+
+    // Check max_supply cap
+    if let Ok(Some(meta)) = node.get_token_metadata(&sym_upper) {
+        if let Some(max) = meta.max_supply {
+            if meta.total_minted + amount > max {
+                return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                    "success": false,
+                    "error": format!("Would exceed max supply: {} + {} > {}", meta.total_minted, amount, max)
+                }))));
+            }
+        }
+    }
+
+    // Check XRGE balance for fee
+    let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < fee {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "success": false,
+            "error": format!("Insufficient XRGE for mint fee: have {:.4}, need {:.4}", bal, fee)
+        }))));
+    }
+
+    let tx = TxV1 {
+        version: 1,
+        tx_type: "mint_tokens".to_string(),
+        from_pub_key: body.public_key.clone(),
+        nonce: state.node.get_next_nonce(&body.public_key),
+        payload: TxPayload {
+            token_symbol: Some(token_symbol.to_string()),
+            token_total_supply: Some(amount),
+            ..Default::default()
+        },
+        fee,
+        sig: body.signature.clone(),
+        signed_payload: Some(signed_payload),
+    };
+
+    let tx_clone = tx.clone();
+    node.add_tx_to_mempool(tx)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
+
+    // Update metadata total_minted
+    let _ = node.record_token_mint(&sym_upper, amount);
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "symbol": sym_upper,
+        "amount_minted": amount
     })))
 }

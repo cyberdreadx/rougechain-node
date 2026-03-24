@@ -797,6 +797,19 @@ impl L1Node {
         image: Option<String>,
         description: Option<String>,
     ) -> Result<String, String> {
+        self.register_token_metadata_ext(symbol, name, creator, image, description, false, None)
+    }
+
+    pub fn register_token_metadata_ext(
+        &self,
+        symbol: &str,
+        name: &str,
+        creator: &str,
+        image: Option<String>,
+        description: Option<String>,
+        mintable: bool,
+        max_supply: Option<u64>,
+    ) -> Result<String, String> {
         let now = Utc::now().timestamp_millis();
         let token_id = TokenMetadata::generate_token_id(creator, symbol, now);
         let metadata = TokenMetadata {
@@ -812,6 +825,9 @@ impl L1Node {
             created_at: now,
             updated_at: now,
             frozen: false,
+            mintable,
+            max_supply,
+            total_minted: 0,
         };
         self.token_metadata_store.set_metadata(&metadata)?;
         Ok(token_id)
@@ -850,6 +866,9 @@ impl L1Node {
             created_at: existing.created_at,
             updated_at: now,
             frozen: existing.frozen,
+            mintable: existing.mintable,
+            max_supply: existing.max_supply,
+            total_minted: existing.total_minted,
         };
         self.token_metadata_store.set_metadata(&updated)
     }
@@ -3163,6 +3182,29 @@ impl L1Node {
                     *token_balances.entry(creator_key).or_insert(0.0) += total_supply;
                 }
             }
+            "mint_tokens" => {
+                // Creator mints additional supply for a mintable token
+                // Note: creator authority + mintable flag are validated at API layer
+                let sym = match tx.payload.token_symbol.as_ref() {
+                    Some(s) => s.trim().to_uppercase(),
+                    None => { eprintln!("[node] Rejecting mint_tokens: missing symbol"); return; }
+                };
+                let amount = tx.payload.token_total_supply.unwrap_or(0) as f64;
+                if amount <= 0.0 {
+                    eprintln!("[node] Rejecting mint_tokens: amount must be > 0");
+                    return;
+                }
+                // Fee
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                if xrge_bal < tx.fee {
+                    eprintln!("[node] Rejecting mint_tokens: insufficient XRGE for fee");
+                    return;
+                }
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                // Credit minted tokens to creator
+                let creator_key = (tx.from_pub_key.clone(), sym);
+                *token_balances.entry(creator_key).or_insert(0.0) += amount;
+            }
             "bridge_mint" => {
                 // Only the node operator key can issue bridge mints (skip check during rebuild)
                 if node_pub_key != "_rebuild_" && !node_pub_key.is_empty() && tx.from_pub_key != node_pub_key {
@@ -4000,6 +4042,15 @@ impl L1Node {
         self.token_metadata_store.set_frozen(symbol, frozen)
     }
 
+    // ===== Token mint authority =====
+
+    pub fn is_token_mintable(&self, symbol: &str) -> Result<bool, String> {
+        self.token_metadata_store.is_mintable(symbol)
+    }
+
+    pub fn record_token_mint(&self, symbol: &str, amount: u64) -> Result<(), String> {
+        self.token_metadata_store.record_mint(symbol, amount)
+    }
 
     // ===== Rouge1 address index =====
 

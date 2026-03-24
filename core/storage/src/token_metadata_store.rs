@@ -20,6 +20,12 @@ pub struct TokenMetadata {
     pub updated_at: i64,           // Timestamp of last metadata update
     #[serde(default)]
     pub frozen: bool,              // Creator can freeze all transfers
+    #[serde(default)]
+    pub mintable: bool,            // Creator can mint additional supply
+    #[serde(default)]
+    pub max_supply: Option<u64>,   // Optional cap on total mintable supply (None = unlimited)
+    #[serde(default)]
+    pub total_minted: u64,         // Running total of all minted supply
 }
 
 impl TokenMetadata {
@@ -122,6 +128,26 @@ impl TokenMetadataStore {
         match self.get_metadata(symbol)? {
             Some(mut meta) => {
                 meta.frozen = frozen;
+                meta.updated_at = chrono::Utc::now().timestamp();
+                self.set_metadata(&meta)
+            }
+            None => Err(format!("Token {} not found", symbol)),
+        }
+    }
+
+    /// Check if a token is mintable
+    pub fn is_mintable(&self, symbol: &str) -> Result<bool, String> {
+        match self.get_metadata(symbol)? {
+            Some(m) => Ok(m.mintable),
+            None => Ok(false),
+        }
+    }
+
+    /// Record additional minted supply
+    pub fn record_mint(&self, symbol: &str, amount: u64) -> Result<(), String> {
+        match self.get_metadata(symbol)? {
+            Some(mut meta) => {
+                meta.total_minted += amount;
                 meta.updated_at = chrono::Utc::now().timestamp();
                 self.set_metadata(&meta)
             }
