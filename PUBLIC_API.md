@@ -777,3 +777,131 @@ await secureCreatePool(
 // Burn tokens permanently
 await secureBurn(wallet.publicKey, wallet.privateKey, 100, 1, "XRGE");
 ```
+
+---
+
+## Address Resolution
+
+Resolve between compact `rouge1…` addresses and full hex public keys.
+
+### Resolve Address
+
+**Endpoint:** `GET /api/resolve/{input}`
+
+Input can be a `rouge1…` address or a hex public key. The endpoint detects the format automatically.
+
+**Response:**
+```json
+{
+  "success": true,
+  "address": "rouge1q8f3x7k2m4...",
+  "publicKey": "a1b2c3d4e5f6...",
+  "balance": 1000.5
+}
+```
+
+---
+
+## Account Nonces
+
+### Get Account Nonce
+
+**Endpoint:** `GET /api/account/{publicKey}/nonce`
+
+**Response:**
+```json
+{
+  "success": true,
+  "publicKey": "a1b2c3d4...",
+  "nonce": 5,
+  "next_nonce": 6
+}
+```
+
+---
+
+## Push Notifications (PQC-Signed)
+
+Register Expo push tokens for real-time mobile notifications. Both endpoints require ML-DSA-65 signed payloads — only the wallet owner can register/unregister.
+
+### Register Push Token
+
+**Endpoint:** `POST /api/push/register`
+
+**Request (SignedTransactionRequest):**
+```json
+{
+  "payload": {
+    "type": "push_register",
+    "from": "wallet-public-key",
+    "pushToken": "ExponentPushToken[xxx]",
+    "platform": "expo",
+    "timestamp": 1234567890123,
+    "nonce": "random-hex"
+  },
+  "signature": "ml-dsa-65-signature-hex",
+  "public_key": "wallet-public-key"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+### Unregister Push Token
+
+**Endpoint:** `POST /api/push/unregister`
+
+**Request (SignedTransactionRequest):**
+```json
+{
+  "payload": {
+    "type": "push_unregister",
+    "from": "wallet-public-key",
+    "timestamp": 1234567890123,
+    "nonce": "random-hex"
+  },
+  "signature": "ml-dsa-65-signature-hex",
+  "public_key": "wallet-public-key"
+}
+```
+
+---
+
+## Mail Attachments
+
+### Send Mail with Attachment
+
+**Endpoint:** `POST /api/mail/send`
+
+Attachments are encrypted client-side using ML-KEM-768 and sent as the `attachmentEncrypted` field.
+
+**Request:**
+```json
+{
+  "fromWalletId": "sender-wallet-id",
+  "toWalletIds": ["recipient-wallet-id"],
+  "subjectEncrypted": "ml-kem-encrypted-subject",
+  "bodyEncrypted": "ml-kem-encrypted-body",
+  "attachmentEncrypted": "ml-kem-encrypted-attachment-json",
+  "signature": "ml-dsa-65-signature",
+  "replyToId": null,
+  "hasAttachment": true
+}
+```
+
+The `attachmentEncrypted` field contains an ML-KEM encrypted JSON payload:
+```json
+{
+  "name": "document.pdf",
+  "type": "application/pdf",
+  "data": "base64-encoded-file-data",
+  "size": 102400
+}
+```
+
+**Max attachment size:** 2 MB (enforced client-side)
+
