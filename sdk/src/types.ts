@@ -38,7 +38,9 @@ export type TransactionType =
   | "transfer_from"
   | "shield"
   | "shielded_transfer"
-  | "unshield";
+  | "unshield"
+  | "contract_deploy"
+  | "contract_call";
 
 export interface TransactionPayload {
   type: TransactionType;
@@ -631,4 +633,52 @@ export interface RollupSubmitResult {
   batch?: RollupBatchResult;
   pending_transfers?: number;
   max_batch_size?: number;
+}
+
+// ===== WASM Smart Contracts =====
+
+export interface ContractMetadata {
+  address: string;
+  deployer: string;
+  codeHash: string;
+  createdAt: number;
+  wasmSize: number;
+}
+
+export interface ContractEvent {
+  contractAddr: string;
+  topic: string;
+  data: string;
+  blockHeight: number;
+  txHash: string;
+}
+
+export interface ContractCallResult {
+  success: boolean;
+  returnData?: unknown;
+  gasUsed: number;
+  events: ContractEvent[];
+  error?: string;
+}
+
+export interface DeployContractParams {
+  /** Base64-encoded WASM bytecode */
+  wasm: string;
+  /** Deployer's public key */
+  deployer: string;
+  /** Nonce for deterministic address */
+  nonce?: number;
+}
+
+export interface CallContractParams {
+  /** Contract address (hex) */
+  contractAddr: string;
+  /** Method name to call */
+  method: string;
+  /** Caller's public key */
+  caller?: string;
+  /** JSON arguments */
+  args?: unknown;
+  /** Gas limit (default 10M) */
+  gasLimit?: number;
 }

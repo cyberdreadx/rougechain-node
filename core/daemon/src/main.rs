@@ -40,6 +40,7 @@ use crate::node::{L1Node, NodeOptions};
 use crate::pool_store::LiquidityPool;
 use crate::pool_events::{PoolEvent, PoolStats, PriceSnapshot};
 use quantum_vault_types::ChainConfig;
+use quantum_vault_vm::{WasmRuntime, ContractStore, ContractCallResult};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -123,6 +124,10 @@ struct AppState {
     rollup_accumulator: Arc<tokio::sync::Mutex<rollup::RollupAccumulator>>,
     /// Address registry: SHA-256(pubkey) hex → pubkey hex
     address_registry: Arc<RwLock<HashMap<String, String>>>,
+    /// WASM smart contract runtime
+    wasm_runtime: Arc<WasmRuntime>,
+    /// WASM contract persistent storage
+    contract_store: Arc<ContractStore>,
 }
 
 #[derive(Clone)]
@@ -301,6 +306,8 @@ async fn main() -> Result<(), String> {
         response_cache: Arc::new(RwLock::new(HashMap::new())),
         rollup_accumulator: Arc::new(tokio::sync::Mutex::new(rollup::RollupAccumulator::new())),
         address_registry: Arc::new(RwLock::new(HashMap::new())),
+        wasm_runtime: Arc::new(WasmRuntime::new().expect("Failed to create WASM runtime")),
+        contract_store: Arc::new(ContractStore::new(&data_dir_clone).expect("Failed to create contract store")),
     };
     
     eprintln!("[core-daemon] WebSocket broadcaster initialized");
@@ -537,6 +544,13 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/governance/proposal/:id/votes", get(get_proposal_votes))
         // Allowance endpoints
         .route("/api/allowances/:pubkey", get(get_allowances))
+        // WASM contract endpoints
+        .route("/api/v2/contract/deploy", post(contract_deploy))
+        .route("/api/v2/contract/call", post(contract_call))
+        .route("/api/contract/:addr", get(contract_get))
+        .route("/api/contract/:addr/state", get(contract_state))
+        .route("/api/contract/:addr/events", get(contract_events))
+        .route("/api/contracts", get(contract_list))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer({
             let cors_origins = std::env::var("QV_CORS_ORIGINS")
@@ -6060,3 +6074,197 @@ async fn v2_token_mint(
         "amount_minted": amount
     })))
 }
+
+// ─── WASM Smart Contract Handlers ─────────────────────────────────────────────
+
+/// Deploy a new WASM smart contract
+async fn contract_deploy(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let wasm_base64 = body.get("wasm")
+        .and_then(|v| v.as_str())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    let deployer = body.get("deployer")
+        .and_then(|v| v.as_str())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    let nonce = body.get("nonce")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    use base64::Engine as _;
+    let wasm_bytes = base64::engine::general_purpose::STANDARD
+        .decode(wasm_base64)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let block_height = state.node.get_tip_height().unwrap_or(0);
+
+    match state.wasm_runtime.deploy_contract(
+        &state.contract_store,
+        deployer,
+        nonce,
+        &wasm_bytes,
+        block_height,
+    ) {
+        Ok(address) => Ok(Json(serde_json::json!({
+            "success": true,
+            "address": address,
+            "wasmSize": wasm_bytes.len(),
+        }))),
+        Err(e) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": e,
+        }))),
+    }
+}
+
+/// Call a WASM smart contract method (mutating)
+async fn contract_call(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let contract_addr = body.get("contractAddr")
+        .and_then(|v| v.as_str())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    let method = body.get("method")
+        .and_then(|v| v.as_str())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    let caller = body.get("caller")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let args = body.get("args").cloned().unwrap_or(serde_json::Value::Null);
+
+    let gas_limit = body.get("gasLimit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(quantum_vault_vm::DEFAULT_FUEL_LIMIT);
+
+    let block_height = state.node.get_tip_height().unwrap_or(0);
+    let block_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let balances = std::collections::HashMap::new(); // TODO: load from node
+
+    let tx_hash = format!("call-{}-{}", contract_addr, block_height);
+
+    match state.wasm_runtime.execute_contract(
+        &state.contract_store,
+        contract_addr,
+        method,
+        &args,
+        caller,
+        block_height,
+        block_time,
+        balances,
+        gas_limit,
+        &tx_hash,
+    ) {
+        Ok(result) => Ok(Json(serde_json::json!({
+            "success": result.success,
+            "returnData": result.return_data,
+            "gasUsed": result.gas_used,
+            "events": result.events,
+            "error": result.error,
+        }))),
+        Err(e) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": e,
+        }))),
+    }
+}
+
+/// Get contract metadata
+async fn contract_get(
+    State(state): State<AppState>,
+    Path(addr): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.contract_store.get_contract(&addr) {
+        Ok(Some(meta)) => Ok(Json(serde_json::json!({
+            "success": true,
+            "contract": meta,
+        }))),
+        Ok(None) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": "Contract not found",
+        }))),
+        Err(e) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": e,
+        }))),
+    }
+}
+
+/// Read a value from contract storage
+async fn contract_state(
+    State(state): State<AppState>,
+    Path(addr): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let key = params.get("key").cloned().unwrap_or_default();
+    let key_bytes = hex::decode(&key).unwrap_or_else(|_| key.as_bytes().to_vec());
+
+    match state.contract_store.storage_read(&addr, &key_bytes) {
+        Ok(Some(val)) => Ok(Json(serde_json::json!({
+            "success": true,
+            "key": key,
+            "value": hex::encode(&val),
+            "valueUtf8": String::from_utf8_lossy(&val),
+        }))),
+        Ok(None) => Ok(Json(serde_json::json!({
+            "success": true,
+            "key": key,
+            "value": null,
+        }))),
+        Err(e) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": e,
+        }))),
+    }
+}
+
+/// Get events for a contract
+async fn contract_events(
+    State(state): State<AppState>,
+    Path(addr): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let limit = params.get("limit")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(50);
+
+    match state.contract_store.get_events(&addr, limit) {
+        Ok(events) => Ok(Json(serde_json::json!({
+            "success": true,
+            "events": events,
+            "count": events.len(),
+        }))),
+        Err(e) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": e,
+        }))),
+    }
+}
+
+/// List all deployed contracts
+async fn contract_list(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.contract_store.list_contracts() {
+        Ok(contracts) => Ok(Json(serde_json::json!({
+            "success": true,
+            "contracts": contracts,
+            "count": contracts.len(),
+        }))),
+        Err(e) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": e,
+        }))),
+    }
+}
+

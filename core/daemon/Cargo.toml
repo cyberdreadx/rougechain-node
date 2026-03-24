@@ -23,10 +23,12 @@ quantum-vault-types = { path = "../types" }
 quantum-vault-crypto = { path = "../crypto" }
 quantum-vault-consensus = { path = "../consensus" }
 quantum-vault-storage = { path = "../storage" }
+quantum-vault-vm = { path = "../vm" }
 sled = "0.34"
 eth-ecdsa-verifier = "0.1"
 rayon = "1.10"
 sha2 = "0.10"
+base64 = "0.21"
 
 [build-dependencies]
 tonic-build = "0.11"

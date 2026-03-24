@@ -118,6 +118,17 @@ pub struct TxPayload {
     pub airdrop_recipients: Option<Vec<String>>,          // List of recipient public keys
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub airdrop_amounts: Option<Vec<u64>>,                // Amounts for each recipient
+    // WASM contract fields
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_wasm: Option<String>,                    // Base64-encoded WASM bytecode (deploy)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_addr: Option<String>,                    // Target contract address (call)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_method: Option<String>,                  // Method name to call
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_args: Option<serde_json::Value>,         // JSON arguments for the method
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_gas_limit: Option<u64>,                  // Max fuel for execution
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

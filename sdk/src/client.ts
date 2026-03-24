@@ -1183,5 +1183,54 @@ class ShieldedClient {
     );
     return this.rc.submitTx("/v2/shielded/unshield", tx);
   }
+
+  // ─── WASM Smart Contracts ──────────────────────────────────────────
+
+  /** Deploy a WASM smart contract */
+  async deployContract(params: {
+    wasm: string;
+    deployer: string;
+    nonce?: number;
+  }): Promise<ApiResponse> {
+    return this.rc.post("/v2/contract/deploy", params);
+  }
+
+  /** Call a WASM smart contract method (mutating) */
+  async callContract(params: {
+    contractAddr: string;
+    method: string;
+    caller?: string;
+    args?: unknown;
+    gasLimit?: number;
+  }): Promise<ApiResponse> {
+    return this.rc.post("/v2/contract/call", params);
+  }
+
+  /** Get contract metadata */
+  async getContract(addr: string): Promise<ApiResponse> {
+    return this.rc.get(`/contract/${addr}`);
+  }
+
+  /** Read a value from contract storage */
+  async getContractState(
+    addr: string,
+    key: string
+  ): Promise<ApiResponse> {
+    return this.rc.get(`/contract/${addr}/state?key=${encodeURIComponent(key)}`);
+  }
+
+  /** Get contract events */
+  async getContractEvents(
+    addr: string,
+    limit?: number
+  ): Promise<ApiResponse> {
+    const q = limit ? `?limit=${limit}` : "";
+    return this.rc.get(`/contract/${addr}/events${q}`);
+  }
+
+  /** List all deployed contracts */
+  async listContracts(): Promise<ApiResponse> {
+    return this.rc.get("/contracts");
+  }
 }
 
