@@ -1715,39 +1715,38 @@ async fn resolve_address(
     }
 }
 
-// ===== Push notification registration =====
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PushRegisterRequest {
-    public_key: String,
-    push_token: String,
-    #[serde(default = "default_platform")]
-    platform: String,
-}
-
-fn default_platform() -> String { "expo".to_string() }
+// ===== Push notification registration (PQC-signed) =====
 
 async fn push_register(
     State(state): State<AppState>,
-    Json(body): Json<PushRegisterRequest>,
+    Json(body): Json<SignedTransactionRequest>,
 ) -> Json<serde_json::Value> {
-    match state.node.register_push_token(&body.public_key, &body.push_token, &body.platform) {
+    // Verify PQC signature — proves the caller owns the private key
+    if let Err(e) = verify_signed_tx(&body) {
+        return Json(serde_json::json!({ "success": false, "error": format!("Signature verification failed: {}", e) }));
+    }
+
+    let push_token = match body.payload.get("pushToken").and_then(|v| v.as_str()) {
+        Some(t) => t.to_string(),
+        None => return Json(serde_json::json!({ "success": false, "error": "payload must include 'pushToken'" })),
+    };
+    let platform = body.payload.get("platform").and_then(|v| v.as_str()).unwrap_or("expo").to_string();
+
+    match state.node.register_push_token(&body.public_key, &push_token, &platform) {
         Ok(()) => Json(serde_json::json!({ "success": true })),
         Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
     }
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PushUnregisterRequest {
-    public_key: String,
-}
-
 async fn push_unregister(
     State(state): State<AppState>,
-    Json(body): Json<PushUnregisterRequest>,
+    Json(body): Json<SignedTransactionRequest>,
 ) -> Json<serde_json::Value> {
+    // Verify PQC signature — only the wallet owner can unregister
+    if let Err(e) = verify_signed_tx(&body) {
+        return Json(serde_json::json!({ "success": false, "error": format!("Signature verification failed: {}", e) }));
+    }
+
     match state.node.unregister_push_token(&body.public_key) {
         Ok(true) => Json(serde_json::json!({ "success": true })),
         Ok(false) => Json(serde_json::json!({ "success": false, "error": "Not registered" })),

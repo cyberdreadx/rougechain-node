@@ -435,3 +435,24 @@ export function createSignedUnshield(
   } as any);
 }
 
+// ===== Push notification builders =====
+
+export function createSignedPushRegister(
+  wallet: WalletKeys,
+  pushToken: string,
+  platform = "expo"
+): SignedTransaction {
+  return buildAndSign(wallet, {
+    type: "push_register",
+    pushToken,
+    platform,
+  } as any);
+}
+
+export function createSignedPushUnregister(
+  wallet: WalletKeys,
+): SignedTransaction {
+  return buildAndSign(wallet, {
+    type: "push_unregister",
+  } as any);
+}

@@ -191,6 +191,7 @@ impl L1Node {
         self.messenger_store.init()?;
         self.rebuild_pool_state()?;
         self.rebuild_nft_state()?;
+        self.migrate_nonce_db();
         self.rebuild_balances()?;
         self.rebuild_token_balances()?;
         self.rebuild_proposer_counts()?;
@@ -1574,6 +1575,28 @@ impl L1Node {
     /// Get the next nonce to use for a new tx from this account
     pub fn get_next_nonce(&self, pubkey: &str) -> u64 {
         self.get_account_nonce(pubkey) + 1
+    }
+
+    /// Auto-migrate: detect and clear stale timestamp-based nonces.
+    /// Any nonce > 1_000_000_000 is clearly a millisecond timestamp, not a sequential nonce.
+    /// Clears the entire nonce_db so rebuild_balances() can repopulate from chain history.
+    fn migrate_nonce_db(&self) {
+        let mut stale_count = 0usize;
+        for item in self.nonce_db.iter() {
+            if let Ok((_key, val)) = item {
+                if val.len() == 8 {
+                    let arr: [u8; 8] = val.as_ref().try_into().unwrap_or([0u8; 8]);
+                    let nonce = u64::from_be_bytes(arr);
+                    if nonce > 1_000_000_000 {
+                        stale_count += 1;
+                    }
+                }
+            }
+        }
+        if stale_count > 0 {
+            eprintln!("[startup] Detected {} stale timestamp nonces — clearing nonce_db for rebuild", stale_count);
+            let _ = self.nonce_db.clear();
+        }
     }
 
     /// Validate that tx nonce is strictly greater than the current stored nonce,

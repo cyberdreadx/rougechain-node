@@ -22,6 +22,8 @@ import {
   createSignedShield,
   createSignedShieldedTransfer,
   createSignedUnshield,
+  createSignedPushRegister,
+  createSignedPushUnregister,
 } from "./signer.js";
 import type {
   WalletKeys,
@@ -305,16 +307,18 @@ export class RougeChain {
     return this.get(`/account/${encodeURIComponent(publicKey)}/nonce`);
   }
 
-  // ===== Push Notifications =====
+  // ===== Push Notifications (PQC-signed) =====
 
-  /** Register an Expo push token for a wallet to receive notifications. */
-  async registerPushToken(publicKey: string, pushToken: string, platform = "expo"): Promise<ApiResponse> {
-    return this.post("/push/register", { publicKey, pushToken, platform });
+  /** Register an Expo push token — signed by wallet to prove ownership. */
+  async registerPushToken(wallet: WalletKeys, pushToken: string, platform = "expo"): Promise<ApiResponse> {
+    const tx = createSignedPushRegister(wallet, pushToken, platform);
+    return this.submitTx("/push/register", tx);
   }
 
-  /** Unregister push notifications for a wallet. */
-  async unregisterPushToken(publicKey: string): Promise<ApiResponse> {
-    return this.post("/push/unregister", { publicKey });
+  /** Unregister push notifications — signed by wallet to prove ownership. */
+  async unregisterPushToken(wallet: WalletKeys): Promise<ApiResponse> {
+    const tx = createSignedPushUnregister(wallet);
+    return this.submitTx("/push/unregister", tx);
   }
 
   // ===== Write operations =====
