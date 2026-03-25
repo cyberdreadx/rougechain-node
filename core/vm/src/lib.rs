@@ -185,10 +185,20 @@ impl WasmRuntime {
             .start(&mut store)
             .map_err(|e| format!("Start: {}", e))?;
 
-        // Call the method — try different signatures
+        // Call the method — inspect function signature for correct results buffer
         let call_result: Result<(), String> = if let Some(func) = instance.get_func(&store, method) {
-            let mut results = [];
-            func.call(&mut store, &[], &mut results)
+            let func_type = func.ty(&store);
+            let mut results_buf: Vec<wasmi::Value> = func_type.results()
+                .iter()
+                .map(|ty| match ty {
+                    wasmi::core::ValueType::I32 => wasmi::Value::I32(0),
+                    wasmi::core::ValueType::I64 => wasmi::Value::I64(0),
+                    wasmi::core::ValueType::F32 => wasmi::Value::F32(0.0.into()),
+                    wasmi::core::ValueType::F64 => wasmi::Value::F64(0.0.into()),
+                    _ => wasmi::Value::I32(0),
+                })
+                .collect();
+            func.call(&mut store, &[], &mut results_buf)
                 .map_err(|e| e.to_string())
         } else {
             Err(format!("Method '{}' not found", method))
