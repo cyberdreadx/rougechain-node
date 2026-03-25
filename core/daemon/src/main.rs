@@ -556,6 +556,34 @@ async fn main() -> Result<(), String> {
         });
     }
 
+    // ── Periodic memory cleanup ─────────────────────────────────────
+    {
+        let cleanup_node = node.clone();
+        let cleanup_cache = app_state.response_cache.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(StdDuration::from_secs(60));
+            loop {
+                interval.tick().await;
+
+                // 1. Evict stale response cache entries (> 30s old)
+                if let Ok(mut cache) = cleanup_cache.write() {
+                    let before = cache.len();
+                    cache.retain(|_, (ts, _)| ts.elapsed() < StdDuration::from_secs(30));
+                    let evicted = before - cache.len();
+                    if evicted > 0 {
+                        eprintln!("[gc] Evicted {} stale cache entries ({} remaining)", evicted, cache.len());
+                    }
+                }
+
+                // 2. Prune zero-balance entries from in-memory balance maps
+                let pruned = cleanup_node.prune_zero_balances();
+                if pruned > 0 {
+                    eprintln!("[gc] Pruned {} zero-balance entries", pruned);
+                }
+            }
+        });
+    }
+
     eprintln!("[core-daemon] starting servers...");
     tokio::select! {
         result = grpc_server => {

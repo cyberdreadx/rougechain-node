@@ -329,6 +329,28 @@ impl L1Node {
         self.mine_notify.clone()
     }
 
+    /// Prune zero-balance entries from in-memory balance maps to reduce memory usage.
+    /// Returns total number of pruned entries.
+    pub fn prune_zero_balances(&self) -> usize {
+        let mut total = 0;
+        if let Ok(mut m) = self.balances.lock() {
+            let before = m.len();
+            m.retain(|_, v| *v > 0.0);
+            total += before - m.len();
+        }
+        if let Ok(mut m) = self.token_balances.lock() {
+            let before = m.len();
+            m.retain(|_, v| *v > 0.0);
+            total += before - m.len();
+        }
+        if let Ok(mut m) = self.lp_balances.lock() {
+            let before = m.len();
+            m.retain(|_, v| *v > 0.0);
+            total += before - m.len();
+        }
+        total
+    }
+
     pub fn is_mining(&self) -> bool {
         self.opts.mine
     }
