@@ -364,3 +364,64 @@ export async function bridgeWithdrawXrge(
     error: data.error,
   };
 }
+
+// ── Bridge History ──────────────────────────────────────────────
+
+export interface BridgeHistoryEntry {
+  id: string;
+  type: string;
+  direction: "deposit" | "withdraw";
+  amount: string;
+  symbol: string;
+  timestamp: number;
+  timeLabel: string;
+  status: "completed" | "pending";
+  txHash?: string;
+  evmTxHash?: string;
+}
+
+/**
+ * Fetch recent bridge transactions for a given public key.
+ * Pulls from the address transaction endpoint and filters to bridge-related types.
+ */
+export async function getBridgeHistory(pubkey: string): Promise<BridgeHistoryEntry[]> {
+  const baseUrl = getCoreApiBaseUrl();
+  if (!baseUrl || !pubkey) return [];
+  try {
+    const res = await fetch(`${baseUrl}/address/${pubkey}/transactions`, {
+      headers: getCoreApiHeaders(),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => ({ transactions: [] }));
+    const txs: any[] = data.transactions || [];
+    
+    const bridgeSymbols = ["qETH", "qUSDC", "XRGE"];
+    
+    return txs
+      .filter((tx: any) => {
+        const t = tx.type || "";
+        const sym = tx.symbol || "";
+        return (
+          t.includes("bridge") ||
+          t === "bridge_mint" ||
+          (t === "receive" && bridgeSymbols.includes(sym) && (tx.from === "bridge" || tx.from === "faucet_bridge")) ||
+          (t === "send" && sym === "XRGE" && tx.memo?.includes("bridge"))
+        );
+      })
+      .slice(0, 10)
+      .map((tx: any) => ({
+        id: tx.id || tx.txHash || Math.random().toString(36),
+        type: tx.type,
+        direction: (tx.type === "send" || tx.type?.includes("withdraw")) ? "withdraw" as const : "deposit" as const,
+        amount: tx.amount || "0",
+        symbol: tx.symbol || "qETH",
+        timestamp: tx.timestamp || 0,
+        timeLabel: tx.timeLabel || "",
+        status: (tx.status || "completed") as "completed" | "pending",
+        txHash: tx.txHash,
+      }));
+  } catch {
+    return [];
+  }
+}

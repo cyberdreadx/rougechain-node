@@ -118,10 +118,13 @@ const labelForType = (type: string) => {
 
 const AddressDetail = () => {
   const { pubkey: rawParam } = useParams<{ pubkey: string }>();
-  // If the URL param is a rouge1 address, we can't resolve to hex without a backend endpoint.
-  // For now, detect and handle gracefully. If it's hex, we use it directly.
+  // If the URL param is a rouge1 address, resolve it to hex via the backend
   const isRouge1Param = rawParam?.startsWith("rouge1") ?? false;
-  const pubkey = isRouge1Param ? undefined : rawParam;
+  const [resolvedPubkey, setResolvedPubkey] = useState<string | undefined>(
+    isRouge1Param ? undefined : rawParam
+  );
+  const [resolveError, setResolveError] = useState(false);
+  const pubkey = resolvedPubkey;
   const { display: rougeAddr, full: rougeAddrFull } = useRougeAddress(pubkey);
   const [balanceData, setBalanceData] = useState<BalanceData | null>(null);
   const [transactions, setTransactions] = useState<AddressTx[]>([]);
@@ -131,6 +134,25 @@ const AddressDetail = () => {
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Resolve rouge1 address → hex pubkey via backend
+  useEffect(() => {
+    if (!isRouge1Param || !rawParam) return;
+    const apiBase = getCoreApiBaseUrl();
+    if (!apiBase) { setResolveError(true); setLoading(false); return; }
+    const headers = getCoreApiHeaders();
+    fetch(`${apiBase}/resolve/${rawParam}`, { signal: AbortSignal.timeout(8000), headers })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success && data.publicKey) {
+          setResolvedPubkey(data.publicKey);
+        } else {
+          setResolveError(true);
+          setLoading(false);
+        }
+      })
+      .catch(() => { setResolveError(true); setLoading(false); });
+  }, [isRouge1Param, rawParam]);
 
   // Rewrite URL bar to rouge1 when resolved (keeps internal hex routing intact)
   useEffect(() => {
@@ -251,8 +273,8 @@ const AddressDetail = () => {
     }
   };
 
-  // If someone navigated with a rouge1 URL, show fallback
-  if (isRouge1Param) {
+  // If rouge1 resolution failed, show fallback
+  if (resolveError) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center space-y-4 max-w-md px-6">

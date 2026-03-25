@@ -17,6 +17,8 @@ import {
   claimXrgeBridgeDeposit,
   bridgeWithdrawXrge,
   type XrgeBridgeConfig,
+  getBridgeHistory,
+  type BridgeHistoryEntry,
 } from "@/lib/bridge";
 import { createSignedBridgeWithdraw } from "@/lib/pqc-signer";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
@@ -214,10 +216,15 @@ const Bridge = () => {
           const recipient = rougechainPubkey;
           const claimMsg = `RougeChain bridge claim\nTx: ${txHash}\nRecipient: ${recipient}`;
           const msgHex = "0x" + Array.from(new TextEncoder().encode(claimMsg)).map(b => b.toString(16).padStart(2, "0")).join("");
-          const sig = await window.ethereum.request({ method: "personal_sign", params: [msgHex, evmAddress] });
+          let sig = "";
+          try {
+            sig = await window.ethereum.request({ method: "personal_sign", params: [msgHex, evmAddress] }) as string;
+          } catch {
+            // Smart contract wallets (Base wallet) may not support personal_sign — backend handles this
+          }
 
           setStep("Claiming qETH...");
-          const claim = await claimBridgeDeposit({ evmTxHash: txHash as string, evmAddress, evmSignature: sig as string, recipientRougechainPubkey: recipient, token: "ETH" });
+          const claim = await claimBridgeDeposit({ evmTxHash: txHash as string, evmAddress, evmSignature: sig, recipientRougechainPubkey: recipient, token: "ETH" });
           if (claim.success) {
             toast.success(`Claimed ${amountNum} ETH as qETH!`);
             setQethBalance((prev) => prev + humanToQeth(amountNum));
@@ -237,10 +244,15 @@ const Bridge = () => {
           const recipient = rougechainPubkey;
           const claimMsg = `RougeChain bridge claim\nTx: ${txHash}\nRecipient: ${recipient}`;
           const msgHex = "0x" + Array.from(new TextEncoder().encode(claimMsg)).map(b => b.toString(16).padStart(2, "0")).join("");
-          const sig = await window.ethereum.request({ method: "personal_sign", params: [msgHex, evmAddress] });
+          let sig = "";
+          try {
+            sig = await window.ethereum.request({ method: "personal_sign", params: [msgHex, evmAddress] }) as string;
+          } catch {
+            // Smart contract wallets may not support personal_sign
+          }
 
           setStep("Claiming qUSDC...");
-          const claim = await claimBridgeDeposit({ evmTxHash: txHash as string, evmAddress, evmSignature: sig as string, recipientRougechainPubkey: recipient, token: "USDC" });
+          const claim = await claimBridgeDeposit({ evmTxHash: txHash as string, evmAddress, evmSignature: sig, recipientRougechainPubkey: recipient, token: "USDC" });
           if (claim.success) {
             toast.success(`Claimed ${amountNum} USDC as qUSDC!`);
             setQusdcBalance((prev) => prev + Math.round(amountNum * 1e6));
@@ -531,9 +543,94 @@ const Bridge = () => {
           </CardContent>
         </Card>
 
+        {/* Recent Bridge Activity */}
+        {rougechainPubkey && (
+          <BridgeActivityCard pubkey={rougechainPubkey} />
+        )}
+
       </motion.div>
     </div>
   );
 };
+
+// ── Recent Bridge Activity Card ─────────────────────────────────
+
+function BridgeActivityCard({ pubkey }: { pubkey: string }) {
+  const [history, setHistory] = useState<BridgeHistoryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      const entries = await getBridgeHistory(pubkey);
+      if (!cancelled) {
+        setHistory(entries);
+        setLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [pubkey]);
+
+  if (loading) {
+    return (
+      <Card className="border-border">
+        <CardContent className="py-6 text-center">
+          <Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="border-border">
+      <CardContent className="p-0">
+        <div className="px-4 py-3 border-b border-border">
+          <h3 className="text-sm font-semibold text-foreground">Recent Bridge Activity</h3>
+        </div>
+        {history.length === 0 ? (
+          <div className="py-8 text-center">
+            <ArrowRightLeft className="w-8 h-8 mx-auto mb-2 text-muted-foreground/50" />
+            <p className="text-sm text-muted-foreground">No bridge activity yet</p>
+            <p className="text-xs text-muted-foreground/70 mt-1">Bridge deposits and withdrawals will appear here</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {history.map((entry) => (
+              <div key={entry.id} className="flex items-center justify-between px-4 py-3 hover:bg-secondary/30 transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                    entry.direction === "deposit" ? "bg-green-500/10" : "bg-amber-500/10"
+                  }`}>
+                    {entry.direction === "deposit" ? (
+                      <ArrowDownToLine className="w-4 h-4 text-green-500" />
+                    ) : (
+                      <ArrowUpFromLine className="w-4 h-4 text-amber-500" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-foreground">
+                      {entry.direction === "deposit" ? "Bridged In" : "Bridged Out"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{entry.timeLabel}</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className={`text-sm font-mono font-medium ${
+                    entry.direction === "deposit" ? "text-green-500" : "text-amber-500"
+                  }`}>
+                    {entry.direction === "deposit" ? "+" : "-"}{entry.amount} {entry.symbol}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground capitalize">{entry.status}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export default Bridge;
