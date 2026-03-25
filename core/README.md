@@ -5,11 +5,13 @@ transaction processing, peer synchronization, and exposes gRPC + HTTP APIs.
 
 ## Crate Structure
 
-- `daemon` - Binary that runs the node and exposes gRPC + HTTP APIs
+- `daemon` - Binary that runs the node and exposes HTTP + JSON-RPC + WebSocket APIs
+- `cli` - CLI wallet binary (`rougechain`) for key management and transactions
 - `types` - Shared types, transaction encoding, and codec helpers
-- `crypto` - Hashing + PQC signing (ML-DSA-65) helpers
+- `crypto` - Hashing + PQC signing (ML-DSA-65) + encryption (ML-KEM-768)
 - `consensus` - Proposer selection utilities
-- `storage` - Chain, validator, messenger, pool persistence (RocksDB)
+- `storage` - Chain, validator, messenger, pool persistence (sled)
+- `vm` - WASM smart contract runtime (wasmi sandbox)
 - `p2p` - TCP gossip scaffolding
 
 ## Key Features
@@ -55,6 +57,22 @@ transaction processing, peer synchronization, and exposes gRPC + HTTP APIs.
 - Timestamp validation (5-minute window)
 - Nonce for replay protection
 
+### BFT Finality
+- Domain-separated ML-DSA-65 vote signatures (`ROUGECHAIN_VOTE:{height}:{round}:{hash}`)
+- Quorum verification: block finalized at 2/3+ stake precommits
+- Persistent finality proofs in sled (`finality-db`)
+- Node loads finalized height from DB on startup
+
+### Event Indexer
+- sled-backed multi-index: by address, type, token, block
+- Automatic backfill from chain store on startup
+- Paginated query API at `/api/indexer/*`
+
+### Prometheus Metrics
+- `/metrics` endpoint (Prometheus text format)
+- Gauges: block height, finalized height, validators, staked, mempool, peers, ws clients, base fee, indexed events
+- Counters: total fees collected, total fees burned
+
 ## Running the Node
 
 ```bash
@@ -75,9 +93,42 @@ cargo build --release
 ./target/release/quantum-vault-daemon \
   --mine \
   --host 0.0.0.0 \
-  --api-port 5100 \
+  --api-port 8900 \
   --peers https://testnet.rougechain.io/api \
   --bridge-custody-address 0xYOUR_ADDRESS
+
+# Docker (recommended)
+docker compose up -d
+
+# Docker with Prometheus monitoring
+docker compose --profile monitoring up -d
+```
+
+### CLI Wallet
+
+```bash
+# Build
+cargo build --release -p quantum-vault-cli
+
+# Key management
+rougechain keygen --label "main"
+rougechain keys
+rougechain whoami
+
+# Queries
+rougechain balance
+rougechain token-balances
+rougechain validators
+rougechain stats
+rougechain history --limit 50
+
+# Transactions (ML-DSA-65 signed)
+rougechain transfer <to_pubkey> 1000
+rougechain stake 5000
+rougechain vote <proposal_id> yes
+
+# Raw JSON-RPC
+rougechain rpc rouge_getStats
 ```
 
 ### Running in tmux (recommended for VPS)
@@ -126,9 +177,18 @@ See `PUBLIC_API.md` in the project root for full API documentation.
 | `/api/swap/quote` | POST | Get swap quote |
 | `/api/burned` | GET | Get burned token stats |
 | `/api/peers` | GET | List connected peers |
+| `/api/finality/:height` | GET | Get BFT finality proof |
+| `/api/fee` | GET | Current fee info (EIP-1559) |
+| `/api/indexer/address/:addr` | GET | Events by address |
+| `/api/indexer/type/:type` | GET | Events by tx type |
+| `/api/indexer/token/:symbol` | GET | Events by token |
+| `/api/indexer/block/:height` | GET | Events by block |
+| `/api/indexer/stats` | GET | Indexer statistics |
+| `/metrics` | GET | Prometheus metrics |
 | `/api/bridge/config` | GET | Bridge configuration |
 | `/api/v2/*` | POST | Secure client-signed transactions |
 | `/api/ws` | WS | Real-time block/tx updates |
+| `/rpc` | POST | JSON-RPC 2.0 (eth_*/rouge_*) |
 
 ### V2 Endpoints (Client-Signed)
 

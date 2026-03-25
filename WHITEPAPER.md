@@ -204,7 +204,7 @@ The combination of quantum entropy, the previous block hash, and the current hei
 1. **Prevote** -- Validators sign a prevote for the proposed block.
 2. **Precommit** -- Upon receiving prevotes from a quorum, validators sign a precommit.
 
-A block is finalized when precommits representing at least **2/3 + 1** of total stake are collected.
+A block is finalized when precommits representing at least **2/3 + 1** of total stake are collected. Each vote is signed with the validator's ML-DSA-65 key using a domain-separated message (`ROUGECHAIN_VOTE:{height}:{round}:{block_hash}`), preventing cross-chain replay. Finality proofs — containing the validator set, their signatures, and aggregate stake — are persisted to the `finality-db` store. On startup, the node loads the highest persisted finality proof rather than assuming the chain tip is finalized, ensuring consistency across restarts.
 
 **Slashing.** Validators that act maliciously or fail to meet protocol obligations are subject to:
 - **Stake reduction**: 10% of the validator's stake is slashed per violation.
@@ -328,8 +328,31 @@ The following stores are maintained independently:
 | NFT Collections | nft-collections-db | Collection metadata and configuration |
 | NFT Tokens | nft-tokens-db | Individual token ownership and attributes |
 | Token Metadata | token-metadata-db | Custom token metadata (name, image, socials) |
+| Finality Proofs | finality-db | BFT finality proofs indexed by block height |
+| Event Index | indexer-db | Multi-index event store (by address, type, token, block) |
+| Transaction Receipts | receipts-db | Post-inclusion status, logs, and gas used |
 
 Additional off-chain stores (JSON-backed) handle bridge claims, withdrawal requests, and messenger data.
+
+### 3.4.1 Event Indexer
+
+RougeChain includes a built-in event indexer that maintains secondary indexes over all on-chain transactions. The indexer supports paginated queries by:
+- **Address** — all transactions involving a given public key (as sender or recipient)
+- **Transaction type** — filter by any of the 28 protocol transaction types
+- **Token symbol** — activity feed for a specific token
+- **Block height** — all events within a given block
+
+The indexer automatically backfills from the chain store on startup and indexes new blocks in real-time during block production and peer import. API endpoints are exposed at `/api/indexer/{address|type|token|block}/:param`.
+
+### 3.4.2 Observability
+
+The node exposes a `/metrics` endpoint in Prometheus text exposition format, providing real-time gauges for:
+- Block height, finalized height, and base fee
+- Validator count, total staked, and mempool size
+- Peer count, WebSocket client count, and indexed event count
+- Lifetime fees collected and burned
+
+A `docker-compose.yml` with an optional `monitoring` profile provisions a Prometheus instance pre-configured to scrape the node.
 
 ### 3.5 Networking
 
@@ -873,6 +896,14 @@ RougeChain's cryptographic infrastructure is designed to evolve. The following p
 | 8 | JSON-RPC 2.0 (eth_*/rouge_* dual namespace) | ✅ Complete |
 | 9 | WebSocket real-time event subscriptions | ✅ Complete |
 | 10 | Genesis configuration and mainnet bootstrapping | ✅ Complete |
+| 11 | BFT finality with quorum-based block verification | ✅ Complete |
+| 12 | Event indexer/subgraph (sled-backed, multi-index) | ✅ Complete |
+| 13 | CLI wallet (ML-DSA-65 signed transactions) | ✅ Complete |
+| 14 | Prometheus metrics and Docker containerization | ✅ Complete |
+| -- | Native limit orders (on-chain conditional swaps) | Planned |
+| -- | Concentrated liquidity (range-based positions) | Planned |
+| -- | Yield farming (LP staking rewards) | Planned |
+| -- | On-chain NFT marketplace | Planned |
 | -- | Fully trustless STARK bridge (Base light client) | Planned |
 | -- | SLH-DSA (SPHINCS+) as alternative signature scheme | Planned |
 | -- | Hybrid classical + PQC mode | Planned |
