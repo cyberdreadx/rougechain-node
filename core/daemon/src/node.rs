@@ -113,7 +113,7 @@ pub struct L1Node {
     /// Running total of burned fees (XRGE)
     total_fees_burned: Arc<Mutex<f64>>,
     /// Queued unbonding entries (unstake with delay)
-    unbonding_queue: Arc<Mutex<Vec<UnbondingEntry>>>,
+    pub unbonding_queue: Arc<Mutex<Vec<UnbondingEntry>>>,
 }
 
 impl L1Node {

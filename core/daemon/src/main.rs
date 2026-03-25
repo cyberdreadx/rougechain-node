@@ -9,6 +9,7 @@ mod peer;
 mod pool_store;
 mod rollup;
 mod websocket;
+mod jsonrpc;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -491,6 +492,8 @@ fn build_http_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(dashboard::node_dashboard))
         .route("/api/ws", get(ws_handler))
+        .route("/rpc", post(rpc_handler))
+        .route("/api/rpc", post(rpc_handler))
         .route("/api/stats", get(get_stats))
         .route("/api/fee", get(get_fee_info))
         .route("/api/finality/:height", get(get_finality_proof))
@@ -845,6 +848,34 @@ fn client_key<B>(request: &Request<B>) -> String {
         }
     }
     "unknown".to_string()
+}
+
+// JSON-RPC 2.0 handler (supports single + batch requests)
+async fn rpc_handler(
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> impl IntoResponse {
+    // Batch request (array)
+    if let Some(arr) = body.as_array() {
+        let mut responses = Vec::new();
+        for item in arr {
+            if let Ok(req) = serde_json::from_value::<jsonrpc::JsonRpcRequest>(item.clone()) {
+                responses.push(jsonrpc::handle_rpc(&state, req).await);
+            } else {
+                responses.push(jsonrpc::JsonRpcResponse::error(
+                    serde_json::Value::Null, -32600, "Invalid request",
+                ));
+            }
+        }
+        return axum::Json(serde_json::to_value(responses).unwrap_or_default());
+    }
+    // Single request
+    match serde_json::from_value::<jsonrpc::JsonRpcRequest>(body) {
+        Ok(req) => axum::Json(serde_json::to_value(jsonrpc::handle_rpc(&state, req).await).unwrap_or_default()),
+        Err(_) => axum::Json(serde_json::to_value(jsonrpc::JsonRpcResponse::error(
+            serde_json::Value::Null, -32700, "Parse error",
+        )).unwrap_or_default()),
+    }
 }
 
 // WebSocket handler for real-time updates
