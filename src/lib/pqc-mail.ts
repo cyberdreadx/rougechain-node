@@ -5,9 +5,9 @@
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { encryptMessage, decryptMessage, type WalletWithPrivateKeys, type Wallet, getWallets } from "@/lib/pqc-messenger";
 
-export const MAIL_DOMAIN = "qwalla.mail";
-export const MAIL_DOMAIN_LEGACY = "rouge.quant";
-export const MAIL_DOMAINS = [MAIL_DOMAIN, MAIL_DOMAIN_LEGACY];
+export const MAIL_DOMAIN = "rouge.quant";
+export const MAIL_DOMAIN_ALT = "qwalla.mail";
+export const MAIL_DOMAINS = [MAIL_DOMAIN, MAIL_DOMAIN_ALT];
 
 export interface MailAttachment {
   name: string;
