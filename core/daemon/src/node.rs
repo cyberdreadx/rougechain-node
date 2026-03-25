@@ -259,6 +259,11 @@ impl L1Node {
         Ok(())
     }
 
+    /// Get a reference to the chain store (for indexer backfill)
+    pub fn store_ref(&self) -> &quantum_vault_storage::chain_store::ChainStore {
+        &self.store
+    }
+
     /// Scan all historical blocks and rebuild blocks_proposed counts for each validator.
     /// Block headers use node ephemeral keys as proposer, not validator staking keys,
     /// so we assign unmatched blocks to the highest-staked validator.

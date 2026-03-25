@@ -10,6 +10,7 @@ mod pool_store;
 mod rollup;
 mod websocket;
 mod jsonrpc;
+mod indexer;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -189,6 +190,8 @@ struct AppState {
     wasm_runtime: Arc<WasmRuntime>,
     /// WASM contract persistent storage
     contract_store: Arc<ContractStore>,
+    /// Off-chain event indexer
+    indexer: Arc<indexer::Indexer>,
 }
 
 #[derive(Clone)]
@@ -405,8 +408,19 @@ async fn main() -> Result<(), String> {
         address_registry: Arc::new(RwLock::new(HashMap::new())),
         wasm_runtime: Arc::new(WasmRuntime::new().expect("Failed to create WASM runtime")),
         contract_store: Arc::new(ContractStore::new(&data_dir_clone).expect("Failed to create contract store")),
+        indexer: Arc::new(indexer::Indexer::new(&data_dir_clone).expect("Failed to create indexer")),
     };
     
+    // Backfill indexer on startup
+    {
+        let idx = app_state.indexer.clone();
+        let store = app_state.node.store_ref();
+        match idx.backfill(store) {
+            Ok(n) if n > 0 => eprintln!("[indexer] Backfilled {} events", n),
+            _ => {}
+        }
+    }
+
     eprintln!("[core-daemon] WebSocket broadcaster initialized");
 
     // Start peer sync
@@ -452,6 +466,7 @@ async fn main() -> Result<(), String> {
         let miner = node.clone();
         let broadcast_pm = peer_manager.clone();
         let ws_bc = ws_broadcaster.clone();
+        let idx_bc = app_state.indexer.clone();
         tokio::spawn(async move {
             loop {
                 if let Ok(Some(block)) = miner.mine_pending() {
@@ -459,6 +474,9 @@ async fn main() -> Result<(), String> {
                     
                     // Broadcast to WebSocket clients
                     ws_bc.broadcast_new_block(&block);
+
+                    // Index the block
+                    let _ = idx_bc.index_block(&block);
                     
                     // Broadcast to P2P peers
                     let peers = broadcast_pm.get_peers().await;
@@ -494,6 +512,11 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/ws", get(ws_handler))
         .route("/rpc", post(rpc_handler))
         .route("/api/rpc", post(rpc_handler))
+        .route("/api/indexer/address/:address", get(indexer_by_address))
+        .route("/api/indexer/type/:tx_type", get(indexer_by_type))
+        .route("/api/indexer/token/:symbol", get(indexer_by_token))
+        .route("/api/indexer/block/:height", get(indexer_by_block))
+        .route("/api/indexer/stats", get(indexer_stats))
         .route("/api/stats", get(get_stats))
         .route("/api/fee", get(get_fee_info))
         .route("/api/finality/:height", get(get_finality_proof))
@@ -876,6 +899,69 @@ async fn rpc_handler(
             serde_json::Value::Null, -32700, "Parse error",
         )).unwrap_or_default()),
     }
+}
+
+// ── Indexer API Handlers ──────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct IndexerQuery {
+    #[serde(default = "default_limit")]
+    limit: usize,
+    #[serde(default)]
+    offset: usize,
+}
+fn default_limit() -> usize { 50 }
+
+async fn indexer_by_address(
+    State(state): State<AppState>,
+    Path(address): Path<String>,
+    Query(q): Query<IndexerQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.indexer.query_by_address(&address, q.limit.min(200), q.offset) {
+        Ok(evts) => Ok(Json(serde_json::json!({"events": evts, "count": evts.len()}))),
+        Err(e) => Ok(Json(serde_json::json!({"error": e}))),
+    }
+}
+
+async fn indexer_by_type(
+    State(state): State<AppState>,
+    Path(tx_type): Path<String>,
+    Query(q): Query<IndexerQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.indexer.query_by_type(&tx_type, q.limit.min(200), q.offset) {
+        Ok(evts) => Ok(Json(serde_json::json!({"events": evts, "count": evts.len()}))),
+        Err(e) => Ok(Json(serde_json::json!({"error": e}))),
+    }
+}
+
+async fn indexer_by_token(
+    State(state): State<AppState>,
+    Path(symbol): Path<String>,
+    Query(q): Query<IndexerQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.indexer.query_by_token(&symbol, q.limit.min(200), q.offset) {
+        Ok(evts) => Ok(Json(serde_json::json!({"events": evts, "count": evts.len()}))),
+        Err(e) => Ok(Json(serde_json::json!({"error": e}))),
+    }
+}
+
+async fn indexer_by_block(
+    State(state): State<AppState>,
+    Path(height): Path<u64>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.indexer.query_by_block(height) {
+        Ok(evts) => Ok(Json(serde_json::json!({"events": evts, "count": evts.len()}))),
+        Err(e) => Ok(Json(serde_json::json!({"error": e}))),
+    }
+}
+
+async fn indexer_stats(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    Ok(Json(serde_json::json!({
+        "totalEvents": state.indexer.event_count(),
+        "highestIndexedBlock": state.indexer.highest_indexed_block(),
+    })))
 }
 
 // WebSocket handler for real-time updates
@@ -1616,6 +1702,8 @@ async fn import_block(
         Ok(()) => {
             // Broadcast to WebSocket clients
             state.ws_broadcaster.broadcast_new_block(&block_clone);
+            // Index the block
+            let _ = state.indexer.index_block(&block_clone);
             Ok(Json(ImportBlockResponse { success: true, error: None }))
         }
         Err(e) => Ok(Json(ImportBlockResponse { success: false, error: Some(e) })),
