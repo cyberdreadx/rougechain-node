@@ -488,21 +488,44 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
   const nodeNames = useMemo(() => {
     const names: string[] = [];
 
-    // Build a name lookup from all sources
+    // Build a name lookup from all available sources
     const nameMap = new Map<string, string>();
-    // From peer_details (daemon peer_names)
-    for (const pd of peerDetails) {
-      if (pd.node_name && pd.url) nameMap.set(pd.url, pd.node_name);
-    }
-    // From nodeStats (per-peer /api/stats responses)
+    // From nodeStats (our connected nodes' /api/stats responses)
     for (const s of nodeStats) {
       if (s.node_name && s.node_id) nameMap.set(s.node_id, s.node_name);
     }
+    // From peer_details (daemon peer names)
+    for (const pd of peerDetails) {
+      if (pd.node_name && pd.url) nameMap.set(pd.url, pd.node_name);
+    }
 
-    // Use validator keys as names for validator dots
+
+
+    // Use validator keys (from /api/validators) as names for validator dots
+    // Each validatorKeys entry is either a real name (e.g. "rouge-prime") or
+    // a truncated pubkey (e.g. "9c88d3...3e22") from the API response
+    const usedStatsNames = new Set<string>();
     if (validatorKeys.length > 0) {
       for (const key of validatorKeys) {
-        names.push(key ? `Validator ${key}` : "");
+        // A truncated pubkey contains "..." and is hex-like around it
+        const isTruncatedPubkey = key.includes("...");
+        if (key && !isTruncatedPubkey) {
+          // It's a real name from the API (e.g. "rouge-prime") — use it
+          names.push(key);
+        } else if (key && isTruncatedPubkey) {
+          // It's a truncated pubkey — try to find a better name from stats/peers
+          let resolvedName = "";
+          for (const s of nodeStats) {
+            if (s.node_name && !usedStatsNames.has(s.node_name)) {
+              resolvedName = s.node_name;
+              usedStatsNames.add(resolvedName);
+              break;
+            }
+          }
+          names.push(resolvedName || `Validator ${key}`);
+        } else {
+          names.push("");
+        }
       }
     } else {
       // Fallback: use node stats names
