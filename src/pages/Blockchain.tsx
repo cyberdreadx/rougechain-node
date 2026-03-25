@@ -83,8 +83,8 @@ const Blockchain = () => {
             headers: getCoreApiHeaders(),
           });
           if (res.ok) {
-            const data = await res.json() as { blocks: BlockV1[] };
-            const converted = data.blocks.map(convertBlock);
+            const data = await res.json() as { blocks?: BlockV1[] };
+            const converted = (data.blocks ?? []).map(convertBlock);
             setChain(converted);
             setNodeConnected(true);
             setIsLoading(false);
@@ -118,8 +118,8 @@ const Blockchain = () => {
         headers: getCoreApiHeaders(),
       });
       if (res.ok) {
-        const data = await res.json() as { blocks: BlockV1[] };
-        setChain(data.blocks.map(convertBlock));
+        const data = await res.json() as { blocks?: BlockV1[] };
+        setChain((data.blocks ?? []).map(convertBlock));
         setNodeConnected(true);
       }
     } catch {
