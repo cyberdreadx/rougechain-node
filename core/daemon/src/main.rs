@@ -6337,7 +6337,7 @@ async fn fee_info(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let base_fee = state.node.get_base_fee();
     let total_burned = state.node.get_total_fees_burned();
-    let height = state.node.get_chain_height();
+    let height = state.node.get_tip_height().unwrap_or(0);
 
     // Suggested priority fee: small tip on top of base fee
     let suggested_priority_fee = (base_fee * 0.1).max(0.0001);

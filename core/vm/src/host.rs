@@ -3,6 +3,18 @@ use wasmi::{Caller, Extern, Linker, Memory};
 
 use crate::store::ContractEvent;
 
+/// Maximum call depth for cross-contract calls
+pub const MAX_CALL_DEPTH: u32 = 8;
+
+/// A pending cross-contract call recorded by `host_call_contract`
+#[derive(Debug, Clone)]
+pub struct PendingCall {
+    pub target_addr: String,
+    pub method: String,
+    pub args_json: String,
+    pub gas_limit: u64,
+}
+
 /// Mutable sandbox environment shared between host functions and the runtime.
 pub struct HostEnv {
     pub caller: String,
@@ -17,6 +29,12 @@ pub struct HostEnv {
     pub events: Vec<ContractEvent>,
     pub return_data: Option<Vec<u8>>,
     pub logs: Vec<String>,
+    /// Pending cross-contract calls (processed by runtime after execution)
+    pub pending_calls: Vec<PendingCall>,
+    /// Results from completed cross-contract calls (indexed by call order)
+    pub cross_call_results: Vec<(bool, Vec<u8>)>,
+    /// Current call depth (0 = top-level)
+    pub call_depth: u32,
 }
 
 impl HostEnv {
@@ -41,6 +59,9 @@ impl HostEnv {
             events: Vec::new(),
             return_data: None,
             logs: Vec::new(),
+            pending_calls: Vec::new(),
+            cross_call_results: Vec::new(),
+            call_depth: 0,
         }
     }
 }
@@ -218,6 +239,58 @@ pub fn register_host_functions(linker: &mut Linker<HostEnv>) -> Result<(), Strin
             let mem = get_memory(&caller);
             let data = read_bytes(&caller, &mem, data_ptr, data_len);
             caller.data_mut().return_data = Some(data);
+        }
+    ).map_err(|e| e.to_string())?;
+
+    // ── host_call_contract(addr_ptr, addr_len, method_ptr, method_len, args_ptr, args_len, gas_limit) → i32 ──
+    // Records a pending cross-contract call. Returns call_id (0-indexed) or -1 on error.
+    // The runtime processes these after the current execution finishes.
+    linker.func_wrap("env", "host_call_contract",
+        |mut caller: Caller<'_, HostEnv>,
+         addr_ptr: u32, addr_len: u32,
+         method_ptr: u32, method_len: u32,
+         args_ptr: u32, args_len: u32,
+         gas_limit: i64| -> i32 {
+            let mem = get_memory(&caller);
+            let target_addr = read_string(&caller, &mem, addr_ptr, addr_len);
+            let method = read_string(&caller, &mem, method_ptr, method_len);
+            let args_json = read_string(&caller, &mem, args_ptr, args_len);
+            let depth = caller.data().call_depth;
+            if depth >= MAX_CALL_DEPTH {
+                caller.data_mut().logs.push(format!("Cross-call rejected: max depth {} reached", MAX_CALL_DEPTH));
+                return -1;
+            }
+            let call_id = caller.data().pending_calls.len() as i32;
+            caller.data_mut().pending_calls.push(PendingCall {
+                target_addr,
+                method,
+                args_json,
+                gas_limit: gas_limit.max(0) as u64,
+            });
+            call_id
+        }
+    ).map_err(|e| e.to_string())?;
+
+    // ── host_get_call_result(call_id, buf_ptr, buf_len) → i32 ──
+    // Returns bytes written on success, -1 if call_id invalid, -2 if call failed, -3 if buf too small
+    linker.func_wrap("env", "host_get_call_result",
+        |mut caller: Caller<'_, HostEnv>,
+         call_id: i32, buf_ptr: u32, buf_len: u32| -> i32 {
+            let results = &caller.data().cross_call_results;
+            if call_id < 0 || (call_id as usize) >= results.len() {
+                return -1;
+            }
+            let (success, data) = &results[call_id as usize];
+            if !success {
+                return -2;
+            }
+            if data.len() > buf_len as usize {
+                return -3;
+            }
+            let data_clone = data.clone();
+            let mem = get_memory(&caller);
+            mem.write(&mut caller, buf_ptr as usize, &data_clone).map_err(|_| ()).ok();
+            data_clone.len() as i32
         }
     ).map_err(|e| e.to_string())?;
 

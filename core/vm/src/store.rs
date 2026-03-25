@@ -40,6 +40,12 @@ pub struct ContractCallResult {
     /// Balance deltas to apply (address, delta)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub balance_deltas: Option<Vec<(String, i128)>>,
+    /// Pending cross-contract calls (runtime-only, not serialized)
+    #[serde(skip)]
+    pub pending_calls: Option<Vec<crate::host::PendingCall>>,
+    /// Results from cross-contract calls (runtime-only, not serialized)
+    #[serde(skip)]
+    pub cross_call_results: Option<Vec<(bool, Vec<u8>)>>,
 }
 
 /// Persistent storage for contracts, their state, and events
