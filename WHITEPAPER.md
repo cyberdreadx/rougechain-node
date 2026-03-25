@@ -209,11 +209,42 @@ A block is finalized when precommits representing at least **2/3 + 1** of total 
 **Slashing.** Validators that act maliciously or fail to meet protocol obligations are subject to:
 - **Stake reduction**: 10% of the validator's stake is slashed per violation.
 - **Jailing**: The validator is excluded from proposer selection for 20 blocks.
+- **Auto-slashing**: Validators that miss 50 consecutive block proposals are automatically slashed. The missed-block counter resets upon successful proposal or after a slash event.
 - Repeated offenses accumulate, with the slash count permanently recorded.
 
-**Fee Distribution.** Transaction fees are split between the block proposer and the validator set:
-- 25% to the block proposer.
-- 75% distributed to all active validators, weighted by their stake.
+**Unbonding Period.** When a validator unstakes, their funds are not returned immediately. Instead, the unstake amount enters an **unbonding queue** with a 500-block delay (~8 hours at current block time). During the unbonding period:
+- Funds remain locked and cannot be transferred.
+- The unbonding entry includes the delegator address, amount, and release height.
+- At each new block, the node processes the unbonding queue and releases matured entries to the delegator's balance.
+- This prevents stake-and-run attacks and ensures validators remain accountable for the blocks they participated in.
+
+**Fee Distribution.** Transaction fees follow an EIP-1559-inspired dynamic fee model. The total fee consists of a **base fee** (burned) and a **priority fee** (distributed). The priority fee is split:
+- **20%** to the block proposer.
+- **70%** distributed to all active validators, weighted by their stake.
+- **10%** allocated to the on-chain treasury, controlled by governance.
+
+The base fee adjusts dynamically based on block utilization (±12.5% per block), targeting 50% capacity. This creates a self-regulating fee market that adapts to demand.
+
+### 3.1.1 Governance
+
+RougeChain includes an on-chain governance system for protocol parameters and treasury management.
+
+**Proposals.** Any staked validator can create a governance proposal specifying a description, action type, quorum requirement, pass threshold, and timelock delay. Supported action types include `treasury_spend` (transfer funds from the on-chain treasury) and `parameter_change`.
+
+**Voting.** Voting is balance-weighted with delegation support:
+- Each voter's weight equals their own XRGE balance plus the balances of all accounts that have delegated to them.
+- Delegators who vote directly are excluded from their delegate's weight (direct vote takes precedence).
+- Proposals must meet both a quorum (minimum total votes) and pass threshold (percentage of yes votes) to succeed.
+
+**Delegation.** Any account can delegate their voting power to another account via a `delegate` transaction. Delegation is one-to-one and can be revoked at any time via `undelegate`. Self-delegation is prohibited.
+
+**Timelock.** Passed proposals enter a timelock period (measured in blocks) before they can be executed. This gives the community time to react to governance decisions.
+
+**Treasury.** The on-chain treasury accumulates 10% of all priority fees. Treasury spending is controlled exclusively through governance proposals that pass quorum, threshold, and timelock requirements.
+
+### 3.1.2 Multi-Signature Wallets
+
+RougeChain supports M-of-N threshold multi-signature wallets at the protocol layer. Multi-sig wallets require M approvals from N designated signers before executing a transaction. All signatures use ML-DSA-65, making RougeChain multi-sig wallets quantum-resistant by default.
 
 ### 3.2 Block Structure
 
@@ -243,14 +274,14 @@ Each block consists of a versioned header, a list of transactions, the proposer'
 
 ### 3.3 Transaction Model
 
-RougeChain supports 21 transaction types within a unified transaction structure:
+RougeChain supports 28 transaction types within a unified transaction structure:
 
 **TxV1:**
 
 | Field | Type | Description |
 |---|---|---|
 | version | u32 | Transaction version |
-| tx_type | String | One of the 21 supported types |
+| tx_type | String | One of the 28 supported types |
 | from_pub_key | String | Sender's ML-DSA-65 public key |
 | nonce | u64 | Replay protection counter |
 | payload | TxPayload | Type-specific data |
@@ -269,6 +300,8 @@ RougeChain supports 21 transaction types within a unified transaction structure:
 | Bridge | `bridge_mint`, `bridge_withdraw` |
 | NFTs | `nft_create_collection`, `nft_mint`, `nft_batch_mint`, `nft_transfer`, `nft_burn`, `nft_lock`, `nft_freeze_collection` |
 | Shielded | `shield`, `shielded_transfer`, `unshield` |
+| Governance | `create_proposal`, `cast_vote`, `execute_proposal`, `delegate`, `undelegate` |
+| Multi-Sig | `multisig_create`, `multisig_approve` |
 
 > **Note:** The faucet is implemented as a `transfer` transaction with a `faucet: true` flag in the payload, signed by the node operator's key. It is not a separate transaction type.
 
@@ -447,12 +480,17 @@ All operations on RougeChain require an XRGE fee. The fee schedule is designed t
 
 ### 4.3 Fee Distribution
 
-Transaction fees are not burned. They are distributed to the network's validators:
+RougeChain uses an **EIP-1559-inspired dynamic fee model**. Each transaction fee consists of a **base fee** (burned) and a **priority fee** (distributed):
 
-- **25%** to the block proposer as a direct reward for block production.
-- **75%** to all active validators, distributed proportionally to their staked XRGE.
+- The **base fee** is burned, permanently reducing the circulating supply. This makes XRGE deflationary under sustained network activity.
+- The **priority fee** (tip) is distributed as follows:
+  - **20%** to the block proposer as a direct reward for block production.
+  - **70%** to all active validators, distributed proportionally to their staked XRGE.
+  - **10%** to the on-chain treasury, governed by protocol governance.
 
-This model incentivizes both block production and passive staking.
+The base fee adjusts dynamically based on block utilization. If a block is fuller than the target (50% capacity), the base fee increases by up to 12.5%. If emptier, it decreases by up to 12.5%. This creates a self-regulating fee market.
+
+This model incentivizes block production, passive staking, and treasury accumulation for ecosystem funding.
 
 ### 4.4 Deflationary Mechanism
 
@@ -829,6 +867,12 @@ RougeChain's cryptographic infrastructure is designed to evolve. The following p
 | 3 | ZK-rollup layer for throughput scaling | ✅ Complete |
 | 3b | STARK bridge deposit verification | ✅ Complete |
 | 4 | WASM-compiled prover for browser extension | Planned |
+| 5 | On-chain governance with delegation and treasury | ✅ Complete |
+| 6 | Multi-signature wallets (M-of-N) | ✅ Complete |
+| 7 | Validator auto-slashing and unbonding period | ✅ Complete |
+| 8 | JSON-RPC 2.0 (eth_*/rouge_* dual namespace) | ✅ Complete |
+| 9 | WebSocket real-time event subscriptions | ✅ Complete |
+| 10 | Genesis configuration and mainnet bootstrapping | ✅ Complete |
 | -- | Fully trustless STARK bridge (Base light client) | Planned |
 | -- | SLH-DSA (SPHINCS+) as alternative signature scheme | Planned |
 | -- | Hybrid classical + PQC mode | Planned |
