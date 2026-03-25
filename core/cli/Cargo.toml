@@ -1,0 +1,19 @@
+[package]
+name = "quantum-vault-cli"
+version = "0.1.0"
+edition = "2021"
+description = "RougeChain CLI Wallet — manage keys, send transactions, query chain state"
+
+[[bin]]
+name = "rougechain"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.11", features = ["json", "blocking"] }
+quantum-vault-crypto = { path = "../crypto" }
+quantum-vault-types = { path = "../types" }
+hex = "0.4"
+dirs = "5"
