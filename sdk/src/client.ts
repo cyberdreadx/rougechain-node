@@ -1211,12 +1211,13 @@ class ShieldedClient {
     return this.rc.get(`/contract/${addr}`);
   }
 
-  /** Read a value from contract storage */
+  /** Read contract storage. Omit key for full state dump. */
   async getContractState(
     addr: string,
-    key: string
+    key?: string
   ): Promise<ApiResponse> {
-    return this.rc.get(`/contract/${addr}/state?key=${encodeURIComponent(key)}`);
+    const q = key ? `?key=${encodeURIComponent(key)}` : "";
+    return this.rc.get(`/contract/${addr}/state${q}`);
   }
 
   /** Get contract events */
