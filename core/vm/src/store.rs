@@ -193,4 +193,21 @@ impl ContractStore {
         }
         Ok(out)
     }
+
+    /// Load all state for a contract into a HashMap (for pre-populating HostEnv cache)
+    pub fn load_all_state(&self, addr: &str) -> Result<std::collections::HashMap<Vec<u8>, Vec<u8>>, String> {
+        let prefix = format!("{}:", addr);
+        let mut map = std::collections::HashMap::new();
+        for item in self.state.scan_prefix(prefix.as_bytes()) {
+            let (full_key, val) = item.map_err(|e| e.to_string())?;
+            // full_key is "addr:hex_key" — extract the raw key bytes
+            let full_key_str = String::from_utf8_lossy(&full_key);
+            if let Some(hex_key) = full_key_str.strip_prefix(&prefix) {
+                if let Ok(key_bytes) = hex::decode(hex_key) {
+                    map.insert(key_bytes, val.to_vec());
+                }
+            }
+        }
+        Ok(map)
+    }
 }

@@ -96,23 +96,39 @@ impl WasmRuntime {
             .get_wasm(contract_addr)?
             .ok_or_else(|| format!("Contract not found: {}", contract_addr))?;
 
-        // Pre-load storage is empty — reads happen via host function
+        // Pre-load existing contract state from sled into cache
+        let storage_cache = contract_store.load_all_state(contract_addr)?;
+
         let env = HostEnv::new(
             caller.to_string(),
             contract_addr.to_string(),
             block_height,
             block_time,
             balances,
-            HashMap::new(),
+            storage_cache,
         );
 
         let result = self.run_wasm(&wasm_bytes, method, args_json, env, gas_limit)?;
 
-        // Commit state on success
+        // Commit state changes on success
         if result.success {
-            // We need to re-run to get storage writes since the Store is consumed.
-            // Actually, we stored storage_writes in ContractCallResult.
-            // Let's use a separate mechanism — embed writes in the result.
+            // Commit storage writes
+            if let Some(ref writes) = result.storage_writes {
+                for (hex_key, hex_val) in writes {
+                    if let (Ok(key), Ok(val)) = (hex::decode(hex_key), hex::decode(hex_val)) {
+                        contract_store.storage_write(contract_addr, &key, &val)?;
+                    }
+                }
+            }
+            // Commit storage deletes
+            if let Some(ref deletes) = result.storage_deletes {
+                for hex_key in deletes {
+                    if let Ok(key) = hex::decode(hex_key) {
+                        contract_store.storage_delete(contract_addr, &key)?;
+                    }
+                }
+            }
+            contract_store.flush_state()?;
         }
 
         // Commit events
@@ -145,13 +161,16 @@ impl WasmRuntime {
             .get_wasm(contract_addr)?
             .ok_or_else(|| format!("Contract not found: {}", contract_addr))?;
 
+        // Pre-load existing state for reads
+        let storage_cache = contract_store.load_all_state(contract_addr)?;
+
         let env = HostEnv::new(
             String::new(),
             contract_addr.to_string(),
             block_height,
             block_time,
             balances,
-            HashMap::new(),
+            storage_cache,
         );
 
         self.run_wasm(&wasm_bytes, method, args_json, env, DEFAULT_FUEL_LIMIT)
