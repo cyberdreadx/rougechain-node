@@ -560,10 +560,10 @@ const TransactionDetail = () => {
                     </Badge>
                     <span className="text-sm font-medium text-primary">{log.event}</span>
                   </div>
-                  {log.topics.length > 0 && (
+                  {(log.topics ?? []).length > 0 && (
                     <div>
                       <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Topics</p>
-                      {log.topics.map((topic, ti) => (
+                      {(log.topics ?? []).map((topic, ti) => (
                         <div key={ti} className="flex items-center gap-2 py-0.5">
                           <span className="text-[10px] text-muted-foreground w-4">[{ti}]</span>
                           <code className="text-xs font-mono text-foreground break-all">{topic}</code>
