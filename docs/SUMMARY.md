@@ -86,6 +86,7 @@
 - [PQC Cryptography](advanced/pqc-cryptography.md)
 - [PQC Messaging & Mail](advanced/messaging.md)
 - [Smart Contracts (WASM)](advanced/smart-contracts.md)
+- [Multi-Sig Wallets](advanced/multi-sig.md)
 - [MCP Server (AI Agents)](advanced/mcp-server.md)
 - [Browser Extensions](advanced/browser-extensions.md)
 - [SDK](advanced/sdk.md)

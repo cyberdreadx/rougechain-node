@@ -180,6 +180,72 @@ await rc.transferFrom(wallet, { owner, to, token, amount });
 await rc.freezeToken(wallet, { token, frozen: true });
 ```
 
+### Multi-Sig Wallets
+
+```typescript
+// Create a 2-of-3 multi-sig wallet
+await rc.sendTransaction(wallet, {
+  txType: 'multisig_create',
+  payload: {
+    multisig_signers: [keyA, keyB, keyC],
+    multisig_threshold: 2,
+    multisig_label: 'Team Treasury',
+  },
+});
+
+// Submit a transfer proposal
+await rc.sendTransaction(wallet, {
+  txType: 'multisig_submit',
+  payload: {
+    multisig_wallet_id: 'ms-abc123...',
+    multisig_proposal_tx_type: 'transfer',
+    multisig_proposal_payload: { to_pub_key_hex: recipient, amount: 1000 },
+  },
+});
+
+// Co-signer approves
+await rc.sendTransaction(coSignerWallet, {
+  txType: 'multisig_approve',
+  payload: { multisig_proposal_id: 'mp-def456...' },
+});
+
+// Query wallets + proposals
+const wallets = await rc.get('/api/multisig/wallets');
+const myWallets = await rc.get(`/api/multisig/wallets/${myPubKey}`);
+const proposals = await rc.get(`/api/multisig/wallet/${walletId}/proposals`);
+```
+
+### Smart Contracts
+
+```typescript
+// Deploy WASM contract
+const deploy = await rc.deployContract({
+  wasm: base64WasmBytes,
+  deployer: wallet.publicKey,
+});
+
+// Call contract method
+const result = await rc.callContract({
+  contractAddr: deploy.address,
+  method: 'increment',
+  caller: wallet.publicKey,
+  args: { key: 'value' },
+  gasLimit: 10_000_000,
+});
+
+// Query contract
+const meta = await rc.getContract(deploy.address);
+const state = await rc.getContractState(deploy.address);
+const events = await rc.getContractEvents(deploy.address);
+```
+
+### EIP-1559 Fee Info
+
+```typescript
+const feeInfo = await rc.get('/api/fee-info');
+// → { baseFee, suggestedPriorityFee, suggestedTotalFee, totalBurned, blockHeight }
+```
+
 ## Environment Support
 
 | Environment | Requirements |
