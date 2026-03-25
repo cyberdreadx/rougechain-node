@@ -61,6 +61,7 @@
 - [Blocks](explorer/blocks.md)
 - [Transactions](explorer/transactions.md)
 - [Addresses](explorer/addresses.md)
+- [Contracts](explorer/contracts.md)
 
 # API Reference
 
