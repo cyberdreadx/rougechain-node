@@ -542,6 +542,8 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/governance/proposals/:token", get(get_proposals_by_token))
         .route("/api/governance/proposal/:id", get(get_proposal_detail))
         .route("/api/governance/proposal/:id/votes", get(get_proposal_votes))
+        .route("/api/governance/delegations", get(get_all_delegations))
+        .route("/api/governance/delegation/:pubkey", get(get_delegation))
         // Allowance endpoints
         .route("/api/allowances/:pubkey", get(get_allowances))
         // WASM contract endpoints
@@ -5918,6 +5920,39 @@ async fn get_proposal_votes(
 ) -> Json<serde_json::Value> {
     match state.node.get_votes_for_proposal(&id) {
         Ok(votes) => Json(serde_json::json!({ "success": true, "votes": votes })),
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+async fn get_all_delegations(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    match state.node.governance_store.get_all_delegations() {
+        Ok(delegations) => {
+            let mapped: Vec<serde_json::Value> = delegations.iter().map(|(from, to)| {
+                serde_json::json!({ "delegator": from, "delegate": to })
+            }).collect();
+            Json(serde_json::json!({ "success": true, "delegations": mapped }))
+        }
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+async fn get_delegation(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Json<serde_json::Value> {
+    match state.node.governance_store.get_delegation(&pubkey) {
+        Ok(Some(delegate)) => Json(serde_json::json!({
+            "success": true,
+            "delegator": pubkey,
+            "delegate": delegate,
+        })),
+        Ok(None) => Json(serde_json::json!({
+            "success": true,
+            "delegator": pubkey,
+            "delegate": null,
+        })),
         Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
     }
 }

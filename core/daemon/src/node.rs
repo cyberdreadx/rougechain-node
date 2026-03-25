@@ -80,7 +80,7 @@ pub struct L1Node {
     lock_store: LockStore,
     pub multisig_store: MultisigStore,
     token_stake_store: TokenStakeStore,
-    governance_store: GovernanceStore,
+    pub governance_store: GovernanceStore,
     allowance_store: AllowanceStore,
     nullifier_store: NullifierStore,
     receipt_store: ReceiptStore,
@@ -688,6 +688,17 @@ impl L1Node {
                         "contract_addr": tx.payload.contract_addr,
                         "method": tx.payload.contract_method,
                     }),
+                },
+                // ── Delegation ──
+                "delegate" => TxLog {
+                    event_type: "vote_delegate".to_string(),
+                    data: serde_json::json!({
+                        "delegate_to": tx.payload.delegate_to,
+                    }),
+                },
+                "undelegate" => TxLog {
+                    event_type: "vote_undelegate".to_string(),
+                    data: serde_json::json!({}),
                 },
                 // ── Bridge ──
                 "bridge_withdraw" | "bridge_claim" => TxLog {
@@ -3276,15 +3287,13 @@ impl L1Node {
                         eprintln!("[node] Rejecting vote: already voted on {}", proposal_id);
                         return;
                     }
-                    // Voting weight = actual token balance (XRGE balance for XRGE proposals)
-                    let weight = if let Ok(Some(ref proposal)) = self.governance_store.get_proposal(proposal_id) {
+                    // Voting weight = own balance + delegated balances
+                    let own_weight = if let Ok(Some(ref proposal)) = self.governance_store.get_proposal(proposal_id) {
                         if proposal.token_symbol.to_uppercase() == "XRGE" {
-                            // Use XRGE balance
                             if let Ok(bals) = self.balances.lock() {
                                 *bals.get(&tx.from_pub_key).unwrap_or(&0.0) as u64
                             } else { 0 }
                         } else {
-                            // Use token balance
                             let key = (tx.from_pub_key.clone(), proposal.token_symbol.to_uppercase());
                             if let Ok(tbals) = self.token_balances.lock() {
                                 *tbals.get(&key).unwrap_or(&0.0) as u64
@@ -3293,6 +3302,30 @@ impl L1Node {
                     } else {
                         0
                     };
+                    // Add delegated weight from all delegators
+                    let delegated_weight = if let Ok(delegators) = self.governance_store.get_delegators_for(&tx.from_pub_key) {
+                        let mut dw: u64 = 0;
+                        if let Ok(Some(ref proposal)) = self.governance_store.get_proposal(proposal_id) {
+                            for delegator in &delegators {
+                                // Skip if delegator already voted directly
+                                if let Ok(Some(_)) = self.governance_store.get_vote(delegator, proposal_id) {
+                                    continue;
+                                }
+                                if proposal.token_symbol.to_uppercase() == "XRGE" {
+                                    if let Ok(bals) = self.balances.lock() {
+                                        dw += *bals.get(delegator).unwrap_or(&0.0) as u64;
+                                    }
+                                } else {
+                                    let key = (delegator.clone(), proposal.token_symbol.to_uppercase());
+                                    if let Ok(tbals) = self.token_balances.lock() {
+                                        dw += *tbals.get(&key).unwrap_or(&0.0) as u64;
+                                    }
+                                }
+                            }
+                        }
+                        dw
+                    } else { 0 };
+                    let weight = own_weight + delegated_weight;
                     if weight == 0 {
                         eprintln!("[node] Rejecting vote: zero balance (no voting power)");
                         return;
@@ -3385,6 +3418,27 @@ impl L1Node {
                             }
                         }
                     }
+                }
+            }
+            "delegate" => {
+                if let Some(delegate_to) = tx.payload.delegate_to.as_ref() {
+                    // Can't delegate to yourself
+                    if delegate_to == &tx.from_pub_key {
+                        eprintln!("[node] Rejecting delegation: can't delegate to self");
+                        return;
+                    }
+                    if let Err(e) = self.governance_store.set_delegation(&tx.from_pub_key, delegate_to) {
+                        eprintln!("[node] Failed to set delegation: {}", e);
+                    } else {
+                        eprintln!("[node] {} delegated voting power to {}", &tx.from_pub_key[..8], &delegate_to[..8.min(delegate_to.len())]);
+                    }
+                }
+            }
+            "undelegate" => {
+                if let Err(e) = self.governance_store.remove_delegation(&tx.from_pub_key) {
+                    eprintln!("[node] Failed to remove delegation: {}", e);
+                } else {
+                    eprintln!("[node] {} removed voting delegation", &tx.from_pub_key[..8]);
                 }
             }
             "token_approve" => {

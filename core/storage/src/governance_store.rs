@@ -84,15 +84,18 @@ pub struct Vote {
 pub struct GovernanceStore {
     proposals_db: Db,
     votes_db: Db,
+    delegations_db: Db,
 }
 
 impl GovernanceStore {
     pub fn new(data_dir: impl AsRef<std::path::Path>) -> Result<Self, String> {
         let prop_path = data_dir.as_ref().join("governance-proposals-db");
         let vote_path = data_dir.as_ref().join("governance-votes-db");
+        let deleg_path = data_dir.as_ref().join("governance-delegations-db");
         let proposals_db = sled::open(&prop_path).map_err(|e| format!("Open proposals: {}", e))?;
         let votes_db = sled::open(&vote_path).map_err(|e| format!("Open votes: {}", e))?;
-        Ok(Self { proposals_db, votes_db })
+        let delegations_db = sled::open(&deleg_path).map_err(|e| format!("Open delegations: {}", e))?;
+        Ok(Self { proposals_db, votes_db, delegations_db })
     }
 
     pub fn save_proposal(&self, proposal: &Proposal) -> Result<(), String> {
@@ -167,5 +170,57 @@ impl GovernanceStore {
             }
         }
         Ok(votes)
+    }
+
+    // ── Delegation methods ──
+
+    /// Delegate voting power from `delegator` to `delegate`
+    pub fn set_delegation(&self, delegator: &str, delegate: &str) -> Result<(), String> {
+        self.delegations_db.insert(delegator.as_bytes(), delegate.as_bytes())
+            .map_err(|e| format!("Set delegation: {}", e))?;
+        self.delegations_db.flush().map_err(|e| format!("Flush: {}", e))?;
+        Ok(())
+    }
+
+    /// Remove delegation for `delegator`
+    pub fn remove_delegation(&self, delegator: &str) -> Result<(), String> {
+        self.delegations_db.remove(delegator.as_bytes())
+            .map_err(|e| format!("Remove delegation: {}", e))?;
+        self.delegations_db.flush().map_err(|e| format!("Flush: {}", e))?;
+        Ok(())
+    }
+
+    /// Get who `delegator` has delegated to
+    pub fn get_delegation(&self, delegator: &str) -> Result<Option<String>, String> {
+        match self.delegations_db.get(delegator.as_bytes()).map_err(|e| format!("Get delegation: {}", e))? {
+            Some(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).to_string())),
+            None => Ok(None),
+        }
+    }
+
+    /// Get all delegators who have delegated to `delegate`
+    pub fn get_delegators_for(&self, delegate: &str) -> Result<Vec<String>, String> {
+        let mut delegators = Vec::new();
+        for entry in self.delegations_db.iter() {
+            let (key, val) = entry.map_err(|e| format!("Iter delegation: {}", e))?;
+            let target = String::from_utf8_lossy(&val).to_string();
+            if target == delegate {
+                delegators.push(String::from_utf8_lossy(&key).to_string());
+            }
+        }
+        Ok(delegators)
+    }
+
+    /// Get all delegations as (delegator, delegate) pairs
+    pub fn get_all_delegations(&self) -> Result<Vec<(String, String)>, String> {
+        let mut pairs = Vec::new();
+        for entry in self.delegations_db.iter() {
+            let (key, val) = entry.map_err(|e| format!("Iter delegation: {}", e))?;
+            pairs.push((
+                String::from_utf8_lossy(&key).to_string(),
+                String::from_utf8_lossy(&val).to_string(),
+            ));
+        }
+        Ok(pairs)
     }
 }

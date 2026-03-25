@@ -114,6 +114,8 @@ pub struct TxPayload {
     pub proposal_quorum: Option<u64>,                     // Min total votes required
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposal_timelock_blocks: Option<u64>,            // Blocks to wait after voting ends
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegate_to: Option<String>,                      // Delegate voting power to pubkey
     // Allowance fields (approve/transferFrom pattern)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spender_pub_key: Option<String>,                  // Approved spender public key
