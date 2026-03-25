@@ -1,4 +1,4 @@
-# ---- Builder stage ----
+# ── RougeChain Node — Production Multi-Stage Build ──
 FROM rust:1.78-bookworm AS builder
 
 RUN apt-get update && apt-get install -y \
@@ -8,24 +8,38 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /build
 COPY core/ core/
 WORKDIR /build/core
-RUN cargo build --release -p quantum-vault-daemon
+RUN cargo build --release -p quantum-vault-daemon -p quantum-vault-cli
 
-# ---- Runtime stage ----
+# ── Runtime ──
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y \
-    ca-certificates libssl3 \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3 curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/core/target/release/quantum-vault-daemon /usr/local/bin/quantum-vault-daemon
+# Binaries
+COPY --from=builder /build/core/target/release/quantum-vault-daemon /usr/local/bin/rougechain-node
+COPY --from=builder /build/core/target/release/rougechain /usr/local/bin/rougechain
 
-RUN useradd -m -s /bin/bash rougechain
+# Genesis configs
+COPY core/daemon/genesis.json /etc/rougechain/genesis.json
+COPY core/daemon/genesis-devnet.json /etc/rougechain/genesis-devnet.json
+
+# Non-root user
+RUN useradd -m -s /bin/bash rougechain && \
+    mkdir -p /data/rougechain && \
+    chown -R rougechain:rougechain /data/rougechain
+
 USER rougechain
 
-VOLUME /data
-EXPOSE 5100
+VOLUME /data/rougechain
+EXPOSE 8900
 
+ENV RUST_LOG=info
 ENV QV_CORS_ORIGINS=""
 
-ENTRYPOINT ["quantum-vault-daemon", "--data-dir", "/data", "--host", "0.0.0.0", "--api-port", "5100"]
-CMD ["--mine", "--peers", "https://testnet.rougechain.io/api"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -sf http://localhost:8900/api/stats || exit 1
+
+ENTRYPOINT ["rougechain-node"]
+CMD ["--data-dir", "/data/rougechain", "--host", "0.0.0.0", "--api-port", "8900", "--mine"]

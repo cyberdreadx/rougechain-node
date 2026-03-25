@@ -1,0 +1,13 @@
+# RougeChain Prometheus Configuration
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'rougechain-node'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['node:8900']
+        labels:
+          chain: 'rougechain'
+          network: 'mainnet'

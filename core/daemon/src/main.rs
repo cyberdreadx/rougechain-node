@@ -517,6 +517,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/indexer/token/:symbol", get(indexer_by_token))
         .route("/api/indexer/block/:height", get(indexer_by_block))
         .route("/api/indexer/stats", get(indexer_stats))
+        .route("/metrics", get(prometheus_metrics))
         .route("/api/stats", get(get_stats))
         .route("/api/fee", get(get_fee_info))
         .route("/api/finality/:height", get(get_finality_proof))
@@ -962,6 +963,67 @@ async fn indexer_stats(
         "totalEvents": state.indexer.event_count(),
         "highestIndexedBlock": state.indexer.highest_indexed_block(),
     })))
+}
+
+// ── Prometheus Metrics ──────────────────────────────────────────
+
+async fn prometheus_metrics(
+    State(state): State<AppState>,
+) -> ([(axum::http::header::HeaderName, &'static str); 1], String) {
+    let node = &state.node;
+    let tip = node.get_tip_height().unwrap_or(0);
+    let (finalized, _, _, _) = node.get_finality_status().unwrap_or((0, 0, 0, 0));
+    let validators = node.list_validators().unwrap_or_default();
+    let val_count = validators.len();
+    let total_staked: u128 = validators.iter().map(|(_, v)| v.stake).sum();
+    let mempool = node.get_mempool_snapshot().len();
+    let (total_fees, _last_fees) = node.get_fee_stats().unwrap_or((0.0, 0.0));
+    let base_fee = node.get_base_fee();
+    let total_burned = node.get_total_fees_burned();
+    let indexed = state.indexer.event_count();
+    let peers = state.peer_manager.peer_count().await;
+    let ws_clients = state.ws_broadcaster.client_count().await;
+
+    let body = format!(
+        "# HELP rougechain_block_height Current block height\n\
+         # TYPE rougechain_block_height gauge\n\
+         rougechain_block_height {}\n\
+         # HELP rougechain_finalized_height Last finalized block height\n\
+         # TYPE rougechain_finalized_height gauge\n\
+         rougechain_finalized_height {}\n\
+         # HELP rougechain_validator_count Active validator count\n\
+         # TYPE rougechain_validator_count gauge\n\
+         rougechain_validator_count {}\n\
+         # HELP rougechain_total_staked Total XRGE staked\n\
+         # TYPE rougechain_total_staked gauge\n\
+         rougechain_total_staked {}\n\
+         # HELP rougechain_mempool_size Pending transactions in mempool\n\
+         # TYPE rougechain_mempool_size gauge\n\
+         rougechain_mempool_size {}\n\
+         # HELP rougechain_total_fees_collected Total fees collected\n\
+         # TYPE rougechain_total_fees_collected counter\n\
+         rougechain_total_fees_collected {}\n\
+         # HELP rougechain_total_fees_burned Total fees burned (base fee)\n\
+         # TYPE rougechain_total_fees_burned counter\n\
+         rougechain_total_fees_burned {}\n\
+         # HELP rougechain_base_fee Current EIP-1559 base fee\n\
+         # TYPE rougechain_base_fee gauge\n\
+         rougechain_base_fee {}\n\
+         # HELP rougechain_indexed_events Total indexed events\n\
+         # TYPE rougechain_indexed_events gauge\n\
+         rougechain_indexed_events {}\n\
+         # HELP rougechain_peer_count Connected P2P peers\n\
+         # TYPE rougechain_peer_count gauge\n\
+         rougechain_peer_count {}\n\
+         # HELP rougechain_ws_clients Active WebSocket clients\n\
+         # TYPE rougechain_ws_clients gauge\n\
+         rougechain_ws_clients {}\n",
+        tip, finalized, val_count, total_staked, mempool,
+        total_fees, total_burned, base_fee, indexed,
+        peers, ws_clients,
+    );
+
+    ([(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")], body)
 }
 
 // WebSocket handler for real-time updates
