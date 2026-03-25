@@ -196,6 +196,8 @@ struct AppState {
     indexer: Arc<indexer::Indexer>,
     /// On-chain limit order book
     order_book: Arc<order_book::OrderBook>,
+    /// Notify handle: wake the miner immediately when a new tx is submitted
+    mine_notify: Arc<tokio::sync::Notify>,
 }
 
 #[derive(Clone)]
@@ -415,6 +417,7 @@ async fn main() -> Result<(), String> {
         contract_store: Arc::new(ContractStore::new(&data_dir_clone).expect("Failed to create contract store")),
         indexer: Arc::new(indexer::Indexer::new(&data_dir_clone).expect("Failed to create indexer")),
         order_book: Arc::new(order_book::OrderBook::new(&data_dir_clone).expect("Failed to create order book")),
+        mine_notify: node.mine_notify(),
     };
     
     // Backfill indexer on startup
@@ -474,6 +477,8 @@ async fn main() -> Result<(), String> {
         let ws_bc = ws_broadcaster.clone();
         let idx_bc = app_state.indexer.clone();
         let ob_bc = app_state.order_book.clone();
+        let mine_wake = node.mine_notify();
+        let mine_interval = args.block_time_ms;
         tokio::spawn(async move {
             loop {
                 if let Ok(Some(block)) = miner.mine_pending() {
@@ -542,7 +547,11 @@ async fn main() -> Result<(), String> {
                         peer::broadcast_block(&peers, &block).await;
                     }
                 }
-                sleep(Duration::from_millis(1000)).await;
+                // Wait for either a new tx notification or the block interval
+                tokio::select! {
+                    _ = mine_wake.notified() => {}
+                    _ = sleep(Duration::from_millis(mine_interval)) => {}
+                }
             }
         });
     }

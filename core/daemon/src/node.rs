@@ -116,6 +116,8 @@ pub struct L1Node {
     pub unbonding_queue: Arc<Mutex<Vec<UnbondingEntry>>>,
     /// Persisted finality proofs (height -> proof JSON)
     finality_db: sled::Tree,
+    /// Notify handle: wake the miner immediately when a tx enters mempool
+    mine_notify: Arc<tokio::sync::Notify>,
 }
 
 impl L1Node {
@@ -209,6 +211,7 @@ impl L1Node {
             },
             unbonding_queue: Arc::new(Mutex::new(Vec::new())),
             finality_db: finality_db_tree,
+            mine_notify: Arc::new(tokio::sync::Notify::new()),
         })
     }
 
@@ -319,6 +322,11 @@ impl L1Node {
 
     pub fn node_id(&self) -> String {
         self.node_id.clone()
+    }
+
+    /// Get the mine-notify handle (for the mining loop to listen on)
+    pub fn mine_notify(&self) -> Arc<tokio::sync::Notify> {
+        self.mine_notify.clone()
     }
 
     pub fn is_mining(&self) -> bool {
@@ -1227,6 +1235,8 @@ impl L1Node {
         self.verified_tx_ids.lock().map_err(|_| "verified lock")?.insert(tx_hash.clone());
         
         mempool.insert(tx_hash, tx);
+        drop(mempool);
+        self.mine_notify.notify_one();
         Ok(())
     }
 
@@ -2072,6 +2082,8 @@ impl L1Node {
             }
         }
         mempool.insert(id, tx);
+        drop(mempool);
+        self.mine_notify.notify_one();
         Ok(())
     }
 
