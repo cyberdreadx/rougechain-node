@@ -484,7 +484,8 @@ impl L1Node {
 
     pub fn get_recent_blocks(&self, limit: usize) -> Result<Vec<BlockV1>, String> {
         if limit == 0 {
-            return self.store.get_all_blocks();
+            // Cap at 10000 to prevent loading the entire chain into memory
+            return self.store.get_recent_blocks(10_000);
         }
         self.store.get_recent_blocks(limit)
     }
@@ -954,12 +955,12 @@ impl L1Node {
     
     /// Get all transactions involving a specific token
     pub fn get_token_transactions(&self, token_symbol: &str, limit: usize, offset: usize) -> Result<(Vec<(TxV1, u64, i64)>, usize), String> {
-        let blocks = self.store.get_all_blocks()?;
         let mut transactions: Vec<(TxV1, u64, i64)> = Vec::new();
         
         let symbol_upper = token_symbol.to_uppercase();
         
-        for block in blocks {
+        // Stream blocks one at a time instead of loading all into memory
+        self.store.scan_blocks(|block| {
             for tx in &block.txs {
                 let matches = match tx.tx_type.as_str() {
                     "create_token" => {
@@ -1002,7 +1003,8 @@ impl L1Node {
                     transactions.push((tx.clone(), block.header.height, block.header.time as i64));
                 }
             }
-        }
+            Ok(())
+        }, 0)?;
         
         // Sort by timestamp descending (most recent first)
         transactions.sort_by(|a, b| b.2.cmp(&a.2));
@@ -1921,8 +1923,8 @@ impl L1Node {
         } else {
             0.0
         };
-        let blocks = self.store.get_all_blocks()?;
-        let total_fees: f64 = blocks.iter().map(|b| b.txs.iter().map(|tx| tx.fee).sum::<f64>()).sum();
+        // Stream through blocks one at a time instead of loading all into memory
+        let total_fees = self.store.sum_all_fees()?;
         Ok((total_fees, last_fees))
     }
 

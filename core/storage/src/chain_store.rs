@@ -134,6 +134,36 @@ impl ChainStore {
         Ok(blocks)
     }
 
+    /// O(1) block count from sled metadata — no deserialization needed
+    pub fn count_blocks(&self) -> u64 {
+        self.db.len() as u64
+    }
+
+    /// Stream through all blocks and sum tx fees without allocating a Vec of all blocks.
+    /// Uses sled's iterator so only one block is in memory at a time.
+    pub fn sum_all_fees(&self) -> Result<f64, String> {
+        let mut total: f64 = 0.0;
+        for item in self.db.iter() {
+            let (_, value) = item.map_err(|e| format!("sled iter: {}", e))?;
+            let block = deserialize_block(&value)?;
+            for tx in &block.txs {
+                total += tx.fee;
+            }
+        }
+        Ok(total)
+    }
+
+    /// Expose a raw sled iterator for callers that need to stream blocks
+    /// with custom early-exit logic (e.g. tx hash lookup).
+    pub fn db_iter(&self) -> sled::Iter {
+        self.db.iter()
+    }
+
+    /// Public wrapper around the module-private deserialize_block function
+    pub fn deserialize_block_pub(&self, bytes: &[u8]) -> Result<BlockV1, String> {
+        deserialize_block(bytes)
+    }
+
     /// Reset the chain with a new set of blocks (used for P2P sync when genesis differs)
     pub fn reset_chain(&self, blocks: &[BlockV1]) -> Result<(), String> {
         if blocks.is_empty() {

@@ -1975,16 +1975,20 @@ async fn get_tx_by_hash(
     Path(hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let node = &state.node;
-    let blocks = node.get_all_blocks().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Stream blocks one at a time from sled instead of loading all into memory
+    let store = node.store_ref();
+    let mut block_hash_match: Option<serde_json::Value> = None;
 
-    // First pass: match by computed tx hash
-    for block in &blocks {
+    for item in store.db_iter() {
+        let (_, value) = item.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let block = store.deserialize_block_pub(&value).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        // Check tx hashes in this block
         for tx in &block.txs {
             let tx_id = quantum_vault_crypto::bytes_to_hex(
                 &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
             );
             if tx_id == hash {
-                // Enrich with receipt data if available
                 let receipt = node.get_receipt(&tx_id).ok().flatten();
                 return Ok(Json(serde_json::json!({
                     "success": true,
@@ -1997,17 +2001,15 @@ async fn get_tx_by_hash(
                 })));
             }
         }
-    }
 
-    // Second pass: match by block hash (frontend may pass block hash as tx identifier)
-    for block in &blocks {
-        if block.hash == hash {
+        // Also check block hash (frontend may pass block hash as tx identifier)
+        if block_hash_match.is_none() && block.hash == hash {
             if let Some(tx) = block.txs.first() {
                 let tx_id = quantum_vault_crypto::bytes_to_hex(
                     &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
                 );
                 let receipt = node.get_receipt(&tx_id).ok().flatten();
-                return Ok(Json(serde_json::json!({
+                block_hash_match = Some(serde_json::json!({
                     "success": true,
                     "txId": tx_id,
                     "blockHeight": block.header.height,
@@ -2015,9 +2017,14 @@ async fn get_tx_by_hash(
                     "blockTime": block.header.time,
                     "tx": tx,
                     "receipt": receipt,
-                })));
+                }));
             }
         }
+    }
+
+    // If no tx hash match was found, return block hash match if available
+    if let Some(result) = block_hash_match {
+        return Ok(Json(result));
     }
 
     Err(StatusCode::NOT_FOUND)
