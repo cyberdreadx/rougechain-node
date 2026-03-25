@@ -308,6 +308,50 @@ impl L1Node {
         Ok(self.store.get_tip()?.height)
     }
 
+    /// Convenience alias for get_tip_height
+    pub fn tip_height(&self) -> Result<u64, String> {
+        self.get_tip_height()
+    }
+
+    /// Apply genesis allocations — credit initial balances and stake initial validators.
+    /// Only called on first boot when chain height == 0.
+    pub fn apply_genesis_allocations(
+        &self,
+        allocations: &[crate::GenesisAllocation],
+        validators: &[crate::GenesisValidator],
+    ) -> Result<(), String> {
+        let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
+
+        // Credit initial allocations
+        for alloc in allocations {
+            *balances.entry(alloc.address.clone()).or_insert(0.0) += alloc.amount as f64;
+            eprintln!("[genesis] Allocated {} XRGE → {} {}",
+                alloc.amount, &alloc.address[..16.min(alloc.address.len())],
+                alloc.label.as_deref().unwrap_or(""));
+        }
+
+        // Stake initial validators
+        drop(balances); // Release lock before validator operations
+        for val in validators {
+            let state = quantum_vault_storage::validator_store::ValidatorState {
+                stake: val.stake as u128,
+                slash_count: 0,
+                jailed_until: 0,
+                entropy_contributions: 0,
+                blocks_proposed: 0,
+                name: val.name.clone(),
+                missed_blocks: 0,
+                total_slashed: 0,
+            };
+            self.validator_store.set_validator(&val.pub_key, &state)?;
+            eprintln!("[genesis] Validator staked: {} ({} XRGE)",
+                val.name.as_deref().unwrap_or(&val.pub_key[..8.min(val.pub_key.len())]),
+                val.stake);
+        }
+
+        Ok(())
+    }
+
     /// Get this node's own public key hex string
     pub fn get_public_key(&self) -> Option<String> {
         self.keys.lock().ok().map(|k| k.public_key_hex.clone())

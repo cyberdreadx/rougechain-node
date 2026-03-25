@@ -40,6 +40,63 @@ use crate::node::{L1Node, NodeOptions};
 use crate::pool_store::LiquidityPool;
 use crate::pool_events::{PoolEvent, PoolStats, PriceSnapshot};
 use quantum_vault_types::ChainConfig;
+
+/// Genesis configuration loaded from JSON file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenesisConfig {
+    pub chain_id: String,
+    #[serde(default)]
+    pub genesis_time: u64,
+    #[serde(default = "default_block_time")]
+    pub block_time_ms: u64,
+    #[serde(default)]
+    pub max_validators: u32,
+    #[serde(default)]
+    pub min_stake: u64,
+    #[serde(default)]
+    pub max_supply: u64,
+    #[serde(default)]
+    pub initial_allocations: Vec<GenesisAllocation>,
+    #[serde(default)]
+    pub initial_validators: Vec<GenesisValidator>,
+    #[serde(default)]
+    pub faucet_enabled: bool,
+    #[serde(default)]
+    pub dev_mode: bool,
+    // Network economic params (informational — constants are in node.rs)
+    #[serde(default)]
+    pub unbonding_blocks: Option<u64>,
+    #[serde(default)]
+    pub slash_divisor: Option<u64>,
+    #[serde(default)]
+    pub missed_block_threshold: Option<u64>,
+    #[serde(default)]
+    pub jail_blocks: Option<u64>,
+    #[serde(default)]
+    pub treasury_fee_pct: Option<u32>,
+    #[serde(default)]
+    pub proposer_fee_pct: Option<u32>,
+    #[serde(default)]
+    pub validator_fee_pct: Option<u32>,
+}
+
+fn default_block_time() -> u64 { 400 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenesisAllocation {
+    pub address: String,
+    pub amount: u64,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenesisValidator {
+    pub pub_key: String,
+    pub stake: u64,
+    #[serde(default)]
+    pub name: Option<String>,
+}
 use quantum_vault_vm::{WasmRuntime, ContractStore, ContractCallResult};
 
 #[derive(Parser, Debug)]
@@ -96,6 +153,9 @@ struct Args {
     /// Human-readable name for this node (shown on the network globe)
     #[arg(long, env = "QV_NODE_NAME")]
     node_name: Option<String>,
+    /// Path to genesis JSON file (e.g. genesis.json for mainnet params)
+    #[arg(long, env = "QV_GENESIS")]
+    genesis: Option<String>,
 }
 
 #[derive(Clone)]
@@ -214,10 +274,31 @@ async fn main() -> Result<(), String> {
         .as_ref()
         .map(PathBuf::from)
         .unwrap_or_else(|| default_data_dir("core-node"));
-    let chain = ChainConfig {
-        chain_id: args.chain_id.clone(),
-        genesis_time: chrono::Utc::now().timestamp_millis() as u64,
-        block_time_ms: args.block_time_ms,
+    // Load genesis config if provided
+    let genesis_config = if let Some(ref genesis_path) = args.genesis {
+        let genesis_data = std::fs::read_to_string(genesis_path)
+            .map_err(|e| format!("Failed to read genesis file '{}': {}", genesis_path, e))?;
+        let gc: GenesisConfig = serde_json::from_str(&genesis_data)
+            .map_err(|e| format!("Failed to parse genesis file: {}", e))?;
+        eprintln!("[main] Loaded genesis config: chain_id={}, allocations={}, validators={}",
+            gc.chain_id, gc.initial_allocations.len(), gc.initial_validators.len());
+        Some(gc)
+    } else {
+        None
+    };
+
+    let chain = if let Some(ref gc) = genesis_config {
+        ChainConfig {
+            chain_id: gc.chain_id.clone(),
+            genesis_time: if gc.genesis_time > 0 { gc.genesis_time } else { chrono::Utc::now().timestamp_millis() as u64 },
+            block_time_ms: gc.block_time_ms,
+        }
+    } else {
+        ChainConfig {
+            chain_id: args.chain_id.clone(),
+            genesis_time: chrono::Utc::now().timestamp_millis() as u64,
+            block_time_ms: args.block_time_ms,
+        }
     };
     let data_dir_clone = data_dir.clone();
     let bridge_withdraw_store = std::sync::Arc::new(
@@ -231,6 +312,21 @@ async fn main() -> Result<(), String> {
     })?);
     node.init()?;
     node.backfill_address_index();
+
+    // Apply genesis allocations on first boot (chain height == 0)
+    if let Some(ref gc) = genesis_config {
+        let current_height = node.tip_height().unwrap_or(0);
+        if current_height == 0 && !gc.initial_allocations.is_empty() {
+            eprintln!("[main] Applying genesis allocations (chain is fresh)...");
+            if let Err(e) = node.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators) {
+                eprintln!("[main] WARNING: Failed to apply genesis allocations: {}", e);
+            } else {
+                let total: u64 = gc.initial_allocations.iter().map(|a| a.amount).sum();
+                eprintln!("[main] Genesis: credited {} XRGE across {} addresses, {} validators staked",
+                    total, gc.initial_allocations.len(), gc.initial_validators.len());
+            }
+        }
+    }
 
     let grpc_addr: SocketAddr = format!("{}:{}", args.host, args.port)
         .parse()

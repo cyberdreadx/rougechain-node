@@ -1,0 +1,61 @@
+{
+  "chain_id": "rougechain-mainnet-1",
+  "genesis_time": 1743033600000,
+  "block_time_ms": 1000,
+  "max_validators": 100,
+  "min_stake": 10000,
+  "unbonding_blocks": 500,
+  "slash_divisor": 10,
+  "missed_block_threshold": 50,
+  "jail_blocks": 20,
+  "treasury_fee_pct": 10,
+  "proposer_fee_pct": 20,
+  "validator_fee_pct": 70,
+  "max_supply": 1000000000,
+  "initial_allocations": [
+    {
+      "address": "__treasury__",
+      "amount": 100000000,
+      "label": "Community Treasury (10%)"
+    },
+    {
+      "address": "__ecosystem__",
+      "amount": 200000000,
+      "label": "Ecosystem Development Fund (20%)"
+    },
+    {
+      "address": "__staking_rewards__",
+      "amount": 300000000,
+      "label": "Staking Rewards Pool (30%)"
+    },
+    {
+      "address": "__team__",
+      "amount": 150000000,
+      "label": "Team & Advisors (15%, 2yr vesting)"
+    },
+    {
+      "address": "__public_sale__",
+      "amount": 100000000,
+      "label": "Public Sale (10%)"
+    },
+    {
+      "address": "__liquidity__",
+      "amount": 100000000,
+      "label": "Initial Liquidity (10%)"
+    },
+    {
+      "address": "__airdrop__",
+      "amount": 50000000,
+      "label": "Community Airdrop (5%)"
+    }
+  ],
+  "initial_validators": [
+    {
+      "pub_key": "GENESIS_VALIDATOR_1",
+      "stake": 100000,
+      "name": "RougeChain Genesis"
+    }
+  ],
+  "faucet_enabled": false,
+  "dev_mode": false
+}

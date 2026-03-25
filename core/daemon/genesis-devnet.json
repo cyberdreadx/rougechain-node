@@ -1,0 +1,19 @@
+{
+  "chain_id": "rougechain-devnet-1",
+  "genesis_time": 0,
+  "block_time_ms": 400,
+  "max_validators": 100,
+  "min_stake": 100,
+  "unbonding_blocks": 50,
+  "slash_divisor": 10,
+  "missed_block_threshold": 50,
+  "jail_blocks": 20,
+  "treasury_fee_pct": 10,
+  "proposer_fee_pct": 20,
+  "validator_fee_pct": 70,
+  "max_supply": 0,
+  "initial_allocations": [],
+  "initial_validators": [],
+  "faucet_enabled": true,
+  "dev_mode": true
+}
