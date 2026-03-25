@@ -11,41 +11,41 @@
   "treasury_fee_pct": 10,
   "proposer_fee_pct": 20,
   "validator_fee_pct": 70,
-  "max_supply": 1000000000,
+  "max_supply": 36000000000,
   "initial_allocations": [
     {
       "address": "__treasury__",
-      "amount": 100000000,
+      "amount": 3600000000,
       "label": "Community Treasury (10%)"
     },
     {
       "address": "__ecosystem__",
-      "amount": 200000000,
+      "amount": 7200000000,
       "label": "Ecosystem Development Fund (20%)"
     },
     {
       "address": "__staking_rewards__",
-      "amount": 300000000,
+      "amount": 10800000000,
       "label": "Staking Rewards Pool (30%)"
     },
     {
       "address": "__team__",
-      "amount": 150000000,
+      "amount": 5400000000,
       "label": "Team & Advisors (15%, 2yr vesting)"
     },
     {
       "address": "__public_sale__",
-      "amount": 100000000,
+      "amount": 3600000000,
       "label": "Public Sale (10%)"
     },
     {
       "address": "__liquidity__",
-      "amount": 100000000,
+      "amount": 3600000000,
       "label": "Initial Liquidity (10%)"
     },
     {
       "address": "__airdrop__",
-      "amount": 50000000,
+      "amount": 1800000000,
       "label": "Community Airdrop (5%)"
     }
   ],
