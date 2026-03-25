@@ -551,6 +551,8 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/contract/:addr/state", get(contract_state))
         .route("/api/contract/:addr/events", get(contract_events))
         .route("/api/contracts", get(contract_list))
+        // EIP-1559 fee info
+        .route("/api/fee-info", get(fee_info))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer({
             let cors_origins = std::env::var("QV_CORS_ORIGINS")
@@ -6329,3 +6331,26 @@ async fn contract_list(
     }
 }
 
+/// EIP-1559 fee info endpoint
+async fn fee_info(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let base_fee = state.node.get_base_fee();
+    let total_burned = state.node.get_total_fees_burned();
+    let height = state.node.get_chain_height();
+
+    // Suggested priority fee: small tip on top of base fee
+    let suggested_priority_fee = (base_fee * 0.1).max(0.0001);
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "baseFee": base_fee,
+        "minFee": 0.001,
+        "suggestedPriorityFee": suggested_priority_fee,
+        "suggestedTotalFee": base_fee + suggested_priority_fee,
+        "totalBurned": total_burned,
+        "targetTxsPerBlock": 10,
+        "maxChangePercent": 12.5,
+        "blockHeight": height,
+    })))
+}

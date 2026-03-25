@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Blocks, Clock, Zap, Activity, TrendingUp } from "lucide-react";
-import { getCoreApiHeaders, getNodeApiBaseUrl } from "@/lib/network";
+import { getCoreApiBaseUrl, getCoreApiHeaders, getNodeApiBaseUrl } from "@/lib/network";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 
 interface NetworkStats {
@@ -97,10 +97,20 @@ const NetworkStatsBar = () => {
         
         const lastBlockAge = Math.max(Math.round((Date.now() - newestBlockTime) / 1000), 0);
 
-        // Dynamic gas fee based on network activity (simple model)
-        const baseFee = 0.001;
-        const activityMultiplier = Math.min(blocksPerMinute * 0.1, 0.5);
-        const currentGasFee = Math.round((baseFee + activityMultiplier) * 10000) / 10000;
+        // Fetch live fee info from EIP-1559 endpoint
+        let currentGasFee = 0.001;
+        try {
+          const apiBase = getCoreApiBaseUrl();
+          if (apiBase) {
+            const feeRes = await fetch(`${apiBase}/fee-info`, { headers: getCoreApiHeaders() });
+            if (feeRes.ok) {
+              const feeData = await feeRes.json();
+              if (feeData.success && feeData.baseFee != null) {
+                currentGasFee = Math.round(feeData.baseFee * 10000) / 10000;
+              }
+            }
+          }
+        } catch { /* fallback to 0.001 */ }
 
         setStats({
           blocksPerMinute,

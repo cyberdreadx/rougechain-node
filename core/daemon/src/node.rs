@@ -175,8 +175,14 @@ impl L1Node {
             nonce_db,
             address_db,
             push_token_store,
-            fee_db,
-            total_fees_burned: Arc::new(Mutex::new(0.0)),
+            fee_db: fee_db.clone(),
+            total_fees_burned: {
+                let saved = fee_db.get(b"total_burned").ok().flatten()
+                    .and_then(|v| String::from_utf8(v.to_vec()).ok())
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                Arc::new(Mutex::new(saved))
+            },
         })
     }
 
@@ -1825,6 +1831,13 @@ impl L1Node {
         *self.total_fees_burned.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Persist total fees burned to sled
+    fn persist_fees_burned(&self) {
+        let burned = self.get_total_fees_burned();
+        let _ = self.fee_db.insert(b"total_burned", burned.to_string().as_bytes());
+        let _ = self.fee_db.flush();
+    }
+
     /// Calculate next base fee based on block fullness (EIP-1559)
     fn calculate_next_base_fee(&self, tx_count: usize) -> f64 {
         let current = self.get_base_fee();
@@ -2028,6 +2041,7 @@ impl L1Node {
         // EIP-1559: recalculate base fee for next block
         let next_base_fee = self.calculate_next_base_fee(block.txs.len());
         self.set_base_fee(next_base_fee);
+        self.persist_fees_burned();
         
         Ok(())
     }
