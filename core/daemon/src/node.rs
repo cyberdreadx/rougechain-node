@@ -1301,11 +1301,12 @@ impl L1Node {
         let mut tx = TxV1 {
             version: 1,
             tx_type: "contract_deploy".to_string(),
-            from_pub_key: deployer.to_string(),
+            from_pub_key: keys.public_key_hex.clone(),
             nonce: self.get_next_nonce(&keys.public_key_hex),
             payload: TxPayload {
                 contract_addr: Some(contract_addr.to_string()),
                 amount: Some(wasm_size as u64),
+                to_pub_key_hex: Some(deployer.to_string()),
                 ..Default::default()
             },
             fee: 0.0,
@@ -1333,12 +1334,13 @@ impl L1Node {
         let mut tx = TxV1 {
             version: 1,
             tx_type: "contract_call".to_string(),
-            from_pub_key: if caller.is_empty() { keys.public_key_hex.clone() } else { caller.to_string() },
+            from_pub_key: keys.public_key_hex.clone(),
             nonce: self.get_next_nonce(&keys.public_key_hex),
             payload: TxPayload {
                 contract_addr: Some(contract_addr.to_string()),
                 contract_method: Some(method.to_string()),
                 contract_gas_limit: Some(gas_used),
+                to_pub_key_hex: if caller.is_empty() { None } else { Some(caller.to_string()) },
                 reason: if success { None } else { Some("failed".to_string()) },
                 ..Default::default()
             },
