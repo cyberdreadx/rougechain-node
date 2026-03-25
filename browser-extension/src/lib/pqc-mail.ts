@@ -6,7 +6,9 @@ import { getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
 import { cachedFetch, invalidate, type CacheCategory } from "./api-cache";
 import { encryptMessage, decryptMessage, type WalletWithPrivateKeys, type Wallet, getWallets } from "./pqc-messenger";
 
-export const MAIL_DOMAIN = "rouge.quant";
+export const MAIL_DOMAIN = "qwalla.mail";
+export const MAIL_DOMAIN_LEGACY = "rouge.quant";
+export const MAIL_DOMAINS = [MAIL_DOMAIN, MAIL_DOMAIN_LEGACY];
 
 export interface MailMessage {
     id: string;
@@ -69,7 +71,11 @@ export async function resolveName(name: string): Promise<{ entry?: NameEntry; wa
     const base = getMailApiBase();
     if (!base) return null;
 
-    const cleanName = name.replace(`@${MAIL_DOMAIN}`, "").toLowerCase();
+    let cleanName = name;
+    for (const domain of MAIL_DOMAINS) {
+        cleanName = cleanName.replace(`@${domain}`, "");
+    }
+    cleanName = cleanName.toLowerCase();
 
     return cachedFetch("nameRegistry" as CacheCategory, cleanName, async () => {
         const res = await fetch(`${base}/names/resolve/${encodeURIComponent(cleanName)}`, {
@@ -324,8 +330,12 @@ export async function deleteMail(walletId: string, messageId: string): Promise<v
 export async function resolveRecipient(input: string): Promise<string | null> {
     const trimmed = input.trim();
 
-    if (trimmed.includes(`@${MAIL_DOMAIN}`)) {
-        const name = trimmed.replace(`@${MAIL_DOMAIN}`, "").toLowerCase();
+    if (MAIL_DOMAINS.some(d => trimmed.includes(`@${d}`))) {
+        let name = trimmed;
+        for (const d of MAIL_DOMAINS) {
+            name = name.replace(`@${d}`, "");
+        }
+        name = name.toLowerCase();
         const result = await resolveName(name);
         return result?.wallet?.id || result?.entry?.wallet_id || null;
     }
