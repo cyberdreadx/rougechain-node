@@ -106,6 +106,14 @@ pub struct TxPayload {
     pub vote_option: Option<String>,                      // "yes" | "no" | "abstain"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposal_end_height: Option<u64>,                 // Block height when voting ends
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_type: Option<String>,                    // "text" | "param_change" | "treasury_spend"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_action_payload: Option<serde_json::Value>, // Type-specific action data
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_quorum: Option<u64>,                     // Min total votes required
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_timelock_blocks: Option<u64>,            // Blocks to wait after voting ends
     // Allowance fields (approve/transferFrom pattern)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spender_pub_key: Option<String>,                  // Approved spender public key

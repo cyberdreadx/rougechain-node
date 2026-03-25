@@ -1813,8 +1813,9 @@ impl L1Node {
     }
 
     // Fee distribution constants
-    const PROPOSER_FEE_SHARE: f64 = 0.25; // 25% to block proposer
-    const VALIDATOR_FEE_SHARE: f64 = 0.75; // 75% split among all validators by stake
+    const PROPOSER_FEE_SHARE: f64 = 0.20;  // 20% to block proposer
+    const VALIDATOR_FEE_SHARE: f64 = 0.70;  // 70% split among validators by stake
+    const TREASURY_FEE_SHARE: f64 = 0.10;  // 10% to community treasury
 
     /// Get the current base fee
     pub fn get_base_fee(&self) -> f64 {
@@ -3100,6 +3101,9 @@ impl L1Node {
                     let proposal_id = tx.payload.proposal_id.clone()
                         .unwrap_or_else(|| format!("prop-{}-{}", block_height, &tx.from_pub_key[..8]));
                     let end_height = tx.payload.proposal_end_height.unwrap_or(block_height + 1000);
+                    let proposal_type = tx.payload.proposal_type.clone().unwrap_or_else(|| "text".into());
+                    let quorum = tx.payload.proposal_quorum.unwrap_or(1000);
+                    let timelock_blocks = tx.payload.proposal_timelock_blocks.unwrap_or(100);
                     let proposal = Proposal {
                         proposal_id,
                         token_symbol: token_symbol.clone(),
@@ -3112,9 +3116,18 @@ impl L1Node {
                         no_votes: 0,
                         abstain_votes: 0,
                         executed: false,
+                        proposal_type,
+                        action_payload: tx.payload.proposal_action_payload.clone(),
+                        quorum,
+                        pass_threshold_pct: 50,
+                        timelock_blocks,
+                        executable_after: end_height + timelock_blocks,
                     };
                     if let Err(e) = self.governance_store.save_proposal(&proposal) {
                         eprintln!("[node] Failed to create proposal: {}", e);
+                    } else {
+                        eprintln!("[node] Created governance proposal {} (type={}, quorum={}, timelock={})",
+                            proposal.proposal_id, proposal.proposal_type, quorum, timelock_blocks);
                     }
                 }
             }
@@ -3123,13 +3136,39 @@ impl L1Node {
                     tx.payload.proposal_id.as_ref(),
                     tx.payload.vote_option.as_ref(),
                 ) {
+                    // Check proposal exists and is still active
+                    if let Ok(Some(proposal)) = self.governance_store.get_proposal(proposal_id) {
+                        if block_height >= proposal.end_height {
+                            eprintln!("[node] Rejecting vote: voting period ended for {}", proposal_id);
+                            return;
+                        }
+                    }
                     // Check voter hasn't already voted
                     if let Ok(Some(_)) = self.governance_store.get_vote(&tx.from_pub_key, proposal_id) {
                         eprintln!("[node] Rejecting vote: already voted on {}", proposal_id);
                         return;
                     }
-                    // Get voting weight (token balance - for now use amount field)
-                    let weight = tx.payload.amount.unwrap_or(1);
+                    // Voting weight = actual token balance (XRGE balance for XRGE proposals)
+                    let weight = if let Ok(Some(ref proposal)) = self.governance_store.get_proposal(proposal_id) {
+                        if proposal.token_symbol.to_uppercase() == "XRGE" {
+                            // Use XRGE balance
+                            if let Ok(bals) = self.balances.lock() {
+                                *bals.get(&tx.from_pub_key).unwrap_or(&0.0) as u64
+                            } else { 0 }
+                        } else {
+                            // Use token balance
+                            let key = (tx.from_pub_key.clone(), proposal.token_symbol.to_uppercase());
+                            if let Ok(tbals) = self.token_balances.lock() {
+                                *tbals.get(&key).unwrap_or(&0.0) as u64
+                            } else { 0 }
+                        }
+                    } else {
+                        0
+                    };
+                    if weight == 0 {
+                        eprintln!("[node] Rejecting vote: zero balance (no voting power)");
+                        return;
+                    }
                     let vote = Vote {
                         voter: tx.from_pub_key.clone(),
                         proposal_id: proposal_id.clone(),
@@ -3154,16 +3193,69 @@ impl L1Node {
             "execute_proposal" => {
                 if let Some(proposal_id) = tx.payload.proposal_id.as_ref() {
                     if let Ok(Some(mut proposal)) = self.governance_store.get_proposal(proposal_id) {
-                        if block_height < proposal.end_height {
-                            eprintln!("[node] Rejecting execute: voting not ended");
-                            return;
-                        }
                         if proposal.executed {
                             eprintln!("[node] Rejecting execute: already executed");
                             return;
                         }
-                        proposal.executed = true;
-                        let _ = self.governance_store.save_proposal(&proposal);
+                        // Check voting has ended
+                        if block_height < proposal.end_height {
+                            eprintln!("[node] Rejecting execute: voting not ended");
+                            return;
+                        }
+                        // Check status (quorum + threshold + timelock)
+                        let status = proposal.status(block_height);
+                        match status {
+                            "failed" => {
+                                eprintln!("[node] Rejecting execute: proposal failed (quorum or threshold not met)");
+                                return;
+                            }
+                            "queued" => {
+                                eprintln!("[node] Rejecting execute: in timelock period (executable at height {})",
+                                    proposal.executable_after);
+                                return;
+                            }
+                            "passed" => {
+                                // Execute the proposal action
+                                match proposal.proposal_type.as_str() {
+                                    "treasury_spend" => {
+                                        // Transfer from treasury to recipient
+                                        if let Some(ref payload) = proposal.action_payload {
+                                            if let (Some(to), Some(amount)) = (
+                                                payload.get("recipient").and_then(|v| v.as_str()),
+                                                payload.get("amount").and_then(|v| v.as_u64()),
+                                            ) {
+                                                if let Ok(mut bals) = self.balances.lock() {
+                                                    let treasury_key = "__treasury__".to_string();
+                                                    let treasury_bal = *bals.get(&treasury_key).unwrap_or(&0.0);
+                                                    if treasury_bal >= amount as f64 {
+                                                        *bals.entry(treasury_key).or_insert(0.0) -= amount as f64;
+                                                        *bals.entry(to.to_string()).or_insert(0.0) += amount as f64;
+                                                        eprintln!("[node] Treasury spend: {} XRGE to {}", amount, &to[..16.min(to.len())]);
+                                                    } else {
+                                                        eprintln!("[node] Treasury spend failed: insufficient funds");
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    "param_change" => {
+                                        eprintln!("[node] Param change proposal executed: {}", proposal_id);
+                                        // Future: apply parameter changes from action_payload
+                                    }
+                                    _ => {
+                                        // "text" proposals — no on-chain action needed
+                                        eprintln!("[node] Text proposal executed: {}", proposal_id);
+                                    }
+                                }
+                                proposal.executed = true;
+                                let _ = self.governance_store.save_proposal(&proposal);
+                                eprintln!("[node] Proposal {} executed successfully", proposal_id);
+                            }
+                            _ => {
+                                eprintln!("[node] Rejecting execute: unexpected status {}", status);
+                                return;
+                            }
+                        }
                     }
                 }
             }
@@ -3371,6 +3463,10 @@ impl L1Node {
             // No validators staked - proposer gets everything
             *balances.entry(proposer_pub_key.to_string()).or_insert(0.0) += validator_pool;
         }
+
+        // Treasury gets 10% of tip
+        let treasury_share = tip_pool * Self::TREASURY_FEE_SHARE;
+        *balances.entry("__treasury__".to_string()).or_insert(0.0) += treasury_share;
     }
     
     fn apply_balance_tx_inner(

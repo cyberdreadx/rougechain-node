@@ -21,6 +21,55 @@ pub struct Proposal {
     pub no_votes: u64,
     pub abstain_votes: u64,
     pub executed: bool,
+    // ── Enhanced fields ──
+    #[serde(default)]
+    pub proposal_type: String,        // "text" | "param_change" | "treasury_spend"
+    #[serde(default)]
+    pub action_payload: Option<serde_json::Value>,  // Type-specific payload
+    #[serde(default = "default_quorum")]
+    pub quorum: u64,                  // Min total votes required (default: 1000)
+    #[serde(default = "default_threshold")]
+    pub pass_threshold_pct: u32,      // % yes votes needed to pass (default: 50)
+    #[serde(default)]
+    pub timelock_blocks: u64,         // Blocks to wait after voting ends before execution
+    #[serde(default)]
+    pub executable_after: u64,        // end_height + timelock_blocks (computed at creation)
+}
+
+fn default_quorum() -> u64 { 1000 }
+fn default_threshold() -> u32 { 50 }
+
+impl Proposal {
+    /// Compute the current status of a proposal given current block height
+    pub fn status(&self, current_height: u64) -> &'static str {
+        if self.executed {
+            return "executed";
+        }
+        if current_height < self.end_height {
+            return "active";
+        }
+        // Voting has ended — check results
+        let total = self.yes_votes + self.no_votes + self.abstain_votes;
+        let quorum_met = total >= self.quorum;
+        let threshold_met = if total > 0 {
+            (self.yes_votes * 100 / total) >= self.pass_threshold_pct as u64
+        } else {
+            false
+        };
+        if !quorum_met || !threshold_met {
+            return "failed";
+        }
+        // Passed — check timelock
+        let exec_after = if self.executable_after > 0 {
+            self.executable_after
+        } else {
+            self.end_height + self.timelock_blocks
+        };
+        if current_height < exec_after {
+            return "queued"; // In timelock period
+        }
+        "passed" // Ready to execute
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
