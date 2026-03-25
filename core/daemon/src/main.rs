@@ -6108,11 +6108,27 @@ async fn contract_deploy(
         &wasm_bytes,
         block_height,
     ) {
-        Ok(address) => Ok(Json(serde_json::json!({
-            "success": true,
-            "address": address,
-            "wasmSize": wasm_bytes.len(),
-        }))),
+        Ok(address) => {
+            // Submit on-chain transaction so it appears in the tx feed
+            let wasm_size = wasm_bytes.len();
+            if let Ok(tx) = state.node.submit_contract_deploy_tx(deployer, &address, wasm_size) {
+                use quantum_vault_crypto::{bytes_to_hex, sha256};
+                use quantum_vault_types::encode_tx_v1;
+                let tx_id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
+                state.ws_broadcaster.broadcast_new_tx(
+                    &tx_id,
+                    &tx.tx_type,
+                    &tx.from_pub_key,
+                    tx.payload.contract_addr.as_deref(),
+                    tx.payload.amount.map(|a| a as u64),
+                );
+            }
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "address": address,
+                "wasmSize": wasm_size,
+            })))
+        },
         Err(e) => Ok(Json(serde_json::json!({
             "success": false,
             "error": e,
@@ -6165,13 +6181,34 @@ async fn contract_call(
         gas_limit,
         &tx_hash,
     ) {
-        Ok(result) => Ok(Json(serde_json::json!({
-            "success": result.success,
-            "returnData": result.return_data,
-            "gasUsed": result.gas_used,
-            "events": result.events,
-            "error": result.error,
-        }))),
+        Ok(result) => {
+            // Submit on-chain transaction so it appears in the tx feed
+            if let Ok(tx) = state.node.submit_contract_call_tx(
+                caller,
+                contract_addr,
+                method,
+                result.gas_used,
+                result.success,
+            ) {
+                use quantum_vault_crypto::{bytes_to_hex, sha256};
+                use quantum_vault_types::encode_tx_v1;
+                let tx_id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
+                state.ws_broadcaster.broadcast_new_tx(
+                    &tx_id,
+                    &tx.tx_type,
+                    &tx.from_pub_key,
+                    tx.payload.contract_addr.as_deref(),
+                    tx.payload.contract_gas_limit.map(|g| g as u64),
+                );
+            }
+            Ok(Json(serde_json::json!({
+                "success": result.success,
+                "returnData": result.return_data,
+                "gasUsed": result.gas_used,
+                "events": result.events,
+                "error": result.error,
+            })))
+        },
         Err(e) => Ok(Json(serde_json::json!({
             "success": false,
             "error": e,

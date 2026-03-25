@@ -1290,6 +1290,70 @@ impl L1Node {
         Ok(tx)
     }
 
+    /// Submit a contract_deploy tx: records a WASM contract deployment on-chain.
+    pub fn submit_contract_deploy_tx(
+        &self,
+        deployer: &str,
+        contract_addr: &str,
+        wasm_size: usize,
+    ) -> Result<TxV1, String> {
+        let keys = self.keys.lock().map_err(|_| "keys lock")?.clone();
+        let mut tx = TxV1 {
+            version: 1,
+            tx_type: "contract_deploy".to_string(),
+            from_pub_key: deployer.to_string(),
+            nonce: self.get_next_nonce(&keys.public_key_hex),
+            payload: TxPayload {
+                contract_addr: Some(contract_addr.to_string()),
+                amount: Some(wasm_size as u64),
+                ..Default::default()
+            },
+            fee: 0.0,
+            sig: String::new(),
+            signed_payload: None,
+        };
+        let bytes = encode_tx_for_signing(&tx);
+        tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
+        let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
+        self.verified_tx_ids.lock().map_err(|_| "verified lock")?.insert(tx_hash);
+        self.accept_tx(tx.clone())?;
+        Ok(tx)
+    }
+
+    /// Submit a contract_call tx: records a WASM contract method call on-chain.
+    pub fn submit_contract_call_tx(
+        &self,
+        caller: &str,
+        contract_addr: &str,
+        method: &str,
+        gas_used: u64,
+        success: bool,
+    ) -> Result<TxV1, String> {
+        let keys = self.keys.lock().map_err(|_| "keys lock")?.clone();
+        let mut tx = TxV1 {
+            version: 1,
+            tx_type: "contract_call".to_string(),
+            from_pub_key: if caller.is_empty() { keys.public_key_hex.clone() } else { caller.to_string() },
+            nonce: self.get_next_nonce(&keys.public_key_hex),
+            payload: TxPayload {
+                contract_addr: Some(contract_addr.to_string()),
+                contract_method: Some(method.to_string()),
+                contract_gas_limit: Some(gas_used),
+                reason: if success { None } else { Some("failed".to_string()) },
+                ..Default::default()
+            },
+            fee: 0.0,
+            sig: String::new(),
+            signed_payload: None,
+        };
+        let bytes = encode_tx_for_signing(&tx);
+        tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
+        let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
+        self.verified_tx_ids.lock().map_err(|_| "verified lock")?.insert(tx_hash);
+        self.accept_tx(tx.clone())?;
+        Ok(tx)
+    }
+
     pub fn submit_stake_tx(
         &self,
         from_private_key: &str,
