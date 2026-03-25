@@ -900,7 +900,7 @@ RougeChain's cryptographic infrastructure is designed to evolve. The following p
 | 12 | Event indexer/subgraph (sled-backed, multi-index) | ✅ Complete |
 | 13 | CLI wallet (ML-DSA-65 signed transactions) | ✅ Complete |
 | 14 | Prometheus metrics and Docker containerization | ✅ Complete |
-| -- | Native limit orders (on-chain conditional swaps) | Planned |
+| -- | Native limit orders (on-chain conditional swaps) | ✅ Complete |
 | -- | Concentrated liquidity (range-based positions) | Planned |
 | -- | Yield farming (LP staking rewards) | Planned |
 | -- | On-chain NFT marketplace | Planned |
