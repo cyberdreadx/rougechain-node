@@ -55,7 +55,8 @@ const NetworkStatsBar = () => {
       let blocks = await fetchBlocks(NODE_API_URL);
 
       if (blocks && blocks.length > 0) {
-        const totalBlocks = blocks.length;
+        // Use the highest block height as total (blocks array is only last ~100)
+        const totalBlocks = Math.max(...blocks.map(b => b.header.height));
         
         // Get timestamps and handle both ascending and descending order
         const timestamps = blocks.map(b => b.header.time).sort((a, b) => a - b);
