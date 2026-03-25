@@ -1808,6 +1808,8 @@ dependencies = [
 name = "quantum-vault-vm"
 version = "0.1.0"
 dependencies = [
+ "bech32",
+ "fips204",
  "hex",
  "quantum-vault-types",
  "serde",

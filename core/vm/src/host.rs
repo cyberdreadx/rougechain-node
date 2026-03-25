@@ -294,5 +294,102 @@ pub fn register_host_functions(linker: &mut Linker<HostEnv>) -> Result<(), Strin
         }
     ).map_err(|e| e.to_string())?;
 
+    // ══════════════════════════════════════════════════════════════════════
+    // PQC PRECOMPILES — Native post-quantum cryptographic operations
+    // ══════════════════════════════════════════════════════════════════════
+
+    // ── host_pqc_verify(pk_ptr, pk_len, msg_ptr, msg_len, sig_ptr, sig_len) → i32 ──
+    // ML-DSA-65 signature verification. Returns 1 if valid, 0 if invalid, -1 on error.
+    linker.func_wrap("env", "host_pqc_verify",
+        |caller: Caller<'_, HostEnv>,
+         pk_ptr: u32, pk_len: u32,
+         msg_ptr: u32, msg_len: u32,
+         sig_ptr: u32, sig_len: u32| -> i32 {
+            let mem = get_memory(&caller);
+            let pk_bytes = read_bytes(&caller, &mem, pk_ptr, pk_len);
+            let msg_bytes = read_bytes(&caller, &mem, msg_ptr, msg_len);
+            let sig_bytes = read_bytes(&caller, &mem, sig_ptr, sig_len);
+
+            // ML-DSA-65 sizes: PK=1952, SIG=3309
+            const PK_SIZE: usize = 1952;
+            const SIG_SIZE: usize = 3309;
+
+            if pk_bytes.len() != PK_SIZE || sig_bytes.len() != SIG_SIZE {
+                return -1;
+            }
+
+            let pk_array: [u8; PK_SIZE] = match pk_bytes.as_slice().try_into() {
+                Ok(a) => a,
+                Err(_) => return -1,
+            };
+            let sig_array: [u8; SIG_SIZE] = match sig_bytes.as_slice().try_into() {
+                Ok(a) => a,
+                Err(_) => return -1,
+            };
+
+            use fips204::ml_dsa_65::PublicKey;
+            use fips204::traits::{SerDes, Verifier};
+
+            let pk = match PublicKey::try_from_bytes(pk_array) {
+                Ok(k) => k,
+                Err(_) => return -1,
+            };
+
+            if pk.verify(&msg_bytes, &sig_array, &[]) { 1 } else { 0 }
+        }
+    ).map_err(|e| e.to_string())?;
+
+    // ── host_pqc_pubkey_to_address(pk_ptr, pk_len, out_ptr, out_len) → i32 ──
+    // Derive a rouge1... bech32m address from a raw ML-DSA-65 public key.
+    // Returns bytes written, or -1 on error, -2 if buffer too small.
+    linker.func_wrap("env", "host_pqc_pubkey_to_address",
+        |mut caller: Caller<'_, HostEnv>,
+         pk_ptr: u32, pk_len: u32,
+         out_ptr: u32, out_len: u32| -> i32 {
+            let mem = get_memory(&caller);
+            let pk_bytes = read_bytes(&caller, &mem, pk_ptr, pk_len);
+
+            // SHA-256 the public key bytes
+            use sha2::{Sha256, Digest};
+            let hash = Sha256::digest(&pk_bytes);
+
+            // Bech32m encode with "rouge" HRP
+            let hrp = match bech32::Hrp::parse("rouge") {
+                Ok(h) => h,
+                Err(_) => return -1,
+            };
+            let address = match bech32::encode::<bech32::Bech32m>(hrp, &hash) {
+                Ok(a) => a,
+                Err(_) => return -1,
+            };
+
+            let addr_bytes = address.as_bytes();
+            if addr_bytes.len() > out_len as usize {
+                return -2;
+            }
+            mem.write(&mut caller, out_ptr as usize, addr_bytes).map_err(|_| ()).ok();
+            addr_bytes.len() as i32
+        }
+    ).map_err(|e| e.to_string())?;
+
+    // ── host_pqc_hash_pubkey(pk_ptr, pk_len, out_ptr) → i32 ──
+    // SHA-256 hash of a public key (32 bytes output). Useful for compact identity checks.
+    // Returns 32 on success, -1 on error.
+    linker.func_wrap("env", "host_pqc_hash_pubkey",
+        |mut caller: Caller<'_, HostEnv>,
+         pk_ptr: u32, pk_len: u32, out_ptr: u32| -> i32 {
+            let mem = get_memory(&caller);
+            let pk_bytes = read_bytes(&caller, &mem, pk_ptr, pk_len);
+
+            use sha2::{Sha256, Digest};
+            let hash = Sha256::digest(&pk_bytes);
+
+            match mem.write(&mut caller, out_ptr as usize, &hash) {
+                Ok(()) => 32,
+                Err(_) => -1,
+            }
+        }
+    ).map_err(|e| e.to_string())?;
+
     Ok(())
 }
