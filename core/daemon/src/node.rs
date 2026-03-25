@@ -38,6 +38,8 @@ const BASE_TRANSFER_FEE: f64 = 0.1;
 const TOKEN_CREATION_FEE: f64 = 100.0;
 const JAIL_BLOCKS: u64 = 20;
 const SLASH_DIVISOR: u128 = 10;
+const UNBONDING_BLOCKS: u64 = 500;             // ~8 hours at 1 block/min
+const MISSED_BLOCK_SLASH_THRESHOLD: u64 = 50;  // Auto-slash after 50 missed blocks
 const MAX_MEMPOOL: usize = 2000;
 
 // EIP-1559 dynamic fee constants
@@ -62,6 +64,14 @@ pub struct NodeOptions {
 
 /// Key for token balances: (public_key, token_symbol)
 type TokenBalanceKey = (String, String);
+
+/// Queued unbonding entry — funds release after UNBONDING_BLOCKS
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct UnbondingEntry {
+    pub delegator: String,
+    pub amount: f64,
+    pub release_height: u64,
+}
 
 #[derive(Clone)]
 pub struct L1Node {
@@ -102,6 +112,8 @@ pub struct L1Node {
     fee_db: sled::Tree,
     /// Running total of burned fees (XRGE)
     total_fees_burned: Arc<Mutex<f64>>,
+    /// Queued unbonding entries (unstake with delay)
+    unbonding_queue: Arc<Mutex<Vec<UnbondingEntry>>>,
 }
 
 impl L1Node {
@@ -187,6 +199,7 @@ impl L1Node {
                     .unwrap_or(0.0);
                 Arc::new(Mutex::new(saved))
             },
+            unbonding_queue: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -335,7 +348,7 @@ impl L1Node {
         for block in blocks {
             // Apply transaction effects
             for tx in &block.txs {
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_");
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height);
                 self.apply_web3_state_effects(tx, block.header.height);
                 Self::apply_amm_balance_effects(
                     &mut balances,
@@ -2013,7 +2026,7 @@ impl L1Node {
         // Apply transaction effects (transfers, stakes, etc.) - fees deducted from senders
         for tx in &block.txs {
             let before = balances.values().sum::<f64>();
-            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key);
+            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block.header.height);
             // Commit sequential nonce for this sender
             let _ = self.nonce_db.insert(tx.from_pub_key.as_bytes(), &tx.nonce.to_be_bytes());
             // Index sender and recipient addresses for rouge1 resolution
@@ -2786,7 +2799,8 @@ impl L1Node {
         let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
         let node_pub_key = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
-        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key);
+        let block_height = self.store.get_tip().map(|t| t.height).unwrap_or(0);
+        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block_height);
         Ok(())
     }
 
@@ -2809,7 +2823,7 @@ impl L1Node {
             for tx in &block.txs {
                 let sum_before: f64 = balances.values().sum();
 
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_");
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height);
                 
                 Self::apply_amm_balance_effects(
                     &mut balances,
@@ -3658,6 +3672,8 @@ impl L1Node {
         tx: &TxV1,
         validator_store: Option<&quantum_vault_storage::validator_store::ValidatorStore>,
         node_pub_key: &str,
+        unbonding_queue: &Arc<Mutex<Vec<UnbondingEntry>>>,
+        block_height: u64,
     ) {
         match tx.tx_type.as_str() {
             "transfer" => {
@@ -3724,7 +3740,7 @@ impl L1Node {
             }
             "unstake" => {
                 let amount = tx.payload.amount.unwrap_or(0) as f64;
-                // Verify staked balance before crediting
+                // Verify staked balance before queueing
                 if let Some(vs) = validator_store {
                     let staked = vs.get_validator(&tx.from_pub_key)
                         .unwrap_or(None)
@@ -3740,7 +3756,18 @@ impl L1Node {
                     eprintln!("[node] Rejecting unstake: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
                     return;
                 }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount - tx.fee;
+                // Deduct fee now, queue the unbonding (funds released after UNBONDING_BLOCKS)
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                if let Ok(mut queue) = unbonding_queue.lock() {
+                    let release_at = block_height + UNBONDING_BLOCKS;
+                    queue.push(UnbondingEntry {
+                        delegator: tx.from_pub_key.clone(),
+                        amount,
+                        release_height: release_at,
+                    });
+                    eprintln!("[node] Unstake queued: {:.4} XRGE, releases at block {}",
+                        amount, release_at);
+                }
             }
             "create_token" => {
                 const RESERVED: &[&str] = &["XRGE", "QETH", "QUSDC", "ETH", "USDC"];
@@ -4099,7 +4126,72 @@ impl L1Node {
         for tx in &block.txs {
             self.apply_validator_tx(tx, block.header.height)?;
         }
+        // Process unbonding queue — release matured entries
+        self.process_unbonding_queue(block.header.height);
+        // Check missed blocks and auto-slash
+        self.check_missed_blocks(block);
         Ok(())
+    }
+
+    /// Release matured unbonding entries — transfer funds back to delegator balance
+    fn process_unbonding_queue(&self, current_height: u64) {
+        if let Ok(mut queue) = self.unbonding_queue.lock() {
+            let mut released = Vec::new();
+            let mut remaining = Vec::new();
+            for entry in queue.drain(..) {
+                if current_height >= entry.release_height {
+                    released.push(entry);
+                } else {
+                    remaining.push(entry);
+                }
+            }
+            *queue = remaining;
+
+            // Credit released unbonds to balances
+            if !released.is_empty() {
+                if let Ok(mut balances) = self.balances.lock() {
+                    for entry in &released {
+                        *balances.entry(entry.delegator.clone()).or_insert(0.0) += entry.amount;
+                        eprintln!("[node] Unbonding released: {:.4} XRGE to {}",
+                            entry.amount, &entry.delegator[..8.min(entry.delegator.len())]);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Track missed blocks and auto-slash validators over threshold
+    fn check_missed_blocks(&self, block: &BlockV1) {
+        // Get the block proposer
+        let proposer = &block.header.proposer_pub_key;
+        // Get all active validators
+        if let Ok(validators) = self.validator_store.list_validators() {
+            for (pubkey, mut state) in validators {
+                if state.stake == 0 { continue; }
+                if &pubkey == proposer {
+                    // Proposer produced a block — increment blocks_proposed, reset missed
+                    state.blocks_proposed += 1;
+                    state.missed_blocks = 0;
+                    let _ = self.validator_store.set_validator(&pubkey, &state);
+                } else if state.jailed_until <= block.header.height {
+                    // Active (non-jailed) validator that didn't propose — increment missed
+                    state.missed_blocks += 1;
+                    if state.missed_blocks >= MISSED_BLOCK_SLASH_THRESHOLD {
+                        // Auto-slash
+                        let slash_amount = (state.stake / SLASH_DIVISOR).max(1);
+                        state.total_slashed += slash_amount;
+                        state.stake = state.stake.saturating_sub(slash_amount);
+                        state.slash_count += 1;
+                        state.jailed_until = block.header.height + JAIL_BLOCKS;
+                        state.missed_blocks = 0; // Reset counter
+                        eprintln!("[node] AUTO-SLASH: {} slashed {} (missed {} blocks, jailed until {})",
+                            &pubkey[..8.min(pubkey.len())], slash_amount,
+                            MISSED_BLOCK_SLASH_THRESHOLD, state.jailed_until);
+                    }
+                    let _ = self.validator_store.set_validator(&pubkey, &state);
+                }
+            }
+        }
     }
 
     fn apply_validator_tx(&self, tx: &TxV1, height: u64) -> Result<(), String> {
