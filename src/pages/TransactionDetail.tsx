@@ -62,9 +62,10 @@ interface TxData {
 }
 
 interface TxLog {
-  event: string;
-  topics: string[];
-  data: string;
+  event?: string;
+  event_type?: string;
+  topics?: string[];
+  data?: unknown;
 }
 
 interface TxReceipt {
@@ -558,7 +559,7 @@ const TransactionDetail = () => {
                     <Badge variant="secondary" className="text-[10px]">
                       #{i}
                     </Badge>
-                    <span className="text-sm font-medium text-primary">{log.event}</span>
+                    <span className="text-sm font-medium text-primary">{log.event ?? log.event_type ?? "—"}</span>
                   </div>
                   {(log.topics ?? []).length > 0 && (
                     <div>
@@ -574,7 +575,7 @@ const TransactionDetail = () => {
                   {log.data && (
                     <div>
                       <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Data</p>
-                      <code className="text-xs font-mono text-muted-foreground break-all">{log.data}</code>
+                      <code className="text-xs font-mono text-muted-foreground break-all">{typeof log.data === "string" ? log.data : JSON.stringify(log.data)}</code>
                     </div>
                   )}
                 </div>
