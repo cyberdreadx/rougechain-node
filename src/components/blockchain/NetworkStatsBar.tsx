@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import { Blocks, Clock, Zap, Activity, TrendingUp } from "lucide-react";
 import { getCoreApiBaseUrl, getCoreApiHeaders, getNodeApiBaseUrl } from "@/lib/network";
@@ -14,6 +14,8 @@ interface NetworkStats {
   lastBlockAge: number;
 }
 
+const PEAK_TPS_KEY = "rougechain-peak-tps";
+
 const NetworkStatsBar = () => {
   const [stats, setStats] = useState<NetworkStats>({
     blocksPerMinute: 0,
@@ -25,6 +27,9 @@ const NetworkStatsBar = () => {
     lastBlockAge: 0,
   });
   const [isLoading, setIsLoading] = useState(true);
+  const peakTpsRef = useRef<number>(
+    (() => { try { return parseFloat(localStorage.getItem(PEAK_TPS_KEY) || "0") || 0; } catch { return 0; } })()
+  );
 
   const fetchStats = async () => {
     try {
@@ -95,6 +100,12 @@ const NetworkStatsBar = () => {
           // Fallback to overall TPS if no recent activity
           txsPerSecond = Math.round((totalTransactions / timeSpanSeconds) * 100) / 100;
         }
+        // Track peak TPS (all-time high)
+        if (txsPerSecond > peakTpsRef.current) {
+          peakTpsRef.current = txsPerSecond;
+          try { localStorage.setItem(PEAK_TPS_KEY, txsPerSecond.toString()); } catch {}
+        }
+        txsPerSecond = peakTpsRef.current;
         
         const lastBlockAge = Math.max(Math.round((Date.now() - newestBlockTime) / 1000), 0);
 
@@ -186,7 +197,7 @@ const NetworkStatsBar = () => {
     },
     {
       icon: Activity,
-      label: "TPS",
+      label: "Peak TPS",
       value: stats.txsPerSecond > 0 ? stats.txsPerSecond.toFixed(2) : "0.00",
       color: "text-success",
     },
