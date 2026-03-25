@@ -569,6 +569,134 @@ impl L1Node {
                         "amount": tx.payload.amount,
                     }),
                 },
+                "burn" => TxLog {
+                    event_type: "burn".to_string(),
+                    data: serde_json::json!({
+                        "amount": tx.payload.amount,
+                        "token": tx.payload.token_symbol,
+                    }),
+                },
+                "mint_tokens" => TxLog {
+                    event_type: "token_mint".to_string(),
+                    data: serde_json::json!({
+                        "token": tx.payload.token_symbol,
+                        "amount": tx.payload.amount,
+                        "to": tx.payload.to_pub_key_hex,
+                    }),
+                },
+                // ── Governance ──
+                "create_proposal" => TxLog {
+                    event_type: "governance_proposal_create".to_string(),
+                    data: serde_json::json!({
+                        "proposal_id": tx.payload.proposal_id,
+                        "title": tx.payload.proposal_title,
+                        "token": tx.payload.token_symbol,
+                        "type": tx.payload.proposal_type,
+                        "end_height": tx.payload.proposal_end_height,
+                        "quorum": tx.payload.proposal_quorum,
+                        "timelock_blocks": tx.payload.proposal_timelock_blocks,
+                    }),
+                },
+                "cast_vote" => TxLog {
+                    event_type: "governance_vote".to_string(),
+                    data: serde_json::json!({
+                        "proposal_id": tx.payload.proposal_id,
+                        "vote": tx.payload.vote_option,
+                    }),
+                },
+                "execute_proposal" => TxLog {
+                    event_type: "governance_proposal_execute".to_string(),
+                    data: serde_json::json!({
+                        "proposal_id": tx.payload.proposal_id,
+                    }),
+                },
+                // ── Multi-sig ──
+                "multisig_create" => TxLog {
+                    event_type: "multisig_wallet_create".to_string(),
+                    data: serde_json::json!({
+                        "wallet_id": tx.payload.multisig_wallet_id,
+                        "signers": tx.payload.multisig_signers,
+                        "threshold": tx.payload.multisig_threshold,
+                        "label": tx.payload.multisig_label,
+                    }),
+                },
+                "multisig_submit" => TxLog {
+                    event_type: "multisig_proposal_submit".to_string(),
+                    data: serde_json::json!({
+                        "wallet_id": tx.payload.multisig_wallet_id,
+                        "proposal_id": tx.payload.multisig_proposal_id,
+                        "inner_tx_type": tx.payload.multisig_proposal_tx_type,
+                        "inner_fee": tx.payload.multisig_proposal_fee,
+                    }),
+                },
+                "multisig_approve" => TxLog {
+                    event_type: "multisig_proposal_approve".to_string(),
+                    data: serde_json::json!({
+                        "proposal_id": tx.payload.multisig_proposal_id,
+                    }),
+                },
+                // ── Allowances ──
+                "token_approve" => TxLog {
+                    event_type: "token_approve".to_string(),
+                    data: serde_json::json!({
+                        "spender": tx.payload.spender_pub_key,
+                        "token": tx.payload.token_symbol,
+                        "amount": tx.payload.allowance_amount,
+                    }),
+                },
+                "token_transfer_from" => TxLog {
+                    event_type: "token_transfer_from".to_string(),
+                    data: serde_json::json!({
+                        "owner": tx.payload.owner_pub_key,
+                        "to": tx.payload.to_pub_key_hex,
+                        "token": tx.payload.token_symbol,
+                        "amount": tx.payload.amount,
+                    }),
+                },
+                "token_freeze" => TxLog {
+                    event_type: "token_freeze".to_string(),
+                    data: serde_json::json!({
+                        "token": tx.payload.token_symbol,
+                    }),
+                },
+                // ── Token lock ──
+                "token_lock" => TxLog {
+                    event_type: "token_lock".to_string(),
+                    data: serde_json::json!({
+                        "lock_id": tx.payload.lock_id,
+                        "token": tx.payload.token_symbol,
+                        "amount": tx.payload.amount,
+                        "lock_until": tx.payload.lock_until_height,
+                    }),
+                },
+                "token_unlock" => TxLog {
+                    event_type: "token_unlock".to_string(),
+                    data: serde_json::json!({
+                        "lock_id": tx.payload.lock_id,
+                    }),
+                },
+                // ── Contract ops ──
+                "contract_deploy" => TxLog {
+                    event_type: "contract_deploy".to_string(),
+                    data: serde_json::json!({
+                        "contract_addr": tx.payload.contract_addr,
+                    }),
+                },
+                "contract_call" => TxLog {
+                    event_type: "contract_call".to_string(),
+                    data: serde_json::json!({
+                        "contract_addr": tx.payload.contract_addr,
+                        "method": tx.payload.contract_method,
+                    }),
+                },
+                // ── Bridge ──
+                "bridge_withdraw" | "bridge_claim" => TxLog {
+                    event_type: tx.tx_type.clone(),
+                    data: serde_json::json!({
+                        "amount": tx.payload.amount,
+                        "token": tx.payload.token_symbol,
+                    }),
+                },
                 _ => TxLog {
                     event_type: tx.tx_type.clone(),
                     data: serde_json::json!({}),
