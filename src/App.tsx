@@ -27,6 +27,8 @@ import TokensList from "./pages/TokensList";
 import Bridge from "./pages/Bridge";
 import Mail from "./pages/Mail";
 import Privacy from "./pages/Privacy";
+import Contracts from "./pages/Contracts";
+import ContractDetail from "./pages/ContractDetail";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -102,6 +104,8 @@ const App = () => (
                 <Route path="/bridge" element={<Bridge />} />
                 <Route path="/mail" element={<Mail />} />
                 <Route path="/privacy" element={<Privacy />} />
+                <Route path="/contracts" element={<Contracts />} />
+                <Route path="/contract/:addr" element={<ContractDetail />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

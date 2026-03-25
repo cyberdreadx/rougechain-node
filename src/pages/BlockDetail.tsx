@@ -92,6 +92,10 @@ const labelForType = (type: string) => {
       return "Remove Liquidity";
     case "nft_mint":
       return "NFT Mint";
+    case "contract_deploy":
+      return "Contract Deploy";
+    case "contract_call":
+      return "Contract Call";
     default:
       return type;
   }

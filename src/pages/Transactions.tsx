@@ -94,6 +94,10 @@ const labelForType = (type: string) => {
       return "Unstake";
     case "create_token":
       return "Token Created";
+    case "contract_deploy":
+      return "Contract Deploy";
+    case "contract_call":
+      return "Contract Call";
     default:
       return type;
   }

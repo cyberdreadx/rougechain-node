@@ -6237,27 +6237,51 @@ async fn contract_get(
     }
 }
 
-/// Read a value from contract storage
+/// Read contract storage — all state if no ?key param, single key otherwise
 async fn contract_state(
     State(state): State<AppState>,
     Path(addr): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let key = params.get("key").cloned().unwrap_or_default();
-    let key_bytes = hex::decode(&key).unwrap_or_else(|_| key.as_bytes().to_vec());
+    // If a specific key is requested, return just that value
+    if let Some(key) = params.get("key") {
+        let key_bytes = hex::decode(key).unwrap_or_else(|_| key.as_bytes().to_vec());
+        return match state.contract_store.storage_read(&addr, &key_bytes) {
+            Ok(Some(val)) => Ok(Json(serde_json::json!({
+                "success": true,
+                "key": key,
+                "value": hex::encode(&val),
+                "valueUtf8": String::from_utf8_lossy(&val),
+            }))),
+            Ok(None) => Ok(Json(serde_json::json!({
+                "success": true,
+                "key": key,
+                "value": null,
+            }))),
+            Err(e) => Ok(Json(serde_json::json!({
+                "success": false,
+                "error": e,
+            }))),
+        };
+    }
 
-    match state.contract_store.storage_read(&addr, &key_bytes) {
-        Ok(Some(val)) => Ok(Json(serde_json::json!({
-            "success": true,
-            "key": key,
-            "value": hex::encode(&val),
-            "valueUtf8": String::from_utf8_lossy(&val),
-        }))),
-        Ok(None) => Ok(Json(serde_json::json!({
-            "success": true,
-            "key": key,
-            "value": null,
-        }))),
+    // No key specified — return full state dump
+    match state.contract_store.load_all_state(&addr) {
+        Ok(all_state) => {
+            let mut state_map = serde_json::Map::new();
+            for (key_bytes, val_bytes) in &all_state {
+                let key_str = String::from_utf8(key_bytes.clone())
+                    .unwrap_or_else(|_| hex::encode(key_bytes));
+                let val_str = String::from_utf8(val_bytes.clone())
+                    .unwrap_or_else(|_| hex::encode(val_bytes));
+                state_map.insert(key_str, serde_json::Value::String(val_str));
+            }
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "state": state_map,
+                "count": all_state.len(),
+            })))
+        }
         Err(e) => Ok(Json(serde_json::json!({
             "success": false,
             "error": e,

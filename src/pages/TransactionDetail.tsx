@@ -43,6 +43,10 @@ interface TxPayload {
   token_out?: string;
   nft_id?: string;
   metadata_uri?: string;
+  contract_addr?: string;
+  contract_method?: string;
+  contract_gas_limit?: number;
+  reason?: string;
 }
 
 interface TxData {
@@ -113,6 +117,10 @@ const labelForType = (type: string) => {
       return "Remove Liquidity";
     case "nft_mint":
       return "NFT Mint";
+    case "contract_deploy":
+      return "Contract Deploy";
+    case "contract_call":
+      return "Contract Call";
     default:
       return type;
   }
@@ -130,6 +138,9 @@ const badgeVariantForType = (type: string): "default" | "secondary" | "outline" 
     case "create_pool":
     case "add_liquidity":
     case "remove_liquidity":
+      return "default";
+    case "contract_deploy":
+    case "contract_call":
       return "default";
     default:
       return "secondary";
@@ -277,6 +288,10 @@ const TransactionDetail = () => {
   const to = payload.toPubKeyHex ?? payload.to_pub_key_hex ?? payload.target_pub_key ?? "";
   const tokenSymbol = payload.token_symbol ?? payload.tokenSymbol ?? "XRGE";
   const isSwapOrAmm = ["swap", "create_pool", "add_liquidity", "remove_liquidity"].includes(txType);
+  const isContract = ["contract_deploy", "contract_call"].includes(txType);
+  const contractAddr = payload.contract_addr ?? "";
+  const contractMethod = payload.contract_method ?? "";
+  const gasUsed = txData.receipt?.gas_used ?? payload.contract_gas_limit ?? 0;
 
   return (
     <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background relative overflow-x-hidden">
@@ -439,6 +454,67 @@ const TransactionDetail = () => {
             </div>
           </CardContent>
         </Card>
+
+        {isContract && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Activity className="w-4 h-4" />
+                {txType === "contract_deploy" ? "Contract Deployment" : "Contract Execution"}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {contractAddr && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Contract Address</p>
+                  <div className="flex items-center gap-2 bg-background rounded border border-border p-2">
+                    <Link
+                      to={`/contract/${contractAddr}`}
+                      className="text-xs font-mono flex-1 break-all text-primary hover:underline"
+                    >
+                      {contractAddr}
+                    </Link>
+                    <CopyButton value={contractAddr} />
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {txType === "contract_call" && contractMethod && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Method</p>
+                    <div className="bg-background rounded border border-border p-2">
+                      <code className="text-sm font-mono text-accent">{contractMethod}()</code>
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Gas Used</p>
+                  <div className="bg-background rounded border border-border p-2">
+                    <span className="text-sm font-mono font-semibold">{gasUsed.toLocaleString()}</span>
+                  </div>
+                </div>
+                {txType === "contract_deploy" && payload.amount != null && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">WASM Size</p>
+                    <div className="bg-background rounded border border-border p-2">
+                      <span className="text-sm font-mono font-semibold">{payload.amount.toLocaleString()} bytes</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {payload.reason && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Result</p>
+                  <div className="bg-background rounded border border-red-500/30 p-2">
+                    <span className="text-sm text-red-500">{payload.reason}</span>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {isSwapOrAmm && (payload.token_a || payload.token_b || payload.token_in || payload.token_out) && (
           <Card className="mb-6">

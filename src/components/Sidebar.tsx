@@ -20,6 +20,7 @@ import {
   Image,
   Search,
   FileText,
+  FileCode,
   ChevronDown,
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
@@ -60,6 +61,7 @@ const navGroups: NavGroup[] = [
     items: [
       { to: "/blockchain", label: "Blockchain", icon: Globe2 },
       { to: "/transactions", label: "Tx Feed", icon: Activity },
+      { to: "/contracts", label: "Contracts", icon: FileCode },
       { to: "/tokens", label: "Tokens", icon: Coins },
       { to: "/nfts", label: "NFTs", icon: Image },
     ],
