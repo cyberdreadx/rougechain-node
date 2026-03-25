@@ -637,12 +637,14 @@ impl L1Node {
                         "to": tx.payload.to_pub_key_hex,
                     }),
                 },
-                "create_pool" | "add_liquidity" | "remove_liquidity" | "swap" => TxLog {
+                "create_pool" | "add_liquidity" | "remove_liquidity" | "swap"
+                | "place_limit_order" | "cancel_limit_order" => TxLog {
                     event_type: tx.tx_type.clone(),
                     data: serde_json::json!({
                         "pool_id": tx.payload.pool_id,
                         "token_a": tx.payload.token_a_symbol,
                         "token_b": tx.payload.token_b_symbol,
+                        "order_id": tx.payload.limit_order_id,
                     }),
                 },
                 "stake" | "unstake" => TxLog {

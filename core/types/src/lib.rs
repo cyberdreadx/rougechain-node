@@ -158,6 +158,11 @@ pub struct TxPayload {
     pub multisig_proposal_fee: Option<f64>,                // Inner tx fee
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub multisig_approval_sig: Option<String>,             // Co-signer's signature for approve
+    // Limit order fields
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit_order_id: Option<String>,                    // Order ID (for cancel)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit_order_expires: Option<u64>,                  // Expiry block height (0 = never)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

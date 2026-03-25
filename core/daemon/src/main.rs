@@ -7,6 +7,7 @@ mod pool_events;
 mod node;
 mod peer;
 mod pool_store;
+mod order_book;
 mod rollup;
 mod websocket;
 mod jsonrpc;
@@ -192,6 +193,8 @@ struct AppState {
     contract_store: Arc<ContractStore>,
     /// Off-chain event indexer
     indexer: Arc<indexer::Indexer>,
+    /// On-chain limit order book
+    order_book: Arc<order_book::OrderBook>,
 }
 
 #[derive(Clone)]
@@ -409,6 +412,7 @@ async fn main() -> Result<(), String> {
         wasm_runtime: Arc::new(WasmRuntime::new().expect("Failed to create WASM runtime")),
         contract_store: Arc::new(ContractStore::new(&data_dir_clone).expect("Failed to create contract store")),
         indexer: Arc::new(indexer::Indexer::new(&data_dir_clone).expect("Failed to create indexer")),
+        order_book: Arc::new(order_book::OrderBook::new(&data_dir_clone).expect("Failed to create order book")),
     };
     
     // Backfill indexer on startup
@@ -467,6 +471,7 @@ async fn main() -> Result<(), String> {
         let broadcast_pm = peer_manager.clone();
         let ws_bc = ws_broadcaster.clone();
         let idx_bc = app_state.indexer.clone();
+        let ob_bc = app_state.order_book.clone();
         tokio::spawn(async move {
             loop {
                 if let Ok(Some(block)) = miner.mine_pending() {
@@ -477,7 +482,58 @@ async fn main() -> Result<(), String> {
 
                     // Index the block
                     let _ = idx_bc.index_block(&block);
-                    
+
+                    // Process limit orders from this block
+                    let block_height = block.header.height;
+                    for tx in &block.txs {
+                        match tx.tx_type.as_str() {
+                            "place_limit_order" => {
+                                let token_in = tx.payload.token_a_symbol.as_deref().unwrap_or("");
+                                let token_out = tx.payload.token_b_symbol.as_deref().unwrap_or("");
+                                let amount_in = tx.payload.amount_a.unwrap_or(0);
+                                let min_out = tx.payload.min_amount_out.unwrap_or(0);
+                                let expires = tx.payload.limit_order_expires.unwrap_or(0);
+                                if !token_in.is_empty() && !token_out.is_empty() && amount_in > 0 && min_out > 0 {
+                                    let pool_id = crate::pool_store::LiquidityPool::make_pool_id(token_in, token_out);
+                                    let order_id = tx.payload.limit_order_id.clone()
+                                        .unwrap_or_else(|| format!("lo-{}-{}", block_height, tx.nonce));
+                                    let order = crate::order_book::LimitOrder {
+                                        order_id: order_id.clone(),
+                                        owner_pub_key: tx.from_pub_key.clone(),
+                                        pool_id,
+                                        token_in: token_in.to_string(),
+                                        token_out: token_out.to_string(),
+                                        amount_in,
+                                        min_amount_out: min_out,
+                                        created_at_height: block_height,
+                                        expires_at_height: expires,
+                                        status: crate::order_book::OrderStatus::Open,
+                                        filled_at_height: None,
+                                        filled_amount_out: None,
+                                    };
+                                    if let Err(e) = ob_bc.place_order(&order) {
+                                        eprintln!("[orders] Failed to place order {}: {}", order_id, e);
+                                    } else {
+                                        eprintln!("[orders] Placed limit order {} ({} {} → min {} {})",
+                                            order_id, amount_in, token_in, min_out, token_out);
+                                    }
+                                }
+                            }
+                            "cancel_limit_order" => {
+                                if let Some(order_id) = &tx.payload.limit_order_id {
+                                    match ob_bc.cancel_order(order_id, &tx.from_pub_key) {
+                                        Ok(_) => eprintln!("[orders] Cancelled order {}", order_id),
+                                        Err(e) => eprintln!("[orders] Cancel failed for {}: {}", order_id, e),
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // Expire stale orders
+                    let _ = ob_bc.expire_orders_at_height(block_height);
+
                     // Broadcast to P2P peers
                     let peers = broadcast_pm.get_peers().await;
                     if !peers.is_empty() {
@@ -518,6 +574,10 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/indexer/block/:height", get(indexer_by_block))
         .route("/api/indexer/stats", get(indexer_stats))
         .route("/metrics", get(prometheus_metrics))
+        .route("/api/orders", get(get_all_orders))
+        .route("/api/orders/pool/:pool_id", get(get_pool_orders))
+        .route("/api/orders/user/:pubkey", get(get_user_orders))
+        .route("/api/orders/:order_id", get(get_order_by_id))
         .route("/api/stats", get(get_stats))
         .route("/api/fee", get(get_fee_info))
         .route("/api/finality/:height", get(get_finality_proof))
@@ -963,6 +1023,65 @@ async fn indexer_stats(
         "totalEvents": state.indexer.event_count(),
         "highestIndexedBlock": state.indexer.highest_indexed_block(),
     })))
+}
+
+// ── Limit Order API ─────────────────────────────────────────────
+
+async fn get_all_orders(
+    State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let status = params.get("status").cloned();
+    let filter = match status.as_deref() {
+        Some("open") => Some(order_book::OrderStatus::Open),
+        Some("filled") => Some(order_book::OrderStatus::Filled),
+        Some("cancelled") => Some(order_book::OrderStatus::Cancelled),
+        Some("expired") => Some(order_book::OrderStatus::Expired),
+        _ => None,
+    };
+    let orders = state.order_book.list_all_orders(filter)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({
+        "orders": orders,
+        "count": orders.len(),
+    })))
+}
+
+async fn get_pool_orders(
+    State(state): State<AppState>,
+    Path(pool_id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let orders = state.order_book.get_open_orders_for_pool(&pool_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({
+        "pool_id": pool_id,
+        "orders": orders,
+        "count": orders.len(),
+    })))
+}
+
+async fn get_user_orders(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let orders = state.order_book.get_user_orders(&pubkey)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({
+        "owner": pubkey,
+        "orders": orders,
+        "count": orders.len(),
+    })))
+}
+
+async fn get_order_by_id(
+    State(state): State<AppState>,
+    Path(order_id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.order_book.get_order(&order_id) {
+        Ok(Some(order)) => Ok(Json(serde_json::json!(order))),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 // ── Prometheus Metrics ──────────────────────────────────────────
