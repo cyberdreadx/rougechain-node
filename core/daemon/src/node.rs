@@ -118,6 +118,8 @@ pub struct L1Node {
     finality_db: sled::Tree,
     /// Notify handle: wake the miner immediately when a tx enters mempool
     mine_notify: Arc<tokio::sync::Notify>,
+    /// Running total of XRGE currently in the shielded privacy pool
+    shielded_supply: Arc<Mutex<f64>>,
 }
 
 impl L1Node {
@@ -212,6 +214,7 @@ impl L1Node {
             unbonding_queue: Arc::new(Mutex::new(Vec::new())),
             finality_db: finality_db_tree,
             mine_notify: Arc::new(tokio::sync::Notify::new()),
+            shielded_supply: Arc::new(Mutex::new(0.0)),
         })
     }
 
@@ -447,7 +450,7 @@ impl L1Node {
         for block in blocks {
             // Apply transaction effects
             for tx in &block.txs {
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height);
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height, &self.shielded_supply);
                 self.apply_web3_state_effects(tx, block.header.height);
                 Self::apply_amm_balance_effects(
                     &mut balances,
@@ -894,6 +897,11 @@ impl L1Node {
 
     pub fn get_nullifier_count(&self) -> usize {
         self.nullifier_store.count()
+    }
+
+    /// Total XRGE currently in the shielded privacy pool
+    pub fn get_shielded_supply(&self) -> f64 {
+        self.shielded_supply.lock().map(|v| *v).unwrap_or(0.0)
     }
 
     /// Find the original creator of a token by scanning blockchain history
@@ -2173,7 +2181,7 @@ impl L1Node {
         // Apply transaction effects (transfers, stakes, etc.) - fees deducted from senders
         for tx in &block.txs {
             let before = balances.values().sum::<f64>();
-            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block.header.height);
+            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block.header.height, &self.shielded_supply);
             // Commit sequential nonce for this sender
             let _ = self.nonce_db.insert(tx.from_pub_key.as_bytes(), &tx.nonce.to_be_bytes());
             // Index sender and recipient addresses for rouge1 resolution
@@ -2947,7 +2955,7 @@ impl L1Node {
         let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
         let node_pub_key = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         let block_height = self.store.get_tip().map(|t| t.height).unwrap_or(0);
-        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block_height);
+        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block_height, &self.shielded_supply);
         Ok(())
     }
 
@@ -2961,6 +2969,10 @@ impl L1Node {
         token_balances.clear();
         lp_balances.clear();
         burned_tokens.clear();
+        // Reset shielded supply — it will be rebuilt from chain history
+        if let Ok(mut sp) = self.shielded_supply.lock() {
+            *sp = 0.0;
+        }
         
         let mut skipped_txs = 0u64;
 
@@ -2970,7 +2982,7 @@ impl L1Node {
             for tx in &block.txs {
                 let sum_before: f64 = balances.values().sum();
 
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height);
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height, &self.shielded_supply);
                 
                 Self::apply_amm_balance_effects(
                     &mut balances,
@@ -3821,6 +3833,7 @@ impl L1Node {
         node_pub_key: &str,
         unbonding_queue: &Arc<Mutex<Vec<UnbondingEntry>>>,
         block_height: u64,
+        shielded_supply: &Arc<Mutex<f64>>,
     ) {
         match tx.tx_type.as_str() {
             "transfer" => {
@@ -4052,6 +4065,10 @@ impl L1Node {
                     return;
                 }
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= shield_amount + tx.fee;
+                // Track shielded supply
+                if let Ok(mut sp) = shielded_supply.lock() {
+                    *sp += shield_amount;
+                }
             }
             "unshield" => {
                 let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
@@ -4062,6 +4079,10 @@ impl L1Node {
                 let unshield_amount = tx.payload.shielded_value.unwrap_or(0) as f64;
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += unshield_amount;
+                // Track shielded supply
+                if let Ok(mut sp) = shielded_supply.lock() {
+                    *sp = (*sp - unshield_amount).max(0.0);
+                }
             }
             "shielded_transfer" => {
                 // Fee is deducted from public balance (fee is always public)

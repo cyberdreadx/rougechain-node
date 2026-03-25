@@ -1557,6 +1557,8 @@ struct TokenHoldersResponse {
     holders: Vec<TokenHolder>,
     total_supply: f64,
     circulating_supply: f64,
+    shielded_supply: f64,
+    burned_supply: f64,
 }
 
 #[derive(Deserialize)]
@@ -1629,11 +1631,18 @@ async fn get_token_holders(
     // Total supply is the original minted amount
     let total_supply = original_supply as f64;
     
-    // Circulating supply = sum of all holder balances (most accurate)
+    // Get shielded supply (only for native XRGE — custom tokens don't support shielding)
+    let shielded = if symbol.eq_ignore_ascii_case("XRGE") {
+        node.get_shielded_supply()
+    } else {
+        0.0
+    };
+    
+    // Circulating supply = transparent wallets + pool reserves + shielded pool
     // Falls back to total - burned if no holders found
     let wallet_total: f64 = wallet_balances.values().sum();
     let circulating_supply = if wallet_total > 0.0 {
-        wallet_total + pool_reserves as f64
+        wallet_total + pool_reserves as f64 + shielded
     } else {
         total_supply - burned
     };
@@ -1658,6 +1667,16 @@ async fn get_token_holders(
         });
     }
     
+    // Add shielded pool as a special holder if there is shielded supply
+    if shielded > 0.0 {
+        let percentage = if total_supply > 0.0 { (shielded / total_supply) * 100.0 } else { 0.0 };
+        holders.push(TokenHolder {
+            address: "Shielded Pool (Private)".to_string(),
+            balance: shielded,
+            percentage,
+        });
+    }
+    
     // Sort by balance descending
     holders.sort_by(|a, b| b.balance.partial_cmp(&a.balance).unwrap_or(std::cmp::Ordering::Equal));
     
@@ -1666,6 +1685,8 @@ async fn get_token_holders(
         holders,
         total_supply,
         circulating_supply,
+        shielded_supply: shielded,
+        burned_supply: burned,
     })
 }
 
