@@ -13,6 +13,7 @@ use quantum_vault_storage::chain_store::ChainStore;
 use quantum_vault_storage::commitment_store::CommitmentStore;
 use quantum_vault_storage::governance_store::{GovernanceStore, Proposal, Vote};
 use quantum_vault_storage::lock_store::{LockStore, TokenLock};
+use quantum_vault_storage::multisig_store::{MultisigStore, MultisigWallet, MultisigProposal};
 use quantum_vault_storage::mail_store::{MailLabel, MailMessage, MailStore};
 use quantum_vault_storage::messenger_store::{Conversation, MessengerMessage, MessengerStore, MessengerWallet};
 use quantum_vault_storage::name_registry::{NameEntry, NameRegistry};
@@ -77,6 +78,7 @@ pub struct L1Node {
     mail_store: MailStore,
     commitment_store: CommitmentStore,
     lock_store: LockStore,
+    pub multisig_store: MultisigStore,
     token_stake_store: TokenStakeStore,
     governance_store: GovernanceStore,
     allowance_store: AllowanceStore,
@@ -123,6 +125,7 @@ impl L1Node {
         let commitment_store = CommitmentStore::new(&opts.data_dir)?;
         let nullifier_store = NullifierStore::new(&opts.data_dir)?;
         let lock_store = LockStore::new(&opts.data_dir)?;
+        let multisig_store = MultisigStore::new(&opts.data_dir)?;
         let token_stake_store = TokenStakeStore::new(&data_dir_str)?;
         let governance_store = GovernanceStore::new(&data_dir_str)?;
         let allowance_store = AllowanceStore::new(&data_dir_str)?;
@@ -160,6 +163,7 @@ impl L1Node {
             nullifier_store,
             receipt_store,
             lock_store,
+            multisig_store,
             token_stake_store,
             governance_store,
             allowance_store,
@@ -2000,6 +2004,113 @@ impl L1Node {
                     };
                     if let Err(e) = self.allowance_store.set_allowance(&new_allowance) {
                         eprintln!("[node] Failed to update allowance: {}", e);
+                    }
+                }
+                _ => {}
+            }
+
+            // ── Multi-sig wallet transactions ──
+            match tx.tx_type.as_str() {
+                "multisig_create" => {
+                    let signers = tx.payload.multisig_signers.clone().unwrap_or_default();
+                    let threshold = tx.payload.multisig_threshold.unwrap_or(2) as u32;
+                    if signers.len() < 2 || threshold < 1 || threshold > signers.len() as u32 {
+                        eprintln!("[node] Rejecting multisig_create: invalid signers/threshold");
+                    } else {
+                        let wallet_id = tx.payload.multisig_wallet_id.clone()
+                            .unwrap_or_else(|| format!("ms-{}", &quantum_vault_types::compute_single_tx_hash(tx)[..16]));
+                        let wallet = MultisigWallet {
+                            wallet_id: wallet_id.clone(),
+                            creator: tx.from_pub_key.clone(),
+                            signers,
+                            threshold,
+                            created_at_height: block.header.height,
+                            label: tx.payload.multisig_label.clone(),
+                        };
+                        if let Err(e) = self.multisig_store.create_wallet(&wallet) {
+                            eprintln!("[node] Failed to create multisig wallet: {}", e);
+                        } else {
+                            eprintln!("[node] Created multisig wallet {} ({}-of-{})", wallet_id, threshold, wallet.signers.len());
+                        }
+                    }
+                }
+                "multisig_submit" => {
+                    let wallet_id = match tx.payload.multisig_wallet_id.as_ref() {
+                        Some(id) => id.clone(),
+                        None => { eprintln!("[node] Rejecting multisig_submit: missing wallet_id"); continue; }
+                    };
+                    if let Ok(Some(wallet)) = self.multisig_store.get_wallet(&wallet_id) {
+                        if !wallet.signers.contains(&tx.from_pub_key) {
+                            eprintln!("[node] Rejecting multisig_submit: not a signer");
+                        } else {
+                            let proposal_id = tx.payload.multisig_proposal_id.clone()
+                                .unwrap_or_else(|| format!("mp-{}", &quantum_vault_types::compute_single_tx_hash(tx)[..16]));
+                            let proposal = MultisigProposal {
+                                proposal_id: proposal_id.clone(),
+                                wallet_id,
+                                tx_type: tx.payload.multisig_proposal_tx_type.clone().unwrap_or_else(|| "transfer".into()),
+                                proposer: tx.from_pub_key.clone(),
+                                payload: tx.payload.multisig_proposal_payload.clone().unwrap_or(serde_json::json!({})),
+                                fee: tx.payload.multisig_proposal_fee.unwrap_or(0.1),
+                                approvals: vec![tx.from_pub_key.clone()],
+                                signatures: vec![tx.sig.clone()],
+                                executed: false,
+                                created_at_height: block.header.height,
+                                executed_at_height: None,
+                            };
+                            if let Err(e) = self.multisig_store.create_proposal(&proposal) {
+                                eprintln!("[node] Failed to create multisig proposal: {}", e);
+                            } else {
+                                eprintln!("[node] Created multisig proposal {}", proposal_id);
+                            }
+                        }
+                    }
+                }
+                "multisig_approve" => {
+                    let proposal_id = match tx.payload.multisig_proposal_id.as_ref() {
+                        Some(id) => id.clone(),
+                        None => { eprintln!("[node] Rejecting multisig_approve: missing proposal_id"); continue; }
+                    };
+                    if let Ok(Some(mut proposal)) = self.multisig_store.get_proposal(&proposal_id) {
+                        if proposal.executed {
+                            eprintln!("[node] Rejecting multisig_approve: already executed");
+                        } else if let Ok(Some(wallet)) = self.multisig_store.get_wallet(&proposal.wallet_id) {
+                            if !wallet.signers.contains(&tx.from_pub_key) {
+                                eprintln!("[node] Rejecting multisig_approve: not a signer");
+                            } else if proposal.approvals.contains(&tx.from_pub_key) {
+                                eprintln!("[node] Rejecting multisig_approve: already approved");
+                            } else {
+                                proposal.approvals.push(tx.from_pub_key.clone());
+                                proposal.signatures.push(tx.payload.multisig_approval_sig.clone().unwrap_or(tx.sig.clone()));
+
+                                // Check if threshold is now met
+                                if proposal.approvals.len() >= wallet.threshold as usize {
+                                    proposal.executed = true;
+                                    proposal.executed_at_height = Some(block.header.height);
+                                    eprintln!("[node] Multisig proposal {} executed ({}/{} approvals)",
+                                        proposal_id, proposal.approvals.len(), wallet.threshold);
+
+                                    // Execute the inner transfer
+                                    if proposal.tx_type == "transfer" {
+                                        if let (Some(to), Some(amount)) = (
+                                            proposal.payload.get("to_pub_key_hex").and_then(|v| v.as_str()),
+                                            proposal.payload.get("amount").and_then(|v| v.as_u64()),
+                                        ) {
+                                            let b = balances.entry(wallet.creator.clone()).or_insert(0.0);
+                                            if *b >= amount as f64 {
+                                                *b -= amount as f64;
+                                                *balances.entry(to.to_string()).or_insert(0.0) += amount as f64;
+                                                eprintln!("[node] Multisig transfer: {} XRGE from {} to {}", amount, wallet.creator, &to[..16]);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if let Err(e) = self.multisig_store.update_proposal(&proposal) {
+                                    eprintln!("[node] Failed to update proposal: {}", e);
+                                }
+                            }
+                        }
                     }
                 }
                 _ => {}

@@ -553,6 +553,11 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/contracts", get(contract_list))
         // EIP-1559 fee info
         .route("/api/fee-info", get(fee_info))
+        // Multi-sig wallet endpoints
+        .route("/api/multisig/wallets", get(multisig_list_wallets))
+        .route("/api/multisig/wallet/:wallet_id", get(multisig_get_wallet))
+        .route("/api/multisig/wallet/:wallet_id/proposals", get(multisig_get_proposals))
+        .route("/api/multisig/wallets/:pubkey", get(multisig_wallets_by_signer))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer({
             let cors_origins = std::env::var("QV_CORS_ORIGINS")
@@ -6353,4 +6358,80 @@ async fn fee_info(
         "maxChangePercent": 12.5,
         "blockHeight": height,
     })))
+}
+
+// ── Multi-sig wallet API handlers ──
+
+/// List all multisig wallets
+async fn multisig_list_wallets(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.node.multisig_store.list_wallets() {
+        Ok(wallets) => Ok(Json(serde_json::json!({
+            "success": true,
+            "wallets": wallets,
+            "count": wallets.len(),
+        }))),
+        Err(e) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": e,
+        }))),
+    }
+}
+
+/// Get a specific multisig wallet
+async fn multisig_get_wallet(
+    State(state): State<AppState>,
+    Path(wallet_id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.node.multisig_store.get_wallet(&wallet_id) {
+        Ok(Some(wallet)) => Ok(Json(serde_json::json!({
+            "success": true,
+            "wallet": wallet,
+        }))),
+        Ok(None) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": "Wallet not found",
+        }))),
+        Err(e) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": e,
+        }))),
+    }
+}
+
+/// Get proposals for a multisig wallet
+async fn multisig_get_proposals(
+    State(state): State<AppState>,
+    Path(wallet_id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.node.multisig_store.get_proposals_by_wallet(&wallet_id) {
+        Ok(proposals) => Ok(Json(serde_json::json!({
+            "success": true,
+            "proposals": proposals,
+            "count": proposals.len(),
+        }))),
+        Err(e) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": e,
+        }))),
+    }
+}
+
+/// Get wallets where a pubkey is a co-signer
+async fn multisig_wallets_by_signer(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.node.multisig_store.get_wallets_by_signer(&pubkey) {
+        Ok(wallets) => Ok(Json(serde_json::json!({
+            "success": true,
+            "wallets": wallets,
+            "count": wallets.len(),
+        }))),
+        Err(e) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": e,
+        }))),
+    }
 }

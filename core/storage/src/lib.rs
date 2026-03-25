@@ -5,6 +5,7 @@ pub mod chain_store;
 pub mod commitment_store;
 pub mod governance_store;
 pub mod lock_store;
+pub mod multisig_store;
 pub mod mail_store;
 pub mod messenger_store;
 pub mod name_registry;

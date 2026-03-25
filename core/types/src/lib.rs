@@ -129,6 +129,25 @@ pub struct TxPayload {
     pub contract_args: Option<serde_json::Value>,         // JSON arguments for the method
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_gas_limit: Option<u64>,                  // Max fuel for execution
+    // Multi-sig wallet fields
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multisig_wallet_id: Option<String>,                // Wallet identifier
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multisig_signers: Option<Vec<String>>,             // N public keys
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multisig_threshold: Option<u32>,                   // M — required signatures
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multisig_label: Option<String>,                    // optional label
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multisig_proposal_id: Option<String>,              // Proposal identifier
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multisig_proposal_tx_type: Option<String>,         // Inner tx type (transfer, etc)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multisig_proposal_payload: Option<serde_json::Value>, // Inner tx payload
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multisig_proposal_fee: Option<f64>,                // Inner tx fee
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multisig_approval_sig: Option<String>,             // Co-signer's signature for approve
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
