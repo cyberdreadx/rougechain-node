@@ -36,9 +36,18 @@ Contracts can call these host functions to interact with the chain:
 | `host_sha256(data, dlen, out)` | Compute SHA-256 hash |
 | `host_set_return(data, dlen)` | Set return value |
 
-## Gas Metering
+## Gas Metering & Fees
 
 Every WASM instruction costs 1 fuel unit. The default limit is **10,000,000 fuel per call** (≈10M instructions). If a contract runs out of fuel, execution halts and all state changes are reverted.
+
+### Fee Schedule
+
+| Operation | Fee Formula |
+|-----------|-------------|
+| Contract Deploy | `wasm_size_bytes × 0.000001` XRGE |
+| Contract Call | `gas_used × 0.000001` XRGE |
+
+Fees are automatically calculated and included in the on-chain transaction. They appear in the transaction detail view on the explorer.
 
 ## API
 
@@ -69,11 +78,48 @@ POST /api/v2/contract/call
 ### Query Contract State
 
 ```bash
-GET /api/contract/{addr}          # metadata
-GET /api/contract/{addr}/state?key=x  # storage read
-GET /api/contract/{addr}/events   # event log
-GET /api/contracts                # list all
+GET /api/contract/{addr}                # metadata
+GET /api/contract/{addr}/state          # full state dump (all keys)
+GET /api/contract/{addr}/state?key=x    # single key lookup
+GET /api/contract/{addr}/events         # event log
+GET /api/contracts                      # list all contracts
 ```
+
+## ERC-20 Token Standard
+
+RougeChain includes a reference ERC-20 token contract at `contracts/erc20_template/`. This implements the standard fungible token interface:
+
+| Method | Args | Description |
+|--------|------|-------------|
+| `init` | `{name, symbol, decimals, total_supply, owner}` | Initialize token, mint supply to owner |
+| `name` / `symbol` / `decimals` / `total_supply` | `{}` | Token metadata queries |
+| `balance_of` | `{account}` | Get account balance |
+| `transfer` | `{to, amount}` | Transfer tokens (caller → to) |
+| `approve` | `{spender, amount}` | Set allowance |
+| `allowance` | `{owner, spender}` | Get allowance |
+| `transfer_from` | `{from, to, amount}` | Transfer using allowance |
+
+### Storage Layout
+
+- `meta:name` / `meta:symbol` / `meta:decimals` / `meta:total_supply` — Token metadata
+- `bal:{account}` — Account balances
+- `allow:{owner}:{spender}` — Allowances
+
+### Build & Deploy
+
+```bash
+cd contracts/erc20_template
+cargo build --release --target wasm32-unknown-unknown
+# Deploy the .wasm from target/wasm32-unknown-unknown/release/
+```
+
+## Explorer Integration
+
+Deployed contracts are visible in the RougeChain explorer:
+
+- **Contracts Explorer** (`/contracts`) — List all deployed contracts with search/sort
+- **Contract Detail** (`/contract/{addr}`) — Contract info, live state viewer, interactive call UI
+- **Transaction Detail** — Contract txs show: contract address, method, gas used, WASM size
 
 ## SDK
 
@@ -98,8 +144,22 @@ const result = await rc.callContract({
 // Query
 const meta = await rc.getContract(deploy.address);
 const events = await rc.getContractEvents(deploy.address);
-const state = await rc.getContractState(deploy.address, '636f756e74');
+const allState = await rc.getContractState(deploy.address);         // full dump
+const single = await rc.getContractState(deploy.address, '636f756e74'); // single key
 ```
+
+## MCP Server (AI Agents)
+
+The RougeChain MCP server exposes smart contract operations as tools for AI agents:
+
+| Tool | Description |
+|------|-------------|
+| `list_contracts` | List all deployed contracts |
+| `get_contract` | Get contract metadata |
+| `get_contract_state` | Read state (single key or full dump) |
+| `get_contract_events` | Get contract event log |
+| `deploy_contract` | Deploy WASM bytecode |
+| `call_contract` | Execute a contract method |
 
 ## Security
 

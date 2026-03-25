@@ -227,13 +227,16 @@ server.tool(
 
 server.tool(
   "get_contract_state",
-  "Read a value from a smart contract's persistent storage",
+  "Read contract storage. Omit key to dump all state; provide key for single-value lookup.",
   {
     address: z.string().describe("Contract address"),
-    key: z.string().describe("Storage key (hex or string)"),
+    key: z.string().optional().describe("Storage key (hex or string). Omit to dump all state."),
   },
   async ({ address, key }) => {
-    const data = await apiGet(`/contract/${address}/state?key=${encodeURIComponent(key)}`);
+    const path = key
+      ? `/contract/${address}/state?key=${encodeURIComponent(key)}`
+      : `/contract/${address}/state`;
+    const data = await apiGet(path);
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   }
 );
