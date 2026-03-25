@@ -121,7 +121,7 @@ const NetworkHistoryChart = () => {
             if (bucket) {
               bucket.blocks += 1;
               // Count transactions in block
-              bucket.transactions += block.txs.length;
+              bucket.transactions += (block.txs ?? []).length;
             }
           }
         });
@@ -154,7 +154,7 @@ const NetworkHistoryChart = () => {
               minute: "2-digit" 
             }),
             blocks: index + 1,
-            transactions: blocks.slice(0, index + 1).reduce((sum, b) => sum + b.txs.length, 0),
+            transactions: blocks.slice(0, index + 1).reduce((sum, b) => sum + (b.txs ?? []).length, 0),
             timestamp: block.header.time,
           }));
           setChartData(cumulativeData);

@@ -76,13 +76,13 @@ const NetworkStatsBar = () => {
           : 0;
 
         // Count transactions across all blocks
-        const totalTransactions = blocks.reduce((sum, b) => sum + b.txs.length, 0);
+        const totalTransactions = blocks.reduce((sum, b) => sum + (b.txs ?? []).length, 0);
         
         // TPS: Calculate based on recent blocks (last 60 seconds) for more accurate real-time TPS
         const now = Date.now();
         const recentWindow = 60000; // 60 seconds
         const recentBlocks = blocks.filter(b => (now - b.header.time) <= recentWindow);
-        const recentTxs = recentBlocks.reduce((sum, b) => sum + b.txs.length, 0);
+        const recentTxs = recentBlocks.reduce((sum, b) => sum + (b.txs ?? []).length, 0);
         
         let txsPerSecond = 0;
         if (recentBlocks.length > 0 && recentTxs > 0) {

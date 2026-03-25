@@ -9,7 +9,7 @@ interface BlockchainVisualizerProps {
 
 const BlockCard = ({ block, index, isFirst }: { block: Block; index: number; isFirst: boolean }) => {
   const truncate = (str: string, len: number) =>
-    str.length > len ? `${str.slice(0, len)}...` : str;
+    str && str.length > len ? `${str.slice(0, len)}...` : (str || "—");
   const getTxCount = () => {
     try {
       const parsed = JSON.parse(block.data);
