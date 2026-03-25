@@ -1309,7 +1309,7 @@ impl L1Node {
                 to_pub_key_hex: Some(deployer.to_string()),
                 ..Default::default()
             },
-            fee: 0.0,
+            fee: (wasm_size as f64) * 0.000001, // Gas fee: 0.000001 XRGE per byte
             sig: String::new(),
             signed_payload: None,
         };
@@ -1344,7 +1344,7 @@ impl L1Node {
                 reason: if success { None } else { Some("failed".to_string()) },
                 ..Default::default()
             },
-            fee: 0.0,
+            fee: (gas_used as f64) * 0.000001, // Gas fee: 0.000001 XRGE per gas unit
             sig: String::new(),
             signed_payload: None,
         };
