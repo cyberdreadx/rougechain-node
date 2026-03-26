@@ -22,6 +22,7 @@ import {
   FileText,
   FileCode,
   ChevronDown,
+  Bot,
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY } from "@/lib/network";
@@ -78,6 +79,7 @@ const navGroups: NavGroup[] = [
     items: [
       { to: "/validators", label: "Validators", icon: Shield },
       { to: "/node", label: "Core Node", icon: Network },
+      { to: "/agents", label: "Agents", icon: Bot },
     ],
   },
 ];

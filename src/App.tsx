@@ -29,6 +29,7 @@ import Mail from "./pages/Mail";
 import Privacy from "./pages/Privacy";
 import Contracts from "./pages/Contracts";
 import ContractDetail from "./pages/ContractDetail";
+import Agents from "./pages/Agents";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -106,6 +107,7 @@ const App = () => (
                 <Route path="/privacy" element={<Privacy />} />
                 <Route path="/contracts" element={<Contracts />} />
                 <Route path="/contract/:addr" element={<ContractDetail />} />
+                <Route path="/agents" element={<Agents />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
