@@ -45,3 +45,4 @@ contracts/cache/
 # Temp / generated files
 *.zip
 create_store_assets.py
+tweets.md
