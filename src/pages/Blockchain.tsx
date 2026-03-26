@@ -173,14 +173,15 @@ const Blockchain = () => {
 
     setIsValidating(true);
     try {
-      // Basic validation: check chain linkage
+      const sorted = [...chain].sort((a, b) => a.index - b.index);
+
       let valid = true;
       const errors: string[] = [];
 
-      for (let i = 0; i < chain.length; i++) {
-        if (i > 0 && chain[i].previousHash !== chain[i - 1].hash) {
+      for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i].previousHash !== sorted[i - 1].hash) {
           valid = false;
-          errors.push(`Block ${i}: Invalid previous hash linkage`);
+          errors.push(`Block ${sorted[i].index}: Invalid previous hash linkage`);
         }
       }
 
@@ -188,7 +189,7 @@ const Blockchain = () => {
 
       if (valid) {
         toast.success("Chain validated!", {
-          description: `All ${chain.length} blocks verified (ML-DSA-65 signatures verified by node)`,
+          description: `All ${sorted.length} blocks on this page verified (ML-DSA-65 signatures verified by node)`,
         });
       } else {
         toast.error("Chain validation failed!", {
