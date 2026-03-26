@@ -58,7 +58,7 @@ function ensureCorrectKeys(wallet: UnifiedWallet): UnifiedWallet {
     // Check encryption key sizes match FIPS 203 ML-KEM-768
     const encPrivBytes = updated.encryptionPrivateKey ? updated.encryptionPrivateKey.length / 2 : 0;
     const needsEncRegen = !updated.encryptionPublicKey || !updated.encryptionPrivateKey ||
-        encPrivBytes !== ML_KEM768_SECRET_KEY_BYTES || (updated.version || 0) < 3;
+        encPrivBytes !== ML_KEM768_SECRET_KEY_BYTES;
 
     if (needsEncRegen) {
         console.warn(`[Vault] Encryption key size mismatch or missing. Regenerating FIPS 203 keys.`);
