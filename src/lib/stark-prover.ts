@@ -36,12 +36,12 @@ async function ensureLoaded(): Promise<WebAssembly.Instance> {
 export async function proveUnshield(amount: number, fee = 1): Promise<string> {
   const wasm = await ensureLoaded();
   const exports = wasm.exports as {
-    prove_unshield: (amount: number, fee: number) => number;
+    prove_unshield: (amount: bigint, fee: bigint) => number;
     get_output_ptr: () => number;
     memory: WebAssembly.Memory;
   };
 
-  const len = exports.prove_unshield(amount, fee);
+  const len = exports.prove_unshield(BigInt(amount), BigInt(fee));
   if (len === 0) {
     throw new Error("STARK proof generation failed (prove_unshield returned 0)");
   }
