@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { secureUnshield } from "@/lib/secure-api";
 import { getActiveNotes, markSpent, importNote, deleteNote, type StoredNote } from "@/lib/note-store";
+import { proveUnshield } from "@/lib/stark-prover";
 
 interface UnshieldDialogProps {
   wallet: {
@@ -38,14 +39,14 @@ const UnshieldDialog = ({ wallet, onClose, onSuccess }: UnshieldDialogProps) => 
     setUnshielding(note.nullifier);
 
     try {
-      // For unshielding, we submit the nullifier and a proof
-      // The proof is the randomness that proves ownership of the commitment
+      const proof = await proveUnshield(note.value);
+
       const result = await secureUnshield(
         wallet.signingPublicKey,
         wallet.signingPrivateKey,
         [note.nullifier],
         note.value,
-        note.randomness  // The randomness serves as the proof of ownership
+        proof
       );
 
       if (!result.success) {

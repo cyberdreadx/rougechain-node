@@ -9,4 +9,5 @@ members = [
   "daemon",
   "vm",
   "cli",
+  "wasm-prover",
 ]
