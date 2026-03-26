@@ -15,7 +15,9 @@ import {
   Globe,
   Twitter,
   Edit2,
-  Droplets
+  Droplets,
+  Shield,
+  Flame
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -109,6 +111,8 @@ const TokenExplorer = () => {
   const [transactionList, setTransactionList] = useState<TokenTransaction[]>([]);
   const [showEditMetadata, setShowEditMetadata] = useState(false);
   const [claiming, setClaiming] = useState(false);
+  const [shieldedSupply, setShieldedSupply] = useState<number>(0);
+  const [burnedSupply, setBurnedSupply] = useState<number>(0);
 
   const { tokenPrices, xrgeUsdPrice } = useTokenPrices(60000);
   const tokenPrice = symbol ? tokenPrices[symbol] : null;
@@ -176,6 +180,8 @@ const TokenExplorer = () => {
           setHolders(holdersData.holders || []);
           setTotalSupply(holdersData.total_supply || 0);
           setCirculatingSupply(holdersData.circulating_supply || 0);
+          setShieldedSupply(holdersData.shielded_supply || 0);
+          setBurnedSupply(holdersData.burned_supply || 0);
         }
       }
 
@@ -484,6 +490,62 @@ const TokenExplorer = () => {
           </Card>
         </div>
 
+        {/* Supply Breakdown (only for XRGE or tokens with shielded/burned data) */}
+        {(circulatingSupply > 0 || shieldedSupply > 0 || burnedSupply > 0) && (
+          <div className="grid grid-cols-3 gap-4">
+            <Card className="border-emerald-500/20">
+              <CardContent className="pt-4">
+                <div className="flex items-center gap-2 text-emerald-400 mb-1">
+                  <TrendingUp className="w-4 h-4" />
+                  <span className="text-xs">Circulating</span>
+                </div>
+                <p className="text-lg font-mono font-semibold">
+                  {formatTokenAmount(circulatingSupply, symbol)}
+                </p>
+                {totalSupply > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {((circulatingSupply / totalSupply) * 100).toFixed(2)}% of supply
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-purple-500/20">
+              <CardContent className="pt-4">
+                <div className="flex items-center gap-2 text-purple-400 mb-1">
+                  <Shield className="w-4 h-4" />
+                  <span className="text-xs">Shielded Pool</span>
+                </div>
+                <p className="text-lg font-mono font-semibold">
+                  {shieldedSupply > 0 ? formatTokenAmount(shieldedSupply, symbol) : "—"}
+                </p>
+                {shieldedSupply > 0 && totalSupply > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {((shieldedSupply / totalSupply) * 100).toFixed(2)}% shielded
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-orange-500/20">
+              <CardContent className="pt-4">
+                <div className="flex items-center gap-2 text-orange-400 mb-1">
+                  <Flame className="w-4 h-4" />
+                  <span className="text-xs">Burned</span>
+                </div>
+                <p className="text-lg font-mono font-semibold">
+                  {burnedSupply > 0 ? formatTokenAmount(burnedSupply, symbol) : "—"}
+                </p>
+                {burnedSupply > 0 && totalSupply > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {((burnedSupply / totalSupply) * 100).toFixed(4)}% burned
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
         {/* Price Chart */}
         {pool && (
           <Card>
@@ -566,7 +628,7 @@ const TokenExplorer = () => {
                     <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                       <span className="text-xs text-muted-foreground w-5 flex-shrink-0">#{index + 1}</span>
                       <p className="font-mono text-xs truncate">
-                        {holder.address.startsWith("Liquidity")
+                        {holder.address.startsWith("Liquidity") || holder.address.startsWith("Shielded")
                           ? holder.address
                           : <Link to={`/address/${holder.address}`} className="hover:text-primary transition-colors"><RougeAddr pubkey={holder.address} /></Link>}
                       </p>
