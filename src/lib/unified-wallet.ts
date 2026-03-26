@@ -291,14 +291,23 @@ function migrateFromV1(data: any): UnifiedWallet {
   };
 }
 
-// Save unified wallet: private keys go to sessionStorage (ephemeral),
-// only public metadata persists in localStorage.
+// Save unified wallet: private keys go to sessionStorage (ephemeral)
+// AND localStorage when no password vault exists (so PWA survives restarts).
+// When the user sets a password, the localStorage copy is removed and only
+// the encrypted blob + sessionStorage are used.
 export function saveUnifiedWallet(wallet: UnifiedWallet): void {
   const validated = ensureCorrectKeys(wallet);
 
-  // Full wallet with private keys -> sessionStorage (cleared on tab close)
+  // Full wallet with private keys -> sessionStorage
   const sessionKey = getScopedKey(UNIFIED_WALLET_KEY);
   sessionStorage.setItem(sessionKey, JSON.stringify(validated));
+
+  // If no password vault exists, also persist to localStorage so the wallet
+  // survives PWA / tab restarts.  Once the user sets a password, lockUnifiedWallet()
+  // removes this key and relies on the encrypted blob instead.
+  if (!hasEncryptedWallet()) {
+    localStorage.setItem(getScopedKey(UNIFIED_WALLET_KEY), JSON.stringify(validated));
+  }
 
   // Public-only metadata -> localStorage for display while locked
   localStorage.setItem(getScopedKey(WALLET_METADATA_KEY), JSON.stringify({
@@ -309,7 +318,7 @@ export function saveUnifiedWallet(wallet: UnifiedWallet): void {
     createdAt: validated.createdAt,
   }));
 
-  // Keep legacy localStorage keys for backward compatibility but only with public data
+  // Keep legacy localStorage keys for backward compatibility (public data only)
   const messengerKey = getScopedKey(MESSENGER_WALLET_KEY);
   localStorage.setItem(messengerKey, JSON.stringify({
     id: validated.id,
@@ -328,9 +337,6 @@ export function saveUnifiedWallet(wallet: UnifiedWallet): void {
     createdAt: validated.createdAt,
     linkedToMessenger: true,
   }));
-
-  // Remove any plaintext private keys from localStorage (migration from old format)
-  localStorage.removeItem(getScopedKey(UNIFIED_WALLET_KEY));
 }
 
 // Load unified wallet: checks sessionStorage first (unlocked wallet with private keys),
