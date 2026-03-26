@@ -139,38 +139,56 @@ await rc.bridge.getWithdrawals();
 
 Register human-readable names and resolve recipients before sending encrypted mail. Third-party apps must call these for cross-app mail to work.
 
+All write operations require a `wallet` parameter for ML-DSA-65 signed requests via `/api/v2/` endpoints with anti-replay nonce protection.
+
 ```typescript
-// Register wallet on the node first (provides encryption key)
-await rc.messenger.registerWallet({
-  id: walletId,
+// Register wallet on the node first (signed request)
+await rc.messenger.registerWallet(wallet, {
+  id: wallet.publicKey,
   displayName: "Alice",
-  signingPublicKey: sigPubKey,
+  signingPublicKey: wallet.publicKey,
   encryptionPublicKey: encPubKey,
 });
 
-// Register a mail name
-await rc.mail.registerName("alice", walletId);
+// Register a mail name (signed request)
+await rc.mail.registerName(wallet, "alice", wallet.publicKey);
 
-// Resolve a name → wallet info (includes encryption key for ML-KEM)
+// Resolve a name → wallet info (public, no signing needed)
 const resolved = await rc.mail.resolveName("bob");
 // { entry: { name, wallet_id }, wallet: { id, encryption_public_key, ... } }
 
-// Reverse lookup: wallet ID → name
-const name = await rc.mail.reverseLookup(walletId); // "alice"
+// Reverse lookup: wallet ID → name (public, no signing needed)
+const name = await rc.mail.reverseLookup(wallet.publicKey); // "alice"
 
-// Release a name
-await rc.mail.releaseName("alice", walletId);
+// Release a name (signed request)
+await rc.mail.releaseName(wallet, "alice", wallet.publicKey);
+
+// Send mail (signed request, multi-recipient CEK encryption)
+await rc.mail.send(wallet, { from, to, subject, body, encrypted_subject, encrypted_body });
+
+// Read inbox / sent (signed requests)
+const inbox = await rc.mail.getInbox(wallet);
+const sent = await rc.mail.getSent(wallet);
+
+// Manage mail (signed requests)
+await rc.mail.markRead(wallet, messageId);
+await rc.mail.move(wallet, messageId, "trash");
+await rc.mail.delete(wallet, messageId);
 ```
 
 ### Messenger (`rc.messenger`)
 
+All operations use ML-DSA-65 signed requests with nonce-based anti-replay protection.
+
 ```typescript
 await rc.messenger.getWallets();
-await rc.messenger.registerWallet({ id, displayName, signingPublicKey, encryptionPublicKey });
-await rc.messenger.getConversations(walletId, { signingPublicKey, encryptionPublicKey });
-await rc.messenger.createConversation([pubKeyA, pubKeyB]);
-await rc.messenger.getMessages(conversationId);
-await rc.messenger.sendMessage(conversationId, sender, encryptedContent, { ... });
+await rc.messenger.registerWallet(wallet, { id, displayName, signingPublicKey, encryptionPublicKey });
+await rc.messenger.getConversations(wallet);
+await rc.messenger.createConversation(wallet, [pubKeyA, pubKeyB]);
+await rc.messenger.getMessages(wallet, conversationId);
+await rc.messenger.sendMessage(wallet, conversationId, encryptedContent, { selfDestruct: true, destructAfterSeconds: 30 });
+await rc.messenger.deleteMessage(wallet, messageId);
+await rc.messenger.deleteConversation(wallet, conversationId);
 ```
 
 ### Push Notifications
@@ -299,6 +317,9 @@ import type {
 - All signatures use ML-DSA-65 (FIPS 204), resistant to quantum attacks
 - Private keys never leave your application
 - The SDK does not store keys — persistence is your responsibility
+- All mail, messenger, and name registry operations use ML-DSA-65 signed requests with timestamp validation and nonce-based anti-replay protection
+- Mail uses a CEK pattern for efficient multi-recipient encryption via ML-KEM-768
+- TOFU key fingerprint tracking for contact key-change detection
 
 ## Source
 
