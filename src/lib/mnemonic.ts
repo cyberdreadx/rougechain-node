@@ -22,9 +22,9 @@ function bytesToHex(bytes: Uint8Array): string {
 
 /**
  * Generate a new BIP-39 mnemonic phrase.
- * @param strength 128 = 12 words (default), 256 = 24 words
+ * @param strength 256 = 24 words (default, post-quantum safe), 128 = 12 words
  */
-export function generateMnemonic(strength: 128 | 256 = 128): string {
+export function generateMnemonic(strength: 128 | 256 = 256): string {
   return _genMnemonic(wordlist, strength);
 }
 

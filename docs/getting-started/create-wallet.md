@@ -52,10 +52,10 @@ All RougeChain wallets use **password-protected encrypted backups**. Plaintext k
 
 ### Seed Phrase (Mnemonic)
 
-Wallets also support **12-word BIP-39 mnemonic** backup:
+Wallets also support **24-word BIP-39 mnemonic** backup (256-bit entropy for post-quantum security):
 
 1. Go to **Settings** → **Reveal Seed Phrase**
-2. Write down all 12 words in order
+2. Write down all 24 words in order
 3. Store securely — anyone with your seed phrase has full access to your wallet
 
 > **Tip:** Use the seed phrase as your primary backup method. The `.pqcbackup` file is best for transferring between devices.
@@ -106,8 +106,8 @@ The encrypted backup file uses industry-standard cryptography:
 ### Key Generation
 
 ```typescript
-// 12-word mnemonic (128-bit entropy)
-const mnemonic = bip39.generateMnemonic(128);
+// 24-word mnemonic (256-bit entropy — post-quantum safe)
+const mnemonic = bip39.generateMnemonic(256);
 
 // Derive 32-byte seed via HKDF-SHA256
 const seed = hkdf(mnemonicToSeed(mnemonic), "rougechain-pqc-v1");

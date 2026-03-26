@@ -18,9 +18,9 @@ export class Wallet implements WalletKeys {
   /**
    * Generate a new ML-DSA-65 keypair with a BIP-39 mnemonic.
    * The mnemonic is stored on the wallet for backup/recovery.
-   * @param strength 128 = 12 words (default), 256 = 24 words
+   * @param strength 256 = 24 words (default, post-quantum safe), 128 = 12 words
    */
-  static generate(strength: 128 | 256 = 128): Wallet {
+  static generate(strength: 128 | 256 = 256): Wallet {
     const mnemonic = generateMnemonic(strength);
     const { publicKey, secretKey } = keypairFromMnemonic(mnemonic);
     return new Wallet(publicKey, secretKey, mnemonic);
