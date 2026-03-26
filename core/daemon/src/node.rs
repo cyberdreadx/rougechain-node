@@ -2265,6 +2265,46 @@ impl L1Node {
         let node_pub_key = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         // Apply transaction effects (transfers, stakes, etc.) - fees deducted from senders
         for tx in &block.txs {
+            // ── SECURITY: Consensus-layer guards (metadata store access) ──
+            // These checks require &self and cannot live inside the static apply_balance_tx_inner.
+            match tx.tx_type.as_str() {
+                "create_token" => {
+                    // Reject duplicate token symbols at consensus layer
+                    if let Some(ref sym) = tx.payload.token_symbol {
+                        let sym_upper = sym.trim().to_uppercase();
+                        if let Ok(Some(_)) = self.token_metadata_store.get_metadata(&sym_upper) {
+                            eprintln!("[node] Rejecting create_token in block: symbol '{}' already exists", sym_upper);
+                            continue; // skip this tx entirely
+                        }
+                    }
+                }
+                "mint_tokens" => {
+                    // CRITICAL: Verify creator authority at consensus layer.
+                    // Without this, any P2P-broadcast mint_tokens tx would credit tokens
+                    // to the signer, bypassing the API-layer creator check.
+                    if let Some(ref sym) = tx.payload.token_symbol {
+                        let sym_upper = sym.trim().to_uppercase();
+                        match self.token_metadata_store.is_creator(&sym_upper, &tx.from_pub_key) {
+                            Ok(true) => {} // authorized creator
+                            _ => {
+                                eprintln!("[node] Rejecting mint_tokens in block: {} is not creator of {}",
+                                    &tx.from_pub_key[..16.min(tx.from_pub_key.len())], sym_upper);
+                                continue; // skip this tx entirely
+                            }
+                        }
+                        // Also enforce mintable flag at consensus layer
+                        match self.token_metadata_store.is_mintable(&sym_upper) {
+                            Ok(true) => {} // mintable token
+                            _ => {
+                                eprintln!("[node] Rejecting mint_tokens in block: {} is not mintable", sym_upper);
+                                continue;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+
             let before = balances.values().sum::<f64>();
             Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block.header.height, &self.shielded_supply);
             // Commit sequential nonce for this sender
