@@ -4283,14 +4283,17 @@ async fn register_messenger_wallet_signed(
             }
         }
 
-        // Enforce unique display names (case-insensitive)
-        let name_lower = display_name.to_lowercase();
-        for w in &existing_wallets {
-            if w.display_name.to_lowercase() == name_lower && w.id != id {
-                let same_keys = (!signing_key.is_empty() && w.signing_public_key == signing_key)
-                    || (!encryption_key.is_empty() && w.encryption_public_key == encryption_key);
-                if !same_keys {
-                    return Err(signed_bad(&format!("Display name '{}' is already taken", display_name)));
+        // Enforce unique display names (case-insensitive) for discoverable wallets only
+        let is_discoverable = p.get("discoverable").and_then(|v| v.as_bool()).unwrap_or(true);
+        if is_discoverable {
+            let name_lower = display_name.to_lowercase();
+            for w in &existing_wallets {
+                if w.discoverable && w.display_name.to_lowercase() == name_lower && w.id != id {
+                    let same_keys = (!signing_key.is_empty() && w.signing_public_key == signing_key)
+                        || (!encryption_key.is_empty() && w.encryption_public_key == encryption_key);
+                    if !same_keys {
+                        return Err(signed_bad(&format!("Display name '{}' is already taken", display_name)));
+                    }
                 }
             }
         }

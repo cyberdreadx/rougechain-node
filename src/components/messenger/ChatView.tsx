@@ -785,7 +785,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
           const botWallet = loadDemoBotWallet();
           if (botWallet) {
             try {
-              await registerWalletOnNode(botWallet);
+              await registerWalletOnNode(botWallet, false);
               const botResponse = await getBotReply(messageText);
 
               const botMsg = await sendMessage(

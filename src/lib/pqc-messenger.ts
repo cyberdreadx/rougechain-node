@@ -470,7 +470,7 @@ export function buildSignedRequest(
   };
 }
 
-export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKeys): Promise<void> {
+export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKeys, discoverableOverride?: boolean): Promise<void> {
   const apiBase = getMessengerApiBase();
   if (!apiBase) return;
   const privacy = getPrivacySettings();
@@ -497,7 +497,7 @@ export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKey
       displayName: wallet.displayName,
       signingPublicKey: wallet.signingPublicKey,
       encryptionPublicKey: wallet.encryptionPublicKey,
-      discoverable: privacy.discoverable,
+      discoverable: discoverableOverride ?? privacy.discoverable,
     },
     priv,
     sigPub,
@@ -730,9 +730,10 @@ export async function getOrCreateDemoBot(): Promise<WalletWithPrivateKeys> {
   const signingKeypair = ml_dsa65.keygen();
   const encryptionKeypair = ml_kem768.keygen();
 
+  const pubHex = bytesToHex(signingKeypair.publicKey);
   const saved: WalletWithPrivateKeys = {
-    id: "demo-bot",
-    displayName: "🤖 Quantum Bot",
+    id: `bot-${pubHex.slice(0, 16)}`,
+    displayName: "Quantum Bot",
     signingPublicKey: bytesToHex(signingKeypair.publicKey),
     encryptionPublicKey: bytesToHex(encryptionKeypair.publicKey),
     signingPrivateKey: bytesToHex(signingKeypair.secretKey),
@@ -742,7 +743,7 @@ export async function getOrCreateDemoBot(): Promise<WalletWithPrivateKeys> {
   // Store the bot wallet locally so it can respond
   localStorage.setItem(DEMO_BOT_STORAGE_KEY, JSON.stringify(saved));
   try {
-    await registerWalletOnNode(saved);
+    await registerWalletOnNode(saved, false);
   } catch (error) {
     console.warn("Failed to register demo bot with node:", error);
   }
