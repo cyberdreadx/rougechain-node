@@ -479,5 +479,60 @@ mod tests {
         verify_rollup_batch(proof, pub_inputs)
             .expect("large batch rollup verification should succeed");
     }
+
+    // ========================================================================
+    // Phase 2b: verify_shielded_transfer_bytes (Security Fix Tests)
+    // ========================================================================
+
+    /// Round-trip: prove a shielded transfer, convert to bytes, verify via bytes API
+    #[test]
+    fn test_verify_shielded_bytes_roundtrip() {
+        let (proof, _pub_inputs) = prove_shielded_transfer(1000, 700, 250, 50)
+            .expect("proof should succeed");
+        let proof_bytes = proof.to_bytes();
+
+        verify_shielded_transfer_bytes(&proof_bytes, 700, 250, 50)
+            .expect("byte-level verification should succeed");
+    }
+
+    /// Wrong output values should fail verification
+    #[test]
+    fn test_verify_shielded_bytes_wrong_values() {
+        let (proof, _) = prove_shielded_transfer(1000, 700, 250, 50)
+            .expect("proof should succeed");
+        let proof_bytes = proof.to_bytes();
+
+        // Try to verify with different amounts — should fail
+        let result = verify_shielded_transfer_bytes(&proof_bytes, 800, 150, 50);
+        assert!(result.is_err(), "wrong output values should fail verification");
+    }
+
+    /// Invalid proof bytes should be rejected
+    #[test]
+    fn test_verify_shielded_bytes_garbage() {
+        let garbage = vec![0u8; 100];
+        let result = verify_shielded_transfer_bytes(&garbage, 700, 250, 50);
+        assert!(result.is_err(), "garbage proof bytes should be rejected");
+    }
+
+    /// Empty proof bytes should be rejected
+    #[test]
+    fn test_verify_shielded_bytes_empty() {
+        let result = verify_shielded_transfer_bytes(&[], 700, 250, 50);
+        assert!(result.is_err(), "empty proof bytes should be rejected");
+    }
+
+    /// Full-fee unshield scenario (output_1 = amount, output_2 = 0)
+    #[test]
+    fn test_verify_shielded_bytes_unshield_pattern() {
+        let amount = 500u64;
+        let fee = 10u64;
+        let (proof, _) = prove_shielded_transfer(amount + fee, amount, 0, fee)
+            .expect("unshield proof should succeed");
+        let proof_bytes = proof.to_bytes();
+
+        verify_shielded_transfer_bytes(&proof_bytes, amount, 0, fee)
+            .expect("unshield byte-level verification should succeed");
+    }
 }
 

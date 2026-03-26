@@ -196,10 +196,45 @@ See `PUBLIC_API.md` in the project root for full API documentation.
 |----------|-------------|
 | `/api/v2/transfer` | Transfer tokens |
 | `/api/v2/token/create` | Create a new token |
+| `/api/v2/token/mint` | Mint additional supply (creator only) |
+| `/api/v2/token/freeze` | Freeze/unfreeze a token (creator only) |
 | `/api/v2/pool/create` | Create a liquidity pool |
 | `/api/v2/pool/add-liquidity` | Add liquidity to a pool |
 | `/api/v2/pool/remove-liquidity` | Remove liquidity |
 | `/api/v2/swap/execute` | Execute a token swap |
 | `/api/v2/stake` | Stake XRGE |
 | `/api/v2/unstake` | Unstake XRGE |
+| `/api/v2/governance/propose` | Create governance proposal |
+| `/api/v2/governance/vote` | Cast governance vote |
+| `/api/v2/shielded/transfer` | Shielded transfer (zk-STARK) |
+| `/api/v2/shielded/unshield` | Unshield (return to public balance) |
+| `/api/v2/contract/deploy` | Deploy WASM smart contract |
+| `/api/v2/contract/call` | Execute WASM contract function |
 | `/api/v2/faucet` | Request testnet tokens |
+
+### WASM Smart Contracts
+
+- `wasmi` pure-Rust interpreter (no JIT, no native code)
+- Fuel-metered: 10M fuel per call, 100M per block
+- Contracts processed during block import alongside balance transitions
+- Contract bytecode stored in `ContractStore` (sled)
+
+### Security Features
+
+- **STARK proof verification**: All shielded transactions require valid zk-STARK proofs
+- **Consensus-layer guards**: `mint_tokens` and `create_token` validated at block import
+- **ML-DSA-65 signatures**: All transactions verified via post-quantum signatures
+- **Nonce replay protection**: Strictly increasing sequential nonces per account
+- **Fee-priority mempool**: Configurable cap with lowest-fee eviction
+- **Unbonding period**: Unstaked XRGE locked for configurable block count
+
+## Running Tests
+
+```bash
+# Full test suite
+cargo test --workspace
+
+# Crypto crate only (STARK proofs, commitment, signatures)
+cargo test -p quantum-vault-crypto
+```
+

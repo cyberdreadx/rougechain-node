@@ -85,10 +85,12 @@ impl RollupBatchProver {
         &self,
         transfers: &[RollupTransfer],
         pre_state_root: BaseElement,
-        post_state_root: BaseElement,
+        _post_state_root: BaseElement,
     ) -> TraceTable<BaseElement> {
         let batch_size = transfers.len();
-        let min_rows = batch_size.max(8);
+        // Ensure at least 1 padding row so the last transfer's running_hash
+        // transition is captured (need row i+1 to store the hash delta).
+        let min_rows = (batch_size + 1).max(8);
         let trace_len = min_rows.next_power_of_two();
 
         let mut col_sender_before = vec![BaseElement::ZERO; trace_len];
@@ -117,28 +119,14 @@ impl RollupBatchProver {
             }
         }
 
-        // Padding rows (batch_size..trace_len): all columns stay 0
-        // Constraints:
+        // Padding rows (batch_size..trace_len): all data columns stay 0
+        // Constraints satisfied:
         //   0: sender_after[i] = sender_before[i] - amount[i] → 0 = 0 - 0 ✓
-        //   1: hash[i+1] = hash[i] + 0 * 0 = hash[i] ✓
+        //   1: hash[i+1] = hash[i] + 0 * 0 = hash[i] ✓  (hash stays constant)
         //   2: 0 - 0 - 0 = 0 ✓
-        // So running_hash stays constant through padding.
         for i in batch_size..trace_len {
             if i + 1 < trace_len {
                 col_running_hash[i + 1] = col_running_hash[i];
-            }
-        }
-
-        // The last row's running_hash must equal post_state_root (boundary assertion).
-        // We set it directly — the prover ensures the transition from the last
-        // real transfer row accumulates to this value.
-        col_running_hash[trace_len - 1] = post_state_root;
-
-        // Back-fill all padding hashes to post_state_root so the transition
-        // constraint (hash stays constant in padding) is satisfied.
-        if batch_size < trace_len {
-            for i in batch_size..trace_len {
-                col_running_hash[i] = post_state_root;
             }
         }
 
@@ -259,20 +247,17 @@ pub fn prove_rollup_batch(
     let prover = RollupBatchProver::new();
     let trace = prover.build_trace(transfers, pre_root, post_root);
 
+    // Extract the actual accumulated post_state_root from the trace
+    // (get_pub_inputs reads the last row's running_hash).
+    let trace_pub_inputs = prover.get_pub_inputs(&trace);
+
     let proof = prover
         .prove(trace)
         .map_err(|e| format!("Rollup batch proof generation failed: {}", e))?;
 
-    let pub_inputs = RollupBatchInputs {
-        pre_state_root: pre_root,
-        post_state_root: post_root,
-        batch_size: BaseElement::from(transfers.len() as u64),
-        total_fees: BaseElement::from(
-            transfers.iter().map(|t| t.fee).sum::<u64>()
-        ),
-    };
-
-    Ok((proof, pub_inputs))
+    // Return public inputs derived from the trace (not external bytes)
+    // so the boundary assertions match the actual accumulated hash.
+    Ok((proof, trace_pub_inputs))
 }
 
 /// Convert first 16 bytes of a 32-byte hash to a field element.
