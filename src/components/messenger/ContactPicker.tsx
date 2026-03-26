@@ -250,14 +250,14 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
             </div>
             <div className="flex-1 text-left">
               <div className="flex items-center gap-2">
-                <p className="font-semibold text-foreground">🤖 Quantum Bot</p>
+                <p className="font-semibold text-foreground">Quantum Bot</p>
                 <span className="px-2 py-0.5 text-xs rounded-full bg-primary/20 text-primary flex items-center gap-1">
                   <Sparkles className="w-3 h-3" />
-                  Local AI
+                  AI
                 </span>
               </div>
               <p className="text-sm text-muted-foreground">
-                Test encryption with a local AI bot
+                Chat with an AI assistant over encrypted messaging
               </p>
             </div>
           </button>

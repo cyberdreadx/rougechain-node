@@ -839,7 +839,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
             <p className="font-medium text-foreground">{getConversationName()}</p>
             {isRecipientBot && (
               <span className="px-1.5 py-0.5 text-[10px] rounded bg-primary/20 text-primary">
-                Local AI
+                AI
               </span>
             )}
             {tofuWarning && !isRecipientBot && (
