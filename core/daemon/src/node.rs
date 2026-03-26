@@ -544,19 +544,18 @@ impl L1Node {
             if block.hash != expected_hash {
                 return Err("Block hash mismatch".to_string());
             }
-            // Check proposer is a known validator (skip for early blocks during initial sync
-            // when the syncing node hasn't replayed stake transactions yet)
+            // SECURITY: Reject blocks from unknown proposers after initial sync period
             let validators = self.list_validators().unwrap_or_default();
-            if !validators.is_empty() {
+            if !validators.is_empty() && block.header.height > 100 {
                 let is_valid_proposer = validators.iter().any(|(pk, vs)| {
                     pk == &block.header.proposer_pub_key && vs.stake > 0
                 });
                 if !is_valid_proposer {
-                    eprintln!(
-                        "[peer] Warning: block {} proposer {} not in validator set, accepting (sig valid)",
+                    return Err(format!(
+                        "Block {} rejected: proposer {} not in validator set with active stake",
                         block.header.height,
                         &block.header.proposer_pub_key[..16.min(block.header.proposer_pub_key.len())]
-                    );
+                    ));
                 }
             }
         }
@@ -1267,10 +1266,21 @@ impl L1Node {
 
     /// Add a transaction to mempool (used for P2P broadcast)
     pub fn add_tx_to_mempool(&self, tx: TxV1) -> Result<(), String> {
-        use quantum_vault_crypto::{sha256, bytes_to_hex};
-        use quantum_vault_types::encode_tx_v1;
+        use quantum_vault_crypto::{sha256, bytes_to_hex, pqc_verify};
+        use quantum_vault_types::{encode_tx_v1, encode_tx_for_signing};
         
         self.check_nonce_valid(&tx.from_pub_key, tx.nonce)?;
+
+        // SECURITY: Verify the ML-DSA-65 signature before accepting P2P broadcast txs
+        let sig_valid = if let Some(ref sp) = tx.signed_payload {
+            pqc_verify(&tx.from_pub_key, sp.as_bytes(), &tx.sig).ok() == Some(true)
+        } else {
+            let bytes = encode_tx_for_signing(&tx);
+            pqc_verify(&tx.from_pub_key, &bytes, &tx.sig).ok() == Some(true)
+        };
+        if !sig_valid {
+            return Err("P2P tx rejected: invalid signature".to_string());
+        }
 
         let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
         
@@ -1280,7 +1290,7 @@ impl L1Node {
             return Ok(());
         }
         
-        // Mark as pre-verified (caller already checked the client-side signature)
+        // Mark as verified (signature confirmed above)
         self.verified_tx_ids.lock().map_err(|_| "verified lock")?.insert(tx_hash.clone());
         
         mempool.insert(tx_hash, tx);
@@ -1366,6 +1376,15 @@ impl L1Node {
         let symbol_upper = token_symbol.to_uppercase();
         if RESERVED_SYMBOLS.contains(&symbol_upper.as_str()) {
             return Err(format!("'{}' is a reserved token symbol", token_symbol));
+        }
+
+        // SECURITY: Cap supply at 2^53 to prevent f64 precision loss in balance tracking
+        const MAX_SAFE_SUPPLY: u64 = 9_007_199_254_740_992; // 2^53
+        if total_supply > MAX_SAFE_SUPPLY {
+            return Err(format!(
+                "Total supply {} exceeds maximum safe supply {} (2^53) for balance precision",
+                total_supply, MAX_SAFE_SUPPLY
+            ));
         }
 
         let tx_fee = TOKEN_CREATION_FEE;

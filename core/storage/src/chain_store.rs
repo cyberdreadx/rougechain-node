@@ -228,6 +228,20 @@ impl ChainStore {
         Ok(())
     }
 
+    /// SECURITY: Get persisted faucet cooldown timestamp for an address
+    pub fn get_faucet_cooldown(&self, pubkey: &str) -> Option<i64> {
+        let key = format!("faucet:{}", pubkey);
+        self.state.get(key.as_bytes()).ok().flatten()
+            .and_then(|v| String::from_utf8(v.to_vec()).ok())
+            .and_then(|s| s.parse::<i64>().ok())
+    }
+
+    /// SECURITY: Persist faucet cooldown timestamp (survives node restarts)
+    pub fn set_faucet_cooldown(&self, pubkey: &str, timestamp: i64) {
+        let key = format!("faucet:{}", pubkey);
+        let _ = self.state.insert(key.as_bytes(), timestamp.to_string().as_bytes());
+    }
+
     /// Reset the chain with a new set of blocks (used for P2P sync when genesis differs)
     pub fn reset_chain(&self, blocks: &[BlockV1]) -> Result<(), String> {
         if blocks.is_empty() {

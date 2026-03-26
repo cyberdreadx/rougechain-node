@@ -3087,8 +3087,11 @@ async fn faucet(
     let now = chrono::Utc::now().timestamp();
     {
         let mut cooldowns = state.faucet_cooldowns.lock().await;
-        if let Some(&last_used) = cooldowns.get(&body.recipient_public_key) {
-            let elapsed = now - last_used;
+        // Check in-memory cooldown first, then fall back to persisted cooldown in sled
+        let last_used = cooldowns.get(&body.recipient_public_key).copied()
+            .or_else(|| node.store_ref().get_faucet_cooldown(&body.recipient_public_key));
+        if let Some(last) = last_used {
+            let elapsed = now - last;
             if elapsed < FAUCET_COOLDOWN_SECS {
                 let remaining = FAUCET_COOLDOWN_SECS - elapsed;
                 let hours = remaining / 3600;
@@ -3105,6 +3108,8 @@ async fn faucet(
             }
         }
         cooldowns.insert(body.recipient_public_key.clone(), now);
+        // SECURITY: Persist cooldown to sled so it survives node restarts
+        node.store_ref().set_faucet_cooldown(&body.recipient_public_key, now);
     }
 
     match node.submit_faucet_tx(&body.recipient_public_key, amount) {

@@ -19,6 +19,10 @@ pub use store::{ContractStore, ContractMetadata, ContractEvent, ContractCallResu
 /// Default fuel limit per contract call (≈ 10M WASM instructions)
 pub const DEFAULT_FUEL_LIMIT: u64 = 10_000_000;
 
+/// SECURITY: Maximum cumulative WASM fuel per block (100M total across all contract calls)
+/// Prevents DoS by batching many expensive contract calls in a single block
+pub const MAX_BLOCK_FUEL: u64 = 100_000_000;
+
 /// Maximum WASM module size (1 MB)
 pub const MAX_WASM_SIZE: usize = 1_048_576;
 
