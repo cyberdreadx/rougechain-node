@@ -1901,11 +1901,21 @@ struct BlocksQuery {
     limit: Option<usize>,
     /// Start from this block height (for P2P full-chain sync)
     from_height: Option<u64>,
+    /// Server-side pagination: 1-indexed page number (descending from tip)
+    page: Option<usize>,
+    /// Server-side pagination: blocks per page (default 10, max 100)
+    per_page: Option<usize>,
 }
 
 #[derive(Serialize)]
 struct BlocksResponse {
     blocks: Vec<quantum_vault_types::BlockV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_height: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    page: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_pages: Option<usize>,
 }
 
 const MAX_BLOCK_PAGE_SIZE: usize = 100;
@@ -1922,11 +1932,40 @@ async fn get_blocks(
         let limit = query.limit.unwrap_or(MAX_SYNC_PAGE_SIZE).min(MAX_SYNC_PAGE_SIZE);
         let all_from = node.get_blocks_from(from_height).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let blocks: Vec<_> = all_from.into_iter().take(limit).collect();
-        return Ok(Json(BlocksResponse { blocks }));
+        return Ok(Json(BlocksResponse { blocks, total_height: None, page: None, total_pages: None }));
+    }
+    // Server-side pagination: page=N returns blocks descending from tip
+    if let Some(page) = query.page {
+        let per_page = query.per_page.unwrap_or(10).min(MAX_BLOCK_PAGE_SIZE).max(1);
+        let tip = node.get_tip_height().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let total_pages = ((tip as usize) + per_page - 1) / per_page; // ceiling division
+        let page = page.max(1).min(total_pages.max(1));
+        // Page 1 = most recent blocks (descending from tip)
+        let skip = (page - 1) * per_page;
+        let start_height = if tip as usize > skip + per_page - 1 {
+            tip - (skip + per_page - 1) as u64
+        } else {
+            0
+        };
+        let end_height = tip.saturating_sub(skip as u64);
+        let mut blocks = Vec::with_capacity(per_page);
+        // Fetch blocks in range [start_height..=end_height] in descending order
+        for h in (start_height..=end_height).rev() {
+            if let Ok(Some(block)) = node.get_block(h) {
+                blocks.push(block);
+            }
+            if blocks.len() >= per_page { break; }
+        }
+        return Ok(Json(BlocksResponse {
+            blocks,
+            total_height: Some(tip),
+            page: Some(page),
+            total_pages: Some(total_pages),
+        }));
     }
     let limit = query.limit.unwrap_or(MAX_BLOCK_PAGE_SIZE).min(MAX_BLOCK_PAGE_SIZE);
     let blocks = node.get_recent_blocks(limit).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(BlocksResponse { blocks }))
+    Ok(Json(BlocksResponse { blocks, total_height: None, page: None, total_pages: None }))
 }
 
 #[derive(Serialize)]

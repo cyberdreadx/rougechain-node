@@ -44,6 +44,8 @@ const Blockchain = () => {
   const [nodeConnected, setNodeConnected] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalHeight, setTotalHeight] = useState(0);
   const [lastKnownHeight, setLastKnownHeight] = useState(0);
   const [viewMode, setViewMode] = useState<"table" | "grid">(() => {
     const saved = localStorage.getItem("blockchain-view-mode");
@@ -63,69 +65,48 @@ const Blockchain = () => {
   });
 
   // Load chain from core node(s)
-  useEffect(() => {
-    const fetchChain = async () => {
-      try {
-        // Use network-aware API base URL
-        const NODE_API_URL = getNodeApiBaseUrl();
-        if (!NODE_API_URL) {
-          setChain([]);
-          setNodeConnected(false);
-          setIsLoading(false);
-          return;
-        }
-
-        try {
-          const isLocal = NODE_API_URL.includes("localhost") || NODE_API_URL.includes("127.0.0.1");
-          const timeoutMs = isLocal ? 3000 : 10000;
-          const res = await fetch(`${NODE_API_URL}/blocks?limit=500`, {
-            signal: AbortSignal.timeout(timeoutMs), // allow slow public nodes
-            headers: getCoreApiHeaders(),
-          });
-          if (res.ok) {
-            const data = await res.json() as { blocks?: BlockV1[] };
-            const converted = (data.blocks ?? []).map(convertBlock);
-            setChain(converted);
-            setNodeConnected(true);
-            setIsLoading(false);
-            return;
-          }
-        } catch (error) {
-          console.warn(`Failed to fetch from ${NODE_API_URL}`, error);
-        }
-
-        // No nodes found
-        setChain([]);
-        setNodeConnected(false);
-        console.warn("No core node found. Make sure a node is running with --mine flag.");
-      } catch (error) {
-        console.error("Failed to load chain:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchChain();
-  }, []);
-
-  // Fetch chain data
-  const fetchChainData = useCallback(async () => {
+  // Server-side paginated fetch — only loads the current page
+  const fetchPage = useCallback(async (pageNum: number, perPage: number) => {
     const NODE_API_URL = getNodeApiBaseUrl();
-    if (!NODE_API_URL) return;
+    if (!NODE_API_URL) {
+      setChain([]);
+      setNodeConnected(false);
+      setIsLoading(false);
+      return;
+    }
     try {
-      const res = await fetch(`${NODE_API_URL}/blocks?limit=500`, {
-        signal: AbortSignal.timeout(10000),
+      const isLocal = NODE_API_URL.includes("localhost") || NODE_API_URL.includes("127.0.0.1");
+      const timeoutMs = isLocal ? 3000 : 10000;
+      const res = await fetch(`${NODE_API_URL}/blocks?page=${pageNum}&per_page=${perPage}`, {
+        signal: AbortSignal.timeout(timeoutMs),
         headers: getCoreApiHeaders(),
       });
       if (res.ok) {
-        const data = await res.json() as { blocks?: BlockV1[] };
+        const data = await res.json() as { blocks?: BlockV1[]; total_height?: number; total_pages?: number };
         setChain((data.blocks ?? []).map(convertBlock));
+        setTotalPages(data.total_pages ?? 1);
+        setTotalHeight(data.total_height ?? 0);
         setNodeConnected(true);
+      } else {
+        setNodeConnected(false);
       }
-    } catch {
-      // Silent fail
+    } catch (error) {
+      console.warn(`Failed to fetch blocks`, error);
+      setNodeConnected(false);
+    } finally {
+      setIsLoading(false);
     }
   }, []);
+
+  // Fetch on mount and when page/pageSize changes
+  useEffect(() => {
+    fetchPage(page, pageSize);
+  }, [page, pageSize, fetchPage]);
+
+  // Refresh current page (for WebSocket new-block events)
+  const fetchChainData = useCallback(async () => {
+    fetchPage(page, pageSize);
+  }, [page, pageSize, fetchPage]);
 
   // WebSocket for real-time updates
   const handleNewBlock = useCallback((event: { height: number }) => {
@@ -140,12 +121,9 @@ const Blockchain = () => {
     fallbackPollInterval: 10000,
   });
 
-  const sortedChain = [...chain].sort((a, b) => b.index - a.index);
-  const totalPages = Math.max(1, Math.ceil(sortedChain.length / pageSize));
-  const safePage = Math.min(page, totalPages);
-  const startIndex = (safePage - 1) * pageSize;
-  const endIndex = Math.min(startIndex + pageSize, sortedChain.length);
-  const pagedChain = sortedChain.slice(startIndex, endIndex);
+  // Blocks come pre-sorted from the server, no client-side sorting needed
+  const pagedChain = chain;
+  const safePage = page;
   const getTxCount = (block: Block) => {
     try {
       const parsed = JSON.parse(block.data);
@@ -177,7 +155,7 @@ const Blockchain = () => {
   };
 
   useEffect(() => {
-    if (page > totalPages) {
+    if (page > totalPages && totalPages > 0) {
       setPage(totalPages);
     }
   }, [page, totalPages]);
@@ -308,10 +286,10 @@ const Blockchain = () => {
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">
-                        Showing {sortedChain.length === 0 ? 0 : startIndex + 1}-{endIndex} of {sortedChain.length}
+                        Showing page {safePage} of {totalPages} ({totalHeight} blocks)
                       </span>
                       <span className="text-[10px] text-muted-foreground hidden sm:inline">•</span>
-                      <span className="text-xs text-muted-foreground hidden sm:inline">Page {safePage} of {totalPages}</span>
+                      <span className="text-xs text-muted-foreground hidden sm:inline">• {pageSize} per page</span>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="flex items-center rounded-full border border-border bg-background p-0.5">
@@ -448,7 +426,7 @@ const Blockchain = () => {
                 >
                   <div className="bg-card rounded-lg border border-border p-3">
                     <p className="text-xs text-muted-foreground">Total Blocks</p>
-                    <p className="text-2xl font-bold text-foreground">{chain.length}</p>
+                    <p className="text-2xl font-bold text-foreground">{totalHeight}</p>
                   </div>
                   <div className="bg-card rounded-lg border border-border p-3">
                     <p className="text-xs text-muted-foreground">Chain Valid</p>
