@@ -110,4 +110,9 @@ export type {
   ContractCallResult,
   DeployContractParams,
   CallContractParams,
+  FeeInfo,
+  FinalityProof,
+  MintTokenParams,
+  VoteMessage,
+  WsSubscribeMessage,
 } from "./types.js";

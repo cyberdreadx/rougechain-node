@@ -364,7 +364,7 @@ const name = await rc.mail.reverseLookup(wallet.publicKey);
 // "alice"
 
 // Release a name (signed request)
-await rc.mail.releaseName(wallet, "alice", wallet.publicKey);
+await rc.mail.releaseName(wallet, "alice");
 ```
 
 ### Sending & Reading Mail
@@ -425,7 +425,7 @@ await rc.messenger.sendMessage(wallet, conversationId, encryptedContent, {
 const messages = await rc.messenger.getMessages(wallet, conversationId);
 
 // Delete a message (signed request)
-await rc.messenger.deleteMessage(wallet, messageId);
+await rc.messenger.deleteMessage(wallet, messageId, conversationId);
 
 // Delete a conversation (signed request)
 await rc.messenger.deleteConversation(wallet, conversationId);

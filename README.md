@@ -25,7 +25,7 @@ RougeChain is a production-ready L1 blockchain built from genesis with NIST-appr
 - **Deploy + Call + Query**: Full contract lifecycle via API
 
 ### MCP Agentic Layer 🆕
-- **21 MCP Tools**: AI agents interact with RougeChain natively
+- **22 MCP Tools**: AI agents interact with RougeChain natively
 - **First MCP-Native Blockchain**: No other L1 has built-in MCP integration
 - **Chain Queries**: Stats, blocks, balances, tokens, NFTs, pools, validators
 - **Contract Operations**: Deploy, call, read state, get events
@@ -41,7 +41,7 @@ RougeChain is a production-ready L1 blockchain built from genesis with NIST-appr
 - **Proof of Stake**: Validator selection weighted by stake
 - **Validator Names**: Human-readable node identifiers
 - **Slashing**: Penalties for misbehavior
-- **Unbonding Queue**: 100-block cooldown for unstaking
+- **Unbonding Queue**: 500-block cooldown for unstaking
 
 ### Privacy & Shielded Transactions
 - **ZK-STARK Proofs**: Winterfell-based shielded transfers
@@ -105,11 +105,11 @@ npm install @rougechain/sdk
 ```typescript
 import { RougeChain, Wallet } from '@rougechain/sdk';
 
-const rc = new RougeChain({ baseUrl: 'https://rougechain.io' });
-const wallet = Wallet.create();
+const rc = new RougeChain('https://rougechain.io/api');
+const wallet = Wallet.generate();
 
 // Check balance
-const balance = await rc.getBalance(wallet.address);
+const { balance } = await rc.getBalance(wallet.publicKey);
 
 // Deploy a WASM smart contract
 const result = await rc.deployContract({
@@ -144,6 +144,7 @@ Add to your Claude Desktop config:
 quantum-vault/
 ├── core/                  # Rust L1 node daemon
 │   ├── daemon/            # Main binary (API, miner, peer sync)
+│   ├── cli/               # CLI wallet (rougechain command)
 │   ├── types/             # Shared types and codec helpers
 │   ├── crypto/            # PQC signing (ML-DSA-65) and hashing
 │   ├── consensus/         # Proposer selection
@@ -153,9 +154,10 @@ quantum-vault/
 ├── sdk/                   # TypeScript SDK (@rougechain/sdk)
 ├── mcp-server/            # MCP server for AI agents
 ├── src/                   # React frontend (Vite + TypeScript)
-├── docs/                  # Documentation (GitBook format)
+├── docs/                  # Documentation (mdBook format)
 ├── scripts/               # Bridge relayer scripts
-└── extension/             # Browser wallet extension
+├── contracts/             # WASM smart contract templates
+└── browser-extension/     # Browser wallet extension (MV3)
 ```
 
 ## Technologies

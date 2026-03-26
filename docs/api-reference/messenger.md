@@ -195,17 +195,29 @@ Requires a signed request. The server verifies the caller is a participant in th
 ## Mark Message as Read
 
 ```http
-POST /api/messenger/messages/read
+POST /api/v2/messenger/messages/read
 Content-Type: application/json
 ```
 
-Used for self-destruct messages.
+Used for self-destruct messages. Requires a signed request with `messageId` and `conversationId` in the payload.
 
-```json
-{
-  "messageId": "msg-uuid"
-}
+## Delete Message
+
+```http
+POST /api/v2/messenger/messages/delete
+Content-Type: application/json
 ```
+
+Requires a signed request with `messageId` and `conversationId` in the payload. The caller must be a conversation participant.
+
+## Delete Conversation
+
+```http
+POST /api/v2/messenger/conversations/delete
+Content-Type: application/json
+```
+
+Requires a signed request with `conversationId` in the payload. The caller must be a conversation participant.
 
 ---
 

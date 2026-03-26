@@ -66,7 +66,7 @@ ML-DSA-65, derived from the CRYSTALS-Dilithium family, is used for all signature
 | Underlying Problem | Module Lattice (Module-LWE) |
 
 **Usage on RougeChain:**
-- Transaction signing (all 19 transaction types)
+- Transaction signing (all transaction types)
 - Block proposal signatures
 - Validator vote attestations (prevote and precommit)
 - Messenger message authentication
@@ -212,7 +212,7 @@ A block is finalized when precommits representing at least **2/3 + 1** of total 
 - **Auto-slashing**: Validators that miss 50 consecutive block proposals are automatically slashed. The missed-block counter resets upon successful proposal or after a slash event.
 - Repeated offenses accumulate, with the slash count permanently recorded.
 
-**Unbonding Period.** When a validator unstakes, their funds are not returned immediately. Instead, the unstake amount enters an **unbonding queue** with a 500-block delay (~8 hours at current block time). During the unbonding period:
+**Unbonding Period.** When a validator unstakes, their funds are not returned immediately. Instead, the unstake amount enters an **unbonding queue** with a 500-block delay (~200 seconds at the default 400ms block time; configurable via `--block-time-ms`). During the unbonding period:
 - Funds remain locked and cannot be transferred.
 - The unbonding entry includes the delegator address, amount, and release height.
 - At each new block, the node processes the unbonding queue and releases matured entries to the delegator's balance.
@@ -274,7 +274,7 @@ Each block consists of a versioned header, a list of transactions, the proposer'
 
 ### 3.3 Transaction Model
 
-RougeChain supports 28 transaction types within a unified transaction structure:
+RougeChain supports over 30 transaction types within a unified transaction structure:
 
 **TxV1:**
 
@@ -301,7 +301,12 @@ RougeChain supports 28 transaction types within a unified transaction structure:
 | NFTs | `nft_create_collection`, `nft_mint`, `nft_batch_mint`, `nft_transfer`, `nft_burn`, `nft_lock`, `nft_freeze_collection` |
 | Shielded | `shield`, `shielded_transfer`, `unshield` |
 | Governance | `create_proposal`, `cast_vote`, `execute_proposal`, `delegate`, `undelegate` |
-| Multi-Sig | `multisig_create`, `multisig_approve` |
+| Multi-Sig | `multisig_create`, `multisig_approve`, `multisig_submit` |
+| Allowances | `approve`, `transfer_from`, `token_approve`, `token_transfer_from` |
+| Tokens (extended) | `mint_tokens`, `token_airdrop`, `token_lock`, `token_unlock` |
+| Token Staking | `create_staking_pool`, `token_stake`, `token_unstake` |
+| Contracts | `contract_deploy`, `contract_call` |
+| Orders | `place_limit_order`, `cancel_limit_order` |
 
 > **Note:** The faucet is implemented as a `transfer` transaction with a `faucet: true` flag in the payload, signed by the node operator's key. It is not a separate transaction type.
 
@@ -521,6 +526,8 @@ All operations on RougeChain require an XRGE fee. The fee schedule is designed t
 | Shield (public → private) | 1 |
 | Shielded transfer | 1 |
 | Unshield (private → public) | 1 |
+
+> **Note:** The v2 client-signed API endpoints enforce a minimum fee of **1.0 XRGE** for transfers, swaps, and liquidity operations to discourage spam. The base protocol fees listed above apply at the consensus layer; the API layer may enforce higher minimums.
 
 ### 4.3 Fee Distribution
 
@@ -860,7 +867,7 @@ Every node exposes a comprehensive HTTP API supporting all chain operations:
 | Rollup | `/api/v2/rollup/status`, `/api/v2/rollup/submit`, `/api/v2/rollup/batch/:id` |
 | Messenger | `/api/v2/messenger/wallets/register`, `/api/v2/messenger/conversations`, `/api/v2/messenger/messages` |
 | Names | `/api/v2/names/register`, `/api/v2/names/release`, `/api/names/resolve/:name`, `/api/names/reverse/:walletId` |
-| Mail | `/api/v2/mail/send`, `/api/v2/mail/inbox`, `/api/v2/mail/sent`, `/api/v2/mail/read`, `/api/v2/mail/move`, `/api/v2/mail/delete` |
+| Mail | `/api/v2/mail/send`, `/api/v2/mail/folder`, `/api/v2/mail/message`, `/api/v2/mail/read`, `/api/v2/mail/move`, `/api/v2/mail/delete` |
 | P2P | `/api/peers`, `/api/peers/register`, `/api/blocks/import` |
 
 ### 9.4 gRPC

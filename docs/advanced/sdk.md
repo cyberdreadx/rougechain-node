@@ -161,7 +161,7 @@ const resolved = await rc.mail.resolveName("bob");
 const name = await rc.mail.reverseLookup(wallet.publicKey); // "alice"
 
 // Release a name (signed request)
-await rc.mail.releaseName(wallet, "alice", wallet.publicKey);
+await rc.mail.releaseName(wallet, "alice");
 
 // Send mail (signed request, multi-recipient CEK encryption)
 await rc.mail.send(wallet, { from, to, subject, body, encrypted_subject, encrypted_body });
@@ -187,7 +187,7 @@ await rc.messenger.getConversations(wallet);
 await rc.messenger.createConversation(wallet, [pubKeyA, pubKeyB]);
 await rc.messenger.getMessages(wallet, conversationId);
 await rc.messenger.sendMessage(wallet, conversationId, encryptedContent, { selfDestruct: true, destructAfterSeconds: 30 });
-await rc.messenger.deleteMessage(wallet, messageId);
+await rc.messenger.deleteMessage(wallet, messageId, conversationId);
 await rc.messenger.deleteConversation(wallet, conversationId);
 ```
 
@@ -255,22 +255,24 @@ await rc.sendTransaction(coSignerWallet, {
 });
 
 // Query wallets + proposals
-const wallets = await rc.get('/api/multisig/wallets');
-const myWallets = await rc.get(`/api/multisig/wallets/${myPubKey}`);
-const proposals = await rc.get(`/api/multisig/wallet/${walletId}/proposals`);
+const wallets = await rc.get('/multisig/wallets');
+const myWallets = await rc.get(`/multisig/wallets/${myPubKey}`);
+const proposals = await rc.get(`/multisig/wallet/${walletId}/proposals`);
 ```
 
-### Smart Contracts
+### Smart Contracts (`rc.shielded`)
+
+Contract helpers are accessed via the `rc.shielded` sub-client:
 
 ```typescript
 // Deploy WASM contract
-const deploy = await rc.deployContract({
+const deploy = await rc.shielded.deployContract({
   wasm: base64WasmBytes,
   deployer: wallet.publicKey,
 });
 
 // Call contract method
-const result = await rc.callContract({
+const result = await rc.shielded.callContract({
   contractAddr: deploy.address,
   method: 'increment',
   caller: wallet.publicKey,
@@ -279,16 +281,16 @@ const result = await rc.callContract({
 });
 
 // Query contract
-const meta = await rc.getContract(deploy.address);
-const state = await rc.getContractState(deploy.address);
-const events = await rc.getContractEvents(deploy.address);
+const meta = await rc.shielded.getContract(deploy.address);
+const state = await rc.shielded.getContractState(deploy.address);
+const events = await rc.shielded.getContractEvents(deploy.address);
 ```
 
 ### EIP-1559 Fee Info
 
 ```typescript
-const feeInfo = await rc.get('/api/fee-info');
-// → { baseFee, suggestedPriorityFee, suggestedTotalFee, totalBurned, blockHeight }
+const feeInfo = await rc.getFeeInfo();
+// → { base_fee, total_fee_suggestion, total_fees_burned, block_height }
 ```
 
 ## Environment Support

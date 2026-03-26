@@ -185,11 +185,11 @@ Set `replyToId` to the ID of the mail being replied to, enabling threading.
 ## Get Inbox
 
 ```http
-POST /api/v2/mail/inbox
+POST /api/v2/mail/folder
 Content-Type: application/json
 ```
 
-Requires a signed request. The caller's wallet is resolved from the signing key.
+Requires a signed request with `"folder": "inbox"` in the payload. The caller's wallet is resolved from the signing key.
 
 ### Response
 
@@ -216,19 +216,22 @@ Requires a signed request. The caller's wallet is resolved from the signing key.
 ## Get Sent Mail
 
 ```http
-POST /api/v2/mail/sent
+POST /api/v2/mail/folder
 Content-Type: application/json
 ```
 
-Same as inbox but returns mail you sent. Requires a signed request.
+Same as inbox but with `"folder": "sent"` in the payload. Requires a signed request.
 
 ---
 
 ## Get Single Mail
 
 ```http
-GET /api/mail/message/:id?publicKey=your-pub-hex
+POST /api/v2/mail/message
+Content-Type: application/json
 ```
+
+Requires a signed request with `messageId` in the payload.
 
 ---
 
@@ -257,8 +260,11 @@ Requires a signed request with `messageId` and `folder` in the payload. Valid fo
 ## Get Trash
 
 ```http
-GET /api/mail/trash?publicKey=your-pub-hex
+POST /api/v2/mail/folder
+Content-Type: application/json
 ```
+
+Same as inbox/sent but with `"folder": "trash"` in the payload. Requires a signed request.
 
 ---
 

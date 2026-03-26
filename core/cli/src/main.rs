@@ -616,8 +616,9 @@ fn main() {
 
         Commands::Inbox => {
             let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
-            let payload = serde_json::Map::new();
-            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/mail/inbox", req)) {
+            let mut payload = serde_json::Map::new();
+            payload.insert("folder".to_string(), Value::String("inbox".to_string()));
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/mail/folder", req)) {
                 Ok(v) => {
                     if let Some(mail) = v.get("mail").and_then(|m| m.as_array()) {
                         if mail.is_empty() {
@@ -641,8 +642,9 @@ fn main() {
 
         Commands::SentMail => {
             let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
-            let payload = serde_json::Map::new();
-            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/mail/sent", req)) {
+            let mut payload = serde_json::Map::new();
+            payload.insert("folder".to_string(), Value::String("sent".to_string()));
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/mail/folder", req)) {
                 Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
                 Err(e) => eprintln!("Error: {}", e),
             }

@@ -230,10 +230,15 @@ See `PUBLIC_API.md` in the project root for full API documentation.
 | `/api/v2/faucet` | Request testnet tokens |
 | `/api/v2/messenger/wallets/register` | Register messenger wallet (signed) |
 | `/api/v2/messenger/conversations` | Create conversation (signed) |
+| `/api/v2/messenger/conversations/list` | List conversations (signed) |
+| `/api/v2/messenger/conversations/delete` | Delete conversation (signed) |
 | `/api/v2/messenger/messages` | Send message (signed) |
+| `/api/v2/messenger/messages/list` | List messages (signed) |
+| `/api/v2/messenger/messages/read` | Mark message read (signed) |
+| `/api/v2/messenger/messages/delete` | Delete message (signed) |
 | `/api/v2/mail/send` | Send encrypted mail (signed) |
-| `/api/v2/mail/inbox` | Get inbox (signed) |
-| `/api/v2/mail/sent` | Get sent mail (signed) |
+| `/api/v2/mail/folder` | Get mail folder (inbox/sent/trash, signed) |
+| `/api/v2/mail/message` | Get single mail message (signed) |
 | `/api/v2/mail/read` | Mark as read (signed) |
 | `/api/v2/mail/move` | Move to folder (signed) |
 | `/api/v2/mail/delete` | Delete mail (signed) |
