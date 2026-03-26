@@ -385,7 +385,7 @@ const Agents = () => {
             <h2 className="text-xl font-semibold text-foreground mb-4">Resources</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <a
-                href="https://github.com/cyberdreadx/quantum-vault/tree/main/mcp-server"
+                href="https://github.com/cyberdreadx/rougechain-node/tree/main/mcp-server"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-3 rounded-xl border border-border p-4 hover:border-primary/30 transition-colors group"

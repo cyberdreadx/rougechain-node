@@ -325,4 +325,4 @@ import type {
 
 ## Source
 
-The SDK source code is in the `sdk/` directory of the [quantum-vault repository](https://github.com/cyberdreadx/quantum-vault).
+The SDK source code is in the `sdk/` directory of the [quantum-vault repository](https://github.com/cyberdreadx/rougechain-node).

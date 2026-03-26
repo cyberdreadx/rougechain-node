@@ -35,7 +35,7 @@
   "homepage": "https://rougechain.io",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cyberdreadx/quantum-vault",
+    "url": "https://github.com/cyberdreadx/rougechain-node",
     "directory": "sdk"
   },
   "license": "MIT",
