@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Conversation, WalletWithPrivateKeys, Message, Wallet, MessageType } from "@/lib/pqc-messenger";
-import { getBotReply, getMessages, sendMessage, deleteMessage, isDemoBot, loadDemoBotWallet, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, isWalletBlocked, blockWallet, unblockWallet, keyFingerprint, checkTofu } from "@/lib/pqc-messenger";
+import { getBotReply, getMessages, sendMessage, deleteMessage, isDemoBot, loadDemoBotWallet, registerWalletOnNode, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, isWalletBlocked, blockWallet, unblockWallet, keyFingerprint, checkTofu } from "@/lib/pqc-messenger";
 import { playNotificationSound, loadNotificationSettings } from "@/lib/notifications";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
 import ChatPayment, { PaymentBubble, parsePaymentMessage, encodePaymentMessage, parseRequestMessage, encodeRequestMessage, PaymentRequestBubble } from "./ChatPayment";
@@ -785,6 +785,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
           const botWallet = loadDemoBotWallet();
           if (botWallet) {
             try {
+              await registerWalletOnNode(botWallet);
               const botResponse = await getBotReply(messageText);
 
               const botMsg = await sendMessage(
