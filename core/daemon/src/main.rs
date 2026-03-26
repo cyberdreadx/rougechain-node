@@ -314,12 +314,19 @@ async fn main() -> Result<(), String> {
     let bridge_withdraw_store = std::sync::Arc::new(
         BridgeWithdrawStore::new(&data_dir_clone).map_err(|e| format!("bridge withdraw store: {}", e))?
     );
-    let node = Arc::new(L1Node::new(NodeOptions {
+    // Create WASM runtime and contract store _before_ wrapping node in Arc
+    let wasm_runtime = Arc::new(WasmRuntime::new().expect("Failed to create WASM runtime"));
+    let contract_store = Arc::new(ContractStore::new(&data_dir_clone).expect("Failed to create contract store"));
+    let mut node = L1Node::new(NodeOptions {
         data_dir,
         chain,
         mine: args.mine,
         bridge_withdraw_store: Some(bridge_withdraw_store.clone()),
-    })?);
+    })?;
+    // Inject WASM runtime/store so apply_balance_block can re-execute contract txs
+    node.set_wasm_runtime(wasm_runtime.clone());
+    node.set_contract_store(contract_store.clone());
+    let node = Arc::new(node);
     node.init()?;
     node.backfill_address_index();
 
@@ -413,8 +420,8 @@ async fn main() -> Result<(), String> {
         response_cache: Arc::new(RwLock::new(HashMap::new())),
         rollup_accumulator: Arc::new(tokio::sync::Mutex::new(rollup::RollupAccumulator::new())),
         address_registry: Arc::new(RwLock::new(HashMap::new())),
-        wasm_runtime: Arc::new(WasmRuntime::new().expect("Failed to create WASM runtime")),
-        contract_store: Arc::new(ContractStore::new(&data_dir_clone).expect("Failed to create contract store")),
+        wasm_runtime: wasm_runtime.clone(),
+        contract_store: contract_store.clone(),
         indexer: Arc::new(indexer::Indexer::new(&data_dir_clone).expect("Failed to create indexer")),
         order_book: Arc::new(order_book::OrderBook::new(&data_dir_clone).expect("Failed to create order book")),
         mine_notify: node.mine_notify(),

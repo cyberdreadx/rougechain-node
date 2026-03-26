@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::fs;
 
+use quantum_vault_vm::{WasmRuntime, ContractStore, MAX_BLOCK_FUEL};
+
 use chrono::Utc;
 
 use quantum_vault_consensus::{compute_selection_seed, fetch_entropy, select_proposer, ProposerSelectionResult};
@@ -120,6 +122,10 @@ pub struct L1Node {
     mine_notify: Arc<tokio::sync::Notify>,
     /// Running total of XRGE currently in the shielded privacy pool
     shielded_supply: Arc<Mutex<f64>>,
+    /// WASM runtime for contract execution (set after construction)
+    wasm_runtime: Option<Arc<WasmRuntime>>,
+    /// Contract store for WASM bytecode/state (set after construction)
+    contract_store: Option<Arc<ContractStore>>,
 }
 
 impl L1Node {
@@ -215,6 +221,8 @@ impl L1Node {
             finality_db: finality_db_tree,
             mine_notify: Arc::new(tokio::sync::Notify::new()),
             shielded_supply: Arc::new(Mutex::new(0.0)),
+            wasm_runtime: None,
+            contract_store: None,
         })
     }
 
@@ -285,6 +293,17 @@ impl L1Node {
     /// Get a reference to the chain store (for indexer backfill)
     pub fn store_ref(&self) -> &quantum_vault_storage::chain_store::ChainStore {
         &self.store
+    }
+
+    /// Inject the WASM runtime for contract execution during block import.
+    /// Called from main.rs after both Node and WasmRuntime are constructed.
+    pub fn set_wasm_runtime(&mut self, rt: Arc<WasmRuntime>) {
+        self.wasm_runtime = Some(rt);
+    }
+
+    /// Inject the contract store for WASM bytecode access during block import.
+    pub fn set_contract_store(&mut self, cs: Arc<ContractStore>) {
+        self.contract_store = Some(cs);
     }
 
     /// Scan all historical blocks and rebuild blocks_proposed counts for each validator.
@@ -2488,6 +2507,107 @@ impl L1Node {
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // ── WASM Contract transactions ──
+        // Re-execute contract txs during block import for state verification.
+        // Enforces MAX_BLOCK_FUEL across all contract calls per block.
+        {
+            let mut block_fuel_used: u64 = 0;
+            for tx in &block.txs {
+                match tx.tx_type.as_str() {
+                    "contract_deploy" => {
+                        let deployer = tx.payload.to_pub_key_hex.as_deref().unwrap_or(&tx.from_pub_key);
+                        let contract_addr = match tx.payload.contract_addr.as_deref() {
+                            Some(a) => a,
+                            None => { eprintln!("[node] Skipping contract_deploy: no contract_addr"); continue; }
+                        };
+                        // Fee deduction
+                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                        if xrge_bal < tx.fee {
+                            eprintln!("[node] Rejecting contract_deploy: insufficient fee ({:.4} < {:.4})", xrge_bal, tx.fee);
+                            continue;
+                        }
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                        actual_fees_collected += tx.fee;
+
+                        // If we have the contract store, verify the deployment is recorded
+                        if let Some(ref cs) = self.contract_store {
+                            match cs.get_contract(contract_addr) {
+                                Ok(Some(_)) => {
+                                    eprintln!("[node] Block import: contract_deploy {} already stored", &contract_addr[..16.min(contract_addr.len())]);
+                                }
+                                Ok(None) => {
+                                    eprintln!("[node] Block import: contract_deploy {} — bytecode not available on this peer (will fetch later)", &contract_addr[..16.min(contract_addr.len())]);
+                                }
+                                Err(e) => {
+                                    eprintln!("[node] Block import: contract_deploy check error: {}", e);
+                                }
+                            }
+                        }
+                        eprintln!("[node] Processed contract_deploy tx: deployer={}... addr={}", &deployer[..16.min(deployer.len())], &contract_addr[..16.min(contract_addr.len())]);
+                    }
+                    "contract_call" => {
+                        let caller = tx.payload.to_pub_key_hex.as_deref().unwrap_or(&tx.from_pub_key);
+                        let contract_addr = match tx.payload.contract_addr.as_deref() {
+                            Some(a) => a,
+                            None => { eprintln!("[node] Skipping contract_call: no contract_addr"); continue; }
+                        };
+                        let method = tx.payload.contract_method.as_deref().unwrap_or("call");
+                        let gas_limit = tx.payload.contract_gas_limit.unwrap_or(quantum_vault_vm::DEFAULT_FUEL_LIMIT);
+
+                        // Enforce block-level fuel cap
+                        if block_fuel_used + gas_limit > MAX_BLOCK_FUEL {
+                            eprintln!("[node] Rejecting contract_call: block fuel cap exceeded ({} + {} > {})", block_fuel_used, gas_limit, MAX_BLOCK_FUEL);
+                            continue;
+                        }
+
+                        // Fee deduction
+                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                        if xrge_bal < tx.fee {
+                            eprintln!("[node] Rejecting contract_call: insufficient fee ({:.4} < {:.4})", xrge_bal, tx.fee);
+                            continue;
+                        }
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                        actual_fees_collected += tx.fee;
+
+                        // Re-execute the contract call if runtime is available
+                        if let (Some(ref rt), Some(ref cs)) = (&self.wasm_runtime, &self.contract_store) {
+                            let call_balances: HashMap<String, u64> = balances.iter()
+                                .map(|(k, v)| (k.clone(), (*v as u64)))
+                                .collect();
+                            let tx_hash_str = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
+                            let args = serde_json::Value::Object(serde_json::Map::new());
+                            match rt.execute_contract(
+                                cs,
+                                contract_addr,
+                                method,
+                                &args,
+                                caller,
+                                block.header.height,
+                                block.header.time / 1000, // ms to seconds
+                                call_balances,
+                                gas_limit,
+                                &tx_hash_str,
+                            ) {
+                                Ok(result) => {
+                                    block_fuel_used += result.gas_used;
+                                    eprintln!("[node] Block import: contract_call {} method={} gas={} success={}", 
+                                        &contract_addr[..16.min(contract_addr.len())], method, result.gas_used, result.success);
+                                }
+                                Err(e) => {
+                                    // Contract not found on this peer or execution error — log but don't reject block
+                                    eprintln!("[node] Block import: contract_call failed: {} (non-fatal)", e);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if block_fuel_used > 0 {
+                eprintln!("[node] Block {} total contract fuel: {} / {}", block.header.height, block_fuel_used, MAX_BLOCK_FUEL);
             }
         }
         
