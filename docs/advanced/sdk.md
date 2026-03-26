@@ -135,6 +135,33 @@ await rc.bridge.claim({ evmTxHash: '0x...', evmAddress: '0x...', evmSignature: '
 await rc.bridge.getWithdrawals();
 ```
 
+### Mail Name Registry (`rc.mail`)
+
+Register human-readable names and resolve recipients before sending encrypted mail. Third-party apps must call these for cross-app mail to work.
+
+```typescript
+// Register wallet on the node first (provides encryption key)
+await rc.messenger.registerWallet({
+  id: walletId,
+  displayName: "Alice",
+  signingPublicKey: sigPubKey,
+  encryptionPublicKey: encPubKey,
+});
+
+// Register a mail name
+await rc.mail.registerName("alice", walletId);
+
+// Resolve a name → wallet info (includes encryption key for ML-KEM)
+const resolved = await rc.mail.resolveName("bob");
+// { entry: { name, wallet_id }, wallet: { id, encryption_public_key, ... } }
+
+// Reverse lookup: wallet ID → name
+const name = await rc.mail.reverseLookup(walletId); // "alice"
+
+// Release a name
+await rc.mail.releaseName("alice", walletId);
+```
+
 ### Messenger (`rc.messenger`)
 
 ```typescript
@@ -260,7 +287,11 @@ const feeInfo = await rc.get('/api/fee-info');
 Full type declarations are included:
 
 ```typescript
-import type { Block, Transaction, Validator, LiquidityPool, NftCollection } from '@rougechain/sdk';
+import type {
+  Block, Transaction, Validator, LiquidityPool, NftCollection,
+  NameEntry, ResolvedName, MailMessage, SendMailParams,
+  PriceSnapshot, PoolStats, SwapQuote,
+} from '@rougechain/sdk';
 ```
 
 ## Security

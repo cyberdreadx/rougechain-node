@@ -296,6 +296,24 @@ export interface XrgeBridgeConfig {
   chainId: number;
 }
 
+// ===== Name Registry =====
+
+export interface NameEntry {
+  name: string;
+  wallet_id: string;
+  registered_at: string;
+}
+
+export interface ResolvedName {
+  entry?: NameEntry;
+  wallet?: {
+    id: string;
+    display_name: string;
+    signing_public_key: string;
+    encryption_public_key: string;
+  };
+}
+
 // ===== Mail =====
 
 export interface MailMessage {

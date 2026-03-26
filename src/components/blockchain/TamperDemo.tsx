@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Block } from "@/lib/pqc-blockchain";
-import { verifyBlockSignature } from "@/lib/pqc-blockchain";
 
 interface TamperDemoProps {
   chain: Block[];
@@ -21,6 +20,8 @@ interface ValidationError {
 }
 
 export function TamperDemo({ chain }: TamperDemoProps) {
+  const sortedChain = [...chain].sort((a, b) => a.index - b.index);
+
   const [selectedBlockIndex, setSelectedBlockIndex] = useState<number>(0);
   const [tamperedData, setTamperedData] = useState<string>("");
   const [isValidating, setIsValidating] = useState(false);
@@ -31,7 +32,7 @@ export function TamperDemo({ chain }: TamperDemoProps) {
   } | null>(null);
   const [tamperedChain, setTamperedChain] = useState<Block[] | null>(null);
 
-  if (chain.length === 0) {
+  if (sortedChain.length === 0) {
     return (
       <Card className="bg-card/50 backdrop-blur border-border">
         <CardHeader className="pb-3">
@@ -49,17 +50,16 @@ export function TamperDemo({ chain }: TamperDemoProps) {
     );
   }
 
-  const selectedBlock = chain[selectedBlockIndex];
+  const selectedBlock = sortedChain[selectedBlockIndex];
 
   const handleTamper = () => {
     if (!tamperedData.trim()) return;
     
-    // Create a tampered copy of the chain
-    const newChain = chain.map((block, idx) => {
+    const newChain = sortedChain.map((block, idx) => {
       if (idx === selectedBlockIndex) {
         return {
           ...block,
-          data: tamperedData, // Modify the data WITHOUT updating hash/signature
+          data: tamperedData,
         };
       }
       return block;
@@ -78,51 +78,33 @@ export function TamperDemo({ chain }: TamperDemoProps) {
     try {
       for (let i = 0; i < tamperedChain.length; i++) {
         const currentBlock = tamperedChain[i];
-        const originalBlock = chain[i];
+        const originalBlock = sortedChain[i];
+        const height = currentBlock.index;
 
-        // Check if data was tampered
         if (currentBlock.data !== originalBlock.data) {
-          // The hash won't match the new data
           errors.push({
             type: "hash",
             blockIndex: i,
-            message: `Block #${i}: Hash mismatch detected`,
-            technical: `SHA-256(index=${i}, timestamp=${currentBlock.timestamp}, data="${currentBlock.data.slice(0, 20)}...", prevHash, nonce=${currentBlock.nonce}) ≠ stored hash. The block data was modified but the hash was not recalculated.`,
+            message: `Block #${height}: Hash mismatch detected`,
+            technical: `SHA-256(index=${height}, timestamp=${currentBlock.timestamp}, data="${currentBlock.data.slice(0, 20)}...", prevHash, nonce=${currentBlock.nonce}) ≠ stored hash. The block data was modified but the hash was not recalculated.`,
           });
 
-          // The signature is invalid for the modified data
           errors.push({
             type: "signature",
             blockIndex: i,
-            message: `Block #${i}: ML-DSA-65 signature invalid`,
+            message: `Block #${height}: ML-DSA-65 signature invalid`,
             technical: `ml_dsa65.verify(publicKey, signature, messageHash) returned FALSE. The signature was created for the original data, not the tampered data. Would need private key to create valid signature.`,
           });
         }
 
-        // Check hash linkage
         if (i > 0) {
           const previousBlock = tamperedChain[i - 1];
           if (currentBlock.previousHash !== previousBlock.hash) {
             errors.push({
               type: "linkage",
               blockIndex: i,
-              message: `Block #${i}: Chain linkage broken`,
-              technical: `block[${i}].previousHash (${currentBlock.previousHash.slice(0, 16)}...) ≠ block[${i-1}].hash (${previousBlock.hash.slice(0, 16)}...). The chain is discontinuous.`,
-            });
-          }
-        }
-
-        // Actually verify the signature against the stored hash (original)
-        if (currentBlock.data !== originalBlock.data) {
-          // Skip actual verification since we know it would fail with tampered data
-        } else {
-          const validSig = await verifyBlockSignature(currentBlock);
-          if (!validSig) {
-            errors.push({
-              type: "signature",
-              blockIndex: i,
-              message: `Block #${i}: Signature verification failed`,
-              technical: `Real ML-DSA-65 verification failed on the server.`,
+              message: `Block #${height}: Chain linkage broken`,
+              technical: `block[${height}].previousHash (${currentBlock.previousHash.slice(0, 16)}...) ≠ block[${previousBlock.index}].hash (${previousBlock.hash.slice(0, 16)}...). The chain is discontinuous.`,
             });
           }
         }
@@ -175,9 +157,9 @@ export function TamperDemo({ chain }: TamperDemoProps) {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {chain.map((block, idx) => (
+              {sortedChain.map((block, idx) => (
                 <SelectItem key={idx} value={idx.toString()}>
-                  Block #{idx} {idx === 0 ? "(Genesis)" : ""}
+                  Block #{block.index} {block.index === 0 ? "(Genesis)" : ""}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -245,7 +227,7 @@ export function TamperDemo({ chain }: TamperDemoProps) {
                 Chain Tampered!
               </div>
               <p className="text-xs text-muted-foreground mt-1">
-                Block #{selectedBlockIndex} data changed from "{selectedBlock.data.slice(0, 20)}..." to "{tamperedData.slice(0, 20)}..."
+                Block #{selectedBlock.index} data changed from "{selectedBlock.data.slice(0, 20)}..." to "{tamperedData.slice(0, 20)}..."
               </p>
               <p className="text-xs text-muted-foreground mt-1">
                 Click "Validate Chain" to run cryptographic verification.

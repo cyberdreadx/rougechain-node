@@ -337,7 +337,37 @@ const batch = await rc.getRollupBatch(1);
 
 ## Mail (`rc.mail`)
 
-On-chain encrypted email with `@rouge.quant` addresses.
+On-chain encrypted email with `@rouge.quant` / `@qwalla.mail` addresses.
+
+### Name Registry
+
+Register a mail name so other users can send you encrypted email. Third-party apps (QWALLA, qRougee, etc.) should call these on wallet creation.
+
+```typescript
+// Step 1: Register wallet on the node (required for encryption keys)
+await rc.messenger.registerWallet({
+  id: wallet.publicKey,
+  displayName: "Alice",
+  signingPublicKey: wallet.publicKey,
+  encryptionPublicKey: encPubKey,
+});
+
+// Step 2: Register a mail name
+await rc.mail.registerName("alice", wallet.publicKey);
+
+// Resolve a name → wallet info (includes encryption key)
+const resolved = await rc.mail.resolveName("alice");
+// { entry: { name, wallet_id }, wallet: { id, signing_public_key, encryption_public_key } }
+
+// Reverse lookup: wallet ID → name
+const name = await rc.mail.reverseLookup(wallet.publicKey);
+// "alice"
+
+// Release a name
+await rc.mail.releaseName("alice", wallet.publicKey);
+```
+
+### Sending & Reading Mail
 
 ```typescript
 // Send an encrypted email

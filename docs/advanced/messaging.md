@@ -8,8 +8,8 @@ RougeChain includes two built-in communication systems — both fully end-to-end
 |---------|-----------|------|
 | **Purpose** | Real-time chat | Async email |
 | **Encryption** | ML-KEM-768 + AES-GCM | ML-KEM-768 + AES-GCM |
-| **Addresses** | Wallet public keys | `@rouge.quant` names |
-| **Media** | Images, videos (auto-compressed) | Text only |
+| **Addresses** | Wallet public keys | `@rouge.quant` / `@qwalla.mail` names |
+| **Media** | Images, videos (auto-compressed) | Text + attachments (up to 2 MB) |
 | **Self-destruct** | ✅ Configurable timer | ❌ |
 | **Folders** | — | Inbox, Sent, Trash |
 | **Threading** | Conversations | Reply chains |
@@ -123,11 +123,23 @@ import { RougeChain, Wallet } from '@rougechain/sdk';
 const rc = new RougeChain('https://testnet.rougechain.io/api');
 const wallet = Wallet.generate();
 
-// Register a mail name
-await rc.registerName(wallet, 'alice');
+// Step 1: Register wallet (provides encryption key to the node)
+await rc.messenger.registerWallet({
+  id: wallet.publicKey,
+  displayName: 'Alice',
+  signingPublicKey: wallet.publicKey,
+  encryptionPublicKey: encPubKey,
+});
 
-// Look up a recipient
-const bob = await rc.lookupName('bob');
+// Step 2: Register a mail name
+await rc.mail.registerName('alice', wallet.publicKey);
+
+// Resolve a recipient's name → wallet + encryption key
+const bob = await rc.mail.resolveName('bob');
+// bob.wallet.encryption_public_key → use for ML-KEM encryption
+
+// Reverse lookup
+const name = await rc.mail.reverseLookup(wallet.publicKey); // "alice"
 ```
 
 For the full messenger and mail APIs, see the [SDK documentation](sdk.md).

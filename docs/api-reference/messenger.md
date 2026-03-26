@@ -11,17 +11,25 @@ POST /api/messenger/wallets/register
 Content-Type: application/json
 ```
 
-Register your wallet's encryption public key so others can send you messages.
+Register your wallet's encryption public key so others can send you encrypted messages and mail. **This is required before receiving mail from other apps.**
 
 ### Request Body
 
 ```json
 {
-  "publicKey": "signing-public-key-hex",
-  "encPublicKey": "ml-kem768-public-key-hex",
-  "displayName": "Alice"
+  "id": "wallet-uuid-or-public-key",
+  "displayName": "Alice",
+  "signingPublicKey": "ml-dsa65-signing-public-key-hex",
+  "encryptionPublicKey": "ml-kem768-encryption-public-key-hex"
 }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique wallet identifier |
+| `displayName` | string | Human-readable name (unique, case-insensitive) |
+| `signingPublicKey` | string | ML-DSA-65 public key (hex) |
+| `encryptionPublicKey` | string | ML-KEM-768 public key (hex) — needed for E2E encryption |
 
 ### Response
 
@@ -45,11 +53,13 @@ Returns all registered messenger wallets.
 
 ```json
 {
+  "success": true,
   "wallets": [
     {
-      "publicKey": "abc123...",
-      "encPublicKey": "def456...",
-      "displayName": "Alice"
+      "id": "wallet-uuid",
+      "display_name": "Alice",
+      "signing_public_key": "abc123...",
+      "encryption_public_key": "def456..."
     }
   ]
 }
@@ -220,3 +230,38 @@ Sender                                    Recipient
 Users can block wallets client-side. Blocked wallets are filtered from conversations and contacts. The block list is stored in browser `localStorage` under `pqc_blocked_wallets`.
 
 This is a client-side feature — the server is not involved. Blocked users can still send messages, but they won't appear in the blocking user's UI.
+
+---
+
+## SDK Usage
+
+The `@rougechain/sdk` provides a high-level API for messenger operations:
+
+```typescript
+import { RougeChain } from "@rougechain/sdk";
+
+const rc = new RougeChain("https://testnet.rougechain.io/api");
+
+// Register wallet (required for receiving messages and mail)
+await rc.messenger.registerWallet({
+  id: walletId,
+  displayName: "Alice",
+  signingPublicKey: sigPubKey,
+  encryptionPublicKey: encPubKey,
+});
+
+// Conversations
+const convos = await rc.messenger.getConversations(walletId);
+await rc.messenger.createConversation([walletIdA, walletIdB]);
+
+// Messages
+const msgs = await rc.messenger.getMessages(conversationId);
+await rc.messenger.sendMessage(conversationId, walletId, encryptedContent, {
+  selfDestruct: true,
+  destructAfterSeconds: 30,
+});
+await rc.messenger.markRead(messageId);
+await rc.messenger.deleteMessage(messageId);
+```
+
+**TypeScript types:** `MessengerWallet`, `MessengerConversation`, `MessengerMessage`

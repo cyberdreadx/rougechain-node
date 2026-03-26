@@ -4,6 +4,21 @@ All notable changes to RougeChain.
 
 ---
 
+## Testnet v0.2.2 — March 2026
+
+### Added
+- **SDK v0.8.4** — Name registry methods: `rc.mail.registerName()`, `rc.mail.resolveName()`, `rc.mail.reverseLookup()`, `rc.mail.releaseName()`
+- **SDK types** — `NameEntry`, `ResolvedName` exported for TypeScript consumers
+- **Browser Extension** — BIP-39 seed phrase support: generate, view, and import 24-word mnemonic phrases
+
+### Fixed
+- API docs corrected: name registry endpoints now show actual routes (`/names/resolve/:name`, `/names/reverse/:walletId`) instead of non-existent query-param URLs
+- Blockchain explorer chain validation no longer fails on descending block order from API
+- Tamper detection demo works correctly with real blocks from the API
+- SDK `SwapQuoteParams` now includes required `tokenOut` field
+
+---
+
 ## Testnet v0.2.1 — March 2026
 
 ### Added

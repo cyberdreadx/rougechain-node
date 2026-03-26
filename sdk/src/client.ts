@@ -64,6 +64,8 @@ import type {
   SwapQuoteParams,
   TokenMetadataUpdateParams,
   TokenHolder,
+  NameEntry,
+  ResolvedName,
   MailMessage,
   SendMailParams,
   MessengerWallet,
@@ -928,6 +930,62 @@ class BridgeClient {
 
 class MailClient {
   constructor(private readonly rc: RougeChain) {}
+
+  // --- Name Registry ---
+
+  async registerName(name: string, walletId: string): Promise<ApiResponse> {
+    try {
+      const data = await this.rc.post<Record<string, unknown>>("/names/register", {
+        name,
+        walletId,
+      });
+      return { success: data.success === true, error: data.error as string | undefined, data };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  async resolveName(name: string): Promise<ResolvedName | null> {
+    try {
+      const data = await this.rc.get<{ success: boolean; entry?: NameEntry; wallet?: ResolvedName["wallet"] }>(
+        `/names/resolve/${encodeURIComponent(name.toLowerCase())}`
+      );
+      if (!data.success) return null;
+      return { entry: data.entry, wallet: data.wallet };
+    } catch {
+      return null;
+    }
+  }
+
+  async reverseLookup(walletId: string): Promise<string | null> {
+    try {
+      const data = await this.rc.get<{ name?: string }>(
+        `/names/reverse/${encodeURIComponent(walletId)}`
+      );
+      return data.name || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async releaseName(name: string, walletId: string): Promise<ApiResponse> {
+    try {
+      const res = await this.rc.fetchFn(
+        `${this.rc.baseUrl}/names/release`,
+        {
+          method: "DELETE",
+          headers: { ...this.rc.headers, "Content-Type": "application/json" },
+          body: JSON.stringify({ name, walletId }),
+        }
+      );
+      const data = (await res.json()) as Record<string, unknown>;
+      return { success: data.success === true, error: data.error as string | undefined };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  // --- Mail ---
 
   async send(params: SendMailParams): Promise<ApiResponse> {
     try {

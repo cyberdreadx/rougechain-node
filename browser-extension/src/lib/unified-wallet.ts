@@ -25,6 +25,7 @@ export interface UnifiedWallet {
     encryptionPublicKey: string;
     encryptionPrivateKey: string;
     version: number;
+    mnemonic?: string;
 }
 
 export interface VaultSettings {

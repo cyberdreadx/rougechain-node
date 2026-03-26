@@ -64,21 +64,42 @@ export function QuantumThreatPanel() {
             finding short vectors in high-dimensional lattices. Unlike factoring, 
             there's <span className="text-primary font-medium">no known quantum speedup</span> for this problem.
           </p>
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            <div className="text-center p-2 rounded bg-background/50">
-              <Zap className="w-4 h-4 mx-auto text-destructive mb-1" />
-              <p className="text-[10px] text-muted-foreground">Classical</p>
-              <p className="text-xs font-mono">2<sup>128</sup> ops</p>
+
+          {/* ECDSA — broken by quantum */}
+          <div className="p-2 rounded bg-destructive/10 border border-destructive/20">
+            <p className="text-[10px] font-medium text-destructive mb-1.5">ECDSA (Bitcoin, Ethereum)</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="text-center p-1.5 rounded bg-background/50">
+                <p className="text-[10px] text-muted-foreground">Classical</p>
+                <p className="text-xs font-mono font-bold text-foreground">2<sup>128</sup> ops</p>
+              </div>
+              <div className="text-center p-1.5 rounded bg-destructive/15">
+                <p className="text-[10px] text-destructive">Quantum</p>
+                <p className="text-xs font-mono font-bold text-destructive">~2<sup>0</sup> ops</p>
+              </div>
             </div>
-            <div className="text-center p-2 rounded bg-background/50">
-              <Cpu className="w-4 h-4 mx-auto text-primary mb-1" />
-              <p className="text-[10px] text-muted-foreground">Quantum</p>
-              <p className="text-xs font-mono">2<sup>128</sup> ops</p>
-            </div>
+            <p className="text-[10px] text-center text-destructive mt-1">
+              Shor's algorithm breaks it instantly
+            </p>
           </div>
-          <p className="text-[10px] text-center text-muted-foreground">
-            No quantum advantage — equally hard for both!
-          </p>
+
+          {/* ML-DSA — quantum safe */}
+          <div className="p-2 rounded bg-success/10 border border-success/20">
+            <p className="text-[10px] font-medium text-success mb-1.5">ML-DSA-65 (RougeChain)</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="text-center p-1.5 rounded bg-background/50">
+                <p className="text-[10px] text-muted-foreground">Classical</p>
+                <p className="text-xs font-mono font-bold text-foreground">2<sup>128</sup> ops</p>
+              </div>
+              <div className="text-center p-1.5 rounded bg-success/15">
+                <p className="text-[10px] text-success">Quantum</p>
+                <p className="text-xs font-mono font-bold text-success">2<sup>128</sup> ops</p>
+              </div>
+            </div>
+            <p className="text-[10px] text-center text-success mt-1">
+              No quantum advantage — equally hard for both
+            </p>
+          </div>
         </div>
 
         {/* Your Protection */}

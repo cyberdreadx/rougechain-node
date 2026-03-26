@@ -9,7 +9,9 @@
         "preview": "vite preview"
     },
     "dependencies": {
+        "@noble/hashes": "^2.0.1",
         "@noble/post-quantum": "^0.5.4",
+        "@scure/bip39": "^2.0.1",
         "clsx": "^2.1.0",
         "framer-motion": "^11.0.0",
         "lucide-react": "^0.462.0",

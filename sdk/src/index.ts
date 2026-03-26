@@ -87,6 +87,8 @@ export type {
   XrgeBridgeWithdrawParams,
   SwapQuoteParams,
   TokenMetadataUpdateParams,
+  NameEntry,
+  ResolvedName,
   MailMessage,
   SendMailParams,
   MessengerWallet,
