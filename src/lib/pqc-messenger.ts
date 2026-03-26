@@ -485,37 +485,38 @@ export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKey
   if (!apiBase) return;
   const privacy = getPrivacySettings();
 
-  const priv = (wallet as WalletWithPrivateKeys).signingPrivateKey;
-  if (priv) {
-    const signed = buildSignedRequest(
-      {
-        id: wallet.id,
-        displayName: wallet.displayName,
-        signingPublicKey: wallet.signingPublicKey,
-        encryptionPublicKey: wallet.encryptionPublicKey,
-        discoverable: privacy.discoverable,
-      },
-      priv,
-      wallet.signingPublicKey,
-    );
-    await fetch(`${apiBase}/v2/messenger/wallets/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
-      body: JSON.stringify(signed),
-    });
-  } else {
-    await fetch(`${apiBase}${MESSENGER_API_PREFIX}/wallets/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
-      body: JSON.stringify({
-        id: wallet.id,
-        displayName: wallet.displayName,
-        signingPublicKey: wallet.signingPublicKey,
-        encryptionPublicKey: wallet.encryptionPublicKey,
-        discoverable: privacy.discoverable,
-      }),
-    });
+  let priv = (wallet as WalletWithPrivateKeys).signingPrivateKey;
+  let sigPub = wallet.signingPublicKey;
+
+  // Fall back to unified wallet for private key if not provided
+  if (!priv) {
+    try {
+      const { loadUnifiedWallet } = await import("@/lib/unified-wallet");
+      const uw = loadUnifiedWallet();
+      if (uw?.signingPrivateKey && uw.signingPublicKey === sigPub) {
+        priv = uw.signingPrivateKey;
+      }
+    } catch {}
   }
+
+  if (!priv) return;
+
+  const signed = buildSignedRequest(
+    {
+      id: wallet.id,
+      displayName: wallet.displayName,
+      signingPublicKey: wallet.signingPublicKey,
+      encryptionPublicKey: wallet.encryptionPublicKey,
+      discoverable: privacy.discoverable,
+    },
+    priv,
+    sigPub,
+  );
+  await fetch(`${apiBase}/v2/messenger/wallets/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
+    body: JSON.stringify(signed),
+  });
 }
 
 async function kemEncryptPlaintext(

@@ -40,11 +40,12 @@ function WalletAutoRegister() {
     if (registered.current || isWalletLocked()) return;
     registered.current = true;
     const w = loadUnifiedWallet();
-    if (w?.encryptionPublicKey) {
+    if (w?.encryptionPublicKey && w?.signingPrivateKey) {
       registerWalletOnNode({
         id: w.id,
         displayName: w.displayName,
         signingPublicKey: w.signingPublicKey,
+        signingPrivateKey: w.signingPrivateKey,
         encryptionPublicKey: w.encryptionPublicKey,
       }).catch(() => {});
     }
