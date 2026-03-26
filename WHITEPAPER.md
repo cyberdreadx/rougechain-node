@@ -1,6 +1,6 @@
 # RougeChain: A Post-Quantum Layer 1 Blockchain
 
-**Version 1.5 -- March 2026**
+**Version 1.6 -- March 2026**
 
 > **RougeChain is a post-quantum Layer 1 blockchain where every signature, every transaction, and every encrypted message is secured by NIST-approved lattice cryptography — not as a future upgrade, but as the foundation.**
 
@@ -315,7 +315,9 @@ RougeChain supports 28 transaction types within a unified transaction structure:
 
 RougeChain uses the Sled embedded database for persistent state, providing:
 - **O(1) block lookups** by height
+- **O(1) transaction lookups** by hash via a dedicated `tx_index` tree
 - **Range queries** for block scanning and pagination
+- **Persistent state** for shielded supply, faucet cooldowns, and chain metadata
 - **Atomic writes** for consistency during block import
 
 The following stores are maintained independently:
@@ -323,6 +325,9 @@ The following stores are maintained independently:
 | Store | Database | Contents |
 |---|---|---|
 | Chain | chain-db | Blocks indexed by height |
+| Tx Index | chain-db (tx_index tree) | O(1) transaction hash → block height lookup |
+| State | chain-db (state tree) | Persistent chain state (shielded supply, faucet cooldowns) |
+| Nonce | chain-db (nonce_db tree) | Per-account nonce tracking for replay prevention |
 | Validators | validators-db | Stake, slash count, jail status, entropy contributions |
 | Pools | pools-db | AMM liquidity pool state |
 | NFT Collections | nft-collections-db | Collection metadata and configuration |
@@ -331,6 +336,7 @@ The following stores are maintained independently:
 | Finality Proofs | finality-db | BFT finality proofs indexed by block height |
 | Event Index | indexer-db | Multi-index event store (by address, type, token, block) |
 | Transaction Receipts | receipts-db | Post-inclusion status, logs, and gas used |
+| Contracts | contracts-db | WASM bytecode, metadata, and contract storage |
 
 Additional off-chain stores (JSON-backed) handle bridge claims, withdrawal requests, and messenger data.
 
@@ -373,7 +379,9 @@ Nodes communicate over HTTP with the following mechanisms:
 
 ### 3.6 Mempool
 
-The mempool holds up to **2,000 pending transactions** in a hash map keyed by transaction hash. When the mempool is full, the oldest transactions are evicted (FIFO). Duplicate transactions are rejected. All transactions in the mempool are included in the next block produced by the local node, then drained.
+The mempool holds up to **2,000 pending transactions** in a hash map keyed by transaction hash. When the mempool is full, the **lowest-fee transaction is evicted** — new transactions must have a higher fee than the current minimum to be admitted. This fee-priority eviction prevents an attacker from flooding the mempool with low-fee spam to displace legitimate transactions. Duplicate transactions are rejected. P2P broadcast transactions undergo full ML-DSA-65 signature verification before admission.
+
+All transactions in the mempool are verified (including parallel signature checks via Rayon) and included in the next block produced by the local node, then drained.
 
 ### 3.7 Signature Size and Scaling
 
@@ -457,6 +465,15 @@ The 64-row trace performs MSB-first bit decomposition of the input value, provin
 1. **Shield** (`shield`): Deducts XRGE from the sender's public balance and stores a commitment on-chain. The note details (value, randomness) are kept by the sender.
 2. **Shielded Transfer** (`shielded_transfer`): Consumes one or more input notes by publishing their nullifiers, creates new output commitments, and includes a STARK proof that value is conserved. Neither the input nor output values are revealed.
 3. **Unshield** (`unshield`): Publishes a nullifier to consume a shielded note and credits the equivalent XRGE to the sender's public balance, with a STARK proof of note ownership.
+
+**Supply Tracking.** The total shielded supply is tracked persistently in the `state` sled tree and updated atomically during shield/unshield operations. The API exposes a supply breakdown:
+
+| Metric | Source |
+|---|---|
+| Circulating Supply | Total supply − burned − shielded |
+| Shielded Pool | Cumulative shield minus unshield amounts |
+| Burned Supply | Balance of the burn address |
+
 
 **Proof Size Tradeoff.** Shielded transfer STARK proofs are approximately 50–100 KB each, compared to ~5.3 KB for a standard transfer (including the 3.3 KB ML-DSA signature). This is an inherent characteristic of STARKs — transparency and quantum resistance come at the cost of larger proofs. Future rollup batching (Phase 3) will amortize this by aggregating hundreds of shielded proofs into a single on-chain proof.
 
@@ -808,6 +825,31 @@ Every node exposes a comprehensive HTTP API supporting all chain operations:
 
 A gRPC interface is available for high-performance node-to-node communication and advanced integrations, supporting the same operations as the REST API with protocol buffer serialization.
 
+### 9.5 WASM Smart Contracts
+
+RougeChain includes a fuel-metered WebAssembly (WASM) smart contract runtime built on the `wasmi` pure-Rust interpreter (used by Parity/Substrate).
+
+**Execution Model:**
+
+| Parameter | Value |
+|---|---|
+| Runtime | wasmi (pure Rust, no JIT) |
+| Fuel limit (per call) | 10,000,000 instructions |
+| Fuel limit (per block) | 100,000,000 instructions |
+| Max WASM module size | 1 MB |
+| Max call depth | 8 (cross-contract) |
+
+**Contract Lifecycle:**
+1. **Deploy** — Compile and validate WASM bytecode, compute contract address as `SHA-256(deployer ‖ nonce)[0..20]`, store metadata and bytecode in `contracts-db`.
+2. **Execute** — Call a contract method with fuel metering. State changes are committed atomically on success; rolled back entirely on failure.
+3. **Query** — Read-only contract calls that do not commit state changes.
+
+**Host API.** Contracts interact with chain state through imported host functions: `storage_get`, `storage_set`, `storage_delete`, `emit_event`, `get_balance`, `transfer`, `call_contract`, and `log`.
+
+**Cross-Contract Calls.** Contracts can invoke other contracts up to 8 levels deep. Balance deltas and storage writes from sub-calls are propagated and committed atomically with the top-level call.
+
+**Development Workflow:** Contracts are written in Rust, compiled to WASM via `wasm32-unknown-unknown`, and deployed via the REST API.
+
 ---
 
 ## 10. Security Considerations
@@ -889,7 +931,8 @@ RougeChain's cryptographic infrastructure is designed to evolve. The following p
 | 2 | Shielded on-chain transactions with nullifier sets | ✅ Complete |
 | 3 | ZK-rollup layer for throughput scaling | ✅ Complete |
 | 3b | STARK bridge deposit verification | ✅ Complete |
-| 4 | WASM-compiled prover for browser extension | Planned |
+| 4 | WASM smart contract runtime (wasmi, fuel-metered) | ✅ Complete |
+| 4b | WASM-compiled prover for browser extension | Planned |
 | 5 | On-chain governance with delegation and treasury | ✅ Complete |
 | 6 | Multi-signature wallets (M-of-N) | ✅ Complete |
 | 7 | Validator auto-slashing and unbonding period | ✅ Complete |
