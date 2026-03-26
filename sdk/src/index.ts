@@ -24,6 +24,7 @@ export {
   createSignedUnshield,
   BURN_ADDRESS,
   isBurnAddress,
+  signRequest,
 } from "./signer.js";
 
 export { generateNonce, hexToBytes, bytesToHex } from "./utils.js";

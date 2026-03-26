@@ -23,6 +23,8 @@ RougeChain's messaging uses **ML-KEM-768** (CRYSTALS-Kyber, FIPS 203) for key en
 
 ## How It Works
 
+### Messenger Encryption
+
 ```
 Alice                                       Bob
   │                                          │
@@ -32,7 +34,7 @@ Alice                                       Bob
   │ 4. AES-GCM encrypt (for Bob)            │
   │ 5. AES-GCM encrypt (for self)           │
   │                                          │
-  │── Both ciphertexts sent to server ──────►│
+  │── Signed request to /api/v2/... ────────►│
   │                                          │
   │                  6. Decapsulate → same shared secret
   │                  7. HKDF → same AES-256 key
@@ -40,6 +42,17 @@ Alice                                       Bob
 ```
 
 **Key principle:** The server stores two encrypted blobs per message — one for the sender, one for the recipient. It never has the keys to decrypt either.
+
+### Mail Encryption (CEK Pattern)
+
+Mail uses a Content Encryption Key (CEK) pattern for efficient multi-recipient support:
+
+1. Generate a random 256-bit AES key (the CEK)
+2. Encrypt all mail content (subject, body, attachment) once with the CEK via AES-256-GCM
+3. For each recipient (and the sender): KEM-wrap the CEK using their ML-KEM-768 public key
+4. Sign the concatenation of all encrypted parts with ML-DSA-65 (unified signature)
+
+This design encrypts content only once regardless of recipient count.
 
 ## Messenger
 
@@ -105,6 +118,25 @@ Names are unique and first-come-first-served.
 
 See [Mail API Reference](../api-reference/mail.md) for full endpoint documentation.
 
+## Authenticated Requests
+
+All mail, messenger, and name registry write operations require ML-DSA-65 signed requests via `/api/v2/` endpoints. Each request includes:
+
+- **`from`** — Sender's ML-DSA-65 public key
+- **`timestamp`** — Millisecond-precision timestamp (valid within a 5-minute window)
+- **`nonce`** — 16 bytes of random hex (prevents replay attacks)
+- **`signature`** — ML-DSA-65 signature over the canonical JSON payload
+
+The server verifies the signature, validates the timestamp, confirms the sender owns the wallet, and rejects duplicate nonces. Legacy unsigned endpoints return HTTP 410 (Gone) in production.
+
+## Trust-on-First-Use (TOFU)
+
+The messenger tracks public key fingerprints (SHA-256 hash) for contacts:
+
+- On first interaction, the contact's key fingerprint is stored locally
+- On subsequent interactions, the fingerprint is compared — a "Key Changed" warning appears if it differs
+- The shortened fingerprint is shown in the chat header for manual verification
+
 ## Security Properties
 
 | Property | Details |
@@ -114,8 +146,17 @@ See [Mail API Reference](../api-reference/mail.md) for full endpoint documentati
 | **Zero-knowledge server** | Server stores only ciphertext — cannot read messages |
 | **Client-side crypto** | All encryption/decryption in the browser via WebAssembly |
 | **Dual ciphertext** | Sender and recipient each get their own encrypted copy |
+| **Signed requests** | All API calls authenticated with ML-DSA-65 signatures |
+| **Anti-replay** | Nonce + timestamp prevents request replay attacks |
+| **TOFU** | Key fingerprint tracking with change detection |
+| **Unified signatures** | Mail signed over all encrypted parts (subject + body + attachment) |
+| **CEK multi-recipient** | Efficient per-recipient key wrapping without re-encryption |
+| **Atomic name registry** | Compare-and-swap prevents race conditions on name claims |
+| **Session-only keys** | Private keys in sessionStorage (cleared on tab close) |
 
 ## SDK Usage
+
+All write operations now require a `wallet` parameter for ML-DSA-65 request signing:
 
 ```typescript
 import { RougeChain, Wallet } from '@rougechain/sdk';
@@ -123,22 +164,22 @@ import { RougeChain, Wallet } from '@rougechain/sdk';
 const rc = new RougeChain('https://testnet.rougechain.io/api');
 const wallet = Wallet.generate();
 
-// Step 1: Register wallet (provides encryption key to the node)
-await rc.messenger.registerWallet({
+// Step 1: Register wallet (signed request)
+await rc.messenger.registerWallet(wallet, {
   id: wallet.publicKey,
   displayName: 'Alice',
   signingPublicKey: wallet.publicKey,
   encryptionPublicKey: encPubKey,
 });
 
-// Step 2: Register a mail name
-await rc.mail.registerName('alice', wallet.publicKey);
+// Step 2: Register a mail name (signed request)
+await rc.mail.registerName(wallet, 'alice', wallet.publicKey);
 
-// Resolve a recipient's name → wallet + encryption key
+// Resolve a recipient's name → wallet + encryption key (public, no signing needed)
 const bob = await rc.mail.resolveName('bob');
 // bob.wallet.encryption_public_key → use for ML-KEM encryption
 
-// Reverse lookup
+// Reverse lookup (public, no signing needed)
 const name = await rc.mail.reverseLookup(wallet.publicKey); // "alice"
 ```
 

@@ -1,6 +1,6 @@
 # RougeChain: A Post-Quantum Layer 1 Blockchain
 
-**Version 1.6 -- March 2026**
+**Version 1.7 -- March 2026**
 
 > **RougeChain is a post-quantum Layer 1 blockchain where every signature, every transaction, and every encrypted message is secured by NIST-approved lattice cryptography — not as a future upgrade, but as the foundation.**
 
@@ -338,7 +338,11 @@ The following stores are maintained independently:
 | Transaction Receipts | receipts-db | Post-inclusion status, logs, and gas used |
 | Contracts | contracts-db | WASM bytecode, metadata, and contract storage |
 
-Additional off-chain stores (JSON-backed) handle bridge claims, withdrawal requests, and messenger data.
+| Messenger | messenger-db | Wallets, conversations, messages with participant and conversation-message indexes |
+| Mail | mail-db | Mail messages and per-recipient folder labels |
+| Name Registry | name-registry-db | Bidirectional name↔wallet mappings with atomic registration (compare-and-swap) |
+
+Additional off-chain stores (JSON-backed) handle bridge claims and withdrawal requests.
 
 ### 3.4.1 Event Indexer
 
@@ -728,17 +732,17 @@ Royalties are enforced at the protocol level. When a transfer includes a `salePr
 
 ---
 
-## 8. Encrypted Messenger
+## 8. Encrypted Messenger and Mail
 
-RougeChain includes an end-to-end encrypted messenger that leverages the same post-quantum primitives used by the blockchain.
+RougeChain includes end-to-end encrypted messenger and mail systems that leverage the same post-quantum primitives used by the blockchain, with comprehensive security hardening across authentication, encryption, and storage layers.
 
 ### 8.1 Encryption Protocol
 
 Each messenger wallet generates two key pairs:
-- **ML-DSA-65** for message signing and authentication.
+- **ML-DSA-65** for message signing, authentication, and request signing.
 - **ML-KEM-768** for key encapsulation and encryption.
 
-When a user sends a message, the following process occurs:
+**Messenger Encryption.** When a user sends a message, the following process occurs:
 
 1. **Key Encapsulation.** The sender encapsulates a shared secret using the recipient's ML-KEM-768 public key, producing a ciphertext and a 32-byte shared secret.
 2. **Key Derivation.** The shared secret is passed through HKDF-SHA-256 to derive an AES-256-GCM key.
@@ -746,20 +750,58 @@ When a user sends a message, the following process occurs:
 4. **Dual Encryption.** The same process is repeated with the sender's own ML-KEM-768 public key, producing a second encrypted copy. This allows the sender to decrypt their own messages when re-fetched from the server.
 5. **Signing.** The entire encrypted package is signed with the sender's ML-DSA-65 private key.
 
-### 8.2 Message Verification
+**Mail Encryption (CEK Pattern).** Mail uses a Content Encryption Key (CEK) pattern for multi-recipient support:
+
+1. **CEK Generation.** A random 256-bit AES key (the CEK) is generated.
+2. **Content Encryption.** The mail content (subject, body, and attachment) is encrypted once using the CEK with AES-256-GCM.
+3. **Key Wrapping.** For each recipient (and the sender), the CEK is wrapped using ML-KEM-768: a shared secret is encapsulated, an AES-GCM wrapping key is derived via HKDF, and the CEK is encrypted with this wrapping key.
+4. **Unified Signature.** A single ML-DSA-65 signature is computed over the concatenation of all encrypted parts (subject + body + attachment), ensuring integrity of the complete message.
+
+This design encrypts the message body only once regardless of recipient count, making multi-recipient mail efficient while preserving per-recipient key isolation.
+
+### 8.2 Authenticated API Requests
+
+All mail, messenger, and name registry operations require ML-DSA-65 signed requests. Each API call includes:
+
+- **Payload** — The operation parameters plus a `from` field (sender's public key), a `timestamp` (millisecond precision, valid within a 5-minute window), and a unique `nonce` (16 bytes of random hex).
+- **Signature** — ML-DSA-65 signature over the canonical (sorted-key) JSON serialization of the payload.
+- **Public Key** — The signer's ML-DSA-65 public key for verification.
+
+The server verifies the signature, checks the timestamp window, confirms the `from` field matches the signing key, and rejects duplicate nonces to prevent replay attacks. Unsigned legacy endpoints return HTTP 410 (Gone) in production.
+
+### 8.3 Anti-Replay Protection
+
+Beyond timestamp validation, each signed request includes a cryptographically random nonce. The server maintains an in-memory nonce store with automatic expiry. Duplicate nonces within the validity window are rejected, preventing captured requests from being replayed even within the 5-minute timestamp tolerance.
+
+### 8.4 Message Verification and TOFU
 
 Recipients verify the ML-DSA-65 signature before decryption, ensuring message authenticity and integrity. Invalid signatures are flagged in the UI.
 
-### 8.3 Features
+**Trust-on-First-Use (TOFU).** The messenger implements a TOFU model for key verification:
+
+1. When a user first communicates with a contact, the contact's public key fingerprint (SHA-256 hash) is recorded in local storage.
+2. On subsequent interactions, the current key fingerprint is compared against the stored value.
+3. If the key has changed, a visible "Key Changed" warning is displayed in the chat header, alerting the user to potential key compromise or re-registration.
+4. The shortened fingerprint is displayed in the chat header for manual out-of-band verification.
+
+### 8.5 Features
 
 - **Self-destructing messages** with configurable timers.
 - **Spoiler tags** for content that should be hidden until explicitly revealed.
 - **Media support** for images and video (up to 10 MB), encrypted identically to text.
 - **1-on-1 and group conversations.**
+- **Mail folders** — Inbox, Sent, Trash, Starred, Drafts.
+- **Mail threading** — Reply chains via `replyToId`.
+- **Name registry** — Human-readable `@rouge.quant` / `@qwalla.mail` addresses with atomic registration.
+- **Attachments** — Encrypted file attachments up to 3 MB.
 
-### 8.4 Privacy by Design
+### 8.6 Privacy by Design
 
-Messenger data is stored off-chain. The blockchain nodes store encrypted message blobs but cannot decrypt them. Only the sender and recipient, possessing the correct ML-KEM-768 private keys, can read message contents.
+Messenger and mail data is stored off-chain in a sled embedded database. The nodes store encrypted message blobs but cannot decrypt them. Only the sender and recipient, possessing the correct ML-KEM-768 private keys, can read message contents.
+
+### 8.7 Client-Side Key Protection
+
+Private keys are stored in `sessionStorage` (cleared when the browser tab closes) rather than `localStorage`. Only public metadata (display name, public keys) persists in `localStorage`. When the vault is locked, all private key material is encrypted with AES-256-GCM using a PBKDF2-derived key (600,000 iterations) from the user's passphrase and stored as an encrypted blob. The plaintext keys are removed from both `sessionStorage` and `localStorage`.
 
 ---
 
@@ -816,9 +858,9 @@ Every node exposes a comprehensive HTTP API supporting all chain operations:
 | NFTs | `/api/nft/collections`, `/api/nft/owner/:pubkey`, `/api/v2/nft/*` |
 | Bridge | `/api/bridge/claim`, `/api/bridge/withdraw` |
 | Rollup | `/api/v2/rollup/status`, `/api/v2/rollup/submit`, `/api/v2/rollup/batch/:id` |
-| Messenger | `/api/messenger/wallets`, `/api/messenger/conversations`, `/api/messenger/messages` |
-| Names | `/api/names/register`, `/api/names/resolve/:name`, `/api/names/reverse/:walletId`, `/api/names/release` |
-| Mail | `/api/mail/send`, `/api/mail/inbox`, `/api/mail/sent`, `/api/mail/message/:id` |
+| Messenger | `/api/v2/messenger/wallets/register`, `/api/v2/messenger/conversations`, `/api/v2/messenger/messages` |
+| Names | `/api/v2/names/register`, `/api/v2/names/release`, `/api/names/resolve/:name`, `/api/names/reverse/:walletId` |
+| Mail | `/api/v2/mail/send`, `/api/v2/mail/inbox`, `/api/v2/mail/sent`, `/api/v2/mail/read`, `/api/v2/mail/move`, `/api/v2/mail/delete` |
 | P2P | `/api/peers`, `/api/peers/register`, `/api/blocks/import` |
 
 ### 9.4 gRPC
@@ -898,9 +940,18 @@ When importing blocks from peers, the node performs the following verification:
 - **Hardened relayer** with nonce management, exponential retry, gas estimation, and graceful shutdown.
 - **Relayer authentication** via shared secret restricts withdrawal fulfillment to authorized operators.
 
-### 10.7 Messenger Privacy
+### 10.7 Messenger and Mail Security
 
-Messages are encrypted end-to-end using post-quantum key encapsulation. The server stores only ciphertext and cannot decrypt message contents. Message signatures provide authentication without exposing plaintext to intermediaries.
+Messages and mail are encrypted end-to-end using post-quantum key encapsulation. The server stores only ciphertext and cannot decrypt message contents. The following security measures protect the communication layer:
+
+- **Signed API requests.** All 16 mail/messenger/name registry endpoints require ML-DSA-65 signed requests with timestamp validation and nonce-based anti-replay protection.
+- **Authorization checks.** The server verifies that the signing key belongs to a registered wallet and that the caller is authorized for the requested operation (e.g., sender owns the mailbox, caller is a conversation participant).
+- **Unified mail signatures.** Mail messages are signed over the concatenation of all encrypted parts (subject, body, and attachment), preventing partial content substitution.
+- **Multi-recipient CEK pattern.** Mail content is encrypted once with a random CEK, which is then KEM-wrapped individually for each recipient, ensuring efficient multi-recipient delivery without re-encrypting the content.
+- **TOFU key verification.** Public key fingerprints (SHA-256) are recorded on first use and compared on subsequent interactions, with visible warnings when a contact's key changes.
+- **Atomic name registration.** The name registry uses sled's compare-and-swap operation to prevent race conditions during name claims.
+- **Input validation.** Server-side length limits are enforced on all fields (display names: 50 chars, message content: 2 MB, mail subject: 10 KB, mail body: 512 KB, attachment: 3 MB, max 50 recipients).
+- **Sled-backed storage.** Messenger data is stored in a sled embedded database with per-record atomic operations, replacing the previous JSON file storage which was susceptible to race conditions under concurrent access.
 
 ### 10.8 dApp Provider Security
 
@@ -943,6 +994,7 @@ RougeChain's cryptographic infrastructure is designed to evolve. The following p
 | 12 | Event indexer/subgraph (sled-backed, multi-index) | ✅ Complete |
 | 13 | CLI wallet (ML-DSA-65 signed transactions) | ✅ Complete |
 | 14 | Prometheus metrics and Docker containerization | ✅ Complete |
+| 15 | Mail/Messenger/Names security hardening (signed requests, anti-replay, CEK, TOFU, sled) | ✅ Complete |
 | -- | Native limit orders (on-chain conditional swaps) | ✅ Complete |
 | -- | Concentrated liquidity (range-based positions) | Planned |
 | -- | Yield farming (LP staking rewards) | Planned |

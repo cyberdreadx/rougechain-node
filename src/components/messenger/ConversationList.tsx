@@ -2,7 +2,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { MessageSquare, Users, Lock, Trash2, Loader2, StickyNote } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Conversation } from "@/lib/pqc-messenger";
+import type { Conversation, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
 import { deleteConversation } from "@/lib/pqc-messenger";
 import { toast } from "sonner";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
@@ -27,6 +27,7 @@ function formatRelativeTime(dateStr: string): string {
 interface ConversationListProps {
   conversations: Conversation[];
   selectedId?: string;
+  wallet: WalletWithPrivateKeys;
   currentWalletId: string;
   currentWalletKeys?: string[];
   currentWalletName?: string;
@@ -34,7 +35,7 @@ interface ConversationListProps {
   onDelete?: (conversationId: string) => void;
 }
 
-const ConversationList = ({ conversations, selectedId, currentWalletId, currentWalletKeys = [], currentWalletName, onSelect, onDelete }: ConversationListProps) => {
+const ConversationList = ({ conversations, selectedId, wallet, currentWalletId, currentWalletKeys = [], currentWalletName, onSelect, onDelete }: ConversationListProps) => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const myIds = new Set([currentWalletId, ...currentWalletKeys].filter(Boolean));
@@ -47,7 +48,7 @@ const ConversationList = ({ conversations, selectedId, currentWalletId, currentW
     
     setDeletingId(conversationId);
     try {
-      await deleteConversation(conversationId);
+      await deleteConversation(wallet, conversationId);
       onDelete?.(conversationId);
       toast.success("Conversation deleted");
     } catch (error) {

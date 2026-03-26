@@ -127,7 +127,7 @@ export default function MailTab({ wallet }: Props) {
         setNameRegistering(true);
         setNameError(null);
         try {
-            const result = await registerName(nameInput.trim(), wallet.id);
+            const result = await registerName(messengerWallet, nameInput.trim(), wallet.id);
             if (result.success) {
                 setMyName(nameInput.trim().toLowerCase());
                 setShowNameReg(false);
@@ -145,7 +145,7 @@ export default function MailTab({ wallet }: Props) {
         setSelectedItem(item);
         setView("read");
         if (!item.label.isRead) {
-            markMailRead(wallet.id, item.message.id).catch(() => {});
+            markMailRead(messengerWallet, item.message.id).catch(() => {});
         }
         try {
             const [inbox, sent] = await Promise.all([
@@ -669,9 +669,9 @@ function ReadView({
     const handleTrash = async () => {
         try {
             if (folder === "trash") {
-                await deleteMail(wallet.id, message.id);
+                await deleteMail(wallet, message.id);
             } else {
-                await moveMail(wallet.id, message.id, "trash");
+                await moveMail(wallet, message.id, "trash");
             }
             onBack();
         } catch (err) {
@@ -681,7 +681,7 @@ function ReadView({
 
     const handleRestore = async () => {
         try {
-            await moveMail(wallet.id, message.id, "inbox");
+            await moveMail(wallet, message.id, "inbox");
             onBack();
         } catch (err) {
             console.error("Failed to restore:", err);

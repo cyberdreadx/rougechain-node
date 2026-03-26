@@ -1,27 +1,56 @@
 # Mail API
 
-Endpoints for the PQC-encrypted mail system. Mail uses the same ML-KEM-768 encryption as the messenger but adds subject lines, folders, threading, and a name registry.
+Endpoints for the PQC-encrypted mail system. Mail uses ML-KEM-768 encryption with a Content Encryption Key (CEK) pattern for multi-recipient support, ML-DSA-65 unified signatures, and name registry with atomic registration.
+
+> **v2 API (March 2026):** All write operations now use `/api/v2/` endpoints that require ML-DSA-65 signed requests with timestamp validation and nonce-based anti-replay protection. Legacy unsigned endpoints return HTTP 410 (Gone) in production.
+
+## Signed Request Format
+
+All v2 write endpoints accept a signed request body:
+
+```json
+{
+  "payload": {
+    "name": "alice",
+    "walletId": "wallet-uuid",
+    "from": "ml-dsa65-public-key-hex",
+    "timestamp": 1710100000000,
+    "nonce": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+  },
+  "signature": "ml-dsa65-signature-hex",
+  "public_key": "ml-dsa65-public-key-hex"
+}
+```
+
+The server verifies: (1) the ML-DSA-65 signature, (2) the timestamp is within a 5-minute window, (3) the `from` field matches the signing key, (4) the nonce has not been used before, and (5) the caller is authorized for the operation.
 
 ## Name Registry
 
 **Important for third-party apps:** Before a user can receive mail, two things must be registered on the node:
-1. Their **wallet** (via `/api/messenger/wallets/register`) — provides the encryption key
-2. Their **mail name** (via `/api/names/register`) — maps a human-readable name to the wallet
+1. Their **wallet** (via `/api/v2/messenger/wallets/register`) — provides the encryption key
+2. Their **mail name** (via `/api/v2/names/register`) — maps a human-readable name to the wallet
 
 ### Register a Name
 
 ```http
-POST /api/names/register
+POST /api/v2/names/register
 Content-Type: application/json
 ```
 
-Register a human-readable email address (e.g., `alice@rouge.quant`).
+Register a human-readable email address (e.g., `alice@rouge.quant`). Requires a signed request. Registration uses atomic compare-and-swap to prevent race conditions.
 
-**Request:**
+**Request (signed):**
 ```json
 {
-  "name": "alice",
-  "walletId": "wallet-uuid-or-public-key"
+  "payload": {
+    "name": "alice",
+    "walletId": "wallet-uuid-or-public-key",
+    "from": "signing-public-key-hex",
+    "timestamp": 1710100000000,
+    "nonce": "random-hex-nonce"
+  },
+  "signature": "ml-dsa65-signature-hex",
+  "public_key": "signing-public-key-hex"
 }
 ```
 
@@ -94,14 +123,22 @@ GET /api/names/reverse/:walletId
 ### Release a Name
 
 ```http
-DELETE /api/names/release
+POST /api/v2/names/release
 Content-Type: application/json
 ```
 
+Requires a signed request. The caller must own the name (verified via signing key).
+
 ```json
 {
-  "name": "alice",
-  "walletId": "wallet-uuid"
+  "payload": {
+    "name": "alice",
+    "from": "signing-public-key-hex",
+    "timestamp": 1710100000000,
+    "nonce": "random-hex-nonce"
+  },
+  "signature": "ml-dsa65-signature-hex",
+  "public_key": "signing-public-key-hex"
 }
 ```
 
@@ -110,9 +147,11 @@ Content-Type: application/json
 ## Send Mail
 
 ```http
-POST /api/mail/send
+POST /api/v2/mail/send
 Content-Type: application/json
 ```
+
+Requires a signed request. The sender is authenticated via ML-DSA-65 signature verification.
 
 ### Request Body
 
@@ -146,8 +185,11 @@ Set `replyToId` to the ID of the mail being replied to, enabling threading.
 ## Get Inbox
 
 ```http
-GET /api/mail/inbox?publicKey=your-pub-hex
+POST /api/v2/mail/inbox
+Content-Type: application/json
 ```
+
+Requires a signed request. The caller's wallet is resolved from the signing key.
 
 ### Response
 
@@ -174,10 +216,11 @@ GET /api/mail/inbox?publicKey=your-pub-hex
 ## Get Sent Mail
 
 ```http
-GET /api/mail/sent?publicKey=your-pub-hex
+POST /api/v2/mail/sent
+Content-Type: application/json
 ```
 
-Same response format as inbox, but returns mail you sent.
+Same as inbox but returns mail you sent. Requires a signed request.
 
 ---
 
@@ -192,31 +235,22 @@ GET /api/mail/message/:id?publicKey=your-pub-hex
 ## Mark as Read
 
 ```http
-POST /api/mail/read
+POST /api/v2/mail/read
 Content-Type: application/json
 ```
 
-```json
-{
-  "id": "mail-uuid"
-}
-```
+Requires a signed request with `messageId` in the payload.
 
 ---
 
-## Move to Trash
+## Move to Folder
 
 ```http
-POST /api/mail/move
+POST /api/v2/mail/move
 Content-Type: application/json
 ```
 
-```json
-{
-  "id": "mail-uuid",
-  "folder": "trash"
-}
-```
+Requires a signed request with `messageId` and `folder` in the payload. Valid folders: `inbox`, `sent`, `trash`, `starred`, `drafts`.
 
 ---
 
@@ -231,10 +265,11 @@ GET /api/mail/trash?publicKey=your-pub-hex
 ## Delete Mail
 
 ```http
-DELETE /api/mail/:id
+POST /api/v2/mail/delete
+Content-Type: application/json
 ```
 
-Permanently deletes a mail item.
+Permanently deletes a mail item. Requires a signed request with `messageId` in the payload. The caller must be a participant (sender or recipient).
 
 ---
 
@@ -260,14 +295,13 @@ Mail threading is handled client-side by following the `replyToId` chain. When v
 
 ## Encryption
 
-Mail uses the same encryption as the messenger:
+Mail uses a Content Encryption Key (CEK) pattern for efficient multi-recipient support:
 
-1. Look up recipient's ML-KEM-768 public key via Name Registry
-2. Encapsulate a shared secret
-3. Derive AES-256 key via HKDF
-4. Encrypt subject + body with AES-GCM
-5. Create separate ciphertext for sender and recipient
-6. Server stores both encrypted copies
+1. Generate a random 256-bit AES key (the CEK)
+2. Encrypt subject, body, and attachment with the CEK via AES-256-GCM
+3. For each recipient (and the sender): encapsulate a shared secret via ML-KEM-768, derive a wrapping key via HKDF, and encrypt the CEK with AES-GCM
+4. Sign the concatenation of all encrypted parts (subject + body + attachment) with ML-DSA-65 (unified signature)
+5. Server stores the encrypted content with per-recipient wrapped keys
 
 ---
 
@@ -324,35 +358,36 @@ When fetching mail (inbox/sent/trash), messages with attachments will include th
 
 ## SDK Usage
 
-The `@rougechain/sdk` provides a high-level API for name registry and mail operations:
+The `@rougechain/sdk` provides a high-level API for name registry and mail operations. All write operations now require a `wallet` parameter for ML-DSA-65 request signing:
 
 ```typescript
-import { RougeChain } from "@rougechain/sdk";
+import { RougeChain, Wallet } from "@rougechain/sdk";
 
 const rc = new RougeChain("https://testnet.rougechain.io/api");
+const wallet = Wallet.generate();
 
-// Register wallet + name (required for receiving mail)
-await rc.messenger.registerWallet({
-  id: walletId,
+// Register wallet + name (signed requests)
+await rc.messenger.registerWallet(wallet, {
+  id: wallet.publicKey,
   displayName: "Alice",
-  signingPublicKey: sigPubKey,
+  signingPublicKey: wallet.publicKey,
   encryptionPublicKey: encPubKey,
 });
-await rc.mail.registerName("alice", walletId);
+await rc.mail.registerName(wallet, "alice", wallet.publicKey);
 
-// Resolve a recipient before sending
+// Resolve a recipient before sending (public, no signing needed)
 const recipient = await rc.mail.resolveName("bob");
 // recipient.wallet.encryption_public_key → use for ML-KEM encryption
 
-// Reverse lookup
-const name = await rc.mail.reverseLookup(walletId); // "alice"
+// Reverse lookup (public, no signing needed)
+const name = await rc.mail.reverseLookup(wallet.publicKey); // "alice"
 
-// Send, read, manage mail
-await rc.mail.send({ from, to, subject, body, encrypted_subject, encrypted_body });
-const inbox = await rc.mail.getInbox(walletId);
-await rc.mail.markRead(messageId);
-await rc.mail.move(messageId, "trash");
-await rc.mail.delete(messageId);
+// Send, read, manage mail (all signed requests)
+await rc.mail.send(wallet, { from, to, subject, body, encrypted_subject, encrypted_body });
+const inbox = await rc.mail.getInbox(wallet);
+await rc.mail.markRead(wallet, messageId);
+await rc.mail.move(wallet, messageId, "trash");
+await rc.mail.delete(wallet, messageId);
 ```
 
 **TypeScript types:** `NameEntry`, `ResolvedName`, `MailMessage`, `SendMailParams`

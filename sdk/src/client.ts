@@ -24,6 +24,7 @@ import {
   createSignedUnshield,
   createSignedPushRegister,
   createSignedPushUnregister,
+  signRequest,
 } from "./signer.js";
 import type {
   WalletKeys,
@@ -931,18 +932,11 @@ class BridgeClient {
 class MailClient {
   constructor(private readonly rc: RougeChain) {}
 
-  // --- Name Registry ---
+  // --- Name Registry (signed) ---
 
-  async registerName(name: string, walletId: string): Promise<ApiResponse> {
-    try {
-      const data = await this.rc.post<Record<string, unknown>>("/names/register", {
-        name,
-        walletId,
-      });
-      return { success: data.success === true, error: data.error as string | undefined, data };
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) };
-    }
+  async registerName(wallet: WalletKeys, name: string, walletId: string): Promise<ApiResponse> {
+    const signed = signRequest(wallet, { name, walletId });
+    return this.rc.submitTx("/v2/names/register", signed);
   }
 
   async resolveName(name: string): Promise<ResolvedName | null> {
@@ -968,93 +962,71 @@ class MailClient {
     }
   }
 
-  async releaseName(name: string, walletId: string): Promise<ApiResponse> {
+  async releaseName(wallet: WalletKeys, name: string): Promise<ApiResponse> {
+    const signed = signRequest(wallet, { name });
+    return this.rc.submitTx("/v2/names/release", signed);
+  }
+
+  // --- Mail (signed) ---
+
+  async send(wallet: WalletKeys, params: SendMailParams): Promise<ApiResponse> {
+    const signed = signRequest(wallet, {
+      fromWalletId: params.from,
+      toWalletIds: [params.to],
+      subjectEncrypted: params.encrypted_subject,
+      bodyEncrypted: params.encrypted_body,
+      contentSignature: params.body,
+      replyToId: params.reply_to_id,
+      hasAttachment: false,
+    });
+    return this.rc.submitTx("/v2/mail/send", signed);
+  }
+
+  async getInbox(wallet: WalletKeys): Promise<MailMessage[]> {
+    const signed = signRequest(wallet, { folder: "inbox" });
     try {
-      const res = await this.rc.fetchFn(
-        `${this.rc.baseUrl}/names/release`,
-        {
-          method: "DELETE",
-          headers: { ...this.rc.headers, "Content-Type": "application/json" },
-          body: JSON.stringify({ name, walletId }),
-        }
-      );
-      const data = (await res.json()) as Record<string, unknown>;
-      return { success: data.success === true, error: data.error as string | undefined };
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) };
-    }
+      const data = await this.rc.post<{ messages: MailMessage[] }>("/v2/mail/folder", signed);
+      return data.messages ?? [];
+    } catch { return []; }
   }
 
-  // --- Mail ---
-
-  async send(params: SendMailParams): Promise<ApiResponse> {
+  async getSent(wallet: WalletKeys): Promise<MailMessage[]> {
+    const signed = signRequest(wallet, { folder: "sent" });
     try {
-      const data = await this.rc.post<Record<string, unknown>>("/mail/send", params);
-      return { success: data.success === true, error: data.error as string | undefined, data };
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) };
-    }
+      const data = await this.rc.post<{ messages: MailMessage[] }>("/v2/mail/folder", signed);
+      return data.messages ?? [];
+    } catch { return []; }
   }
 
-  async getInbox(walletId: string): Promise<MailMessage[]> {
-    const data = await this.rc.get<{ messages: MailMessage[] }>(
-      `/mail/inbox?walletId=${encodeURIComponent(walletId)}`
-    );
-    return data.messages ?? [];
-  }
-
-  async getSent(walletId: string): Promise<MailMessage[]> {
-    const data = await this.rc.get<{ messages: MailMessage[] }>(
-      `/mail/sent?walletId=${encodeURIComponent(walletId)}`
-    );
-    return data.messages ?? [];
-  }
-
-  async getTrash(walletId: string): Promise<MailMessage[]> {
-    const data = await this.rc.get<{ messages: MailMessage[] }>(
-      `/mail/trash?walletId=${encodeURIComponent(walletId)}`
-    );
-    return data.messages ?? [];
-  }
-
-  async getMessage(id: string): Promise<MailMessage> {
-    return this.rc.get<MailMessage>(`/mail/message/${encodeURIComponent(id)}`);
-  }
-
-  async move(messageId: string, folder: string): Promise<ApiResponse> {
+  async getTrash(wallet: WalletKeys): Promise<MailMessage[]> {
+    const signed = signRequest(wallet, { folder: "trash" });
     try {
-      const data = await this.rc.post<Record<string, unknown>>("/mail/move", {
-        messageId,
-        folder,
-      });
-      return { success: data.success === true, error: data.error as string | undefined };
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) };
-    }
+      const data = await this.rc.post<{ messages: MailMessage[] }>("/v2/mail/folder", signed);
+      return data.messages ?? [];
+    } catch { return []; }
   }
 
-  async markRead(messageId: string): Promise<ApiResponse> {
+  async getMessage(wallet: WalletKeys, messageId: string): Promise<MailMessage | null> {
+    const signed = signRequest(wallet, { messageId });
     try {
-      const data = await this.rc.post<Record<string, unknown>>("/mail/read", {
-        messageId,
-      });
-      return { success: data.success === true, error: data.error as string | undefined };
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) };
-    }
+      const data = await this.rc.post<{ success: boolean; message: MailMessage }>("/v2/mail/message", signed);
+      return data.message ?? null;
+    } catch { return null; }
   }
 
-  async delete(id: string): Promise<ApiResponse> {
-    try {
-      const res = await this.rc.fetchFn(
-        `${this.rc.baseUrl}/mail/${encodeURIComponent(id)}`,
-        { method: "DELETE", headers: this.rc.headers }
-      );
-      const data = (await res.json()) as Record<string, unknown>;
-      return { success: data.success === true, error: data.error as string | undefined };
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) };
-    }
+  async move(wallet: WalletKeys, messageId: string, folder: string): Promise<ApiResponse> {
+    const signed = signRequest(wallet, { messageId, folder });
+    return this.rc.submitTx("/v2/mail/move", signed);
+  }
+
+  async markRead(wallet: WalletKeys, messageId: string): Promise<ApiResponse> {
+    const signed = signRequest(wallet, { messageId });
+    return this.rc.submitTx("/v2/mail/read", signed);
+  }
+
+  async delete(wallet: WalletKeys, messageId: string): Promise<ApiResponse> {
+    const signed = signRequest(wallet, { messageId });
+    return this.rc.submitTx("/v2/mail/delete", signed);
   }
 }
 
@@ -1068,102 +1040,92 @@ class MessengerClient {
     return data.wallets ?? [];
   }
 
-  async registerWallet(opts: {
+  async registerWallet(wallet: WalletKeys, opts: {
     id: string;
     displayName: string;
     signingPublicKey: string;
     encryptionPublicKey: string;
+    discoverable?: boolean;
   }): Promise<ApiResponse> {
+    const signed = signRequest(wallet, {
+      id: opts.id,
+      displayName: opts.displayName,
+      signingPublicKey: opts.signingPublicKey,
+      encryptionPublicKey: opts.encryptionPublicKey,
+      discoverable: opts.discoverable ?? true,
+    });
+    return this.rc.submitTx("/v2/messenger/wallets/register", signed);
+  }
+
+  async getConversations(wallet: WalletKeys): Promise<MessengerConversation[]> {
+    const signed = signRequest(wallet, {});
     try {
-      const data = await this.rc.post<Record<string, unknown>>("/messenger/wallets/register", opts);
-      return { success: data.success === true, error: data.error as string | undefined, data };
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) };
-    }
+      const data = await this.rc.post<{ conversations: MessengerConversation[] }>(
+        "/v2/messenger/conversations/list", signed
+      );
+      return data.conversations ?? [];
+    } catch { return []; }
   }
 
-  async getConversations(
-    walletId: string,
-    opts: { signingPublicKey?: string; encryptionPublicKey?: string } = {}
-  ): Promise<MessengerConversation[]> {
-    const params = new URLSearchParams({ walletId });
-    if (opts.signingPublicKey) params.set("signingPublicKey", opts.signingPublicKey);
-    if (opts.encryptionPublicKey) params.set("encryptionPublicKey", opts.encryptionPublicKey);
-    const data = await this.rc.get<{ conversations: MessengerConversation[] }>(
-      `/messenger/conversations?${params.toString()}`
-    );
-    return data.conversations ?? [];
+  async createConversation(wallet: WalletKeys, participantIds: string[], opts: {
+    name?: string;
+    isGroup?: boolean;
+  } = {}): Promise<ApiResponse> {
+    const signed = signRequest(wallet, {
+      participantIds,
+      name: opts.name,
+      isGroup: opts.isGroup ?? false,
+    });
+    return this.rc.submitTx("/v2/messenger/conversations", signed);
   }
 
-  async createConversation(participants: string[]): Promise<ApiResponse> {
+  async getMessages(wallet: WalletKeys, conversationId: string): Promise<MessengerMessage[]> {
+    const signed = signRequest(wallet, { conversationId });
     try {
-      const data = await this.rc.post<Record<string, unknown>>("/messenger/conversations", {
-        participants,
-      });
-      return { success: data.success === true, error: data.error as string | undefined, data };
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) };
-    }
-  }
-
-  async getMessages(conversationId: string): Promise<MessengerMessage[]> {
-    const data = await this.rc.get<{ messages: MessengerMessage[] }>(
-      `/messenger/messages?conversationId=${encodeURIComponent(conversationId)}`
-    );
-    return data.messages ?? [];
+      const data = await this.rc.post<{ messages: MessengerMessage[] }>(
+        "/v2/messenger/messages/list", signed
+      );
+      return data.messages ?? [];
+    } catch { return []; }
   }
 
   async sendMessage(
+    wallet: WalletKeys,
     conversationId: string,
-    senderWalletId: string,
     encryptedContent: string,
     opts: {
-      signature?: string;
+      contentSignature?: string;
       messageType?: string;
       selfDestruct?: boolean;
       destructAfterSeconds?: number;
       spoiler?: boolean;
     } = {}
   ): Promise<ApiResponse> {
-    try {
-      const data = await this.rc.post<Record<string, unknown>>("/messenger/messages", {
-        conversationId,
-        senderWalletId,
-        encryptedContent,
-        signature: opts.signature ?? "",
-        messageType: opts.messageType ?? "text",
-        selfDestruct: opts.selfDestruct ?? false,
-        destructAfterSeconds: opts.destructAfterSeconds,
-        spoiler: opts.spoiler ?? false,
-      });
-      return { success: data.success === true, error: data.error as string | undefined, data };
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) };
-    }
+    const signed = signRequest(wallet, {
+      conversationId,
+      encryptedContent,
+      contentSignature: opts.contentSignature ?? "",
+      messageType: opts.messageType ?? "text",
+      selfDestruct: opts.selfDestruct ?? false,
+      destructAfterSeconds: opts.destructAfterSeconds,
+      spoiler: opts.spoiler ?? false,
+    });
+    return this.rc.submitTx("/v2/messenger/messages", signed);
   }
 
-  async deleteMessage(messageId: string): Promise<ApiResponse> {
-    try {
-      const res = await this.rc.fetchFn(
-        `${this.rc.baseUrl}/messenger/messages/${encodeURIComponent(messageId)}`,
-        { method: "DELETE", headers: this.rc.headers }
-      );
-      const data = (await res.json()) as Record<string, unknown>;
-      return { success: data.success === true, error: data.error as string | undefined };
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) };
-    }
+  async deleteMessage(wallet: WalletKeys, messageId: string, conversationId: string): Promise<ApiResponse> {
+    const signed = signRequest(wallet, { messageId, conversationId });
+    return this.rc.submitTx("/v2/messenger/messages/delete", signed);
   }
 
-  async markRead(messageId: string): Promise<ApiResponse> {
-    try {
-      const data = await this.rc.post<Record<string, unknown>>("/messenger/messages/read", {
-        messageId,
-      });
-      return { success: data.success === true, error: data.error as string | undefined };
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) };
-    }
+  async deleteConversation(wallet: WalletKeys, conversationId: string): Promise<ApiResponse> {
+    const signed = signRequest(wallet, { conversationId });
+    return this.rc.submitTx("/v2/messenger/conversations/delete", signed);
+  }
+
+  async markRead(wallet: WalletKeys, messageId: string, conversationId: string): Promise<ApiResponse> {
+    const signed = signRequest(wallet, { messageId, conversationId });
+    return this.rc.submitTx("/v2/messenger/messages/read", signed);
   }
 }
 

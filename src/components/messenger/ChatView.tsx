@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Conversation, WalletWithPrivateKeys, Message, Wallet, MessageType } from "@/lib/pqc-messenger";
-import { getBotReply, getMessages, sendMessage, deleteMessage, isDemoBot, loadDemoBotWallet, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, isWalletBlocked, blockWallet, unblockWallet } from "@/lib/pqc-messenger";
+import { getBotReply, getMessages, sendMessage, deleteMessage, isDemoBot, loadDemoBotWallet, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, isWalletBlocked, blockWallet, unblockWallet, keyFingerprint, checkTofu } from "@/lib/pqc-messenger";
 import { playNotificationSound, loadNotificationSettings } from "@/lib/notifications";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
 import ChatPayment, { PaymentBubble, parsePaymentMessage, encodePaymentMessage, parseRequestMessage, encodeRequestMessage, PaymentRequestBubble } from "./ChatPayment";
@@ -522,7 +522,19 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
   const isRecipientBot = recipient && !isSelfConversation ? isDemoBot(recipient.id) : false;
   const recipientMainId = recipient?.id || recipient?.signingPublicKey || "";
   const [blocked, setBlocked] = useState(() => recipientMainId ? isWalletBlocked(recipientMainId) : false);
+  const [tofuWarning, setTofuWarning] = useState(false);
+  const [fingerprint, setFingerprint] = useState("");
   const { display: recipientRougeAddr } = useRougeAddress(recipientMainId || undefined);
+
+  useEffect(() => {
+    if (!recipient || isRecipientBot || isSelfConversation) return;
+    (async () => {
+      const tofu = await checkTofu(recipient);
+      setTofuWarning(tofu.changed);
+      const fp = await keyFingerprint(recipient.signingPublicKey);
+      setFingerprint(fp);
+    })();
+  }, [recipient?.id, recipient?.signingPublicKey]);
 
   const handleToggleBlock = () => {
     if (!recipientMainId) return;
@@ -829,6 +841,16 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
                 Local AI
               </span>
             )}
+            {tofuWarning && !isRecipientBot && (
+              <span className="px-1.5 py-0.5 text-[10px] rounded bg-destructive/20 text-destructive font-medium" title="This contact's keys have changed since you first communicated">
+                Key Changed
+              </span>
+            )}
+            {fingerprint && !isRecipientBot && !tofuWarning && (
+              <span className="px-1.5 py-0.5 text-[10px] rounded bg-green-500/20 text-green-600 dark:text-green-400 font-mono" title={`Fingerprint: ${fingerprint}`}>
+                {fingerprint.substring(0, 9)}
+              </span>
+            )}
           </div>
           {recipient && !isRecipientBot && (
             <button
@@ -1090,7 +1112,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
             onClose={() => setSelectedMessage(null)}
             onDelete={async (msgId) => {
               try {
-                await deleteMessage(msgId);
+                await deleteMessage(wallet, msgId, conversation.id);
                 setMessages(prev => prev.filter(m => m.id !== msgId));
                 toast.success("Message deleted");
               } catch {

@@ -4,23 +4,52 @@ Endpoints for the end-to-end encrypted PQC messenger.
 
 All messages are encrypted client-side using ML-KEM-768 key encapsulation and AES-GCM. The server only stores encrypted blobs — it cannot read message contents.
 
-## Register Messenger Wallet
+> **v2 API (March 2026):** All write operations now use `/api/v2/` endpoints that require ML-DSA-65 signed requests with timestamp validation and nonce-based anti-replay protection. Legacy unsigned endpoints return HTTP 410 (Gone) in production.
 
-```http
-POST /api/messenger/wallets/register
-Content-Type: application/json
-```
+## Signed Request Format
 
-Register your wallet's encryption public key so others can send you encrypted messages and mail. **This is required before receiving mail from other apps.**
-
-### Request Body
+All v2 write endpoints accept a signed request body:
 
 ```json
 {
-  "id": "wallet-uuid-or-public-key",
-  "displayName": "Alice",
-  "signingPublicKey": "ml-dsa65-signing-public-key-hex",
-  "encryptionPublicKey": "ml-kem768-encryption-public-key-hex"
+  "payload": {
+    "action": "register_wallet",
+    "from": "ml-dsa65-public-key-hex",
+    "timestamp": 1710100000000,
+    "nonce": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+    "...": "operation-specific fields"
+  },
+  "signature": "ml-dsa65-signature-hex",
+  "public_key": "ml-dsa65-public-key-hex"
+}
+```
+
+The server verifies: (1) the ML-DSA-65 signature, (2) the timestamp is within a 5-minute window, (3) the `from` field matches the signing key, and (4) the nonce has not been used before.
+
+## Register Messenger Wallet
+
+```http
+POST /api/v2/messenger/wallets/register
+Content-Type: application/json
+```
+
+Register your wallet's encryption public key so others can send you encrypted messages and mail. **This is required before receiving mail from other apps.** Requires a signed request.
+
+### Request Body (signed)
+
+```json
+{
+  "payload": {
+    "id": "wallet-uuid-or-public-key",
+    "displayName": "Alice",
+    "signingPublicKey": "ml-dsa65-signing-public-key-hex",
+    "encryptionPublicKey": "ml-kem768-encryption-public-key-hex",
+    "from": "ml-dsa65-signing-public-key-hex",
+    "timestamp": 1710100000000,
+    "nonce": "random-hex-nonce"
+  },
+  "signature": "ml-dsa65-signature-hex",
+  "public_key": "ml-dsa65-signing-public-key-hex"
 }
 ```
 
@@ -70,23 +99,34 @@ Returns all registered messenger wallets.
 ## Send Message
 
 ```http
-POST /api/messenger/messages
+POST /api/v2/messenger/messages
 Content-Type: application/json
 ```
 
-### Request Body
+Requires a signed request. The sender is authenticated via the ML-DSA-65 signature.
+
+### Request Body (signed)
+
+The `payload` includes the message fields plus `from`, `timestamp`, and `nonce`:
 
 ```json
 {
-  "conversationId": "conv-uuid",
-  "senderPublicKey": "sender-pub-hex",
-  "recipientPublicKey": "recipient-pub-hex",
-  "senderEncrypted": "base64-encrypted-for-sender",
-  "recipientEncrypted": "base64-encrypted-for-recipient",
-  "senderDisplayName": "Alice",
-  "recipientDisplayName": "Bob",
-  "selfDestruct": false,
-  "destructSeconds": 0
+  "payload": {
+    "conversationId": "conv-uuid",
+    "senderPublicKey": "sender-pub-hex",
+    "recipientPublicKey": "recipient-pub-hex",
+    "senderEncrypted": "base64-encrypted-for-sender",
+    "recipientEncrypted": "base64-encrypted-for-recipient",
+    "senderDisplayName": "Alice",
+    "recipientDisplayName": "Bob",
+    "selfDestruct": false,
+    "destructSeconds": 0,
+    "from": "sender-pub-hex",
+    "timestamp": 1710100000000,
+    "nonce": "random-hex-nonce"
+  },
+  "signature": "ml-dsa65-signature-hex",
+  "public_key": "sender-pub-hex"
 }
 ```
 
@@ -110,15 +150,26 @@ Set `selfDestruct: true` and `destructSeconds` to a value. After the recipient r
 ## Get Messages
 
 ```http
-GET /api/messenger/messages?conversationId=conv-uuid&publicKey=your-pub-hex
+POST /api/v2/messenger/messages/list
+Content-Type: application/json
 ```
 
-### Query Parameters
+Requires a signed request. The server verifies the caller is a participant in the conversation.
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `conversationId` | string | The conversation ID |
-| `publicKey` | string | Your public key (to get your encrypted copy) |
+### Request Body (signed)
+
+```json
+{
+  "payload": {
+    "conversationId": "conv-uuid",
+    "from": "your-pub-hex",
+    "timestamp": 1710100000000,
+    "nonce": "random-hex-nonce"
+  },
+  "signature": "ml-dsa65-signature-hex",
+  "public_key": "your-pub-hex"
+}
+```
 
 ### Response
 
@@ -161,10 +212,11 @@ Used for self-destruct messages.
 ## Get Conversations
 
 ```http
-GET /api/messenger/conversations?publicKey=your-pub-hex
+POST /api/v2/messenger/conversations/list
+Content-Type: application/json
 ```
 
-Returns all conversations for a wallet.
+Returns all conversations for a wallet. Requires a signed request.
 
 ### Response
 
@@ -235,33 +287,34 @@ This is a client-side feature — the server is not involved. Blocked users can 
 
 ## SDK Usage
 
-The `@rougechain/sdk` provides a high-level API for messenger operations:
+The `@rougechain/sdk` provides a high-level API for messenger operations. All write operations now require a `wallet` parameter for ML-DSA-65 request signing:
 
 ```typescript
-import { RougeChain } from "@rougechain/sdk";
+import { RougeChain, Wallet } from "@rougechain/sdk";
 
 const rc = new RougeChain("https://testnet.rougechain.io/api");
+const wallet = Wallet.generate();
 
-// Register wallet (required for receiving messages and mail)
-await rc.messenger.registerWallet({
-  id: walletId,
+// Register wallet (signed request, required for receiving messages and mail)
+await rc.messenger.registerWallet(wallet, {
+  id: wallet.publicKey,
   displayName: "Alice",
-  signingPublicKey: sigPubKey,
+  signingPublicKey: wallet.publicKey,
   encryptionPublicKey: encPubKey,
 });
 
-// Conversations
-const convos = await rc.messenger.getConversations(walletId);
-await rc.messenger.createConversation([walletIdA, walletIdB]);
+// Conversations (signed requests)
+const convos = await rc.messenger.getConversations(wallet);
+await rc.messenger.createConversation(wallet, [wallet.publicKey, recipientPubKey]);
 
-// Messages
-const msgs = await rc.messenger.getMessages(conversationId);
-await rc.messenger.sendMessage(conversationId, walletId, encryptedContent, {
+// Messages (signed requests)
+const msgs = await rc.messenger.getMessages(wallet, conversationId);
+await rc.messenger.sendMessage(wallet, conversationId, encryptedContent, {
   selfDestruct: true,
   destructAfterSeconds: 30,
 });
-await rc.messenger.markRead(messageId);
-await rc.messenger.deleteMessage(messageId);
+await rc.messenger.markRead(wallet, messageId);
+await rc.messenger.deleteMessage(wallet, messageId);
 ```
 
 **TypeScript types:** `MessengerWallet`, `MessengerConversation`, `MessengerMessage`

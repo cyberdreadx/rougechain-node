@@ -50,11 +50,16 @@ impl NameRegistry {
         let name_tree = self.name_tree()?;
         let wallet_tree = self.wallet_tree()?;
 
-        if name_tree.contains_key(canonical.as_bytes()).map_err(|e| e.to_string())? {
-            return Err(format!("Name '{}' is already taken", canonical));
-        }
+        // Atomically claim the wallet slot (one name per wallet)
+        let cas_wallet = wallet_tree
+            .compare_and_swap(
+                wallet_id.as_bytes(),
+                None::<&[u8]>,
+                Some(canonical.as_bytes()),
+            )
+            .map_err(|e| e.to_string())?;
 
-        if wallet_tree.contains_key(wallet_id.as_bytes()).map_err(|e| e.to_string())? {
+        if let Err(_existing) = cas_wallet {
             return Err("This wallet already has a registered name".into());
         }
 
@@ -65,10 +70,22 @@ impl NameRegistry {
         };
         let bytes = serde_json::to_vec(&entry).map_err(|e| e.to_string())?;
 
-        name_tree.insert(canonical.as_bytes(), bytes.as_slice()).map_err(|e| e.to_string())?;
-        wallet_tree.insert(wallet_id.as_bytes(), canonical.as_bytes()).map_err(|e| e.to_string())?;
-        self.db.flush().map_err(|e| e.to_string())?;
+        // Atomically claim the name slot
+        let cas_name = name_tree
+            .compare_and_swap(
+                canonical.as_bytes(),
+                None::<&[u8]>,
+                Some(bytes.as_slice()),
+            )
+            .map_err(|e| e.to_string())?;
 
+        if let Err(_existing) = cas_name {
+            // Roll back the wallet claim
+            let _ = wallet_tree.remove(wallet_id.as_bytes());
+            return Err(format!("Name '{}' is already taken", canonical));
+        }
+
+        self.db.flush().map_err(|e| e.to_string())?;
         Ok(entry)
     }
 

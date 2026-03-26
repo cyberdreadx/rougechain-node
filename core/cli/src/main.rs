@@ -1,7 +1,9 @@
 use clap::{Parser, Subcommand};
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_RPC: &str = "https://rougechain.rougee.app";
 
@@ -111,6 +113,62 @@ enum Commands {
         method: String,
         /// JSON params (optional)
         params: Option<String>,
+    },
+
+    // ── Mail & Messenger ──
+
+    /// Register a mail name (e.g., alice@rouge.quant)
+    RegisterName {
+        /// Name to register (e.g., "alice")
+        name: String,
+    },
+    /// Release a mail name
+    ReleaseName {
+        /// Name to release
+        name: String,
+    },
+    /// Resolve a name to wallet info
+    ResolveName {
+        /// Name to look up
+        name: String,
+    },
+    /// Reverse lookup: wallet → name
+    ReverseLookup {
+        /// Public key (omit to use active key)
+        pubkey: Option<String>,
+    },
+    /// Send encrypted mail
+    SendMail {
+        /// Recipient name (e.g., "bob") or public key
+        to: String,
+        /// Subject line
+        #[arg(long)]
+        subject: String,
+        /// Message body
+        #[arg(long)]
+        body: String,
+    },
+    /// Get mail inbox
+    Inbox,
+    /// Get sent mail
+    SentMail,
+    /// Register messenger wallet on the node
+    RegisterMessenger {
+        /// Display name
+        #[arg(long)]
+        display_name: String,
+    },
+    /// List messenger conversations
+    Conversations,
+    /// Create a messenger conversation
+    CreateConversation {
+        /// Participant public keys (comma-separated)
+        participants: String,
+    },
+    /// List messages in a conversation
+    Messages {
+        /// Conversation ID
+        conversation_id: String,
     },
 }
 
@@ -236,6 +294,63 @@ fn submit_tx(rpc: &str, dir: &PathBuf, tx_type: &str, payload: Value, fee: u64) 
         }
     }
     Ok(())
+}
+
+fn generate_nonce() -> String {
+    let mut bytes = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
+fn timestamp_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+}
+
+fn build_signed_request(key: &SavedKey, mut payload: serde_json::Map<String, Value>) -> Result<Value, String> {
+    payload.insert("from".to_string(), Value::String(key.public_key_hex.clone()));
+    payload.insert("timestamp".to_string(), serde_json::json!(timestamp_ms()));
+    payload.insert("nonce".to_string(), Value::String(generate_nonce()));
+
+    let payload_value = Value::Object(payload);
+    let canonical = sorted_json(&payload_value);
+    let sig = quantum_vault_crypto::pqc_sign(&key.secret_key_hex, canonical.as_bytes())
+        .map_err(|e| format!("Sign error: {}", e))?;
+
+    Ok(serde_json::json!({
+        "payload": payload_value,
+        "signature": sig,
+        "public_key": key.public_key_hex,
+    }))
+}
+
+fn sorted_json(value: &Value) -> String {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let entries: Vec<String> = keys.iter().map(|k| {
+                format!("{}:{}", serde_json::to_string(*k).unwrap(), sorted_json(&map[*k]))
+            }).collect();
+            format!("{{{}}}", entries.join(","))
+        }
+        Value::Array(arr) => {
+            let items: Vec<String> = arr.iter().map(|v| sorted_json(v)).collect();
+            format!("[{}]", items.join(","))
+        }
+        _ => serde_json::to_string(value).unwrap(),
+    }
+}
+
+fn submit_signed(rpc: &str, path: &str, req: Value) -> Result<Value, String> {
+    let result = api_post(rpc, path, req)?;
+    if let Some(err) = result.get("error") {
+        Err(format!("{}", err.as_str().unwrap_or(&err.to_string())))
+    } else {
+        Ok(result)
+    }
 }
 
 fn main() {
@@ -412,6 +527,206 @@ fn main() {
             let p: Value = params.as_deref().and_then(|s| serde_json::from_str(s).ok()).unwrap_or(Value::Array(vec![]));
             match rpc_call(rpc, &method, p) {
                 Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        // ── Name Registry ──
+
+        Commands::RegisterName { name } => {
+            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let mut payload = serde_json::Map::new();
+            payload.insert("name".to_string(), Value::String(name.clone()));
+            payload.insert("walletId".to_string(), Value::String(key.public_key_hex.clone()));
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/names/register", req)) {
+                Ok(v) => {
+                    println!("Registered: {}@rouge.quant", name);
+                    if let Some(entry) = v.get("entry") {
+                        println!("{}", serde_json::to_string_pretty(entry).unwrap());
+                    }
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::ReleaseName { name } => {
+            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let mut payload = serde_json::Map::new();
+            payload.insert("name".to_string(), Value::String(name.clone()));
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/names/release", req)) {
+                Ok(_) => println!("Released: {}", name),
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::ResolveName { name } => {
+            match api_get(rpc, &format!("/api/names/resolve/{}", name)) {
+                Ok(v) => {
+                    if v.get("success").and_then(|s| s.as_bool()) == Some(true) {
+                        if let Some(entry) = v.get("entry") {
+                            println!("Name:      {}", entry.get("name").and_then(|n| n.as_str()).unwrap_or("?"));
+                            println!("Wallet:    {}", entry.get("wallet_id").and_then(|w| w.as_str()).unwrap_or("?"));
+                        }
+                        if let Some(wallet) = v.get("wallet") {
+                            if let Some(enc) = wallet.get("encryption_public_key").and_then(|e| e.as_str()) {
+                                println!("Enc Key:   {}...{}", &enc[..16], &enc[enc.len()-16..]);
+                            }
+                        }
+                    } else {
+                        println!("Name '{}' not found", name);
+                    }
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::ReverseLookup { pubkey } => {
+            let pk = pubkey.unwrap_or_else(|| active_key(&dir).map(|k| k.public_key_hex).unwrap_or_default());
+            if pk.is_empty() { eprintln!("No key specified"); return; }
+            match api_get(rpc, &format!("/api/names/reverse/{}", pk)) {
+                Ok(v) => {
+                    if let Some(name) = v.get("name").and_then(|n| n.as_str()) {
+                        println!("{}@rouge.quant", name);
+                    } else {
+                        println!("No name registered for this wallet");
+                    }
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        // ── Mail ──
+
+        Commands::SendMail { to, subject, body } => {
+            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let mut payload = serde_json::Map::new();
+            payload.insert("to".to_string(), Value::String(to.clone()));
+            payload.insert("subject".to_string(), Value::String(subject));
+            payload.insert("body".to_string(), Value::String(body));
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/mail/send", req)) {
+                Ok(v) => {
+                    println!("Mail sent to {}", to);
+                    if let Some(id) = v.get("id") {
+                        println!("   ID: {}", id);
+                    }
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::Inbox => {
+            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let payload = serde_json::Map::new();
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/mail/inbox", req)) {
+                Ok(v) => {
+                    if let Some(mail) = v.get("mail").and_then(|m| m.as_array()) {
+                        if mail.is_empty() {
+                            println!("Inbox empty");
+                        } else {
+                            for m in mail {
+                                let from = m.get("from").and_then(|f| f.as_str()).unwrap_or("?");
+                                let ts = m.get("timestamp").and_then(|t| t.as_u64()).unwrap_or(0);
+                                let read = m.get("read").and_then(|r| r.as_bool()).unwrap_or(false);
+                                let id = m.get("id").and_then(|i| i.as_str()).unwrap_or("?");
+                                println!("{} {} from: {} ({})", if read { " " } else { "*" }, id, from, ts);
+                            }
+                        }
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&v).unwrap());
+                    }
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::SentMail => {
+            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let payload = serde_json::Map::new();
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/mail/sent", req)) {
+                Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        // ── Messenger ──
+
+        Commands::RegisterMessenger { display_name } => {
+            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let mut payload = serde_json::Map::new();
+            payload.insert("id".to_string(), Value::String(key.public_key_hex.clone()));
+            payload.insert("displayName".to_string(), Value::String(display_name.clone()));
+            payload.insert("signingPublicKey".to_string(), Value::String(key.public_key_hex.clone()));
+            payload.insert("encryptionPublicKey".to_string(), Value::String(String::new()));
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/messenger/wallets/register", req)) {
+                Ok(_) => println!("Messenger wallet registered as '{}'", display_name),
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::Conversations => {
+            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let payload = serde_json::Map::new();
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/messenger/conversations/list", req)) {
+                Ok(v) => {
+                    if let Some(convos) = v.get("conversations").and_then(|c| c.as_array()) {
+                        if convos.is_empty() {
+                            println!("No conversations");
+                        } else {
+                            for c in convos {
+                                let id = c.get("conversationId").and_then(|i| i.as_str()).unwrap_or("?");
+                                let participants: Vec<&str> = c.get("participants")
+                                    .and_then(|p| p.as_array())
+                                    .map(|arr| arr.iter().filter_map(|p| p.get("displayName").and_then(|n| n.as_str())).collect())
+                                    .unwrap_or_default();
+                                println!("{} — {}", id, participants.join(", "));
+                            }
+                        }
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&v).unwrap());
+                    }
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::CreateConversation { participants } => {
+            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let parts: Vec<Value> = participants.split(',').map(|s| Value::String(s.trim().to_string())).collect();
+            let mut payload = serde_json::Map::new();
+            payload.insert("participants".to_string(), Value::Array(parts));
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/messenger/conversations", req)) {
+                Ok(v) => {
+                    if let Some(id) = v.get("conversationId").and_then(|i| i.as_str()) {
+                        println!("Conversation created: {}", id);
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&v).unwrap());
+                    }
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::Messages { conversation_id } => {
+            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let mut payload = serde_json::Map::new();
+            payload.insert("conversationId".to_string(), Value::String(conversation_id));
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/messenger/messages/list", req)) {
+                Ok(v) => {
+                    if let Some(msgs) = v.get("messages").and_then(|m| m.as_array()) {
+                        if msgs.is_empty() {
+                            println!("No messages");
+                        } else {
+                            for m in msgs {
+                                let sender = m.get("senderDisplayName").and_then(|s| s.as_str()).unwrap_or("?");
+                                let ts = m.get("timestamp").and_then(|t| t.as_u64()).unwrap_or(0);
+                                let encrypted = m.get("encrypted").is_some();
+                                println!("[{}] {} — {}", ts, sender, if encrypted { "(encrypted)" } else { "(empty)" });
+                            }
+                        }
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&v).unwrap());
+                    }
+                }
                 Err(e) => eprintln!("Error: {}", e),
             }
         }

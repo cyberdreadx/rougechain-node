@@ -391,10 +391,10 @@ function ReadView({
   const handleTrash = async () => {
     try {
       if (folder === "trash") {
-        await deleteMail(wallet.id, message.id);
+        await deleteMail(wallet, message.id);
         toast.success("Mail deleted permanently");
       } else {
-        await moveMail(wallet.id, message.id, "trash");
+        await moveMail(wallet, message.id, "trash");
         toast.success("Moved to trash");
       }
       onBack();
@@ -406,7 +406,7 @@ function ReadView({
 
   const handleRestore = async () => {
     try {
-      await moveMail(wallet.id, message.id, "inbox");
+      await moveMail(wallet, message.id, "inbox");
       toast.success("Restored to inbox");
       onBack();
     } catch (err) {
@@ -695,11 +695,11 @@ const MailPage = () => {
   }, [folder, messengerWallet]);
 
   const handleRegisterName = async () => {
-    if (!nameInput.trim() || !wallet) return;
+    if (!nameInput.trim() || !wallet || !messengerWallet) return;
     setNameRegistering(true);
     setNameError(null);
     try {
-      const result = await registerName(nameInput.trim(), wallet.id);
+      const result = await registerName(messengerWallet, nameInput.trim(), wallet.id);
       if (result.success) {
         setMyName(nameInput.trim().toLowerCase());
         setShowNameReg(false);
@@ -717,8 +717,8 @@ const MailPage = () => {
   const openMail = async (item: MailItem) => {
     setSelectedItem(item);
     setView("read");
-    if (!item.label.isRead && wallet) {
-      markMailRead(wallet.id, item.message.id).catch(() => {});
+    if (!item.label.isRead && messengerWallet) {
+      markMailRead(messengerWallet, item.message.id).catch(() => {});
     }
     if (messengerWallet) {
       try {

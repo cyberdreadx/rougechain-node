@@ -456,3 +456,12 @@ export function createSignedPushUnregister(
     type: "push_unregister",
   } as any);
 }
+
+// ===== Generic signed request builder (for mail/messenger/names) =====
+
+export function signRequest(
+  wallet: WalletKeys,
+  payload: Record<string, unknown>
+): SignedTransaction {
+  return buildAndSign(wallet, payload as any);
+}

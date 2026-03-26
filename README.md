@@ -57,8 +57,11 @@ RougeChain is a production-ready L1 blockchain built from genesis with NIST-appr
 
 ### Messaging & Mail
 - **E2E Encrypted Messenger**: Real-time chat with ML-KEM-768 encryption
-- **Encrypted Mail**: On-chain mail system with PQC encryption
+- **Encrypted Mail**: On-chain mail system with PQC encryption, multi-recipient CEK pattern
+- **Signed API Requests**: All mail/messenger/name operations require ML-DSA-65 signed requests with anti-replay nonces
+- **TOFU Key Verification**: SHA-256 fingerprints with key-change warnings
 - **Push Notifications**: Web push for new messages
+- **Atomic Name Registry**: compare-and-swap name registration via sled
 
 ### Bridge
 - **qETH Bridge**: Bridge ETH from Base Sepolia to qETH on RougeChain

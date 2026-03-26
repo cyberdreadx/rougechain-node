@@ -51,7 +51,7 @@ export default function MessengerTab({ wallet }: Props) {
     const messengerWallet = toMessengerWallet(wallet) as WalletWithPrivateKeys;
 
     const loadConversations = async () => {
-        const convos = await getConversations(wallet.id, wallet);
+        const convos = await getConversations(wallet.id, messengerWallet);
         setConversations(convos);
         setIsLoading(false);
     };
@@ -141,7 +141,7 @@ export default function MessengerTab({ wallet }: Props) {
                         onClick={async () => {
                             try {
                                 const convo = await createConversation(
-                                    wallet.id,
+                                    messengerWallet,
                                     [wallet.id, wallet.id],
                                     "Note to Self"
                                 );
@@ -170,7 +170,7 @@ export default function MessengerTab({ wallet }: Props) {
                                 onClick={async () => {
                                     try {
                                         const convo = await createConversation(
-                                            wallet.id,
+                                            messengerWallet,
                                             [wallet.id, c.id],
                                             c.displayName
                                         );
@@ -257,7 +257,7 @@ export default function MessengerTab({ wallet }: Props) {
                                         e.stopPropagation();
                                         if (!confirm("Delete this conversation?")) return;
                                         try {
-                                            await deleteConversation(convo.id);
+                                            await deleteConversation(messengerWallet, convo.id);
                                             setConversations(prev => prev.filter(c => c.id !== convo.id));
                                         } catch (err) { console.error("Delete failed:", err); }
                                     }}

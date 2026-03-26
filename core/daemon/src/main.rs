@@ -198,6 +198,8 @@ struct AppState {
     order_book: Arc<order_book::OrderBook>,
     /// Notify handle: wake the miner immediately when a new tx is submitted
     mine_notify: Arc<tokio::sync::Notify>,
+    /// Anti-replay nonce store: nonce -> expiry timestamp (ms)
+    replay_nonces: Arc<RwLock<HashMap<String, i64>>>,
 }
 
 #[derive(Clone)]
@@ -425,6 +427,7 @@ async fn main() -> Result<(), String> {
         indexer: Arc::new(indexer::Indexer::new(&data_dir_clone).expect("Failed to create indexer")),
         order_book: Arc::new(order_book::OrderBook::new(&data_dir_clone).expect("Failed to create order book")),
         mine_notify: node.mine_notify(),
+        replay_nonces: Arc::new(RwLock::new(HashMap::new())),
     };
     
     // Backfill indexer on startup
@@ -663,6 +666,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/validators/stats", get(get_vote_stats))
         .route("/api/votes/submit", post(submit_vote))
         .route("/api/entropy/submit", post(submit_entropy))
+        // Legacy messenger routes (unsigned — deprecated, will be removed)
         .route("/api/messenger/wallets", get(get_messenger_wallets))
         .route("/api/messenger/wallets/register", post(register_messenger_wallet))
         .route("/api/messenger/conversations", get(get_messenger_conversations))
@@ -672,12 +676,23 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/messenger/messages", post(send_messenger_message))
         .route("/api/messenger/messages/read", post(mark_messenger_read))
         .route("/api/messenger/messages/:id", delete(delete_messenger_message))
-        // Name registry
+        // Secured messenger routes (signed requests required)
+        .route("/api/v2/messenger/wallets/register", post(register_messenger_wallet_signed))
+        .route("/api/v2/messenger/conversations/list", post(get_conversations_signed))
+        .route("/api/v2/messenger/conversations", post(create_conversation_signed))
+        .route("/api/v2/messenger/conversations/delete", post(delete_conversation_signed))
+        .route("/api/v2/messenger/messages/list", post(get_messages_signed))
+        .route("/api/v2/messenger/messages", post(send_message_signed))
+        .route("/api/v2/messenger/messages/read", post(mark_message_read_signed))
+        .route("/api/v2/messenger/messages/delete", post(delete_message_signed))
+        // Name registry (resolve/reverse stay public, register/release require signatures)
         .route("/api/names/register", post(register_name))
         .route("/api/names/resolve/:name", get(resolve_name))
         .route("/api/names/reverse/:walletId", get(reverse_lookup_name))
         .route("/api/names/release", delete(release_name))
-        // Mail
+        .route("/api/v2/names/register", post(register_name_signed))
+        .route("/api/v2/names/release", post(release_name_signed))
+        // Legacy mail routes (unsigned — deprecated, will be removed)
         .route("/api/mail/send", post(send_mail))
         .route("/api/mail/inbox", get(get_mail_inbox))
         .route("/api/mail/sent", get(get_mail_sent))
@@ -686,6 +701,13 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/mail/move", post(move_mail))
         .route("/api/mail/read", post(mark_mail_read))
         .route("/api/mail/:id", delete(delete_mail))
+        // Secured mail routes (signed requests required)
+        .route("/api/v2/mail/send", post(send_mail_signed))
+        .route("/api/v2/mail/folder", post(get_mail_folder_signed))
+        .route("/api/v2/mail/message", post(get_mail_message_signed))
+        .route("/api/v2/mail/move", post(move_mail_signed))
+        .route("/api/v2/mail/read", post(mark_mail_read_signed))
+        .route("/api/v2/mail/delete", post(delete_mail_signed))
         .route("/api/peers", get(get_peers))
         .route("/api/peers/register", post(register_peer))
         // AMM/DEX endpoints
@@ -835,7 +857,7 @@ async fn auth_middleware<B>(
     if path == "/" || path == "/api/health" || path == "/api/stats" {
         return Ok(next.run(request).await);
     }
-    // v1 endpoints that accept private keys — block unless --dev flag is set
+    // v1 endpoints — block unless --dev flag is set (use v2 signed equivalents)
     const V1_KEY_ENDPOINTS: &[&str] = &[
         "/api/tx/submit",
         "/api/stake/submit",
@@ -848,12 +870,31 @@ async fn auth_middleware<B>(
         "/api/token/metadata/update",
         "/api/token/metadata/claim",
         "/api/wallet/create",
+        "/api/mail/send",
+        "/api/mail/move",
+        "/api/mail/read",
+        "/api/messenger/wallets/register",
+        "/api/messenger/messages/read",
+        "/api/names/register",
     ];
     if V1_KEY_ENDPOINTS.iter().any(|ep| path == *ep) {
         if !state.dev_mode {
             return Err(StatusCode::GONE);
         }
         return Ok(next.run(request).await);
+    }
+    // Block unsigned DELETE/POST on messenger/mail paths in production
+    let is_write = request.method() == Method::POST || request.method() == Method::DELETE;
+    let is_legacy_write = is_write && (
+        (path.starts_with("/api/messenger/conversations/") && request.method() == Method::DELETE)
+        || (path.starts_with("/api/messenger/messages/") && request.method() == Method::DELETE)
+        || (path == "/api/messenger/conversations" && request.method() == Method::POST)
+        || (path == "/api/messenger/messages" && request.method() == Method::POST)
+        || (path.starts_with("/api/mail/") && request.method() == Method::DELETE)
+        || (path == "/api/names/release" && request.method() == Method::DELETE)
+    );
+    if is_legacy_write && !state.dev_mode {
+        return Err(StatusCode::GONE);
     }
     // Auth bypass for endpoints that handle their own auth (v2 uses signatures, faucet/bridge are public)
     let skip_auth = path == "/api/faucet"
@@ -3426,6 +3467,10 @@ async fn register_messenger_wallet(
     let signing_key = body.get("signingPublicKey").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     let encryption_key = body.get("encryptionPublicKey").and_then(|v| v.as_str()).unwrap_or_default().to_string();
 
+    if display_name.len() > 50 {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Display name too long (max 50 chars)" })));
+    }
+
     // Enforce unique display names (case-insensitive)
     // Also collect old wallet IDs that will be replaced (for name registry update)
     let mut old_ids_to_update: Vec<String> = Vec::new();
@@ -3531,6 +3576,10 @@ async fn send_messenger_message(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let node = &state.node;
+    let content_len = body.get("encryptedContent").and_then(|v| v.as_str()).map(|s| s.len()).unwrap_or(0);
+    if content_len > 2 * 1024 * 1024 {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Message too large (max 2MB)" })));
+    }
     let message = quantum_vault_storage::messenger_store::MessengerMessage {
         id: uuid::Uuid::new_v4().to_string(),
         conversation_id: body.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
@@ -3580,6 +3629,9 @@ async fn register_name(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let name = body.get("name").and_then(|v| v.as_str()).unwrap_or_default();
     let wallet_id = body.get("walletId").and_then(|v| v.as_str()).unwrap_or_default();
+    if name.len() > 50 || wallet_id.len() > 500 {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Input too long" })));
+    }
     match state.node.register_name(name, wallet_id) {
         Ok(entry) => Ok(Json(serde_json::json!({ "success": true, "entry": entry }))),
         Err(e) => Ok(Json(serde_json::json!({ "success": false, "error": e }))),
@@ -3594,15 +3646,21 @@ async fn resolve_name(
     match entry {
         Some(e) => {
             let wallets = state.node.list_wallets().unwrap_or_default();
-            // Try exact ID match first, then fall back to key-based matching
             let wallet = wallets.iter().find(|w| w.id == e.wallet_id)
                 .or_else(|| wallets.iter().find(|w|
                     w.signing_public_key == e.wallet_id || w.encryption_public_key == e.wallet_id
                 ));
+            // Only expose public fields needed for name resolution
+            let wallet_info = wallet.map(|w| serde_json::json!({
+                "id": w.id,
+                "display_name": w.display_name,
+                "signing_public_key": w.signing_public_key,
+                "encryption_public_key": w.encryption_public_key,
+            }));
             Ok(Json(serde_json::json!({
                 "success": true,
                 "entry": e,
-                "wallet": wallet,
+                "wallet": wallet_info,
             })))
         }
         None => Ok(Json(serde_json::json!({ "success": false, "error": "Name not found" }))),
@@ -3637,6 +3695,22 @@ async fn send_mail(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let to_count = body.get("toWalletIds").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    if to_count > 50 {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Maximum 50 recipients" })));
+    }
+    let subject_len = body.get("subjectEncrypted").and_then(|v| v.as_str()).map(|s| s.len()).unwrap_or(0);
+    if subject_len > 10 * 1024 {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Subject too large (max 10KB)" })));
+    }
+    let body_len = body.get("bodyEncrypted").and_then(|v| v.as_str()).map(|s| s.len()).unwrap_or(0);
+    if body_len > 512 * 1024 {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Body too large (max 512KB)" })));
+    }
+    let attach_len = body.get("attachmentEncrypted").and_then(|v| v.as_str()).map(|s| s.len()).unwrap_or(0);
+    if attach_len > 3 * 1024 * 1024 {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Attachment too large (max 3MB)" })));
+    }
     let msg = quantum_vault_storage::mail_store::MailMessage {
         id: uuid::Uuid::new_v4().to_string(),
         from_wallet_id: body.get("fromWalletId").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
@@ -3716,6 +3790,9 @@ async fn move_mail(
     let wallet_id = body.get("walletId").and_then(|v| v.as_str()).unwrap_or_default();
     let message_id = body.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
     let folder = body.get("folder").and_then(|v| v.as_str()).unwrap_or_default();
+    if !["inbox", "sent", "trash", "starred", "drafts"].contains(&folder) {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Invalid folder" })));
+    }
     match state.node.move_mail(wallet_id, message_id, folder) {
         Ok(()) => Ok(Json(serde_json::json!({ "success": true }))),
         Err(e) => Ok(Json(serde_json::json!({ "success": false, "error": e }))),
@@ -3793,6 +3870,578 @@ fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<String, String> {
     }
     
     Ok(payload_json)
+}
+
+/// Verify a signed request for mail/messenger/names operations.
+/// Returns the authenticated public_key on success. Lighter than verify_signed_tx
+/// (no chain nonce needed). Includes anti-replay nonce checking.
+fn verify_signed_request(
+    req: &SignedTransactionRequest,
+    nonce_store: &RwLock<HashMap<String, i64>>,
+) -> Result<String, String> {
+    use quantum_vault_crypto::pqc_verify;
+
+    let payload_json = serde_json::to_string(&req.payload)
+        .map_err(|e| format!("Failed to serialize payload: {}", e))?;
+    let payload_bytes = payload_json.as_bytes();
+
+    let valid = pqc_verify(&req.public_key, payload_bytes, &req.signature)
+        .map_err(|e| format!("Signature verification failed: {}", e))?;
+    if !valid {
+        return Err("Invalid signature".to_string());
+    }
+
+    let timestamp = req.payload.get("timestamp").and_then(|v| v.as_i64())
+        .ok_or_else(|| "payload must include a 'timestamp' field".to_string())?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let ttl_ms: i64 = 5 * 60 * 1000;
+    if (now - timestamp).abs() > ttl_ms {
+        return Err("Request expired (timestamp too old or too far in the future)".to_string());
+    }
+
+    if let Some(from) = req.payload.get("from").and_then(|v| v.as_str()) {
+        if from != req.public_key {
+            return Err("Payload 'from' does not match signing public key".to_string());
+        }
+    }
+
+    // Anti-replay: require and check a unique nonce
+    let nonce = req.payload.get("nonce").and_then(|v| v.as_str())
+        .ok_or_else(|| "payload must include a 'nonce' field".to_string())?;
+    if nonce.len() < 8 || nonce.len() > 128 {
+        return Err("nonce must be 8-128 characters".to_string());
+    }
+    {
+        let mut store = nonce_store.write().unwrap();
+        // Opportunistic cleanup: purge expired nonces
+        if store.len() > 1000 {
+            store.retain(|_, expiry| *expiry > now);
+        }
+        let expiry = timestamp + ttl_ms;
+        if store.contains_key(nonce) {
+            return Err("Duplicate nonce (possible replay attack)".to_string());
+        }
+        store.insert(nonce.to_string(), expiry);
+    }
+
+    Ok(req.public_key.clone())
+}
+
+/// Helper: find a registered wallet whose signing_public_key matches the given key.
+fn find_wallet_by_signing_key(
+    node: &std::sync::Arc<crate::L1Node>,
+    signing_key: &str,
+) -> Option<quantum_vault_storage::messenger_store::MessengerWallet> {
+    node.list_wallets().ok()?.into_iter().find(|w| w.signing_public_key == signing_key)
+}
+
+/// Helper: resolve the wallet ID that corresponds to a signing public key.
+/// Checks: direct wallet ID match, then signing_public_key match.
+fn resolve_wallet_id(
+    node: &std::sync::Arc<crate::L1Node>,
+    signing_key: &str,
+) -> Option<String> {
+    let wallets = node.list_wallets().ok()?;
+    for w in &wallets {
+        if w.id == signing_key || w.signing_public_key == signing_key {
+            return Some(w.id.clone());
+        }
+    }
+    None
+}
+
+/// Helper: check if a wallet (by signing key) is a participant in a conversation.
+fn is_conversation_participant(
+    node: &std::sync::Arc<crate::L1Node>,
+    conversation_id: &str,
+    signing_key: &str,
+) -> bool {
+    let wallet = find_wallet_by_signing_key(node, signing_key);
+    let conversations = match node.list_wallets() {
+        Ok(_) => {
+            let wid = wallet.as_ref().map(|w| w.id.as_str()).unwrap_or(signing_key);
+            let extra = wallet.as_ref().map(|w| vec![
+                w.signing_public_key.as_str(),
+                w.encryption_public_key.as_str(),
+            ]).unwrap_or_default();
+            node.list_conversations_with_activity(wid, &extra).unwrap_or_default()
+        }
+        Err(_) => return false,
+    };
+    conversations.iter().any(|c| {
+        c.get("id").and_then(|v| v.as_str()) == Some(conversation_id)
+    })
+}
+
+/// Signed request error helper — returns (StatusCode, Json) tuple for v2-style error responses
+fn signed_err(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "success": false, "error": msg })))
+}
+
+fn signed_bad(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": msg })))
+}
+
+fn signed_internal(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "success": false, "error": msg })))
+}
+
+// ============================================
+// Secured mail handlers (require signed requests)
+// ============================================
+
+async fn send_mail_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let from_wallet_id = p.get("fromWalletId").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+
+    // Verify the sender wallet belongs to the authenticated key
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key)
+        .ok_or_else(|| signed_err("Wallet not registered"))?;
+    if wallet.id != from_wallet_id && wallet.signing_public_key != from_wallet_id {
+        return Err(signed_err("Not authorized to send from this wallet"));
+    }
+
+    let to_wallet_ids: Vec<String> = p.get("toWalletIds")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    if to_wallet_ids.is_empty() {
+        return Err(signed_bad("toWalletIds is required"));
+    }
+    if to_wallet_ids.len() > 50 {
+        return Err(signed_bad("Maximum 50 recipients"));
+    }
+
+    let subject_encrypted = p.get("subjectEncrypted").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let body_encrypted = p.get("bodyEncrypted").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    if subject_encrypted.len() > 10 * 1024 {
+        return Err(signed_bad("Subject too large (max 10KB)"));
+    }
+    if body_encrypted.len() > 512 * 1024 {
+        return Err(signed_bad("Body too large (max 512KB)"));
+    }
+
+    let msg = quantum_vault_storage::mail_store::MailMessage {
+        id: uuid::Uuid::new_v4().to_string(),
+        from_wallet_id: wallet.id.clone(),
+        to_wallet_ids,
+        subject_encrypted,
+        body_encrypted,
+        signature: p.get("contentSignature").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        reply_to_id: p.get("replyToId").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        has_attachment: p.get("hasAttachment").and_then(|v| v.as_bool()).unwrap_or(false),
+        attachment_hash: p.get("attachmentHash").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        attachment_encrypted: p.get("attachmentEncrypted").and_then(|v| v.as_str()).map(|s| s.to_string()),
+    };
+    let msg = state.node.send_mail(msg).map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "message": msg })))
+}
+
+async fn get_mail_folder_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let folder = p.get("folder").and_then(|v| v.as_str()).unwrap_or("inbox");
+    if !["inbox", "sent", "trash", "starred", "drafts"].contains(&folder) {
+        return Err(signed_bad("Invalid folder"));
+    }
+
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key)
+        .ok_or_else(|| signed_err("Wallet not registered"))?;
+
+    let items = state.node.list_mail_folder(&wallet.id, folder)
+        .map_err(|e| signed_internal(&e))?;
+    let messages: Vec<serde_json::Value> = items.into_iter().map(|(msg, label)| {
+        serde_json::json!({ "message": msg, "label": label })
+    }).collect();
+    Ok(Json(serde_json::json!({ "success": true, "messages": messages })))
+}
+
+async fn get_mail_message_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let message_id = p.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
+    if message_id.is_empty() {
+        return Err(signed_bad("messageId is required"));
+    }
+
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key)
+        .ok_or_else(|| signed_err("Wallet not registered"))?;
+
+    let msg = state.node.get_mail(message_id).map_err(|e| signed_internal(&e))?;
+    match msg {
+        Some(m) => {
+            // Verify caller is sender or recipient
+            if m.from_wallet_id != wallet.id && !m.to_wallet_ids.contains(&wallet.id) {
+                return Err(signed_err("Not authorized to read this message"));
+            }
+            let _ = state.node.mark_mail_read(&wallet.id, message_id);
+            Ok(Json(serde_json::json!({ "success": true, "message": m })))
+        }
+        None => Err(signed_bad("Message not found")),
+    }
+}
+
+async fn move_mail_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let message_id = p.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
+    let folder = p.get("folder").and_then(|v| v.as_str()).unwrap_or_default();
+
+    if !["inbox", "sent", "trash", "starred", "drafts"].contains(&folder) {
+        return Err(signed_bad("Invalid folder"));
+    }
+
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key)
+        .ok_or_else(|| signed_err("Wallet not registered"))?;
+
+    state.node.move_mail(&wallet.id, message_id, folder)
+        .map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
+async fn mark_mail_read_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let message_id = p.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
+
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key)
+        .ok_or_else(|| signed_err("Wallet not registered"))?;
+
+    state.node.mark_mail_read(&wallet.id, message_id)
+        .map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
+async fn delete_mail_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let message_id = p.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
+
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key)
+        .ok_or_else(|| signed_err("Wallet not registered"))?;
+
+    state.node.delete_mail(&wallet.id, message_id)
+        .map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
+// ============================================
+// Secured messenger handlers (require signed requests)
+// ============================================
+
+async fn register_messenger_wallet_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let id = p.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let display_name = p.get("displayName").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let signing_key = p.get("signingPublicKey").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let encryption_key = p.get("encryptionPublicKey").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+
+    if display_name.len() > 50 {
+        return Err(signed_bad("Display name too long (max 50 chars)"));
+    }
+
+    // The authenticated key must match the signing key being registered
+    if !signing_key.is_empty() && signing_key != authed_key {
+        return Err(signed_err("Cannot register a signing key that doesn't match your identity"));
+    }
+
+    // Prevent takeover: if a wallet with this ID already exists, the request must be
+    // signed by the existing wallet's signing key
+    if let Ok(existing_wallets) = state.node.list_wallets() {
+        for w in &existing_wallets {
+            if w.id == id && w.signing_public_key != authed_key {
+                return Err(signed_err("Wallet ID already registered by another key"));
+            }
+        }
+
+        // Enforce unique display names (case-insensitive)
+        let name_lower = display_name.to_lowercase();
+        for w in &existing_wallets {
+            if w.display_name.to_lowercase() == name_lower && w.id != id {
+                let same_keys = (!signing_key.is_empty() && w.signing_public_key == signing_key)
+                    || (!encryption_key.is_empty() && w.encryption_public_key == encryption_key);
+                if !same_keys {
+                    return Err(signed_bad(&format!("Display name '{}' is already taken", display_name)));
+                }
+            }
+        }
+    }
+
+    let mut old_ids_to_update: Vec<String> = Vec::new();
+    if let Ok(existing_wallets) = state.node.list_wallets() {
+        for w in &existing_wallets {
+            if w.id != id {
+                let will_replace = (!signing_key.is_empty() && w.signing_public_key == signing_key)
+                    || (!encryption_key.is_empty() && w.encryption_public_key == encryption_key);
+                if will_replace {
+                    old_ids_to_update.push(w.id.clone());
+                }
+            }
+        }
+    }
+
+    let wallet = quantum_vault_storage::messenger_store::MessengerWallet {
+        id: id.clone(),
+        display_name,
+        signing_public_key: if signing_key.is_empty() { authed_key.clone() } else { signing_key },
+        encryption_public_key: encryption_key,
+        created_at: chrono::Utc::now().to_rfc3339(),
+        discoverable: p.get("discoverable").and_then(|v| v.as_bool()).unwrap_or(true),
+    };
+    let wallet = state.node.register_wallet(wallet).map_err(|e| signed_internal(&e))?;
+
+    for old_id in &old_ids_to_update {
+        let _ = state.node.update_name_wallet_id(old_id, &id);
+        let _ = state.node.update_mail_labels_wallet_id(old_id, &id);
+    }
+
+    Ok(Json(serde_json::json!({ "success": true, "wallet": wallet })))
+}
+
+async fn get_conversations_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key);
+    let wallet_id = wallet.as_ref().map(|w| w.id.as_str()).unwrap_or(&authed_key);
+    let extra_keys: Vec<&str> = wallet.as_ref().map(|w| vec![
+        w.signing_public_key.as_str(),
+        w.encryption_public_key.as_str(),
+    ]).unwrap_or_default();
+
+    let conversations = state.node.list_conversations_with_activity(wallet_id, &extra_keys)
+        .map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "conversations": conversations })))
+}
+
+async fn create_conversation_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key)
+        .ok_or_else(|| signed_err("Wallet not registered"))?;
+
+    let participant_ids: Vec<String> = p.get("participantIds")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+
+    if participant_ids.len() > 50 {
+        return Err(signed_bad("Maximum 50 participants"));
+    }
+
+    // Ensure creator is in the participant list
+    if !participant_ids.iter().any(|pid| *pid == wallet.id || *pid == wallet.signing_public_key || *pid == wallet.encryption_public_key) {
+        return Err(signed_bad("Creator must be a participant"));
+    }
+
+    let name = p.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let is_group = p.get("isGroup").and_then(|v| v.as_bool()).unwrap_or(false);
+    let conversation = state.node.create_conversation(&wallet.id, participant_ids, name, is_group)
+        .map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "conversation": conversation })))
+}
+
+async fn get_messages_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let conversation_id = p.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default();
+    if conversation_id.is_empty() {
+        return Err(signed_bad("conversationId is required"));
+    }
+
+    if !is_conversation_participant(&state.node, conversation_id, &authed_key) {
+        return Err(signed_err("Not a participant in this conversation"));
+    }
+
+    let messages = state.node.list_messages(conversation_id)
+        .map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "messages": messages })))
+}
+
+async fn send_message_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key)
+        .ok_or_else(|| signed_err("Wallet not registered"))?;
+
+    let conversation_id = p.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    if !is_conversation_participant(&state.node, &conversation_id, &authed_key) {
+        return Err(signed_err("Not a participant in this conversation"));
+    }
+
+    let encrypted_content = p.get("encryptedContent").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    if encrypted_content.len() > 2 * 1024 * 1024 {
+        return Err(signed_bad("Message too large (max 2MB)"));
+    }
+
+    let message = quantum_vault_storage::messenger_store::MessengerMessage {
+        id: uuid::Uuid::new_v4().to_string(),
+        conversation_id,
+        sender_wallet_id: wallet.id.clone(),
+        encrypted_content,
+        signature: p.get("contentSignature").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        self_destruct: p.get("selfDestruct").and_then(|v| v.as_bool()).unwrap_or(false),
+        destruct_after_seconds: p.get("destructAfterSeconds").and_then(|v| v.as_u64()),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        is_read: false,
+        read_at: None,
+        message_type: p.get("messageType").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
+        spoiler: p.get("spoiler").and_then(|v| v.as_bool()).unwrap_or(false),
+    };
+    let message = state.node.send_message(message).map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "message": message })))
+}
+
+async fn delete_conversation_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let conversation_id = p.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default();
+    if !is_conversation_participant(&state.node, conversation_id, &authed_key) {
+        return Err(signed_err("Not a participant in this conversation"));
+    }
+
+    state.node.delete_conversation(conversation_id)
+        .map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
+async fn delete_message_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let message_id = p.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key)
+        .ok_or_else(|| signed_err("Wallet not registered"))?;
+
+    // Verify the caller is the sender of this message
+    if let Ok(messages) = state.node.list_messages(
+        p.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default()
+    ) {
+        if let Some(msg) = messages.iter().find(|m| m.id == message_id) {
+            if msg.sender_wallet_id != wallet.id {
+                return Err(signed_err("Only the sender can delete a message"));
+            }
+        }
+    }
+
+    state.node.delete_message(message_id)
+        .map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
+async fn mark_message_read_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let message_id = p.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
+
+    // Verify caller is a participant (not just anyone)
+    if let Some(conv_id) = p.get("conversationId").and_then(|v| v.as_str()) {
+        if !is_conversation_participant(&state.node, conv_id, &authed_key) {
+            return Err(signed_err("Not a participant in this conversation"));
+        }
+    }
+
+    let message = state.node.mark_message_read(message_id)
+        .map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "message": message })))
+}
+
+// ============================================
+// Secured name registry handlers
+// ============================================
+
+async fn register_name_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+    let wallet_id = p.get("walletId").and_then(|v| v.as_str()).unwrap_or_default();
+
+    // Verify the wallet belongs to the authenticated key
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key)
+        .ok_or_else(|| signed_err("Wallet not registered"))?;
+    if wallet.id != wallet_id && wallet.signing_public_key != wallet_id {
+        return Err(signed_err("Not authorized to register name for this wallet"));
+    }
+
+    match state.node.register_name(name, &wallet.id) {
+        Ok(entry) => Ok(Json(serde_json::json!({ "success": true, "entry": entry }))),
+        Err(e) => Err(signed_bad(&e)),
+    }
+}
+
+async fn release_name_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key)
+        .ok_or_else(|| signed_err("Wallet not registered"))?;
+
+    match state.node.release_name(name, &wallet.id) {
+        Ok(()) => Ok(Json(serde_json::json!({ "success": true }))),
+        Err(e) => Err(signed_bad(&e)),
+    }
 }
 
 async fn v2_transfer(

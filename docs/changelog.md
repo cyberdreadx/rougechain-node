@@ -4,6 +4,26 @@ All notable changes to RougeChain.
 
 ---
 
+## Testnet v0.2.3 — March 2026
+
+### Security Hardening
+- **Signed API requests** — All 16 mail, messenger, and name registry endpoints now require ML-DSA-65 signed requests via `/api/v2/` routes. Legacy unsigned endpoints return HTTP 410 (Gone)
+- **Anti-replay nonces** — Each signed request includes a cryptographically random nonce; duplicates within the timestamp window are rejected server-side
+- **Multi-recipient CEK encryption** — Mail content encrypted once with a random AES-256 CEK, KEM-wrapped individually per recipient via ML-KEM-768
+- **Unified mail signatures** — Single ML-DSA-65 signature over concatenation of all encrypted parts (subject + body + attachment) prevents partial content substitution
+- **TOFU key verification** — Public key fingerprints (SHA-256) tracked on first use with key-change warnings displayed in messenger UI
+- **Atomic name registration** — Name registry uses sled compare-and-swap (CAS) to prevent TOCTOU race conditions during name claims
+- **Sled messenger storage** — Messenger data migrated from JSON file to sled embedded database with per-record atomic operations and automatic migration from legacy format
+- **Server-side input validation** — Length limits enforced on all fields (display names: 50 chars, message content: 2 MB, mail subject: 10 KB, mail body: 512 KB, attachments: 3 MB, max 50 recipients)
+- **Session-only private keys** — Web app stores private keys in `sessionStorage` (cleared on tab close) instead of `localStorage`; encrypted wallet blob persists in `localStorage`
+- **Legacy decryption removal** — Pre-v2 mail and messenger decryption fallbacks removed to reduce attack surface
+
+### Changed
+- Messenger, mail, and name registry SDK methods now require a `wallet` parameter for request signing
+- `WHITEPAPER.md` updated to v1.7 with full security hardening documentation
+
+---
+
 ## Testnet v0.2.2 — March 2026
 
 ### Added

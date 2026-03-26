@@ -337,7 +337,7 @@ const batch = await rc.getRollupBatch(1);
 
 ## Mail (`rc.mail`)
 
-On-chain encrypted email with `@rouge.quant` / `@qwalla.mail` addresses.
+On-chain encrypted email with `@rouge.quant` / `@qwalla.mail` addresses. All write operations require a `wallet` parameter for ML-DSA-65 request signing — requests are authenticated via `/api/v2/` endpoints with anti-replay nonce protection.
 
 ### Name Registry
 
@@ -345,17 +345,17 @@ Register a mail name so other users can send you encrypted email. Third-party ap
 
 ```typescript
 // Step 1: Register wallet on the node (required for encryption keys)
-await rc.messenger.registerWallet({
+await rc.messenger.registerWallet(wallet, {
   id: wallet.publicKey,
   displayName: "Alice",
   signingPublicKey: wallet.publicKey,
   encryptionPublicKey: encPubKey,
 });
 
-// Step 2: Register a mail name
-await rc.mail.registerName("alice", wallet.publicKey);
+// Step 2: Register a mail name (signed request)
+await rc.mail.registerName(wallet, "alice", wallet.publicKey);
 
-// Resolve a name → wallet info (includes encryption key)
+// Resolve a name → wallet info (includes encryption key, public data only)
 const resolved = await rc.mail.resolveName("alice");
 // { entry: { name, wallet_id }, wallet: { id, signing_public_key, encryption_public_key } }
 
@@ -363,15 +363,15 @@ const resolved = await rc.mail.resolveName("alice");
 const name = await rc.mail.reverseLookup(wallet.publicKey);
 // "alice"
 
-// Release a name
-await rc.mail.releaseName("alice", wallet.publicKey);
+// Release a name (signed request)
+await rc.mail.releaseName(wallet, "alice", wallet.publicKey);
 ```
 
 ### Sending & Reading Mail
 
 ```typescript
-// Send an encrypted email
-await rc.mail.send({
+// Send an encrypted email (signed, multi-recipient CEK encryption)
+await rc.mail.send(wallet, {
   from: wallet.publicKey,
   to: recipientPubKey,
   subject: "Hello",
@@ -380,52 +380,55 @@ await rc.mail.send({
   encrypted_body: encryptedBody,
 });
 
-// Read inbox
-const inbox = await rc.mail.getInbox(wallet.publicKey);
+// Read inbox (signed request)
+const inbox = await rc.mail.getInbox(wallet);
 
-// Move to trash
-await rc.mail.move(messageId, "trash");
+// Move to trash (signed request)
+await rc.mail.move(wallet, messageId, "trash");
 
-// Mark as read
-await rc.mail.markRead(messageId);
+// Mark as read (signed request)
+await rc.mail.markRead(wallet, messageId);
+
+// Delete (signed request)
+await rc.mail.delete(wallet, messageId);
 ```
 
 ## Messenger (`rc.messenger`)
 
-End-to-end encrypted messaging with media and self-destruct support.
+End-to-end encrypted messaging with media and self-destruct support. All operations use ML-DSA-65 signed requests via `/api/v2/` endpoints with nonce-based anti-replay protection.
 
 ```typescript
-// Register wallet for messaging
-await rc.messenger.registerWallet({
+// Register wallet for messaging (signed request)
+await rc.messenger.registerWallet(wallet, {
   id: wallet.publicKey,
   displayName: "Alice",
   signingPublicKey: wallet.publicKey,
   encryptionPublicKey: encPubKey,
 });
 
-// Create a conversation
-const result = await rc.messenger.createConversation([
+// Create a conversation (signed request)
+const result = await rc.messenger.createConversation(wallet, [
   wallet.publicKey,
   recipientPubKey,
 ]);
 
-// Fetch conversations (with extended key matching)
-const convos = await rc.messenger.getConversations(wallet.publicKey, {
-  signingPublicKey: wallet.publicKey,
-  encryptionPublicKey: encPubKey,
-});
+// Fetch conversations (signed request)
+const convos = await rc.messenger.getConversations(wallet);
 
-// Send an encrypted message (with optional self-destruct)
-await rc.messenger.sendMessage(conversationId, wallet.publicKey, encryptedContent, {
+// Send an encrypted message (signed, with optional self-destruct)
+await rc.messenger.sendMessage(wallet, conversationId, encryptedContent, {
   selfDestruct: true,
   destructAfterSeconds: 30,
 });
 
-// Read messages
-const messages = await rc.messenger.getMessages(conversationId);
+// Read messages (signed request)
+const messages = await rc.messenger.getMessages(wallet, conversationId);
 
-// Delete a message
-await rc.messenger.deleteMessage(messageId);
+// Delete a message (signed request)
+await rc.messenger.deleteMessage(wallet, messageId);
+
+// Delete a conversation (signed request)
+await rc.messenger.deleteConversation(wallet, conversationId);
 ```
 
 ## Shielded Transactions (`rc.shielded`)
@@ -553,6 +556,9 @@ import type {
 - **Post-quantum cryptography** — All signatures use ML-DSA-65 (CRYSTALS-Dilithium), resistant to quantum computer attacks
 - **Client-side signing** — Private keys never leave your application
 - **No key storage** — The SDK does not store or transmit keys
+- **Signed API requests** — All mail, messenger, and name registry operations use ML-DSA-65 signed requests with timestamp validation and nonce-based anti-replay protection
+- **Multi-recipient CEK encryption** — Mail content is encrypted once with a random AES-256 key, KEM-wrapped individually per recipient via ML-KEM-768
+- **TOFU key verification** — Public key fingerprints (SHA-256) are tracked for key change detection
 
 ## Links
 

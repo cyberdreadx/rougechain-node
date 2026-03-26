@@ -113,7 +113,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
   const handleSelectContact = async (contact: Wallet) => {
     setIsCreating(contact.id);
     try {
-      const conversation = await createConversation(wallet.id, contact.id);
+      const conversation = await createConversation(wallet, contact.id);
       // Add participant info
       conversation.participants = [
         {
@@ -139,7 +139,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
       const botWallet = await getOrCreateDemoBot();
       
       // Create conversation with the bot
-      const conversation = await createConversation(wallet.id, botWallet.id);
+      const conversation = await createConversation(wallet, botWallet.id);
       conversation.participants = [
         {
           id: wallet.id,
@@ -165,7 +165,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
   const handleNoteToSelf = async () => {
     setIsCreatingNoteToSelf(true);
     try {
-      const conversation = await createConversation(wallet.id, wallet.id);
+      const conversation = await createConversation(wallet, wallet.id);
       conversation.participants = [
         {
           id: wallet.id,
@@ -192,7 +192,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
     setIsAddingManual(true);
     try {
       // Create conversation with the detected wallet
-      const conversation = await createConversation(wallet.id, detectedWallet.id);
+      const conversation = await createConversation(wallet, detectedWallet.id);
       conversation.participants = [
         {
           id: wallet.id,

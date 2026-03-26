@@ -1753,6 +1753,7 @@ dependencies = [
  "hex",
  "quantum-vault-crypto",
  "quantum-vault-types",
+ "rand",
  "reqwest",
  "serde",
  "serde_json",

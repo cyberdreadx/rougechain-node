@@ -533,6 +533,7 @@ const Messenger = () => {
           <ConversationList
             conversations={conversations}
             selectedId={selectedConversation?.id}
+            wallet={wallet}
             currentWalletId={wallet.id}
             currentWalletKeys={[wallet.signingPublicKey, wallet.encryptionPublicKey]}
             currentWalletName={wallet.displayName}

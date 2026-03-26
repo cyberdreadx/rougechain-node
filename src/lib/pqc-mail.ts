@@ -3,7 +3,7 @@
  * Reuses ML-KEM-768 + ML-DSA-65 encryption from pqc-messenger.ts
  */
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
-import { encryptMessage, decryptMessage, type WalletWithPrivateKeys, type Wallet, getWallets } from "@/lib/pqc-messenger";
+import { encryptMessage, buildSignedRequest, type WalletWithPrivateKeys, type Wallet, getWallets } from "@/lib/pqc-messenger";
 
 export const MAIL_DOMAIN = "rouge.quant";
 export const MAIL_DOMAIN_ALT = "qwalla.mail";
@@ -53,6 +53,16 @@ export interface NameEntry {
   registered_at: string;
 }
 
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return bytes;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 function getMailApiBase(): string | null {
   const base = getCoreApiBaseUrl();
   return base ? base : null;
@@ -60,14 +70,19 @@ function getMailApiBase(): string | null {
 
 // --- Name Registry ---
 
-export async function registerName(name: string, walletId: string): Promise<{ success: boolean; error?: string; entry?: NameEntry }> {
+export async function registerName(wallet: WalletWithPrivateKeys, name: string, walletId: string): Promise<{ success: boolean; error?: string; entry?: NameEntry }> {
   const base = getMailApiBase();
   if (!base) throw new Error("Node not configured");
 
-  const res = await fetch(`${base}/names/register`, {
+  const signed = buildSignedRequest(
+    { name, walletId },
+    wallet.signingPrivateKey,
+    wallet.signingPublicKey,
+  );
+  const res = await fetch(`${base}/v2/names/register`, {
     method: "POST",
     headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ name, walletId }),
+    body: JSON.stringify(signed),
   });
   return await res.json();
 }
@@ -107,16 +122,116 @@ export async function reverseLookup(walletId: string): Promise<string | null> {
   }
 }
 
-export async function releaseName(name: string, walletId: string): Promise<{ success: boolean; error?: string }> {
+export async function releaseName(wallet: WalletWithPrivateKeys, name: string): Promise<{ success: boolean; error?: string }> {
   const base = getMailApiBase();
   if (!base) throw new Error("Node not configured");
 
-  const res = await fetch(`${base}/names/release`, {
-    method: "DELETE",
+  const signed = buildSignedRequest(
+    { name },
+    wallet.signingPrivateKey,
+    wallet.signingPublicKey,
+  );
+  const res = await fetch(`${base}/v2/names/release`, {
+    method: "POST",
     headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ name, walletId }),
+    body: JSON.stringify(signed),
   });
   return await res.json();
+}
+
+// --- Multi-recipient CEK encryption ---
+
+async function encryptForMultipleRecipients(
+  plaintext: string,
+  recipientEncPubKeys: string[],
+  senderEncPubKey: string,
+): Promise<string> {
+  const { ml_kem768 } = await import("@noble/post-quantum/ml-kem.js");
+
+  // Generate random AES-256 CEK
+  const cek = crypto.getRandomValues(new Uint8Array(32));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+
+  const aesKey = await crypto.subtle.importKey("raw", cek, { name: "AES-GCM" }, false, ["encrypt"]);
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    aesKey,
+    new TextEncoder().encode(plaintext),
+  );
+
+  // KEM-wrap CEK for each recipient
+  const wrappedKeys: Record<string, { kemCipherText: string; wrappedCek: string; wrappedIv: string }> = {};
+  const allKeys = [...new Set([...recipientEncPubKeys, senderEncPubKey])];
+
+  for (const encPubKey of allKeys) {
+    if (!encPubKey) continue;
+    const { cipherText, sharedSecret } = ml_kem768.encapsulate(hexToBytes(encPubKey));
+    const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret.buffer.slice(sharedSecret.byteOffset, sharedSecret.byteOffset + sharedSecret.byteLength) as ArrayBuffer, "HKDF", false, ["deriveKey"]);
+    const wrapKey = await crypto.subtle.deriveKey(
+      { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("pqc-cek-wrap") },
+      keyMaterial,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt"],
+    );
+    const wrapIv = crypto.getRandomValues(new Uint8Array(12));
+    const wrappedCek = await crypto.subtle.encrypt({ name: "AES-GCM", iv: wrapIv }, wrapKey, cek);
+
+    wrappedKeys[encPubKey] = {
+      kemCipherText: bytesToHex(cipherText),
+      wrappedCek: bytesToHex(new Uint8Array(wrappedCek)),
+      wrappedIv: bytesToHex(wrapIv),
+    };
+  }
+
+  return JSON.stringify({
+    version: 2,
+    iv: bytesToHex(iv),
+    encryptedContent: bytesToHex(new Uint8Array(encrypted)),
+    wrappedKeys,
+  });
+}
+
+async function decryptMailContent(
+  encryptedPackage: string,
+  recipientEncPrivKey: string,
+  recipientEncPubKey: string,
+): Promise<string> {
+  const parsed = JSON.parse(encryptedPackage);
+
+  // New v2 format with per-recipient wrapped keys
+  if (parsed.version === 2 && parsed.wrappedKeys) {
+    const { ml_kem768 } = await import("@noble/post-quantum/ml-kem.js");
+    const myWrappedKey = parsed.wrappedKeys[recipientEncPubKey];
+    if (!myWrappedKey) throw new Error("No wrapped key for this recipient");
+
+    const privKeyBytes = hexToBytes(recipientEncPrivKey);
+    const sharedSecret = ml_kem768.decapsulate(hexToBytes(myWrappedKey.kemCipherText), privKeyBytes);
+    const ssArr = sharedSecret;
+    const ssBuf = ssArr.buffer.slice(ssArr.byteOffset, ssArr.byteOffset + ssArr.byteLength) as ArrayBuffer;
+    const keyMaterial = await crypto.subtle.importKey("raw", ssBuf, "HKDF", false, ["deriveKey"]);
+    const unwrapKey = await crypto.subtle.deriveKey(
+      { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("pqc-cek-wrap") },
+      keyMaterial,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["decrypt"],
+    );
+    const cekBytes = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: hexToBytes(myWrappedKey.wrappedIv) },
+      unwrapKey,
+      hexToBytes(myWrappedKey.wrappedCek),
+    );
+    const cek = await crypto.subtle.importKey("raw", cekBytes, { name: "AES-GCM" }, false, ["decrypt"]);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: hexToBytes(parsed.iv) },
+      cek,
+      hexToBytes(parsed.encryptedContent),
+    );
+    return new TextDecoder().decode(decrypted);
+  }
+
+  throw new Error("Unsupported encryption format (pre-v2 messages are no longer supported)");
 }
 
 // --- Mail ---
@@ -167,16 +282,9 @@ export async function sendMail(
     recipientEncPubKeys.push(w.encryptionPublicKey);
   }
 
-  const primaryRecipientKey = recipientEncPubKeys[0];
+  const subjectEncrypted = await encryptForMultipleRecipients(subject, recipientEncPubKeys, wallet.encryptionPublicKey);
+  const bodyEncrypted = await encryptForMultipleRecipients(body, recipientEncPubKeys, wallet.encryptionPublicKey);
 
-  const subjectEnc = await encryptMessage(
-    subject, primaryRecipientKey, wallet.signingPrivateKey, wallet.encryptionPublicKey,
-  );
-  const bodyEnc = await encryptMessage(
-    body, primaryRecipientKey, wallet.signingPrivateKey, wallet.encryptionPublicKey,
-  );
-
-  // Encrypt attachment if present
   let attachmentEncrypted: string | undefined;
   if (attachment) {
     const attachmentPayload = JSON.stringify({
@@ -185,25 +293,36 @@ export async function sendMail(
       data: attachment.data,
       size: attachment.size,
     });
-    const attachEnc = await encryptMessage(
-      attachmentPayload, primaryRecipientKey, wallet.signingPrivateKey, wallet.encryptionPublicKey,
-    );
-    attachmentEncrypted = attachEnc.encryptedPackage;
+    attachmentEncrypted = await encryptForMultipleRecipients(attachmentPayload, recipientEncPubKeys, wallet.encryptionPublicKey);
   }
 
-  const res = await fetch(`${base}/mail/send`, {
-    method: "POST",
-    headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({
+  // Unified signature over all encrypted parts
+  const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
+  const signPayload = subjectEncrypted + "|" + bodyEncrypted + (attachmentEncrypted ? "|" + attachmentEncrypted : "");
+  const sigBytes = ml_dsa65.sign(
+    new TextEncoder().encode(signPayload),
+    hexToBytes(wallet.signingPrivateKey),
+  );
+  const unifiedSignature = bytesToHex(sigBytes);
+
+  const signed = buildSignedRequest(
+    {
       fromWalletId: wallet.id,
       toWalletIds,
-      subjectEncrypted: subjectEnc.encryptedPackage,
-      bodyEncrypted: bodyEnc.encryptedPackage,
+      subjectEncrypted,
+      bodyEncrypted,
       attachmentEncrypted,
-      signature: subjectEnc.signature,
+      contentSignature: unifiedSignature,
       replyToId,
       hasAttachment: !!attachment,
-    }),
+    },
+    wallet.signingPrivateKey,
+    wallet.signingPublicKey,
+  );
+  const res = await fetch(`${base}/v2/mail/send`, {
+    method: "POST",
+    headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(signed),
   });
 
   if (!res.ok) throw new Error(`Send failed: ${await res.text()}`);
@@ -235,8 +354,15 @@ async function getFolder(wallet: WalletWithPrivateKeys, folder: string): Promise
   if (!base) return [];
 
   try {
-    const res = await fetch(`${base}/mail/${folder}?walletId=${encodeURIComponent(wallet.id)}`, {
-      headers: getCoreApiHeaders(),
+    const signed = buildSignedRequest(
+      { folder },
+      wallet.signingPrivateKey,
+      wallet.signingPublicKey,
+    );
+    const res = await fetch(`${base}/v2/mail/folder`, {
+      method: "POST",
+      headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify(signed),
     });
     if (!res.ok) return [];
     const data = await res.json();
@@ -264,30 +390,31 @@ async function getFolder(wallet: WalletWithPrivateKeys, folder: string): Promise
       let signatureValid = false;
 
       try {
-        const subjectResult = await decryptMessage(
-          msg.subjectEncrypted, wallet.encryptionPrivateKey, senderSigningKey,
-          msg.signature, isSender,
-        );
-        subject = subjectResult.plaintext;
-        signatureValid = subjectResult.signatureValid;
+        subject = await decryptMailContent(msg.subjectEncrypted, wallet.encryptionPrivateKey, wallet.encryptionPublicKey);
       } catch { /* */ }
 
       try {
-        const bodyResult = await decryptMessage(
-          msg.bodyEncrypted, wallet.encryptionPrivateKey, senderSigningKey,
-          msg.signature, isSender,
-        );
-        body = bodyResult.plaintext;
+        body = await decryptMailContent(msg.bodyEncrypted, wallet.encryptionPrivateKey, wallet.encryptionPublicKey);
       } catch { /* */ }
 
       let attachmentData: MailAttachment | undefined;
       if (msg.hasAttachment && msg.attachmentEncrypted) {
         try {
-          const attachResult = await decryptMessage(
-            msg.attachmentEncrypted, wallet.encryptionPrivateKey, senderSigningKey,
-            msg.signature, isSender,
+          const attachPlain = await decryptMailContent(msg.attachmentEncrypted, wallet.encryptionPrivateKey, wallet.encryptionPublicKey);
+          attachmentData = JSON.parse(attachPlain) as MailAttachment;
+        } catch { /* */ }
+      }
+
+      // Verify unified signature over all encrypted parts
+      if (msg.signature && senderSigningKey) {
+        try {
+          const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
+          const sigPayload = msg.subjectEncrypted + "|" + msg.bodyEncrypted + (msg.attachmentEncrypted ? "|" + msg.attachmentEncrypted : "");
+          signatureValid = ml_dsa65.verify(
+            hexToBytes(msg.signature),
+            new TextEncoder().encode(sigPayload),
+            hexToBytes(senderSigningKey),
           );
-          attachmentData = JSON.parse(attachResult.plaintext) as MailAttachment;
         } catch { /* */ }
       }
 
@@ -316,36 +443,52 @@ async function getSenderDisplayName(walletId: string, allWallets: Wallet[]): Pro
   return w?.displayName || walletId.substring(0, 12) + "...";
 }
 
-export async function moveMail(walletId: string, messageId: string, folder: string): Promise<void> {
+export async function moveMail(wallet: WalletWithPrivateKeys, messageId: string, folder: string): Promise<void> {
   const base = getMailApiBase();
   if (!base) throw new Error("Node not configured");
 
-  const res = await fetch(`${base}/mail/move`, {
+  const signed = buildSignedRequest(
+    { messageId, folder },
+    wallet.signingPrivateKey,
+    wallet.signingPublicKey,
+  );
+  const res = await fetch(`${base}/v2/mail/move`, {
     method: "POST",
     headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ walletId, messageId, folder }),
+    body: JSON.stringify(signed),
   });
   if (!res.ok) throw new Error(`Move failed: ${await res.text()}`);
 }
 
-export async function markMailRead(walletId: string, messageId: string): Promise<void> {
+export async function markMailRead(wallet: WalletWithPrivateKeys, messageId: string): Promise<void> {
   const base = getMailApiBase();
   if (!base) throw new Error("Node not configured");
 
-  await fetch(`${base}/mail/read`, {
+  const signed = buildSignedRequest(
+    { messageId },
+    wallet.signingPrivateKey,
+    wallet.signingPublicKey,
+  );
+  await fetch(`${base}/v2/mail/read`, {
     method: "POST",
     headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ walletId, messageId }),
+    body: JSON.stringify(signed),
   });
 }
 
-export async function deleteMail(walletId: string, messageId: string): Promise<void> {
+export async function deleteMail(wallet: WalletWithPrivateKeys, messageId: string): Promise<void> {
   const base = getMailApiBase();
   if (!base) throw new Error("Node not configured");
 
-  const res = await fetch(`${base}/mail/${encodeURIComponent(messageId)}?walletId=${encodeURIComponent(walletId)}`, {
-    method: "DELETE",
-    headers: getCoreApiHeaders(),
+  const signed = buildSignedRequest(
+    { messageId },
+    wallet.signingPrivateKey,
+    wallet.signingPublicKey,
+  );
+  const res = await fetch(`${base}/v2/mail/delete`, {
+    method: "POST",
+    headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(signed),
   });
   if (!res.ok) throw new Error(`Delete failed: ${await res.text()}`);
 }

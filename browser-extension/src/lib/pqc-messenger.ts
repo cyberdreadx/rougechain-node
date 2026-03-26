@@ -60,6 +60,47 @@ export interface Conversation {
 
 const MESSENGER_API_PREFIX = "/messenger";
 const BLOCKED_WALLETS_KEY = "pqc_blocked_wallets";
+const TOFU_STORE_KEY = "pqc_tofu_fingerprints";
+
+// --- Key fingerprint & TOFU helpers ---
+
+export async function keyFingerprint(publicKeyHex: string): Promise<string> {
+    if (!publicKeyHex) return "";
+    const hash = await crypto.subtle.digest("SHA-256", hexToBytes(publicKeyHex));
+    const hex = bytesToHex(new Uint8Array(hash));
+    return hex.substring(0, 32).replace(/(.{4})/g, "$1 ").trim().toUpperCase();
+}
+
+interface TofuEntry {
+    walletId: string;
+    signingFingerprint: string;
+    encryptionFingerprint: string;
+    firstSeen: number;
+}
+
+function loadTofuStore(): Record<string, TofuEntry> {
+    try { const raw = localStorage.getItem(TOFU_STORE_KEY); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+}
+
+function saveTofuStore(store: Record<string, TofuEntry>): void {
+    localStorage.setItem(TOFU_STORE_KEY, JSON.stringify(store));
+}
+
+export async function checkTofu(wallet: Wallet): Promise<{ trusted: boolean; changed: boolean; firstSeen: number }> {
+    const store = loadTofuStore();
+    const sigFp = await keyFingerprint(wallet.signingPublicKey);
+    const encFp = await keyFingerprint(wallet.encryptionPublicKey);
+    const key = wallet.id;
+    const existing = store[key];
+    if (!existing) {
+        store[key] = { walletId: wallet.id, signingFingerprint: sigFp, encryptionFingerprint: encFp, firstSeen: Date.now() };
+        saveTofuStore(store);
+        return { trusted: true, changed: false, firstSeen: Date.now() };
+    }
+    const changed = existing.signingFingerprint !== sigFp || existing.encryptionFingerprint !== encFp;
+    if (changed) { store[key] = { ...existing, signingFingerprint: sigFp, encryptionFingerprint: encFp }; saveTofuStore(store); }
+    return { trusted: !changed, changed, firstSeen: existing.firstSeen };
+}
 
 // --- Block list helpers ---
 
@@ -259,23 +300,82 @@ function getMessengerApiBase(): string | null {
     return base ? `${base}${MESSENGER_API_PREFIX}` : null;
 }
 
-export async function registerWalletOnNode(wallet: Wallet): Promise<void> {
-    const apiBase = getMessengerApiBase();
-    if (!apiBase) throw new Error("Node not configured");
+function sortKeysDeep(obj: unknown): unknown {
+    if (Array.isArray(obj)) return obj.map(sortKeysDeep);
+    if (obj !== null && typeof obj === "object") {
+        const sorted: Record<string, unknown> = {};
+        for (const key of Object.keys(obj as Record<string, unknown>).sort()) {
+            sorted[key] = sortKeysDeep((obj as Record<string, unknown>)[key]);
+        }
+        return sorted;
+    }
+    return obj;
+}
 
-    const res = await fetch(`${apiBase}/wallets/register`, {
-        method: "POST",
-        headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({
-            id: wallet.id,
-            displayName: wallet.displayName,
-            signingPublicKey: wallet.signingPublicKey,
-            encryptionPublicKey: wallet.encryptionPublicKey,
-        }),
-    });
-    if (!res.ok) throw new Error(`Registration failed: ${await res.text()}`);
-    const data = await res.json();
-    if (data.success === false) throw new Error(data.error || "Registration failed");
+export function buildSignedRequest(
+    payload: Record<string, unknown>,
+    signingPrivateKey: string,
+    signingPublicKey: string,
+): { payload: Record<string, unknown>; signature: string; public_key: string } {
+    const nonce = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
+    const fullPayload: Record<string, unknown> = {
+        ...payload,
+        from: signingPublicKey,
+        timestamp: Date.now(),
+        nonce,
+    };
+    const sorted = sortKeysDeep(fullPayload) as Record<string, unknown>;
+    const json = JSON.stringify(sorted);
+    const bytes = new TextEncoder().encode(json);
+    const sig = ml_dsa65.sign(bytes, hexToBytes(signingPrivateKey));
+    return {
+        payload: sorted,
+        signature: bytesToHex(sig),
+        public_key: signingPublicKey,
+    };
+}
+
+export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKeys): Promise<void> {
+    const base = getCoreApiBaseUrl();
+    if (!base) throw new Error("Node not configured");
+
+    const priv = (wallet as WalletWithPrivateKeys).signingPrivateKey;
+    if (priv) {
+        const signed = buildSignedRequest(
+            {
+                id: wallet.id,
+                displayName: wallet.displayName,
+                signingPublicKey: wallet.signingPublicKey,
+                encryptionPublicKey: wallet.encryptionPublicKey,
+            },
+            priv,
+            wallet.signingPublicKey,
+        );
+        const res = await fetch(`${base}/v2/messenger/wallets/register`, {
+            method: "POST",
+            headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
+            body: JSON.stringify(signed),
+        });
+        if (!res.ok) throw new Error(`Registration failed: ${await res.text()}`);
+        const data = await res.json();
+        if (data.success === false) throw new Error(data.error || "Registration failed");
+    } else {
+        const apiBase = getMessengerApiBase();
+        if (!apiBase) throw new Error("Node not configured");
+        const res = await fetch(`${apiBase}/wallets/register`, {
+            method: "POST",
+            headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
+            body: JSON.stringify({
+                id: wallet.id,
+                displayName: wallet.displayName,
+                signingPublicKey: wallet.signingPublicKey,
+                encryptionPublicKey: wallet.encryptionPublicKey,
+            }),
+        });
+        if (!res.ok) throw new Error(`Registration failed: ${await res.text()}`);
+        const data = await res.json();
+        if (data.success === false) throw new Error(data.error || "Registration failed");
+    }
 }
 
 async function kemEncryptPlaintext(
@@ -458,22 +558,22 @@ export async function getWallets(): Promise<Wallet[]> {
 }
 
 export async function createConversation(
-    walletId: string,
+    wallet: WalletWithPrivateKeys,
     participantIds: string[],
     name?: string
 ): Promise<Conversation> {
-    const apiBase = getMessengerApiBase();
-    if (!apiBase) throw new Error("Node not configured");
+    const base = getCoreApiBaseUrl();
+    if (!base) throw new Error("Node not configured");
 
-    const res = await fetch(`${apiBase}/conversations`, {
+    const signed = buildSignedRequest(
+        { participantIds, name, isGroup: participantIds.length > 2 },
+        wallet.signingPrivateKey,
+        wallet.signingPublicKey,
+    );
+    const res = await fetch(`${base}/v2/messenger/conversations`, {
         method: "POST",
         headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({
-            createdBy: walletId,
-            participantIds,
-            name,
-            isGroup: participantIds.length > 2,
-        }),
+        body: JSON.stringify(signed),
     });
     if (!res.ok) throw new Error(`Failed to create conversation: ${await res.text()}`);
     invalidate("messengerConversations");
@@ -481,20 +581,36 @@ export async function createConversation(
     return normalizeConversation(data.conversation || data);
 }
 
-export async function getConversations(walletId: string, currentWallet?: Wallet): Promise<Conversation[]> {
-    const apiBase = getMessengerApiBase();
-    if (!apiBase) return [];
+export async function getConversations(walletId: string, currentWallet?: Wallet | WalletWithPrivateKeys): Promise<Conversation[]> {
+    const base = getCoreApiBaseUrl();
+    if (!base) return [];
     try {
         const all = await cachedFetch("messengerConversations", walletId, async () => {
-            const params = new URLSearchParams({ walletId });
-            if (currentWallet?.signingPublicKey) params.set("signingPublicKey", currentWallet.signingPublicKey);
-            if (currentWallet?.encryptionPublicKey) params.set("encryptionPublicKey", currentWallet.encryptionPublicKey);
-            const res = await fetch(`${apiBase}/conversations?${params.toString()}`, {
-                headers: getCoreApiHeaders(),
-            });
-            if (!res.ok) return [];
-            const data = await res.json();
-            const convos = data.conversations || data || [];
+            const privKey = (currentWallet as WalletWithPrivateKeys)?.signingPrivateKey;
+            let convos: any[];
+            if (privKey && currentWallet?.signingPublicKey) {
+                const signed = buildSignedRequest({}, privKey, currentWallet.signingPublicKey);
+                const res = await fetch(`${base}/v2/messenger/conversations/list`, {
+                    method: "POST",
+                    headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
+                    body: JSON.stringify(signed),
+                });
+                if (!res.ok) return [];
+                const data = await res.json();
+                convos = data.conversations || data || [];
+            } else {
+                const apiBase = getMessengerApiBase();
+                if (!apiBase) return [];
+                const params = new URLSearchParams({ walletId });
+                if (currentWallet?.signingPublicKey) params.set("signingPublicKey", currentWallet.signingPublicKey);
+                if (currentWallet?.encryptionPublicKey) params.set("encryptionPublicKey", currentWallet.encryptionPublicKey);
+                const res = await fetch(`${apiBase}/conversations?${params.toString()}`, {
+                    headers: getCoreApiHeaders(),
+                });
+                if (!res.ok) return [];
+                const data = await res.json();
+                convos = data.conversations || data || [];
+            }
 
             const allWallets = await getWallets();
             const walletMap = new Map<string, Wallet>();
@@ -536,12 +652,18 @@ export async function getConversations(walletId: string, currentWallet?: Wallet)
     } catch { return []; }
 }
 
-export async function deleteConversation(conversationId: string): Promise<void> {
-    const apiBase = getMessengerApiBase();
-    if (!apiBase) throw new Error("Node not configured");
-    const res = await fetch(`${apiBase}/conversations/${encodeURIComponent(conversationId)}`, {
-        method: "DELETE",
-        headers: getCoreApiHeaders(),
+export async function deleteConversation(wallet: WalletWithPrivateKeys, conversationId: string): Promise<void> {
+    const base = getCoreApiBaseUrl();
+    if (!base) throw new Error("Node not configured");
+    const signed = buildSignedRequest(
+        { conversationId },
+        wallet.signingPrivateKey,
+        wallet.signingPublicKey,
+    );
+    const res = await fetch(`${base}/v2/messenger/conversations/delete`, {
+        method: "POST",
+        headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify(signed),
     });
     if (!res.ok) throw new Error(`Delete failed: ${await res.text()}`);
     invalidate("messengerConversations");
@@ -566,19 +688,24 @@ export async function sendMessage(
         wallet.encryptionPublicKey
     );
 
-    const res = await fetch(`${apiBase}/messages`, {
-        method: "POST",
-        headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({
+    const base = getCoreApiBaseUrl();
+    const signed = buildSignedRequest(
+        {
             conversationId,
-            senderWalletId: wallet.id,
             encryptedContent: encryptedPackage,
-            signature,
+            contentSignature: signature,
             selfDestruct,
             destructAfterSeconds,
             messageType,
             spoiler,
-        }),
+        },
+        wallet.signingPrivateKey,
+        wallet.signingPublicKey,
+    );
+    const res = await fetch(`${base}/v2/messenger/messages`, {
+        method: "POST",
+        headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify(signed),
     });
     if (!res.ok) throw new Error(`Send failed: ${await res.text()}`);
     invalidate("messengerMessages", conversationId);
@@ -605,14 +732,20 @@ export async function sendMessage(
     };
 }
 
-async function fetchRawMessages(conversationId: string): Promise<unknown[]> {
-    const apiBase = getMessengerApiBase();
-    if (!apiBase) return [];
+async function fetchRawMessages(conversationId: string, wallet: WalletWithPrivateKeys): Promise<unknown[]> {
+    const base = getCoreApiBaseUrl();
+    if (!base) return [];
     return cachedFetch("messengerMessages", conversationId, async () => {
-        const res = await fetch(
-            `${apiBase}/messages?conversationId=${encodeURIComponent(conversationId)}`,
-            { headers: getCoreApiHeaders() }
+        const signed = buildSignedRequest(
+            { conversationId },
+            wallet.signingPrivateKey,
+            wallet.signingPublicKey,
         );
+        const res = await fetch(`${base}/v2/messenger/messages/list`, {
+            method: "POST",
+            headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
+            body: JSON.stringify(signed),
+        });
         if (!res.ok) return [];
         const data = await res.json();
         return data.messages || data || [];
@@ -633,7 +766,7 @@ export async function getMessages(
     participants: Wallet[]
 ): Promise<Message[]> {
     try {
-        const rawMessages = await fetchRawMessages(conversationId);
+        const rawMessages = await fetchRawMessages(conversationId, wallet);
 
         let allParticipants = participants;
         if (!allParticipants.length) {
@@ -681,12 +814,17 @@ export async function getMessages(
                 signatureValid = result.signatureValid;
 
                 if (!isOwn && msg.selfDestruct && !msg.readAt) {
-                    const apiBase = getMessengerApiBase();
-                    if (apiBase) {
-                        fetch(`${apiBase}/messages/read`, {
+                    const readBase = getCoreApiBaseUrl();
+                    if (readBase) {
+                        const readSigned = buildSignedRequest(
+                            { messageId: msg.id, conversationId },
+                            wallet.signingPrivateKey,
+                            wallet.signingPublicKey,
+                        );
+                        fetch(`${readBase}/v2/messenger/messages/read`, {
                             method: "POST",
                             headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-                            body: JSON.stringify({ messageId: msg.id }),
+                            body: JSON.stringify(readSigned),
                         }).catch(() => {});
                     }
                 }

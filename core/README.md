@@ -10,7 +10,7 @@ transaction processing, peer synchronization, and exposes gRPC + HTTP APIs.
 - `types` - Shared types, transaction encoding, and codec helpers
 - `crypto` - Hashing + PQC signing (ML-DSA-65) + encryption (ML-KEM-768)
 - `consensus` - Proposer selection utilities
-- `storage` - Chain, validator, messenger, pool persistence (sled)
+- `storage` - Chain, validator, messenger, mail, name registry, pool persistence (sled)
 - `vm` - WASM smart contract runtime (wasmi sandbox)
 - `p2p` - TCP gossip scaffolding
 
@@ -127,6 +127,23 @@ rougechain transfer <to_pubkey> 1000
 rougechain stake 5000
 rougechain vote <proposal_id> yes
 
+# Name registry (ML-DSA-65 signed requests with anti-replay nonce)
+rougechain register-name alice
+rougechain resolve-name bob
+rougechain reverse-lookup
+rougechain release-name alice
+
+# Mail (ML-DSA-65 signed requests)
+rougechain send-mail bob --subject "Hello" --body "Hi from the CLI"
+rougechain inbox
+rougechain sent-mail
+
+# Messenger (ML-DSA-65 signed requests)
+rougechain register-messenger --display-name "Alice"
+rougechain conversations
+rougechain create-conversation <pubkey1>,<pubkey2>
+rougechain messages <conversation-id>
+
 # Raw JSON-RPC
 rougechain rpc rouge_getStats
 ```
@@ -211,6 +228,17 @@ See `PUBLIC_API.md` in the project root for full API documentation.
 | `/api/v2/contract/deploy` | Deploy WASM smart contract |
 | `/api/v2/contract/call` | Execute WASM contract function |
 | `/api/v2/faucet` | Request testnet tokens |
+| `/api/v2/messenger/wallets/register` | Register messenger wallet (signed) |
+| `/api/v2/messenger/conversations` | Create conversation (signed) |
+| `/api/v2/messenger/messages` | Send message (signed) |
+| `/api/v2/mail/send` | Send encrypted mail (signed) |
+| `/api/v2/mail/inbox` | Get inbox (signed) |
+| `/api/v2/mail/sent` | Get sent mail (signed) |
+| `/api/v2/mail/read` | Mark as read (signed) |
+| `/api/v2/mail/move` | Move to folder (signed) |
+| `/api/v2/mail/delete` | Delete mail (signed) |
+| `/api/v2/names/register` | Register name (signed, CAS) |
+| `/api/v2/names/release` | Release name (signed) |
 
 ### WASM Smart Contracts
 
@@ -218,6 +246,15 @@ See `PUBLIC_API.md` in the project root for full API documentation.
 - Fuel-metered: 10M fuel per call, 100M per block
 - Contracts processed during block import alongside balance transitions
 - Contract bytecode stored in `ContractStore` (sled)
+
+### Mail, Messenger & Name Registry Security
+
+- **Signed API requests**: All 16 mail/messenger/name endpoints require ML-DSA-65 signed requests via `/api/v2/` routes
+- **Anti-replay nonces**: Server-side nonce store with TTL-based cleanup rejects duplicate nonces
+- **Sled-backed messenger storage**: Replaced JSON file storage with sled for atomic per-record operations
+- **Atomic name registration**: Compare-and-swap (CAS) prevents TOCTOU race conditions on name claims
+- **Input validation**: Server-side length limits on all fields (display names, message content, mail subject/body/attachment, recipient count)
+- **Authorization checks**: Caller ownership verified for all operations (mailbox access, conversation participation, name ownership)
 
 ### Security Features
 
