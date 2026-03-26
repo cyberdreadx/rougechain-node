@@ -3,6 +3,21 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 
+// ── Custom getrandom: delegates to host-provided crypto.getRandomValues ──
+
+extern "C" {
+    fn host_fill_random(ptr: *mut u8, len: usize);
+}
+
+fn custom_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
+    unsafe { host_fill_random(buf.as_mut_ptr(), buf.len()) };
+    Ok(())
+}
+
+getrandom::register_custom_getrandom!(custom_getrandom);
+
+// ── Output buffer ──
+
 struct OutputBuf(UnsafeCell<Vec<u8>>);
 unsafe impl Sync for OutputBuf {}
 

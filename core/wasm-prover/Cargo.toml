@@ -9,4 +9,4 @@ crate-type = ["cdylib"]
 [dependencies]
 quantum-vault-crypto = { path = "../crypto" }
 hex = "0.4"
-getrandom = { version = "0.2", features = ["js"] }
+getrandom = { version = "0.2", features = ["custom"] }
