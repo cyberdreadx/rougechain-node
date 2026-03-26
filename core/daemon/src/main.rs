@@ -150,6 +150,9 @@ struct Args {
     /// Bridge: Base Sepolia RPC URL (default: https://sepolia.base.org)
     #[arg(long, env = "QV_BASE_SEPOLIA_RPC", default_value = "https://sepolia.base.org")]
     base_sepolia_rpc: String,
+    /// Groq API key for Quantum Bot (optional — bot falls back to canned replies if unset)
+    #[arg(long, env = "GROQ_API_KEY")]
+    groq_api_key: Option<String>,
     /// Enable legacy v1 endpoints that accept private keys (UNSAFE — for local dev only)
     #[arg(long)]
     dev: bool,
@@ -200,6 +203,8 @@ struct AppState {
     mine_notify: Arc<tokio::sync::Notify>,
     /// Anti-replay nonce store: nonce -> expiry timestamp (ms)
     replay_nonces: Arc<RwLock<HashMap<String, i64>>>,
+    /// Groq API key for Quantum Bot proxy
+    groq_api_key: Option<String>,
 }
 
 #[derive(Clone)]
@@ -428,6 +433,7 @@ async fn main() -> Result<(), String> {
         order_book: Arc::new(order_book::OrderBook::new(&data_dir_clone).expect("Failed to create order book")),
         mine_notify: node.mine_notify(),
         replay_nonces: Arc::new(RwLock::new(HashMap::new())),
+        groq_api_key: args.groq_api_key.clone(),
     };
     
     // Backfill indexer on startup
@@ -685,6 +691,8 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/messenger/messages", post(send_message_signed))
         .route("/api/v2/messenger/messages/read", post(mark_message_read_signed))
         .route("/api/v2/messenger/messages/delete", post(delete_message_signed))
+        // Quantum Bot AI proxy
+        .route("/api/bot/reply", post(bot_reply))
         // Name registry (resolve/reverse stay public, register/release require signatures)
         .route("/api/names/register", post(register_name))
         .route("/api/names/resolve/:name", get(resolve_name))
@@ -898,6 +906,7 @@ async fn auth_middleware<B>(
     }
     // Auth bypass for endpoints that handle their own auth (v2 uses signatures, faucet/bridge are public)
     let skip_auth = path == "/api/faucet"
+        || path == "/api/bot/reply"
         || path.starts_with("/api/bridge/")
         || path.starts_with("/api/v2/")
         || path.starts_with("/api/messenger/")
@@ -1819,6 +1828,97 @@ struct XRGEPriceResponse {
     source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+// ── Quantum Bot AI proxy ──────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct BotRequest {
+    message: String,
+}
+
+#[derive(Serialize)]
+struct BotResponse {
+    reply: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+async fn bot_reply(
+    State(state): State<AppState>,
+    Json(body): Json<BotRequest>,
+) -> Json<BotResponse> {
+    let api_key = match &state.groq_api_key {
+        Some(k) if !k.is_empty() => k.clone(),
+        _ => {
+            return Json(BotResponse {
+                reply: String::new(),
+                error: Some("Bot AI not configured".into()),
+            });
+        }
+    };
+
+    let msg = body.message.chars().take(500).collect::<String>();
+
+    let client = match reqwest::Client::builder()
+        .timeout(StdDuration::from_secs(15))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return Json(BotResponse {
+                reply: String::new(),
+                error: Some(format!("HTTP client error: {e}")),
+            });
+        }
+    };
+
+    let payload = serde_json::json!({
+        "model": "llama-3.1-8b-instant",
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are Quantum Bot, a friendly assistant inside RougeChain's post-quantum encrypted messenger. Reply briefly and helpfully. You can answer questions about RougeChain, post-quantum cryptography (ML-DSA-65, ML-KEM-768), wallets, staking, and the XRGE token."
+            },
+            { "role": "user", "content": msg }
+        ],
+        "temperature": 0.7,
+        "max_tokens": 256
+    });
+
+    let res = client
+        .post("https://api.groq.com/openai/v1/chat/completions")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await;
+
+    match res {
+        Ok(r) if r.status().is_success() => {
+            match r.json::<serde_json::Value>().await {
+                Ok(data) => {
+                    let content = data["choices"][0]["message"]["content"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
+                    Json(BotResponse { reply: content, error: None })
+                }
+                Err(e) => Json(BotResponse {
+                    reply: String::new(),
+                    error: Some(format!("Parse error: {e}")),
+                }),
+            }
+        }
+        Ok(r) => Json(BotResponse {
+            reply: String::new(),
+            error: Some(format!("Groq API error: {}", r.status())),
+        }),
+        Err(e) => Json(BotResponse {
+            reply: String::new(),
+            error: Some(format!("Request failed: {e}")),
+        }),
+    }
 }
 
 async fn get_xrge_price() -> Json<XRGEPriceResponse> {

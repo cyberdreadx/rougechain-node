@@ -396,16 +396,6 @@ const DEMO_BOT_RESPONSES = [
   "💬 Echo: I received your quantum-encrypted message loud and clear!",
 ];
 
-const DEFAULT_LLM_URL = "http://localhost:1234";
-const DEFAULT_LLM_MODEL = "local-model";
-
-function getLocalLlmUrl(): string {
-  return (import.meta.env.VITE_LOCAL_LLM_URL as string | undefined) || DEFAULT_LLM_URL;
-}
-
-function getLocalLlmModel(): string {
-  return (import.meta.env.VITE_LOCAL_LLM_MODEL as string | undefined) || DEFAULT_LLM_MODEL;
-}
 
 // Store wallet in localStorage (private keys stay local)
 export function saveWalletLocally(wallet: WalletWithPrivateKeys): void {
@@ -783,35 +773,18 @@ export function getDemoBotResponse(): string {
 
 export async function getBotReply(userMessage: string): Promise<string> {
   try {
-    const baseUrl = getLocalLlmUrl().replace(/\/+$/, "");
-    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+    const apiBase = getMessengerApiBase();
+    if (!apiBase) throw new Error("No API base");
+    const res = await fetch(`${apiBase}/bot/reply`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: getLocalLlmModel(),
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are Quantum Bot, a friendly assistant inside a post-quantum messenger. Reply briefly.",
-          },
-          { role: "user", content: userMessage },
-        ],
-        temperature: 0.7,
-      }),
+      headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
+      body: JSON.stringify({ message: userMessage.slice(0, 500) }),
     });
-    if (!res.ok) {
-      throw new Error(`LLM error: ${res.status}`);
-    }
-    const data = await res.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = data.choices?.[0]?.message?.content?.trim();
-    if (content) {
-      return content;
-    }
+    if (!res.ok) throw new Error(`Bot API error: ${res.status}`);
+    const data = await res.json() as { reply?: string; error?: string };
+    if (data.reply) return data.reply;
   } catch (error) {
-    console.warn("[Messenger] Local LLM unavailable, using fallback:", error);
+    console.warn("[Messenger] Bot AI unavailable, using fallback:", error);
   }
   return getDemoBotResponse();
 }
