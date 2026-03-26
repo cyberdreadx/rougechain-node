@@ -1289,6 +1289,20 @@ impl L1Node {
         if mempool.contains_key(&tx_hash) {
             return Ok(());
         }
+
+        // SECURITY: Enforce mempool cap with fee-priority eviction on P2P path
+        if mempool.len() >= MAX_MEMPOOL {
+            if let Some(evict_id) = mempool.iter()
+                .min_by(|a, b| a.1.fee.partial_cmp(&b.1.fee).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(k, _)| k.clone())
+            {
+                let min_fee = mempool.get(&evict_id).map(|t| t.fee).unwrap_or(0.0);
+                if tx.fee <= min_fee {
+                    return Err("Mempool full: tx fee too low".to_string());
+                }
+                mempool.remove(&evict_id);
+            }
+        }
         
         // Mark as verified (signature confirmed above)
         self.verified_tx_ids.lock().map_err(|_| "verified lock")?.insert(tx_hash.clone());
@@ -2140,13 +2154,29 @@ impl L1Node {
         Ok(())
     }
 
+    /// INTERNAL ONLY: Accept a node-generated transaction into the mempool.
+    /// 
+    /// SECURITY: This function does NOT verify the transaction signature because
+    /// it is ONLY called from `submit_*_tx()` functions where the node itself
+    /// just signed the tx using its own key. Never expose this to external callers.
+    /// External/P2P transactions must go through `add_tx_to_mempool()` which
+    /// verifies ML-DSA-65 signatures.
     fn accept_tx(&self, tx: TxV1) -> Result<(), String> {
         self.check_nonce_valid(&tx.from_pub_key, tx.nonce)?;
         let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
         let mut mempool = self.mempool.lock().map_err(|_| "mempool lock")?;
         if mempool.len() >= MAX_MEMPOOL {
-            if let Some(oldest) = mempool.keys().next().cloned() {
-                mempool.remove(&oldest);
+            // SECURITY: Evict lowest-fee tx to prevent fee-based DoS
+            if let Some(evict_id) = mempool.iter()
+                .min_by(|a, b| a.1.fee.partial_cmp(&b.1.fee).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(k, _)| k.clone())
+            {
+                // Only evict if new tx has higher fee than the minimum
+                let min_fee = mempool.get(&evict_id).map(|t| t.fee).unwrap_or(0.0);
+                if tx.fee <= min_fee {
+                    return Err("Mempool full: tx fee too low".to_string());
+                }
+                mempool.remove(&evict_id);
             }
         }
         mempool.insert(id, tx);
