@@ -113,6 +113,40 @@ pub fn verify_shielded_transfer(
         .map_err(|e| format!("Shielded proof verification failed: {}", e))
 }
 
+/// Convenience: verify a shielded transfer from raw proof bytes + u64 values.
+///
+/// This function handles winterfell deserialization internally so the caller
+/// doesn't need a direct `winterfell` dependency.
+///
+/// # Arguments
+/// * `proof_bytes` — Serialized winterfell Proof (from `Proof::to_bytes()`)
+/// * `output_1` — Value of first output note (recipient)
+/// * `output_2` — Value of second output note (change)
+/// * `fee` — Transaction fee (public)
+pub fn verify_shielded_transfer_bytes(
+    proof_bytes: &[u8],
+    output_1: u64,
+    output_2: u64,
+    fee: u64,
+) -> Result<(), String> {
+    let proof = winterfell::Proof::from_bytes(proof_bytes)
+        .map_err(|e| format!("Invalid STARK proof bytes: {}", e))?;
+
+    // Reconstruct public inputs from the provided values
+    let input_value = output_1 + output_2 + fee;
+    let first_bit = (input_value >> 63) & 1;
+
+    let pub_inputs = ShieldedTransferInputs {
+        output_1_commitment_value: BaseElement::from(output_1),
+        output_2_commitment_value: BaseElement::from(output_2),
+        fee: BaseElement::from(fee),
+        first_bit: BaseElement::from(first_bit),
+        input_value_check: BaseElement::from(input_value),
+    };
+
+    verify_shielded_transfer(proof, pub_inputs)
+}
+
 type Blake3Hasher = winterfell::crypto::hashers::Blake3_256<BaseElement>;
 
 /// Public inputs for a rollup batch STARK proof.

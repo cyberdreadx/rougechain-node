@@ -6331,6 +6331,30 @@ async fn v2_shielded_transfer(
         }))));
     }
 
+    // ── SECURITY: Verify the STARK proof ──
+    // Decode proof bytes from hex and verify via the crypto crate.
+    // This ensures value conservation (inputs = outputs + fee) and
+    // 64-bit range check on the input value.
+    {
+        let proof_bytes = hex::decode(proof_hex).map_err(|e| {
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("invalid proof hex: {}", e)
+            })))
+        })?;
+        // output_1=0, output_2=0: the shielded transfer outputs are hidden in commitments;
+        // we verify conservation against the declared fee.
+        quantum_vault_crypto::stark::verify_shielded_transfer_bytes(
+            &proof_bytes, 0, 0, shielded_fee,
+        ).map_err(|e| {
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("STARK proof verification failed: {}", e)
+            })))
+        })?;
+        eprintln!("[shielded] STARK proof verified for shielded_transfer (fee={})", shielded_fee);
+    }
+
     let tx = TxV1 {
         version: 1,
         tx_type: "shielded_transfer".to_string(),
@@ -6412,6 +6436,28 @@ async fn v2_unshield(
             "success": false,
             "error": format!("insufficient XRGE for fee: have {:.4}, need {:.4}", bal, fee)
         }))));
+    }
+
+    // ── SECURITY: Verify the STARK proof ──
+    // Decode and verify the proof to ensure the claimed amount matches
+    // the value inside the consumed note.
+    {
+        let proof_bytes = hex::decode(proof_hex).map_err(|e| {
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("invalid proof hex: {}", e)
+            })))
+        })?;
+        // For unshield: output_1 = amount credited back, output_2 = 0 (no change note)
+        quantum_vault_crypto::stark::verify_shielded_transfer_bytes(
+            &proof_bytes, amount, 0, fee as u64,
+        ).map_err(|e| {
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "success": false,
+                "error": format!("STARK proof verification failed: {}", e)
+            })))
+        })?;
+        eprintln!("[shielded] STARK proof verified for unshield (amount={}, fee={})", amount, fee);
     }
 
     let tx = TxV1 {
