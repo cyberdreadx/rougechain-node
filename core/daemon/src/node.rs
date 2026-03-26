@@ -249,6 +249,23 @@ impl L1Node {
         self.rebuild_balances()?;
         self.rebuild_token_balances()?;
         self.rebuild_proposer_counts()?;
+        // Rebuild tx hash index if empty (first startup after upgrade)
+        if self.store.lookup_tx_height("_probe_").unwrap_or(None).is_none() {
+            // Check if index is populated by looking at tree length
+            match self.store.rebuild_tx_index() {
+                Ok(count) if count > 0 => eprintln!("[node] Rebuilt tx hash index: {} txs indexed", count),
+                Ok(_) => {} // no txs to index
+                Err(e) => eprintln!("[node] Warning: tx index rebuild failed: {}", e),
+            }
+        }
+        // Load persisted shielded supply from sled
+        let persisted_shielded = self.store.get_shielded_supply();
+        if persisted_shielded > 0.0 {
+            if let Ok(mut sp) = self.shielded_supply.lock() {
+                *sp = persisted_shielded;
+            }
+            eprintln!("[node] Loaded persisted shielded supply: {:.4}", persisted_shielded);
+        }
         let tip = self.store.get_tip()?;
         // Load finalized_height from persisted finality_db (highest proven height)
         let persisted_finalized = self.finality_db.iter().rev().next()
@@ -3024,6 +3041,10 @@ impl L1Node {
 
         if skipped_txs > 0 {
             eprintln!("[rebuild] Skipped {} invalid transactions during balance rebuild", skipped_txs);
+        }
+        // Persist computed shielded supply to sled for fast startup
+        if let Ok(sp) = self.shielded_supply.lock() {
+            let _ = self.store.set_shielded_supply(*sp);
         }
         Ok(())
     }

@@ -3,11 +3,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use quantum_vault_crypto::sha256;
-use quantum_vault_types::{compute_block_hash, compute_tx_hash, BlockHeaderV1, BlockV1, ChainConfig};
+use quantum_vault_types::{compute_block_hash, compute_tx_hash, encode_tx_v1, BlockHeaderV1, BlockV1, ChainConfig};
 
 #[derive(Clone)]
 pub struct ChainStore {
     db: Arc<sled::Db>,
+    /// tx_hash (hex) → block height (u64 big-endian)
+    tx_index: sled::Tree,
+    /// Persistent node state (shielded_supply, etc.)
+    state: sled::Tree,
     data_dir: PathBuf,
     chain: ChainConfig,
 }
@@ -37,8 +41,14 @@ impl ChainStore {
         let db_path = data_dir.join("chain-db");
         let db = sled::open(&db_path)
             .map_err(|e| format!("Failed to open chain DB: {}", e))?;
+        let tx_index = db.open_tree("tx_index")
+            .map_err(|e| format!("Failed to open tx_index tree: {}", e))?;
+        let state = db.open_tree("state")
+            .map_err(|e| format!("Failed to open state tree: {}", e))?;
         Ok(Self {
             db: Arc::new(db),
+            tx_index,
+            state,
             data_dir,
             chain,
         })
@@ -63,6 +73,13 @@ impl ChainStore {
         self.db
             .insert(key, value)
             .map_err(|e| format!("sled insert: {}", e))?;
+        // Index all tx hashes → block height for O(1) lookup
+        for tx in &block.txs {
+            let tx_hash = hex::encode(sha256(&encode_tx_v1(tx)));
+            self.tx_index
+                .insert(tx_hash.as_bytes(), &block.header.height.to_be_bytes())
+                .map_err(|e| format!("tx index insert: {}", e))?;
+        }
         self.db.flush().map_err(|e| format!("sled flush: {}", e))?;
         Ok(())
     }
@@ -162,6 +179,53 @@ impl ChainStore {
     /// Public wrapper around the module-private deserialize_block function
     pub fn deserialize_block_pub(&self, bytes: &[u8]) -> Result<BlockV1, String> {
         deserialize_block(bytes)
+    }
+
+    /// O(1) tx hash lookup: returns the block height containing this tx hash
+    pub fn lookup_tx_height(&self, tx_hash: &str) -> Result<Option<u64>, String> {
+        match self.tx_index.get(tx_hash.as_bytes()).map_err(|e| format!("tx index get: {}", e))? {
+            Some(bytes) => {
+                let arr: [u8; 8] = bytes.as_ref().try_into()
+                    .map_err(|_| "corrupt tx index entry".to_string())?;
+                Ok(Some(u64::from_be_bytes(arr)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Rebuild the tx hash index from all existing blocks (run once at startup)
+    pub fn rebuild_tx_index(&self) -> Result<u64, String> {
+        self.tx_index.clear().map_err(|e| format!("tx index clear: {}", e))?;
+        let mut count = 0u64;
+        for item in self.db.iter() {
+            let (_, value) = item.map_err(|e| format!("sled iter: {}", e))?;
+            let block = deserialize_block(&value)?;
+            for tx in &block.txs {
+                let tx_hash = hex::encode(sha256(&encode_tx_v1(tx)));
+                self.tx_index
+                    .insert(tx_hash.as_bytes(), &block.header.height.to_be_bytes())
+                    .map_err(|e| format!("tx index insert: {}", e))?;
+                count += 1;
+            }
+        }
+        self.tx_index.flush().map_err(|e| format!("tx index flush: {}", e))?;
+        Ok(count)
+    }
+
+    /// Get persisted shielded supply (returns 0.0 if not yet stored)
+    pub fn get_shielded_supply(&self) -> f64 {
+        self.state.get(b"shielded_supply").ok().flatten()
+            .and_then(|v| String::from_utf8(v.to_vec()).ok())
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(0.0)
+    }
+
+    /// Persist shielded supply to sled
+    pub fn set_shielded_supply(&self, amount: f64) -> Result<(), String> {
+        self.state
+            .insert(b"shielded_supply", amount.to_string().as_bytes())
+            .map_err(|e| format!("persist shielded supply: {}", e))?;
+        Ok(())
     }
 
     /// Reset the chain with a new set of blocks (used for P2P sync when genesis differs)

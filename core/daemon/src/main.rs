@@ -1996,20 +1996,41 @@ async fn get_tx_by_hash(
     Path(hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let node = &state.node;
-    // Stream blocks one at a time from sled instead of loading all into memory
     let store = node.store_ref();
-    let mut block_hash_match: Option<serde_json::Value> = None;
 
-    for item in store.db_iter() {
+    // O(1) tx hash lookup via sled index
+    if let Ok(Some(height)) = store.lookup_tx_height(&hash) {
+        if let Ok(Some(block)) = store.get_block(height) {
+            for tx in &block.txs {
+                let tx_id = quantum_vault_crypto::bytes_to_hex(
+                    &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
+                );
+                if tx_id == hash {
+                    let receipt = node.get_receipt(&tx_id).ok().flatten();
+                    return Ok(Json(serde_json::json!({
+                        "success": true,
+                        "txId": tx_id,
+                        "blockHeight": block.header.height,
+                        "blockHash": block.hash,
+                        "blockTime": block.header.time,
+                        "tx": tx,
+                        "receipt": receipt,
+                    })));
+                }
+            }
+        }
+    }
+
+    // Fallback: check if hash is a block hash (frontend may pass block hash)
+    // Only scan recent blocks for this case
+    for item in store.db_iter().rev().take(1000) {
         let (_, value) = item.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let block = store.deserialize_block_pub(&value).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-        // Check tx hashes in this block
-        for tx in &block.txs {
-            let tx_id = quantum_vault_crypto::bytes_to_hex(
-                &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
-            );
-            if tx_id == hash {
+        if block.hash == hash {
+            if let Some(tx) = block.txs.first() {
+                let tx_id = quantum_vault_crypto::bytes_to_hex(
+                    &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
+                );
                 let receipt = node.get_receipt(&tx_id).ok().flatten();
                 return Ok(Json(serde_json::json!({
                     "success": true,
@@ -2022,30 +2043,6 @@ async fn get_tx_by_hash(
                 })));
             }
         }
-
-        // Also check block hash (frontend may pass block hash as tx identifier)
-        if block_hash_match.is_none() && block.hash == hash {
-            if let Some(tx) = block.txs.first() {
-                let tx_id = quantum_vault_crypto::bytes_to_hex(
-                    &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
-                );
-                let receipt = node.get_receipt(&tx_id).ok().flatten();
-                block_hash_match = Some(serde_json::json!({
-                    "success": true,
-                    "txId": tx_id,
-                    "blockHeight": block.header.height,
-                    "blockHash": block.hash,
-                    "blockTime": block.header.time,
-                    "tx": tx,
-                    "receipt": receipt,
-                }));
-            }
-        }
-    }
-
-    // If no tx hash match was found, return block hash match if available
-    if let Some(result) = block_hash_match {
-        return Ok(Json(result));
     }
 
     Err(StatusCode::NOT_FOUND)
