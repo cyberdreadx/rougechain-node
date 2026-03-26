@@ -720,7 +720,13 @@ export async function getOrCreateDemoBot(): Promise<WalletWithPrivateKeys> {
   const stored = localStorage.getItem(DEMO_BOT_STORAGE_KEY);
   if (stored) {
     try {
-      return JSON.parse(stored);
+      const parsed = JSON.parse(stored) as WalletWithPrivateKeys;
+      // Migrate legacy fixed-ID bot to unique-ID format
+      if (parsed.id === "demo-bot") {
+        localStorage.removeItem(DEMO_BOT_STORAGE_KEY);
+      } else {
+        return parsed;
+      }
     } catch {
       // Continue to create new one
     }
