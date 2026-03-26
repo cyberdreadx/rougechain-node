@@ -4,6 +4,23 @@ All notable changes to RougeChain.
 
 ---
 
+## Testnet v0.2.4 — March 2026
+
+### Added
+- **WASM STARK prover** — Browser-side STARK proof generation via `core/wasm-prover/` compiled to WebAssembly. Unshield and shielded transfer operations now generate real winterfell STARK proofs client-side without relying on a trusted server
+- **Groq-powered Quantum Bot** — Messenger AI bot proxied through the node using Groq's `llama-3.1-8b-instant` model with a comprehensive RougeChain knowledge base
+
+### Fixed
+- **PWA wallet persistence** — Wallet private keys now persist in `localStorage` when no vault password is set, preventing wallet loss on PWA/tab restart. Password-protected vaults continue to use encrypted storage only
+- **Browser extension key regeneration** — Removed aggressive version-based key regeneration that was replacing existing valid keys and causing loss of on-chain identity (faucet funds)
+- **Quantum Bot registration** — Bot wallets use unique per-browser IDs and register as non-discoverable to prevent display name conflicts
+
+### Changed
+- Service worker cache bumped to `rougechain-v2` to invalidate stale assets on existing PWA installs
+- Session-only private keys policy updated: `localStorage` used for unprotected wallets, `sessionStorage`-only when vault passphrase is configured
+
+---
+
 ## Testnet v0.2.3 — March 2026
 
 ### Security Hardening
@@ -15,7 +32,7 @@ All notable changes to RougeChain.
 - **Atomic name registration** — Name registry uses sled compare-and-swap (CAS) to prevent TOCTOU race conditions during name claims
 - **Sled messenger storage** — Messenger data migrated from JSON file to sled embedded database with per-record atomic operations and automatic migration from legacy format
 - **Server-side input validation** — Length limits enforced on all fields (display names: 50 chars, message content: 2 MB, mail subject: 10 KB, mail body: 512 KB, attachments: 3 MB, max 50 recipients)
-- **Session-only private keys** — Web app stores private keys in `sessionStorage` (cleared on tab close) instead of `localStorage`; encrypted wallet blob persists in `localStorage`
+- **Session-only private keys** — Web app stores private keys in `sessionStorage` (cleared on tab close) instead of `localStorage`; encrypted wallet blob persists in `localStorage` *(superseded in v0.2.4: localStorage used when no vault password is set for PWA persistence)*
 - **Legacy decryption removal** — Pre-v2 mail and messenger decryption fallbacks removed to reduce attack surface
 
 ### Changed

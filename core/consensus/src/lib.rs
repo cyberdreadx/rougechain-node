@@ -1,6 +1,7 @@
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 pub struct ProposerSelectionResult {
     pub proposer_pub_key: String,
@@ -56,53 +57,68 @@ pub fn select_proposer(
     None
 }
 
-/// Fetch entropy from ANU Quantum RNG (quantum vacuum fluctuations).
-/// Falls back to local CSPRNG if the API is unreachable.
-pub fn fetch_entropy() -> (String, String) {
-    // ANU QRNG endpoints to try (primary + alternative)
-    let endpoints = [
-        "https://qrng.anu.edu.au/API/jsonI.php?length=1&type=hex16&size=32",
-        "https://api.quantumnumbers.anu.edu.au?length=1&type=hex16&size=32",
-    ];
+/// Pre-fetched entropy cache so the mining loop never blocks on network I/O.
+/// A background thread refills the cache; `fetch_entropy()` always returns instantly.
+static ENTROPY_CACHE: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-    for url in endpoints {
-        match ureq::get(url)
-            .set("User-Agent", "RougeChain/1.0")
-            .timeout(std::time::Duration::from_secs(10))
-            .call()
-        {
-            Ok(resp) => {
-                match resp.into_string() {
-                    Ok(body) => {
-                        match serde_json::from_str::<serde_json::Value>(&body) {
-                            Ok(json) => {
-                                if let Some(data) = json["data"].as_array() {
-                                    if let Some(hex_str) = data.first().and_then(|v| v.as_str()) {
-                                        let cleaned = hex_str.trim().to_lowercase();
-                                        if cleaned.len() >= 32 {
-                                            return (cleaned, "quantum".to_string());
-                                        }
-                                        eprintln!("[qrng] hex too short: {} chars", cleaned.len());
-                                    } else {
-                                        eprintln!("[qrng] no hex string in data array");
-                                    }
-                                } else {
-                                    eprintln!("[qrng] no 'data' array in response: {}", body);
-                                }
-                            }
-                            Err(e) => eprintln!("[qrng] JSON parse error: {}", e),
-                        }
-                    }
-                    Err(e) => eprintln!("[qrng] body read error: {}", e),
-                }
-            }
-            Err(e) => eprintln!("[qrng] request failed for {}: {}", url, e),
+/// Fetch entropy from the cache (instant).  Falls back to local CSPRNG if the
+/// cache is empty.  Call `start_entropy_prefetch()` once at startup to keep
+/// the cache populated in the background.
+pub fn fetch_entropy() -> (String, String) {
+    if let Ok(mut cache) = ENTROPY_CACHE.lock() {
+        if let Some(hex) = cache.pop() {
+            return (hex, "quantum".to_string());
         }
     }
-
-    // Fallback: local CSPRNG
-    eprintln!("[qrng] all endpoints failed, using local CSPRNG");
     let mut buf = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut buf);
     (hex::encode(buf), "local".to_string())
+}
+
+/// Start a background thread that keeps the entropy cache filled by polling
+/// the ANU QRNG API every 30 seconds.  Safe to call more than once (extra
+/// calls are no-ops because the cache is shared).
+pub fn start_entropy_prefetch() {
+    std::thread::spawn(|| {
+        let endpoints = [
+            "https://qrng.anu.edu.au/API/jsonI.php?length=10&type=hex16&size=32",
+            "https://api.quantumnumbers.anu.edu.au?length=10&type=hex16&size=32",
+        ];
+        loop {
+            for url in &endpoints {
+                match ureq::get(url)
+                    .set("User-Agent", "RougeChain/1.0")
+                    .timeout(std::time::Duration::from_secs(5))
+                    .call()
+                {
+                    Ok(resp) => {
+                        if let Ok(body) = resp.into_string() {
+                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                                if let Some(data) = json["data"].as_array() {
+                                    let mut harvested = 0usize;
+                                    if let Ok(mut cache) = ENTROPY_CACHE.lock() {
+                                        for v in data {
+                                            if let Some(s) = v.as_str() {
+                                                let cleaned = s.trim().to_lowercase();
+                                                if cleaned.len() >= 32 {
+                                                    cache.push(cleaned);
+                                                    harvested += 1;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if harvested > 0 {
+                                        eprintln!("[qrng] cached {} entropy values", harvested);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("[qrng] prefetch failed for {}: {}", url, e),
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(30));
+        }
+    });
 }

@@ -94,7 +94,7 @@ const valid = ml_dsa65.verify(signature, message, publicKey);
 
 ## Security Considerations
 
-1. **Key storage** - Private keys are stored in browser localStorage (encrypted in production)
+1. **Key storage** - Private keys are stored in `localStorage` when no vault password is set (for PWA persistence), or encrypted with AES-256-GCM (PBKDF2, 600K iterations) when the user configures a vault passphrase. Active session keys are held in `sessionStorage`.
 2. **Entropy** - Keys use cryptographically secure random number generators
 3. **Side channels** - Library implementations are designed to be constant-time
 4. **Hybrid approach** - Consider adding classical signatures for defense-in-depth
@@ -191,5 +191,5 @@ Deposits from Base are cryptographically verified before minting:
 - [ ] Hybrid classical+PQC mode
 - [ ] Hardware wallet support
 - [ ] Threshold signatures for multi-sig
-- [ ] WASM-compiled prover for browser extension
+- [x] WASM-compiled STARK prover for browser (`core/wasm-prover/`, served as `stark-prover.wasm`)
 

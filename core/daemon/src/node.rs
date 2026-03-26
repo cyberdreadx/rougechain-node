@@ -7,7 +7,7 @@ use quantum_vault_vm::{WasmRuntime, ContractStore, MAX_BLOCK_FUEL};
 
 use chrono::Utc;
 
-use quantum_vault_consensus::{compute_selection_seed, fetch_entropy, select_proposer, ProposerSelectionResult};
+use quantum_vault_consensus::{compute_selection_seed, fetch_entropy, select_proposer, start_entropy_prefetch, ProposerSelectionResult};
 use quantum_vault_crypto::{bytes_to_hex, pqc_keygen, pqc_sign, pqc_verify, sha256};
 use quantum_vault_storage::allowance_store::{Allowance, AllowanceStore};
 use quantum_vault_storage::bridge_withdraw_store::BridgeWithdrawStore;
@@ -177,7 +177,7 @@ impl L1Node {
                     .open_tree("finality")
                     .map_err(|e| format!("finality tree: {}", e))?
             };
-            Ok(Self {
+            let node = Self {
             node_id: uuid::Uuid::new_v4().to_string(),
             opts,
             store,
@@ -223,7 +223,11 @@ impl L1Node {
             shielded_supply: Arc::new(Mutex::new(0.0)),
             wasm_runtime: None,
             contract_store: None,
-        })
+        };
+
+        start_entropy_prefetch();
+
+        Ok(node)
     }
 
     fn load_or_create_keys(data_dir: &PathBuf) -> Result<PQKeypair, String> {

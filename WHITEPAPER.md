@@ -106,7 +106,7 @@ RougeChain incorporates a zk-STARK (Zero-Knowledge Scalable Transparent Argument
 | Quantum resistance | No | **Yes** |
 | Post-quantum safe | No | **Yes** |
 
-**Implementation.** RougeChain uses Meta's `winterfell` library, a production-grade Rust STARK prover and verifier. The system uses Blake3-256 as the commitment hash function, providing both quantum resistance and high performance.
+**Implementation.** RougeChain uses Meta's `winterfell` library, a production-grade Rust STARK prover and verifier. The system uses Blake3-256 as the commitment hash function, providing both quantum resistance and high performance. A WASM-compiled version of the prover (`core/wasm-prover/`) runs directly in the browser, enabling client-side proof generation for shielded operations without relying on a trusted server. Nodes verify proofs using the native Rust verifier.
 
 **Balance Transfer AIR.** The first Algebraic Intermediate Representation (AIR) encodes a balance-transfer circuit that proves a token transfer is valid -- value is conserved, and the sender has sufficient funds -- without revealing the actual balances or transfer amount. The proof is generated over a finite field (128-bit prime), using a 3-column execution trace with the following transition constraints:
 
@@ -808,7 +808,7 @@ Messenger and mail data is stored off-chain in a sled embedded database. The nod
 
 ### 8.7 Client-Side Key Protection
 
-Private keys are stored in `sessionStorage` (cleared when the browser tab closes) rather than `localStorage`. Only public metadata (display name, public keys) persists in `localStorage`. When the vault is locked, all private key material is encrypted with AES-256-GCM using a PBKDF2-derived key (600,000 iterations) from the user's passphrase and stored as an encrypted blob. The plaintext keys are removed from both `sessionStorage` and `localStorage`.
+Private keys are stored in both `sessionStorage` and `localStorage` when no password vault is configured, ensuring PWA and mobile browser sessions survive app restarts. Once the user sets a vault passphrase, plaintext keys are removed from persistent storage and only the encrypted blob (AES-256-GCM with a PBKDF2-derived key, 600,000 iterations) remains in `localStorage`. On unlock, keys are restored to `sessionStorage` for the active session. When the vault is locked or auto-locked, all plaintext key material is cleared from both `sessionStorage` and `localStorage`.
 
 ---
 
@@ -990,7 +990,7 @@ RougeChain's cryptographic infrastructure is designed to evolve. The following p
 | 3 | ZK-rollup layer for throughput scaling | ✅ Complete |
 | 3b | STARK bridge deposit verification | ✅ Complete |
 | 4 | WASM smart contract runtime (wasmi, fuel-metered) | ✅ Complete |
-| 4b | WASM-compiled prover for browser extension | Planned |
+| 4b | WASM-compiled STARK prover for browser | ✅ Complete |
 | 5 | On-chain governance with delegation and treasury | ✅ Complete |
 | 6 | Multi-signature wallets (M-of-N) | ✅ Complete |
 | 7 | Validator auto-slashing and unbonding period | ✅ Complete |
