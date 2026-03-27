@@ -16,6 +16,10 @@ import {
   Globe,
   ExternalLink,
   ChevronRight,
+  MessageCircle,
+  Heart,
+  Users,
+  Tag,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -49,8 +53,8 @@ const toolCategories = [
     bg: "bg-amber-500/10",
     tools: [
       { name: "list_tokens", desc: "All tokens on the network" },
-      { name: "get_token", desc: "Token metadata and supply" },
-      { name: "get_token_holders", desc: "Top holders for any token" },
+      { name: "get_token", desc: "Token metadata, supply, and creator" },
+      { name: "get_token_holders", desc: "Top holders and supply breakdown" },
     ],
   },
   {
@@ -97,14 +101,46 @@ const toolCategories = [
     ],
   },
   {
-    title: "Other",
-    icon: Globe,
+    title: "Social",
+    icon: Heart,
+    color: "text-rose-400",
+    bg: "bg-rose-500/10",
+    tools: [
+      { name: "get_global_timeline", desc: "Global feed — all posts, newest first" },
+      { name: "get_post", desc: "Single post with engagement stats" },
+      { name: "get_user_posts", desc: "Posts by a specific user" },
+      { name: "get_post_replies", desc: "Threaded replies to a post" },
+      { name: "get_track_stats", desc: "Music track plays, likes, comments" },
+      { name: "get_artist_stats", desc: "Artist followers and follow state" },
+    ],
+  },
+  {
+    title: "Messaging",
+    icon: MessageCircle,
+    color: "text-sky-400",
+    bg: "bg-sky-500/10",
+    tools: [
+      { name: "list_messenger_wallets", desc: "Registered wallets with display names" },
+    ],
+  },
+  {
+    title: "Names & Identity",
+    icon: Tag,
     color: "text-teal-400",
     bg: "bg-teal-500/10",
     tools: [
+      { name: "resolve_name", desc: "Resolve rouge.quant / qwalla.mail names" },
+      { name: "reverse_lookup_name", desc: "Look up name for a wallet or public key" },
+    ],
+  },
+  {
+    title: "Governance & Fees",
+    icon: Globe,
+    color: "text-lime-400",
+    bg: "bg-lime-500/10",
+    tools: [
       { name: "list_proposals", desc: "Governance proposals" },
-      { name: "get_fee_info", desc: "Current EIP-1559 fee data" },
-      { name: "resolve_name", desc: "Resolve rouge.quant names" },
+      { name: "get_fee_info", desc: "Current EIP-1559 dynamic fee data" },
     ],
   },
 ];
@@ -112,8 +148,8 @@ const toolCategories = [
 const claudeConfig = `{
   "mcpServers": {
     "rougechain": {
-      "command": "node",
-      "args": ["/path/to/mcp-server/dist/index.js"],
+      "command": "npx",
+      "args": ["rougechain-mcp"],
       "env": {
         "ROUGECHAIN_URL": "https://rougechain.io"
       }
@@ -180,7 +216,7 @@ const Agents = () => {
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               {[
                 { label: "AI Agent", sub: "Claude, GPT, Custom", icon: Bot, color: "text-violet-400", bg: "bg-violet-500/10" },
-                { label: "MCP Server", sub: "22 blockchain tools", icon: Terminal, color: "text-blue-400", bg: "bg-blue-500/10" },
+                { label: "MCP Server", sub: "30 blockchain tools", icon: Terminal, color: "text-blue-400", bg: "bg-blue-500/10" },
                 { label: "Node API", sub: "REST + JSON-RPC", icon: Globe, color: "text-emerald-400", bg: "bg-emerald-500/10" },
                 { label: "RougeChain L1", sub: "ML-DSA + ML-KEM", icon: Zap, color: "text-amber-400", bg: "bg-amber-500/10" },
               ].map((step, i) => (
@@ -214,7 +250,7 @@ const Agents = () => {
               <Zap className="w-5 h-5 text-primary" />
               What Agents Can Do
             </h2>
-            <p className="text-sm text-muted-foreground mb-6">22 tools across 8 categories — everything an agent needs to interact with the chain.</p>
+            <p className="text-sm text-muted-foreground mb-6">30 tools across 11 categories — everything an agent needs to interact with the chain.</p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {toolCategories.map((cat) => {
@@ -277,15 +313,14 @@ const Agents = () => {
                   <span className="font-medium text-foreground text-sm">Install the MCP server</span>
                 </div>
                 <div className="relative rounded-lg bg-card border border-border overflow-hidden">
-                  <CopyButton text="cd mcp-server && npm install && npm run build" />
+                  <CopyButton text="npm install -g rougechain-mcp" />
                   <pre className="p-4 text-sm font-mono text-foreground overflow-x-auto">
                     <code>
-                      <span className="text-muted-foreground">$</span> cd mcp-server{"\n"}
-                      <span className="text-muted-foreground">$</span> npm install{"\n"}
-                      <span className="text-muted-foreground">$</span> npm run build
+                      <span className="text-muted-foreground">$</span> npm install -g rougechain-mcp
                     </code>
                   </pre>
                 </div>
+                <p className="text-[11px] text-muted-foreground mt-2">Or use <code className="text-primary">npx rougechain-mcp</code> directly — no global install needed.</p>
               </div>
 
               {/* Step 2 */}
@@ -333,13 +368,25 @@ const Agents = () => {
                     <div className="flex gap-3">
                       <Bot className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
                       <div>
-                        <p className="text-muted-foreground italic">"Get a swap quote for 1000 XRGE to MTK with 2% slippage"</p>
+                        <p className="text-muted-foreground italic">"Get a swap quote for 1000 XRGE to QSHIB with 2% slippage"</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-3">
+                      <Bot className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-muted-foreground italic">"Show me the latest posts on the social timeline and the top artists"</p>
                       </div>
                     </div>
                     <div className="flex gap-3">
                       <Bot className="w-5 h-5 text-pink-400 flex-shrink-0 mt-0.5" />
                       <div>
                         <p className="text-muted-foreground italic">"Deploy this WASM contract and call the init function"</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-3">
+                      <Bot className="w-5 h-5 text-teal-400 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-muted-foreground italic">"Resolve rougeboss@rouge.quant and show their token holdings"</p>
                       </div>
                     </div>
                   </div>

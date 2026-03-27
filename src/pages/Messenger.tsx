@@ -68,7 +68,7 @@ const Messenger = () => {
       setWallet(savedWallet);
       // Prompt for display name if it's generic or empty
       const name = savedWallet.displayName?.trim() || "";
-      const generic = ["my wallet", "wallet", "unnamed", "untitled", ""];
+      const generic = ["my wallet", "wallet", "unnamed", "untitled", "extension wallet", ""];
       if (generic.includes(name.toLowerCase())) {
         setShowNamePrompt(true);
       }

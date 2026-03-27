@@ -371,17 +371,17 @@ const Wallet = () => {
         return;
       }
       setLoading(true);
-      const result = await provider.connect() as { publicKey: string };
+      const result = await provider.connect() as { publicKey: string; displayName?: string; encryptionPublicKey?: string };
       if (!result?.publicKey) {
         throw new Error("Extension did not return a public key");
       }
       const extensionWallet: UnifiedWallet = {
         id: `ext-${Date.now()}`,
-        displayName: "Extension Wallet",
+        displayName: result.displayName || "Extension Wallet",
         createdAt: Date.now(),
         signingPublicKey: result.publicKey,
-        signingPrivateKey: "", // signing stays in the extension
-        encryptionPublicKey: "",
+        signingPrivateKey: "",
+        encryptionPublicKey: result.encryptionPublicKey || "",
         encryptionPrivateKey: "",
         version: 2,
       };
