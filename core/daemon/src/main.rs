@@ -4208,16 +4208,25 @@ async fn send_mail_signed(
         return Err(signed_err("Not authorized to send from this wallet"));
     }
 
-    let to_wallet_ids: Vec<String> = p.get("toWalletIds")
+    let raw_to_wallet_ids: Vec<String> = p.get("toWalletIds")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
         .unwrap_or_default();
-    if to_wallet_ids.is_empty() {
+    if raw_to_wallet_ids.is_empty() {
         return Err(signed_bad("toWalletIds is required"));
     }
-    if to_wallet_ids.len() > 50 {
+    if raw_to_wallet_ids.len() > 50 {
         return Err(signed_bad("Maximum 50 recipients"));
     }
+
+    // Resolve each recipient to their canonical wallet.id so inbox labels match
+    let all_wallets = state.node.list_wallets().unwrap_or_default();
+    let to_wallet_ids: Vec<String> = raw_to_wallet_ids.iter().map(|raw_id| {
+        all_wallets.iter()
+            .find(|w| w.id == *raw_id || w.signing_public_key == *raw_id || w.encryption_public_key == *raw_id)
+            .map(|w| w.id.clone())
+            .unwrap_or_else(|| raw_id.clone())
+    }).collect();
 
     let subject_encrypted = p.get("subjectEncrypted").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     let body_encrypted = p.get("bodyEncrypted").and_then(|v| v.as_str()).unwrap_or_default().to_string();

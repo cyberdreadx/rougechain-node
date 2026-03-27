@@ -26,6 +26,7 @@ import {
   createSignedPushUnregister,
   signRequest,
 } from "./signer.js";
+import { hexToBytes, bytesToHex } from "./utils.js";
 import type {
   WalletKeys,
   ApiResponse,
@@ -972,14 +973,29 @@ class MailClient {
   // --- Mail (signed) ---
 
   async send(wallet: WalletKeys, params: SendMailParams): Promise<ApiResponse> {
+    const sigPayload = params.encrypted_subject + "|" + params.encrypted_body
+      + (params.encrypted_attachment ? "|" + params.encrypted_attachment : "");
+    let contentSig = params.content_signature || "";
+    if (!contentSig && wallet.privateKey) {
+      try {
+        const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
+        const privKey = typeof wallet.privateKey === "string" ? hexToBytes(wallet.privateKey) : wallet.privateKey;
+        const sigBytes = ml_dsa65.sign(
+          privKey,
+          new TextEncoder().encode(sigPayload),
+        );
+        contentSig = bytesToHex(sigBytes);
+      } catch { /* signature optional — daemon accepts empty */ }
+    }
     const signed = signRequest(wallet, {
       fromWalletId: params.from,
       toWalletIds: [params.to],
       subjectEncrypted: params.encrypted_subject,
       bodyEncrypted: params.encrypted_body,
-      contentSignature: params.body,
+      attachmentEncrypted: params.encrypted_attachment,
+      contentSignature: contentSig,
       replyToId: params.reply_to_id,
-      hasAttachment: false,
+      hasAttachment: !!params.encrypted_attachment,
     });
     return this.rc.submitTx("/v2/mail/send", signed);
   }

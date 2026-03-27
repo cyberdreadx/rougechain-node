@@ -324,19 +324,37 @@ export interface MailMessage {
   body: string;
   encrypted_subject?: string;
   encrypted_body?: string;
+  attachment_encrypted?: string;
+  attachmentEncrypted?: string;
+  has_attachment?: boolean;
+  hasAttachment?: boolean;
   reply_to_id?: string;
+  replyToId?: string;
+  signature?: string;
+  contentSignature?: string;
   read: boolean;
   folder: "inbox" | "sent" | "trash";
   created_at: number;
+  createdAt?: string;
+  fromWalletId?: string;
+  from_wallet_id?: string;
+  toWalletIds?: string[];
+  to_wallet_ids?: string[];
+  subjectEncrypted?: string;
+  subject_encrypted?: string;
+  bodyEncrypted?: string;
+  body_encrypted?: string;
 }
 
 export interface SendMailParams {
   from: string;
   to: string;
-  subject: string;
-  body: string;
+  subject?: string;
+  body?: string;
   encrypted_subject: string;
   encrypted_body: string;
+  encrypted_attachment?: string;
+  content_signature?: string;
   reply_to_id?: string;
 }
 
