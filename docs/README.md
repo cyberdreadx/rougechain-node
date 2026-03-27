@@ -29,7 +29,9 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | **PQC Mail** | Encrypted email with `@rouge.quant` addresses and threading |
 | **Browser Extensions** | Chrome/Firefox wallet extensions with vault lock |
 | **PWA Support** | Installable progressive web app for mobile and desktop |
-| **SDK** | `@rougechain/sdk` npm package for building dApps |
+| **Social Layer** | Posts, timeline, reposts, likes, follows, comments, tips |
+| **CLI Wallet** | Command-line wallet with full chain access and social commands |
+| **SDK** | `@rougechain/sdk` v1.0.0 npm package for building dApps |
 | **EIP-1559 Dynamic Fees** | Base fee auto-adjusts per block, fee burning for deflationary pressure |
 | **Token Mint Authority** | Ongoing minting for custom tokens with supply cap enforcement |
 | **Validator Slashing** | Slash penalties for misbehavior, unbonding queue with 500-block delay |
@@ -46,6 +48,7 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 - [P2P Networking](p2p-networking/README.md)
 - [Staking & Validators](staking/README.md)
 - [Browser Extensions](advanced/browser-extensions.md)
+- [CLI Wallet](advanced/cli.md)
 - [SDK](advanced/sdk.md)
 - [Architecture](advanced/architecture.md)
 - [GitHub (Node Source)](https://github.com/cyberdreadx/rougechain-node)
