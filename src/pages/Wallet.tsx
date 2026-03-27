@@ -64,6 +64,7 @@ import {
   hasEncryptedWallet,
   isWalletLocked,
   loadUnifiedWallet,
+  lockUnifiedWallet,
   saveUnifiedWallet,
   saveVaultSettings,
   unlockUnifiedWallet,
@@ -105,6 +106,13 @@ const Wallet = () => {
   const [unlocking, setUnlocking] = useState(false);
   const [vaultSettings, setVaultSettings] = useState<VaultSettings>(() => getVaultSettings());
   const [lastActivity, setLastActivity] = useState(Date.now());
+
+  // Password setup after wallet creation
+  const [showPasswordSetup, setShowPasswordSetup] = useState(false);
+  const [setupPassword, setSetupPassword] = useState("");
+  const [setupConfirm, setSetupConfirm] = useState("");
+  const [setupError, setSetupError] = useState("");
+  const [setupBusy, setSetupBusy] = useState(false);
 
   // Load wallet from storage
   useEffect(() => {
@@ -338,9 +346,7 @@ const Wallet = () => {
         console.warn("Failed to register wallet on node:", err);
       }
 
-      toast.success("Quantum-safe wallet created!", {
-        description: "Your wallet is ready. Back up your seed phrase!"
-      });
+      setShowPasswordSetup(true);
     } catch (error) {
       console.error("Failed to create wallet:", error);
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -350,6 +356,31 @@ const Wallet = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handlePasswordSetup = async () => {
+    if (setupPassword.length < 6) {
+      setSetupError("Password must be at least 6 characters");
+      return;
+    }
+    if (setupPassword !== setupConfirm) {
+      setSetupError("Passwords don't match");
+      return;
+    }
+    setSetupError("");
+    setSetupBusy(true);
+    try {
+      await lockUnifiedWallet(setupPassword);
+      const w = await unlockUnifiedWallet(setupPassword);
+      setWallet(w);
+      setShowPasswordSetup(false);
+      toast.success("Wallet created and secured!", {
+        description: "Your wallet is encrypted with your password."
+      });
+    } catch (err) {
+      setSetupError("Failed to encrypt wallet");
+    }
+    setSetupBusy(false);
   };
 
   const disconnectWallet = () => {
@@ -429,6 +460,9 @@ const Wallet = () => {
   const handleWalletImport = (importedWallet: UnifiedWallet) => {
     saveUnifiedWallet(importedWallet);
     setWallet(importedWallet);
+    if (!hasEncryptedWallet()) {
+      setShowPasswordSetup(true);
+    }
     refreshWalletData();
   };
 
@@ -602,6 +636,60 @@ const Wallet = () => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (showPasswordSetup) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="max-w-md mx-auto px-4 py-12">
+          <Card className="border-border">
+            <CardHeader className="text-center">
+              <div className="mx-auto w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-3">
+                <Shield className="w-6 h-6 text-primary" />
+              </div>
+              <CardTitle className="text-xl">Set a Password</CardTitle>
+              <p className="text-sm text-muted-foreground mt-2">
+                Your password encrypts the wallet on this device. You'll need it to unlock your wallet each time.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-3">
+                <Input
+                  type="password"
+                  placeholder="Create password (min 6 characters)"
+                  value={setupPassword}
+                  onChange={(e) => { setSetupPassword(e.target.value); setSetupError(""); }}
+                />
+                <Input
+                  type="password"
+                  placeholder="Confirm password"
+                  value={setupConfirm}
+                  onChange={(e) => { setSetupConfirm(e.target.value); setSetupError(""); }}
+                  onKeyDown={(e) => e.key === "Enter" && handlePasswordSetup()}
+                />
+              </div>
+              {setupError && (
+                <p className="text-sm text-destructive text-center">{setupError}</p>
+              )}
+              <Button
+                className="w-full"
+                onClick={handlePasswordSetup}
+                disabled={!setupPassword || !setupConfirm || setupBusy}
+              >
+                {setupBusy ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Encrypting...</>
+                ) : (
+                  <><Shield className="w-4 h-4 mr-2" /> Set Password & Continue</>
+                )}
+              </Button>
+              <p className="text-xs text-muted-foreground text-center">
+                Your password is never sent anywhere. It encrypts your private keys locally with AES-256-GCM.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
