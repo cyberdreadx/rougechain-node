@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 use std::sync::RwLock;
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
@@ -843,6 +843,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/multisig/wallet/:wallet_id", get(multisig_get_wallet))
         .route("/api/multisig/wallet/:wallet_id/proposals", get(multisig_get_proposals))
         .route("/api/multisig/wallets/:pubkey", get(multisig_wallets_by_signer))
+        .layer(DefaultBodyLimit::max(16 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer({
             let cors_origins = std::env::var("QV_CORS_ORIGINS")
