@@ -1,6 +1,6 @@
 # RougeChain: A Post-Quantum Layer 1 Blockchain
 
-**Version 1.7 -- March 2026**
+**Version 1.8 -- March 2026**
 
 > **RougeChain is a post-quantum Layer 1 blockchain where every signature, every transaction, and every encrypted message is secured by NIST-approved lattice cryptography — not as a future upgrade, but as the foundation.**
 
@@ -8,7 +8,7 @@
 
 ## Abstract
 
-RougeChain is a Layer 1 blockchain built on NIST-standardized post-quantum cryptographic primitives for signatures and encryption, with hash-based systems for proofs and commitments. Every transaction signature, block proposal, validator attestation, and encrypted message on the network uses ML-DSA-65 (FIPS 204) and ML-KEM-768 (FIPS 203), providing NIST Level 3 security -- equivalent to 192-bit classical strength -- against both classical and quantum adversaries. The chain incorporates zk-STARKs for privacy-preserving transaction verification and rollup batch proving, completing a fully quantum-resistant cryptographic stack across signatures, encryption, and zero-knowledge proofs. RougeChain combines a Proof-of-Stake consensus protocol with a full-featured application layer: an automated market maker, cross-chain bridge with cryptographic deposit verification, NFT standard with on-chain royalties, custom token issuance, zk-STARK rollups for throughput scaling, and an end-to-end encrypted messenger. The result is a quantum-resistant blockchain that is ready for production use today, not as a future migration target.
+RougeChain is a Layer 1 blockchain built on NIST-standardized post-quantum cryptographic primitives for signatures and encryption, with hash-based systems for proofs and commitments. Every transaction signature, block proposal, validator attestation, and encrypted message on the network uses ML-DSA-65 (FIPS 204) and ML-KEM-768 (FIPS 203), providing NIST Level 3 security -- equivalent to 192-bit classical strength -- against both classical and quantum adversaries. The chain incorporates zk-STARKs for privacy-preserving transaction verification and rollup batch proving, completing a fully quantum-resistant cryptographic stack across signatures, encryption, and zero-knowledge proofs. RougeChain combines a Proof-of-Stake consensus protocol with a full-featured application layer: an automated market maker, cross-chain bridge with cryptographic deposit verification, NFT standard with on-chain royalties, custom token issuance, zk-STARK rollups for throughput scaling, an end-to-end encrypted messenger, and an on-chain social layer with posts, timeline feeds, and cryptographically signed engagement. The result is a quantum-resistant blockchain that is ready for production use today, not as a future migration target.
 
 ---
 
@@ -22,9 +22,10 @@ RougeChain is a Layer 1 blockchain built on NIST-standardized post-quantum crypt
 6. [ETH Bridge](#6-eth-bridge)
 7. [NFT Standard](#7-nft-standard)
 8. [Encrypted Messenger](#8-encrypted-messenger)
-9. [Developer Ecosystem](#9-developer-ecosystem)
-10. [Security Considerations](#10-security-considerations)
-11. [Roadmap](#11-roadmap)
+9. [Social Layer](#9-social-layer)
+10. [Developer Ecosystem](#10-developer-ecosystem)
+11. [Security Considerations](#11-security-considerations)
+12. [Roadmap](#12-roadmap)
 
 ---
 
@@ -348,6 +349,7 @@ The following stores are maintained independently:
 | Messenger | messenger-db | Wallets, conversations, messages with participant and conversation-message indexes |
 | Mail | mail-db | Mail messages and per-recipient folder labels |
 | Name Registry | name-registry-db | Bidirectional name↔wallet mappings with atomic registration (compare-and-swap) |
+| Social | social-db | Posts, likes, reposts, follows, comments, play counts, timeline indexes |
 
 Additional off-chain stores (JSON-backed) handle bridge claims and withdrawal requests.
 
@@ -815,11 +817,101 @@ Private keys are stored in both `sessionStorage` and `localStorage` when no pass
 
 ---
 
-## 9. Developer Ecosystem
+## 9. Social Layer
 
-### 9.1 TypeScript SDK
+RougeChain includes a protocol-native social layer that provides decentralized social primitives — posts, likes, reposts, follows, comments, and play tracking — without requiring a separate protocol, token, or infrastructure deployment.
 
-The `@rougechain/sdk` package provides a complete TypeScript SDK for building on RougeChain.
+### 9.1 Design Rationale
+
+Centralized social platforms control users' identity, content, and social graphs. Existing decentralized social protocols (Farcaster, Lens) address this but introduce separate infrastructure (hubs, L2 deployments) and distinct token economies. RougeChain embeds social features directly into the L1 node, following the same vertically integrated design philosophy applied to the DEX, messenger, and mail systems.
+
+All social writes are authenticated via ML-DSA-65 signed requests using the same v2 signed API format as all other write operations on the chain. This means every post, like, follow, and repost is cryptographically attributable to the signer's public key and protected against replay attacks.
+
+### 9.2 Data Model
+
+Social data is stored in a dedicated sled embedded database (`social-db`) with the following trees:
+
+| Tree | Key Format | Value | Purpose |
+|---|---|---|---|
+| `social_posts` | post_id (UUID) | JSON `SocialPost` | Post content and metadata |
+| `social_user_posts_idx` | `pubkey:reverse_timestamp` | post_id | User post index (newest first) |
+| `social_post_counts` | pubkey | u64 BE | Per-user post count |
+| `social_global_timeline` | `reverse_timestamp:post_id` | post_id | Global timeline (newest first) |
+| `social_play_counts` | track_id | u64 BE | Per-track play count |
+| `social_likes` | `target_id:pubkey` | "1" | Like membership |
+| `social_like_counts` | target_id | u64 BE | Per-target like count |
+| `social_user_likes` | `pubkey:target_id` | "1" | Reverse index for user's likes |
+| `social_comments` | comment_id (UUID) | JSON `SocialComment` | Comment content |
+| `social_track_comments_idx` | `track_id:timestamp` | comment_id | Track comment index |
+| `social_comment_counts` | track_id | u64 BE | Per-track comment count |
+| `social_followers` | `artist:follower` | "1" | Follow membership |
+| `social_follower_counts` | pubkey | u64 BE | Per-user follower count |
+| `social_following` | `follower:artist` | "1" | Reverse follow index |
+| `social_following_counts` | pubkey | u64 BE | Per-user following count |
+| `social_reposts` | `post_id:pubkey` | "1" | Repost membership |
+| `social_repost_counts` | post_id | u64 BE | Per-post repost count |
+| `social_reply_counts` | post_id | u64 BE | Per-post reply count |
+| `social_reply_idx` | `parent_id:timestamp` | child_post_id | Reply threading index |
+
+Reverse timestamps (`u64::MAX - millis`) are used for index keys so that lexicographic sled iteration naturally yields newest-first ordering without explicit sorting.
+
+### 9.3 Posts and Threading
+
+Posts are standalone text entries (max 4000 characters) identified by UUID. A post optionally references a `reply_to_id`, forming a threaded reply tree. Replies increment the parent's reply count and are indexed for efficient retrieval.
+
+```
+SocialPost {
+    id: String,          // UUID
+    author_pubkey: String,  // ML-DSA-65 public key
+    body: String,        // max 4000 chars
+    reply_to_id: Option<String>,  // parent post for threading
+    created_at: String,  // RFC 3339 timestamp
+}
+```
+
+### 9.4 Timeline Feeds
+
+Two timeline modes are supported:
+
+- **Global timeline** — All posts ordered by creation time (newest first). Implemented as a sequential sled scan over the `social_global_timeline` tree.
+- **Following feed** — Posts from users the viewer follows, merged and sorted newest-first. Implemented by scanning each followed user's post index and merging results client-side.
+
+Both support pagination via `limit` and `offset` parameters.
+
+### 9.5 Engagement Primitives
+
+All engagement actions are toggle operations — calling the same endpoint twice reverses the action:
+
+| Action | Endpoint | Effect |
+|---|---|---|
+| Like | `POST /api/v2/social/like` | Toggles like on any post or track |
+| Repost | `POST /api/v2/social/repost` | Toggles repost on any post |
+| Follow | `POST /api/v2/social/follow` | Toggles follow on any user |
+
+Like counts, repost counts, and follower counts are maintained as atomic counters in dedicated sled trees.
+
+### 9.6 Tips
+
+Tips are not stored in the social layer — they settle directly on L1 as standard XRGE transfer transactions via `rc.transfer()`. This means tips have the same finality guarantees, fee model, and quantum-resistant signing as any other on-chain transfer.
+
+### 9.7 Security Properties
+
+| Property | Mechanism |
+|---|---|
+| **Authenticated writes** | Every social write requires an ML-DSA-65 signed request |
+| **Anti-replay** | Timestamp + nonce protection (same as all v2 endpoints) |
+| **Provable authorship** | Posts are cryptographically linked to the signer's public key |
+| **No impersonation** | Cannot post, like, or follow as another user without their private key |
+| **Quantum-resistant** | All signatures use ML-DSA-65 (FIPS 204) |
+| **Deletion authorization** | Only the original author can delete their posts or comments |
+
+---
+
+## 10. Developer Ecosystem
+
+### 10.1 TypeScript SDK
+
+The `@rougechain/sdk` (v1.0.0) package provides a complete TypeScript SDK for building on RougeChain.
 
 **Installation:**
 ```
@@ -830,11 +922,13 @@ npm install @rougechain/sdk
 - Wallet generation and management (ML-DSA-65 key pairs)
 - Transaction construction and client-side signing
 - Token, NFT, DEX, bridge, and staking operations
+- Social layer (posts, timeline, reposts, likes, follows, comments) via `rc.social`
+- Encrypted mail and messenger via `rc.mail` and `rc.messenger`
 - Balance and state queries
 
 **Environment support:** Browser, Node.js, and React Native. The SDK uses `@noble/post-quantum` for all cryptographic operations, with no native dependencies.
 
-### 9.2 Browser Extension
+### 10.2 Browser Extension
 
 The RougeChain browser extension (Manifest V3) provides:
 
@@ -854,7 +948,7 @@ Connected sites are tracked and require explicit user approval via a popup windo
 
 **Provider Authenticity.** The injected provider object carries a `Symbol.for("rougechain:authentic")` token that dApps can check to verify they are communicating with the genuine extension, not a malicious imitation. The provider is defined with `Object.defineProperty` (non-writable, non-configurable) and unconditionally overwrites any pre-existing definitions to prevent injection attacks.
 
-### 9.3 REST API
+### 10.3 REST API
 
 Every node exposes a comprehensive HTTP API supporting all chain operations:
 
@@ -871,13 +965,14 @@ Every node exposes a comprehensive HTTP API supporting all chain operations:
 | Messenger | `/api/v2/messenger/wallets/register`, `/api/v2/messenger/conversations`, `/api/v2/messenger/messages` |
 | Names | `/api/v2/names/register`, `/api/v2/names/release`, `/api/names/resolve/:name`, `/api/names/reverse/:walletId` |
 | Mail | `/api/v2/mail/send`, `/api/v2/mail/folder`, `/api/v2/mail/message`, `/api/v2/mail/read`, `/api/v2/mail/move`, `/api/v2/mail/delete` |
+| Social | `/api/social/timeline`, `/api/social/post/:id`, `/api/social/user/:pubkey/posts`, `/api/v2/social/post`, `/api/v2/social/like`, `/api/v2/social/repost`, `/api/v2/social/follow`, `/api/v2/social/feed` |
 | P2P | `/api/peers`, `/api/peers/register`, `/api/blocks/import` |
 
-### 9.4 gRPC
+### 10.4 gRPC
 
 A gRPC interface is available for high-performance node-to-node communication and advanced integrations, supporting the same operations as the REST API with protocol buffer serialization.
 
-### 9.5 WASM Smart Contracts
+### 10.5 WASM Smart Contracts
 
 RougeChain includes a fuel-metered WebAssembly (WASM) smart contract runtime built on the `wasmi` pure-Rust interpreter (used by Parity/Substrate).
 
@@ -904,23 +999,23 @@ RougeChain includes a fuel-metered WebAssembly (WASM) smart contract runtime bui
 
 ---
 
-## 10. Security Considerations
+## 11. Security Considerations
 
-### 10.1 Cryptographic Security
+### 11.1 Cryptographic Security
 
 RougeChain targets NIST Level 3 security for signatures and encryption (~192-bit classical, ~128-bit quantum), while STARK proofs provide ~100-bit soundness -- all of which remain well beyond practical attack feasibility. The lattice-based problems underlying ML-DSA-65 and ML-KEM-768 have been studied extensively and are considered resistant to all known quantum and classical attacks. Blake3, used for STARK commitments, is not itself NIST-standardized but provides equivalent collision resistance; the overall proof system's security reduces to hash collision resistance, which is unaffected by Shor's algorithm.
 
-### 10.2 Client-Side Key Management
+### 11.2 Client-Side Key Management
 
 Private keys are generated and stored exclusively on the user's device. The browser extension encrypts keys at rest using PBKDF2 (600,000 iterations) with AES-256-GCM. Transaction signing occurs locally; only the signed transaction is transmitted to the network.
 
 Legacy API endpoints that previously accepted raw private keys for server-side signing are disabled in production and return HTTP 410 (Gone). They are accessible only in local development mode via the `--dev` flag.
 
-### 10.3 Validator Accountability
+### 11.3 Validator Accountability
 
 The slashing mechanism penalizes validators for protocol violations by confiscating 10% of their stake and jailing them for 20 blocks. The slash count is permanently recorded, providing a public accountability record. Jailed validators are excluded from proposer selection until their jail period expires.
 
-### 10.4 Network Resilience
+### 11.4 Network Resilience
 
 - **Mempool limits** (2,000 transactions) prevent memory exhaustion.
 - **Three-tier rate limiting** with cryptographic validator authentication protects all endpoints.
@@ -929,7 +1024,7 @@ The slashing mechanism penalizes validators for protocol violations by confiscat
 - **Adaptive polling** reduces unnecessary network traffic during quiet periods.
 - **Nonce deduplication** prevents transaction replay at both mempool and block import layers.
 
-### 10.5 Block Import Verification
+### 11.5 Block Import Verification
 
 When importing blocks from peers, the node performs the following verification:
 
@@ -939,7 +1034,7 @@ When importing blocks from peers, the node performs the following verification:
 4. **Active validator check** -- The `proposer_pub_key` must belong to an actively staked validator.
 5. **Transaction signatures** -- All transactions are verified in parallel (using Rayon) across three signature formats (V2 signed payload, V1 new format, V1 legacy format). If any transaction fails all three verification methods, the entire block is rejected.
 
-### 10.6 Bridge Security
+### 11.6 Bridge Security
 
 - **Two-layer deposit verification:** EVM receipt validation (tx status, recipient, sender, confirmations) combined with SHA-256 commitment nullifiers to prevent double-claiming.
 - **BridgeDeposit event verification** for XRGE vault deposits via transaction log parsing.
@@ -950,7 +1045,7 @@ When importing blocks from peers, the node performs the following verification:
 - **Hardened relayer** with nonce management, exponential retry, gas estimation, and graceful shutdown.
 - **Relayer authentication** via shared secret restricts withdrawal fulfillment to authorized operators.
 
-### 10.7 Messenger and Mail Security
+### 11.7 Messenger and Mail Security
 
 Messages and mail are encrypted end-to-end using post-quantum key encapsulation. The server stores only ciphertext and cannot decrypt message contents. The following security measures protect the communication layer:
 
@@ -963,7 +1058,7 @@ Messages and mail are encrypted end-to-end using post-quantum key encapsulation.
 - **Input validation.** Server-side length limits are enforced on all fields (display names: 50 chars, message content: 2 MB, mail subject: 10 KB, mail body: 512 KB, attachment: 3 MB, max 50 recipients).
 - **Sled-backed storage.** Messenger data is stored in a sled embedded database with per-record atomic operations, replacing the previous JSON file storage which was susceptible to race conditions under concurrent access.
 
-### 10.8 dApp Provider Security
+### 11.8 dApp Provider Security
 
 The browser extension's injected provider (`window.rougechain`) defends against page-level tampering:
 - **Unconditional injection** overwrites any malicious pre-definitions.
@@ -971,7 +1066,7 @@ The browser extension's injected provider (`window.rougechain`) defends against 
 - **Authenticity token** (`Symbol.for("rougechain:authentic")`) allows dApps to verify they are communicating with the genuine extension.
 - **Approval popups** require explicit user consent for connect, sign, and send operations.
 
-### 10.9 Zero-Knowledge Proof Security
+### 11.9 Zero-Knowledge Proof Security
 
 The zk-STARK proof system provides an additional security dimension: transaction privacy without sacrificing verifiability.
 
@@ -982,7 +1077,7 @@ The zk-STARK proof system provides an additional security dimension: transaction
 
 ---
 
-## 11. Roadmap
+## 12. Roadmap
 
 RougeChain's cryptographic infrastructure is designed to evolve. The following phases are planned:
 
@@ -1005,6 +1100,7 @@ RougeChain's cryptographic infrastructure is designed to evolve. The following p
 | 13 | CLI wallet (ML-DSA-65 signed transactions) | ✅ Complete |
 | 14 | Prometheus metrics and Docker containerization | ✅ Complete |
 | 15 | Mail/Messenger/Names security hardening (signed requests, anti-replay, CEK, TOFU, sled) | ✅ Complete |
+| 16 | Social layer (posts, timeline, reposts, likes, follows, comments, tips) | ✅ Complete |
 | -- | Native limit orders (on-chain conditional swaps) | ✅ Complete |
 | -- | Concentrated liquidity (range-based positions) | Planned |
 | -- | Yield farming (LP staking rewards) | Planned |
