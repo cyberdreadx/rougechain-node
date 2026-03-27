@@ -3874,7 +3874,19 @@ async fn reverse_lookup_name(
     Path(wallet_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let name = state.node.reverse_lookup_name(&wallet_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({ "success": true, "name": name })))
+    if name.is_some() {
+        return Ok(Json(serde_json::json!({ "success": true, "name": name })));
+    }
+    // Fallback: caller may have passed a signing/encryption key instead of wallet.id
+    if let Ok(wallets) = state.node.list_wallets() {
+        if let Some(w) = wallets.iter().find(|w| w.signing_public_key == wallet_id || w.encryption_public_key == wallet_id) {
+            if w.id != wallet_id {
+                let name2 = state.node.reverse_lookup_name(&w.id).unwrap_or(None);
+                return Ok(Json(serde_json::json!({ "success": true, "name": name2 })));
+            }
+        }
+    }
+    Ok(Json(serde_json::json!({ "success": true, "name": null })))
 }
 
 async fn release_name(

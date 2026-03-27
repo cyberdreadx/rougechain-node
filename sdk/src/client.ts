@@ -981,8 +981,8 @@ class MailClient {
         const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
         const privKey = typeof wallet.privateKey === "string" ? hexToBytes(wallet.privateKey) : wallet.privateKey;
         const sigBytes = ml_dsa65.sign(
-          privKey,
           new TextEncoder().encode(sigPayload),
+          privKey,
         );
         contentSig = bytesToHex(sigBytes);
       } catch { /* signature optional — daemon accepts empty */ }
