@@ -61,6 +61,8 @@ const ConversationList = ({ conversations, selectedId, wallet, currentWalletId, 
 
   const isSelfConversation = (conversation: Conversation): boolean => {
     if (conversation.name === "Note to Self") return true;
+    if (conversation.name === "Quantum Bot") return false;
+    if (conversation.participants?.some(p => p.id?.startsWith("bot-"))) return false;
     if (!conversation.participants || conversation.participants.length === 0) return false;
     return conversation.participants.every(p =>
       myIds.has(p.id) || myIds.has(p.signingPublicKey) || myIds.has(p.encryptionPublicKey)

@@ -4,7 +4,7 @@ RougeChain is the **first blockchain with native MCP (Model Context Protocol) in
 
 ## What is MCP?
 
-The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standard for AI agents to interact with external services. RougeChain's MCP server exposes 21 blockchain tools that any MCP-compatible agent can use.
+The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standard for AI agents to interact with external services. RougeChain's MCP server exposes 23 blockchain tools that any MCP-compatible agent can use.
 
 ## Setup
 
@@ -32,7 +32,7 @@ Add to `~/.config/claude/claude_desktop_config.json`:
 }
 ```
 
-## Available Tools (21)
+## Available Tools (23)
 
 | Category | Tools |
 |----------|-------|
@@ -43,7 +43,8 @@ Add to `~/.config/claude/claude_desktop_config.json`:
 | **NFTs** | `list_nft_collections`, `get_nft_collection` |
 | **Validators** | `list_validators` |
 | **Contracts** | `list_contracts`, `get_contract`, `get_contract_state`, `get_contract_events`, `deploy_contract`, `call_contract` |
-| **Other** | `list_proposals`, `get_fee_info`, `resolve_name` |
+| **Mail & Messaging** | `resolve_name`, `reverse_lookup_name`, `list_messenger_wallets` |
+| **Other** | `list_proposals`, `get_fee_info` |
 
 ## Architecture
 

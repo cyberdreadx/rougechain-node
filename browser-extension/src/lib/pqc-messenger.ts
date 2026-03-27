@@ -340,42 +340,27 @@ export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKey
     if (!base) throw new Error("Node not configured");
 
     const priv = (wallet as WalletWithPrivateKeys).signingPrivateKey;
-    if (priv) {
-        const signed = buildSignedRequest(
-            {
-                id: wallet.id,
-                displayName: wallet.displayName,
-                signingPublicKey: wallet.signingPublicKey,
-                encryptionPublicKey: wallet.encryptionPublicKey,
-            },
-            priv,
-            wallet.signingPublicKey,
-        );
-        const res = await fetch(`${base}/v2/messenger/wallets/register`, {
-            method: "POST",
-            headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-            body: JSON.stringify(signed),
-        });
-        if (!res.ok) throw new Error(`Registration failed: ${await res.text()}`);
-        const data = await res.json();
-        if (data.success === false) throw new Error(data.error || "Registration failed");
-    } else {
-        const apiBase = getMessengerApiBase();
-        if (!apiBase) throw new Error("Node not configured");
-        const res = await fetch(`${apiBase}/wallets/register`, {
-            method: "POST",
-            headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-            body: JSON.stringify({
-                id: wallet.id,
-                displayName: wallet.displayName,
-                signingPublicKey: wallet.signingPublicKey,
-                encryptionPublicKey: wallet.encryptionPublicKey,
-            }),
-        });
-        if (!res.ok) throw new Error(`Registration failed: ${await res.text()}`);
-        const data = await res.json();
-        if (data.success === false) throw new Error(data.error || "Registration failed");
-    }
+    if (!priv) throw new Error("Signing private key required for v2 registration");
+
+    const signed = buildSignedRequest(
+        {
+            id: wallet.id,
+            displayName: wallet.displayName,
+            signingPublicKey: wallet.signingPublicKey,
+            encryptionPublicKey: wallet.encryptionPublicKey,
+            discoverable: true,
+        },
+        priv,
+        wallet.signingPublicKey,
+    );
+    const res = await fetch(`${base}/v2/messenger/wallets/register`, {
+        method: "POST",
+        headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify(signed),
+    });
+    if (!res.ok) throw new Error(`Registration failed: ${await res.text()}`);
+    const data = await res.json();
+    if (data.success === false) throw new Error(data.error || "Registration failed");
 }
 
 async function kemEncryptPlaintext(
@@ -632,11 +617,12 @@ export async function getConversations(walletId: string, currentWallet?: Wallet 
                             if (currentWallet && currentIds.has(id)) return currentWallet;
                             const w = walletMap.get(id);
                             if (w) return w;
-                            return allWallets.find(aw =>
+                            const fallback = allWallets.find(aw =>
                                 aw.id === id || aw.signingPublicKey === id || aw.encryptionPublicKey === id
                             );
-                        })
-                        .filter((w): w is Wallet => w !== undefined);
+                            if (fallback) return fallback;
+                            return { id, displayName: id.startsWith("bot-") ? "Quantum Bot" : "Unknown", signingPublicKey: "", encryptionPublicKey: "" } as Wallet;
+                        });
                 }
                 return conv;
             });

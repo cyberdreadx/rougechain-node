@@ -13,7 +13,7 @@ RougeChain uses Proof of Stake (PoS) for consensus. Validators stake XRGE tokens
 
 | Requirement | Value |
 |-------------|-------|
-| Minimum stake | 1,000 XRGE |
+| Minimum stake | 10,000 XRGE |
 | Unbonding period | ~7 days |
 | Slashing | Not implemented (testnet) |
 
@@ -23,18 +23,38 @@ RougeChain uses Proof of Stake (PoS) for consensus. Validators stake XRGE tokens
 
 1. Go to the **Validators** page
 2. Click **Stake**
-3. Enter amount (min 1,000 XRGE)
+3. Enter amount (min 10,000 XRGE)
 4. Confirm transaction
 
-### Via API
+### Via SDK (Recommended)
+
+```typescript
+import { RougeChain, Wallet } from '@rougechain/sdk';
+
+const rc = new RougeChain('https://testnet.rougechain.io/api');
+const wallet = Wallet.fromKeys(publicKey, privateKey);
+
+await rc.stake(wallet, { amount: 10000 });
+```
+
+### Via API (v2 Signed Request)
+
+All write operations require ML-DSA-65 client-side signing. See [Staking API](../api-reference/staking.md) for the full request format.
 
 ```bash
-curl -X POST https://testnet.rougechain.io/api/stake/submit \
+# The payload must be signed client-side with your ML-DSA-65 private key.
+# Use the SDK or build the signed request manually:
+curl -X POST https://testnet.rougechain.io/api/v2/stake \
   -H "Content-Type: application/json" \
   -d '{
-    "fromPrivateKey": "your-private-key",
-    "fromPublicKey": "your-public-key",
-    "amount": 1000
+    "payload": {
+      "amount": 10000,
+      "from": "your-public-key-hex",
+      "timestamp": 1706745600000,
+      "nonce": "random-hex"
+    },
+    "signature": "ml-dsa65-signature-hex",
+    "public_key": "your-public-key-hex"
   }'
 ```
 
@@ -50,7 +70,7 @@ Response:
   "validators": [
     {
       "publicKey": "your-public-key",
-      "stake": 1000.0,
+      "stake": 10000.0,
       "status": "active",
       "blocksProposed": 42
     }
@@ -60,15 +80,26 @@ Response:
 
 ## Unstake
 
-### Via API
+### Via SDK
+
+```typescript
+await rc.unstake(wallet, { amount: 5000 });
+```
+
+### Via API (v2 Signed Request)
 
 ```bash
-curl -X POST https://testnet.rougechain.io/api/unstake/submit \
+curl -X POST https://testnet.rougechain.io/api/v2/unstake \
   -H "Content-Type: application/json" \
   -d '{
-    "fromPrivateKey": "your-private-key",
-    "fromPublicKey": "your-public-key",
-    "amount": 500
+    "payload": {
+      "amount": 5000,
+      "from": "your-public-key-hex",
+      "timestamp": 1706745600000,
+      "nonce": "random-hex"
+    },
+    "signature": "ml-dsa65-signature-hex",
+    "public_key": "your-public-key-hex"
   }'
 ```
 
@@ -82,12 +113,15 @@ Block proposers are selected using:
 
 ## Rewards
 
-Validators earn:
+Validators earn from an **EIP-1559-inspired fee model**:
 
-- **Transaction fees** from blocks they produce
-- **Base block reward** (if configured)
+| Component | Distribution |
+|-----------|-------------|
+| Base fee | 50% burned, 50% to block proposer |
+| Priority fee (tip) | 100% to block proposer |
+| Minimum tip | 0.1 XRGE per block |
 
-Fees are credited immediately when a block is finalized.
+Fees are credited immediately when a block is finalized. See [Validator Economics](becoming-validator.md) for detailed reward calculations.
 
 ## PQC Security
 

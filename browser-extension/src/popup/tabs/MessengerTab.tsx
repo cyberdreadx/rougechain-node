@@ -69,12 +69,7 @@ export default function MessengerTab({ wallet }: Props) {
         setRegStatus("pending");
         setRegError(null);
         try {
-            await registerWalletOnNode({
-                id: wallet.id,
-                displayName: wallet.displayName,
-                signingPublicKey: wallet.signingPublicKey,
-                encryptionPublicKey: wallet.encryptionPublicKey,
-            });
+            await registerWalletOnNode(messengerWallet);
             setRegStatus("ok");
         } catch (err: any) {
             setRegStatus("error");
@@ -172,7 +167,6 @@ export default function MessengerTab({ wallet }: Props) {
                                         const convo = await createConversation(
                                             messengerWallet,
                                             [wallet.id, c.id],
-                                            c.displayName
                                         );
                                         setConversations(prev => [convo, ...prev]);
                                         setSelected(convo);
@@ -212,7 +206,8 @@ export default function MessengerTab({ wallet }: Props) {
                     conversations.map(convo => {
                         const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
                         const isSelf = (p: any) => myIds.has(p.id) || myIds.has(p.signingPublicKey || "") || myIds.has(p.encryptionPublicKey || "");
-                        const isNoteToSelf = convo.name === "Note to Self" || (convo.participants?.every((p: any) => isSelf(p)) ?? false);
+                        const hasBot = convo.name === "Quantum Bot" || convo.participants?.some((p: any) => p.id?.startsWith("bot-"));
+                        const isNoteToSelf = !hasBot && (convo.name === "Note to Self" || (convo.participants?.every((p: any) => isSelf(p)) ?? false));
                         let other = convo.participants?.find((p: any) => !isSelf(p));
                         if (!other && wallet.displayName && convo.participants?.length === 2) {
                             other = convo.participants.find((p: any) => p.displayName !== wallet.displayName);
@@ -301,8 +296,11 @@ function ChatView({
     const chatMyIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
     const chatIsSelf = (p: any) => chatMyIds.has(p.id) || chatMyIds.has(p.signingPublicKey || "") || chatMyIds.has(p.encryptionPublicKey || "");
 
-    const isSelfConversation = conversation.name === "Note to Self" ||
-        (conversation.participants?.every((p: any) => chatIsSelf(p)) ?? false);
+    const chatHasBot = conversation.name === "Quantum Bot" || conversation.participants?.some((p: any) => p.id?.startsWith("bot-"));
+    const isSelfConversation = !chatHasBot && (
+        conversation.name === "Note to Self" ||
+        (conversation.participants?.every((p: any) => chatIsSelf(p)) ?? false)
+    );
 
     let participantRecipient = isSelfConversation
         ? { id: wallet.id, displayName: wallet.displayName, signingPublicKey: wallet.signingPublicKey, encryptionPublicKey: wallet.encryptionPublicKey }

@@ -1711,10 +1711,14 @@ impl L1Node {
         amount: f64,
         fee: Option<f64>,
     ) -> Result<TxV1, String> {
+        const MIN_STAKE: f64 = 10_000.0;
+        if amount < MIN_STAKE {
+            return Err(format!("minimum stake is {} XRGE", MIN_STAKE as u64));
+        }
+
         let tx_fee = fee.unwrap_or(BASE_TRANSFER_FEE);
         let total_required = amount + tx_fee;
-        
-        // Check sender has sufficient balance
+
         let sender_balance = self.get_balance(from_public_key)?;
         if sender_balance < total_required {
             return Err(format!(
@@ -4008,7 +4012,17 @@ impl L1Node {
         Ok(())
     }
     
-    /// Distribute block fees: 25% to proposer, 75% split among validators by stake
+    /// Minimum tip pool per block — if fees alone don't reach this threshold,
+    /// the difference is drawn from the `__staking_rewards__` reserve so that
+    /// validators always receive a baseline reward.
+    const MIN_TIP_FLOOR: f64 = 0.1;
+
+    /// Fraction of the base fee that is burned (rest flows into the tip pool).
+    const BASE_FEE_BURN_RATIO: f64 = 0.5;
+
+    /// Distribute block fees: 20% to proposer, 70% to validators (stake-weighted), 10% to treasury.
+    /// Half the base fee is burned; the remainder plus priority tips form the distributable pool.
+    /// A minimum tip floor is enforced, subsidised from `__staking_rewards__` if needed.
     fn distribute_fees(
         balances: &mut HashMap<String, f64>,
         total_fees: f64,
@@ -4018,30 +4032,36 @@ impl L1Node {
         tx_count: usize,
         total_fees_burned: &Arc<Mutex<f64>>,
     ) {
-        // EIP-1559: burn base_fee portion, distribute only the tip
         let total_base_fees = base_fee_per_tx * tx_count as f64;
-        let burned = total_base_fees.min(total_fees); // Can't burn more than collected
-        let tip_pool = total_fees - burned;
+        let burned = (total_base_fees * Self::BASE_FEE_BURN_RATIO).min(total_fees);
+        let mut tip_pool = total_fees - burned;
 
-        // Track burned fees
         if burned > 0.0 {
             if let Ok(mut b) = total_fees_burned.lock() {
                 *b += burned;
             }
         }
 
-        if tip_pool <= 0.0 {
-            return; // All fees burned, nothing to distribute
+        if tip_pool < Self::MIN_TIP_FLOOR {
+            let subsidy = Self::MIN_TIP_FLOOR - tip_pool;
+            let reserve = balances.get("__staking_rewards__").copied().unwrap_or(0.0);
+            let actual_subsidy = subsidy.min(reserve);
+            if actual_subsidy > 0.0 {
+                *balances.entry("__staking_rewards__".to_string()).or_insert(0.0) -= actual_subsidy;
+                tip_pool += actual_subsidy;
+            }
         }
 
-        // Proposer gets 25% of tip
+        if tip_pool <= 0.0 {
+            return;
+        }
+
         let proposer_share = tip_pool * Self::PROPOSER_FEE_SHARE;
         *balances.entry(proposer_pub_key.to_string()).or_insert(0.0) += proposer_share;
-        
-        // Remaining 75% split among all validators by stake weight
+
         let validator_pool = tip_pool * Self::VALIDATOR_FEE_SHARE;
         let total_stake: u128 = validator_stakes.values().sum();
-        
+
         if total_stake > 0 {
             for (validator_pub_key, stake) in validator_stakes {
                 let stake_ratio = *stake as f64 / total_stake as f64;
@@ -4049,11 +4069,9 @@ impl L1Node {
                 *balances.entry(validator_pub_key.clone()).or_insert(0.0) += validator_share;
             }
         } else {
-            // No validators staked - proposer gets everything
             *balances.entry(proposer_pub_key.to_string()).or_insert(0.0) += validator_pool;
         }
 
-        // Treasury gets 10% of tip
         let treasury_share = tip_pool * Self::TREASURY_FEE_SHARE;
         *balances.entry("__treasury__".to_string()).or_insert(0.0) += treasury_share;
     }

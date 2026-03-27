@@ -258,7 +258,7 @@ RougeChain uses an EIP-1559-like fee model with base fee adjustment and fee burn
 1. **Base fee** adjusts ±12.5% per block based on block fullness (target: 10 txs/block)
 2. **Floor**: minimum base fee of 0.001 XRGE
 3. **Fee burning**: base fee portion is burned (deflationary)
-4. **Priority fee (tip)**: goes to validators (25% proposer, 75% stake-weighted)
+4. **Priority fee (tip)**: 20% to block proposer, 70% to validators (stake-weighted), 10% to treasury
 
 ### API
 

@@ -4,7 +4,7 @@ import {
   Mail as MailIcon, Inbox, SendHorizonal, Trash2, Plus, RefreshCw,
   ArrowLeft, Send, Lock, Loader2, CheckCircle2, XCircle, AtSign,
   Reply, MailOpen, Key, Copy, Settings, ToggleLeft, ToggleRight, Type,
-  Paperclip, Download, X, FileText, Image as ImageIcon,
+  Paperclip, Download, X, FileText, Image as ImageIcon, ShieldQuestion,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,16 +65,21 @@ function formatDate(dateInput: string): string {
   } catch { return ""; }
 }
 
-function buildThread(allItems: MailItem[], selected: MailItem): MailItem[] {
-  const byId = new Map<string, MailItem>();
-  for (const item of allItems) byId.set(item.message.id, item);
-
-  let rootId = selected.message.id;
-  let cur = selected.message;
+function findRootId(item: MailItem, byId: Map<string, MailItem>): string {
+  let rootId = item.message.id;
+  let cur = item.message;
   while (cur.replyToId && byId.has(cur.replyToId)) {
     rootId = cur.replyToId;
     cur = byId.get(cur.replyToId)!.message;
   }
+  return rootId;
+}
+
+function buildThread(allItems: MailItem[], selected: MailItem): MailItem[] {
+  const byId = new Map<string, MailItem>();
+  for (const item of allItems) byId.set(item.message.id, item);
+
+  const rootId = findRootId(selected, byId);
 
   const threadIds = new Set<string>();
   const collect = (parentId: string) => {
@@ -90,6 +95,54 @@ function buildThread(allItems: MailItem[], selected: MailItem): MailItem[] {
   return allItems
     .filter(item => threadIds.has(item.message.id))
     .sort((a, b) => new Date(a.message.createdAt).getTime() - new Date(b.message.createdAt).getTime());
+}
+
+interface ThreadGroup {
+  rootId: string;
+  subject: string;
+  latestItem: MailItem;
+  messages: MailItem[];
+  participants: string[];
+  hasUnread: boolean;
+  latestDate: string;
+}
+
+function groupByThread(items: MailItem[]): ThreadGroup[] {
+  const byId = new Map<string, MailItem>();
+  for (const item of items) byId.set(item.message.id, item);
+
+  const groups = new Map<string, MailItem[]>();
+  for (const item of items) {
+    const rootId = findRootId(item, byId);
+    const arr = groups.get(rootId) || [];
+    arr.push(item);
+    groups.set(rootId, arr);
+  }
+
+  const result: ThreadGroup[] = [];
+  for (const [rootId, msgs] of groups) {
+    msgs.sort((a, b) => new Date(a.message.createdAt).getTime() - new Date(b.message.createdAt).getTime());
+    const latest = msgs[msgs.length - 1];
+    const root = byId.get(rootId);
+    const subject = root?.message.subject || latest.message.subject || "(No subject)";
+    const participantSet = new Set<string>();
+    for (const m of msgs) {
+      const name = m.message.senderName || "Unknown";
+      participantSet.add(name);
+    }
+    result.push({
+      rootId,
+      subject,
+      latestItem: latest,
+      messages: msgs,
+      participants: [...participantSet],
+      hasUnread: msgs.some(m => !m.label.isRead),
+      latestDate: latest.message.createdAt,
+    });
+  }
+
+  result.sort((a, b) => new Date(b.latestDate).getTime() - new Date(a.latestDate).getTime());
+  return result;
 }
 
 // --- Compose View ---
@@ -319,10 +372,12 @@ function ThreadMessage({
             <span className={`text-sm font-medium truncate ${isLatest ? "text-foreground" : "text-muted-foreground"}`}>
               {message.senderName || "Unknown"}
             </span>
-            {message.signatureValid ? (
+            {message.signatureValid === true ? (
               <CheckCircle2 className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
-            ) : (
+            ) : message.signatureValid === false ? (
               <XCircle className="w-3.5 h-3.5 text-destructive flex-shrink-0" />
+            ) : (
+              <ShieldQuestion className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
             )}
           </div>
           <p className="text-xs text-muted-foreground">{formatDate(message.createdAt)}</p>
@@ -469,10 +524,12 @@ function ReadView({
                 </p>
                 <p className="text-xs text-muted-foreground">{formatDate(message.createdAt)}</p>
               </div>
-              {message.signatureValid ? (
+              {message.signatureValid === true ? (
                 <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
-              ) : (
+              ) : message.signatureValid === false ? (
                 <XCircle className="w-4 h-4 text-destructive flex-shrink-0" />
+              ) : (
+                <ShieldQuestion className="w-4 h-4 text-muted-foreground flex-shrink-0" />
               )}
             </div>
 
@@ -794,7 +851,8 @@ const MailPage = () => {
     return <WalletSetup onWalletCreated={handleWalletCreated} onWalletImported={(w) => { saveUnifiedWallet(w); setWallet(w); }} />;
   }
 
-  const unreadCount = items.filter(i => !i.label.isRead).length;
+  const threads = groupByThread(items);
+  const unreadCount = threads.filter(t => t.hasUnread).length;
 
   if (view === "settings") {
     return (
@@ -967,31 +1025,38 @@ const MailPage = () => {
           </div>
         ) : (
           <div className="divide-y divide-border">
-            {items.map(item => (
+            {threads.map(thread => (
               <button
-                key={item.message.id}
-                onClick={() => openMail(item)}
+                key={thread.rootId}
+                onClick={() => openMail(thread.latestItem)}
                 className={`w-full flex items-start gap-3 px-4 py-3 hover:bg-secondary/30 transition-colors text-left ${
-                  !item.label.isRead ? "bg-primary/5" : ""
+                  thread.hasUnread ? "bg-primary/5" : ""
                 }`}
               >
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                  !item.label.isRead ? "bg-primary/20" : "bg-muted"
+                  thread.hasUnread ? "bg-primary/20" : "bg-muted"
                 }`}>
-                  <MailIcon className={`w-5 h-5 ${!item.label.isRead ? "text-primary" : "text-muted-foreground"}`} />
+                  <MailIcon className={`w-5 h-5 ${thread.hasUnread ? "text-primary" : "text-muted-foreground"}`} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
-                    <p className={`text-sm truncate ${!item.label.isRead ? "font-semibold text-foreground" : "text-muted-foreground"}`}>
-                      {item.message.senderName || "Unknown"}
-                    </p>
-                    <span className="text-xs text-muted-foreground flex-shrink-0">{formatDate(item.message.createdAt)}</span>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <p className={`text-sm truncate ${thread.hasUnread ? "font-semibold text-foreground" : "text-muted-foreground"}`}>
+                        {thread.participants.join(", ")}
+                      </p>
+                      {thread.messages.length > 1 && (
+                        <span className="text-xs text-muted-foreground flex-shrink-0">
+                          ({thread.messages.length})
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs text-muted-foreground flex-shrink-0">{formatDate(thread.latestDate)}</span>
                   </div>
-                  <p className={`text-sm truncate ${!item.label.isRead ? "font-medium text-foreground" : "text-muted-foreground"}`}>
-                    {item.message.subject || "(No subject)"}
+                  <p className={`text-sm truncate ${thread.hasUnread ? "font-medium text-foreground" : "text-muted-foreground"}`}>
+                    {thread.subject}
                   </p>
                   <p className="text-xs text-muted-foreground truncate mt-0.5">
-                    {item.message.body?.substring(0, 100) || ""}
+                    {thread.latestItem.message.body?.substring(0, 100) || ""}
                   </p>
                 </div>
               </button>

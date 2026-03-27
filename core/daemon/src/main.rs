@@ -5421,10 +5421,11 @@ async fn v2_stake(
     let payload = &body.payload;
     
     let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
-    let fee = 1.0_f64; // Server-enforced fee
+    let fee = 1.0_f64;
+    const MIN_STAKE: u64 = 10_000;
 
-    if amount == 0 {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "stake amount must be greater than zero"}))));
+    if amount < MIN_STAKE {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("minimum stake is {} XRGE", MIN_STAKE)}))));
     }
 
     let bal = node.get_balance(&body.public_key).unwrap_or(0.0);

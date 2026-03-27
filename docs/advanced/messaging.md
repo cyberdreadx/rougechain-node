@@ -104,8 +104,10 @@ Names are unique and first-come-first-served.
 
 | Domain | Platform |
 |--------|----------|
-| `@rouge.quant` | Website and browser extensions |
-| `@qwalla.mail` | QWalla mobile app (future) |
+| `@rouge.quant` | Website and browser extension |
+| `@qwalla.mail` | QWalla mobile app |
+
+Both domains resolve against the same on-chain name registry — the domain is a client-side display choice only.
 
 ### Getting Started
 
@@ -153,6 +155,43 @@ The messenger tracks public key fingerprints (SHA-256 hash) for contacts:
 | **CEK multi-recipient** | Efficient per-recipient key wrapping without re-encryption |
 | **Atomic name registry** | Compare-and-swap prevents race conditions on name claims |
 | **Persistent or vaulted keys** | Private keys in localStorage (no password) or AES-256-GCM encrypted blob (with vault passphrase); active session keys in sessionStorage |
+
+## Notifications & Unread Badges
+
+### Browser Extension
+
+The browser extension tracks unread counts for both **Chat** and **Mail** tabs:
+
+| Feature | Details |
+|---------|---------|
+| **Tab badges** | Chat and Mail tabs display a numeric badge when unread items exist |
+| **Tooltips** | Hovering a badged tab shows "3 unread messages" or "2 unread emails" |
+| **Extension icon badge** | The combined unread total (chat + mail) is shown on the browser toolbar icon via `chrome.action.setBadgeText` |
+| **System notifications** | Native OS notifications for new messages, new mail, received/sent tokens, contract events, staking, and balance changes |
+| **Badge clearing** | Viewing a conversation or inbox marks items as read server-side and updates the badge immediately |
+
+Notifications are powered by two channels:
+- **WebSocket** — Real-time transaction and balance events via `wss://testnet.rougechain.io/api/ws`
+- **Polling** — Unread messenger and mail counts checked every 15 seconds via signed `/api/v2/` endpoints
+
+### QWalla Mobile App
+
+QWalla provides the same unread badge experience:
+
+| Feature | Details |
+|---------|---------|
+| **Tab badges** | Expo Router `tabBarBadge` on Chat and Mail tabs |
+| **Initial poll** | On app launch, actual unread counts are fetched from the server so badges are accurate from the start |
+| **Real-time updates** | WebSocket events increment the badge for new messages and mail |
+| **Push notifications** | Expo push notifications for messages, mail, and transfers (requires `registerPushToken`) |
+| **Badge clearing** | Navigating to the Chat or Mail tab clears the respective unread count |
+
+### Deriving Unread Counts
+
+The server does not expose a dedicated "unread total" endpoint. Clients derive counts from existing data:
+
+- **Chat:** Sum `unread_count` from each conversation returned by `POST /api/v2/messenger/conversations/list`
+- **Mail:** Count inbox items where the label's `is_read` field is `false` from `POST /api/v2/mail/folder`
 
 ## SDK Usage
 

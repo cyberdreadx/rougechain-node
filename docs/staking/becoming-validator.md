@@ -6,7 +6,7 @@ Validators produce blocks and earn transaction fees on RougeChain. This guide wa
 
 | Requirement | Details |
 |-------------|---------|
-| XRGE balance | At least 1,000 XRGE (+ fees) |
+| XRGE balance | At least 10,000 XRGE (+ fees) |
 | Wallet | A RougeChain wallet with signing keys |
 | Node (optional) | Running a node earns you more blocks |
 
@@ -16,7 +16,7 @@ If you're on testnet, use the faucet:
 
 1. Visit [rougechain.io](https://rougechain.io)
 2. Go to **Wallet** and click **Request from Faucet**
-3. Repeat until you have at least 1,000 XRGE
+3. Repeat until you have at least 10,000 XRGE
 
 ## Step 2: Stake Tokens
 
@@ -24,7 +24,7 @@ If you're on testnet, use the faucet:
 
 1. Navigate to the **Validators** page
 2. Click **Stake**
-3. Enter your stake amount (minimum 1,000 XRGE)
+3. Enter your stake amount (minimum 10,000 XRGE)
 4. Confirm the transaction
 5. Your wallet signs the stake transaction with ML-DSA-65
 

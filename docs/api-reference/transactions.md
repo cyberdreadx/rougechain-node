@@ -1,11 +1,11 @@
 # Transactions API
 
-## Submit Transaction
+## Transfer Tokens (v2)
 
-Send XRGE tokens to another address.
+Send XRGE or custom tokens to another address using client-side ML-DSA-65 signing.
 
 ```http
-POST /api/tx/submit
+POST /api/v2/transfer
 Content-Type: application/json
 ```
 
@@ -13,40 +13,35 @@ Content-Type: application/json
 
 ```json
 {
-  "fromPrivateKey": "your-private-key-hex",
-  "fromPublicKey": "your-public-key-hex", 
-  "toPublicKey": "recipient-public-key-hex",
-  "amount": 100.0,
-  "fee": 0.1
+  "payload": {
+    "toPubKeyHex": "recipient-public-key-hex",
+    "amount": 100.0,
+    "fee": 0.1,
+    "token": "XRGE",
+    "from": "sender-public-key-hex",
+    "timestamp": 1706745600000,
+    "nonce": "random-hex-string"
+  },
+  "signature": "ml-dsa65-signature-hex",
+  "public_key": "sender-public-key-hex"
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `fromPrivateKey` | string | Yes | Sender's ML-DSA-65 private key (hex) |
-| `fromPublicKey` | string | Yes | Sender's ML-DSA-65 public key (hex) |
-| `toPublicKey` | string | Yes | Recipient's public key (hex) |
-| `amount` | number | Yes | Amount of XRGE to send |
+| `toPubKeyHex` | string | Yes | Recipient's public key (hex) or `rouge1` address |
+| `amount` | number | Yes | Amount to send |
 | `fee` | number | No | Transaction fee (default: 0.1) |
+| `token` | string | No | Token symbol (default: "XRGE") |
+
+> **Security:** Private keys never leave your application. The transaction is signed client-side using ML-DSA-65 and the server verifies the signature before processing.
 
 ### Response
 
 ```json
 {
   "success": true,
-  "txId": "abc123...",
-  "tx": {
-    "version": 1,
-    "txType": "transfer",
-    "fromPubKey": "...",
-    "nonce": 1234567890,
-    "payload": {
-      "toPubKeyHex": "...",
-      "amount": 100
-    },
-    "fee": 0.1,
-    "sig": "..."
-  }
+  "txId": "abc123..."
 }
 ```
 
@@ -102,12 +97,52 @@ GET /api/txs?limit=50&offset=0
 
 ---
 
-## Request Faucet (Testnet)
+## Get Transaction by Hash
+
+```http
+GET /api/tx/:hash
+```
+
+### Response
+
+```json
+{
+  "success": true,
+  "tx": {
+    "version": 1,
+    "txType": "transfer",
+    "fromPubKey": "abc...",
+    "nonce": 1234567890,
+    "payload": {
+      "toPubKeyHex": "def...",
+      "amount": 100
+    },
+    "fee": 0.1,
+    "sig": "ghi...",
+    "blockHeight": 42,
+    "blockTime": 1706745600000
+  }
+}
+```
+
+---
+
+## Get Transaction Receipt
+
+```http
+GET /api/tx/:hash/receipt
+```
+
+Returns execution receipt for contract calls and other complex transactions.
+
+---
+
+## Request Faucet (v2)
 
 Get free testnet XRGE tokens.
 
 ```http
-POST /api/faucet
+POST /api/v2/faucet
 Content-Type: application/json
 ```
 
@@ -115,7 +150,13 @@ Content-Type: application/json
 
 ```json
 {
-  "publicKey": "your-public-key-hex"
+  "payload": {
+    "from": "your-public-key-hex",
+    "timestamp": 1706745600000,
+    "nonce": "random-hex-string"
+  },
+  "signature": "your-signature-hex",
+  "public_key": "your-public-key-hex"
 }
 ```
 
@@ -141,8 +182,13 @@ The faucet has additional rate limiting:
 
 | Type | Description |
 |------|-------------|
-| `transfer` | Standard XRGE transfer |
+| `transfer` | Standard XRGE or token transfer |
 | `faucet` | Faucet distribution |
 | `stake` | Stake tokens to become validator |
 | `unstake` | Unstake tokens |
 | `create_token` | Create custom token |
+| `burn` | Burn tokens permanently |
+| `shield` | Shield tokens (make private) |
+| `unshield` | Unshield tokens (make public) |
+| `contract_deploy` | Deploy WASM smart contract |
+| `contract_call` | Call smart contract method |

@@ -218,10 +218,12 @@ A block is finalized when precommits representing at least **2/3 + 1** of total 
 - At each new block, the node processes the unbonding queue and releases matured entries to the delegator's balance.
 - This prevents stake-and-run attacks and ensures validators remain accountable for the blocks they participated in.
 
-**Fee Distribution.** Transaction fees follow an EIP-1559-inspired dynamic fee model. The total fee consists of a **base fee** (burned) and a **priority fee** (distributed). The priority fee is split:
+**Fee Distribution.** Transaction fees follow an EIP-1559-inspired dynamic fee model. The total fee consists of a **base fee** and a **priority fee**. **50%** of the base fee is burned (deflationary); the remaining 50% flows into the distributable tip pool alongside the priority fee. The tip pool is split:
 - **20%** to the block proposer.
 - **70%** distributed to all active validators, weighted by their stake.
 - **10%** allocated to the on-chain treasury, controlled by governance.
+
+A **minimum tip floor** of 0.1 XRGE per block is enforced. If fees alone do not reach this threshold, the shortfall is drawn from the `__staking_rewards__` genesis allocation (10.8B XRGE), ensuring validators receive a baseline reward even during low-traffic periods. At maximum draw this reserve lasts over 1,300 years.
 
 The base fee adjusts dynamically based on block utilization (±12.5% per block), targeting 50% capacity. This creates a self-regulating fee market that adapts to demand.
 
@@ -531,13 +533,14 @@ All operations on RougeChain require an XRGE fee. The fee schedule is designed t
 
 ### 4.3 Fee Distribution
 
-RougeChain uses an **EIP-1559-inspired dynamic fee model**. Each transaction fee consists of a **base fee** (burned) and a **priority fee** (distributed):
+RougeChain uses an **EIP-1559-inspired dynamic fee model**. Each transaction fee consists of a **base fee** and a **priority fee** (tip):
 
-- The **base fee** is burned, permanently reducing the circulating supply. This makes XRGE deflationary under sustained network activity.
-- The **priority fee** (tip) is distributed as follows:
+- **50%** of the base fee is **burned**, permanently reducing the circulating supply. This makes XRGE deflationary under sustained network activity. The remaining 50% of the base fee flows into the tip pool alongside priority fees.
+- The **tip pool** is distributed as follows:
   - **20%** to the block proposer as a direct reward for block production.
   - **70%** to all active validators, distributed proportionally to their staked XRGE.
   - **10%** to the on-chain treasury, governed by protocol governance.
+- A **minimum tip floor** of 0.1 XRGE per block is enforced. When collected fees fall below this threshold, the shortfall is subsidised from the `__staking_rewards__` genesis allocation, guaranteeing validators a baseline return even during low-traffic periods.
 
 The base fee adjusts dynamically based on block utilization. If a block is fuller than the target (50% capacity), the base fee increases by up to 12.5%. If emptier, it decreases by up to 12.5%. This creates a self-regulating fee market.
 

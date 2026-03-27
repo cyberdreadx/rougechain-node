@@ -37,7 +37,7 @@ Add to `~/.config/claude/claude_desktop_config.json`:
 | `ROUGECHAIN_URL` | `https://rougechain.io` | RougeChain node URL |
 | `ROUGECHAIN_API_KEY` | (none) | Optional API key |
 
-## Available Tools (21)
+## Available Tools (23)
 
 ### Chain Info
 - `get_chain_stats` — Network stats (height, peers, validators, supply)
@@ -72,10 +72,14 @@ Add to `~/.config/claude/claude_desktop_config.json`:
 - `deploy_contract` — Deploy WASM bytecode
 - `call_contract` — Execute contract method
 
+### Mail & Messaging
+- `resolve_name` — Resolve a mail name to wallet info and encryption keys
+- `reverse_lookup_name` — Look up the registered mail name for a wallet ID
+- `list_messenger_wallets` — List registered messenger wallets with display names
+
 ### Other
 - `list_proposals` — Governance proposals
 - `get_fee_info` — Dynamic fee info (EIP-1559)
-- `resolve_name` — Name service lookup
 
 ## Resources
 

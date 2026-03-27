@@ -798,16 +798,20 @@ export async function getBotReply(userMessage: string): Promise<string> {
 
 export async function createConversation(
   senderWallet: WalletWithPrivateKeys,
-  recipientWalletId: string
+  recipientWalletId: string,
+  name?: string,
 ): Promise<Conversation> {
   const apiBase = getMessengerApiBase();
   if (!apiBase) throw new Error("Node API is not configured");
 
+  const payload: Record<string, unknown> = {
+    participantIds: [senderWallet.id, recipientWalletId],
+    isGroup: false,
+  };
+  if (name) payload.name = name;
+
   const signed = buildSignedRequest(
-    {
-      participantIds: [senderWallet.id, recipientWalletId],
-      isGroup: false,
-    },
+    payload,
     senderWallet.signingPrivateKey,
     senderWallet.signingPublicKey,
   );
@@ -892,6 +896,20 @@ export async function getConversations(walletId: string, currentWallet?: Wallet 
     if (w.encryptionPublicKey) walletMap.set(w.encryptionPublicKey, w);
   }
 
+  // Include locally stored demo bot wallet (not discoverable on server)
+  const botWallet = loadDemoBotWallet();
+  if (botWallet) {
+    const bw: Wallet = {
+      id: botWallet.id,
+      displayName: botWallet.displayName,
+      signingPublicKey: botWallet.signingPublicKey,
+      encryptionPublicKey: botWallet.encryptionPublicKey,
+    };
+    if (bw.id) walletMap.set(bw.id, bw);
+    if (bw.signingPublicKey) walletMap.set(bw.signingPublicKey, bw);
+    if (bw.encryptionPublicKey) walletMap.set(bw.encryptionPublicKey, bw);
+  }
+
   const currentIds = currentWallet
     ? new Set([currentWallet.id, currentWallet.signingPublicKey, currentWallet.encryptionPublicKey].filter(Boolean))
     : new Set<string>();
@@ -913,7 +931,7 @@ export async function getConversations(walletId: string, currentWallet?: Wallet 
     unread_count?: number;
   }) => {
     const participantIds = conv.participant_ids || conv.participantIds || [];
-    const participants = participantIds
+    const participants: Wallet[] = participantIds
       .map((id: string) => {
         if (currentIds.has(id)) return currentWallet!;
         const w = walletMap.get(id);
@@ -924,9 +942,9 @@ export async function getConversations(walletId: string, currentWallet?: Wallet 
         const fallback = allWallets.find(aw =>
           aw.id === id || aw.signingPublicKey === id || aw.encryptionPublicKey === id
         );
-        return fallback;
-      })
-      .filter((w): w is Wallet => w !== undefined);
+        if (fallback) return fallback;
+        return { id, displayName: id.startsWith("bot-") ? "Quantum Bot" : "Unknown", signingPublicKey: "", encryptionPublicKey: "" };
+      });
 
     return {
       id: conv.id,

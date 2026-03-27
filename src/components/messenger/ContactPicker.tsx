@@ -139,7 +139,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
       const botWallet = await getOrCreateDemoBot();
       
       // Create conversation with the bot
-      const conversation = await createConversation(wallet, botWallet.id);
+      const conversation = await createConversation(wallet, botWallet.id, "Quantum Bot");
       conversation.participants = [
         {
           id: wallet.id,

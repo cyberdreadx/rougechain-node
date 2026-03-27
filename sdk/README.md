@@ -393,6 +393,25 @@ await rc.mail.markRead(wallet, messageId);
 await rc.mail.delete(wallet, messageId);
 ```
 
+### Unread Counts
+
+The SDK does not expose a dedicated unread-count endpoint. Derive unread totals client-side from inbox data:
+
+```typescript
+// Mail: count unread inbox items
+const inbox = await rc.mail.getInbox(wallet);
+const unreadMail = inbox.filter((m: any) => {
+  const label = m.label ?? {};
+  return !(label.is_read ?? label.isRead ?? true);
+}).length;
+
+// Messenger: sum unread_count across conversations
+const convos = await rc.messenger.getConversations(wallet);
+const unreadChats = convos.reduce((sum: number, c: any) => {
+  return sum + (c.unread_count ?? c.unreadCount ?? 0);
+}, 0);
+```
+
 ## Messenger (`rc.messenger`)
 
 End-to-end encrypted messaging with media and self-destruct support. All operations use ML-DSA-65 signed requests via `/api/v2/` endpoints with nonce-based anti-replay protection.

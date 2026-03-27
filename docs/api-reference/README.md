@@ -2,6 +2,8 @@
 
 The RougeChain node exposes a REST API on the configured `--api-port` (default: 5101).
 
+> **Important:** All write operations (POST/PUT/DELETE) require **v2 signed requests** using ML-DSA-65 client-side signing. Legacy unsigned v1 write endpoints return `410 GONE` in production. Private keys never leave your application.
+
 ## Base URL
 
 ```
@@ -25,6 +27,25 @@ All API endpoints expect **raw hex public keys**, not `rouge1` addresses:
 ```
 
 > **Tip:** Use `GET /api/resolve/:input` to convert between `rouge1…` addresses and hex public keys.
+
+## v2 Signed Request Format
+
+All write endpoints use a standard signed-request envelope:
+
+```json
+{
+  "payload": {
+    "...endpoint-specific fields...",
+    "from": "your-signing-public-key-hex",
+    "timestamp": 1706745600000,
+    "nonce": "random-hex-string"
+  },
+  "signature": "ml-dsa65-signature-of-payload-hex",
+  "public_key": "your-signing-public-key-hex"
+}
+```
+
+The `payload` is JSON-serialized with keys sorted alphabetically, then signed with your ML-DSA-65 private key. The server verifies the signature, checks the timestamp (must be within 60 seconds), and rejects replayed nonces.
 
 ## Endpoints Overview
 
@@ -53,14 +74,13 @@ All API endpoints expect **raw hex public keys**, not `rouge1` addresses:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/wallet/create` | POST | Create new wallet |
 | `/api/balance/:publicKey` | GET | Get XRGE balance |
 | `/api/balance/:publicKey/:token` | GET | Get token balance |
 | `/api/account/:pubkey/nonce` | GET | Get account nonce |
 | `/api/resolve/:input` | GET | Resolve address ↔ public key |
 | `/api/address/:pubkey/transactions` | GET | Get address transactions |
-| `/api/faucet` | POST | Request testnet tokens |
-| `/api/tx/submit` | POST | Submit transaction (legacy) |
+| `/api/v2/transfer` | POST | Transfer tokens (signed) |
+| `/api/v2/faucet` | POST | Request testnet tokens (signed) |
 
 ### Tokens
 
@@ -70,19 +90,19 @@ All API endpoints expect **raw hex public keys**, not `rouge1` addresses:
 | `/api/token/:symbol/metadata` | GET | Get token metadata |
 | `/api/token/:symbol/holders` | GET | Get token holders |
 | `/api/token/:symbol/transactions` | GET | Get token transactions |
-| `/api/token/create` | POST | Create token (legacy) |
-| `/api/token/metadata/update` | POST | Update token metadata |
-| `/api/token/metadata/claim` | POST | Claim metadata ownership |
 | `/api/burn-address` | GET | Get official burn address |
 | `/api/burned` | GET | Get burned token stats |
+| `/api/v2/token/create` | POST | Create token (signed) |
+| `/api/v2/token/metadata/update` | POST | Update token metadata (signed) |
+| `/api/v2/token/metadata/claim` | POST | Claim metadata ownership (signed) |
 
 ### Token Allowances (ERC-20 Style)
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v2/token/approve` | POST | Approve spender allowance |
-| `/api/v2/token/transfer-from` | POST | Transfer using allowance |
-| `/api/v2/token/freeze` | POST | Freeze/unfreeze token transfers |
+| `/api/v2/token/approve` | POST | Approve spender allowance (signed) |
+| `/api/v2/token/transfer-from` | POST | Transfer using allowance (signed) |
+| `/api/v2/token/freeze` | POST | Freeze/unfreeze token transfers (signed) |
 | `/api/token/allowance` | GET | Check specific allowance |
 | `/api/token/allowances` | GET | List allowances by owner/spender |
 | `/api/allowances/:pubkey` | GET | List all allowances for a key |
@@ -97,10 +117,8 @@ All API endpoints expect **raw hex public keys**, not `rouge1` addresses:
 | `/api/selection` | GET | Proposer selection |
 | `/api/finality` | GET | Finality status |
 | `/api/votes` | GET | Vote quorum info |
-| `/api/stake/submit` | POST | Stake tokens (legacy) |
-| `/api/unstake/submit` | POST | Unstake tokens (legacy) |
-| `/api/votes/submit` | POST | Submit validator vote |
-| `/api/entropy/submit` | POST | Submit entropy contribution |
+| `/api/v2/stake` | POST | Stake tokens (signed) |
+| `/api/v2/unstake` | POST | Unstake tokens (signed) |
 
 ### Token Staking Pools
 
@@ -120,11 +138,11 @@ All API endpoints expect **raw hex public keys**, not `rouge1` addresses:
 | `/api/pool/:pool_id/prices` | GET | Get price history |
 | `/api/pool/:pool_id/events` | GET | Get pool events |
 | `/api/pool/:pool_id/stats` | GET | Get pool statistics |
-| `/api/pool/create` | POST | Create liquidity pool |
-| `/api/pool/add-liquidity` | POST | Add liquidity |
-| `/api/pool/remove-liquidity` | POST | Remove liquidity |
 | `/api/swap/quote` | POST | Get swap quote |
-| `/api/swap/execute` | POST | Execute swap |
+| `/api/v2/pool/create` | POST | Create liquidity pool (signed) |
+| `/api/v2/pool/add-liquidity` | POST | Add liquidity (signed) |
+| `/api/v2/pool/remove-liquidity` | POST | Remove liquidity (signed) |
+| `/api/v2/swap/execute` | POST | Execute swap (signed) |
 
 ### NFTs
 
@@ -135,13 +153,23 @@ All API endpoints expect **raw hex public keys**, not `rouge1` addresses:
 | `/api/nft/collection/:id/tokens` | GET | Get collection tokens |
 | `/api/nft/token/:coll/:id` | GET | Get specific NFT |
 | `/api/nft/owner/:pubkey` | GET | Get NFTs by owner |
-| `/api/v2/nft/collection/create` | POST | Create collection (v2) |
-| `/api/v2/nft/mint` | POST | Mint NFT (v2) |
-| `/api/v2/nft/batch-mint` | POST | Batch mint (v2) |
-| `/api/v2/nft/transfer` | POST | Transfer NFT (v2) |
-| `/api/v2/nft/burn` | POST | Burn NFT (v2) |
-| `/api/v2/nft/lock` | POST | Lock/unlock NFT (v2) |
-| `/api/v2/nft/freeze-collection` | POST | Freeze collection (v2) |
+| `/api/v2/nft/collection/create` | POST | Create collection (signed) |
+| `/api/v2/nft/mint` | POST | Mint NFT (signed) |
+| `/api/v2/nft/batch-mint` | POST | Batch mint (signed) |
+| `/api/v2/nft/transfer` | POST | Transfer NFT (signed) |
+| `/api/v2/nft/burn` | POST | Burn NFT (signed) |
+| `/api/v2/nft/lock` | POST | Lock/unlock NFT (signed) |
+| `/api/v2/nft/freeze-collection` | POST | Freeze collection (signed) |
+
+### Smart Contracts
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v2/contract/deploy` | POST | Deploy WASM contract (signed) |
+| `/api/v2/contract/call` | POST | Call contract method (signed) |
+| `/api/contract/:address` | GET | Get contract metadata |
+| `/api/contract/:address/state` | GET | Get contract state |
+| `/api/contract/:address/events` | GET | Get contract events |
 
 ### Bridge (ETH/USDC + XRGE)
 
@@ -162,9 +190,9 @@ All API endpoints expect **raw hex public keys**, not `rouge1` addresses:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v2/shielded/shield` | POST | Shield tokens (make private) |
-| `/api/v2/shielded/transfer` | POST | Private transfer |
-| `/api/v2/shielded/unshield` | POST | Unshield tokens (make public) |
+| `/api/v2/shielded/shield` | POST | Shield tokens (signed) |
+| `/api/v2/shielded/transfer` | POST | Private transfer (signed) |
+| `/api/v2/shielded/unshield` | POST | Unshield tokens (signed) |
 | `/api/shielded/stats` | GET | Shielded pool statistics |
 | `/api/shielded/nullifier/:hash` | GET | Check nullifier |
 
@@ -174,7 +202,7 @@ All API endpoints expect **raw hex public keys**, not `rouge1` addresses:
 |----------|--------|-------------|
 | `/api/v2/rollup/status` | GET | Rollup status |
 | `/api/v2/rollup/batch/:id` | GET | Get rollup batch |
-| `/api/v2/rollup/submit` | POST | Submit rollup transfer |
+| `/api/v2/rollup/submit` | POST | Submit rollup transfer (signed) |
 
 ### Governance
 
@@ -190,29 +218,29 @@ All API endpoints expect **raw hex public keys**, not `rouge1` addresses:
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/messenger/wallets` | GET | List messenger wallets |
-| `/api/messenger/wallets/register` | POST | Register wallet |
-| `/api/messenger/conversations` | GET/POST | Conversations |
-| `/api/messenger/conversations/:id` | DELETE | Delete conversation |
-| `/api/messenger/messages` | GET/POST | Messages |
-| `/api/messenger/messages/read` | POST | Mark as read |
-| `/api/messenger/messages/:id` | DELETE | Delete message |
+| `/api/v2/messenger/wallets/register` | POST | Register wallet (signed) |
+| `/api/v2/messenger/conversations` | POST | Create conversation (signed) |
+| `/api/v2/messenger/conversations/list` | POST | List conversations (signed) |
+| `/api/v2/messenger/conversations/delete` | POST | Delete conversation (signed) |
+| `/api/v2/messenger/messages` | POST | Send message (signed) |
+| `/api/v2/messenger/messages/list` | POST | List messages (signed) |
+| `/api/v2/messenger/messages/read` | POST | Mark as read (signed) |
+| `/api/v2/messenger/messages/delete` | POST | Delete message (signed) |
 
 ### Mail
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/names/register` | POST | Register mail name |
+| `/api/v2/names/register` | POST | Register mail name (signed) |
+| `/api/v2/names/release` | POST | Release a name (signed) |
 | `/api/names/resolve/:name` | GET | Resolve name → wallet |
 | `/api/names/reverse/:walletId` | GET | Reverse lookup → name |
-| `/api/names/release` | DELETE | Release a name |
-| `/api/mail/send` | POST | Send encrypted mail (with optional attachment) |
-| `/api/mail/inbox` | GET | Get inbox |
-| `/api/mail/sent` | GET | Get sent mail |
-| `/api/mail/trash` | GET | Get trashed mail |
-| `/api/mail/message/:id` | GET | Get single mail item |
-| `/api/mail/read` | POST | Mark as read |
-| `/api/mail/move` | POST | Move to folder |
-| `/api/mail/:id` | DELETE | Delete permanently |
+| `/api/v2/mail/send` | POST | Send encrypted mail (signed) |
+| `/api/v2/mail/folder` | POST | Get inbox/sent/trash (signed) |
+| `/api/v2/mail/message` | POST | Get single mail item (signed) |
+| `/api/v2/mail/read` | POST | Mark as read (signed) |
+| `/api/v2/mail/move` | POST | Move to folder (signed) |
+| `/api/v2/mail/delete` | POST | Delete permanently (signed) |
 
 ### Push Notifications
 
@@ -220,24 +248,6 @@ All API endpoints expect **raw hex public keys**, not `rouge1` addresses:
 |----------|--------|-------------|
 | `/api/push/register` | POST | Register push token (PQC-signed) |
 | `/api/push/unregister` | POST | Unregister push token (PQC-signed) |
-
-### Secure v2 API (Client-Side Signing)
-
-All v2 endpoints accept pre-signed transactions. Private keys never leave the client.
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v2/transfer` | POST | Transfer tokens |
-| `/api/v2/token/create` | POST | Create token |
-| `/api/v2/token/metadata/update` | POST | Update token metadata |
-| `/api/v2/token/metadata/claim` | POST | Claim metadata ownership |
-| `/api/v2/pool/create` | POST | Create pool |
-| `/api/v2/pool/add-liquidity` | POST | Add liquidity |
-| `/api/v2/pool/remove-liquidity` | POST | Remove liquidity |
-| `/api/v2/swap/execute` | POST | Execute swap |
-| `/api/v2/stake` | POST | Stake tokens |
-| `/api/v2/unstake` | POST | Unstake tokens |
-| `/api/v2/faucet` | POST | Request faucet |
 
 ### P2P
 

@@ -136,8 +136,9 @@ Once your Docker node is running and synced:
 4. Your node will begin participating in block production
 
 Your node earns:
-- **25%** of block fees when selected as proposer
-- **A share of 75%** of all block fees, weighted by your stake
+- **20%** of priority tips when selected as block proposer
+- **A share of 70%** of priority tips, weighted by your stake
+- A minimum tip floor of 0.1 XRGE/block is guaranteed from staking reserves
 
 ## Health Checks
 

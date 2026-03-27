@@ -318,10 +318,30 @@ server.tool(
 
 server.tool(
   "resolve_name",
-  "Resolve a RougeChain name service entry (like ENS for RougeChain)",
-  { name: z.string().describe("Name to resolve") },
+  "Resolve a mail name (e.g. 'alice') to the wallet's public keys and encryption key. Names are registered as alice@rouge.quant or alice@qwalla.mail",
+  { name: z.string().describe("Name to resolve (e.g. 'alice', without the @domain)") },
   async ({ name }) => {
-    const data = await apiGet(`/names/${name}`);
+    const data = await apiGet(`/names/resolve/${encodeURIComponent(name.toLowerCase())}`);
+    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  }
+);
+
+server.tool(
+  "reverse_lookup_name",
+  "Look up the registered mail name for a wallet ID or public key",
+  { walletId: z.string().describe("Wallet ID or public key hex") },
+  async ({ walletId }) => {
+    const data = await apiGet(`/names/reverse/${encodeURIComponent(walletId)}`);
+    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  }
+);
+
+server.tool(
+  "list_messenger_wallets",
+  "List all registered messenger wallets with their display names and encryption keys",
+  {},
+  async () => {
+    const data = await apiGet("/messenger/wallets");
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   }
 );
@@ -357,12 +377,14 @@ Features:
 - Custom tokens with mint authority
 - NFT collections with royalties
 - AMM DEX with multi-hop routing
-- End-to-end encrypted messaging
-- Encrypted mail system
+- End-to-end encrypted messaging (ML-KEM-768 + AES-GCM)
+- Encrypted mail with @rouge.quant / @qwalla.mail addresses (CEK multi-recipient encryption)
+- Real-time notifications: unread badges, native browser notifications, push notifications
 - EVM bridge (Base Sepolia)
-- Name service
+- Name service (mail + wallet name registry)
 - Governance proposals
 - WASM smart contracts with fuel-metered execution
+- WebSocket real-time event streaming
 
 SDK: @rougechain/sdk (npm)
 Docs: ${BASE_URL}/docs`,

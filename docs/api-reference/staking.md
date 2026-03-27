@@ -1,6 +1,6 @@
 # Staking API
 
-Endpoints for validator staking operations.
+Endpoints for validator staking operations. All write operations use v2 signed requests.
 
 ## List Validators
 
@@ -49,36 +49,23 @@ GET /api/validators
 
 ## Stake Tokens
 
-### Legacy API
-
-```http
-POST /api/stake/submit
-Content-Type: application/json
-```
-
-```json
-{
-  "fromPrivateKey": "your-private-key-hex",
-  "fromPublicKey": "your-public-key-hex",
-  "amount": 1000
-}
-```
-
-### v2 API (Client-Side Signing)
-
 ```http
 POST /api/v2/stake
 Content-Type: application/json
 ```
 
+### Request Body
+
 ```json
 {
-  "publicKey": "your-public-key-hex",
   "payload": {
-    "amount": 1000
+    "amount": 10000,
+    "from": "your-public-key-hex",
+    "timestamp": 1706745600000,
+    "nonce": "random-hex-string"
   },
-  "nonce": 1706745600000,
-  "signature": "your-ml-dsa65-signature-hex"
+  "signature": "your-ml-dsa65-signature-hex",
+  "public_key": "your-public-key-hex"
 }
 ```
 
@@ -88,7 +75,7 @@ Content-Type: application/json
 {
   "success": true,
   "txId": "abc123...",
-  "stake": 1000.0,
+  "stake": 10000.0,
   "status": "active"
 }
 ```
@@ -97,43 +84,30 @@ Content-Type: application/json
 
 | Requirement | Value |
 |-------------|-------|
-| Minimum stake | 1,000 XRGE |
+| Minimum stake | 10,000 XRGE |
 | Fee | 0.1 XRGE |
 
 ---
 
 ## Unstake Tokens
 
-### Legacy API
-
-```http
-POST /api/unstake/submit
-Content-Type: application/json
-```
-
-```json
-{
-  "fromPrivateKey": "your-private-key-hex",
-  "fromPublicKey": "your-public-key-hex",
-  "amount": 500
-}
-```
-
-### v2 API (Client-Side Signing)
-
 ```http
 POST /api/v2/unstake
 Content-Type: application/json
 ```
 
+### Request Body
+
 ```json
 {
-  "publicKey": "your-public-key-hex",
   "payload": {
-    "amount": 500
+    "amount": 5000,
+    "from": "your-public-key-hex",
+    "timestamp": 1706745600000,
+    "nonce": "random-hex-string"
   },
-  "nonce": 1706745600000,
-  "signature": "your-ml-dsa65-signature-hex"
+  "signature": "your-ml-dsa65-signature-hex",
+  "public_key": "your-public-key-hex"
 }
 ```
 
@@ -143,7 +117,7 @@ Content-Type: application/json
 {
   "success": true,
   "txId": "abc123...",
-  "remainingStake": 500.0
+  "remainingStake": 5000.0
 }
 ```
 
@@ -158,6 +132,6 @@ After unstaking, tokens enter an unbonding period (~7 days on testnet) before th
 | Error | Cause |
 |-------|-------|
 | `"insufficient balance"` | Not enough XRGE to stake |
-| `"below minimum stake"` | Amount is less than 1,000 XRGE |
+| `"below minimum stake"` | Amount is less than 10,000 XRGE |
 | `"validator not found"` | Trying to unstake but not a validator |
 | `"invalid signature"` | ML-DSA-65 signature verification failed |

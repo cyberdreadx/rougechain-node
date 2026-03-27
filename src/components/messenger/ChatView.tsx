@@ -509,10 +509,14 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
   );
 
 
-  const isSelfConversation = conversation.name === "Note to Self" ||
+  const hasBot = conversation.name === "Quantum Bot" ||
+    conversation.participants?.some(p => p.id?.startsWith("bot-"));
+  const isSelfConversation = !hasBot && (
+    conversation.name === "Note to Self" ||
     (conversation.participants?.every(p =>
       myIds.has(p.id) || myIds.has(p.signingPublicKey) || myIds.has(p.encryptionPublicKey)
-    ) ?? false);
+    ) ?? false)
+  );
 
   const recipient = isSelfConversation
     ? { id: wallet.id, displayName: wallet.displayName, signingPublicKey: wallet.signingPublicKey, encryptionPublicKey: wallet.encryptionPublicKey }

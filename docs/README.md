@@ -32,7 +32,7 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | **SDK** | `@rougechain/sdk` npm package for building dApps |
 | **EIP-1559 Dynamic Fees** | Base fee auto-adjusts per block, fee burning for deflationary pressure |
 | **Token Mint Authority** | Ongoing minting for custom tokens with supply cap enforcement |
-| **Validator Slashing** | Slash penalties for misbehavior, unbonding queue with 100-block delay |
+| **Validator Slashing** | Slash penalties for misbehavior, unbonding queue with 500-block delay |
 | **BFT Finality Proofs** | Serializable quorum certificates with ≥2/3 validator stake |
 | **WebSocket Subscriptions** | Topic-based real-time event streaming (blocks, txs, accounts, tokens) |
 | **HD Wallet Derivation** | BIP-44-like PQC key derivation from master seed (HMAC-SHA256) |
@@ -88,8 +88,8 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | Token Creation | 100 XRGE |
 | Pool Creation | 10 XRGE |
 | Swap | 0.3% (to LPs) |
-| Minimum Stake | 1,000 XRGE |
-| Unbonding Period | 100 blocks (~10 minutes) |
+| Minimum Stake | 10,000 XRGE |
+| Unbonding Period | 500 blocks |
 
 > **EIP-1559 Fee Model:** The base fee adjusts ±12.5% per block based on transaction volume (target: 10 txs/block). The base fee portion is **burned**, and only the priority tip goes to validators. Check current fees via `GET /api/fee`.
 

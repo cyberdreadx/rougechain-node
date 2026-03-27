@@ -9,13 +9,30 @@ All notable changes to RougeChain.
 ### Added
 - **WASM STARK prover** — Browser-side STARK proof generation via `core/wasm-prover/` compiled to WebAssembly. Unshield and shielded transfer operations now generate real winterfell STARK proofs client-side without relying on a trusted server
 - **Groq-powered Quantum Bot** — Messenger AI bot proxied through the node using Groq's `llama-3.1-8b-instant` model with a comprehensive RougeChain knowledge base
+- **Mail & messenger unread badges** — Browser extension and QWalla app show unread count badges on both Chat and Mail tabs with hover tooltips (e.g. "3 unread emails"). The browser extension icon badge displays the combined unread total
+- **Native browser notifications** — Browser extension fires system notifications for new messages, new mail, received/sent tokens, contract deployments, staking events, and balance changes via WebSocket and periodic polling
+- **Mail reply pre-fill** — Clicking "Reply" in the browser extension auto-populates the recipient, subject (with "Re:"), and quoted original message body
+- **Mail attachments (extension)** — Browser extension mail compose and read views now support file attachments with upload, preview, and download, matching the website's feature set
+- **Initial unread count polling (QWalla)** — App fetches actual unread chat and mail counts from the server on launch so tab badges are accurate immediately, not just after a real-time event arrives
 
 ### Fixed
 - **PWA wallet persistence** — Wallet private keys now persist in `localStorage` when no vault password is set, preventing wallet loss on PWA/tab restart. Password-protected vaults continue to use encrypted storage only
 - **Browser extension key regeneration** — Removed aggressive version-based key regeneration that was replacing existing valid keys and causing loss of on-chain identity (faucet funds)
 - **Quantum Bot registration** — Bot wallets use unique per-browser IDs and register as non-discoverable to prevent display name conflicts
+- **Browser extension messenger** — All 8 messenger endpoints migrated from legacy unsigned v1 to ML-DSA-65 signed v2 endpoints, fixing "Registration failed" errors in production
+- **Browser extension mail decryption** — Ported v2 multi-recipient CEK encryption/decryption to the extension, fixing "[Unable to decrypt]" on mail sent from the website
+- **QWalla mail encryption** — Added v2 CEK encryption/decryption for cross-client mail compatibility with the website and browser extension
+- **QWalla message signing** — Messages now include ML-DSA-65 content signatures; fixed `ml_dsa65.sign` argument order that caused "secretKey expected Uint8Array of length 4032" errors
+- **Message signature display** — Three-state indicator: green check (verified), red X (failed), grey shield (no signature) — prevents false negatives on unsigned legacy messages
+- **Shielded note badge** — Browser extension wallet tab now shows shielded notes for the current wallet only (per-wallet `getActiveNotes`) instead of the global chain stat
+- **Unread badge persistence** — Badge clears correctly after viewing messages; `lastKnownUnread` persisted to `chrome.storage.local` to survive service worker restarts
+- **QWalla `@qwalla.mail` domain** — Mail addresses now display as `@qwalla.mail` throughout the app instead of `@rouge.quant`
+- **QWalla mail name resolution** — Mail list and detail views resolve and display registered names instead of raw wallet IDs
 
 ### Changed
+- **Validator economics** — Base fee burn reduced from 100% to 50%; remaining 50% flows into the tip pool for validator rewards. A 0.1 XRGE/block minimum tip floor is guaranteed from the staking reserves allocation
+- **Minimum stake** — Enforced at 10,000 XRGE (previously unenforced). Staking requests below this threshold are rejected
+- **Entropy prefetch** — ANU QRNG entropy is now fetched in a background thread and cached, eliminating per-block blocking HTTP calls that could stall block production for up to 20 seconds
 - Service worker cache bumped to `rougechain-v2` to invalidate stale assets on existing PWA installs
 - Session-only private keys policy updated: `localStorage` used for unprotected wallets, `sessionStorage`-only when vault passphrase is configured
 

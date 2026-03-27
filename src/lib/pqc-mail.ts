@@ -31,7 +31,7 @@ export interface MailMessage {
   subject?: string;
   body?: string;
   attachmentData?: MailAttachment;
-  signatureValid?: boolean;
+  signatureValid?: boolean | null;
   senderName?: string;
 }
 
@@ -387,7 +387,7 @@ async function getFolder(wallet: WalletWithPrivateKeys, folder: string): Promise
 
       let subject = "[Unable to decrypt]";
       let body = "[Unable to decrypt]";
-      let signatureValid = false;
+      let signatureValid: boolean | null = null;
 
       try {
         subject = await decryptMailContent(msg.subjectEncrypted, wallet.encryptionPrivateKey, wallet.encryptionPublicKey);
@@ -415,7 +415,9 @@ async function getFolder(wallet: WalletWithPrivateKeys, folder: string): Promise
             new TextEncoder().encode(sigPayload),
             hexToBytes(senderSigningKey),
           );
-        } catch { /* */ }
+        } catch {
+          signatureValid = false;
+        }
       }
 
       const senderName = await getSenderDisplayName(msg.fromWalletId, allWallets);
