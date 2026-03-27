@@ -223,3 +223,92 @@ const name = await rc.mail.reverseLookup(wallet.publicKey); // "alice"
 ```
 
 For the full messenger and mail APIs, see the [SDK documentation](sdk.md).
+
+## Social Layer
+
+RougeChain includes a built-in social layer for posts, likes, reposts, follows, comments, and play tracking. Social data is stored server-side in sled with ML-DSA-65 signed writes — tips settle on-chain via `rc.transfer()`.
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| **Posts** | Standalone text posts (max 4000 chars) with threaded replies via `replyToId` |
+| **Timeline** | Global timeline (newest first) and personalized following feed |
+| **Likes** | Toggle likes on posts or tracks — reuses the same endpoint |
+| **Reposts** | Toggle reposts on any post |
+| **Comments** | Track-level comments with pagination |
+| **Follows** | Follow/unfollow any user; follower and following counts |
+| **Play counts** | Record plays on tracks (debounced per session) |
+| **Tips** | Send XRGE tips to creators via `rc.transfer()` — settles on-chain |
+
+### API Endpoints
+
+**Read (unsigned GET):**
+- `GET /api/social/timeline` — Global timeline
+- `GET /api/social/post/:postId` — Single post with stats
+- `GET /api/social/post/:postId/stats` — Post engagement stats (likes, reposts, replies)
+- `GET /api/social/post/:postId/replies` — Threaded replies
+- `GET /api/social/user/:pubkey/posts` — User's posts
+- `GET /api/social/track/:trackId/stats` — Track stats (plays, likes, comments)
+- `GET /api/social/track/:trackId/comments` — Track comments
+- `GET /api/social/artist/:pubkey/stats` — Artist stats (followers, following)
+- `GET /api/social/user/:pubkey/likes` — User's liked IDs
+- `GET /api/social/user/:pubkey/following` — User's followed artists
+
+**Write (v2 signed POST):**
+- `POST /api/v2/social/post` — Create a post
+- `POST /api/v2/social/post/delete` — Delete your post
+- `POST /api/v2/social/like` — Toggle like
+- `POST /api/v2/social/repost` — Toggle repost
+- `POST /api/v2/social/comment` — Post a comment
+- `POST /api/v2/social/comment/delete` — Delete your comment
+- `POST /api/v2/social/follow` — Toggle follow
+- `POST /api/v2/social/play` — Record a play
+- `POST /api/v2/social/feed` — Get following feed (authenticated)
+
+### SDK Usage
+
+```typescript
+import { RougeChain, Wallet } from '@rougechain/sdk';
+
+const rc = new RougeChain('https://testnet.rougechain.io/api');
+const wallet = Wallet.generate();
+
+// Create a post
+const { post } = await rc.social.createPost(wallet, "Hello RougeChain!");
+
+// Reply
+await rc.social.createPost(wallet, "Great post!", post.id);
+
+// Like, repost, follow
+await rc.social.toggleLike(wallet, post.id);
+await rc.social.toggleRepost(wallet, post.id);
+await rc.social.toggleFollow(wallet, artistPubKey);
+
+// Read timeline
+const timeline = await rc.social.getGlobalTimeline();
+const feed = await rc.social.getFollowingFeed(wallet);
+```
+
+### CLI Usage
+
+```bash
+# Post
+rougechain post "Hello from the CLI!"
+
+# Reply
+rougechain post "Nice post!" --reply-to <post-id>
+
+# Timeline
+rougechain timeline --limit 20
+
+# Your feed (posts from people you follow)
+rougechain feed
+
+# Like / repost
+rougechain like <post-or-track-id>
+rougechain repost <post-id>
+
+# Get a post
+rougechain get-post <post-id>
+```

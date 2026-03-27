@@ -107,6 +107,7 @@ export class RougeChain {
   public readonly mail: MailClient;
   public readonly messenger: MessengerClient;
   public readonly shielded: ShieldedClient;
+  public readonly social: SocialClient;
 
   constructor(baseUrl: string, options: RougeChainOptions = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
@@ -122,6 +123,7 @@ export class RougeChain {
     this.mail = new MailClient(this);
     this.messenger = new MessengerClient(this);
     this.shielded = new ShieldedClient(this);
+    this.social = new SocialClient(this);
   }
 
   // ===== Internal helpers =====
@@ -1252,6 +1254,160 @@ class ShieldedClient {
   /** List all deployed contracts */
   async listContracts(): Promise<ApiResponse> {
     return this.rc.get("/contracts");
+  }
+}
+
+// ===== Social Client =====
+
+export interface TrackStats {
+  plays: number;
+  likes: number;
+  commentCount: number;
+  liked: boolean;
+}
+
+export interface ArtistStats {
+  followers: number;
+  following: number;
+  isFollowing: boolean;
+}
+
+export interface SocialComment {
+  id: string;
+  track_id: string;
+  wallet_pubkey: string;
+  body: string;
+  timestamp: string;
+}
+
+export interface SocialPost {
+  id: string;
+  author_pubkey: string;
+  body: string;
+  reply_to_id: string | null;
+  created_at: string;
+}
+
+export interface PostStats {
+  likes: number;
+  reposts: number;
+  replies: number;
+  liked: boolean;
+  reposted: boolean;
+}
+
+class SocialClient {
+  constructor(private readonly rc: RougeChain) {}
+
+  async recordPlay(wallet: WalletKeys, trackId: string): Promise<ApiResponse> {
+    const signed = signRequest(wallet, { trackId });
+    return this.rc.submitTx("/v2/social/play", signed);
+  }
+
+  async toggleLike(wallet: WalletKeys, trackId: string): Promise<ApiResponse & { liked?: boolean; likes?: number }> {
+    const signed = signRequest(wallet, { trackId });
+    return this.rc.submitTx("/v2/social/like", signed) as Promise<ApiResponse & { liked?: boolean; likes?: number }>;
+  }
+
+  async postComment(wallet: WalletKeys, trackId: string, body: string): Promise<ApiResponse & { comment?: SocialComment }> {
+    const signed = signRequest(wallet, { trackId, body });
+    return this.rc.submitTx("/v2/social/comment", signed) as Promise<ApiResponse & { comment?: SocialComment }>;
+  }
+
+  async deleteComment(wallet: WalletKeys, commentId: string): Promise<ApiResponse> {
+    const signed = signRequest(wallet, { commentId });
+    return this.rc.submitTx("/v2/social/comment/delete", signed);
+  }
+
+  async toggleFollow(wallet: WalletKeys, artistPubkey: string): Promise<ApiResponse & { following?: boolean; followers?: number }> {
+    const signed = signRequest(wallet, { artistPubkey });
+    return this.rc.submitTx("/v2/social/follow", signed) as Promise<ApiResponse & { following?: boolean; followers?: number }>;
+  }
+
+  async getTrackStats(trackId: string, viewerPubkey?: string): Promise<TrackStats> {
+    const q = viewerPubkey ? `?viewer=${encodeURIComponent(viewerPubkey)}` : "";
+    return this.rc.get<TrackStats>(`/social/track/${encodeURIComponent(trackId)}/stats${q}`);
+  }
+
+  async getComments(trackId: string, limit = 50, offset = 0): Promise<SocialComment[]> {
+    const data = await this.rc.get<{ comments: SocialComment[] }>(
+      `/social/track/${encodeURIComponent(trackId)}/comments?limit=${limit}&offset=${offset}`
+    );
+    return data.comments ?? [];
+  }
+
+  async getArtistStats(pubkey: string, viewerPubkey?: string): Promise<ArtistStats> {
+    const q = viewerPubkey ? `?viewer=${encodeURIComponent(viewerPubkey)}` : "";
+    return this.rc.get<ArtistStats>(`/social/artist/${encodeURIComponent(pubkey)}/stats${q}`);
+  }
+
+  async getUserLikes(pubkey: string): Promise<string[]> {
+    const data = await this.rc.get<{ trackIds: string[] }>(`/social/user/${encodeURIComponent(pubkey)}/likes`);
+    return data.trackIds ?? [];
+  }
+
+  async getUserFollowing(pubkey: string): Promise<string[]> {
+    const data = await this.rc.get<{ artists: string[] }>(`/social/user/${encodeURIComponent(pubkey)}/following`);
+    return data.artists ?? [];
+  }
+
+  // ── Posts ──────────────────────────────────────────────
+
+  async createPost(wallet: WalletKeys, body: string, replyToId?: string): Promise<ApiResponse & { post?: SocialPost }> {
+    const payload: Record<string, unknown> = { body };
+    if (replyToId) payload.replyToId = replyToId;
+    const signed = signRequest(wallet, payload);
+    return this.rc.submitTx("/v2/social/post", signed) as Promise<ApiResponse & { post?: SocialPost }>;
+  }
+
+  async deletePost(wallet: WalletKeys, postId: string): Promise<ApiResponse> {
+    const signed = signRequest(wallet, { postId });
+    return this.rc.submitTx("/v2/social/post/delete", signed);
+  }
+
+  async toggleRepost(wallet: WalletKeys, postId: string): Promise<ApiResponse & { reposted?: boolean; reposts?: number }> {
+    const signed = signRequest(wallet, { postId });
+    return this.rc.submitTx("/v2/social/repost", signed) as Promise<ApiResponse & { reposted?: boolean; reposts?: number }>;
+  }
+
+  async getPost(postId: string, viewerPubkey?: string): Promise<{ post: SocialPost; stats: PostStats } | null> {
+    const q = viewerPubkey ? `?viewer=${encodeURIComponent(viewerPubkey)}` : "";
+    try {
+      return await this.rc.get<{ post: SocialPost; stats: PostStats }>(`/social/post/${encodeURIComponent(postId)}${q}`);
+    } catch { return null; }
+  }
+
+  async getPostStats(postId: string, viewerPubkey?: string): Promise<PostStats> {
+    const q = viewerPubkey ? `?viewer=${encodeURIComponent(viewerPubkey)}` : "";
+    return this.rc.get<PostStats>(`/social/post/${encodeURIComponent(postId)}/stats${q}`);
+  }
+
+  async getPostReplies(postId: string, limit = 50, offset = 0): Promise<SocialPost[]> {
+    const data = await this.rc.get<{ replies: SocialPost[] }>(
+      `/social/post/${encodeURIComponent(postId)}/replies?limit=${limit}&offset=${offset}`
+    );
+    return data.replies ?? [];
+  }
+
+  async getUserPosts(pubkey: string, limit = 50, offset = 0): Promise<{ posts: SocialPost[]; total: number }> {
+    return this.rc.get<{ posts: SocialPost[]; total: number }>(
+      `/social/user/${encodeURIComponent(pubkey)}/posts?limit=${limit}&offset=${offset}`
+    );
+  }
+
+  async getGlobalTimeline(limit = 50, offset = 0): Promise<SocialPost[]> {
+    const data = await this.rc.get<{ posts: SocialPost[] }>(
+      `/social/timeline?limit=${limit}&offset=${offset}`
+    );
+    return data.posts ?? [];
+  }
+
+  async getFollowingFeed(wallet: WalletKeys, limit = 50, offset = 0): Promise<SocialPost[]> {
+    const signed = signRequest(wallet, { limit, offset });
+    try {
+      const data = await this.rc.submitTx("/v2/social/feed", signed) as unknown as { posts?: SocialPost[] };
+      return data.posts ?? [];
+    } catch { return []; }
   }
 }
 

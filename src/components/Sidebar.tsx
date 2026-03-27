@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { 
   Home, 
@@ -28,7 +28,8 @@ import xrgeLogo from "@/assets/xrge-logo.webp";
 import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY } from "@/lib/network";
 import { cn } from "@/lib/utils";
 import { pubkeyToAddress, isRougeAddress, formatAddress } from "@/lib/address";
-import { loadUnifiedWallet } from "@/lib/unified-wallet";
+import { loadUnifiedWallet, toMessengerWallet } from "@/lib/unified-wallet";
+import type { WalletWithPrivateKeys } from "@/lib/pqc-messenger";
 
 interface NavItem {
   to: string;
@@ -138,6 +139,9 @@ export function Sidebar({ children }: SidebarProps) {
   const [networkLabel, setNetworkLabel] = useState<string>(() => getNetworkLabel());
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [unreadChats, setUnreadChats] = useState(0);
+  const [unreadMail, setUnreadMail] = useState(0);
+  const unreadIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Derive wallet address
   useEffect(() => {
@@ -146,6 +150,43 @@ export function Sidebar({ children }: SidebarProps) {
       pubkeyToAddress(wallet.signingPublicKey).then(setWalletAddress).catch(() => {});
     }
   }, []);
+
+  const pollUnread = useCallback(async () => {
+    const wallet = loadUnifiedWallet();
+    if (!wallet) return;
+    try {
+      const mw = toMessengerWallet(wallet) as WalletWithPrivateKeys;
+      const { getConversations } = await import("@/lib/pqc-messenger");
+      const convos = await getConversations(mw.id, mw);
+      const chatCount = convos.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+      setUnreadChats(chatCount);
+    } catch { /* ignore */ }
+    try {
+      const mw = toMessengerWallet(wallet) as WalletWithPrivateKeys;
+      const { getInbox } = await import("@/lib/pqc-mail");
+      const inbox = await getInbox(mw);
+      const mailCount = inbox.filter(item => !item.label.isRead).length;
+      setUnreadMail(mailCount);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    const wallet = loadUnifiedWallet();
+    if (!wallet) return;
+    pollUnread();
+    unreadIntervalRef.current = setInterval(pollUnread, 30000);
+    return () => {
+      if (unreadIntervalRef.current) clearInterval(unreadIntervalRef.current);
+    };
+  }, [pollUnread]);
+
+  // Re-poll when navigating to messenger or mail (marks as read)
+  useEffect(() => {
+    if (location.pathname === "/messenger" || location.pathname === "/mail") {
+      const timeout = setTimeout(pollUnread, 3000);
+      return () => clearTimeout(timeout);
+    }
+  }, [location.pathname, pollUnread]);
 
   const toggleGroup = (title: string) => {
     setCollapsedGroups((prev) => ({ ...prev, [title]: !prev[title] }));
@@ -289,11 +330,19 @@ export function Sidebar({ children }: SidebarProps) {
             {group.items.map((item) => {
               const isActive = location.pathname === item.to;
               const Icon = item.icon;
+              const badge = item.to === "/messenger" ? unreadChats : item.to === "/mail" ? unreadMail : 0;
+              const tooltip =
+                item.to === "/messenger" && badge > 0
+                  ? `${badge} unread message${badge > 1 ? "s" : ""}`
+                  : item.to === "/mail" && badge > 0
+                    ? `${badge} unread email${badge > 1 ? "s" : ""}`
+                    : item.label;
               return (
                 <NavLink
                   key={item.to}
                   to={item.to}
                   onClick={() => isMobile && setMobileOpen(false)}
+                  title={tooltip}
                   className={cn(
                     "flex items-center gap-3 px-3 py-1 rounded-lg text-[13px] font-medium transition-all duration-200",
                     isActive
@@ -301,12 +350,24 @@ export function Sidebar({ children }: SidebarProps) {
                       : "text-muted-foreground hover:text-foreground hover:bg-muted"
                   )}
                 >
-                  <Icon className="w-4 h-4 flex-shrink-0" />
+                  <span className="relative flex-shrink-0">
+                    <Icon className="w-4 h-4" />
+                    {badge > 0 && !(expanded || isMobile) && (
+                      <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] flex items-center justify-center rounded-full bg-primary text-[8px] font-bold text-primary-foreground leading-none px-0.5">
+                        {badge > 99 ? "99+" : badge}
+                      </span>
+                    )}
+                  </span>
                   <span className={cn(
-                    "whitespace-nowrap overflow-hidden transition-all duration-300",
+                    "whitespace-nowrap overflow-hidden transition-all duration-300 flex items-center gap-2",
                     (expanded || isMobile) ? "opacity-100 w-auto" : "opacity-0 w-0"
                   )}>
                     {item.label}
+                    {badge > 0 && (expanded || isMobile) && (
+                      <span className="min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground leading-none px-1">
+                        {badge > 99 ? "99+" : badge}
+                      </span>
+                    )}
                   </span>
                 </NavLink>
               );

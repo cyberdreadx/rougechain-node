@@ -7,6 +7,13 @@ All notable changes to RougeChain.
 ## Testnet v0.2.4 — March 2026
 
 ### Added
+- **Social layer** — On-chain social features with plays, likes, comments, follows, and tips. Data is stored server-side in sled with ML-DSA-65 signed writes; tips settle on-chain via `rc.transfer()`
+- **Standalone posts** — Create, delete, and fetch posts (max 4000 chars) with threaded replies via `replyToId`. Global timeline and personalized following feed endpoints
+- **Reposts** — Toggle repost on any post; repost counts aggregated per post with viewer state
+- **Post stats** — Aggregate endpoint returns likes, reposts, reply count, and viewer's liked/reposted state for any post
+- **Following feed** — Authenticated endpoint returns posts from users the viewer follows, sorted newest-first
+- **qRougee social integration** — TrackDetail shows play counts, like button, tip modal, and comments. TrackCard badges show plays/likes. ArtistProfile shows followers and follow button. Library includes a "Liked" tab. Home page sorts discovery by popularity
+- **SDK v1.0.0** — `rc.social` namespace with 19 methods: `createPost`, `deletePost`, `toggleRepost`, `getPost`, `getPostStats`, `getPostReplies`, `getUserPosts`, `getGlobalTimeline`, `getFollowingFeed`, plus existing play/like/comment/follow methods
 - **WASM STARK prover** — Browser-side STARK proof generation via `core/wasm-prover/` compiled to WebAssembly. Unshield and shielded transfer operations now generate real winterfell STARK proofs client-side without relying on a trusted server
 - **Groq-powered Quantum Bot** — Messenger AI bot proxied through the node using Groq's `llama-3.1-8b-instant` model with a comprehensive RougeChain knowledge base
 - **Mail & messenger unread badges** — Browser extension and QWalla app show unread count badges on both Chat and Mail tabs with hover tooltips (e.g. "3 unread emails"). The browser extension icon badge displays the combined unread total

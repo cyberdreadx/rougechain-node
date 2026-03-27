@@ -1,5 +1,5 @@
 export { RougeChain } from "./client.js";
-export type { RougeChainOptions } from "./client.js";
+export type { RougeChainOptions, TrackStats, ArtistStats, SocialComment, SocialPost, PostStats } from "./client.js";
 
 export { Wallet } from "./wallet.js";
 

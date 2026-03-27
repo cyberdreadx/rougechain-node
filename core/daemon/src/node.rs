@@ -21,6 +21,7 @@ use quantum_vault_storage::messenger_store::{Conversation, MessengerMessage, Mes
 use quantum_vault_storage::name_registry::{NameEntry, NameRegistry};
 use quantum_vault_storage::nullifier_store::NullifierStore;
 use quantum_vault_storage::receipt_store::ReceiptStore;
+use quantum_vault_storage::social_store::SocialStore;
 use quantum_vault_storage::token_metadata_store::{TokenMetadata, TokenMetadataStore};
 use quantum_vault_storage::push_token_store::PushTokenStore;
 use quantum_vault_storage::token_stake_store::{TokenStakeStore, StakingPool, TokenStake};
@@ -96,6 +97,7 @@ pub struct L1Node {
     allowance_store: AllowanceStore,
     nullifier_store: NullifierStore,
     receipt_store: ReceiptStore,
+    social_store: SocialStore,
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
     verified_tx_ids: Arc<Mutex<HashSet<String>>>,
@@ -153,6 +155,7 @@ impl L1Node {
         let token_stake_store = TokenStakeStore::new(&data_dir_str)?;
         let governance_store = GovernanceStore::new(&data_dir_str)?;
         let allowance_store = AllowanceStore::new(&data_dir_str)?;
+        let social_store = SocialStore::new(&opts.data_dir)?;
         // Open receipt store on the same sled DB as chain store
         let receipt_db = sled::open(opts.data_dir.join("receipt-db"))
             .map_err(|e| format!("open receipt DB: {}", e))?;
@@ -197,6 +200,7 @@ impl L1Node {
             token_stake_store,
             governance_store,
             allowance_store,
+            social_store,
             keys: Arc::new(Mutex::new(keys)),
             mempool: Arc::new(Mutex::new(HashMap::new())),
             verified_tx_ids: Arc::new(Mutex::new(HashSet::new())),
@@ -5255,6 +5259,90 @@ impl L1Node {
             .into_iter()
             .map(|r| (r.public_key, r.push_token))
             .collect()
+    }
+
+    // ===== Social =====
+
+    pub fn social_record_play(&self, track_id: &str) -> Result<u64, String> {
+        self.social_store.record_play(track_id)
+    }
+
+    pub fn social_toggle_like(&self, track_id: &str, wallet_pubkey: &str) -> Result<(bool, u64), String> {
+        self.social_store.toggle_like(track_id, wallet_pubkey)
+    }
+
+    pub fn social_add_comment(&self, track_id: &str, wallet_pubkey: &str, body: &str) -> Result<quantum_vault_storage::social_store::SocialComment, String> {
+        self.social_store.add_comment(track_id, wallet_pubkey, body)
+    }
+
+    pub fn social_delete_comment(&self, comment_id: &str, wallet_pubkey: &str) -> Result<(), String> {
+        self.social_store.delete_comment(comment_id, wallet_pubkey)
+    }
+
+    pub fn social_toggle_follow(&self, follower_pubkey: &str, artist_pubkey: &str) -> Result<(bool, u64), String> {
+        self.social_store.toggle_follow(follower_pubkey, artist_pubkey)
+    }
+
+    pub fn social_get_track_stats(&self, track_id: &str, viewer: Option<&str>) -> Result<serde_json::Value, String> {
+        self.social_store.get_track_stats(track_id, viewer)
+    }
+
+    pub fn social_get_comments(&self, track_id: &str, limit: usize, offset: usize) -> Result<Vec<quantum_vault_storage::social_store::SocialComment>, String> {
+        self.social_store.get_comments(track_id, limit, offset)
+    }
+
+    pub fn social_get_artist_stats(&self, pubkey: &str, viewer: Option<&str>) -> Result<serde_json::Value, String> {
+        self.social_store.get_artist_stats(pubkey, viewer)
+    }
+
+    pub fn social_get_user_likes(&self, pubkey: &str) -> Result<Vec<String>, String> {
+        self.social_store.get_user_likes(pubkey)
+    }
+
+    pub fn social_get_user_following(&self, pubkey: &str) -> Result<Vec<String>, String> {
+        self.social_store.get_user_following(pubkey)
+    }
+
+    // ===== Social Posts =====
+
+    pub fn social_create_post(&self, author_pubkey: &str, body: &str, reply_to_id: Option<&str>) -> Result<quantum_vault_storage::social_store::SocialPost, String> {
+        self.social_store.create_post(author_pubkey, body, reply_to_id)
+    }
+
+    pub fn social_get_post(&self, post_id: &str) -> Result<Option<quantum_vault_storage::social_store::SocialPost>, String> {
+        self.social_store.get_post(post_id)
+    }
+
+    pub fn social_delete_post(&self, post_id: &str, author_pubkey: &str) -> Result<(), String> {
+        self.social_store.delete_post(post_id, author_pubkey)
+    }
+
+    pub fn social_get_user_posts(&self, pubkey: &str, limit: usize, offset: usize) -> Result<Vec<quantum_vault_storage::social_store::SocialPost>, String> {
+        self.social_store.get_user_posts(pubkey, limit, offset)
+    }
+
+    pub fn social_get_user_post_count(&self, pubkey: &str) -> Result<u64, String> {
+        self.social_store.get_user_post_count(pubkey)
+    }
+
+    pub fn social_get_global_timeline(&self, limit: usize, offset: usize) -> Result<Vec<quantum_vault_storage::social_store::SocialPost>, String> {
+        self.social_store.get_global_timeline(limit, offset)
+    }
+
+    pub fn social_get_following_feed(&self, viewer_pubkey: &str, limit: usize, offset: usize) -> Result<Vec<quantum_vault_storage::social_store::SocialPost>, String> {
+        self.social_store.get_following_feed(viewer_pubkey, limit, offset)
+    }
+
+    pub fn social_get_replies(&self, post_id: &str, limit: usize, offset: usize) -> Result<Vec<quantum_vault_storage::social_store::SocialPost>, String> {
+        self.social_store.get_replies(post_id, limit, offset)
+    }
+
+    pub fn social_toggle_repost(&self, post_id: &str, reposter_pubkey: &str) -> Result<(bool, u64), String> {
+        self.social_store.toggle_repost(post_id, reposter_pubkey)
+    }
+
+    pub fn social_get_post_stats(&self, post_id: &str, viewer: Option<&str>) -> Result<serde_json::Value, String> {
+        self.social_store.get_post_stats(post_id, viewer)
     }
 
 }

@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>Build quantum-safe dApps on RougeChain</strong><br />
-  Transfers · DEX · NFTs · Shielded Transactions · Bridge · Rollups · Dynamic Fees · Finality Proofs · WebSocket · Mail · Messenger
+  Transfers · DEX · NFTs · Social · Shielded Transactions · Bridge · Rollups · Dynamic Fees · Finality Proofs · WebSocket · Mail · Messenger
 </p>
 
 <p align="center">
@@ -62,6 +62,7 @@ const { balance } = await rc.getBalance(wallet.publicKey);
 | **Shielded** | `rc.shielded` | Private transfers with zk-STARK proofs, shield/unshield XRGE |
 | **Bridge** | `rc.bridge` | ETH ↔ qETH, USDC ↔ qUSDC, XRGE bridge (Base Mainnet/Sepolia) |
 | **Rollup** | `rc` | zk-STARK batch proofs, rollup status, submit transfers |
+| **Social** | `rc.social` | Posts, timeline feed, reposts, likes, follows, comments |
 | **Mail** | `rc.mail` | On-chain encrypted email (`@rouge.quant`) |
 | **Messenger** | `rc.messenger` | E2E encrypted messaging with self-destruct |
 | **Address Resolution** | `rc` | O(1) rouge1↔pubkey resolution via on-chain index |
@@ -335,6 +336,79 @@ const batch = await rc.getRollupBatch(1);
 // { batch_id, transfer_count, proof_size_bytes, proof_time_ms, verified, ... }
 ```
 
+## Social (`rc.social`)
+
+On-chain social layer with posts, threaded replies, reposts, likes, follows, and comments. All write operations require a `wallet` parameter for ML-DSA-65 signed requests.
+
+### Posts & Timeline
+
+```typescript
+// Create a post (max 4000 chars)
+const { post } = await rc.social.createPost(wallet, "Hello RougeChain!");
+
+// Reply to a post (threaded)
+await rc.social.createPost(wallet, "Great point!", post.id);
+
+// Delete your own post
+await rc.social.deletePost(wallet, post.id);
+
+// Get a single post with stats
+const result = await rc.social.getPost(post.id, wallet.publicKey);
+// result.post, result.stats { likes, reposts, replies, liked, reposted }
+
+// Global timeline (all posts, newest first)
+const timeline = await rc.social.getGlobalTimeline(50, 0);
+
+// Following feed (posts from people you follow)
+const feed = await rc.social.getFollowingFeed(wallet, 50, 0);
+
+// User's posts
+const { posts, total } = await rc.social.getUserPosts(userPubKey);
+
+// Get replies to a post
+const replies = await rc.social.getPostReplies(post.id);
+```
+
+### Likes, Reposts & Follows
+
+```typescript
+// Like/unlike a post or track (toggle)
+await rc.social.toggleLike(wallet, postOrTrackId);
+
+// Repost/unrepost (toggle)
+await rc.social.toggleRepost(wallet, post.id);
+
+// Follow/unfollow (toggle)
+await rc.social.toggleFollow(wallet, artistPubKey);
+
+// Get stats
+const stats = await rc.social.getPostStats(post.id, wallet.publicKey);
+const artistStats = await rc.social.getArtistStats(pubkey, wallet.publicKey);
+```
+
+### Comments (Track-level)
+
+```typescript
+// Comment on a track
+const { comment } = await rc.social.postComment(wallet, trackId, "Fire track!");
+
+// Get comments
+const comments = await rc.social.getComments(trackId);
+
+// Delete your comment
+await rc.social.deleteComment(wallet, comment.id);
+```
+
+### Play Counts
+
+```typescript
+// Record a play (debounce client-side, one per session per track)
+await rc.social.recordPlay(wallet, trackId);
+
+// Get track stats (plays, likes, comments)
+const trackStats = await rc.social.getTrackStats(trackId, wallet.publicKey);
+```
+
 ## Mail (`rc.mail`)
 
 On-chain encrypted email with `@rouge.quant` / `@qwalla.mail` addresses. All write operations require a `wallet` parameter for ML-DSA-65 request signing — requests are authenticated via `/api/v2/` endpoints with anti-replay nonce protection.
@@ -567,6 +641,7 @@ import type {
   ShieldedNote,
   RollupStatus, RollupBatchResult, RollupSubmitParams, RollupSubmitResult,
   FeeInfo, FinalityProof, MintTokenParams, VoteMessage, WsSubscribeMessage,
+  SocialPost, PostStats, TrackStats, ArtistStats, SocialComment,
 } from "@rougechain/sdk";
 ```
 

@@ -170,6 +170,57 @@ enum Commands {
         /// Conversation ID
         conversation_id: String,
     },
+
+    // ── Social ──
+
+    /// Create a social post
+    Post {
+        /// Post body text (max 4000 chars)
+        body: String,
+        /// Reply to an existing post ID (optional)
+        #[arg(long)]
+        reply_to: Option<String>,
+    },
+    /// Delete your own post
+    DeletePost {
+        /// Post ID to delete
+        post_id: String,
+    },
+    /// Get global social timeline
+    Timeline {
+        /// Max posts
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+    /// Get posts by a user
+    UserPosts {
+        /// Public key (omit to use active key)
+        pubkey: Option<String>,
+        /// Max posts
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+    /// Get a single post
+    GetPost {
+        /// Post ID
+        post_id: String,
+    },
+    /// Toggle like on a post or track
+    Like {
+        /// Post or track ID
+        id: String,
+    },
+    /// Toggle repost
+    Repost {
+        /// Post ID to repost
+        post_id: String,
+    },
+    /// Get your following feed
+    Feed {
+        /// Max posts
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -723,6 +774,135 @@ fn main() {
                                 let ts = m.get("timestamp").and_then(|t| t.as_u64()).unwrap_or(0);
                                 let encrypted = m.get("encrypted").is_some();
                                 println!("[{}] {} — {}", ts, sender, if encrypted { "(encrypted)" } else { "(empty)" });
+                            }
+                        }
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&v).unwrap());
+                    }
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        // ── Social ──
+
+        Commands::Post { body, reply_to } => {
+            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let mut payload = serde_json::Map::new();
+            payload.insert("body".to_string(), Value::String(body));
+            if let Some(ref rt) = reply_to {
+                payload.insert("replyToId".to_string(), Value::String(rt.clone()));
+            }
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/social/post", req)) {
+                Ok(v) => {
+                    if let Some(post) = v.get("post") {
+                        let id = post.get("id").and_then(|i| i.as_str()).unwrap_or("?");
+                        println!("Posted: {}", id);
+                        if reply_to.is_some() { println!("   (reply)"); }
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&v).unwrap());
+                    }
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::DeletePost { post_id } => {
+            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let mut payload = serde_json::Map::new();
+            payload.insert("postId".to_string(), Value::String(post_id.clone()));
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/social/post/delete", req)) {
+                Ok(_) => println!("Deleted post {}", post_id),
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::Timeline { limit } => {
+            match api_get(rpc, &format!("/api/social/timeline?limit={}", limit)) {
+                Ok(v) => {
+                    if let Some(posts) = v.get("posts").and_then(|p| p.as_array()) {
+                        if posts.is_empty() {
+                            println!("No posts yet");
+                        } else {
+                            for p in posts {
+                                let id = p.get("id").and_then(|i| i.as_str()).unwrap_or("?");
+                                let author = p.get("author_pubkey").and_then(|a| a.as_str()).unwrap_or("?");
+                                let body = p.get("body").and_then(|b| b.as_str()).unwrap_or("");
+                                let short_author = if author.len() > 16 { &author[..16] } else { author };
+                                let preview = if body.len() > 80 { format!("{}...", &body[..80]) } else { body.to_string() };
+                                println!("{} @{}... — {}", id, short_author, preview);
+                            }
+                        }
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&v).unwrap());
+                    }
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::UserPosts { pubkey, limit } => {
+            let pk = pubkey.unwrap_or_else(|| active_key(&dir).map(|k| k.public_key_hex).unwrap_or_default());
+            if pk.is_empty() { eprintln!("No key specified"); return; }
+            match api_get(rpc, &format!("/api/social/user/{}/posts?limit={}", pk, limit)) {
+                Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::GetPost { post_id } => {
+            let viewer = active_key(&dir).map(|k| k.public_key_hex).unwrap_or_default();
+            let q = if viewer.is_empty() { String::new() } else { format!("?viewer={}", viewer) };
+            match api_get(rpc, &format!("/api/social/post/{}{}", post_id, q)) {
+                Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::Like { id } => {
+            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let mut payload = serde_json::Map::new();
+            payload.insert("trackId".to_string(), Value::String(id.clone()));
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/social/like", req)) {
+                Ok(v) => {
+                    let liked = v.get("liked").and_then(|l| l.as_bool()).unwrap_or(false);
+                    let count = v.get("likes").and_then(|l| l.as_u64()).unwrap_or(0);
+                    println!("{} {} (total: {})", if liked { "Liked" } else { "Unliked" }, id, count);
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::Repost { post_id } => {
+            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let mut payload = serde_json::Map::new();
+            payload.insert("postId".to_string(), Value::String(post_id.clone()));
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/social/repost", req)) {
+                Ok(v) => {
+                    let reposted = v.get("reposted").and_then(|r| r.as_bool()).unwrap_or(false);
+                    let count = v.get("reposts").and_then(|r| r.as_u64()).unwrap_or(0);
+                    println!("{} {} (total: {})", if reposted { "Reposted" } else { "Un-reposted" }, post_id, count);
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::Feed { limit } => {
+            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let mut payload = serde_json::Map::new();
+            payload.insert("limit".to_string(), serde_json::json!(limit));
+            payload.insert("offset".to_string(), serde_json::json!(0));
+            match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/social/feed", req)) {
+                Ok(v) => {
+                    if let Some(posts) = v.get("posts").and_then(|p| p.as_array()) {
+                        if posts.is_empty() {
+                            println!("No posts in your feed — follow some users first");
+                        } else {
+                            for p in posts {
+                                let id = p.get("id").and_then(|i| i.as_str()).unwrap_or("?");
+                                let body = p.get("body").and_then(|b| b.as_str()).unwrap_or("");
+                                let preview = if body.len() > 80 { format!("{}...", &body[..80]) } else { body.to_string() };
+                                println!("{} — {}", id, preview);
                             }
                         }
                     } else {

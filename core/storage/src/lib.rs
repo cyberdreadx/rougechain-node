@@ -15,4 +15,5 @@ pub mod receipt_store;
 pub mod state_root;
 pub mod token_metadata_store;
 pub mod token_stake_store;
+pub mod social_store;
 pub mod validator_store;

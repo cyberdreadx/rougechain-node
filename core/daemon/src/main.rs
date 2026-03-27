@@ -807,6 +807,28 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/governance/delegation/:pubkey", get(get_delegation))
         // Allowance endpoints
         .route("/api/allowances/:pubkey", get(get_allowances))
+        // Social endpoints (read — unsigned)
+        .route("/api/social/track/:trackId/stats", get(social_track_stats))
+        .route("/api/social/track/:trackId/comments", get(social_track_comments))
+        .route("/api/social/artist/:pubkey/stats", get(social_artist_stats))
+        .route("/api/social/user/:pubkey/likes", get(social_user_likes))
+        .route("/api/social/user/:pubkey/following", get(social_user_following))
+        // Social endpoints (read — posts/timeline)
+        .route("/api/social/post/:postId", get(social_get_post))
+        .route("/api/social/post/:postId/stats", get(social_post_stats))
+        .route("/api/social/post/:postId/replies", get(social_post_replies))
+        .route("/api/social/user/:pubkey/posts", get(social_user_posts))
+        .route("/api/social/timeline", get(social_global_timeline))
+        // Social endpoints (write — v2 signed)
+        .route("/api/v2/social/play", post(social_play_signed))
+        .route("/api/v2/social/like", post(social_like_signed))
+        .route("/api/v2/social/comment", post(social_comment_signed))
+        .route("/api/v2/social/comment/delete", post(social_comment_delete_signed))
+        .route("/api/v2/social/follow", post(social_follow_signed))
+        .route("/api/v2/social/post", post(social_create_post_signed))
+        .route("/api/v2/social/post/delete", post(social_delete_post_signed))
+        .route("/api/v2/social/repost", post(social_repost_signed))
+        .route("/api/v2/social/feed", post(social_following_feed_signed))
         // WASM contract endpoints
         .route("/api/v2/contract/deploy", post(contract_deploy))
         .route("/api/v2/contract/call", post(contract_call))
@@ -8075,4 +8097,276 @@ async fn multisig_wallets_by_signer(
             "error": e,
         }))),
     }
+}
+
+// ============================================
+// Social handlers (read — unsigned GET)
+// ============================================
+
+async fn social_track_stats(
+    State(state): State<AppState>,
+    Path(track_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let viewer = params.get("viewer").map(|s| s.as_str());
+    match state.node.social_get_track_stats(&track_id, viewer) {
+        Ok(stats) => Json(stats),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+async fn social_track_comments(
+    State(state): State<AppState>,
+    Path(track_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let limit: usize = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
+    let offset: usize = params.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
+    match state.node.social_get_comments(&track_id, limit, offset) {
+        Ok(comments) => Json(serde_json::json!({ "comments": comments })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+async fn social_artist_stats(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let viewer = params.get("viewer").map(|s| s.as_str());
+    match state.node.social_get_artist_stats(&pubkey, viewer) {
+        Ok(stats) => Json(stats),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+async fn social_user_likes(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Json<serde_json::Value> {
+    match state.node.social_get_user_likes(&pubkey) {
+        Ok(track_ids) => Json(serde_json::json!({ "trackIds": track_ids })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+async fn social_user_following(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Json<serde_json::Value> {
+    match state.node.social_get_user_following(&pubkey) {
+        Ok(artists) => Json(serde_json::json!({ "artists": artists })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+// ============================================
+// Social handlers (write — v2 signed POST)
+// ============================================
+
+async fn social_play_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let _authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let track_id = p.get("trackId").and_then(|v| v.as_str()).unwrap_or_default();
+    if track_id.is_empty() {
+        return Err(signed_bad("trackId is required"));
+    }
+    let plays = state.node.social_record_play(track_id).map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "plays": plays })))
+}
+
+async fn social_like_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let track_id = p.get("trackId").and_then(|v| v.as_str()).unwrap_or_default();
+    if track_id.is_empty() {
+        return Err(signed_bad("trackId is required"));
+    }
+    let (liked, total) = state.node.social_toggle_like(track_id, &authed_key).map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "liked": liked, "likes": total })))
+}
+
+async fn social_comment_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let track_id = p.get("trackId").and_then(|v| v.as_str()).unwrap_or_default();
+    let comment_body = p.get("body").and_then(|v| v.as_str()).unwrap_or_default();
+    if track_id.is_empty() || comment_body.is_empty() {
+        return Err(signed_bad("trackId and body are required"));
+    }
+    if comment_body.len() > 2000 {
+        return Err(signed_bad("Comment body too long (max 2000 characters)"));
+    }
+    let comment = state.node.social_add_comment(track_id, &authed_key, comment_body).map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "comment": comment })))
+}
+
+async fn social_comment_delete_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let comment_id = p.get("commentId").and_then(|v| v.as_str()).unwrap_or_default();
+    if comment_id.is_empty() {
+        return Err(signed_bad("commentId is required"));
+    }
+    state.node.social_delete_comment(comment_id, &authed_key).map_err(|e| signed_bad(&e))?;
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
+async fn social_follow_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let artist_pubkey = p.get("artistPubkey").and_then(|v| v.as_str()).unwrap_or_default();
+    if artist_pubkey.is_empty() {
+        return Err(signed_bad("artistPubkey is required"));
+    }
+    let (following, followers) = state.node.social_toggle_follow(&authed_key, artist_pubkey).map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "following": following, "followers": followers })))
+}
+
+// ============================================
+// Social post handlers (read — unsigned GET)
+// ============================================
+
+async fn social_get_post(
+    State(state): State<AppState>,
+    Path(post_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    match state.node.social_get_post(&post_id) {
+        Ok(Some(post)) => {
+            let viewer = params.get("viewer").map(|s| s.as_str());
+            let stats = state.node.social_get_post_stats(&post_id, viewer).unwrap_or_default();
+            Json(serde_json::json!({ "post": post, "stats": stats }))
+        }
+        Ok(None) => Json(serde_json::json!({ "error": "Post not found" })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+async fn social_post_stats(
+    State(state): State<AppState>,
+    Path(post_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let viewer = params.get("viewer").map(|s| s.as_str());
+    match state.node.social_get_post_stats(&post_id, viewer) {
+        Ok(stats) => Json(stats),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+async fn social_post_replies(
+    State(state): State<AppState>,
+    Path(post_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let limit: usize = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
+    let offset: usize = params.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
+    match state.node.social_get_replies(&post_id, limit, offset) {
+        Ok(replies) => Json(serde_json::json!({ "replies": replies })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+async fn social_user_posts(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let limit: usize = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
+    let offset: usize = params.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let post_count = state.node.social_get_user_post_count(&pubkey).unwrap_or(0);
+    match state.node.social_get_user_posts(&pubkey, limit, offset) {
+        Ok(posts) => Json(serde_json::json!({ "posts": posts, "total": post_count })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+async fn social_global_timeline(
+    State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let limit: usize = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
+    let offset: usize = params.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
+    match state.node.social_get_global_timeline(limit, offset) {
+        Ok(posts) => Json(serde_json::json!({ "posts": posts })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+// ============================================
+// Social post handlers (write — v2 signed POST)
+// ============================================
+
+async fn social_create_post_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let post_body = p.get("body").and_then(|v| v.as_str()).unwrap_or_default();
+    if post_body.is_empty() {
+        return Err(signed_bad("body is required"));
+    }
+    if post_body.len() > 4000 {
+        return Err(signed_bad("Post body too long (max 4000 characters)"));
+    }
+    let reply_to_id = p.get("replyToId").and_then(|v| v.as_str());
+    let post = state.node.social_create_post(&authed_key, post_body, reply_to_id).map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "post": post })))
+}
+
+async fn social_delete_post_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let post_id = p.get("postId").and_then(|v| v.as_str()).unwrap_or_default();
+    if post_id.is_empty() {
+        return Err(signed_bad("postId is required"));
+    }
+    state.node.social_delete_post(post_id, &authed_key).map_err(|e| signed_bad(&e))?;
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
+async fn social_repost_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let post_id = p.get("postId").and_then(|v| v.as_str()).unwrap_or_default();
+    if post_id.is_empty() {
+        return Err(signed_bad("postId is required"));
+    }
+    let (reposted, total) = state.node.social_toggle_repost(post_id, &authed_key).map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "reposted": reposted, "reposts": total })))
+}
+
+async fn social_following_feed_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let limit: usize = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+    let offset: usize = p.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let posts = state.node.social_get_following_feed(&authed_key, limit, offset).map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "posts": posts })))
 }

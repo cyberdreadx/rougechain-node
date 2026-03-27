@@ -213,6 +213,30 @@ The `payload` is JSON-serialized with keys sorted alphabetically, then signed wi
 | `/api/governance/proposal/:id` | GET | Get proposal details |
 | `/api/governance/proposal/:id/votes` | GET | Get proposal votes |
 
+### Social
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/social/track/:trackId/stats` | GET | Get track stats (plays, likes, comments) |
+| `/api/social/track/:trackId/comments` | GET | Get track comments |
+| `/api/social/artist/:pubkey/stats` | GET | Get artist stats (followers, following) |
+| `/api/social/user/:pubkey/likes` | GET | Get user's liked track/post IDs |
+| `/api/social/user/:pubkey/following` | GET | Get user's followed artists |
+| `/api/social/user/:pubkey/posts` | GET | Get user's posts |
+| `/api/social/post/:postId` | GET | Get a single post with stats |
+| `/api/social/post/:postId/stats` | GET | Get post stats (likes, reposts, replies) |
+| `/api/social/post/:postId/replies` | GET | Get replies to a post |
+| `/api/social/timeline` | GET | Global timeline (newest first) |
+| `/api/v2/social/play` | POST | Record a play (signed) |
+| `/api/v2/social/like` | POST | Toggle like (signed) |
+| `/api/v2/social/comment` | POST | Post a comment (signed) |
+| `/api/v2/social/comment/delete` | POST | Delete a comment (signed) |
+| `/api/v2/social/follow` | POST | Toggle follow (signed) |
+| `/api/v2/social/post` | POST | Create a post (signed) |
+| `/api/v2/social/post/delete` | POST | Delete a post (signed) |
+| `/api/v2/social/repost` | POST | Toggle repost (signed) |
+| `/api/v2/social/feed` | POST | Get following feed (signed) |
+
 ### Messenger
 
 | Endpoint | Method | Description |

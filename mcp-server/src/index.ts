@@ -346,6 +346,89 @@ server.tool(
   }
 );
 
+// ── Social ───────────────────────────────────────────────────────────────────
+
+server.tool(
+  "get_global_timeline",
+  "Get the global social timeline — all posts, newest first",
+  {
+    limit: z.number().optional().default(50).describe("Max posts to return"),
+    offset: z.number().optional().default(0).describe("Offset for pagination"),
+  },
+  async ({ limit, offset }) => {
+    const data = await apiGet(`/social/timeline?limit=${limit}&offset=${offset}`);
+    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  }
+);
+
+server.tool(
+  "get_post",
+  "Get a single social post by ID with engagement stats",
+  {
+    postId: z.string().describe("Post ID (UUID)"),
+    viewer: z.string().optional().describe("Viewer public key to check liked/reposted state"),
+  },
+  async ({ postId, viewer }) => {
+    const q = viewer ? `?viewer=${encodeURIComponent(viewer)}` : "";
+    const data = await apiGet(`/social/post/${encodeURIComponent(postId)}${q}`);
+    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  }
+);
+
+server.tool(
+  "get_user_posts",
+  "Get posts by a specific user",
+  {
+    pubkey: z.string().describe("User's public key"),
+    limit: z.number().optional().default(50).describe("Max posts to return"),
+  },
+  async ({ pubkey, limit }) => {
+    const data = await apiGet(`/social/user/${encodeURIComponent(pubkey)}/posts?limit=${limit}`);
+    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  }
+);
+
+server.tool(
+  "get_post_replies",
+  "Get threaded replies to a post",
+  {
+    postId: z.string().describe("Parent post ID"),
+    limit: z.number().optional().default(50).describe("Max replies to return"),
+  },
+  async ({ postId, limit }) => {
+    const data = await apiGet(`/social/post/${encodeURIComponent(postId)}/replies?limit=${limit}`);
+    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  }
+);
+
+server.tool(
+  "get_track_stats",
+  "Get social stats for a music track (plays, likes, comments)",
+  {
+    trackId: z.string().describe("Track/NFT token ID"),
+    viewer: z.string().optional().describe("Viewer public key to check liked state"),
+  },
+  async ({ trackId, viewer }) => {
+    const q = viewer ? `?viewer=${encodeURIComponent(viewer)}` : "";
+    const data = await apiGet(`/social/track/${encodeURIComponent(trackId)}/stats${q}`);
+    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  }
+);
+
+server.tool(
+  "get_artist_stats",
+  "Get social stats for an artist (followers, following count)",
+  {
+    pubkey: z.string().describe("Artist's public key"),
+    viewer: z.string().optional().describe("Viewer public key to check follow state"),
+  },
+  async ({ pubkey, viewer }) => {
+    const q = viewer ? `?viewer=${encodeURIComponent(viewer)}` : "";
+    const data = await apiGet(`/social/artist/${encodeURIComponent(pubkey)}/stats${q}`);
+    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  }
+);
+
 // ══════════════════════════════════════════════════════════════════════════════
 // RESOURCES — static context about RougeChain for AI agents
 // ══════════════════════════════════════════════════════════════════════════════
@@ -379,6 +462,7 @@ Features:
 - AMM DEX with multi-hop routing
 - End-to-end encrypted messaging (ML-KEM-768 + AES-GCM)
 - Encrypted mail with @rouge.quant / @qwalla.mail addresses (CEK multi-recipient encryption)
+- Social layer: posts, timeline, threaded replies, reposts, likes, follows, comments, tips
 - Real-time notifications: unread badges, native browser notifications, push notifications
 - EVM bridge (Base Sepolia)
 - Name service (mail + wallet name registry)

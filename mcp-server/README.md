@@ -37,7 +37,7 @@ Add to `~/.config/claude/claude_desktop_config.json`:
 | `ROUGECHAIN_URL` | `https://rougechain.io` | RougeChain node URL |
 | `ROUGECHAIN_API_KEY` | (none) | Optional API key |
 
-## Available Tools (23)
+## Available Tools (29)
 
 ### Chain Info
 - `get_chain_stats` — Network stats (height, peers, validators, supply)
@@ -71,6 +71,14 @@ Add to `~/.config/claude/claude_desktop_config.json`:
 - `get_contract_events` — Contract event log
 - `deploy_contract` — Deploy WASM bytecode
 - `call_contract` — Execute contract method
+
+### Social
+- `get_global_timeline` — Global post timeline (newest first)
+- `get_post` — Get a single post with engagement stats
+- `get_user_posts` — Get posts by a specific user
+- `get_post_replies` — Get threaded replies to a post
+- `get_track_stats` — Get play/like/comment stats for a track
+- `get_artist_stats` — Get follower/following counts for an artist
 
 ### Mail & Messaging
 - `resolve_name` — Resolve a mail name to wallet info and encryption keys
