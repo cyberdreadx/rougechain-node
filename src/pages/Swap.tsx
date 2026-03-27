@@ -50,7 +50,7 @@ interface Pool {
 }
 
 /** Tokens shown by default without searching — XRGE + major bridged assets */
-const MAJOR_TOKENS = new Set(["XRGE", "qETH", "qUSDC"]);
+const MAJOR_TOKENS = new Set(["XRGE", "qETH", "qUSDC", "qBTC"]);
 
 // ─── Token Picker ──────────────────────────────────────────────
 interface TokenPickerProps {
@@ -275,11 +275,14 @@ const TokenPicker = ({
 const Swap = () => {
   const [searchParams] = useSearchParams();
   const urlToken = searchParams.get("token");
+  const urlTokenIn = searchParams.get("tokenIn");
+  const urlTokenOut = searchParams.get("tokenOut");
+  const urlPool = searchParams.get("pool");
   const { getTokenImage } = useTokenMetadata();
   const [tokens, setTokens] = useState<Token[]>([]);
   const [allPoolTokens, setAllPoolTokens] = useState<string[]>([]);
-  const [tokenIn, setTokenIn] = useState<string>("XRGE");
-  const [tokenOut, setTokenOut] = useState<string>("");
+  const [tokenIn, setTokenIn] = useState<string>(urlTokenIn?.toUpperCase() || "XRGE");
+  const [tokenOut, setTokenOut] = useState<string>(urlTokenOut?.toUpperCase() || "");
   const [amountIn, setAmountIn] = useState<string>("");
   const [quote, setQuote] = useState<SwapQuote | null>(null);
   const [loading, setLoading] = useState(false);
@@ -353,22 +356,39 @@ const Swap = () => {
       setTokens(tokenList);
       setAllPoolTokens(Array.from(poolTokenSet));
       
-      // Apply URL ?token= param on first load
-      if (!urlTokenApplied.current && urlToken) {
+      if (!urlTokenApplied.current) {
         urlTokenApplied.current = true;
-        const normalizedUrlToken = urlToken.toUpperCase();
-        // Pre-select the token from URL
-        if (normalizedUrlToken === "XRGE") {
-          // If navigating from XRGE, set it as tokenIn and pick first other as tokenOut
-          setTokenIn("XRGE");
-          const other = tokenList.find(t => t.symbol !== "XRGE");
-          if (other) setTokenOut(other.symbol);
-        } else {
-          // Navigating from a custom token → set it as tokenOut, swap from XRGE into it
-          setTokenIn("XRGE");
-          setTokenOut(normalizedUrlToken);
+
+        if (urlPool) {
+          // ?pool=XRGE-MTK → resolve pool tokens from fetched pools
+          try {
+            const poolsRes2 = await fetch(`${baseUrl}/pools`, { headers: getCoreApiHeaders() });
+            if (poolsRes2.ok) {
+              const d = await poolsRes2.json();
+              const match = (d.pools || []).find((p: Pool) => p.pool_id === urlPool);
+              if (match) {
+                setTokenIn(match.token_a);
+                setTokenOut(match.token_b);
+              }
+            }
+          } catch {}
+        } else if (urlTokenIn || urlTokenOut) {
+          // ?tokenIn=XRGE&tokenOut=MTK
+          if (urlTokenIn) setTokenIn(urlTokenIn.toUpperCase());
+          if (urlTokenOut) setTokenOut(urlTokenOut.toUpperCase());
+        } else if (urlToken) {
+          const normalizedUrlToken = urlToken.toUpperCase();
+          if (normalizedUrlToken === "XRGE") {
+            setTokenIn("XRGE");
+            const other = tokenList.find(t => t.symbol !== "XRGE");
+            if (other) setTokenOut(other.symbol);
+          } else {
+            setTokenIn("XRGE");
+            setTokenOut(normalizedUrlToken);
+          }
         }
-      } else if (!tokenOut && tokenList.length > 1) {
+      }
+      if (!tokenOut && tokenList.length > 1) {
         const other = tokenList.find(t => t.symbol !== "XRGE");
         if (other) setTokenOut(other.symbol);
       }

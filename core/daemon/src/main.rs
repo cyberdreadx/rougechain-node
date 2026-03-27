@@ -4720,6 +4720,7 @@ async fn v2_transfer(
             to_pub_key_hex: Some(to.to_string()),
             amount: Some(amount as u64),
             token_name: Some(token.to_string()),
+            token_symbol: if token != "XRGE" { Some(token.to_string()) } else { None },
             ..Default::default()
         },
         fee,

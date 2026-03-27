@@ -598,7 +598,7 @@ const TokenExplorer = () => {
                 </div>
               </div>
 
-              <Link to={`/swap?pool=${pool.pool_id}`}>
+              <Link to={`/swap?tokenIn=${encodeURIComponent(pool.token_a)}&tokenOut=${encodeURIComponent(pool.token_b)}`}>
                 <Button variant="outline" className="w-full">
                   Trade on this Pool
                 </Button>

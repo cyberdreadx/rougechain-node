@@ -23,6 +23,12 @@ All notable changes to RougeChain.
 - **Initial unread count polling (QWalla)** — App fetches actual unread chat and mail counts from the server on launch so tab badges are accurate immediately, not just after a real-time event arrives
 
 ### Fixed
+- **Custom token transfers** — `v2_transfer` handler now correctly sets `token_symbol` on `TxPayload` (previously only set `token_name`), which the balance engine actually reads. Without this, all custom token transfers silently moved XRGE instead of the selected token
+- **Browser extension token send** — Added token picker dropdown to the send form so users can send any held token, not just XRGE. Upgraded from legacy v1 `/tx/submit` (which sent the private key to the server) to v2 signed endpoint with client-side ML-DSA-65 signing
+- **Browser extension import token** — Added MetaMask-style "Import Custom Token" flow: enter a symbol, validates on-chain, persists to tracked list. Replaced the "All Tokens on Chain" dump with a curated held + imported view
+- **Qwalla custom token balance validation** — Send screen now fetches and validates the correct token balance when sending a custom token, instead of always checking XRGE balance
+- **Website send dialog pre-selection** — Clicking "Send" from a token's detail view now pre-selects that token instead of always defaulting to XRGE
+- **Swap pre-fill from Trade button** — "Trade on this Pool" now passes `tokenIn`/`tokenOut` URL params to the swap page, correctly pre-filling both sides of the swap
 - **PWA wallet persistence** — Wallet private keys now persist in `localStorage` when no vault password is set, preventing wallet loss on PWA/tab restart. Password-protected vaults continue to use encrypted storage only
 - **Browser extension key regeneration** — Removed aggressive version-based key regeneration that was replacing existing valid keys and causing loss of on-chain identity (faucet funds)
 - **Quantum Bot registration** — Bot wallets use unique per-browser IDs and register as non-discoverable to prevent display name conflicts

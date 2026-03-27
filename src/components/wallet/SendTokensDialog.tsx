@@ -28,6 +28,7 @@ interface SendTokensDialogProps {
     signingPrivateKey: string;
   };
   balances: WalletBalance[];
+  initialToken?: string;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -72,11 +73,11 @@ const parseXrgeAddress = (input: string): { valid: boolean; address: string; err
   return { valid: true, address: rawAddress };
 };
 
-const SendTokensDialog = ({ wallet, balances, onClose, onSuccess }: SendTokensDialogProps) => {
+const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }: SendTokensDialogProps) => {
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
   const [memo, setMemo] = useState("");
-  const [selectedToken, setSelectedToken] = useState("XRGE");
+  const [selectedToken, setSelectedToken] = useState(initialToken || "XRGE");
   const [sending, setSending] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");

@@ -682,6 +682,7 @@ impl L1Node {
                     data: serde_json::json!({
                         "to": tx.payload.to_pub_key_hex,
                         "amount": tx.payload.amount,
+                        "token": tx.payload.token_symbol.as_deref().unwrap_or("XRGE"),
                     }),
                 },
                 "create_token" => TxLog {

@@ -79,7 +79,7 @@ const Wallet = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [minting, setMinting] = useState(false);
-  const [showSend, setShowSend] = useState(false);
+  const [showSend, setShowSend] = useState<string | false>(false);
   const [showReceive, setShowReceive] = useState(false);
   const [showShield, setShowShield] = useState(false);
   const [showUnshield, setShowUnshield] = useState(false);
@@ -956,6 +956,7 @@ const Wallet = () => {
           <SendTokensDialog
             wallet={wallet}
             balances={balances}
+            initialToken={typeof showSend === "string" ? showSend : undefined}
             onClose={() => setShowSend(false)}
             onSuccess={() => {
               setShowSend(false);
@@ -1051,7 +1052,7 @@ const Wallet = () => {
             walletPrivateKey={wallet.signingPrivateKey}
             isCreator={getMetadata(selectedAsset.symbol)?.creator === wallet.signingPublicKey}
             onClose={() => setSelectedAsset(null)}
-            onSend={() => setShowSend(true)}
+            onSend={() => setShowSend(selectedAsset.symbol)}
             onReceive={() => setShowReceive(true)}
             onSwap={() => window.location.href = `/swap?token=${selectedAsset.symbol}`}
           />

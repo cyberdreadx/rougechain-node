@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Droplets, TrendingUp, Loader2, Info, Minus, BarChart3, ArrowDownUp, Shield } from "lucide-react";
+import { Plus, Droplets, TrendingUp, Loader2, Info, Minus, BarChart3, ArrowDownUp, Shield, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TokenIcon } from "@/components/ui/token-icon";
 import { Input } from "@/components/ui/input";
@@ -76,6 +76,11 @@ const Pools = () => {
   
   // Swap widget
   const [showSwapWidget, setShowSwapWidget] = useState(false);
+
+  // Search & display
+  const [poolSearch, setPoolSearch] = useState("");
+  const [showAllPools, setShowAllPools] = useState(false);
+  const POOL_DISPLAY_LIMIT = 20;
   
   // Wallet state
   const [wallet, setWallet] = useState<{ publicKey: string; privateKey: string } | null>(null);
@@ -293,6 +298,16 @@ const Pools = () => {
     return formatTokenAmount(n, symbol);
   };
 
+  const sortedPools = useMemo(() => {
+    const sorted = [...pools].sort((a, b) => (b.reserve_a + b.reserve_b) - (a.reserve_a + a.reserve_b));
+    if (poolSearch.trim()) {
+      const q = poolSearch.trim().toUpperCase();
+      return sorted.filter(p => p.token_a.toUpperCase().includes(q) || p.token_b.toUpperCase().includes(q) || p.pool_id.toUpperCase().includes(q));
+    }
+    if (!showAllPools) return sorted.slice(0, POOL_DISPLAY_LIMIT);
+    return sorted;
+  }, [pools, poolSearch, showAllPools]);
+
 
   // Show cyberpunk loader during pool operations
   if (actionLoading) {
@@ -407,6 +422,19 @@ const Pools = () => {
             </div>
           </div>
 
+          {/* Pool Search */}
+          {pools.length > 0 && (
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search pools by token symbol..."
+                value={poolSearch}
+                onChange={e => { setPoolSearch(e.target.value); setShowAllPools(true); }}
+                className="pl-9"
+              />
+            </div>
+          )}
+
           {/* Pool List */}
           {loading ? (
             <div className="flex items-center justify-center py-12">
@@ -428,7 +456,7 @@ const Pools = () => {
             </Card>
           ) : (
             <div className="space-y-4">
-              {pools.map((pool) => (
+              {sortedPools.map((pool) => (
                 <Card key={pool.pool_id} className="bg-card/50 backdrop-blur border-primary/20">
                   <CardHeader className="pb-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -505,6 +533,16 @@ const Pools = () => {
                   </CardContent>
                 </Card>
               ))}
+              {!showAllPools && !poolSearch && pools.length > POOL_DISPLAY_LIMIT && (
+                <div className="text-center pt-2">
+                  <Button variant="ghost" size="sm" onClick={() => setShowAllPools(true)}>
+                    Show all {pools.length} pools
+                  </Button>
+                </div>
+              )}
+              {poolSearch && sortedPools.length === 0 && (
+                <p className="text-center text-muted-foreground text-sm py-4">No pools match "{poolSearch}"</p>
+              )}
             </div>
           )}
 
