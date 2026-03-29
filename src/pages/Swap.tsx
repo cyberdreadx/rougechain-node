@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
-import { loadUnifiedWallet } from "@/lib/unified-wallet";
+import { loadUnifiedWallet, saveUnifiedWallet, type UnifiedWallet } from "@/lib/unified-wallet";
 import { secureSwap } from "@/lib/secure-api";
 import { formatTokenAmount, isQeth, humanToQeth, qethToHuman } from "@/hooks/use-eth-price";
 import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
@@ -294,8 +294,10 @@ const Swap = () => {
   const [wallet, setWallet] = useState<{ publicKey: string; privateKey: string } | null>(null);
   const { priceUsd: xrgePrice } = useXRGEPrice(60_000);
 
-  // Load wallet — retry after brief delay to catch app-level extension auto-connect
+  // Load wallet — retry after brief delay, then try Qwalla / extension auto-connect
   useEffect(() => {
+    let cancelled = false;
+
     const tryLoad = () => {
       const savedWallet = loadUnifiedWallet();
       if (savedWallet?.signingPublicKey) {
@@ -307,9 +309,35 @@ const Swap = () => {
       }
       return false;
     };
+
+    const tryExtensionConnect = async () => {
+      const provider = (window as unknown as { rougechain?: { isRougeChain?: boolean; connect(): Promise<{ publicKey: string; displayName?: string; encryptionPublicKey?: string }> } }).rougechain;
+      if (!provider?.isRougeChain) return;
+      try {
+        const result = await provider.connect();
+        if (cancelled || !result?.publicKey) return;
+        const extWallet: UnifiedWallet = {
+          id: `ext-${Date.now()}`,
+          displayName: result.displayName || "Qwalla Wallet",
+          createdAt: Date.now(),
+          signingPublicKey: result.publicKey,
+          signingPrivateKey: "",
+          encryptionPublicKey: result.encryptionPublicKey || "",
+          encryptionPrivateKey: "",
+          version: 2,
+        };
+        saveUnifiedWallet(extWallet);
+        setWallet({ publicKey: result.publicKey, privateKey: "" });
+      } catch { /* extension connect failed silently */ }
+    };
+
     if (!tryLoad()) {
-      const retry = setTimeout(tryLoad, 1000);
-      return () => clearTimeout(retry);
+      const retry = setTimeout(() => {
+        if (!cancelled && !tryLoad()) {
+          tryExtensionConnect();
+        }
+      }, 1000);
+      return () => { cancelled = true; clearTimeout(retry); };
     }
   }, []);
 

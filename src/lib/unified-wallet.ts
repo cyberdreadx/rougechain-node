@@ -356,12 +356,12 @@ export function loadUnifiedWallet(): UnifiedWallet | null {
     return upgraded;
   };
 
-  // 1. sessionStorage: contains full wallet with private keys (current session)
+  // 1. sessionStorage: contains full wallet (current session)
   const sessionData = sessionStorage.getItem(getScopedKey(UNIFIED_WALLET_KEY));
   if (sessionData) {
     try {
       const wallet = JSON.parse(sessionData) as UnifiedWallet;
-      if (wallet.signingPrivateKey) {
+      if (wallet.signingPublicKey) {
         return upgradeAndSave(wallet);
       }
     } catch { /* continue */ }
@@ -373,9 +373,8 @@ export function loadUnifiedWallet(): UnifiedWallet | null {
   if (unified) {
     try {
       const wallet = JSON.parse(unified) as UnifiedWallet;
-      if (wallet.signingPrivateKey) {
+      if (wallet.signingPublicKey) {
         const upgraded = upgradeAndSave(wallet);
-        // Migrate: move private keys out of localStorage
         saveUnifiedWallet(upgraded);
         return upgraded;
       }
