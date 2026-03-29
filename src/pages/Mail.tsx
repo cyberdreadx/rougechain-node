@@ -702,19 +702,29 @@ const MailPage = () => {
   useEffect(() => {
     const locked = isWalletLocked();
     setIsLocked(locked);
-    if (!locked) {
+    const tryLoad = () => {
+      if (locked) return true;
       const w = loadUnifiedWallet();
-      setWallet(w);
-      if (w?.encryptionPublicKey) {
-        registerWalletOnNode({
-          id: w.id,
-          displayName: w.displayName,
-          signingPublicKey: w.signingPublicKey,
-          encryptionPublicKey: w.encryptionPublicKey,
-        }).catch(() => {});
+      if (w) {
+        setWallet(w);
+        if (w.encryptionPublicKey) {
+          registerWalletOnNode({
+            id: w.id,
+            displayName: w.displayName,
+            signingPublicKey: w.signingPublicKey,
+            encryptionPublicKey: w.encryptionPublicKey,
+          }).catch(() => {});
+        }
+        return true;
       }
+      return false;
+    };
+    if (!tryLoad()) {
+      const retry = setTimeout(() => { tryLoad(); setIsLoading(false); }, 1000);
+      return () => clearTimeout(retry);
+    } else {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   }, []);
 
   const messengerWallet = useMemo(() =>

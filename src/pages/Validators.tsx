@@ -67,7 +67,7 @@ export default function Validators() {
   const [availableBalance, setAvailableBalance] = useState(0);
   const [isLoadingBalance, setIsLoadingBalance] = useState(true);
 
-  // Load wallet and balance
+  // Load wallet and balance — retry after brief delay to catch app-level extension auto-connect
   useEffect(() => {
     const loadWalletData = async () => {
       setIsLoadingBalance(true);
@@ -87,7 +87,11 @@ export default function Validators() {
       setIsLoadingBalance(false);
     };
 
-    loadWalletData();
+    loadWalletData().then(() => {
+      if (!loadUnifiedWallet()?.signingPublicKey) {
+        setTimeout(loadWalletData, 1000);
+      }
+    });
   }, []);
 
   const refreshBalance = async () => {

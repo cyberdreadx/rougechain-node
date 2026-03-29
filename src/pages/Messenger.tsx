@@ -59,21 +59,28 @@ const Messenger = () => {
   const allWalletsRef = useRef<Wallet[]>([]);
   const { display: walletRougeAddr } = useRougeAddress(wallet?.signingPublicKey);
 
-  // Load wallet from localStorage on mount
+  // Load wallet from localStorage on mount — retry for extension auto-connect
   useEffect(() => {
     const locked = isWalletLocked();
     setIsLocked(locked);
-    const savedWallet = locked ? null : loadUnifiedWallet();
-    if (savedWallet) {
-      setWallet(savedWallet);
-      // Prompt for display name if it's generic or empty
-      const name = savedWallet.displayName?.trim() || "";
-      const generic = ["my wallet", "wallet", "unnamed", "untitled", "extension wallet", ""];
-      if (generic.includes(name.toLowerCase())) {
-        setShowNamePrompt(true);
+    const tryLoad = () => {
+      const savedWallet = locked ? null : loadUnifiedWallet();
+      if (savedWallet) {
+        setWallet(savedWallet);
+        const name = savedWallet.displayName?.trim() || "";
+        const generic = ["my wallet", "wallet", "unnamed", "untitled", "extension wallet", ""];
+        if (generic.includes(name.toLowerCase())) {
+          setShowNamePrompt(true);
+        }
+        setIsLoading(false);
+        return true;
       }
+      return false;
+    };
+    if (!tryLoad()) {
+      const retry = setTimeout(() => { tryLoad(); setIsLoading(false); }, 1000);
+      return () => clearTimeout(retry);
     }
-    setIsLoading(false);
   }, []);
 
   // Load conversations when wallet is available and ensure wallet is registered

@@ -67,8 +67,15 @@ const Bridge = () => {
   }, []);
 
   useEffect(() => {
-    const wallet = loadUnifiedWallet();
-    if (wallet?.signingPublicKey) setRougechainPubkey(wallet.signingPublicKey);
+    const tryLoad = () => {
+      const wallet = loadUnifiedWallet();
+      if (wallet?.signingPublicKey) { setRougechainPubkey(wallet.signingPublicKey); return true; }
+      return false;
+    };
+    if (!tryLoad()) {
+      const retry = setTimeout(tryLoad, 1000);
+      return () => clearTimeout(retry);
+    }
   }, []);
 
   const refreshBalances = () => {

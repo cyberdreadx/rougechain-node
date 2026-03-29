@@ -85,14 +85,22 @@ const Pools = () => {
   // Wallet state
   const [wallet, setWallet] = useState<{ publicKey: string; privateKey: string } | null>(null);
 
-  // Load wallet from localStorage
+  // Load wallet — retry after brief delay to catch app-level extension auto-connect
   useEffect(() => {
-    const savedWallet = loadUnifiedWallet();
-    if (savedWallet && savedWallet.signingPublicKey) {
-      setWallet({
-        publicKey: savedWallet.signingPublicKey,
-        privateKey: savedWallet.signingPrivateKey || "",
-      });
+    const tryLoad = () => {
+      const savedWallet = loadUnifiedWallet();
+      if (savedWallet?.signingPublicKey) {
+        setWallet({
+          publicKey: savedWallet.signingPublicKey,
+          privateKey: savedWallet.signingPrivateKey || "",
+        });
+        return true;
+      }
+      return false;
+    };
+    if (!tryLoad()) {
+      const retry = setTimeout(tryLoad, 1000);
+      return () => clearTimeout(retry);
     }
   }, []);
 

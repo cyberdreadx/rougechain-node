@@ -6,7 +6,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
 import { Footer } from "@/components/Footer";
-import { loadUnifiedWallet, isWalletLocked } from "@/lib/unified-wallet";
+import { loadUnifiedWallet, saveUnifiedWallet, isWalletLocked } from "@/lib/unified-wallet";
+import type { UnifiedWallet } from "@/lib/unified-wallet";
 import { registerWalletOnNode } from "@/lib/pqc-messenger";
 import Index from "./pages/Index";
 import Blockchain from "./pages/Blockchain";
@@ -40,14 +41,42 @@ function WalletAutoRegister() {
     if (registered.current || isWalletLocked()) return;
     registered.current = true;
     const w = loadUnifiedWallet();
-    if (w?.encryptionPublicKey && w?.signingPrivateKey) {
-      registerWalletOnNode({
-        id: w.id,
-        displayName: w.displayName,
-        signingPublicKey: w.signingPublicKey,
-        signingPrivateKey: w.signingPrivateKey,
-        encryptionPublicKey: w.encryptionPublicKey,
-      }).catch(() => {});
+    if (w?.signingPublicKey) {
+      if (w.encryptionPublicKey && w.signingPrivateKey) {
+        registerWalletOnNode({
+          id: w.id,
+          displayName: w.displayName,
+          signingPublicKey: w.signingPublicKey,
+          signingPrivateKey: w.signingPrivateKey,
+          encryptionPublicKey: w.encryptionPublicKey,
+        }).catch(() => {});
+      }
+      return;
+    }
+    const provider = (window as any).rougechain;
+    if (provider?.isRougeChain) {
+      (async () => {
+        try {
+          const result = await provider.connect() as {
+            publicKey: string;
+            displayName?: string;
+            encryptionPublicKey?: string;
+          };
+          if (result?.publicKey) {
+            const extWallet: UnifiedWallet = {
+              id: `ext-${Date.now()}`,
+              displayName: result.displayName || "Extension Wallet",
+              createdAt: Date.now(),
+              signingPublicKey: result.publicKey,
+              signingPrivateKey: "",
+              encryptionPublicKey: result.encryptionPublicKey || "",
+              encryptionPrivateKey: "",
+              version: 2,
+            };
+            saveUnifiedWallet(extWallet);
+          }
+        } catch { /* extension auto-connect failed silently */ }
+      })();
     }
   }, []);
   return null;

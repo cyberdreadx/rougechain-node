@@ -294,14 +294,22 @@ const Swap = () => {
   const [wallet, setWallet] = useState<{ publicKey: string; privateKey: string } | null>(null);
   const { priceUsd: xrgePrice } = useXRGEPrice(60_000);
 
-  // Load wallet
+  // Load wallet — retry after brief delay to catch app-level extension auto-connect
   useEffect(() => {
-    const savedWallet = loadUnifiedWallet();
-    if (savedWallet?.signingPublicKey) {
-      setWallet({
-        publicKey: savedWallet.signingPublicKey,
-        privateKey: savedWallet.signingPrivateKey || "",
-      });
+    const tryLoad = () => {
+      const savedWallet = loadUnifiedWallet();
+      if (savedWallet?.signingPublicKey) {
+        setWallet({
+          publicKey: savedWallet.signingPublicKey,
+          privateKey: savedWallet.signingPrivateKey || "",
+        });
+        return true;
+      }
+      return false;
+    };
+    if (!tryLoad()) {
+      const retry = setTimeout(tryLoad, 1000);
+      return () => clearTimeout(retry);
     }
   }, []);
 

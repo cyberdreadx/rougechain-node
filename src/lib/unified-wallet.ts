@@ -18,8 +18,12 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 
-// Validate and regenerate keys if sizes don't match FIPS standards
+// Validate and regenerate keys if sizes don't match FIPS standards.
+// Extension wallets have empty private keys — skip regeneration for those.
 function ensureCorrectKeys(wallet: UnifiedWallet): UnifiedWallet {
+  const isExtensionWallet = !wallet.signingPrivateKey && wallet.signingPublicKey;
+  if (isExtensionWallet) return wallet;
+
   let updated = { ...wallet };
   let changed = false;
 
