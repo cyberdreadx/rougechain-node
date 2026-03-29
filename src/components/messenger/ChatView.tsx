@@ -488,6 +488,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
   const [newMessageIds, setNewMessageIds] = useState<Set<string>>(new Set());
   const [stagedMedia, setStagedMedia] = useState<{ file: File; previewUrl: string } | null>(null);
   const [spoiler, setSpoiler] = useState(false);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
@@ -962,6 +963,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
                       const req = parseRequestMessage(msg.plaintext!);
                       if (req) setShowPaymentDialog(true);
                     } : undefined}
+                    onImageClick={(url) => setLightboxUrl(url)}
                   />
                 </div>
               );
@@ -1130,6 +1132,33 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
 
       {/* Payment dialog */}
       <AnimatePresence>
+        {lightboxUrl && (
+          <motion.div
+            key="lightbox"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-sm cursor-pointer"
+            onClick={() => setLightboxUrl(null)}
+          >
+            <button
+              onClick={() => setLightboxUrl(null)}
+              className="absolute top-4 right-4 z-[101] p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors"
+            >
+              <X className="w-6 h-6 text-white" />
+            </button>
+            <motion.img
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              src={lightboxUrl}
+              alt="Full size"
+              className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg cursor-default"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </motion.div>
+        )}
+
         {showPaymentDialog && recipient && !isSelfConversation && (
           <ChatPayment
             walletPublicKey={wallet.signingPublicKey}
@@ -1333,6 +1362,7 @@ const MessageBubble = ({
   reactingTo,
   onToggleReactionPicker,
   onAcceptRequest,
+  onImageClick,
 }: {
   message: Message;
   isOwn: boolean;
@@ -1346,6 +1376,7 @@ const MessageBubble = ({
   reactingTo?: string | null;
   onToggleReactionPicker?: (id: string) => void;
   onAcceptRequest?: () => void;
+  onImageClick?: (url: string) => void;
 }) => {
   const [showDecryptAnimation, setShowDecryptAnimation] = useState(isNew && !isOwn);
   const [spoilerRevealed, setSpoilerRevealed] = useState(false);
@@ -1474,7 +1505,7 @@ const MessageBubble = ({
                     className={`max-w-full rounded-lg max-h-[300px] object-contain cursor-pointer transition-all duration-300 ${isSpoiler ? "blur-xl scale-[0.98]" : ""}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (!isSpoiler) window.open(message.mediaUrl, "_blank");
+                      if (!isSpoiler && message.mediaUrl) onImageClick?.(message.mediaUrl);
                     }}
                   />
                   {message.mediaFileName && !isSpoiler && (
