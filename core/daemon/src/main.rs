@@ -4119,6 +4119,11 @@ struct SignedTransactionRequest {
     payload: serde_json::Value,
     signature: String,
     public_key: String,
+    /// Optional: hex-encoded bytes that were actually signed by the client.
+    /// When present, verification uses these bytes instead of re-serializing `payload`.
+    /// The node validates that the bytes decode to the same payload (prevents tampering).
+    #[serde(default)]
+    payload_bytes_hex: Option<String>,
 }
 
 /// Verify a signed transaction from the frontend.
@@ -4126,13 +4131,23 @@ struct SignedTransactionRequest {
 fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<String, String> {
     use quantum_vault_crypto::pqc_verify;
     
-    // Serialize payload deterministically (sorted keys)
-    let payload_json = serde_json::to_string(&req.payload)
-        .map_err(|e| format!("Failed to serialize payload: {}", e))?;
-    let payload_bytes = payload_json.as_bytes();
+    let payload_bytes: Vec<u8> = if let Some(hex) = &req.payload_bytes_hex {
+        let raw = quantum_vault_crypto::hex_to_bytes(hex)
+            .map_err(|e| format!("Invalid payload_bytes_hex: {}", e))?;
+        let parsed: serde_json::Value = serde_json::from_slice(&raw)
+            .map_err(|e| format!("payload_bytes_hex is not valid JSON: {}", e))?;
+        if parsed != req.payload {
+            return Err("payload_bytes_hex does not match payload object".to_string());
+        }
+        raw
+    } else {
+        serde_json::to_string(&req.payload)
+            .map_err(|e| format!("Failed to serialize payload: {}", e))?
+            .into_bytes()
+    };
     
     // Verify signature
-    let valid = pqc_verify(&req.public_key, payload_bytes, &req.signature)
+    let valid = pqc_verify(&req.public_key, &payload_bytes, &req.signature)
         .map_err(|e| format!("Signature verification failed: {}", e))?;
     
     if !valid {
@@ -4155,6 +4170,8 @@ fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<String, String> {
         }
     }
     
+    let payload_json = String::from_utf8(payload_bytes)
+        .map_err(|_| "payload bytes are not valid UTF-8".to_string())?;
     Ok(payload_json)
 }
 
@@ -4167,11 +4184,22 @@ fn verify_signed_request(
 ) -> Result<String, String> {
     use quantum_vault_crypto::pqc_verify;
 
-    let payload_json = serde_json::to_string(&req.payload)
-        .map_err(|e| format!("Failed to serialize payload: {}", e))?;
-    let payload_bytes = payload_json.as_bytes();
+    let payload_bytes: Vec<u8> = if let Some(hex) = &req.payload_bytes_hex {
+        let raw = quantum_vault_crypto::hex_to_bytes(hex)
+            .map_err(|e| format!("Invalid payload_bytes_hex: {}", e))?;
+        let parsed: serde_json::Value = serde_json::from_slice(&raw)
+            .map_err(|e| format!("payload_bytes_hex is not valid JSON: {}", e))?;
+        if parsed != req.payload {
+            return Err("payload_bytes_hex does not match payload object".to_string());
+        }
+        raw
+    } else {
+        serde_json::to_string(&req.payload)
+            .map_err(|e| format!("Failed to serialize payload: {}", e))?
+            .into_bytes()
+    };
 
-    let valid = pqc_verify(&req.public_key, payload_bytes, &req.signature)
+    let valid = pqc_verify(&req.public_key, &payload_bytes, &req.signature)
         .map_err(|e| format!("Signature verification failed: {}", e))?;
     if !valid {
         return Err("Invalid signature".to_string());
@@ -6751,6 +6779,7 @@ async fn bridge_withdraw(
             payload: payload.clone(),
             signature: signature.clone(),
             public_key: body.from_public_key.clone(),
+            payload_bytes_hex: None,
         };
         if let Err(e) = verify_signed_tx(&signed_req) {
             return Ok(Json(BridgeWithdrawResponse {
@@ -7045,6 +7074,7 @@ async fn xrge_bridge_withdraw(
             payload: payload.clone(),
             signature: signature.clone(),
             public_key: body.from_public_key.clone(),
+            payload_bytes_hex: None,
         };
         if let Err(e) = verify_signed_tx(&signed_req) {
             return Json(serde_json::json!({ "success": false, "error": format!("Signature verification failed: {}", e) }));

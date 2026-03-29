@@ -100,6 +100,7 @@ export interface SignedTransaction {
   payload: TransactionPayload;
   signature: string;
   public_key: string;
+  payload_bytes_hex?: string;
 }
 
 /**

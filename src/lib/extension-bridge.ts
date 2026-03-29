@@ -66,5 +66,6 @@ export async function signViaExtension(
     payload,
     signature: result.signature,
     public_key: publicKey,
+    payload_bytes_hex: serializedHex,
   };
 }
