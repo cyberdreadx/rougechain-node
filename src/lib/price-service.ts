@@ -135,10 +135,7 @@ export function formatUsd(value: number | null | undefined): string {
   if (value < 0.0001) return `$${value.toFixed(6)}`;
   if (value < 0.01) return `$${value.toFixed(4)}`;
   if (value < 1) return `$${value.toFixed(4)}`;
-  if (value < 1000) return `$${value.toFixed(2)}`;
-  if (value < 1_000_000) return `$${(value / 1000).toFixed(2)}K`;
-  if (value < 1_000_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
-  return `$${(value / 1_000_000_000).toFixed(2)}B`;
+  return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /**

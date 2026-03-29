@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Send, Loader2, AlertCircle, CheckCircle2, ChevronDown, QrCode, Shield } from "lucide-react";
+import { X, Send, Loader2, AlertCircle, CheckCircle2, ChevronDown, QrCode, Shield, Copy, Check, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,8 +17,8 @@ import { secureTransfer, secureShield } from "@/lib/secure-api";
 import { qethToHuman, humanToQeth, formatQethForDisplay } from "@/hooks/use-eth-price";
 import PqcQrScanner from "./PqcQrScanner";
 import xrgeLogo from "@/assets/xrge-logo.webp";
-import { createShieldedNote } from "@/lib/shielded-crypto";
-import { saveNote } from "@/lib/note-store";
+import { createShieldedNote, type ShieldedNote } from "@/lib/shielded-crypto";
+import { saveNote, saveSentNote } from "@/lib/note-store";
 import { isRougeAddress } from "@/lib/address";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 
@@ -83,6 +83,8 @@ const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }
   const [error, setError] = useState("");
   const [showScanner, setShowScanner] = useState(false);
   const [shieldedSend, setShieldedSend] = useState(false);
+  const [sentNote, setSentNote] = useState<ShieldedNote | null>(null);
+  const [noteCopied, setNoteCopied] = useState(false);
 
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
   const rawSelectedBalance = balances.find(b => b.symbol === selectedToken)?.balance || 0;
@@ -153,7 +155,6 @@ const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }
     setSending(true);
     try {
       if (shieldedSend && selectedToken === "XRGE") {
-        // Shielded send: create note owned by recipient
         const note = await createShieldedNote(amountToSend, resolvedAddress);
         const result = await secureShield(
           wallet.signingPublicKey,
@@ -164,18 +165,9 @@ const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }
         if (!result.success) {
           throw new Error(result.error || "Shielded transfer failed");
         }
-        // Save note for recipient reference (they'll need to import it)
-        // Show the note data so sender can share with recipient
-        toast.success(`Shielded ${amountToSend} XRGE to recipient`, {
-          description: "Share the note data with the recipient so they can unshield",
-          duration: 8000,
-        });
-        // Copy note to clipboard for sharing
-        try {
-          await navigator.clipboard.writeText(JSON.stringify(note));
-          toast.info("Note copied to clipboard — share with recipient", { duration: 5000 });
-        } catch { /* clipboard may fail */ }
-        onSuccess();
+        saveSentNote(note, wallet.signingPublicKey);
+        setSending(false);
+        setSentNote(note);
         return;
       }
 
@@ -237,6 +229,97 @@ const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }
       setConfirming(false);
     }
   };
+
+  const copyNoteToClipboard = async () => {
+    if (!sentNote) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(sentNote));
+      setNoteCopied(true);
+      toast.success("Note copied to clipboard");
+      setTimeout(() => setNoteCopied(false), 3000);
+    } catch {
+      toast.error("Failed to copy — use the download button instead");
+    }
+  };
+
+  const downloadNoteAsFile = () => {
+    if (!sentNote) return;
+    const blob = new Blob([JSON.stringify(sentNote, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `shielded-note-${sentNote.commitment.slice(0, 8)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (sentNote) {
+    const noteJson = JSON.stringify(sentNote);
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4"
+      >
+        <motion.div
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.95, opacity: 0 }}
+          onClick={(e) => e.stopPropagation()}
+          className="w-full max-w-md bg-card rounded-2xl border border-border p-6 shadow-xl"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-green-500" />
+              <h2 className="text-xl font-bold text-foreground">Shielded Transaction Sent</h2>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-200 text-sm">
+              <p className="font-medium">The recipient needs this note to unshield their tokens.</p>
+              <p className="mt-1 text-xs text-amber-200/70">
+                Copy or download it and send it to them. Without this note, the tokens cannot be recovered.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Amount</Label>
+              <p className="font-mono text-sm">{sentNote.value.toLocaleString()} XRGE</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Note Data (share with recipient)</Label>
+              <div className="relative">
+                <pre className="p-3 rounded-lg bg-muted/50 border border-border text-xs font-mono break-all whitespace-pre-wrap max-h-[200px] overflow-y-auto select-all">
+                  {JSON.stringify(sentNote, null, 2)}
+                </pre>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <Button onClick={copyNoteToClipboard} variant="outline" className="flex-1">
+                {noteCopied ? <Check className="w-4 h-4 mr-2" /> : <Copy className="w-4 h-4 mr-2" />}
+                {noteCopied ? "Copied" : "Copy Note"}
+              </Button>
+              <Button onClick={downloadNoteAsFile} variant="outline" className="flex-1">
+                <Download className="w-4 h-4 mr-2" />
+                Download JSON
+              </Button>
+            </div>
+
+            <Button
+              onClick={() => { onSuccess(); }}
+              className="w-full"
+            >
+              Done
+            </Button>
+          </div>
+        </motion.div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div

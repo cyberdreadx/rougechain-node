@@ -58,9 +58,7 @@ export function formatQethForDisplay(units: number): string {
  */
 export function formatTokenAmount(amount: number, symbol?: string): string {
   if (symbol === "qETH") return formatQethForDisplay(amount);
-  if (amount >= 1_000_000) return (amount / 1_000_000).toFixed(2) + "M";
-  if (amount >= 1_000) return (amount / 1_000).toFixed(2) + "K";
-  if (amount >= 1) return amount.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (amount >= 1) return amount.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 0 });
   if (amount > 0) return parseFloat(amount.toFixed(6)).toString();
   return "0";
 }

@@ -9,6 +9,7 @@ import { getActiveNetwork } from "./network";
 import type { ShieldedNote } from "./shielded-crypto";
 
 const NOTE_STORE_KEY = "pqc-shielded-notes";
+const SENT_NOTE_STORE_KEY = "pqc-shielded-sent-notes";
 
 export interface StoredNote extends ShieldedNote {
   /** When the note was created (ms since epoch) */
@@ -93,6 +94,36 @@ export function markSpent(nullifier: string): void {
 export function deleteNote(nullifier: string): void {
   const notes = loadAll().filter(n => n.nullifier !== nullifier);
   persist(notes);
+}
+
+/**
+ * Save a note the sender created for a recipient (for retrieval if clipboard is lost).
+ */
+export function saveSentNote(note: ShieldedNote, senderPubKey: string): void {
+  const key = `${SENT_NOTE_STORE_KEY}:${getActiveNetwork()}`;
+  let notes: (StoredNote & { senderPubKey: string })[] = [];
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) notes = JSON.parse(raw);
+  } catch { /* ignore */ }
+  if (notes.some(n => n.commitment === note.commitment)) return;
+  notes.push({ ...note, senderPubKey, createdAt: Date.now(), spent: false });
+  localStorage.setItem(key, JSON.stringify(notes));
+}
+
+/**
+ * Get sent notes created by this wallet (notes owned by recipients).
+ */
+export function getSentNotes(senderPubKey: string): (StoredNote & { senderPubKey: string })[] {
+  const key = `${SENT_NOTE_STORE_KEY}:${getActiveNetwork()}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const all = JSON.parse(raw) as (StoredNote & { senderPubKey: string })[];
+    return all.filter(n => n.senderPubKey === senderPubKey);
+  } catch {
+    return [];
+  }
 }
 
 /**
