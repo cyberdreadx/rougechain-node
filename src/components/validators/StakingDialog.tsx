@@ -64,7 +64,7 @@ export function StakingDialog({
   const minRequired = STAKE_REQUIREMENTS[selectedTier];
   const hasEnoughBalance = amount <= availableBalance;
   const meetsMinimum = amount >= minRequired;
-  const hasKeys = !!walletId && !!signingPublicKey && !!signingPrivateKey;
+  const hasKeys = !!walletId && !!signingPublicKey;
   const canStake = hasEnoughBalance && meetsMinimum && amount > 0 && hasKeys;
 
   useEffect(() => {
@@ -80,10 +80,10 @@ export function StakingDialog({
     setError(null);
 
     try {
-      if (!walletId || !signingPublicKey || !signingPrivateKey) {
+      if (!walletId || !signingPublicKey) {
         throw new Error("Wallet keys are missing. Please connect your wallet.");
       }
-      await registerValidator(walletId, signingPublicKey, signingPrivateKey, amount, selectedTier);
+      await registerValidator(walletId, signingPublicKey, signingPrivateKey || "", amount, selectedTier);
       setSuccess(true);
       setTimeout(() => {
         onSuccess(amount);

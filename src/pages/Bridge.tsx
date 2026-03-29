@@ -20,7 +20,8 @@ import {
   getBridgeHistory,
   type BridgeHistoryEntry,
 } from "@/lib/bridge";
-import { createSignedBridgeWithdraw } from "@/lib/pqc-signer";
+import { createSignedBridgeWithdraw, type TransactionPayload, generateNonce } from "@/lib/pqc-signer";
+import { signViaExtension, getRougeChainProvider } from "@/lib/extension-bridge";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { getWalletBalance } from "@/lib/pqc-wallet";
 import { qethToHuman, humanToQeth, formatQethForDisplay } from "@/hooks/use-eth-price";
@@ -274,9 +275,34 @@ const Bridge = () => {
 
   // ── Withdraw: RougeChain → Base ───────────────────────────────
 
+  const signBridgeWithdraw = async (
+    pubKey: string,
+    privKey: string,
+    withdrawAmount: number,
+    evmAddr: string,
+    tokenSymbol: string
+  ) => {
+    if (privKey) {
+      return createSignedBridgeWithdraw(pubKey, privKey, withdrawAmount, evmAddr, tokenSymbol);
+    }
+    const payload: TransactionPayload = {
+      type: "bridge_withdraw",
+      from: pubKey,
+      amount: withdrawAmount,
+      fee: 0.1,
+      tokenSymbol,
+      evmAddress: evmAddr.startsWith("0x") ? evmAddr : `0x${evmAddr}`,
+      timestamp: Date.now(),
+      nonce: generateNonce(),
+    };
+    return signViaExtension(payload, pubKey);
+  };
+
   const handleWithdraw = async () => {
     const wallet = loadUnifiedWallet();
-    if (!wallet?.signingPrivateKey || !wallet?.signingPublicKey) { toast.error("Connect your RougeChain wallet first"); return; }
+    const hasKey = !!wallet?.signingPrivateKey;
+    const hasProvider = !!getRougeChainProvider();
+    if (!wallet?.signingPublicKey || (!hasKey && !hasProvider)) { toast.error("Connect your RougeChain wallet first"); return; }
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum <= 0) { toast.error("Enter a valid amount"); return; }
     const evm = evmTarget.trim();
@@ -290,7 +316,7 @@ const Bridge = () => {
       if (asset === "XRGE") {
         if (amountNum > xrgeL1Balance) { toast.error("Insufficient XRGE balance"); setProcessing(false); return; }
         setStep("Submitting withdrawal...");
-        const signed = createSignedBridgeWithdraw(wallet.signingPublicKey, wallet.signingPrivateKey, amountNum, evmAddr, "XRGE");
+        const signed = await signBridgeWithdraw(wallet.signingPublicKey, wallet.signingPrivateKey, amountNum, evmAddr, "XRGE");
         const result = await bridgeWithdrawXrge({ fromPublicKey: wallet.signingPublicKey, amount: amountNum, evmAddress: evmAddr, signature: signed.signature, payload: signed.payload as unknown as Record<string, unknown> });
         if (result.success) {
           toast.success(`Withdrawal submitted! The relayer will release XRGE on Base.`);
@@ -307,7 +333,7 @@ const Bridge = () => {
         if (amountUnits > currentBalance) { toast.error(`Insufficient ${tokenLabel} balance`); setProcessing(false); return; }
 
         setStep("Submitting withdrawal...");
-        const signed = createSignedBridgeWithdraw(wallet.signingPublicKey, wallet.signingPrivateKey, amountUnits, evmAddr, tokenLabel);
+        const signed = await signBridgeWithdraw(wallet.signingPublicKey, wallet.signingPrivateKey, amountUnits, evmAddr, tokenLabel);
         const result = await bridgeWithdraw({ fromPublicKey: wallet.signingPublicKey, amountUnits, evmAddress: evmAddr, tokenSymbol: tokenLabel, signature: signed.signature, payload: signed.payload as unknown as Record<string, unknown> });
         if (result.success) {
           toast.success(`Withdrawal submitted! The relayer will send ${asset} to your Base address.`);

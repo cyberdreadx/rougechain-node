@@ -245,7 +245,7 @@ const PoolDetail = () => {
               variant="default"
               size="sm"
               onClick={() => setShowSwapWidget(true)}
-              disabled={!wallet?.signingPrivateKey}
+              disabled={!wallet?.signingPublicKey}
             >
               <ArrowUpDown className="w-4 h-4 mr-1.5" />
               Swap
@@ -402,10 +402,10 @@ const PoolDetail = () => {
 
       {/* Swap widget modal */}
       <AnimatePresence>
-        {showSwapWidget && wallet?.signingPrivateKey && (
+        {showSwapWidget && wallet?.signingPublicKey && (
           <SwapWidget
             walletPublicKey={wallet.signingPublicKey}
-            walletPrivateKey={wallet.signingPrivateKey}
+            walletPrivateKey={wallet.signingPrivateKey || ""}
             onClose={() => setShowSwapWidget(false)}
           />
         )}

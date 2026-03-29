@@ -665,6 +665,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/stake/submit", post(submit_stake))
         .route("/api/unstake/submit", post(submit_unstake))
         .route("/api/faucet", post(faucet))
+        .route("/api/faucet/bridge", post(bridge_faucet))
         .route("/api/validators", get(get_validators))
         .route("/api/selection", get(get_selection))
         .route("/api/finality", get(get_finality))
@@ -929,6 +930,7 @@ async fn auth_middleware<B>(
     }
     // Auth bypass for endpoints that handle their own auth (v2 uses signatures, faucet/bridge are public)
     let skip_auth = path == "/api/faucet"
+        || path == "/api/faucet/bridge"
         || path == "/api/bot/reply"
         || path.starts_with("/api/bridge/")
         || path.starts_with("/api/v2/")
@@ -3405,6 +3407,75 @@ async fn faucet(
     match node.submit_faucet_tx(&body.recipient_public_key, amount) {
         Ok(tx) => {
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
+            Ok(Json(TxResponse { success: true, tx_id: Some(id), tx: Some(tx), error: None }))
+        }
+        Err(err) => Ok(Json(TxResponse { success: false, tx_id: None, tx: None, error: Some(err) })),
+    }
+}
+
+// ===== Bridge Token Faucet (testnet only) =====
+// Mints qUSDC / qETH directly via bridge_mint without requiring a real Base deposit.
+
+const BRIDGE_FAUCET_COOLDOWN_SECS: i64 = 3600; // 1 hour
+const BRIDGE_FAUCET_ALLOWED: &[&str] = &["qUSDC", "qETH"];
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeFaucetRequest {
+    recipient_public_key: String,
+    token: String,
+    amount: Option<u64>,
+}
+
+async fn bridge_faucet(
+    State(state): State<AppState>,
+    Json(body): Json<BridgeFaucetRequest>,
+) -> Result<Json<TxResponse>, StatusCode> {
+    let token = body.token.trim().to_string();
+    if !BRIDGE_FAUCET_ALLOWED.iter().any(|t| t.eq_ignore_ascii_case(&token)) {
+        return Ok(Json(TxResponse {
+            success: false, tx_id: None, tx: None,
+            error: Some(format!("Bridge faucet not available for '{}'. Supported: {:?}", token, BRIDGE_FAUCET_ALLOWED)),
+        }));
+    }
+
+    // Normalize symbol
+    let mint_symbol = if token.eq_ignore_ascii_case("qUSDC") { "qUSDC" } else { "qETH" };
+
+    // Default amounts: 1000 qUSDC (6-decimal → 1_000_000_000) or 1 qETH (6-decimal → 1_000_000)
+    let default_amount: u64 = if mint_symbol == "qUSDC" { 1_000_000_000 } else { 1_000_000 };
+    let max_amount: u64 = if mint_symbol == "qUSDC" { 10_000_000_000 } else { 10_000_000 };
+    let amount = body.amount.unwrap_or(default_amount).min(max_amount);
+
+    // Rate limit keyed by recipient + token
+    let cooldown_key = format!("{}:{}", body.recipient_public_key, mint_symbol);
+    let now = chrono::Utc::now().timestamp();
+    {
+        let mut cooldowns = state.faucet_cooldowns.lock().await;
+        if let Some(last) = cooldowns.get(&cooldown_key).copied() {
+            let elapsed = now - last;
+            if elapsed < BRIDGE_FAUCET_COOLDOWN_SECS {
+                let remaining = BRIDGE_FAUCET_COOLDOWN_SECS - elapsed;
+                let mins = remaining / 60;
+                return Ok(Json(TxResponse {
+                    success: false, tx_id: None, tx: None,
+                    error: Some(format!("Bridge faucet cooldown: please wait {}m before requesting {} again.", mins, mint_symbol)),
+                }));
+            }
+        }
+        cooldowns.insert(cooldown_key, now);
+    }
+
+    let node = &state.node;
+    match node.submit_bridge_mint_tx(&body.recipient_public_key, amount, mint_symbol) {
+        Ok(tx) => {
+            let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
+            // Human-readable amount for response
+            let display = if mint_symbol == "qUSDC" {
+                format!("{} qUSDC", amount as f64 / 1_000_000.0)
+            } else {
+                format!("{} qETH", amount as f64 / 1_000_000.0)
+            };
             Ok(Json(TxResponse { success: true, tx_id: Some(id), tx: Some(tx), error: None }))
         }
         Err(err) => Ok(Json(TxResponse { success: false, tx_id: None, tx: None, error: Some(err) })),

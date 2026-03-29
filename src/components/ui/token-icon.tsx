@@ -31,12 +31,16 @@ export function TokenIcon({ symbol, size = 24, imageUrl, className = "" }: Token
     );
   }
 
+  const isStablecoin = symbol === "qUSDC";
+
   return (
     <div
-      className={`rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold ${className}`}
+      className={`rounded-full flex items-center justify-center text-xs font-bold ${
+        isStablecoin ? "bg-emerald-500/20 text-emerald-500" : "bg-primary/20"
+      } ${className}`}
       style={{ width: size, height: size }}
     >
-      {symbol.charAt(0)}
+      {isStablecoin ? "$" : symbol.charAt(0)}
     </div>
   );
 }

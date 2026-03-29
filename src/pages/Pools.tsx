@@ -88,10 +88,10 @@ const Pools = () => {
   // Load wallet from localStorage
   useEffect(() => {
     const savedWallet = loadUnifiedWallet();
-    if (savedWallet && savedWallet.signingPublicKey && savedWallet.signingPrivateKey) {
+    if (savedWallet && savedWallet.signingPublicKey) {
       setWallet({
         publicKey: savedWallet.signingPublicKey,
-        privateKey: savedWallet.signingPrivateKey,
+        privateKey: savedWallet.signingPrivateKey || "",
       });
     }
   }, []);

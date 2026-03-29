@@ -297,10 +297,10 @@ const Swap = () => {
   // Load wallet
   useEffect(() => {
     const savedWallet = loadUnifiedWallet();
-    if (savedWallet?.signingPublicKey && savedWallet?.signingPrivateKey) {
+    if (savedWallet?.signingPublicKey) {
       setWallet({
         publicKey: savedWallet.signingPublicKey,
-        privateKey: savedWallet.signingPrivateKey,
+        privateKey: savedWallet.signingPrivateKey || "",
       });
     }
   }, []);

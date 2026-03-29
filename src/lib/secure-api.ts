@@ -3,34 +3,20 @@
  * 
  * All transactions are signed locally before being sent to the server.
  * Private keys NEVER leave the browser.
+ *
+ * When connected via browser extension or Qwalla dApp browser (no local
+ * private key), signing requests are routed through window.rougechain.
  */
 
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "./network";
 import {
-  SignedTransaction,
-  createSignedTransfer,
-  createSignedTokenCreation,
-  createSignedSwap,
-  createSignedPoolCreation,
-  createSignedAddLiquidity,
-  createSignedRemoveLiquidity,
-  createSignedStake,
-  createSignedUnstake,
-  createSignedFaucetRequest,
-  createSignedBurn,
-  createSignedNftCreateCollection,
-  createSignedNftMint,
-  createSignedNftBatchMint,
-  createSignedNftTransfer,
-  createSignedNftBurn,
-  createSignedNftLock,
-  createSignedNftFreezeCollection,
-  createSignedTokenMetadataUpdate,
-  createSignedTokenMetadataClaim,
-  createSignedShield,
-  createSignedUnshield,
+  type TransactionPayload,
+  type SignedTransaction,
+  signTransaction,
+  generateNonce,
   BURN_ADDRESS,
 } from "./pqc-signer";
+import { signViaExtension, getRougeChainProvider } from "./extension-bridge";
 
 // Re-export burn address for convenience
 export { BURN_ADDRESS };
@@ -42,6 +28,23 @@ interface ApiResponse<T = unknown> {
   success: boolean;
   error?: string;
   data?: T;
+}
+
+/**
+ * Sign a transaction locally or via extension depending on private key availability
+ */
+async function resolveSignedTx(
+  payload: TransactionPayload,
+  publicKey: string,
+  privateKey: string
+): Promise<SignedTransaction> {
+  if (!privateKey) {
+    if (!getRougeChainProvider()) {
+      throw new Error("No private key and no wallet extension available — cannot sign transaction");
+    }
+    return signViaExtension(payload, publicKey);
+  }
+  return signTransaction(payload, privateKey, publicKey);
 }
 
 /**
@@ -75,9 +78,10 @@ async function submitSignedTx(
   }
 }
 
-/**
- * Transfer tokens securely (client-side signing)
- */
+// ============================================
+// Token operations
+// ============================================
+
 export async function secureTransfer(
   fromPublicKey: string,
   fromPrivateKey: string,
@@ -86,20 +90,20 @@ export async function secureTransfer(
   fee: number = 1,
   token: string = "XRGE"
 ): Promise<ApiResponse> {
-  const signedTx = createSignedTransfer(
-    fromPublicKey,
-    fromPrivateKey,
-    toPublicKey,
+  const payload: TransactionPayload = {
+    type: "transfer",
+    from: fromPublicKey,
+    to: toPublicKey,
     amount,
     fee,
-    token
-  );
+    token,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, fromPublicKey, fromPrivateKey);
   return submitSignedTx("/v2/transfer", signedTx);
 }
 
-/**
- * Create a token securely (client-side signing)
- */
 export async function secureCreateToken(
   creatorPublicKey: string,
   creatorPrivateKey: string,
@@ -110,22 +114,22 @@ export async function secureCreateToken(
   image?: string,
   description?: string
 ): Promise<ApiResponse<{ token_symbol: string }>> {
-  const signedTx = createSignedTokenCreation(
-    creatorPublicKey,
-    creatorPrivateKey,
-    tokenName,
-    tokenSymbol,
-    initialSupply,
+  const payload: TransactionPayload = {
+    type: "create_token",
+    from: creatorPublicKey,
+    token_name: tokenName,
+    token_symbol: tokenSymbol,
+    initial_supply: initialSupply,
     fee,
-    image,
-    description
-  );
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+    ...(image ? { image } : {}),
+    ...(description ? { description } : {}),
+  };
+  const signedTx = await resolveSignedTx(payload, creatorPublicKey, creatorPrivateKey);
   return submitSignedTx("/v2/token/create", signedTx) as Promise<ApiResponse<{ token_symbol: string }>>;
 }
 
-/**
- * Approve a spender to transfer tokens on your behalf (client-side signing)
- */
 export async function secureApproveToken(
   ownerPublicKey: string,
   ownerPrivateKey: string,
@@ -133,20 +137,19 @@ export async function secureApproveToken(
   tokenSymbol: string,
   amount: number
 ): Promise<ApiResponse<{ spender: string; token_symbol: string; amount: number }>> {
-  const { createSignedTokenApproval } = await import("./pqc-signer");
-  const signedTx = createSignedTokenApproval(
-    ownerPublicKey,
-    ownerPrivateKey,
-    spenderPublicKey,
-    tokenSymbol,
-    amount
-  );
+  const payload: TransactionPayload = {
+    type: "approve",
+    from: ownerPublicKey,
+    spender: spenderPublicKey,
+    token_symbol: tokenSymbol,
+    amount,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, ownerPublicKey, ownerPrivateKey);
   return submitSignedTx("/v2/token/approve", signedTx) as Promise<ApiResponse<{ spender: string; token_symbol: string; amount: number }>>;
 }
 
-/**
- * Transfer tokens from an owner using an existing allowance (client-side signing)
- */
 export async function secureTransferFrom(
   spenderPublicKey: string,
   spenderPrivateKey: string,
@@ -155,21 +158,24 @@ export async function secureTransferFrom(
   tokenSymbol: string,
   amount: number
 ): Promise<ApiResponse<{ from: string; to: string; amount: number }>> {
-  const { createSignedTokenTransferFrom } = await import("./pqc-signer");
-  const signedTx = createSignedTokenTransferFrom(
-    spenderPublicKey,
-    spenderPrivateKey,
-    ownerPublicKey,
-    recipientPublicKey,
-    tokenSymbol,
-    amount
-  );
+  const payload: TransactionPayload = {
+    type: "transfer_from",
+    from: spenderPublicKey,
+    owner: ownerPublicKey,
+    to: recipientPublicKey,
+    token_symbol: tokenSymbol,
+    amount,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, spenderPublicKey, spenderPrivateKey);
   return submitSignedTx("/v2/token/transfer-from", signedTx) as Promise<ApiResponse<{ from: string; to: string; amount: number }>>;
 }
 
-/**
- * Execute a swap securely (client-side signing)
- */
+// ============================================
+// DEX operations
+// ============================================
+
 export async function secureSwap(
   fromPublicKey: string,
   fromPrivateKey: string,
@@ -178,20 +184,20 @@ export async function secureSwap(
   amountIn: number,
   minAmountOut: number
 ): Promise<ApiResponse> {
-  const signedTx = createSignedSwap(
-    fromPublicKey,
-    fromPrivateKey,
-    tokenIn,
-    tokenOut,
-    amountIn,
-    minAmountOut
-  );
+  const payload: TransactionPayload = {
+    type: "swap",
+    from: fromPublicKey,
+    token_in: tokenIn,
+    token_out: tokenOut,
+    amount_in: amountIn,
+    min_amount_out: minAmountOut,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, fromPublicKey, fromPrivateKey);
   return submitSignedTx("/v2/swap/execute", signedTx);
 }
 
-/**
- * Create a liquidity pool securely (client-side signing)
- */
 export async function secureCreatePool(
   creatorPublicKey: string,
   creatorPrivateKey: string,
@@ -200,20 +206,20 @@ export async function secureCreatePool(
   amountA: number,
   amountB: number
 ): Promise<ApiResponse<{ pool_id: string }>> {
-  const signedTx = createSignedPoolCreation(
-    creatorPublicKey,
-    creatorPrivateKey,
-    tokenA,
-    tokenB,
-    amountA,
-    amountB
-  );
+  const payload: TransactionPayload = {
+    type: "create_pool",
+    from: creatorPublicKey,
+    token_a: tokenA,
+    token_b: tokenB,
+    amount_a: amountA,
+    amount_b: amountB,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, creatorPublicKey, creatorPrivateKey);
   return submitSignedTx("/v2/pool/create", signedTx) as Promise<ApiResponse<{ pool_id: string }>>;
 }
 
-/**
- * Add liquidity securely (client-side signing)
- */
 export async function secureAddLiquidity(
   fromPublicKey: string,
   fromPrivateKey: string,
@@ -221,85 +227,95 @@ export async function secureAddLiquidity(
   amountA: number,
   amountB: number
 ): Promise<ApiResponse> {
-  const signedTx = createSignedAddLiquidity(
-    fromPublicKey,
-    fromPrivateKey,
-    poolId,
-    amountA,
-    amountB
-  );
+  const payload: TransactionPayload = {
+    type: "add_liquidity",
+    from: fromPublicKey,
+    pool_id: poolId,
+    amount_a: amountA,
+    amount_b: amountB,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, fromPublicKey, fromPrivateKey);
   return submitSignedTx("/v2/pool/add-liquidity", signedTx);
 }
 
-/**
- * Remove liquidity securely (client-side signing)
- */
 export async function secureRemoveLiquidity(
   fromPublicKey: string,
   fromPrivateKey: string,
   poolId: string,
   lpAmount: number
 ): Promise<ApiResponse> {
-  const signedTx = createSignedRemoveLiquidity(
-    fromPublicKey,
-    fromPrivateKey,
-    poolId,
-    lpAmount
-  );
+  const payload: TransactionPayload = {
+    type: "remove_liquidity",
+    from: fromPublicKey,
+    pool_id: poolId,
+    lp_amount: lpAmount,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, fromPublicKey, fromPrivateKey);
   return submitSignedTx("/v2/pool/remove-liquidity", signedTx);
 }
 
-/**
- * Stake tokens securely (client-side signing)
- */
+// ============================================
+// Staking operations
+// ============================================
+
 export async function secureStake(
   fromPublicKey: string,
   fromPrivateKey: string,
   amount: number,
   fee: number = 1
 ): Promise<ApiResponse> {
-  const signedTx = createSignedStake(
-    fromPublicKey,
-    fromPrivateKey,
+  const payload: TransactionPayload = {
+    type: "stake",
+    from: fromPublicKey,
     amount,
-    fee
-  );
+    fee,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, fromPublicKey, fromPrivateKey);
   return submitSignedTx("/v2/stake", signedTx);
 }
 
-/**
- * Unstake tokens securely (client-side signing)
- */
 export async function secureUnstake(
   fromPublicKey: string,
   fromPrivateKey: string,
   amount: number,
   fee: number = 1
 ): Promise<ApiResponse> {
-  const signedTx = createSignedUnstake(
-    fromPublicKey,
-    fromPrivateKey,
+  const payload: TransactionPayload = {
+    type: "unstake",
+    from: fromPublicKey,
     amount,
-    fee
-  );
+    fee,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, fromPublicKey, fromPrivateKey);
   return submitSignedTx("/v2/unstake", signedTx);
 }
 
-/**
- * Request faucet tokens securely (client-side signing)
- */
+// ============================================
+// Faucet / Burn
+// ============================================
+
 export async function secureFaucet(
   publicKey: string,
   privateKey: string
 ): Promise<ApiResponse> {
-  const signedTx = createSignedFaucetRequest(publicKey, privateKey);
+  const payload: TransactionPayload = {
+    type: "faucet",
+    from: publicKey,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, publicKey, privateKey);
   return submitSignedTx("/v2/faucet", signedTx);
 }
 
-/**
- * Burn tokens securely (client-side signing)
- * Tokens are sent to the official burn address and permanently destroyed
- */
 export async function secureBurn(
   fromPublicKey: string,
   fromPrivateKey: string,
@@ -307,19 +323,24 @@ export async function secureBurn(
   fee: number = 1,
   token: string = "XRGE"
 ): Promise<ApiResponse> {
-  const signedTx = createSignedBurn(
-    fromPublicKey,
-    fromPrivateKey,
+  const payload: TransactionPayload = {
+    type: "transfer",
+    from: fromPublicKey,
+    to: BURN_ADDRESS,
     amount,
     fee,
-    token
-  );
+    token,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, fromPublicKey, fromPrivateKey);
   return submitSignedTx("/v2/transfer", signedTx);
 }
 
-/**
- * Get burned tokens stats from the chain
- */
+// ============================================
+// Burned token stats (no signing needed)
+// ============================================
+
 export async function getBurnedTokens(): Promise<ApiResponse<{
   burned: Record<string, number>;
   total_xrge_burned: number;
@@ -340,7 +361,9 @@ export async function getBurnedTokens(): Promise<ApiResponse<{
   }
 }
 
-// ===== Token Metadata API =====
+// ============================================
+// Token Metadata API
+// ============================================
 
 export interface TokenMetadata {
   symbol: string;
@@ -355,9 +378,6 @@ export interface TokenMetadata {
   updated_at: number;
 }
 
-/**
- * Get all token metadata
- */
 export async function getAllTokenMetadata(): Promise<ApiResponse<TokenMetadata[]>> {
   const baseUrl = getNodeApiBaseUrl();
   if (!baseUrl) {
@@ -378,9 +398,6 @@ export async function getAllTokenMetadata(): Promise<ApiResponse<TokenMetadata[]
   }
 }
 
-/**
- * Get metadata for a specific token
- */
 export async function getTokenMetadata(symbol: string): Promise<ApiResponse<TokenMetadata>> {
   const baseUrl = getNodeApiBaseUrl();
   if (!baseUrl) {
@@ -401,23 +418,22 @@ export async function getTokenMetadata(symbol: string): Promise<ApiResponse<Toke
   }
 }
 
-/**
- * Claim token metadata (for tokens created before metadata system)
- * Only the original creator (verified on-chain) can claim
- */
 export async function claimTokenMetadata(
   publicKey: string,
   privateKey: string,
   tokenSymbol: string
 ): Promise<ApiResponse> {
-  const signedTx = createSignedTokenMetadataClaim(publicKey, privateKey, tokenSymbol);
+  const payload: TransactionPayload = {
+    type: "claim_token_metadata",
+    from: publicKey,
+    token_symbol: tokenSymbol,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, publicKey, privateKey);
   return submitSignedTx("/v2/token/metadata/claim", signedTx);
 }
 
-/**
- * Update token metadata (only token creator can do this)
- * Uses v2 signed endpoint — private key never sent to server.
- */
 export async function updateTokenMetadata(
   publicKey: string,
   privateKey: string,
@@ -430,16 +446,25 @@ export async function updateTokenMetadata(
     discord?: string;
   }
 ): Promise<ApiResponse> {
-  const signedTx = createSignedTokenMetadataUpdate(
-    publicKey,
-    privateKey,
-    tokenSymbol,
-    metadata
-  );
+  const payload: TransactionPayload = {
+    type: "update_token_metadata",
+    from: publicKey,
+    token_symbol: tokenSymbol,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+    ...(metadata.image !== undefined ? { image: metadata.image } : {}),
+    ...(metadata.description !== undefined ? { description: metadata.description } : {}),
+    ...(metadata.website !== undefined ? { website: metadata.website } : {}),
+    ...(metadata.twitter !== undefined ? { twitter: metadata.twitter } : {}),
+    ...(metadata.discord !== undefined ? { discord: metadata.discord } : {}),
+  };
+  const signedTx = await resolveSignedTx(payload, publicKey, privateKey);
   return submitSignedTx("/v2/token/metadata/update", signedTx);
 }
 
-// ===== NFT API =====
+// ============================================
+// NFT API
+// ============================================
 
 export interface NftCollection {
   collection_id: string;
@@ -476,7 +501,20 @@ export async function secureCreateNftCollection(
   name: string,
   opts: { maxSupply?: number; royaltyBps?: number; image?: string; description?: string } = {}
 ): Promise<ApiResponse> {
-  const signedTx = createSignedNftCreateCollection(publicKey, privateKey, symbol, name, opts);
+  const payload: TransactionPayload = {
+    type: "nft_create_collection",
+    from: publicKey,
+    symbol,
+    name,
+    fee: 50,
+    maxSupply: opts.maxSupply,
+    royaltyBps: opts.royaltyBps,
+    image: opts.image,
+    description: opts.description,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, publicKey, privateKey);
   return submitSignedTx("/v2/nft/collection/create", signedTx);
 }
 
@@ -487,7 +525,18 @@ export async function secureMintNft(
   name: string,
   opts: { metadataUri?: string; attributes?: unknown } = {}
 ): Promise<ApiResponse> {
-  const signedTx = createSignedNftMint(publicKey, privateKey, collectionId, name, opts);
+  const payload: TransactionPayload = {
+    type: "nft_mint",
+    from: publicKey,
+    collectionId,
+    name,
+    fee: 5,
+    metadataUri: opts.metadataUri,
+    attributes: opts.attributes,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, publicKey, privateKey);
   return submitSignedTx("/v2/nft/mint", signedTx);
 }
 
@@ -498,7 +547,18 @@ export async function secureBatchMintNft(
   names: string[],
   opts: { uris?: string[]; batchAttributes?: unknown[] } = {}
 ): Promise<ApiResponse> {
-  const signedTx = createSignedNftBatchMint(publicKey, privateKey, collectionId, names, opts);
+  const payload: TransactionPayload = {
+    type: "nft_batch_mint",
+    from: publicKey,
+    collectionId,
+    names,
+    fee: 5 * names.length,
+    uris: opts.uris,
+    batchAttributes: opts.batchAttributes,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, publicKey, privateKey);
   return submitSignedTx("/v2/nft/batch-mint", signedTx);
 }
 
@@ -510,7 +570,18 @@ export async function secureTransferNft(
   toPublicKey: string,
   salePrice?: number
 ): Promise<ApiResponse> {
-  const signedTx = createSignedNftTransfer(publicKey, privateKey, collectionId, tokenId, toPublicKey, salePrice);
+  const payload: TransactionPayload = {
+    type: "nft_transfer",
+    from: publicKey,
+    collectionId,
+    tokenId,
+    to: toPublicKey,
+    fee: 1,
+    salePrice,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, publicKey, privateKey);
   return submitSignedTx("/v2/nft/transfer", signedTx);
 }
 
@@ -520,7 +591,16 @@ export async function secureBurnNft(
   collectionId: string,
   tokenId: number
 ): Promise<ApiResponse> {
-  const signedTx = createSignedNftBurn(publicKey, privateKey, collectionId, tokenId);
+  const payload: TransactionPayload = {
+    type: "nft_burn",
+    from: publicKey,
+    collectionId,
+    tokenId,
+    fee: 0.1,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, publicKey, privateKey);
   return submitSignedTx("/v2/nft/burn", signedTx);
 }
 
@@ -531,7 +611,17 @@ export async function secureLockNft(
   tokenId: number,
   locked: boolean
 ): Promise<ApiResponse> {
-  const signedTx = createSignedNftLock(publicKey, privateKey, collectionId, tokenId, locked);
+  const payload: TransactionPayload = {
+    type: "nft_lock",
+    from: publicKey,
+    collectionId,
+    tokenId,
+    locked,
+    fee: 0.1,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, publicKey, privateKey);
   return submitSignedTx("/v2/nft/lock", signedTx);
 }
 
@@ -541,11 +631,22 @@ export async function secureFreezeNftCollection(
   collectionId: string,
   frozen: boolean
 ): Promise<ApiResponse> {
-  const signedTx = createSignedNftFreezeCollection(publicKey, privateKey, collectionId, frozen);
+  const payload: TransactionPayload = {
+    type: "nft_freeze_collection",
+    from: publicKey,
+    collectionId,
+    frozen,
+    fee: 0.1,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, publicKey, privateKey);
   return submitSignedTx("/v2/nft/freeze-collection", signedTx);
 }
 
-// ===== NFT Query Functions (no signing needed) =====
+// ============================================
+// NFT Query Functions (no signing needed)
+// ============================================
 
 export async function getNftCollections(): Promise<ApiResponse<NftCollection[]>> {
   const baseUrl = getNodeApiBaseUrl();
@@ -634,7 +735,9 @@ export async function getNftsByOwner(pubkey: string): Promise<ApiResponse<NftTok
   }
 }
 
-// ===== Shielded Transaction API =====
+// ============================================
+// Shielded Transaction API
+// ============================================
 
 export interface ShieldedStats {
   success: boolean;
@@ -643,9 +746,6 @@ export interface ShieldedStats {
   active_notes: number;
 }
 
-/**
- * Get shielded pool stats (commitment & nullifier counts)
- */
 export async function getShieldedStats(): Promise<ApiResponse<ShieldedStats>> {
   const baseUrl = getNodeApiBaseUrl();
   if (!baseUrl) return { success: false, error: "API not configured" };
@@ -659,22 +759,24 @@ export async function getShieldedStats(): Promise<ApiResponse<ShieldedStats>> {
   }
 }
 
-/**
- * Shield XRGE into a private note (client-side signing)
- */
 export async function secureShield(
   publicKey: string,
   privateKey: string,
   amount: number,
   commitment: string
 ): Promise<ApiResponse> {
-  const signedTx = createSignedShield(publicKey, privateKey, amount, commitment);
+  const payload: TransactionPayload = {
+    type: "shield",
+    from: publicKey,
+    amount,
+    commitment,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, publicKey, privateKey);
   return submitSignedTx("/v2/shielded/shield", signedTx);
 }
 
-/**
- * Unshield a private note back to public XRGE (client-side signing)
- */
 export async function secureUnshield(
   publicKey: string,
   privateKey: string,
@@ -682,6 +784,15 @@ export async function secureUnshield(
   amount: number,
   proof: string
 ): Promise<ApiResponse> {
-  const signedTx = createSignedUnshield(publicKey, privateKey, nullifiers, amount, proof);
+  const payload: TransactionPayload = {
+    type: "unshield",
+    from: publicKey,
+    nullifiers,
+    amount,
+    proof,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+  const signedTx = await resolveSignedTx(payload, publicKey, privateKey);
   return submitSignedTx("/v2/shielded/unshield", signedTx);
 }

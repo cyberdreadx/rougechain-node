@@ -16,7 +16,8 @@ import {
   Puzzle,
   ExternalLink,
   Shield,
-  ShieldOff
+  ShieldOff,
+  DollarSign
 } from "lucide-react";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { useTokenPrices } from "@/hooks/use-token-prices";
@@ -126,6 +127,35 @@ const Wallet = () => {
     const unified = loadUnifiedWallet();
     if (unified) {
       setWallet(unified);
+    } else {
+      // Auto-connect if inside Qwalla dApp browser or extension is injected
+      const provider = (window as any).rougechain;
+      if (provider?.isRougeChain) {
+        (async () => {
+          try {
+            const result = await provider.connect() as { publicKey: string; displayName?: string; encryptionPublicKey?: string };
+            if (result?.publicKey) {
+              const extensionWallet: UnifiedWallet = {
+                id: `ext-${Date.now()}`,
+                displayName: result.displayName || "Extension Wallet",
+                createdAt: Date.now(),
+                signingPublicKey: result.publicKey,
+                signingPrivateKey: "",
+                encryptionPublicKey: result.encryptionPublicKey || "",
+                encryptionPrivateKey: "",
+                version: 2,
+              };
+              saveUnifiedWallet(extensionWallet);
+              setWallet(extensionWallet);
+            }
+          } catch {
+            // Auto-connect failed silently — user can still connect manually
+          } finally {
+            setLoading(false);
+          }
+        })();
+        return;
+      }
     }
     setLoading(false);
   }, [activeNetwork]);
@@ -535,6 +565,43 @@ const Wallet = () => {
     }
   };
 
+  const claimBridgeFaucet = async (token: "qUSDC" | "qETH") => {
+    if (!wallet) {
+      toast.error("Connect your wallet first");
+      return;
+    }
+    setMinting(true);
+    try {
+      const NODE_API_URL = getNodeApiBaseUrl();
+      const res = await fetch(`${NODE_API_URL}/faucet/bridge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
+        body: JSON.stringify({
+          recipientPublicKey: wallet.signingPublicKey,
+          token,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data?.error || `Failed to claim ${token}`);
+      }
+      const displayAmount = token === "qUSDC" ? "1,000 qUSDC" : "1 qETH";
+      toast.success(`Claimed ${displayAmount}!`, {
+        description: "Balance will update once the block is mined.",
+      });
+      await refreshWalletData();
+      for (const delayMs of [800, 1600, 2400]) {
+        await new Promise((r) => setTimeout(r, delayMs));
+        await refreshWalletData();
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : `Failed to claim ${token}`;
+      toast.error(`Failed to claim ${token}`, { description: msg });
+    } finally {
+      setMinting(false);
+    }
+  };
+
   // Get XRGE balance specifically for the main display (native token)
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
   
@@ -565,15 +632,22 @@ const Wallet = () => {
 
   // Convert balances to asset format with USD values (from pools + DexScreener)
   const assets = balances.map(b => {
-    // qETH: 1 unit = 10^-6 ETH, display as 0.0005 and use ETH price for USD
     const isQeth = b.symbol === "qETH";
-    const displayBalance = isQeth ? qethToHuman(b.balance) : b.balance;
-    const balanceStr = isQeth ? formatQethForDisplay(b.balance) : b.balance.toLocaleString();
+    const isQusdc = b.symbol === "qUSDC";
+    // qETH: 1 unit = 10^-6 ETH. qUSDC: 1 unit = 10^-6 USD (6-decimal stablecoin).
+    const displayBalance = isQeth ? qethToHuman(b.balance)
+      : isQusdc ? b.balance / 1_000_000
+      : b.balance;
+    const balanceStr = isQeth ? formatQethForDisplay(b.balance)
+      : isQusdc ? (b.balance / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : b.balance.toLocaleString();
 
     const tokenPrice = tokenPrices[b.symbol];
     let usdValue: string | null = null;
     if (isQeth && ethPriceUsd !== null) {
       usdValue = formatUsd(displayBalance * ethPriceUsd);
+    } else if (isQusdc) {
+      usdValue = formatUsd(displayBalance);
     } else if (tokenPrice) {
       usdValue = tokenPrice.priceUsd < 0.01
         ? formatTokenPrice(b.balance * tokenPrice.priceUsd)
@@ -582,9 +656,11 @@ const Wallet = () => {
 
     const pricePerToken = isQeth && ethPriceUsd !== null
       ? formatTokenPrice(ethPriceUsd)
-      : tokenPrice
-        ? formatTokenPrice(tokenPrice.priceUsd)
-        : null;
+      : isQusdc
+        ? "$1.00"
+        : tokenPrice
+          ? formatTokenPrice(tokenPrice.priceUsd)
+          : null;
 
     const imageUrl = getTokenImage(b.symbol);
 
@@ -593,7 +669,7 @@ const Wallet = () => {
       name: b.name,
       symbol: b.symbol,
       balance: balanceStr,
-      value: isQeth ? `${balanceStr} qETH` : `${b.balance} ${b.symbol}`,
+      value: isQeth ? `${balanceStr} qETH` : isQusdc ? `${balanceStr} qUSDC` : `${b.balance} ${b.symbol}`,
       usdValue,
       pricePerToken,
       change: 0,
@@ -821,7 +897,7 @@ const Wallet = () => {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">Quick actions</h3>
             </div>
-            <div className={`grid gap-2 ${isMainnet ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-4 sm:grid-cols-7'}`}>
+            <div className={`grid gap-2 ${isMainnet ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-4 sm:grid-cols-8'}`}>
               <Button
                 variant="outline"
                 className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
@@ -845,7 +921,7 @@ const Wallet = () => {
                 <span className="text-[10px]">Receive</span>
               </Button>
               
-              {/* Only show faucet on devnet/testnet */}
+              {/* Only show faucets on devnet/testnet */}
               {!isMainnet && (
                 <Button
                   variant="outline"
@@ -860,7 +936,24 @@ const Wallet = () => {
                       <Droplets className="w-4 h-4 text-accent" />
                     )}
                   </div>
-                  <span className="text-[10px]">Faucet</span>
+                  <span className="text-[10px]">XRGE</span>
+                </Button>
+              )}
+              {!isMainnet && (
+                <Button
+                  variant="outline"
+                  className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
+                  onClick={() => claimBridgeFaucet("qUSDC")}
+                  disabled={minting}
+                >
+                  <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
+                    {minting ? (
+                      <Loader2 className="w-4 h-4 text-green-500 animate-spin" />
+                    ) : (
+                      <DollarSign className="w-4 h-4 text-green-500" />
+                    )}
+                  </div>
+                  <span className="text-[10px]">qUSDC</span>
                 </Button>
               )}
 
