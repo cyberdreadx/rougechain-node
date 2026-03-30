@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getCoreApiBaseUrl } from "@/lib/network";
 
-// WebSocket event types from the daemon
 export interface WsNewBlockEvent {
   type: "new_block";
   height: number;
@@ -32,7 +31,7 @@ interface UseBlockchainWsOptions {
   onNewBlock?: (event: WsNewBlockEvent) => void;
   onNewTransaction?: (event: WsNewTransactionEvent) => void;
   onStats?: (event: WsStatsEvent) => void;
-  fallbackPollInterval?: number; // ms, default 5000
+  fallbackPollInterval?: number;
 }
 
 interface UseBlockchainWsReturn {
@@ -43,88 +42,35 @@ interface UseBlockchainWsReturn {
 }
 
 export function useBlockchainWs(options: UseBlockchainWsOptions = {}): UseBlockchainWsReturn {
-  const {
-    onNewBlock,
-    onNewTransaction,
-    onStats,
-    fallbackPollInterval = 5000,
-  } = options;
+  const { fallbackPollInterval = 5000 } = options;
 
   const [isConnected, setIsConnected] = useState(false);
   const [connectionType, setConnectionType] = useState<"websocket" | "polling" | "disconnected">("disconnected");
   const [lastBlockHeight, setLastBlockHeight] = useState(0);
-  
-  const wsRef = useRef<WebSocket | null>(null);
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const reconnectAttempts = useRef(0);
 
-  // Build WebSocket URL from API base
+  const wsRef = useRef<WebSocket | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttempts = useRef(0);
+  const lastHeightRef = useRef(0);
+
+  // Store callbacks in refs to avoid re-creating connect on every render
+  const onNewBlockRef = useRef(options.onNewBlock);
+  const onNewTransactionRef = useRef(options.onNewTransaction);
+  const onStatsRef = useRef(options.onStats);
+  onNewBlockRef.current = options.onNewBlock;
+  onNewTransactionRef.current = options.onNewTransaction;
+  onStatsRef.current = options.onStats;
+
   const getWsUrl = useCallback(() => {
     const apiBase = getCoreApiBaseUrl();
     if (!apiBase) return null;
-    
-    // Convert http(s) to ws(s)
-    const wsUrl = apiBase
+    return apiBase
       .replace(/^https:/, "wss:")
       .replace(/^http:/, "ws:")
       .replace(/\/api$/, "/api/ws");
-    
-    return wsUrl;
   }, []);
 
-  // Fallback polling function
-  const pollStats = useCallback(async () => {
-    try {
-      const apiBase = getCoreApiBaseUrl();
-      if (!apiBase) return;
-      
-      const res = await fetch(`${apiBase}/stats`, {
-        signal: AbortSignal.timeout(8000),
-      });
-      
-      if (res.ok) {
-        const data = await res.json();
-        const height = data.network_height ?? data.networkHeight ?? 0;
-        
-        // Trigger callback if height changed
-        if (height > lastBlockHeight) {
-          setLastBlockHeight(height);
-          onNewBlock?.({
-            type: "new_block",
-            height,
-            hash: "",
-            tx_count: 0,
-            timestamp: Date.now(),
-          });
-        }
-        
-        onStats?.({
-          type: "stats",
-          block_height: height,
-          peer_count: data.connected_peers ?? data.connectedPeers ?? 0,
-          mempool_size: 0,
-        });
-        
-        setIsConnected(true);
-        setConnectionType("polling");
-      }
-    } catch {
-      // Silent fail
-    }
-  }, [lastBlockHeight, onNewBlock, onStats]);
-
-  // Start fallback polling
-  const startPolling = useCallback(() => {
-    if (pollIntervalRef.current) return;
-    
-    console.log("[ws] Starting fallback polling");
-    setConnectionType("polling");
-    pollStats();
-    pollIntervalRef.current = setInterval(pollStats, fallbackPollInterval);
-  }, [pollStats, fallbackPollInterval]);
-
-  // Stop polling
   const stopPolling = useCallback(() => {
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
@@ -132,7 +78,51 @@ export function useBlockchainWs(options: UseBlockchainWsOptions = {}): UseBlockc
     }
   }, []);
 
-  // Connect to WebSocket
+  const startPolling = useCallback(() => {
+    if (pollIntervalRef.current) return;
+
+    console.log("[ws] Starting fallback polling");
+    setConnectionType("polling");
+
+    const poll = async () => {
+      try {
+        const apiBase = getCoreApiBaseUrl();
+        if (!apiBase) return;
+        const res = await fetch(`${apiBase}/stats`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) return;
+        const data = await res.json();
+        const height = data.network_height ?? data.networkHeight ?? 0;
+
+        if (height > lastHeightRef.current) {
+          lastHeightRef.current = height;
+          setLastBlockHeight(height);
+          onNewBlockRef.current?.({
+            type: "new_block",
+            height,
+            hash: "",
+            tx_count: 0,
+            timestamp: Date.now(),
+          });
+        }
+
+        onStatsRef.current?.({
+          type: "stats",
+          block_height: height,
+          peer_count: data.connected_peers ?? 0,
+          mempool_size: 0,
+        });
+
+        setIsConnected(true);
+        setConnectionType("polling");
+      } catch {
+        // silent
+      }
+    };
+
+    poll();
+    pollIntervalRef.current = setInterval(poll, fallbackPollInterval);
+  }, [fallbackPollInterval]);
+
   const connect = useCallback(() => {
     const wsUrl = getWsUrl();
     if (!wsUrl) {
@@ -140,9 +130,9 @@ export function useBlockchainWs(options: UseBlockchainWsOptions = {}): UseBlockc
       return;
     }
 
-    // Close existing connection
     if (wsRef.current) {
       wsRef.current.close();
+      wsRef.current = null;
     }
 
     try {
@@ -161,22 +151,23 @@ export function useBlockchainWs(options: UseBlockchainWsOptions = {}): UseBlockc
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data) as WsEvent;
-          
           switch (data.type) {
             case "new_block":
+              lastHeightRef.current = data.height;
               setLastBlockHeight(data.height);
-              onNewBlock?.(data);
+              onNewBlockRef.current?.(data);
               break;
             case "new_transaction":
-              onNewTransaction?.(data);
+              onNewTransactionRef.current?.(data);
               break;
             case "stats":
+              lastHeightRef.current = data.block_height;
               setLastBlockHeight(data.block_height);
-              onStats?.(data);
+              onStatsRef.current?.(data);
               break;
           }
-        } catch (e) {
-          console.error("[ws] Failed to parse message:", e);
+        } catch {
+          // ignore parse errors
         }
       };
 
@@ -189,14 +180,11 @@ export function useBlockchainWs(options: UseBlockchainWsOptions = {}): UseBlockc
         setIsConnected(false);
         wsRef.current = null;
 
-        // Exponential backoff for reconnection
+        startPolling();
+
         const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
         reconnectAttempts.current++;
 
-        // Start polling as fallback
-        startPolling();
-
-        // Try to reconnect
         reconnectTimeoutRef.current = setTimeout(() => {
           console.log("[ws] Attempting reconnect...");
           connect();
@@ -206,9 +194,8 @@ export function useBlockchainWs(options: UseBlockchainWsOptions = {}): UseBlockc
       console.error("[ws] Failed to connect:", error);
       startPolling();
     }
-  }, [getWsUrl, onNewBlock, onNewTransaction, onStats, startPolling, stopPolling]);
+  }, [getWsUrl, startPolling, stopPolling]);
 
-  // Manual reconnect
   const reconnect = useCallback(() => {
     reconnectAttempts.current = 0;
     if (reconnectTimeoutRef.current) {
@@ -217,25 +204,20 @@ export function useBlockchainWs(options: UseBlockchainWsOptions = {}): UseBlockc
     connect();
   }, [connect]);
 
-  // Connect on mount
+  // Single stable effect — connect once on mount, cleanup on unmount
   useEffect(() => {
     connect();
-
     return () => {
       if (wsRef.current) {
         wsRef.current.close();
+        wsRef.current = null;
       }
       stopPolling();
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
     };
-  }, [connect, stopPolling]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return {
-    isConnected,
-    lastBlockHeight,
-    connectionType,
-    reconnect,
-  };
+  return { isConnected, lastBlockHeight, connectionType, reconnect };
 }
