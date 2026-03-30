@@ -502,7 +502,18 @@ impl L1Node {
                     if let Some(ref sym) = tx.payload.token_symbol {
                         let sym_upper = sym.trim().to_uppercase();
                         if created_symbols.contains(&sym_upper) { continue; }
-                        created_symbols.insert(sym_upper);
+                        created_symbols.insert(sym_upper.clone());
+
+                        let name = tx.payload.token_name.as_deref().unwrap_or(&sym_upper);
+                        let _ = self.register_or_merge_token_metadata(
+                            &sym_upper,
+                            name,
+                            &tx.from_pub_key,
+                            tx.payload.metadata_image.clone(),
+                            tx.payload.metadata_description.clone(),
+                            false,
+                            None,
+                        );
                     }
                 }
                 Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height, &self.shielded_supply);
@@ -1189,6 +1200,46 @@ impl L1Node {
         Ok(token_id)
     }
     
+    /// Register token metadata during rebuild, preserving any user-updated fields.
+    /// If metadata already exists, only fill in fields that are currently None.
+    /// Never overwrites existing image, description, website, twitter, or discord.
+    pub fn register_or_merge_token_metadata(
+        &self,
+        symbol: &str,
+        name: &str,
+        creator: &str,
+        image: Option<String>,
+        description: Option<String>,
+        mintable: bool,
+        max_supply: Option<u64>,
+    ) -> Result<String, String> {
+        let sym = symbol.to_uppercase();
+        if let Ok(Some(existing)) = self.token_metadata_store.get_metadata(&sym) {
+            let name_needs_update = existing.name == existing.symbol;
+            let updated = TokenMetadata {
+                symbol: existing.symbol,
+                name: if name_needs_update { name.to_string() } else { existing.name },
+                creator: existing.creator,
+                token_id: existing.token_id,
+                image: existing.image.or(image),
+                description: existing.description.or(description),
+                website: existing.website,
+                twitter: existing.twitter,
+                discord: existing.discord,
+                created_at: existing.created_at,
+                updated_at: existing.updated_at,
+                frozen: existing.frozen,
+                mintable: existing.mintable || mintable,
+                max_supply: existing.max_supply.or(max_supply),
+                total_minted: existing.total_minted,
+            };
+            self.token_metadata_store.set_metadata(&updated)?;
+            Ok(updated.token_id)
+        } else {
+            self.register_token_metadata_ext(symbol, name, creator, image, description, mintable, max_supply)
+        }
+    }
+
     /// Update token metadata (only creator can update)
     pub fn update_token_metadata(
         &self,
@@ -3283,12 +3334,13 @@ impl L1Node {
                 Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height, &self.shielded_supply);
 
                 // Register token metadata during rebuild + track created symbols
+                // Uses merge to preserve user-updated fields (image, links, etc.)
                 if tx.tx_type == "create_token" {
                     if let Some(ref sym) = tx.payload.token_symbol {
                         let sym_upper = sym.trim().to_uppercase();
                         created_token_symbols.insert(sym_upper.clone());
                         let name = tx.payload.token_name.as_deref().unwrap_or(&sym_upper);
-                        let _ = self.register_token_metadata_ext(
+                        let _ = self.register_or_merge_token_metadata(
                             &sym_upper,
                             name,
                             &tx.from_pub_key,
@@ -3345,6 +3397,36 @@ impl L1Node {
         if let Ok(sp) = self.shielded_supply.lock() {
             let _ = self.store.set_shielded_supply(*sp);
         }
+
+        // Auto-backfill: for tokens with image=None, try to find an image
+        // from an NFT collection by the same creator with a related symbol.
+        if let Ok(all_meta) = self.token_metadata_store.get_all() {
+            let imageless: Vec<_> = all_meta.into_iter()
+                .filter(|m| m.image.is_none())
+                .collect();
+            if !imageless.is_empty() {
+                if let Ok(collections) = self.nft_store.list_collections() {
+                    for meta in &imageless {
+                        // Look for an NFT collection by the same creator whose
+                        // symbol shares the token's symbol as a prefix (e.g. SENSEI -> SENSEINFT)
+                        let best = collections.iter().find(|c| {
+                            c.creator == meta.creator
+                                && c.image.is_some()
+                                && c.symbol.starts_with(&meta.symbol)
+                        });
+                        if let Some(col) = best {
+                            if let Some(ref img) = col.image {
+                                let mut updated = meta.clone();
+                                updated.image = Some(img.clone());
+                                let _ = self.token_metadata_store.set_metadata(&updated);
+                                eprintln!("[rebuild] Backfilled image for {} from NFT collection {}", meta.symbol, col.collection_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
     
