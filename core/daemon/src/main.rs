@@ -3508,7 +3508,7 @@ async fn bridge_faucet(
 struct ValidatorsResponse {
     success: bool,
     validators: Vec<ValidatorInfo>,
-    total_stake: String,
+    total_stake: u64,
 }
 
 #[derive(Serialize)]
@@ -3517,7 +3517,7 @@ struct ValidatorInfo {
     public_key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
-    stake: String,
+    stake: u64,
     status: String,
     slash_count: u32,
     jailed_until: u64,
@@ -3558,7 +3558,7 @@ async fn get_validators(State(state): State<AppState>) -> Result<Json<Validators
         ValidatorInfo {
             public_key,
             name,
-            stake: vstate.stake.to_string(),
+            stake: vstate.stake as u64,
             status: status.to_string(),
             slash_count: vstate.slash_count,
             jailed_until: vstate.jailed_until,
@@ -3569,7 +3569,7 @@ async fn get_validators(State(state): State<AppState>) -> Result<Json<Validators
     Ok(Json(ValidatorsResponse {
         success: true,
         validators: mapped,
-        total_stake: total.to_string(),
+        total_stake: total as u64,
     }))
 }
 

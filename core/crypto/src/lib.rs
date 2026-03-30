@@ -248,4 +248,161 @@ mod tests {
         assert!(formatted.starts_with("rouge1"), "should keep prefix");
         assert!(formatted.len() < addr.len(), "should be shorter than full address");
     }
+
+    // ── ML-DSA-65 sign / verify ──────────────────────────────────────────────
+
+    #[test]
+    fn test_sign_and_verify() {
+        let keys = pqc_keygen();
+        let msg = b"rougechain test message";
+        let sig = pqc_sign(&keys.secret_key_hex, msg).expect("sign should succeed");
+        let valid = pqc_verify(&keys.public_key_hex, msg, &sig).expect("verify should not error");
+        assert!(valid, "signature should be valid");
+    }
+
+    #[test]
+    fn test_verify_wrong_message_fails() {
+        let keys = pqc_keygen();
+        let sig = pqc_sign(&keys.secret_key_hex, b"original").expect("sign should succeed");
+        let valid = pqc_verify(&keys.public_key_hex, b"tampered", &sig).expect("verify should not error");
+        assert!(!valid, "signature over different message should not verify");
+    }
+
+    #[test]
+    fn test_verify_wrong_key_fails() {
+        let keys = pqc_keygen();
+        let other_keys = pqc_keygen();
+        let sig = pqc_sign(&keys.secret_key_hex, b"test").expect("sign should succeed");
+        let valid = pqc_verify(&other_keys.public_key_hex, b"test", &sig)
+            .expect("verify should not error");
+        assert!(!valid, "signature should not verify against a different public key");
+    }
+
+    #[test]
+    fn test_verify_keypair_valid() {
+        let keys = pqc_keygen();
+        let ok = pqc_verify_keypair(&keys.public_key_hex, &keys.secret_key_hex)
+            .expect("verify_keypair should not error");
+        assert!(ok, "matching keypair should pass verify_keypair");
+    }
+
+    #[test]
+    fn test_verify_keypair_mismatched() {
+        let keys1 = pqc_keygen();
+        let keys2 = pqc_keygen();
+        let ok = pqc_verify_keypair(&keys1.public_key_hex, &keys2.secret_key_hex)
+            .expect("verify_keypair should not error on mismatched keys");
+        assert!(!ok, "mismatched keypair should fail verify_keypair");
+    }
+
+    #[test]
+    fn test_signature_length() {
+        let keys = pqc_keygen();
+        let sig_hex = pqc_sign(&keys.secret_key_hex, b"test").expect("sign should succeed");
+        // ML-DSA-65 signatures are 3309 bytes → 6618 hex chars
+        assert_eq!(sig_hex.len(), 6618, "signature should be 3309 bytes (6618 hex chars)");
+    }
+
+    // ── HD wallet key derivation ─────────────────────────────────────────────
+
+    #[test]
+    fn test_keygen_from_seed_deterministic() {
+        let seed = [42u8; 32];
+        let kp1 = pqc_keygen_from_seed(&seed);
+        let kp2 = pqc_keygen_from_seed(&seed);
+        assert_eq!(kp1.public_key_hex, kp2.public_key_hex, "same seed → same public key");
+        assert_eq!(kp1.secret_key_hex, kp2.secret_key_hex, "same seed → same secret key");
+    }
+
+    #[test]
+    fn test_keygen_from_seed_different_seeds_different_keys() {
+        let seed1 = [1u8; 32];
+        let seed2 = [2u8; 32];
+        let kp1 = pqc_keygen_from_seed(&seed1);
+        let kp2 = pqc_keygen_from_seed(&seed2);
+        assert_ne!(kp1.public_key_hex, kp2.public_key_hex, "different seeds → different keys");
+    }
+
+    #[test]
+    fn test_keygen_from_seed_key_lengths() {
+        let seed = [0u8; 32];
+        let kp = pqc_keygen_from_seed(&seed);
+        // ML-DSA-65: pk=1952 bytes (3904 hex), sk=4032 bytes (8064 hex)
+        assert_eq!(kp.public_key_hex.len(), 3904, "public key should be 1952 bytes");
+        assert_eq!(kp.secret_key_hex.len(), 8064, "secret key should be 4032 bytes");
+    }
+
+    #[test]
+    fn test_derive_child_seed_deterministic() {
+        let parent = [99u8; 32];
+        let child1 = derive_child_seed(&parent, 0);
+        let child2 = derive_child_seed(&parent, 0);
+        assert_eq!(child1, child2, "same parent + index → same child seed");
+    }
+
+    #[test]
+    fn test_derive_child_seed_different_indices() {
+        let parent = [99u8; 32];
+        let child0 = derive_child_seed(&parent, 0);
+        let child1 = derive_child_seed(&parent, 1);
+        assert_ne!(child0, child1, "different indices → different child seeds");
+    }
+
+    #[test]
+    fn test_derive_child_seed_different_from_parent() {
+        let parent = [99u8; 32];
+        let child = derive_child_seed(&parent, 0);
+        assert_ne!(parent, child, "child seed should differ from parent seed");
+    }
+
+    #[test]
+    fn test_pqc_derive_path_deterministic() {
+        let seed = [7u8; 32];
+        let path = [44u32, 808, 0];
+        let kp1 = pqc_derive_path(&seed, &path);
+        let kp2 = pqc_derive_path(&seed, &path);
+        assert_eq!(kp1.public_key_hex, kp2.public_key_hex, "same path → same keypair");
+    }
+
+    #[test]
+    fn test_pqc_derive_path_different_accounts() {
+        let seed = [7u8; 32];
+        let kp0 = pqc_derive_path(&seed, &[44, 808, 0]);
+        let kp1 = pqc_derive_path(&seed, &[44, 808, 1]);
+        assert_ne!(kp0.public_key_hex, kp1.public_key_hex, "different account index → different keypair");
+    }
+
+    #[test]
+    fn test_pqc_derive_path_keys_are_valid_for_signing() {
+        let seed = [7u8; 32];
+        let kp = pqc_derive_path(&seed, &[44, 808, 0]);
+        let msg = b"hd wallet signing test";
+        let sig = pqc_sign(&kp.secret_key_hex, msg).expect("sign should succeed");
+        let ok = pqc_verify(&kp.public_key_hex, msg, &sig).expect("verify should not error");
+        assert!(ok, "HD-derived keypair should produce valid signatures");
+    }
+
+    // ── Utilities ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_sha256_known_value() {
+        // SHA-256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        let result = sha256(b"");
+        let hex = bytes_to_hex(&result);
+        assert_eq!(hex, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    }
+
+    #[test]
+    fn test_hex_roundtrip() {
+        let original = b"rougechain";
+        let hex = bytes_to_hex(original);
+        let decoded = hex_to_bytes(&hex).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn test_hex_to_bytes_invalid_input() {
+        assert!(hex_to_bytes("zzzz").is_err(), "invalid hex should return error");
+        assert!(hex_to_bytes("abc").is_err(), "odd-length hex should return error");
+    }
 }

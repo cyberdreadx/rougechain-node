@@ -163,8 +163,8 @@ export async function getValidators(): Promise<Validator[]> {
   const stats = await getValidatorVoteStats();
   const statsByKey = new Map(stats.validators.map((entry) => [entry.publicKey, entry]));
 
-  return validators.map((validator: { publicKey: string; stake: string; status?: string; slashCount?: number; jailedUntil?: number; entropyContributions?: number }) => {
-    const stakeAmount = Number(validator.stake || 0);
+  return validators.map((validator: { publicKey: string; stake: number; status?: string; slashCount?: number; jailedUntil?: number; entropyContributions?: number }) => {
+    const stakeAmount = validator.stake || 0;
     const tier = getTierFromStake(stakeAmount);
     const voteStats = statsByKey.get(validator.publicKey);
     const voteParticipation = voteStats?.precommitParticipation ?? 0;
@@ -302,17 +302,17 @@ export async function getVoteSummary(height?: number): Promise<VoteSummary> {
     totalStake: Number(data.totalStake || 0),
     quorumStake: Number(data.quorumStake || 0),
     prevote: Array.isArray(data.prevote)
-      ? data.prevote.map((entry: { blockHash: string; voters: number; stake: string }) => ({
+      ? data.prevote.map((entry: { blockHash: string; voters: number; stake: number }) => ({
           blockHash: entry.blockHash,
-          voters: Number(entry.voters || 0),
-          stake: Number(entry.stake || 0),
+          voters: entry.voters || 0,
+          stake: entry.stake || 0,
         }))
       : [],
     precommit: Array.isArray(data.precommit)
-      ? data.precommit.map((entry: { blockHash: string; voters: number; stake: string }) => ({
+      ? data.precommit.map((entry: { blockHash: string; voters: number; stake: number }) => ({
           blockHash: entry.blockHash,
-          voters: Number(entry.voters || 0),
-          stake: Number(entry.stake || 0),
+          voters: entry.voters || 0,
+          stake: entry.stake || 0,
         }))
       : [],
   };
