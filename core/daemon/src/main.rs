@@ -323,7 +323,21 @@ async fn main() -> Result<(), String> {
     );
     // Create WASM runtime and contract store _before_ wrapping node in Arc
     let wasm_runtime = Arc::new(WasmRuntime::new().expect("Failed to create WASM runtime"));
-    let contract_store = Arc::new(ContractStore::new(&data_dir_clone).expect("Failed to create contract store"));
+    let contract_store = Arc::new({
+        let mut last_err = String::new();
+        let mut store = None;
+        for attempt in 1..=5 {
+            match ContractStore::new(&data_dir_clone) {
+                Ok(s) => { store = Some(s); break; }
+                Err(e) => {
+                    last_err = format!("{}", e);
+                    eprintln!("[init] Contract store lock attempt {}/5 failed: {} — retrying in {}s", attempt, e, attempt);
+                    std::thread::sleep(std::time::Duration::from_secs(attempt as u64));
+                }
+            }
+        }
+        store.unwrap_or_else(|| panic!("Failed to create contract store after 5 attempts: {}", last_err))
+    });
     let mut node = L1Node::new(NodeOptions {
         data_dir,
         chain,
