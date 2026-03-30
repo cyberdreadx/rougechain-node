@@ -581,6 +581,11 @@ class NftClient {
       royaltyBps: params.royaltyBps,
       image: params.image,
       description: params.description,
+      publicMint: params.publicMint,
+      mintPrice: params.mintPrice,
+      tokenGateSymbol: params.tokenGateSymbol,
+      tokenGateAmount: params.tokenGateAmount,
+      discountPct: params.discountPct,
     });
     return this.rc.submitTx("/v2/nft/collection/create", tx);
   }

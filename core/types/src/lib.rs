@@ -62,6 +62,16 @@ pub struct TxPayload {
     pub nft_attributes: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nft_locked: Option<bool>,
+    #[serde(default)]
+    pub nft_public_mint: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_mint_price: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_token_gate_symbol: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_token_gate_amount: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_discount_pct: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nft_frozen: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

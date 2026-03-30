@@ -17,6 +17,16 @@ pub struct NftCollection {
     pub royalty_recipient: String,
     pub frozen: bool,
     pub created_at: u64,
+    #[serde(default)]
+    pub public_mint: bool,
+    #[serde(default)]
+    pub mint_price: Option<f64>,
+    #[serde(default)]
+    pub token_gate_symbol: Option<String>,
+    #[serde(default)]
+    pub token_gate_amount: Option<f64>,
+    #[serde(default)]
+    pub discount_pct: Option<u32>,
 }
 
 impl NftCollection {

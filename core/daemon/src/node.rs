@@ -4846,6 +4846,11 @@ impl L1Node {
                     royalty_recipient: tx.from_pub_key.clone(),
                     frozen: false,
                     created_at: block_time,
+                    public_mint: tx.payload.nft_public_mint.unwrap_or(false),
+                    mint_price: tx.payload.nft_mint_price,
+                    token_gate_symbol: tx.payload.nft_token_gate_symbol.clone(),
+                    token_gate_amount: tx.payload.nft_token_gate_amount,
+                    discount_pct: tx.payload.nft_discount_pct,
                 };
                 self.nft_store.save_collection(&col)?;
             }
@@ -4861,8 +4866,9 @@ impl L1Node {
                     }
                 };
 
-                if col.creator != tx.from_pub_key {
-                    eprintln!("[node] Rejecting nft_mint: {} is not the creator of collection {}", &tx.from_pub_key[..16], col_id);
+                let is_creator = col.creator == tx.from_pub_key;
+                if !is_creator && !col.public_mint {
+                    eprintln!("[node] Rejecting nft_mint: {} is not the creator and public_mint is off for {}", &tx.from_pub_key[..16.min(tx.from_pub_key.len())], col_id);
                     return Ok(());
                 }
                 if col.frozen {
@@ -4876,13 +4882,34 @@ impl L1Node {
                     }
                 }
 
+                // Calculate cost: network fee + mint price (minus discount for token holders)
+                let mut mint_cost = 0.0_f64;
+                if !is_creator {
+                    if let Some(price) = col.mint_price {
+                        mint_cost = price;
+                        // Apply token-gate discount
+                        if let (Some(ref gate_sym), Some(gate_amt)) = (&col.token_gate_symbol, col.token_gate_amount) {
+                            let holder_bal = self.get_token_balance(&tx.from_pub_key, gate_sym).unwrap_or(0.0);
+                            if holder_bal >= gate_amt {
+                                let disc = col.discount_pct.unwrap_or(100) as f64 / 100.0;
+                                mint_cost *= 1.0 - disc;
+                            }
+                        }
+                    }
+                }
+
+                let total_cost = tx.fee + mint_cost;
                 let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
-                    eprintln!("[node] Rejecting nft_mint: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
+                if xrge_bal < total_cost {
+                    eprintln!("[node] Rejecting nft_mint: insufficient XRGE ({:.4} < {:.4})", xrge_bal, total_cost);
                     return Ok(());
                 }
 
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= total_cost;
+                // Pay mint price to collection creator
+                if mint_cost > 0.0 {
+                    *balances.entry(col.creator.clone()).or_insert(0.0) += mint_cost;
+                }
 
                 let token_id = col.minted + 1;
                 col.minted = token_id;

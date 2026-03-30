@@ -287,6 +287,11 @@ export function createSignedNftCreateCollection(
     royaltyBps?: number;
     image?: string;
     description?: string;
+    publicMint?: boolean;
+    mintPrice?: number;
+    tokenGateSymbol?: string;
+    tokenGateAmount?: number;
+    discountPct?: number;
   } = {}
 ): SignedTransaction {
   return buildAndSign(wallet, {
@@ -298,6 +303,11 @@ export function createSignedNftCreateCollection(
     royaltyBps: opts.royaltyBps,
     image: opts.image,
     description: opts.description,
+    publicMint: opts.publicMint,
+    mintPrice: opts.mintPrice,
+    tokenGateSymbol: opts.tokenGateSymbol,
+    tokenGateAmount: opts.tokenGateAmount,
+    discountPct: opts.discountPct,
   });
 }
 

@@ -5716,6 +5716,11 @@ async fn v2_nft_create_collection(
     let image = p.get("image").and_then(|v| v.as_str()).map(String::from);
     let max_supply = p.get("maxSupply").and_then(|v| v.as_u64());
     let royalty_bps = p.get("royaltyBps").and_then(|v| v.as_u64()).map(|v| v as u16);
+    let public_mint = p.get("publicMint").and_then(|v| v.as_bool());
+    let mint_price = p.get("mintPrice").and_then(|v| v.as_f64());
+    let token_gate_symbol = p.get("tokenGateSymbol").and_then(|v| v.as_str()).map(String::from);
+    let token_gate_amount = p.get("tokenGateAmount").and_then(|v| v.as_f64());
+    let discount_pct = p.get("discountPct").and_then(|v| v.as_u64()).map(|v| v as u32);
 
     let nft_fee = 50.0_f64;
     let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
@@ -5735,6 +5740,11 @@ async fn v2_nft_create_collection(
             nft_image: image,
             nft_max_supply: max_supply,
             nft_royalty_bps: royalty_bps,
+            nft_public_mint: public_mint,
+            nft_mint_price: mint_price,
+            nft_token_gate_symbol: token_gate_symbol,
+            nft_token_gate_amount: token_gate_amount,
+            nft_discount_pct: discount_pct,
             ..Default::default()
         },
         fee: nft_fee,
@@ -5778,21 +5788,40 @@ async fn v2_nft_mint(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE balance for mint fee: have {:.4}, need {:.4}", bal, mint_fee)}))));
     }
 
-    // Only the collection creator can mint
-    if let Ok(Some(col)) = state.node.get_nft_collection(collection_id) {
-        if col.creator != body.public_key {
-            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"success": false, "error": "only the collection creator can mint"}))));
+    let col = state.node.get_nft_collection(collection_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"success": false, "error": e}))))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(serde_json::json!({"success": false, "error": "collection not found"}))))?;
+
+    let is_creator = col.creator == body.public_key;
+    if !is_creator && !col.public_mint {
+        return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"success": false, "error": "only the collection creator can mint (public mint is not enabled)"}))));
+    }
+    if col.frozen {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "collection is frozen"}))));
+    }
+    if let Some(max) = col.max_supply {
+        if col.minted >= max {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "collection has reached max supply"}))));
         }
-        if col.frozen {
-            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "collection is frozen"}))));
-        }
-        if let Some(max) = col.max_supply {
-            if col.minted >= max {
-                return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "collection has reached max supply"}))));
+    }
+
+    // Calculate total cost for pre-flight balance check
+    let mut mint_price_charge = 0.0_f64;
+    if !is_creator {
+        if let Some(price) = col.mint_price {
+            mint_price_charge = price;
+            if let (Some(ref gate_sym), Some(gate_amt)) = (&col.token_gate_symbol, col.token_gate_amount) {
+                let holder_bal = state.node.get_token_balance(&body.public_key, gate_sym).unwrap_or(0.0);
+                if holder_bal >= gate_amt {
+                    let disc = col.discount_pct.unwrap_or(100) as f64 / 100.0;
+                    mint_price_charge *= 1.0 - disc;
+                }
             }
         }
-    } else {
-        return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"success": false, "error": "collection not found"}))));
+    }
+    let total_needed = mint_fee + mint_price_charge;
+    if bal < total_needed {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE: have {:.4}, need {:.4} (fee {:.4} + mint price {:.4})", bal, total_needed, mint_fee, mint_price_charge)}))));
     }
 
     let tx = TxV1 {

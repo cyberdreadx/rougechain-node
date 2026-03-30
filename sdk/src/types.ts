@@ -85,6 +85,12 @@ export interface TransactionPayload {
   website?: string;
   twitter?: string;
   discord?: string;
+  // NFT public mint / token-gating fields
+  publicMint?: boolean;
+  mintPrice?: number;
+  tokenGateSymbol?: string;
+  tokenGateAmount?: number;
+  discountPct?: number;
   // Allowance fields
   spender?: string;
   owner?: string;
@@ -246,6 +252,11 @@ export interface NftCollection {
   royalty_recipient: string;
   frozen: boolean;
   created_at: number;
+  public_mint?: boolean;
+  mint_price?: number;
+  token_gate_symbol?: string;
+  token_gate_amount?: number;
+  discount_pct?: number;
 }
 
 export interface NftToken {
@@ -503,6 +514,11 @@ export interface CreateNftCollectionParams {
   royaltyBps?: number;
   image?: string;
   description?: string;
+  publicMint?: boolean;
+  mintPrice?: number;
+  tokenGateSymbol?: string;
+  tokenGateAmount?: number;
+  discountPct?: number;
 }
 
 export interface MintNftParams {
