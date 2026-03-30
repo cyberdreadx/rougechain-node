@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/network";
 import { RougeAddressLink } from "@/components/RougeAddressLink";
+import { TokenIcon } from "@/components/ui/token-icon";
 
 const DiscordLogo = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" className={className} fill="currentColor">
@@ -47,6 +48,30 @@ const truncateText = (text: string, maxLen: number) => {
   return text.slice(0, maxLen) + "...";
 };
 
+const BUILTIN_TOKENS: TokenInfo[] = [
+  {
+    symbol: "XRGE",
+    name: "XRGE",
+    creator: "",
+    description: "Native chain token of RougeChain — quantum-resistant L1",
+    created_at: 0,
+  },
+  {
+    symbol: "qETH",
+    name: "qETH",
+    creator: "",
+    description: "Quantum-wrapped Ethereum — bridged via RougeChain Bridge (6 decimals)",
+    created_at: 0,
+  },
+  {
+    symbol: "qUSDC",
+    name: "qUSDC",
+    creator: "",
+    description: "Quantum-wrapped USDC stablecoin — bridged via RougeChain Bridge (6 decimals)",
+    created_at: 0,
+  },
+];
+
 const TokensList = () => {
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,7 +88,10 @@ const TokensList = () => {
         });
         if (res.ok) {
           const data = await res.json();
-          setTokens(data.tokens || []);
+          const apiTokens: TokenInfo[] = data.tokens || [];
+          const apiSymbols = new Set(apiTokens.map((t) => t.symbol));
+          const builtins = BUILTIN_TOKENS.filter((b) => !apiSymbols.has(b.symbol));
+          setTokens([...builtins, ...apiTokens]);
         }
       } catch (e) {
         console.error("Failed to fetch tokens:", e);
@@ -168,17 +196,7 @@ const TokensList = () => {
                           >
                             <td className="py-3 px-2">
                               <div className="flex items-center gap-3">
-                                {token.image ? (
-                                  <img
-                                    src={token.image}
-                                    alt={token.symbol}
-                                    className="w-8 h-8 rounded-full object-cover bg-secondary flex-shrink-0"
-                                  />
-                                ) : (
-                                  <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center flex-shrink-0">
-                                    <Coins className="w-4 h-4 text-muted-foreground" />
-                                  </div>
-                                )}
+                                <TokenIcon symbol={token.symbol} size={32} imageUrl={token.image} className="flex-shrink-0" />
                                 <div className="min-w-0">
                                   <Link
                                     to={`/token/${token.symbol}`}
@@ -262,17 +280,7 @@ const TokensList = () => {
                   >
                     <CardContent className="p-4 space-y-3">
                       <div className="flex items-center gap-3">
-                        {token.image ? (
-                          <img
-                            src={token.image}
-                            alt={token.symbol}
-                            className="w-10 h-10 rounded-full object-cover bg-secondary flex-shrink-0"
-                          />
-                        ) : (
-                          <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center flex-shrink-0">
-                            <Coins className="w-5 h-5 text-muted-foreground" />
-                          </div>
-                        )}
+                        <TokenIcon symbol={token.symbol} size={40} imageUrl={token.image} className="flex-shrink-0" />
                         <div className="flex-1 min-w-0">
                           <Link
                             to={`/token/${token.symbol}`}

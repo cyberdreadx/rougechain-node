@@ -56,16 +56,41 @@ export function formatQethForDisplay(units: number): string {
  * Format any token amount for display — auto-converts qETH from raw units.
  * For non-qETH tokens, applies standard number formatting.
  */
+/** Tokens that use 6 decimal places (1 human unit = 1,000,000 raw units) */
+const SIX_DECIMAL_TOKENS = new Set(["qETH", "qUSDC"]);
+
 export function formatTokenAmount(amount: number, symbol?: string): string {
   if (symbol === "qETH") return formatQethForDisplay(amount);
+  if (symbol === "qUSDC") {
+    const human = amount / 1_000_000;
+    return human >= 1
+      ? human.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : human > 0
+      ? parseFloat(human.toFixed(6)).toString()
+      : "0.00";
+  }
   if (amount >= 1) return amount.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 0 });
   if (amount > 0) return parseFloat(amount.toFixed(6)).toString();
   return "0";
 }
 
-/** Check whether a raw amount should be converted (for qETH input fields) */
+/** Check whether a raw amount needs human conversion (6-decimal tokens) */
 export function isQeth(symbol?: string): boolean {
   return symbol === "qETH";
+}
+
+export function isSixDecimalToken(symbol?: string): boolean {
+  return SIX_DECIMAL_TOKENS.has(symbol || "");
+}
+
+export function rawToHuman(amount: number, symbol?: string): number {
+  if (isSixDecimalToken(symbol)) return amount / 1_000_000;
+  return amount;
+}
+
+export function humanToRaw(amount: number, symbol?: string): number {
+  if (isSixDecimalToken(symbol)) return Math.round(amount * 1_000_000);
+  return amount;
 }
 
 export function useETHPrice(pollInterval: number = 60_000) {

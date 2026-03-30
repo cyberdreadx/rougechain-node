@@ -1,6 +1,7 @@
 import { useState } from "react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import qethLogo from "@/assets/qeth-logo.png";
+import qusdcLogo from "@/assets/qusdc-logo.png";
 
 interface TokenIconProps {
   symbol: string;
@@ -12,6 +13,7 @@ interface TokenIconProps {
 const BUILTIN_LOGOS: Record<string, string> = {
   XRGE: xrgeLogo,
   qETH: qethLogo,
+  qUSDC: qusdcLogo,
 };
 
 export function TokenIcon({ symbol, size = 24, imageUrl, className = "" }: TokenIconProps) {

@@ -613,7 +613,10 @@ export async function getWalletTransactions(publicKey: string): Promise<WalletTr
     const counterparty = isSender ? tx.to : tx.from;
 
     const txSymbol = tx.symbol || "XRGE";
-    const txAmount = txSymbol === "qETH" ? (tx.amount / 1_000_000).toFixed(6).replace(/\.?0+$/, '') : tx.amount.toString();
+    const isSixDec = txSymbol === "qETH" || txSymbol === "qUSDC";
+    const txAmount = isSixDec
+      ? (tx.amount / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 }).replace(/\.?0+$/, '')
+      : tx.amount.toLocaleString();
 
     walletTxs.push({
       id: block.hash.slice(0, 16),

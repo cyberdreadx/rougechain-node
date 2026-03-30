@@ -21,7 +21,7 @@ import { Slider } from "@/components/ui/slider";
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { loadUnifiedWallet, saveUnifiedWallet, type UnifiedWallet } from "@/lib/unified-wallet";
 import { secureSwap } from "@/lib/secure-api";
-import { formatTokenAmount, isQeth, humanToQeth, qethToHuman } from "@/hooks/use-eth-price";
+import { formatTokenAmount, isQeth, humanToQeth, qethToHuman, isSixDecimalToken, rawToHuman, humanToRaw } from "@/hooks/use-eth-price";
 import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
 import { useTokenMetadata } from "@/hooks/use-token-metadata";
 
@@ -463,7 +463,7 @@ const Swap = () => {
         body: JSON.stringify({
           token_in: tokenIn,
           token_out: tokenOut,
-          amount_in: Math.floor(isQeth(tokenIn) ? humanToQeth(amount) : amount),
+          amount_in: Math.floor(humanToRaw(amount, tokenIn)),
         }),
       });
       
@@ -501,7 +501,7 @@ const Swap = () => {
     }
     
     const amount = parseFloat(amountIn);
-    const rawAmountIn = Math.floor(isQeth(tokenIn) ? humanToQeth(amount) : amount);
+    const rawAmountIn = Math.floor(humanToRaw(amount, tokenIn));
     const minOut = Math.floor(quote.amount_out * (1 - slippage / 100));
     
     setLoading(true);
@@ -634,7 +634,7 @@ const Swap = () => {
                   ) : (
                     <span />
                   )}
-                  {tokenInData && parseFloat(amountIn) > (isQeth(tokenIn) ? qethToHuman(tokenInData.balance) : tokenInData.balance) && (
+                  {tokenInData && parseFloat(amountIn) > rawToHuman(tokenInData.balance, tokenIn) && (
                     <p className="text-xs text-destructive">Insufficient balance</p>
                   )}
                 </div>
@@ -695,9 +695,8 @@ const Swap = () => {
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Rate</span>
                     <span>1 {tokenIn} ≈ {(() => {
-                      const rawIn = isQeth(tokenIn) ? humanToQeth(parseFloat(amountIn)) : parseFloat(amountIn);
-                      const humanOut = isQeth(tokenOut) ? qethToHuman(quote.amount_out) : quote.amount_out;
-                      const humanIn = isQeth(tokenIn) ? parseFloat(amountIn) : rawIn;
+                      const humanOut = rawToHuman(quote.amount_out, tokenOut);
+                      const humanIn = parseFloat(amountIn);
                       return (humanOut / humanIn).toFixed(4);
                     })()} {tokenOut}</span>
                   </div>
@@ -722,7 +721,7 @@ const Swap = () => {
               {/* Swap Button */}
               <Button
                 onClick={executeSwap}
-                disabled={!wallet || !quote || loading || parseFloat(amountIn) > (tokenInData ? (isQeth(tokenIn) ? qethToHuman(tokenInData.balance) : tokenInData.balance) : 0)}
+                disabled={!wallet || !quote || loading || parseFloat(amountIn) > (tokenInData ? rawToHuman(tokenInData.balance, tokenIn) : 0)}
                 className="w-full h-12 text-lg"
               >
                 {loading ? (
@@ -736,7 +735,7 @@ const Swap = () => {
                   "Enter Amount"
                 ) : !quote ? (
                   "No Route Found"
-                ) : parseFloat(amountIn) > (tokenInData ? (isQeth(tokenIn) ? qethToHuman(tokenInData.balance) : tokenInData.balance) : 0) ? (
+                ) : parseFloat(amountIn) > (tokenInData ? rawToHuman(tokenInData.balance, tokenIn) : 0) ? (
                   "Insufficient Balance"
                 ) : (
                   "Swap"

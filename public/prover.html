@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>STARK Prover</title></head>
+<body><script>
+let wasm = null;
+let wasmMemory = null;
+
+async function loadWasm() {
+  if (wasm) return;
+  const resp = await fetch('/stark-prover.wasm');
+  const importObject = {
+    env: {
+      host_fill_random: (ptr, len) => {
+        const buf = new Uint8Array(wasmMemory.buffer, ptr, len);
+        crypto.getRandomValues(buf);
+      },
+    },
+  };
+  const { instance } = await WebAssembly.instantiateStreaming(resp, importObject);
+  wasmMemory = instance.exports.memory;
+  wasm = instance;
+}
+
+function proveUnshield(amount, fee) {
+  const len = wasm.exports.prove_unshield(BigInt(amount), BigInt(fee));
+  if (len === 0) throw new Error('prove_unshield returned 0');
+  const ptr = wasm.exports.get_output_ptr();
+  return new TextDecoder().decode(new Uint8Array(wasm.exports.memory.buffer, ptr, len));
+}
+
+window.addEventListener('message', async (e) => {
+  try {
+    const { id, amount, fee } = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+    if (!id || amount == null) return;
+    await loadWasm();
+    const proof = proveUnshield(amount, fee || 1);
+    window.ReactNativeWebView
+      ? window.ReactNativeWebView.postMessage(JSON.stringify({ id, proof }))
+      : window.parent.postMessage({ id, proof }, '*');
+  } catch (err) {
+    const parsed = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+    const msg = JSON.stringify({ id: parsed?.id, error: err.message });
+    window.ReactNativeWebView
+      ? window.ReactNativeWebView.postMessage(msg)
+      : window.parent.postMessage(JSON.parse(msg), '*');
+  }
+});
+
+loadWasm().then(() => {
+  const ready = JSON.stringify({ ready: true });
+  window.ReactNativeWebView
+    ? window.ReactNativeWebView.postMessage(ready)
+    : window.parent.postMessage({ ready: true }, '*');
+});
+</script></body></html>
