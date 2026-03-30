@@ -1425,5 +1425,17 @@ class SocialClient {
       return data.posts ?? [];
     } catch { return []; }
   }
+
+  // ── Hidden Tracks ─────────────────────────────────────
+
+  async hideTrack(wallet: WalletKeys, trackId: string, hidden = true): Promise<ApiResponse & { hidden?: boolean }> {
+    const signed = signRequest(wallet, { trackId, hidden });
+    return this.rc.submitTx("/v2/social/hide-track", signed) as Promise<ApiResponse & { hidden?: boolean }>;
+  }
+
+  async getHiddenTracks(pubkey: string): Promise<string[]> {
+    const data = await this.rc.get<{ trackIds: string[] }>(`/social/hidden-tracks/${encodeURIComponent(pubkey)}`);
+    return data.trackIds ?? [];
+  }
 }
 

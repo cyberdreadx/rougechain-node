@@ -830,6 +830,8 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/social/post/delete", post(social_delete_post_signed))
         .route("/api/v2/social/repost", post(social_repost_signed))
         .route("/api/v2/social/feed", post(social_following_feed_signed))
+        .route("/api/v2/social/hide-track", post(social_hide_track_signed))
+        .route("/api/social/hidden-tracks/:pubkey", get(social_hidden_tracks))
         // WASM contract endpoints
         .route("/api/v2/contract/deploy", post(contract_deploy))
         .route("/api/v2/contract/call", post(contract_call))
@@ -8342,6 +8344,31 @@ async fn social_follow_signed(
     }
     let (following, followers) = state.node.social_toggle_follow(&authed_key, artist_pubkey).map_err(|e| signed_internal(&e))?;
     Ok(Json(serde_json::json!({ "success": true, "following": following, "followers": followers })))
+}
+
+async fn social_hide_track_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let track_id = p.get("trackId").and_then(|v| v.as_str()).unwrap_or_default();
+    if track_id.is_empty() {
+        return Err(signed_bad("trackId is required"));
+    }
+    let hidden = p.get("hidden").and_then(|v| v.as_bool()).unwrap_or(true);
+    state.node.social_set_track_hidden(&authed_key, track_id, hidden).map_err(|e| signed_internal(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "hidden": hidden, "trackId": track_id })))
+}
+
+async fn social_hidden_tracks(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Json<serde_json::Value> {
+    match state.node.social_get_hidden_tracks(&pubkey) {
+        Ok(track_ids) => Json(serde_json::json!({ "trackIds": track_ids })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
 }
 
 // ============================================

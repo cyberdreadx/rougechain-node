@@ -650,6 +650,46 @@ impl SocialStore {
         }))
     }
 
+    // ── Hidden Tracks ────────────────────────────────────────
+
+    fn hidden_tracks_tree(&self) -> Result<sled::Tree, String> {
+        self.db.open_tree("social_hidden_tracks").map_err(|e| e.to_string())
+    }
+
+    /// Set or unset the hidden flag for a track. Key: "creator:track_id" → "1"
+    pub fn set_track_hidden(&self, creator_pubkey: &str, track_id: &str, hidden: bool) -> Result<(), String> {
+        let tree = self.hidden_tracks_tree()?;
+        let key = format!("{}:{}", creator_pubkey, track_id);
+        if hidden {
+            tree.insert(key.as_bytes(), b"1").map_err(|e| e.to_string())?;
+        } else {
+            tree.remove(key.as_bytes()).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Get all hidden track IDs for a creator
+    pub fn get_hidden_tracks(&self, creator_pubkey: &str) -> Result<Vec<String>, String> {
+        let tree = self.hidden_tracks_tree()?;
+        let prefix = format!("{}:", creator_pubkey);
+        let mut ids = Vec::new();
+        for entry in tree.scan_prefix(prefix.as_bytes()) {
+            let (k, _) = entry.map_err(|e| e.to_string())?;
+            let key_str = String::from_utf8_lossy(&k);
+            if let Some(tid) = key_str.strip_prefix(&prefix) {
+                ids.push(tid.to_string());
+            }
+        }
+        Ok(ids)
+    }
+
+    /// Check if a specific track is hidden by its creator
+    pub fn is_track_hidden(&self, creator_pubkey: &str, track_id: &str) -> Result<bool, String> {
+        let tree = self.hidden_tracks_tree()?;
+        let key = format!("{}:{}", creator_pubkey, track_id);
+        tree.contains_key(key.as_bytes()).map_err(|e| e.to_string())
+    }
+
     // ── Aggregate stats ─────────────────────────────────────
 
     pub fn get_track_stats(&self, track_id: &str, viewer_pubkey: Option<&str>) -> Result<serde_json::Value, String> {

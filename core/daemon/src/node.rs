@@ -5383,6 +5383,20 @@ impl L1Node {
         self.social_store.get_user_following(pubkey)
     }
 
+    // ===== Hidden Tracks =====
+
+    pub fn social_set_track_hidden(&self, creator_pubkey: &str, track_id: &str, hidden: bool) -> Result<(), String> {
+        self.social_store.set_track_hidden(creator_pubkey, track_id, hidden)
+    }
+
+    pub fn social_get_hidden_tracks(&self, creator_pubkey: &str) -> Result<Vec<String>, String> {
+        self.social_store.get_hidden_tracks(creator_pubkey)
+    }
+
+    pub fn social_is_track_hidden(&self, creator_pubkey: &str, track_id: &str) -> Result<bool, String> {
+        self.social_store.is_track_hidden(creator_pubkey, track_id)
+    }
+
     // ===== Social Posts =====
 
     pub fn social_create_post(&self, author_pubkey: &str, body: &str, reply_to_id: Option<&str>) -> Result<quantum_vault_storage::social_store::SocialPost, String> {
