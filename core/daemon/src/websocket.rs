@@ -7,7 +7,7 @@ use quantum_vault_types::BlockV1;
 const BROADCAST_CAPACITY: usize = 100;
 
 /// Maximum concurrent WebSocket connections
-const MAX_WS_CLIENTS: usize = 300;
+const MAX_WS_CLIENTS: usize = 100;
 
 /// Events that can be broadcast to WebSocket clients
 #[derive(Clone, Debug, Serialize, Deserialize)]

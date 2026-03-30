@@ -1298,88 +1298,98 @@ async fn ws_handler(
 
 async fn handle_ws_connection(socket: WebSocket, state: AppState) {
     use std::collections::HashSet;
+    use tokio::time::{interval, Duration, timeout};
+
     let (mut sender, mut receiver) = socket.split();
     let broadcaster = state.ws_broadcaster.clone();
-    
-    // Per-client subscription topics (empty = receive everything for backward compat)
+
     let subscriptions: Arc<tokio::sync::RwLock<HashSet<String>>> = Arc::new(tokio::sync::RwLock::new(HashSet::new()));
-    
-    // Subscribe to broadcast channel
+
     let mut rx = broadcaster.subscribe();
-    
-    // Send initial stats
+
     let height = state.node.get_tip_height().unwrap_or(0);
     let peer_count = state.peer_manager.peer_count().await;
-    let mempool_size = 0;
-    broadcaster.broadcast_stats(height, peer_count, mempool_size);
-    
-    // Spawn task to forward broadcasts to this client (with topic filtering)
+    broadcaster.broadcast_stats(height, peer_count, 0);
+
     let subs_clone = subscriptions.clone();
     let send_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            // Parse the event to check topics
-            let should_send = {
-                let subs = subs_clone.read().await;
-                if subs.is_empty() {
-                    true // No subscriptions = receive everything
-                } else if let Ok(event) = serde_json::from_str::<serde_json::Value>(&msg) {
-                    // Check if the event matches any subscription topic
-                    if let Ok(ws_event) = serde_json::from_value::<crate::websocket::WsEvent>(event) {
-                        let event_topics = ws_event.topics();
-                        event_topics.iter().any(|t| subs.contains(t))
-                    } else {
-                        true // Can't parse = send anyway
+        let mut ping_interval = interval(Duration::from_secs(30));
+        loop {
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Ok(msg) => {
+                            let should_send = {
+                                let subs = subs_clone.read().await;
+                                if subs.is_empty() {
+                                    true
+                                } else if let Ok(event) = serde_json::from_str::<serde_json::Value>(&msg) {
+                                    if let Ok(ws_event) = serde_json::from_value::<crate::websocket::WsEvent>(event) {
+                                        let event_topics = ws_event.topics();
+                                        event_topics.iter().any(|t| subs.contains(t))
+                                    } else {
+                                        true
+                                    }
+                                } else {
+                                    true
+                                }
+                            };
+                            if should_send {
+                                if sender.send(Message::Text(msg)).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Err(_) => break,
                     }
-                } else {
-                    true
                 }
-            };
-            if should_send {
-                if sender.send(Message::Text(msg)).await.is_err() {
-                    break;
+                _ = ping_interval.tick() => {
+                    if sender.send(Message::Ping(vec![1, 2, 3, 4].into())).await.is_err() {
+                        break;
+                    }
                 }
             }
         }
     });
-    
-    // Handle incoming messages (subscribe/unsubscribe + ping/close)
-    while let Some(msg) = receiver.next().await {
-        match msg {
-            Ok(Message::Text(text)) => {
-                // Try parsing as subscription command
-                if let Ok(cmd) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(topics) = cmd.get("subscribe").and_then(|v| v.as_array()) {
-                        let mut subs = subscriptions.write().await;
-                        for topic in topics {
-                            if let Some(t) = topic.as_str() {
-                                subs.insert(t.to_string());
+
+    const CLIENT_TIMEOUT: Duration = Duration::from_secs(90);
+    loop {
+        match timeout(CLIENT_TIMEOUT, receiver.next()).await {
+            Ok(Some(msg)) => {
+                match msg {
+                    Ok(Message::Text(text)) => {
+                        if let Ok(cmd) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if let Some(topics) = cmd.get("subscribe").and_then(|v| v.as_array()) {
+                                let mut subs = subscriptions.write().await;
+                                for topic in topics {
+                                    if let Some(t) = topic.as_str() {
+                                        subs.insert(t.to_string());
+                                    }
+                                }
+                                drop(subs);
                             }
-                        }
-                        let current: Vec<String> = subs.iter().cloned().collect();
-                        // Send subscription confirmation
-                        let confirm = serde_json::json!({"type": "subscribed", "topics": current});
-                        // Note: we don't have direct sender access here in the read loop
-                        // Instead, broadcast via the channel (only this client will get it)
-                        drop(subs);
-                    }
-                    if let Some(topics) = cmd.get("unsubscribe").and_then(|v| v.as_array()) {
-                        let mut subs = subscriptions.write().await;
-                        for topic in topics {
-                            if let Some(t) = topic.as_str() {
-                                subs.remove(t);
+                            if let Some(topics) = cmd.get("unsubscribe").and_then(|v| v.as_array()) {
+                                let mut subs = subscriptions.write().await;
+                                for topic in topics {
+                                    if let Some(t) = topic.as_str() {
+                                        subs.remove(t);
+                                    }
+                                }
                             }
                         }
                     }
+                    Ok(Message::Pong(_)) => {}
+                    Ok(Message::Ping(_)) => {}
+                    Ok(Message::Close(_)) => break,
+                    Err(_) => break,
+                    _ => {}
                 }
             }
-            Ok(Message::Ping(_)) => {}
-            Ok(Message::Close(_)) => break,
-            Err(_) => break,
-            _ => {}
+            Ok(None) => break,
+            Err(_) => break, // Timeout — no activity for 90s, close connection
         }
     }
-    
-    // Client disconnected
+
     broadcaster.client_disconnected().await;
     send_task.abort();
 }
