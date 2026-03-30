@@ -14,10 +14,19 @@
  *   node sdk/stress-test.mjs --target https://testnet.rougechain.io/api
  */
 
-const BASE = process.argv.find(a => a.startsWith("--target="))?.split("=")[1]
-  ?? "https://testnet.rougechain.io/api";
-const TOTAL_TXS = parseInt(process.argv.find(a => a.startsWith("--txs="))?.split("=")[1] ?? "50");
-const CONCURRENCY = parseInt(process.argv.find(a => a.startsWith("--concurrency="))?.split("=")[1] ?? "10");
+function getArg(name, fallback) {
+  const args = process.argv.slice(2);
+  const eqForm = args.find(a => a.startsWith(`--${name}=`));
+  if (eqForm) return eqForm.split("=")[1];
+  const idx = args.indexOf(`--${name}`);
+  if (idx !== -1 && idx + 1 < args.length) return args[idx + 1];
+  return fallback;
+}
+
+const BASE = getArg("target", "https://testnet.rougechain.io/api");
+const TOTAL_TXS = parseInt(getArg("txs", "50"));
+const CONCURRENCY = parseInt(getArg("concurrency", "10"));
+const BATCH_SIZE = parseInt(getArg("batch", "0"));  // 0 = no batching
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -149,6 +158,7 @@ async function main() {
   console.log(`  Target:      ${BASE}`);
   console.log(`  Total TXs:   ${TOTAL_TXS}`);
   console.log(`  Concurrency: ${CONCURRENCY}`);
+  if (BATCH_SIZE > 0) console.log(`  Batch size:  ${BATCH_SIZE}`);
   console.log();
 
   // 1. Check chain health
@@ -194,49 +204,18 @@ async function main() {
   console.log();
 
   // 4. Flood transactions
-  console.log(`🚀 Sending ${TOTAL_TXS} transfers (${CONCURRENCY} concurrent)...`);
+  const mode = BATCH_SIZE > 0 ? `batch(${BATCH_SIZE})` : `individual`;
+  console.log(`🚀 Sending ${TOTAL_TXS} transfers (${CONCURRENCY} concurrent, ${mode})...`);
   console.log("   ─".repeat(25));
 
   const results = { success: 0, failed: 0, errors: {} };
   const latencies = [];
   const startTime = performance.now();
 
-  // Create a semaphore for concurrency control
   let active = 0;
   let completed = 0;
-  const queue = [];
 
-  async function sendOne(index) {
-    const txStart = performance.now();
-    try {
-      const tx = createSignedTransfer(
-        sender,
-        receiver.publicKey,
-        0.01,     // tiny amount 
-        0.1,      // fee
-        "XRGE"
-      );
-      
-      const res = await post("/v2/transfer", tx);
-
-      const latency = performance.now() - txStart;
-      latencies.push(latency);
-
-      if (res.success) {
-        results.success++;
-      } else {
-        results.failed++;
-        const errKey = res.error?.slice(0, 50) || "unknown";
-        results.errors[errKey] = (results.errors[errKey] || 0) + 1;
-      }
-    } catch (e) {
-      results.failed++;
-      const errKey = e.message?.slice(0, 50) || "network_error";
-      results.errors[errKey] = (results.errors[errKey] || 0) + 1;
-      latencies.push(performance.now() - txStart);
-    }
-    
-    completed++;
+  function logProgress() {
     if (completed % 10 === 0 || completed === TOTAL_TXS) {
       const elapsed = (performance.now() - startTime) / 1000;
       const tps = completed / elapsed;
@@ -246,17 +225,101 @@ async function main() {
     }
   }
 
-  // Run with concurrency limit
-  const promises = [];
+  // Pre-sign all transactions upfront so signing time doesn't count
+  const allSigned = [];
   for (let i = 0; i < TOTAL_TXS; i++) {
-    while (active >= CONCURRENCY) {
-      await new Promise(r => setTimeout(r, 10));
-    }
-    active++;
-    const p = sendOne(i).finally(() => active--);
-    promises.push(p);
+    allSigned.push(createSignedTransfer(sender, receiver.publicKey, 0.01, 0.1, "XRGE"));
   }
-  await Promise.all(promises);
+
+  if (BATCH_SIZE > 0) {
+    // Batch mode: send groups of TXs in single requests
+    const batches = [];
+    for (let i = 0; i < allSigned.length; i += BATCH_SIZE) {
+      batches.push(allSigned.slice(i, i + BATCH_SIZE));
+    }
+
+    const promises = [];
+    for (const batch of batches) {
+      while (active >= CONCURRENCY) {
+        await new Promise(r => setTimeout(r, 5));
+      }
+      active++;
+      const batchStart = performance.now();
+      const p = post("/v2/batch-submit", batch)
+        .then(res => {
+          const latency = performance.now() - batchStart;
+          if (res.results) {
+            for (const r of res.results) {
+              latencies.push(latency);
+              completed++;
+              if (r?.success) { results.success++; }
+              else {
+                results.failed++;
+                const errKey = r?.error?.slice(0, 50) || "unknown";
+                results.errors[errKey] = (results.errors[errKey] || 0) + 1;
+              }
+            }
+          } else {
+            for (let j = 0; j < batch.length; j++) {
+              completed++;
+              results.failed++;
+              latencies.push(latency);
+            }
+            const errKey = res.error?.slice(0, 50) || "batch_error";
+            results.errors[errKey] = (results.errors[errKey] || 0) + batch.length;
+          }
+          logProgress();
+        })
+        .catch(e => {
+          const latency = performance.now() - batchStart;
+          for (let j = 0; j < batch.length; j++) {
+            completed++;
+            results.failed++;
+            latencies.push(latency);
+          }
+          const errKey = e.message?.slice(0, 50) || "network_error";
+          results.errors[errKey] = (results.errors[errKey] || 0) + batch.length;
+          logProgress();
+        })
+        .finally(() => active--);
+      promises.push(p);
+    }
+    await Promise.all(promises);
+  } else {
+    // Individual mode (original behavior)
+    async function sendOne(index) {
+      const txStart = performance.now();
+      try {
+        const res = await post("/v2/transfer", allSigned[index]);
+        const latency = performance.now() - txStart;
+        latencies.push(latency);
+        if (res.success) { results.success++; }
+        else {
+          results.failed++;
+          const errKey = res.error?.slice(0, 50) || "unknown";
+          results.errors[errKey] = (results.errors[errKey] || 0) + 1;
+        }
+      } catch (e) {
+        results.failed++;
+        const errKey = e.message?.slice(0, 50) || "network_error";
+        results.errors[errKey] = (results.errors[errKey] || 0) + 1;
+        latencies.push(performance.now() - txStart);
+      }
+      completed++;
+      logProgress();
+    }
+
+    const promises = [];
+    for (let i = 0; i < TOTAL_TXS; i++) {
+      while (active >= CONCURRENCY) {
+        await new Promise(r => setTimeout(r, 5));
+      }
+      active++;
+      const p = sendOne(i).finally(() => active--);
+      promises.push(p);
+    }
+    await Promise.all(promises);
+  }
 
   const totalElapsed = (performance.now() - startTime) / 1000;
   console.log("\n");

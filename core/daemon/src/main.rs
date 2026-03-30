@@ -283,7 +283,7 @@ fn normalize_recipient(value: &str) -> String {
     stripped.to_lowercase()
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), String> {
     let args = Args::parse();
     let data_dir = args
@@ -733,6 +733,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/events", get(get_all_events))
         // Secure v2 endpoints (client-side signing)
         .route("/api/v2/transfer", post(v2_transfer))
+        .route("/api/v2/batch-submit", post(v2_batch_submit))
         .route("/api/v2/token/create", post(v2_create_token))
         .route("/api/v2/token/metadata/update", post(v2_update_token_metadata))
         .route("/api/v2/token/metadata/claim", post(v2_claim_token_metadata))
@@ -4865,6 +4866,143 @@ async fn v2_transfer(
         "success": true,
         "message": "Transfer transaction submitted"
     })))
+}
+
+async fn v2_batch_submit(
+    State(state): State<AppState>,
+    Json(batch): Json<Vec<SignedTransactionRequest>>,
+) -> Json<serde_json::Value> {
+    use quantum_vault_types::{TxPayload, TxV1};
+
+    const MAX_BATCH: usize = 100;
+    if batch.is_empty() {
+        return Json(serde_json::json!({"success": false, "error": "empty batch"}));
+    }
+    if batch.len() > MAX_BATCH {
+        return Json(serde_json::json!({"success": false, "error": format!("batch too large, max {}", MAX_BATCH)}));
+    }
+
+    let verify_handles: Vec<_> = batch.iter().enumerate().map(|(i, req)| {
+        let pk = req.public_key.clone();
+        let sig = req.signature.clone();
+        let payload = req.payload.clone();
+        let payload_bytes_hex = req.payload_bytes_hex.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let payload_bytes: Vec<u8> = if let Some(hex) = &payload_bytes_hex {
+                match quantum_vault_crypto::hex_to_bytes(hex) {
+                    Ok(raw) => {
+                        match serde_json::from_slice::<serde_json::Value>(&raw) {
+                            Ok(parsed) if parsed == payload => raw,
+                            _ => return (i, Err("payload_bytes_hex mismatch".to_string())),
+                        }
+                    }
+                    Err(e) => return (i, Err(format!("bad payload_bytes_hex: {}", e))),
+                }
+            } else {
+                match serde_json::to_string(&payload) {
+                    Ok(s) => s.into_bytes(),
+                    Err(e) => return (i, Err(format!("serialize: {}", e))),
+                }
+            };
+            match quantum_vault_crypto::pqc_verify(&pk, &payload_bytes, &sig) {
+                Ok(true) => (i, Ok(String::from_utf8_lossy(&payload_bytes).to_string())),
+                Ok(false) => (i, Err("invalid signature".to_string())),
+                Err(e) => (i, Err(format!("verify: {}", e))),
+            }
+        })
+    }).collect();
+
+    let mut verified: Vec<(usize, String)> = Vec::with_capacity(batch.len());
+    let mut results: Vec<serde_json::Value> = vec![serde_json::json!(null); batch.len()];
+
+    for handle in verify_handles {
+        match handle.await {
+            Ok((i, Ok(signed_payload))) => { verified.push((i, signed_payload)); }
+            Ok((i, Err(e))) => {
+                results[i] = serde_json::json!({"success": false, "error": e});
+            }
+            Err(e) => {
+                eprintln!("[batch] join error: {}", e);
+            }
+        }
+    }
+
+    let node = &state.node;
+    let mut broadcast_txs: Vec<TxV1> = Vec::new();
+
+    for (i, signed_payload) in verified {
+        let req = &batch[i];
+        let payload = &req.payload;
+        let tx_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("transfer");
+
+        if tx_type != "transfer" {
+            results[i] = serde_json::json!({"success": false, "error": "batch only supports transfer type"});
+            continue;
+        }
+
+        let to = payload.get("to").and_then(|v| v.as_str()).unwrap_or_default();
+        let amount = payload.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let token = payload.get("token").and_then(|v| v.as_str()).unwrap_or("XRGE");
+        let fee = 1.0_f64;
+
+        if to.is_empty() || amount <= 0.0 || to == req.public_key {
+            results[i] = serde_json::json!({"success": false, "error": "invalid transfer params"});
+            continue;
+        }
+
+        if token != "XRGE" {
+            if let Ok(true) = node.is_token_frozen(token) {
+                results[i] = serde_json::json!({"success": false, "error": format!("{} is frozen", token)});
+                continue;
+            }
+        }
+
+        let tx = TxV1 {
+            version: 1,
+            tx_type: "transfer".to_string(),
+            from_pub_key: req.public_key.clone(),
+            nonce: node.get_next_nonce(&req.public_key),
+            payload: TxPayload {
+                to_pub_key_hex: Some(to.to_string()),
+                amount: Some(amount as u64),
+                token_name: Some(token.to_string()),
+                token_symbol: if token != "XRGE" { Some(token.to_string()) } else { None },
+                ..Default::default()
+            },
+            fee,
+            sig: req.signature.clone(),
+            signed_payload: Some(signed_payload),
+        };
+
+        match node.add_tx_to_mempool_verified(tx.clone()) {
+            Ok(()) => {
+                results[i] = serde_json::json!({"success": true});
+                broadcast_txs.push(tx);
+            }
+            Err(e) => {
+                results[i] = serde_json::json!({"success": false, "error": e});
+            }
+        }
+    }
+
+    if !broadcast_txs.is_empty() {
+        let peers = state.peer_manager.get_peers().await;
+        if !peers.is_empty() {
+            for tx in &broadcast_txs {
+                peer::broadcast_tx(&peers, tx);
+            }
+        }
+    }
+
+    let accepted = results.iter().filter(|r| r.get("success").and_then(|s| s.as_bool()).unwrap_or(false)).count();
+    Json(serde_json::json!({
+        "success": true,
+        "total": batch.len(),
+        "accepted": accepted,
+        "rejected": batch.len() - accepted,
+        "results": results
+    }))
 }
 
 async fn v2_create_token(
