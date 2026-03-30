@@ -130,6 +130,8 @@ pub struct L1Node {
     wasm_runtime: Option<Arc<WasmRuntime>>,
     /// Contract store for WASM bytecode/state (set after construction)
     contract_store: Option<Arc<ContractStore>>,
+    /// Persisted balance snapshot to avoid full rebuild on restart
+    snapshot_db: sled::Tree,
 }
 
 impl L1Node {
@@ -182,6 +184,10 @@ impl L1Node {
                     .open_tree("finality")
                     .map_err(|e| format!("finality tree: {}", e))?
             };
+            let snapshot_db = sled::open(opts.data_dir.join("snapshot-db"))
+                .map_err(|e| format!("snapshot-db: {}", e))?
+                .open_tree("balance_snapshot")
+                .map_err(|e| format!("snapshot tree: {}", e))?;
             let node = Self {
             node_id: uuid::Uuid::new_v4().to_string(),
             opts,
@@ -230,6 +236,7 @@ impl L1Node {
             mined_tx_hashes: Arc::new(Mutex::new(HashSet::new())),
             wasm_runtime: None,
             contract_store: None,
+            snapshot_db,
         };
 
         start_entropy_prefetch();
@@ -262,11 +269,35 @@ impl L1Node {
     pub fn init(&self) -> Result<(), String> {
         self.store.init()?;
         self.messenger_store.init()?;
-        self.rebuild_pool_state()?;
-        self.rebuild_nft_state()?;
-        self.migrate_nonce_db();
-        self.rebuild_balances()?;
-        self.rebuild_token_balances()?;
+
+        let tip = self.store.get_tip()?;
+        let snapshot_valid = match self.load_balance_snapshot() {
+            Ok(snap_height) if snap_height == tip.height => {
+                eprintln!("[init] Loaded balance snapshot at height {} — skipping rebuild", snap_height);
+                true
+            }
+            Ok(snap_height) => {
+                eprintln!("[init] Snapshot height {} != tip {} — full rebuild required", snap_height, tip.height);
+                false
+            }
+            Err(_) => {
+                eprintln!("[init] No valid snapshot — full rebuild required");
+                false
+            }
+        };
+
+        if snapshot_valid {
+            // Pool and NFT sled stores are already up to date from live block processing
+            self.migrate_nonce_db();
+        } else {
+            self.rebuild_pool_state()?;
+            self.rebuild_nft_state()?;
+            self.migrate_nonce_db();
+            self.rebuild_balances()?;
+            self.rebuild_token_balances()?;
+            // Save snapshot after rebuild so next restart is instant
+            self.save_balance_snapshot(tip.height);
+        }
         self.rebuild_proposer_counts()?;
         // Rebuild tx hash index if empty (first startup after upgrade)
         if self.store.lookup_tx_height("_probe_").unwrap_or(None).is_none() {
@@ -299,6 +330,84 @@ impl L1Node {
         *self.finalized_height.lock().map_err(|_| "finality lock")? = finalized;
         eprintln!("[bft] Finalized height: {} (tip: {})", finalized, tip.height);
         Ok(())
+    }
+
+    /// Persist current in-memory balance state to sled for fast restart.
+    fn save_balance_snapshot(&self, height: u64) {
+        let snap = || -> Result<(), String> {
+            let bal = self.balances.lock().map_err(|_| "bal lock")?;
+            let tok = self.token_balances.lock().map_err(|_| "tok lock")?;
+            let lp = self.lp_balances.lock().map_err(|_| "lp lock")?;
+            let burned = self.burned_tokens.lock().map_err(|_| "burned lock")?;
+            let fees_burned = *self.total_fees_burned.lock().map_err(|_| "fees lock")?;
+            let shielded = *self.shielded_supply.lock().map_err(|_| "shielded lock")?;
+
+            let bal_bytes = serde_json::to_vec(&*bal).map_err(|e| e.to_string())?;
+            let tok_vec: Vec<((String, String), f64)> = tok.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            let tok_bytes = serde_json::to_vec(&tok_vec).map_err(|e| e.to_string())?;
+            let lp_vec: Vec<((String, String), f64)> = lp.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            let lp_bytes = serde_json::to_vec(&lp_vec).map_err(|e| e.to_string())?;
+            let burned_bytes = serde_json::to_vec(&*burned).map_err(|e| e.to_string())?;
+
+            self.snapshot_db.insert(b"height", &height.to_be_bytes()).map_err(|e| e.to_string())?;
+            self.snapshot_db.insert(b"balances", bal_bytes).map_err(|e| e.to_string())?;
+            self.snapshot_db.insert(b"token_balances", tok_bytes).map_err(|e| e.to_string())?;
+            self.snapshot_db.insert(b"lp_balances", lp_bytes).map_err(|e| e.to_string())?;
+            self.snapshot_db.insert(b"burned_tokens", burned_bytes).map_err(|e| e.to_string())?;
+            self.snapshot_db.insert(b"fees_burned", fees_burned.to_be_bytes().as_ref()).map_err(|e| e.to_string())?;
+            self.snapshot_db.insert(b"shielded_supply", shielded.to_be_bytes().as_ref()).map_err(|e| e.to_string())?;
+            self.snapshot_db.flush().map_err(|e| e.to_string())?;
+            Ok(())
+        };
+        if let Err(e) = snap() {
+            eprintln!("[snapshot] Failed to save at height {}: {}", height, e);
+        }
+    }
+
+    /// Try to load a balance snapshot from sled. Returns Ok(height) if successful.
+    fn load_balance_snapshot(&self) -> Result<u64, String> {
+        let height_bytes = self.snapshot_db.get(b"height")
+            .map_err(|e| e.to_string())?
+            .ok_or("no snapshot")?;
+        let height = u64::from_be_bytes(
+            height_bytes.as_ref().try_into().map_err(|_| "bad height bytes")?
+        );
+
+        let bal_bytes = self.snapshot_db.get(b"balances")
+            .map_err(|e| e.to_string())?.ok_or("no balances")?;
+        let tok_bytes = self.snapshot_db.get(b"token_balances")
+            .map_err(|e| e.to_string())?.ok_or("no token_balances")?;
+        let lp_bytes = self.snapshot_db.get(b"lp_balances")
+            .map_err(|e| e.to_string())?.ok_or("no lp_balances")?;
+        let burned_bytes = self.snapshot_db.get(b"burned_tokens")
+            .map_err(|e| e.to_string())?.ok_or("no burned_tokens")?;
+        let fees_bytes = self.snapshot_db.get(b"fees_burned")
+            .map_err(|e| e.to_string())?.ok_or("no fees_burned")?;
+        let shielded_bytes = self.snapshot_db.get(b"shielded_supply")
+            .map_err(|e| e.to_string())?.ok_or("no shielded_supply")?;
+
+        let bal: HashMap<String, f64> = serde_json::from_slice(&bal_bytes)
+            .map_err(|e| e.to_string())?;
+        let tok_vec: Vec<((String, String), f64)> = serde_json::from_slice(&tok_bytes)
+            .map_err(|e| e.to_string())?;
+        let lp_vec: Vec<((String, String), f64)> = serde_json::from_slice(&lp_bytes)
+            .map_err(|e| e.to_string())?;
+        let burned: HashMap<String, f64> = serde_json::from_slice(&burned_bytes)
+            .map_err(|e| e.to_string())?;
+        let fees_burned = f64::from_be_bytes(
+            fees_bytes.as_ref().try_into().map_err(|_| "bad fees bytes")?
+        );
+        let shielded = f64::from_be_bytes(
+            shielded_bytes.as_ref().try_into().map_err(|_| "bad shielded bytes")?
+        );
+
+        *self.balances.lock().map_err(|_| "bal lock")? = bal;
+        *self.token_balances.lock().map_err(|_| "tok lock")? = tok_vec.into_iter().collect();
+        *self.lp_balances.lock().map_err(|_| "lp lock")? = lp_vec.into_iter().collect();
+        *self.burned_tokens.lock().map_err(|_| "burned lock")? = burned;
+        *self.total_fees_burned.lock().map_err(|_| "fees lock")? = fees_burned;
+        *self.shielded_supply.lock().map_err(|_| "shielded lock")? = shielded;
+        Ok(height)
     }
 
     /// Get a reference to the chain store (for indexer backfill)
@@ -547,7 +656,13 @@ impl L1Node {
             self.set_base_fee(next_base_fee);
         }
         
-        eprintln!("[node] Chain reset complete - now at height {}", blocks.last().map(|b| b.header.height).unwrap_or(0));
+        let final_height = blocks.last().map(|b| b.header.height).unwrap_or(0);
+        drop(balances);
+        drop(token_balances);
+        drop(lp_balances);
+        drop(burned_tokens);
+        self.save_balance_snapshot(final_height);
+        eprintln!("[node] Chain reset complete - now at height {}", final_height);
         Ok(())
     }
 
@@ -675,6 +790,7 @@ impl L1Node {
         // Auto-vote for imported block
         self.auto_vote_for_block(&block);
         
+        self.save_balance_snapshot(block.header.height);
         eprintln!("[node] Imported block {} from peer", block.header.height);
         Ok(())
     }
@@ -2208,6 +2324,7 @@ impl L1Node {
             }
         }
         
+        self.save_balance_snapshot(block.header.height);
         Ok(Some(block))
     }
 
