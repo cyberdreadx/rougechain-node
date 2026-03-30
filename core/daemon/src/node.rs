@@ -124,6 +124,8 @@ pub struct L1Node {
     mine_notify: Arc<tokio::sync::Notify>,
     /// Running total of XRGE currently in the shielded privacy pool
     shielded_supply: Arc<Mutex<f64>>,
+    /// Recently mined tx hashes — prevents re-adding the same tx to mempool
+    mined_tx_hashes: Arc<Mutex<HashSet<String>>>,
     /// WASM runtime for contract execution (set after construction)
     wasm_runtime: Option<Arc<WasmRuntime>>,
     /// Contract store for WASM bytecode/state (set after construction)
@@ -225,6 +227,7 @@ impl L1Node {
             finality_db: finality_db_tree,
             mine_notify: Arc::new(tokio::sync::Notify::new()),
             shielded_supply: Arc::new(Mutex::new(0.0)),
+            mined_tx_hashes: Arc::new(Mutex::new(HashSet::new())),
             wasm_runtime: None,
             contract_store: None,
         };
@@ -491,9 +494,17 @@ impl L1Node {
         burned_tokens.clear();
         
         // Replay all transactions to rebuild balances with fee distribution
+        let mut created_symbols: HashSet<String> = HashSet::new();
         for block in blocks {
             // Apply transaction effects
             for tx in &block.txs {
+                if tx.tx_type == "create_token" {
+                    if let Some(ref sym) = tx.payload.token_symbol {
+                        let sym_upper = sym.trim().to_uppercase();
+                        if created_symbols.contains(&sym_upper) { continue; }
+                        created_symbols.insert(sym_upper);
+                    }
+                }
                 Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height, &self.shielded_supply);
                 self.apply_web3_state_effects(tx, block.header.height);
                 Self::apply_amm_balance_effects(
@@ -1311,6 +1322,13 @@ impl L1Node {
         }
 
         let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
+
+        // Reject txs already mined in a recent block
+        if let Ok(mined) = self.mined_tx_hashes.lock() {
+            if mined.contains(&tx_hash) {
+                return Ok(());
+            }
+        }
         
         let mut mempool = self.mempool.lock().map_err(|_| "mempool lock")?;
         
@@ -2065,6 +2083,18 @@ impl L1Node {
             proposer_sig,
             hash,
         };
+        // Track mined tx hashes to prevent re-adding to mempool
+        if let Ok(mut mined) = self.mined_tx_hashes.lock() {
+            for tx in &block.txs {
+                let h = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
+                mined.insert(h);
+            }
+            // Cap set size to prevent unbounded growth
+            if mined.len() > 10_000 {
+                mined.clear();
+            }
+        }
+
         self.store.append_block(&block)?;
         self.apply_balance_block(&block)?;
         self.apply_validator_block(&block)?;
@@ -2322,6 +2352,23 @@ impl L1Node {
             Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block.header.height, &self.shielded_supply);
             // Commit sequential nonce for this sender
             let _ = self.nonce_db.insert(tx.from_pub_key.as_bytes(), &tx.nonce.to_be_bytes());
+
+            // Register token metadata after balance is credited (not at API time)
+            if tx.tx_type == "create_token" {
+                if let Some(ref sym) = tx.payload.token_symbol {
+                    let sym_upper = sym.trim().to_uppercase();
+                    let name = tx.payload.token_name.as_deref().unwrap_or(&sym_upper);
+                    let _ = self.register_token_metadata_ext(
+                        &sym_upper,
+                        name,
+                        &tx.from_pub_key,
+                        tx.payload.metadata_image.clone(),
+                        tx.payload.metadata_description.clone(),
+                        false,
+                        None,
+                    );
+                }
+            }
             // Index sender and recipient addresses for rouge1 resolution
             self.index_address(&tx.from_pub_key);
             if let Some(ref to_pk) = tx.payload.to_pub_key_hex {
@@ -3214,15 +3261,45 @@ impl L1Node {
         }
         
         let mut skipped_txs = 0u64;
+        let mut created_token_symbols: HashSet<String> = HashSet::new();
 
         for block in &blocks {
             let mut actual_fees_collected: f64 = 0.0;
 
             for tx in &block.txs {
+                // Skip duplicate create_token txs (same symbol already created)
+                if tx.tx_type == "create_token" {
+                    if let Some(ref sym) = tx.payload.token_symbol {
+                        let sym_upper = sym.trim().to_uppercase();
+                        if created_token_symbols.contains(&sym_upper) {
+                            skipped_txs += 1;
+                            continue;
+                        }
+                    }
+                }
+
                 let sum_before: f64 = balances.values().sum();
 
                 Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height, &self.shielded_supply);
-                
+
+                // Register token metadata during rebuild + track created symbols
+                if tx.tx_type == "create_token" {
+                    if let Some(ref sym) = tx.payload.token_symbol {
+                        let sym_upper = sym.trim().to_uppercase();
+                        created_token_symbols.insert(sym_upper.clone());
+                        let name = tx.payload.token_name.as_deref().unwrap_or(&sym_upper);
+                        let _ = self.register_token_metadata_ext(
+                            &sym_upper,
+                            name,
+                            &tx.from_pub_key,
+                            tx.payload.metadata_image.clone(),
+                            tx.payload.metadata_description.clone(),
+                            false,
+                            None,
+                        );
+                    }
+                }
+
                 Self::apply_amm_balance_effects(
                     &mut balances,
                     &mut token_balances,

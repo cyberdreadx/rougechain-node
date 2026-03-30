@@ -3253,15 +3253,6 @@ async fn create_token(
         Ok((tx, token_address)) => {
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
             
-            // Register initial token metadata
-            let _ = node.register_token_metadata(
-                &body.token_symbol,
-                &body.token_name,
-                &body.from_public_key,
-                None, // image
-                None, // description
-            );
-            
             Ok(Json(CreateTokenResponse { 
                 success: true, 
                 tx_id: Some(id), 
@@ -4929,6 +4920,8 @@ async fn v2_create_token(
             token_symbol: Some(token_symbol.to_string()),
             token_decimals: Some(18),
             token_total_supply: Some(initial_supply),
+            metadata_image: token_image,
+            metadata_description: token_description,
             ..Default::default()
         },
         fee,
@@ -4942,20 +4935,9 @@ async fn v2_create_token(
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
 
-    let token_id = node.register_token_metadata_ext(
-        &sym_upper,
-        name_trimmed,
-        &body.public_key,
-        token_image,
-        token_description,
-        mintable,
-        max_supply,
-    ).unwrap_or_default();
-
     Ok(Json(serde_json::json!({
         "success": true,
         "token_symbol": sym_upper,
-        "token_id": token_id,
         "message": "Token creation transaction submitted"
     })))
 }
