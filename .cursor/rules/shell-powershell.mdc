@@ -1,0 +1,15 @@
+---
+description: Always use PowerShell-compatible syntax for shell commands
+alwaysApply: true
+---
+
+# PowerShell Shell Environment
+
+This workspace runs on Windows with PowerShell. Always use PowerShell-compatible syntax:
+
+- Do NOT use `&&` to chain commands. Use `;` instead.
+- Do NOT use heredocs (`<<'EOF'`). Pass multi-line strings with PowerShell syntax or keep commit messages on one line.
+- Do NOT use bash-specific redirects. Use PowerShell equivalents (`2>&1` works, but `< file` does not).
+- Use `Invoke-RestMethod` or `curl.exe` (not `curl` alias) for HTTP requests.
+- Quote paths with spaces using double quotes.
+- Use `; ` to separate sequential commands: `git add .; git commit -m "msg"`

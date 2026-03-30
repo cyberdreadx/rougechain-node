@@ -326,17 +326,17 @@ async fn main() -> Result<(), String> {
     let contract_store = Arc::new({
         let mut last_err = String::new();
         let mut store = None;
-        for attempt in 1..=5 {
+        for attempt in 1..=15 {
             match ContractStore::new(&data_dir_clone) {
                 Ok(s) => { store = Some(s); break; }
                 Err(e) => {
                     last_err = format!("{}", e);
-                    eprintln!("[init] Contract store lock attempt {}/5 failed: {} — retrying in {}s", attempt, e, attempt);
-                    std::thread::sleep(std::time::Duration::from_secs(attempt as u64));
+                    eprintln!("[init] Contract store lock attempt {}/15 failed: {} — retrying in 2s", attempt, e);
+                    std::thread::sleep(std::time::Duration::from_secs(2));
                 }
             }
         }
-        store.unwrap_or_else(|| panic!("Failed to create contract store after 5 attempts: {}", last_err))
+        store.unwrap_or_else(|| panic!("Failed to create contract store after 15 attempts: {}", last_err))
     });
     let mut node = L1Node::new(NodeOptions {
         data_dir,
