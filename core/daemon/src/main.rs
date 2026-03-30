@@ -4888,7 +4888,8 @@ async fn v2_batch_submit(
 ) -> Json<serde_json::Value> {
     use quantum_vault_types::{TxPayload, TxV1};
 
-    const MAX_BATCH: usize = 100;
+    const MAX_BATCH: usize = 50;
+    const VERIFY_CONCURRENCY: usize = 4;
     if batch.is_empty() {
         return Json(serde_json::json!({"success": false, "error": "empty batch"}));
     }
@@ -4896,34 +4897,40 @@ async fn v2_batch_submit(
         return Json(serde_json::json!({"success": false, "error": format!("batch too large, max {}", MAX_BATCH)}));
     }
 
+    let sem = Arc::new(tokio::sync::Semaphore::new(VERIFY_CONCURRENCY));
+
     let verify_handles: Vec<_> = batch.iter().enumerate().map(|(i, req)| {
         let pk = req.public_key.clone();
         let sig = req.signature.clone();
         let payload = req.payload.clone();
         let payload_bytes_hex = req.payload_bytes_hex.clone();
+        let permit = sem.clone();
 
-        tokio::task::spawn_blocking(move || {
-            let payload_bytes: Vec<u8> = if let Some(hex) = &payload_bytes_hex {
-                match quantum_vault_crypto::hex_to_bytes(hex) {
-                    Ok(raw) => {
-                        match serde_json::from_slice::<serde_json::Value>(&raw) {
-                            Ok(parsed) if parsed == payload => raw,
-                            _ => return (i, Err("payload_bytes_hex mismatch".to_string())),
+        tokio::spawn(async move {
+            let _permit = permit.acquire().await.unwrap();
+            tokio::task::spawn_blocking(move || {
+                let payload_bytes: Vec<u8> = if let Some(hex) = &payload_bytes_hex {
+                    match quantum_vault_crypto::hex_to_bytes(hex) {
+                        Ok(raw) => {
+                            match serde_json::from_slice::<serde_json::Value>(&raw) {
+                                Ok(parsed) if parsed == payload => raw,
+                                _ => return (i, Err("payload_bytes_hex mismatch".to_string())),
+                            }
                         }
+                        Err(e) => return (i, Err(format!("bad payload_bytes_hex: {}", e))),
                     }
-                    Err(e) => return (i, Err(format!("bad payload_bytes_hex: {}", e))),
+                } else {
+                    match serde_json::to_string(&payload) {
+                        Ok(s) => s.into_bytes(),
+                        Err(e) => return (i, Err(format!("serialize: {}", e))),
+                    }
+                };
+                match quantum_vault_crypto::pqc_verify(&pk, &payload_bytes, &sig) {
+                    Ok(true) => (i, Ok(String::from_utf8_lossy(&payload_bytes).to_string())),
+                    Ok(false) => (i, Err("invalid signature".to_string())),
+                    Err(e) => (i, Err(format!("verify: {}", e))),
                 }
-            } else {
-                match serde_json::to_string(&payload) {
-                    Ok(s) => s.into_bytes(),
-                    Err(e) => return (i, Err(format!("serialize: {}", e))),
-                }
-            };
-            match quantum_vault_crypto::pqc_verify(&pk, &payload_bytes, &sig) {
-                Ok(true) => (i, Ok(String::from_utf8_lossy(&payload_bytes).to_string())),
-                Ok(false) => (i, Err("invalid signature".to_string())),
-                Err(e) => (i, Err(format!("verify: {}", e))),
-            }
+            }).await.unwrap_or((i, Err("verify task panicked".to_string())))
         })
     }).collect();
 
@@ -5000,12 +5007,17 @@ async fn v2_batch_submit(
         }
     }
 
+    // Broadcast accepted TXs to peers (fire-and-forget, throttled)
     if !broadcast_txs.is_empty() {
         let peers = state.peer_manager.get_peers().await;
         if !peers.is_empty() {
-            for tx in &broadcast_txs {
-                peer::broadcast_tx(&peers, tx);
-            }
+            let txs = broadcast_txs.clone();
+            tokio::spawn(async move {
+                for tx in &txs {
+                    peer::broadcast_tx(&peers, tx);
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            });
         }
     }
 
