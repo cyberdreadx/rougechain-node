@@ -262,19 +262,47 @@ async fn sync_from_peer(peer_url: &str, node: &L1Node, allow_genesis_reset: bool
     
     // Normal incremental sync
     let mut synced_count = 0u64;
-    for block in peer_blocks {
-        // Skip blocks we already have
+    let mut fork_detected = false;
+    for block in &peer_blocks {
         if block.header.height <= local_height {
             continue;
         }
         
-        // Import the block
         if let Err(e) = node.import_block(block.clone()) {
             eprintln!("[peer] Failed to import block {}: {}", block.header.height, e);
-            break; // Stop on first error - chain is invalid
+            fork_detected = true;
+            break;
         }
         
         synced_count += 1;
+    }
+
+    // Fork recovery: if incremental sync failed and the peer has a longer/equal chain,
+    // fetch the full chain from genesis and reset.
+    if fork_detected && synced_count == 0 && peer_height >= local_height {
+        eprintln!("[peer] Fork detected (peer height {} >= local {}) — fetching full chain for reset", peer_height, local_height);
+        let full_url = format!("{}/blocks?from_height=0&limit=10000", peer_url);
+        if let Ok(resp) = reqwest::get(&full_url).await {
+            if resp.status().is_success() {
+                if let Ok(full_data) = resp.json::<serde_json::Value>().await {
+                    if let Some(full_arr) = full_data.get("blocks").and_then(|b| b.as_array()) {
+                        let mut full_blocks: Vec<BlockV1> = Vec::new();
+                        for bj in full_arr {
+                            if let Ok(b) = serde_json::from_value::<BlockV1>(bj.clone()) {
+                                full_blocks.push(b);
+                            }
+                        }
+                        full_blocks.sort_by_key(|b| b.header.height);
+                        if !full_blocks.is_empty() && full_blocks[0].header.height == 0 {
+                            eprintln!("[peer] Resetting chain with {} blocks from peer", full_blocks.len());
+                            node.reset_chain(&full_blocks)?;
+                            return Ok(full_blocks.len() as u64);
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("[peer] Fork recovery failed — could not fetch full chain from peer");
     }
     
     Ok(synced_count)
