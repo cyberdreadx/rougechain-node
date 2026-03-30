@@ -39,9 +39,17 @@ async function post(path, body) {
   return res.json();
 }
 
-async function get(path) {
-  const res = await fetch(`${BASE}${path}`);
-  return res.json();
+async function get(path, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await fetch(`${BASE}${path}`);
+      const text = await res.text();
+      return JSON.parse(text);
+    } catch {
+      if (i < retries - 1) await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+  return {};
 }
 
 function randomHex(bytes) {
