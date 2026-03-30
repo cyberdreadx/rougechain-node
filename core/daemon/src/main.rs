@@ -3153,8 +3153,11 @@ async fn receive_broadcast_tx(
     State(state): State<AppState>,
     Json(tx): Json<quantum_vault_types::TxV1>,
 ) -> Result<Json<BroadcastTxResponse>, StatusCode> {
-    let node = &state.node;
-    match node.add_tx_to_mempool(tx) {
+    let node = state.node.clone();
+    match tokio::task::spawn_blocking(move || node.add_tx_to_mempool(tx))
+        .await
+        .unwrap_or_else(|e| Err(format!("task failed: {}", e)))
+    {
         Ok(()) => Ok(Json(BroadcastTxResponse { success: true, error: None })),
         Err(e) => Ok(Json(BroadcastTxResponse { success: false, error: Some(e) })),
     }
