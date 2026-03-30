@@ -2598,7 +2598,7 @@ async fn push_register(
     Json(body): Json<SignedTransactionRequest>,
 ) -> Json<serde_json::Value> {
     // Verify PQC signature — proves the caller owns the private key
-    if let Err(e) = verify_signed_tx(&body) {
+    if let Err(e) = verify_signed_tx(&body).await {
         return Json(serde_json::json!({ "success": false, "error": format!("Signature verification failed: {}", e) }));
     }
 
@@ -2619,7 +2619,7 @@ async fn push_unregister(
     Json(body): Json<SignedTransactionRequest>,
 ) -> Json<serde_json::Value> {
     // Verify PQC signature — only the wallet owner can unregister
-    if let Err(e) = verify_signed_tx(&body) {
+    if let Err(e) = verify_signed_tx(&body).await {
         return Json(serde_json::json!({ "success": false, "error": format!("Signature verification failed: {}", e) }));
     }
 
@@ -2756,7 +2756,7 @@ async fn create_pool(
     let signed_tx = TxV1 { sig, ..tx };
     
     let tx_clone = signed_tx.clone();
-    node.add_tx_to_mempool(signed_tx)
+    node.add_tx_to_mempool_verified(signed_tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -2817,7 +2817,7 @@ async fn add_liquidity(
     let signed_tx = TxV1 { sig, ..tx };
     
     let tx_clone = signed_tx.clone();
-    node.add_tx_to_mempool(signed_tx)
+    node.add_tx_to_mempool_verified(signed_tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -2867,7 +2867,7 @@ async fn remove_liquidity(
     let signed_tx = TxV1 { sig, ..tx };
     
     let tx_clone = signed_tx.clone();
-    node.add_tx_to_mempool(signed_tx)
+    node.add_tx_to_mempool_verified(signed_tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -2991,7 +2991,7 @@ async fn execute_swap(
     let signed_tx = TxV1 { sig, ..tx };
     
     let tx_clone = signed_tx.clone();
-    node.add_tx_to_mempool(signed_tx)
+    node.add_tx_to_mempool_verified(signed_tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -3148,7 +3148,7 @@ struct BroadcastTxResponse {
     error: Option<String>,
 }
 
-/// Receive a transaction broadcast from a peer
+/// Receive a transaction broadcast from a peer (untrusted — must verify signature)
 async fn receive_broadcast_tx(
     State(state): State<AppState>,
     Json(tx): Json<quantum_vault_types::TxV1>,
@@ -4121,9 +4121,7 @@ struct SignedTransactionRequest {
 
 /// Verify a signed transaction from the frontend.
 /// Returns the serialized payload JSON on success (the exact bytes that were signed).
-fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<String, String> {
-    use quantum_vault_crypto::pqc_verify;
-    
+async fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<String, String> {
     let payload_bytes: Vec<u8> = if let Some(hex) = &req.payload_bytes_hex {
         let raw = quantum_vault_crypto::hex_to_bytes(hex)
             .map_err(|e| format!("Invalid payload_bytes_hex: {}", e))?;
@@ -4139,9 +4137,16 @@ fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<String, String> {
             .into_bytes()
     };
     
-    // Verify signature
-    let valid = pqc_verify(&req.public_key, &payload_bytes, &req.signature)
-        .map_err(|e| format!("Signature verification failed: {}", e))?;
+    // Offload CPU-heavy ML-DSA-65 verification to a blocking thread
+    let pk = req.public_key.clone();
+    let sig = req.signature.clone();
+    let verify_bytes = payload_bytes.clone();
+    let valid = tokio::task::spawn_blocking(move || {
+        quantum_vault_crypto::pqc_verify(&pk, &verify_bytes, &sig)
+    })
+    .await
+    .map_err(|e| format!("verification task failed: {}", e))?
+    .map_err(|e| format!("Signature verification failed: {}", e))?;
     
     if !valid {
         return Err("Invalid signature".to_string());
@@ -4171,12 +4176,10 @@ fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<String, String> {
 /// Verify a signed request for mail/messenger/names operations.
 /// Returns the authenticated public_key on success. Lighter than verify_signed_tx
 /// (no chain nonce needed). Includes anti-replay nonce checking.
-fn verify_signed_request(
+async fn verify_signed_request(
     req: &SignedTransactionRequest,
     nonce_store: &RwLock<HashMap<String, i64>>,
 ) -> Result<String, String> {
-    use quantum_vault_crypto::pqc_verify;
-
     let payload_bytes: Vec<u8> = if let Some(hex) = &req.payload_bytes_hex {
         let raw = quantum_vault_crypto::hex_to_bytes(hex)
             .map_err(|e| format!("Invalid payload_bytes_hex: {}", e))?;
@@ -4192,8 +4195,15 @@ fn verify_signed_request(
             .into_bytes()
     };
 
-    let valid = pqc_verify(&req.public_key, &payload_bytes, &req.signature)
-        .map_err(|e| format!("Signature verification failed: {}", e))?;
+    let pk = req.public_key.clone();
+    let sig = req.signature.clone();
+    let verify_bytes = payload_bytes.clone();
+    let valid = tokio::task::spawn_blocking(move || {
+        quantum_vault_crypto::pqc_verify(&pk, &verify_bytes, &sig)
+    })
+    .await
+    .map_err(|e| format!("verification task failed: {}", e))?
+    .map_err(|e| format!("Signature verification failed: {}", e))?;
     if !valid {
         return Err("Invalid signature".to_string());
     }
@@ -4301,7 +4311,7 @@ async fn send_mail_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
 
     let from_wallet_id = p.get("fromWalletId").and_then(|v| v.as_str()).unwrap_or_default().to_string();
@@ -4363,7 +4373,7 @@ async fn get_mail_folder_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
 
     let folder = p.get("folder").and_then(|v| v.as_str()).unwrap_or("inbox");
@@ -4386,7 +4396,7 @@ async fn get_mail_message_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
 
     let message_id = p.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
@@ -4415,7 +4425,7 @@ async fn move_mail_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
 
     let message_id = p.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
@@ -4437,7 +4447,7 @@ async fn mark_mail_read_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
     let message_id = p.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
 
@@ -4453,7 +4463,7 @@ async fn delete_mail_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
     let message_id = p.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
 
@@ -4473,7 +4483,7 @@ async fn register_messenger_wallet_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
 
     let id = p.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
@@ -4550,7 +4560,7 @@ async fn get_conversations_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
 
     let wallet = find_wallet_by_signing_key(&state.node, &authed_key);
     let wallet_id = wallet.as_ref().map(|w| w.id.as_str()).unwrap_or(&authed_key);
@@ -4568,7 +4578,7 @@ async fn create_conversation_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
 
     let wallet = find_wallet_by_signing_key(&state.node, &authed_key)
@@ -4599,7 +4609,7 @@ async fn get_messages_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
 
     let conversation_id = p.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default();
@@ -4620,7 +4630,7 @@ async fn send_message_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
 
     let wallet = find_wallet_by_signing_key(&state.node, &authed_key)
@@ -4658,7 +4668,7 @@ async fn delete_conversation_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
 
     let conversation_id = p.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default();
@@ -4675,7 +4685,7 @@ async fn delete_message_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
 
     let message_id = p.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
@@ -4702,7 +4712,7 @@ async fn mark_message_read_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
     let message_id = p.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
 
@@ -4726,7 +4736,7 @@ async fn register_name_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
 
     let name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
@@ -4749,7 +4759,7 @@ async fn release_name_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
 
     let name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
@@ -4769,7 +4779,7 @@ async fn v2_transfer(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -4843,7 +4853,7 @@ async fn v2_transfer(
     };
     
     let tx_clone = tx.clone();
-    node.add_tx_to_mempool(tx)
+    node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -4860,7 +4870,7 @@ async fn v2_create_token(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -4932,7 +4942,7 @@ async fn v2_create_token(
     };
     
     let tx_clone = tx.clone();
-    node.add_tx_to_mempool(tx)
+    node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -4948,7 +4958,7 @@ async fn v2_update_token_metadata(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let _ = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let _ = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let node = &state.node;
     let payload = &body.payload;
@@ -4987,7 +4997,7 @@ async fn v2_claim_token_metadata(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let _ = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let _ = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let node = &state.node;
     let payload = &body.payload;
@@ -5013,7 +5023,7 @@ async fn v2_token_approve(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
 
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let node = &state.node;
     let payload = &body.payload;
 
@@ -5048,7 +5058,7 @@ async fn v2_token_approve(
     };
 
     let tx_clone = tx.clone();
-    node.add_tx_to_mempool(tx)
+    node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -5068,7 +5078,7 @@ async fn v2_token_transfer_from(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
 
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let node = &state.node;
     let payload = &body.payload;
 
@@ -5115,7 +5125,7 @@ async fn v2_token_transfer_from(
     };
 
     let tx_clone = tx.clone();
-    node.add_tx_to_mempool(tx)
+    node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -5197,7 +5207,7 @@ async fn v2_create_pool(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -5280,7 +5290,7 @@ async fn v2_create_pool(
     };
     
     let tx_clone = tx.clone();
-    node.add_tx_to_mempool(tx)
+    node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -5298,7 +5308,7 @@ async fn v2_add_liquidity(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -5366,7 +5376,7 @@ async fn v2_add_liquidity(
     };
     
     let tx_clone = tx.clone();
-    node.add_tx_to_mempool(tx)
+    node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -5383,7 +5393,7 @@ async fn v2_remove_liquidity(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -5438,7 +5448,7 @@ async fn v2_remove_liquidity(
     };
     
     let tx_clone = tx.clone();
-    node.add_tx_to_mempool(tx)
+    node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -5455,7 +5465,7 @@ async fn v2_execute_swap(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -5526,7 +5536,7 @@ async fn v2_execute_swap(
     };
     
     let tx_clone = tx.clone();
-    node.add_tx_to_mempool(tx)
+    node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -5543,7 +5553,7 @@ async fn v2_stake(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -5579,7 +5589,7 @@ async fn v2_stake(
     };
     
     let tx_clone = tx.clone();
-    node.add_tx_to_mempool(tx)
+    node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -5596,7 +5606,7 @@ async fn v2_unstake(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
     
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let payload = &body.payload;
@@ -5646,7 +5656,7 @@ async fn v2_unstake(
     };
     
     let tx_clone = tx.clone();
-    node.add_tx_to_mempool(tx)
+    node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -5661,7 +5671,7 @@ async fn v2_faucet(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let _ = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let _ = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
     let node = &state.node;
     let faucet_amount = 10000_u64;
@@ -5707,7 +5717,7 @@ async fn v2_nft_create_collection(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
 
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let symbol = p.get("symbol").and_then(|v| v.as_str()).unwrap_or_default();
@@ -5756,7 +5766,7 @@ async fn v2_nft_create_collection(
     let collection_id = format!("col:{}:{}", creator_short, symbol.to_uppercase());
 
     let tx_clone = tx.clone();
-    state.node.add_tx_to_mempool(tx)
+    state.node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -5774,7 +5784,7 @@ async fn v2_nft_mint(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
 
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
@@ -5842,7 +5852,7 @@ async fn v2_nft_mint(
     };
 
     let tx_clone = tx.clone();
-    state.node.add_tx_to_mempool(tx)
+    state.node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -5859,7 +5869,7 @@ async fn v2_nft_batch_mint(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
 
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
@@ -5920,7 +5930,7 @@ async fn v2_nft_batch_mint(
     };
 
     let tx_clone = tx.clone();
-    state.node.add_tx_to_mempool(tx)
+    state.node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -5937,7 +5947,7 @@ async fn v2_nft_transfer(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
 
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
@@ -5997,7 +6007,7 @@ async fn v2_nft_transfer(
     };
 
     let tx_clone = tx.clone();
-    state.node.add_tx_to_mempool(tx)
+    state.node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -6014,7 +6024,7 @@ async fn v2_nft_burn(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
 
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
@@ -6054,7 +6064,7 @@ async fn v2_nft_burn(
     };
 
     let tx_clone = tx.clone();
-    state.node.add_tx_to_mempool(tx)
+    state.node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -6071,7 +6081,7 @@ async fn v2_nft_lock(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
 
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
@@ -6113,7 +6123,7 @@ async fn v2_nft_lock(
     };
 
     let tx_clone = tx.clone();
-    state.node.add_tx_to_mempool(tx)
+    state.node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -6130,7 +6140,7 @@ async fn v2_nft_freeze_collection(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
 
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
@@ -6170,7 +6180,7 @@ async fn v2_nft_freeze_collection(
     };
 
     let tx_clone = tx.clone();
-    state.node.add_tx_to_mempool(tx)
+    state.node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -6794,7 +6804,7 @@ async fn bridge_withdraw(
             public_key: body.from_public_key.clone(),
             payload_bytes_hex: None,
         };
-        if let Err(e) = verify_signed_tx(&signed_req) {
+        if let Err(e) = verify_signed_tx(&signed_req).await {
             return Ok(Json(BridgeWithdrawResponse {
                 success: false,
                 tx_id: None,
@@ -6913,7 +6923,7 @@ async fn bridge_withdrawal_fulfill(
                         error: Some("unauthorized: only the node operator can fulfill withdrawals".to_string()),
                     });
                 }
-                if let Err(e) = verify_signed_tx(&signed_body) {
+                if let Err(e) = verify_signed_tx(&signed_body).await {
                     return Json(BridgeFulfillResponse {
                         success: false,
                         error: Some(format!("signature verification failed: {}", e)),
@@ -7089,7 +7099,7 @@ async fn xrge_bridge_withdraw(
             public_key: body.from_public_key.clone(),
             payload_bytes_hex: None,
         };
-        if let Err(e) = verify_signed_tx(&signed_req) {
+        if let Err(e) = verify_signed_tx(&signed_req).await {
             return Json(serde_json::json!({ "success": false, "error": format!("Signature verification failed: {}", e) }));
         }
         state.node.submit_bridge_withdraw_tx_signed(
@@ -7171,7 +7181,7 @@ async fn xrge_bridge_fulfill(
                         error: Some("unauthorized".to_string()),
                     });
                 }
-                if let Err(e) = verify_signed_tx(&signed_body) {
+                if let Err(e) = verify_signed_tx(&signed_body).await {
                     return Json(BridgeFulfillResponse {
                         success: false,
                         error: Some(format!("signature verification failed: {}", e)),
@@ -7212,7 +7222,7 @@ async fn v2_shield(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
 
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let node = &state.node;
     let payload = &body.payload;
@@ -7253,7 +7263,7 @@ async fn v2_shield(
     };
 
     let tx_clone = tx.clone();
-    node.add_tx_to_mempool(tx)
+    node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -7272,7 +7282,7 @@ async fn v2_shielded_transfer(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
 
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let node = &state.node;
     let payload = &body.payload;
@@ -7365,7 +7375,7 @@ async fn v2_shielded_transfer(
     };
 
     let tx_clone = tx.clone();
-    node.add_tx_to_mempool(tx)
+    node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -7383,7 +7393,7 @@ async fn v2_unshield(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
 
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let node = &state.node;
     let payload = &body.payload;
@@ -7469,7 +7479,7 @@ async fn v2_unshield(
     };
 
     let tx_clone = tx.clone();
-    node.add_tx_to_mempool(tx)
+    node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -7791,7 +7801,7 @@ async fn v2_token_mint(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     use quantum_vault_types::{TxPayload, TxV1};
 
-    let signed_payload = verify_signed_tx(&body).map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+    let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let node = &state.node;
     let payload = &body.payload;
@@ -7867,7 +7877,7 @@ async fn v2_token_mint(
     };
 
     let tx_clone = tx.clone();
-    node.add_tx_to_mempool(tx)
+    node.add_tx_to_mempool_verified(tx)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
@@ -8305,7 +8315,7 @@ async fn social_play_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let _authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let _authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
     let track_id = p.get("trackId").and_then(|v| v.as_str()).unwrap_or_default();
     if track_id.is_empty() {
@@ -8319,7 +8329,7 @@ async fn social_like_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
     let track_id = p.get("trackId").and_then(|v| v.as_str()).unwrap_or_default();
     if track_id.is_empty() {
@@ -8333,7 +8343,7 @@ async fn social_comment_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
     let track_id = p.get("trackId").and_then(|v| v.as_str()).unwrap_or_default();
     let comment_body = p.get("body").and_then(|v| v.as_str()).unwrap_or_default();
@@ -8351,7 +8361,7 @@ async fn social_comment_delete_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
     let comment_id = p.get("commentId").and_then(|v| v.as_str()).unwrap_or_default();
     if comment_id.is_empty() {
@@ -8365,7 +8375,7 @@ async fn social_follow_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
     let artist_pubkey = p.get("artistPubkey").and_then(|v| v.as_str()).unwrap_or_default();
     if artist_pubkey.is_empty() {
@@ -8379,7 +8389,7 @@ async fn social_hide_track_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
     let track_id = p.get("trackId").and_then(|v| v.as_str()).unwrap_or_default();
     if track_id.is_empty() {
@@ -8479,7 +8489,7 @@ async fn social_create_post_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
     let post_body = p.get("body").and_then(|v| v.as_str()).unwrap_or_default();
     if post_body.is_empty() {
@@ -8497,7 +8507,7 @@ async fn social_delete_post_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
     let post_id = p.get("postId").and_then(|v| v.as_str()).unwrap_or_default();
     if post_id.is_empty() {
@@ -8511,7 +8521,7 @@ async fn social_repost_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
     let post_id = p.get("postId").and_then(|v| v.as_str()).unwrap_or_default();
     if post_id.is_empty() {
@@ -8525,7 +8535,7 @@ async fn social_following_feed_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let authed_key = verify_signed_request(&body, &state.replay_nonces).map_err(|e| signed_err(&e))?;
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
     let p = &body.payload;
     let limit: usize = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
     let offset: usize = p.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;

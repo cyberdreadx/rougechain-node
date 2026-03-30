@@ -1354,12 +1354,10 @@ impl L1Node {
         pqc_keygen()
     }
 
-    /// Add a transaction to mempool (used for P2P broadcast)
+    /// Add a transaction to mempool (used for P2P broadcast — verifies signature)
     pub fn add_tx_to_mempool(&self, tx: TxV1) -> Result<(), String> {
-        use quantum_vault_crypto::{sha256, bytes_to_hex, pqc_verify};
-        use quantum_vault_types::{encode_tx_v1, encode_tx_for_signing};
-        
-        self.check_nonce_valid(&tx.from_pub_key, tx.nonce)?;
+        use quantum_vault_crypto::pqc_verify;
+        use quantum_vault_types::encode_tx_for_signing;
 
         // SECURITY: Verify the ML-DSA-65 signature before accepting P2P broadcast txs
         let sig_valid = if let Some(ref sp) = tx.signed_payload {
@@ -1371,6 +1369,22 @@ impl L1Node {
         if !sig_valid {
             return Err("P2P tx rejected: invalid signature".to_string());
         }
+
+        self.insert_tx_to_mempool(tx)
+    }
+
+    /// Add a pre-verified transaction to mempool (used by V2 API handlers that
+    /// already called verify_signed_tx — skips the expensive pqc_verify).
+    pub fn add_tx_to_mempool_verified(&self, tx: TxV1) -> Result<(), String> {
+        self.insert_tx_to_mempool(tx)
+    }
+
+    /// Shared mempool insertion logic (nonce check, dedup, cap, notify).
+    fn insert_tx_to_mempool(&self, tx: TxV1) -> Result<(), String> {
+        use quantum_vault_crypto::{sha256, bytes_to_hex};
+        use quantum_vault_types::encode_tx_v1;
+
+        self.check_nonce_valid(&tx.from_pub_key, tx.nonce)?;
 
         let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
 
@@ -1387,7 +1401,7 @@ impl L1Node {
             return Ok(());
         }
 
-        // SECURITY: Enforce mempool cap with fee-priority eviction on P2P path
+        // SECURITY: Enforce mempool cap with fee-priority eviction
         if mempool.len() >= MAX_MEMPOOL {
             if let Some(evict_id) = mempool.iter()
                 .min_by(|a, b| a.1.fee.partial_cmp(&b.1.fee).unwrap_or(std::cmp::Ordering::Equal))
@@ -1401,7 +1415,7 @@ impl L1Node {
             }
         }
         
-        // Mark as verified (signature confirmed above)
+        // Mark as verified so mine_pending skips re-verification
         self.verified_tx_ids.lock().map_err(|_| "verified lock")?.insert(tx_hash.clone());
         
         mempool.insert(tx_hash, tx);
