@@ -5120,6 +5120,8 @@ impl L1Node {
                         if tx.tx_type == "nft_batch_mint" {
                             token_count += tx.payload.nft_batch_names.as_ref().map(|n| n.len() as u32).unwrap_or(0);
                         }
+                        // Ensure sender has enough balance for fee checks during rebuild
+                        *dummy_balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += tx.fee + 1.0;
                         let _ = self.apply_nft_tx_inner(&mut dummy_balances, tx, block.header.time);
                     }
                     _ => {}
