@@ -6,6 +6,9 @@ use quantum_vault_types::BlockV1;
 /// Maximum number of buffered messages in the broadcast channel
 const BROADCAST_CAPACITY: usize = 100;
 
+/// Maximum concurrent WebSocket connections
+const MAX_WS_CLIENTS: usize = 300;
+
 /// Events that can be broadcast to WebSocket clients
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -96,18 +99,24 @@ impl WsBroadcaster {
         *self.client_count.read().await
     }
 
-    /// Increment client count (call when client connects)
-    pub async fn client_connected(&self) {
+    /// Check if we can accept a new connection
+    pub async fn try_connect(&self) -> bool {
         let mut count = self.client_count.write().await;
+        if *count >= MAX_WS_CLIENTS {
+            eprintln!("[ws] Connection rejected — at limit ({}/{})", *count, MAX_WS_CLIENTS);
+            return false;
+        }
         *count += 1;
-        eprintln!("[ws] Client connected. Total: {}", *count);
+        if *count % 50 == 0 {
+            eprintln!("[ws] Connections: {}/{}", *count, MAX_WS_CLIENTS);
+        }
+        true
     }
 
     /// Decrement client count (call when client disconnects)
     pub async fn client_disconnected(&self) {
         let mut count = self.client_count.write().await;
         *count = count.saturating_sub(1);
-        eprintln!("[ws] Client disconnected. Total: {}", *count);
     }
 
     /// Broadcast an event to all connected clients

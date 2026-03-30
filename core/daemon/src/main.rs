@@ -1289,17 +1289,17 @@ async fn prometheus_metrics(
 async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws_connection(socket, state))
+) -> Result<impl IntoResponse, StatusCode> {
+    if !state.ws_broadcaster.try_connect().await {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    Ok(ws.on_upgrade(move |socket| handle_ws_connection(socket, state)))
 }
 
 async fn handle_ws_connection(socket: WebSocket, state: AppState) {
     use std::collections::HashSet;
     let (mut sender, mut receiver) = socket.split();
     let broadcaster = state.ws_broadcaster.clone();
-    
-    // Track connection
-    broadcaster.client_connected().await;
     
     // Per-client subscription topics (empty = receive everything for backward compat)
     let subscriptions: Arc<tokio::sync::RwLock<HashSet<String>>> = Arc::new(tokio::sync::RwLock::new(HashSet::new()));
