@@ -46,3 +46,9 @@ contracts/cache/
 *.zip
 create_store_assets.py
 tweets.md
+
+# SDK build artifacts
+*.tgz
+
+# Claude Code settings
+.claude/
