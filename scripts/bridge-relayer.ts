@@ -30,6 +30,8 @@ import {
   http,
   parseAbi,
   getContract,
+  keccak256,
+  toBytes,
   type Chain,
   type PublicClient,
   type WalletClient,
@@ -343,7 +345,7 @@ async function main() {
 
           const hash = await withRetry(`ETH-${w.tx_id.slice(0, 8)}`, async () => {
             if (bridgeContract) {
-              const l1TxIdBytes = `0x${w.tx_id.padEnd(64, "0").slice(0, 64)}` as `0x${string}`;
+              const l1TxIdBytes = keccak256(toBytes(w.tx_id));
               return await (bridgeContract as any).write.releaseETH([
                 w.evm_address as `0x${string}`,
                 wei,
