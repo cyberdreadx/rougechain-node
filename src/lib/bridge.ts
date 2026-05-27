@@ -74,11 +74,11 @@ const TOKEN_ADDRESSES: Record<number, { usdc: string; xrge: string }> = {
 };
 
 export function getUsdcAddress(chainId: number): string {
-  return TOKEN_ADDRESSES[chainId]?.usdc || TOKEN_ADDRESSES[BASE_SEPOLIA_CHAIN_ID].usdc;
+  return TOKEN_ADDRESSES[chainId]?.usdc || TOKEN_ADDRESSES[BASE_MAINNET_CHAIN_ID].usdc;
 }
 
 export function getXrgeAddress(chainId: number): string {
-  return TOKEN_ADDRESSES[chainId]?.xrge || TOKEN_ADDRESSES[BASE_SEPOLIA_CHAIN_ID].xrge;
+  return TOKEN_ADDRESSES[chainId]?.xrge || TOKEN_ADDRESSES[BASE_MAINNET_CHAIN_ID].xrge;
 }
 
 // ── Convenience exports (backward compat) ───────────────────────
@@ -125,23 +125,23 @@ export interface BridgeConfig {
 export async function getBridgeConfig(): Promise<BridgeConfig> {
   const baseUrl = getCoreApiBaseUrl();
   if (!baseUrl) {
-    return { enabled: false, chainId: BASE_SEPOLIA_CHAIN_ID };
+    return { enabled: false, chainId: BASE_MAINNET_CHAIN_ID };
   }
   try {
     const res = await fetch(`${baseUrl}/bridge/config`, {
       headers: getCoreApiHeaders(),
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return { enabled: false, chainId: BASE_SEPOLIA_CHAIN_ID };
+    if (!res.ok) return { enabled: false, chainId: BASE_MAINNET_CHAIN_ID };
     const data = await res.json().catch(() => ({}));
     return {
       enabled: data.enabled === true,
       custodyAddress: data.custodyAddress,
-      chainId: data.chainId ?? BASE_SEPOLIA_CHAIN_ID,
+      chainId: data.chainId ?? BASE_MAINNET_CHAIN_ID,
       supportedTokens: data.supportedTokens,
     };
   } catch {
-    return { enabled: false, chainId: BASE_SEPOLIA_CHAIN_ID };
+    return { enabled: false, chainId: BASE_MAINNET_CHAIN_ID };
   }
 }
 
@@ -264,16 +264,16 @@ export interface XrgeBridgeConfig {
 export async function getXrgeBridgeConfig(): Promise<XrgeBridgeConfig> {
   const baseUrl = getCoreApiBaseUrl();
   if (!baseUrl) {
-    return { enabled: false, chainId: BASE_SEPOLIA_CHAIN_ID };
+    return { enabled: false, chainId: BASE_MAINNET_CHAIN_ID };
   }
   try {
     const res = await fetch(`${baseUrl}/bridge/xrge/config`, {
       headers: getCoreApiHeaders(),
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return { enabled: false, chainId: BASE_SEPOLIA_CHAIN_ID };
+    if (!res.ok) return { enabled: false, chainId: BASE_MAINNET_CHAIN_ID };
     const data = await res.json().catch(() => ({}));
-    const chainId = data.chainId ?? BASE_SEPOLIA_CHAIN_ID;
+    const chainId = data.chainId ?? BASE_MAINNET_CHAIN_ID;
     return {
       enabled: data.enabled === true,
       vaultAddress: data.vaultAddress,
@@ -281,7 +281,7 @@ export async function getXrgeBridgeConfig(): Promise<XrgeBridgeConfig> {
       chainId,
     };
   } catch {
-    return { enabled: false, chainId: BASE_SEPOLIA_CHAIN_ID };
+    return { enabled: false, chainId: BASE_MAINNET_CHAIN_ID };
   }
 }
 
