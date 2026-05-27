@@ -266,15 +266,25 @@ export function Sidebar({ children }: SidebarProps) {
         )}
       </div>
 
-      {/* Network Badge */}
+      {/* Network Selector */}
       <div className={cn(
-        "px-3 py-2 border-b border-border transition-all duration-300",
+        "px-3 py-2 border-b border-border transition-all duration-300 relative",
         (expanded || isMobile) ? "opacity-100 h-auto" : "opacity-0 h-0 py-0 overflow-hidden"
       )}>
-        <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-card border border-border text-xs">
+        <button
+          onClick={() => {
+            const current = getActiveNetwork();
+            const next = current === "mainnet" ? "testnet" : "mainnet";
+            localStorage.setItem(NETWORK_STORAGE_KEY, next);
+            window.location.reload();
+          }}
+          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg bg-card border border-border text-xs hover:border-primary/50 transition-colors cursor-pointer group"
+          title="Click to switch network"
+        >
           <span className={`h-2 w-2 rounded-full flex-shrink-0 ${getActiveNetwork() === "mainnet" ? "bg-success" : "bg-amber-500"}`} />
           <span className="font-medium text-foreground truncate">{networkLabel}</span>
-        </div>
+          <ChevronDown className="w-3 h-3 text-muted-foreground ml-auto group-hover:text-foreground transition-colors" />
+        </button>
       </div>
 
       {/* Wallet Address */}
@@ -431,10 +441,20 @@ export function Sidebar({ children }: SidebarProps) {
           <img src={xrgeLogo} alt="XRGE" className="w-7 h-7 rounded-full" />
         </span>
         <span className="font-bold">RougeChain</span>
-        <div className="ml-auto flex items-center gap-2 px-2 py-1 rounded-full bg-card border border-border text-xs">
+        <button
+          onClick={() => {
+            const current = getActiveNetwork();
+            const next = current === "mainnet" ? "testnet" : "mainnet";
+            localStorage.setItem(NETWORK_STORAGE_KEY, next);
+            window.location.reload();
+          }}
+          className="ml-auto flex items-center gap-2 px-2 py-1 rounded-full bg-card border border-border text-xs hover:border-primary/50 transition-colors cursor-pointer"
+          title="Tap to switch network"
+        >
           <span className={`h-2 w-2 rounded-full ${getActiveNetwork() === "mainnet" ? "bg-success" : "bg-amber-500"}`} />
           <span className="font-medium">{networkLabel}</span>
-        </div>
+          <ChevronDown className="w-3 h-3 text-muted-foreground" />
+        </button>
       </div>
 
       {/* Mobile Sidebar Overlay */}
