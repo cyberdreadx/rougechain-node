@@ -57,43 +57,67 @@ async function main() {
     console.log("Ownership target:", SAFE_ADDRESS);
     console.log("XRGE Token:", XRGE_ADDRESS);
 
+    const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
     // ── 1. Deploy BridgeVault (XRGE lock/unlock) ────────────────
-    console.log("\n[1/5] Deploying BridgeVault...");
-    const Vault = await ethers.getContractFactory("BridgeVault");
-    const vault = await Vault.deploy(XRGE_ADDRESS);
-    await vault.waitForDeployment();
-    const vaultAddress = await vault.getAddress();
-    console.log("✓ BridgeVault deployed:", vaultAddress);
+    let vaultAddress = process.env.BRIDGE_VAULT_ADDRESS || "";
+    let vault;
+    if (vaultAddress) {
+        console.log("\n[1/5] Using existing BridgeVault:", vaultAddress);
+        vault = await ethers.getContractAt("BridgeVault", vaultAddress);
+    } else {
+        console.log("\n[1/5] Deploying BridgeVault...");
+        const Vault = await ethers.getContractFactory("BridgeVault");
+        vault = await Vault.deploy(XRGE_ADDRESS);
+        await vault.waitForDeployment();
+        vaultAddress = await vault.getAddress();
+        console.log("✓ BridgeVault deployed:", vaultAddress);
+        console.log("  Waiting for confirmation...");
+        await delay(10000);
+    }
 
     // ── 2. Deploy RougeBridge (ETH + ERC-20) ────────────────────
-    console.log("\n[2/5] Deploying RougeBridge...");
-    const Bridge = await ethers.getContractFactory("RougeBridge");
-    const bridge = await Bridge.deploy(guardian);
-    await bridge.waitForDeployment();
-    const bridgeAddress = await bridge.getAddress();
-    console.log("✓ RougeBridge deployed:", bridgeAddress);
+    let bridgeAddress = process.env.ROUGE_BRIDGE_ADDRESS || "";
+    let bridge;
+    if (bridgeAddress) {
+        console.log("\n[2/5] Using existing RougeBridge:", bridgeAddress);
+        bridge = await ethers.getContractAt("RougeBridge", bridgeAddress);
+    } else {
+        console.log("\n[2/5] Deploying RougeBridge...");
+        const Bridge = await ethers.getContractFactory("RougeBridge");
+        bridge = await Bridge.deploy(guardian);
+        await bridge.waitForDeployment();
+        bridgeAddress = await bridge.getAddress();
+        console.log("✓ RougeBridge deployed:", bridgeAddress);
+        console.log("  Waiting for confirmation...");
+        await delay(8000);
+    }
 
     // ── 3. Configure supported tokens ───────────────────────────
     console.log("\n[3/5] Configuring supported tokens...");
     const tx1 = await bridge.setSupportedToken(XRGE_ADDRESS, true);
     await tx1.wait();
     console.log("✓ XRGE added as supported token");
+    await delay(8000);
 
     const tx2 = await bridge.setSupportedToken(USDC_BASE_MAINNET, true);
     await tx2.wait();
     console.log("✓ USDC added as supported token");
+    await delay(8000);
 
     // ── 4. Set large withdrawal threshold ───────────────────────
     console.log("\n[4/5] Setting large withdrawal threshold to 0.5 ETH...");
     const tx3 = await bridge.setLargeWithdrawalThreshold(ethers.parseEther("0.5"));
     await tx3.wait();
     console.log("✓ Threshold set (withdrawals ≥ 0.5 ETH get 24h timelock)");
+    await delay(8000);
 
     // ── 5. Transfer ownership to Safe ───────────────────────────
     console.log("\n[5/5] Transferring ownership to Safe multisig...");
     const tx4 = await bridge.transferOwnership(SAFE_ADDRESS);
     await tx4.wait();
     console.log("✓ RougeBridge ownership → Safe");
+    await delay(8000);
 
     const tx5 = await vault.transferOwnership(SAFE_ADDRESS);
     await tx5.wait();
