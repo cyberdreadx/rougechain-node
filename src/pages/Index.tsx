@@ -203,7 +203,7 @@ const LiveNetworkStatus = () => {
         <div className="flex items-center gap-4 text-sm font-mono">
           <div className="flex items-center gap-1.5">
             <Zap className="w-3.5 h-3.5 text-primary" />
-            <span className="text-primary/80">TESTNET</span>
+            <span className="text-primary/80">MAINNET</span>
           </div>
 
           <div className="h-4 w-px bg-primary/30" />
@@ -347,10 +347,10 @@ const Index = () => {
         >
           <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full bg-gradient-to-r from-primary/10 via-accent/10 to-primary/10 border border-primary/30">
             <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-primary/20 text-primary text-xs font-bold font-mono">
-              TESTNET LIVE
+              MAINNET LIVE
             </span>
             <span className="text-sm text-muted-foreground">
-              Mainnet launch coming soon
+              Mainnet is live
             </span>
             <span className="text-accent animate-pulse">→</span>
           </div>
@@ -571,11 +571,11 @@ const Index = () => {
             <div className="inline-flex flex-col items-center gap-3 p-6 rounded-2xl bg-gradient-to-r from-primary/5 via-transparent to-accent/5 border border-primary/20">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-              <span className="text-sm font-mono text-primary">TESTNET IS LIVE</span>
+              <span className="text-sm font-mono text-primary">MAINNET IS LIVE</span>
             </div>
             <p className="text-muted-foreground text-sm max-w-md">
-              RougeChain testnet is open for testing. Create a wallet, request tokens from the faucet,
-              and help us battle-test the network before mainnet launch.
+              RougeChain mainnet is live. Create a wallet, bridge assets from Base,
+              and start building on a post-quantum Layer 1.
             </p>
             <div className="flex items-center gap-2 mt-2">
               <Link to="/wallet">

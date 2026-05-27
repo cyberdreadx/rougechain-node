@@ -29,9 +29,9 @@ export function Footer() {
             <p className="text-sm text-muted-foreground mb-4">
               Post-quantum Layer 1 blockchain secured by ML-DSA-65 signatures.
             </p>
-            <div className="flex items-center gap-1 px-2 py-1 rounded bg-red-500/10 border border-red-500/30 w-fit">
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              <span className="text-xs text-red-400 font-mono">TESTNET LIVE</span>
+            <div className="flex items-center gap-1 px-2 py-1 rounded bg-success/10 border border-success/30 w-fit">
+              <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
+              <span className="text-xs text-success font-mono">MAINNET LIVE</span>
             </div>
           </div>
 
@@ -130,7 +130,7 @@ export function Footer() {
         {/* Bottom */}
         <div className="mt-8 pt-6 border-t border-red-500/10 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-xs text-muted-foreground/60 font-mono">
-            RougeChain Testnet v0.1 • Post-Quantum Secured
+            RougeChain Mainnet v1.0 • Post-Quantum Secured
           </p>
           <div className="flex items-center gap-4">
             <a

@@ -15,20 +15,19 @@ interface NetworkConfig {
 
 const networks: NetworkConfig[] = [
   {
+    id: "mainnet",
+    name: "Mainnet",
+    chainName: "RougeChain",
+    color: "text-success",
+    dotColor: "bg-success",
+  },
+  {
     id: "testnet",
     name: "Testnet",
     chainName: "RougeChain Testnet",
     color: "text-amber-500",
     dotColor: "bg-amber-500",
   },
-  // Mainnet disabled until launch
-  // {
-  //   id: "mainnet",
-  //   name: "Mainnet",
-  //   chainName: "RougeChain",
-  //   color: "text-success",
-  //   dotColor: "bg-success",
-  // },
 ];
 
 interface NetworkBadgeProps {
@@ -39,13 +38,17 @@ interface NetworkBadgeProps {
 
 const NetworkBadge = ({ isConnected = true, blockNumber, onNetworkChange }: NetworkBadgeProps) => {
   const [showDropdown, setShowDropdown] = useState(false);
-  const [currentNetwork, setCurrentNetwork] = useState<NetworkType>("testnet");
+  const [currentNetwork, setCurrentNetwork] = useState<NetworkType>("mainnet");
 
-  // Load saved network preference - force testnet for now
+  // Load saved network preference
   useEffect(() => {
-    // Always force testnet until mainnet launch
-    setCurrentNetwork("testnet");
-    localStorage.setItem(NETWORK_STORAGE_KEY, "testnet");
+    const saved = localStorage.getItem(NETWORK_STORAGE_KEY) as NetworkType | null;
+    if (saved === "mainnet" || saved === "testnet") {
+      setCurrentNetwork(saved);
+    } else {
+      setCurrentNetwork("mainnet");
+      localStorage.setItem(NETWORK_STORAGE_KEY, "mainnet");
+    }
   }, []);
 
   const handleNetworkChange = (networkId: NetworkType) => {
