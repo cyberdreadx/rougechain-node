@@ -31,6 +31,12 @@ import { ethers } from "hardhat";
 // Real XRGE contract on Base mainnet
 const XRGE_ADDRESS = "0x147120faEC9277ec02d957584CFCD92B56A24317";
 
+// USDC on Base mainnet
+const USDC_BASE_MAINNET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+// Your Gnosis Safe multisig on Base mainnet
+const SAFE_ADDRESS = "0xDa31C963E979495f4374979127c34E980eF3184e";
+
 async function main() {
     const [deployer] = await ethers.getSigners();
     console.log("╔══════════════════════════════════════════════════╗");
@@ -46,69 +52,96 @@ async function main() {
         process.exit(1);
     }
 
-    // Guardian = Safe multisig address (emergency pause role)
-    const guardian = process.env.GUARDIAN_ADDRESS;
-    if (!guardian) {
-        console.error("\n⚠ GUARDIAN_ADDRESS is required. Create a Safe multisig at https://app.safe.global");
-        console.error("  Then set GUARDIAN_ADDRESS=0x... in your .env");
-        process.exit(1);
-    }
+    const guardian = process.env.GUARDIAN_ADDRESS || SAFE_ADDRESS;
     console.log("Guardian (Safe):", guardian);
+    console.log("Ownership target:", SAFE_ADDRESS);
     console.log("XRGE Token:", XRGE_ADDRESS);
 
-    // ── 1. Deploy RougeBridge ────────────────────────────────────
-    console.log("\n[1/3] Deploying RougeBridge...");
+    // ── 1. Deploy BridgeVault (XRGE lock/unlock) ────────────────
+    console.log("\n[1/5] Deploying BridgeVault...");
+    const Vault = await ethers.getContractFactory("BridgeVault");
+    const vault = await Vault.deploy(XRGE_ADDRESS);
+    await vault.waitForDeployment();
+    const vaultAddress = await vault.getAddress();
+    console.log("✓ BridgeVault deployed:", vaultAddress);
+
+    // ── 2. Deploy RougeBridge (ETH + ERC-20) ────────────────────
+    console.log("\n[2/5] Deploying RougeBridge...");
     const Bridge = await ethers.getContractFactory("RougeBridge");
     const bridge = await Bridge.deploy(guardian);
     await bridge.waitForDeployment();
     const bridgeAddress = await bridge.getAddress();
     console.log("✓ RougeBridge deployed:", bridgeAddress);
 
-    // ── 2. Add XRGE as supported token ──────────────────────────
-    console.log("\n[2/3] Adding XRGE as supported token...");
+    // ── 3. Configure supported tokens ───────────────────────────
+    console.log("\n[3/5] Configuring supported tokens...");
     const tx1 = await bridge.setSupportedToken(XRGE_ADDRESS, true);
     await tx1.wait();
-    console.log("✓ XRGE added");
+    console.log("✓ XRGE added as supported token");
 
-    // ── 3. Set large withdrawal threshold ───────────────────────
-    console.log("\n[3/3] Setting large withdrawal threshold to 0.5 ETH...");
-    const tx2 = await bridge.setLargeWithdrawalThreshold(ethers.parseEther("0.5"));
+    const tx2 = await bridge.setSupportedToken(USDC_BASE_MAINNET, true);
     await tx2.wait();
+    console.log("✓ USDC added as supported token");
+
+    // ── 4. Set large withdrawal threshold ───────────────────────
+    console.log("\n[4/5] Setting large withdrawal threshold to 0.5 ETH...");
+    const tx3 = await bridge.setLargeWithdrawalThreshold(ethers.parseEther("0.5"));
+    await tx3.wait();
     console.log("✓ Threshold set (withdrawals ≥ 0.5 ETH get 24h timelock)");
+
+    // ── 5. Transfer ownership to Safe ───────────────────────────
+    console.log("\n[5/5] Transferring ownership to Safe multisig...");
+    const tx4 = await bridge.transferOwnership(SAFE_ADDRESS);
+    await tx4.wait();
+    console.log("✓ RougeBridge ownership → Safe");
+
+    const tx5 = await vault.transferOwnership(SAFE_ADDRESS);
+    await tx5.wait();
+    console.log("✓ BridgeVault ownership → Safe");
+
+    // ── Verify ──────────────────────────────────────────────────
+    const bridgeOwner = await bridge.owner();
+    const vaultOwner = await vault.owner();
+    console.log("\n✓ RougeBridge owner:", bridgeOwner);
+    console.log("✓ BridgeVault owner:", vaultOwner);
+
+    if (bridgeOwner.toLowerCase() !== SAFE_ADDRESS.toLowerCase() ||
+        vaultOwner.toLowerCase() !== SAFE_ADDRESS.toLowerCase()) {
+        console.error("⚠ WARNING: Ownership transfer may have failed!");
+    }
 
     // ── Summary ─────────────────────────────────────────────────
     console.log("\n╔══════════════════════════════════════════════════╗");
     console.log("║  DEPLOYMENT COMPLETE                             ║");
     console.log("╠══════════════════════════════════════════════════╣");
-    console.log(`║  RougeBridge:   ${bridgeAddress}  ║`);
-    console.log(`║  XRGE Token:    ${XRGE_ADDRESS}  ║`);
-    console.log(`║  Owner/Relayer: ${deployer.address}  ║`);
-    console.log(`║  Guardian:      ${guardian}  ║`);
+    console.log(`║  BridgeVault:   ${vaultAddress}`);
+    console.log(`║  RougeBridge:   ${bridgeAddress}`);
+    console.log(`║  XRGE Token:    ${XRGE_ADDRESS}`);
+    console.log(`║  USDC Token:    ${USDC_BASE_MAINNET}`);
+    console.log(`║  Owner (Safe):  ${SAFE_ADDRESS}`);
+    console.log(`║  Guardian:      ${guardian}`);
     console.log("╚══════════════════════════════════════════════════╝");
 
-    console.log("\n── Next Steps ──────────────────────────────────────\n");
+    console.log("\n── Relayer ENV ─────────────────────────────────────\n");
+    console.log(`ROUGE_BRIDGE_ADDRESS=${bridgeAddress}`);
+    console.log(`XRGE_BRIDGE_VAULT=${vaultAddress}`);
+    console.log(`BASE_CHAIN=mainnet`);
+    console.log(`CORE_API_URL=https://testnet.rougechain.io`);
+    console.log(`BRIDGE_DATA_DIR=/opt/rougechain/bridge`);
+    console.log(`BRIDGE_RELAYER_SECRET=<your_secret>`);
+    console.log(`BRIDGE_CUSTODY_PRIVATE_KEY=<relayer_key>`);
 
-    console.log("1. Verify on Basescan:");
-    console.log(`   npx hardhat verify --network base ${bridgeAddress} ${guardian}\n`);
+    console.log("\n── IMPORTANT ──────────────────────────────────────\n");
+    console.log("⚠ The deployer key is NO LONGER the owner.");
+    console.log("  All admin actions (releases, pause, emergency) now");
+    console.log("  require Safe multisig approval.");
+    console.log("");
+    console.log("  The relayer key needs to be added as a Safe signer,");
+    console.log("  or use Safe Transaction Service API for auto-releases.");
 
-    console.log("2. Fund the bridge:");
-    console.log(`   - Send ETH to ${bridgeAddress} for ETH release operations`);
-    console.log(`   - Send XRGE to ${bridgeAddress} for XRGE release operations\n`);
-
-    console.log("3. Set relayer env on your server:");
-    console.log(`   ROUGE_BRIDGE_ADDRESS=${bridgeAddress}`);
-    console.log(`   BRIDGE_CUSTODY_PRIVATE_KEY=<deployer_private_key>`);
-    console.log(`   BASE_CHAIN=mainnet`);
-    console.log(`   CORE_API_URL=https://testnet.rougechain.io`);
-    console.log(`   BRIDGE_RELAYER_SECRET=<your_secret>\n`);
-
-    console.log("4. Start the relayer:");
-    console.log("   npx tsx scripts/bridge-relayer.ts\n");
-
-    console.log("── Security Model ─────────────────────────────────\n");
-    console.log("  Relayer key (owner): auto-processes releases — no manual signing");
-    console.log("  Safe multisig (guardian): emergency pause + cancel suspicious timelocks");
-    console.log("  Timelock: withdrawals ≥ 0.5 ETH are delayed 24h, guardian can cancel");
+    console.log("\n── Verify on Basescan ──────────────────────────────\n");
+    console.log(`npx hardhat verify --network base ${vaultAddress} ${XRGE_ADDRESS}`);
+    console.log(`npx hardhat verify --network base ${bridgeAddress} ${guardian}`);
 }
 
 main().catch((error) => {
