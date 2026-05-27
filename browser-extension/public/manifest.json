@@ -23,6 +23,7 @@
     ],
     "host_permissions": [
         "http://localhost:5100/*",
+        "https://api.rougechain.io/*",
         "https://testnet.rougechain.io/*"
     ],
     "background": {

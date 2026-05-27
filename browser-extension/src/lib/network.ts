@@ -6,12 +6,12 @@ export const NETWORK_STORAGE_KEY = "rougechain-network";
 
 // Default node URLs — browser extension uses the remote public node
 const DEFAULT_TESTNET_URL = "https://testnet.rougechain.io/api";
-const DEFAULT_MAINNET_URL = "";
+const DEFAULT_MAINNET_URL = "https://api.rougechain.io/api";
 
 export function getActiveNetwork(): NetworkType {
     const saved = storage.getItem(NETWORK_STORAGE_KEY) as NetworkType | null;
     if (saved === "mainnet" || saved === "testnet") return saved;
-    return "testnet";
+    return "mainnet";
 }
 
 export function setActiveNetwork(network: NetworkType): void {

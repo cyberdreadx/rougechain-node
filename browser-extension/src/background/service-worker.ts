@@ -253,7 +253,7 @@ function getApiBaseUrl(): Promise<string> {
                 resolve(url);
                 return;
             }
-            resolve("https://testnet.rougechain.io/api");
+            resolve("https://api.rougechain.io/api");
         });
     });
 }
