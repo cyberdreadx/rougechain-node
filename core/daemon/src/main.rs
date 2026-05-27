@@ -6488,10 +6488,14 @@ async fn bridge_config(State(state): State<AppState>) -> Json<BridgeConfigRespon
         Some(addr) if !addr.is_empty() => (true, Some(addr.clone())),
         _ => (false, None),
     };
+    let chain_id: u64 = std::env::var("QV_BRIDGE_CHAIN_ID")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8453);
     Json(BridgeConfigResponse {
         enabled,
         custody_address,
-        chain_id: 84532,
+        chain_id,
         supported_tokens: vec!["ETH".to_string(), "USDC".to_string()],
     })
 }
@@ -7138,11 +7142,15 @@ async fn bridge_withdrawal_fulfill(
 
 async fn xrge_bridge_config(State(state): State<AppState>) -> Json<serde_json::Value> {
     let enabled = state.xrge_bridge_vault.is_some();
+    let chain_id: u64 = std::env::var("QV_BRIDGE_CHAIN_ID")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8453);
     Json(serde_json::json!({
         "enabled": enabled,
         "vaultAddress": state.xrge_bridge_vault,
         "tokenAddress": state.xrge_bridge_token,
-        "chainId": 84532,
+        "chainId": chain_id,
     }))
 }
 
