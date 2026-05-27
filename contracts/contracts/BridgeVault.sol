@@ -110,7 +110,11 @@ contract BridgeVault is Ownable, ReentrancyGuard {
         uint256 balance = xrgeToken.balanceOf(address(this));
         if (balance < amount) revert InsufficientVaultBalance();
 
-        totalLocked -= amount;
+        if (totalLocked >= amount) {
+            totalLocked -= amount;
+        } else {
+            totalLocked = 0;
+        }
         xrgeToken.safeTransfer(to, amount);
 
         emit BridgeRelease(to, amount, l1TxId);

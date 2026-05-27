@@ -268,8 +268,8 @@
       ]
     },
     "C:\\Users\\brand\\Documents\\GitHub\\quantum-vault\\contracts\\contracts\\BridgeVault.sol": {
-      "lastModificationDate": 1779894186258,
-      "contentHash": "7f395c9e3f52ea8525cb82215d3aa58b",
+      "lastModificationDate": 1779908987013,
+      "contentHash": "68578bdbd8f1b01ea1fe42735c09eb8c",
       "sourceName": "contracts/BridgeVault.sol",
       "solcConfig": {
         "version": "0.8.20",
