@@ -91,7 +91,7 @@ const Privacy = () => {
             </li>
             <li>
               The extension connects to the RougeChain node (
-              <code className="text-accent text-sm">testnet.rougechain.io</code>)
+              <code className="text-accent text-sm">api.rougechain.io</code>)
               to fetch balances, submit transactions, send/receive encrypted
               messages and mail, and resolve name registry entries.
             </li>
@@ -178,7 +178,7 @@ const Privacy = () => {
             </div>
             <div>
               <p className="text-white font-medium">
-                Host permissions (testnet.rougechain.io)
+                Host permissions (api.rougechain.io)
               </p>
               <p className="text-sm">
                 Communicate with the RougeChain node API for all blockchain

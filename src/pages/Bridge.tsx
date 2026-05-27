@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { getBaseChainConfig, getUsdcAddress, BASE_SEPOLIA_CHAIN_ID } from "@/lib/bridge";
+import { getBaseChainConfig, getUsdcAddress, BASE_MAINNET_CHAIN_ID } from "@/lib/bridge";
 import {
   getBridgeConfig,
   claimBridgeDeposit,
@@ -114,7 +114,7 @@ const Bridge = () => {
   useEffect(() => { refreshEvmBalances(); }, [evmAddress, xrgeConfig]);
 
   // Detect chain from daemon config
-  const detectedChainId = config?.chainId ?? xrgeConfig?.chainId ?? BASE_SEPOLIA_CHAIN_ID;
+  const detectedChainId = config?.chainId ?? xrgeConfig?.chainId ?? BASE_MAINNET_CHAIN_ID;
   const chainConfig = getBaseChainConfig(detectedChainId);
   const chainLabel = chainConfig.name; // "Base" or "Base Sepolia"
   const usdcAddress = getUsdcAddress(detectedChainId);

@@ -452,7 +452,7 @@ export function NodeDashboard() {
                   No Rust needed — one command and you're running.
                 </p>
                 <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all whitespace-pre-wrap">
-                  docker run -d --name rougechain-node -p 5100:5100 -v qv-data:/data rougechain/node --mine --peers https://testnet.rougechain.io/api
+                  docker run -d --name rougechain-node -p 5100:5100 -v qv-data:/data rougechain/node --mine --peers https://api.rougechain.io/api
                 </code>
                 <p className="text-xs text-muted-foreground mt-2">Skip to step 3 once it's running!</p>
               </div>
@@ -506,10 +506,10 @@ export function NodeDashboard() {
               <div className="pb-4">
                 <h4 className="font-semibold text-sm mb-1">Start Your Node 🚀</h4>
                 <p className="text-xs text-muted-foreground mb-2">
-                  That's it! Run this one command. Your node will connect to the testnet, sync the blockchain, and start running.
+                  That's it! Run this one command. Your node will connect to the network, sync the blockchain, and start running.
                 </p>
                 <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
-                  ./target/release/quantum-vault-daemon --api-port 5100 --peers "https://testnet.rougechain.io/api"
+                  ./target/release/quantum-vault-daemon --api-port 5100 --peers "https://api.rougechain.io/api"
                 </code>
                 <p className="text-xs text-muted-foreground mt-2">
                   🎉 <strong>You're done!</strong> Your node is now part of the RougeChain network.
@@ -529,7 +529,7 @@ export function NodeDashboard() {
                   <a href="/blockchain" className="text-primary underline">network globe</a>? Add <code className="text-xs bg-background px-1 rounded">--node-name</code>:
                 </p>
                 <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
-                  ./target/release/quantum-vault-daemon --api-port 5100 --node-name "MyAwesomeNode" --peers "https://testnet.rougechain.io/api"
+                  ./target/release/quantum-vault-daemon --api-port 5100 --node-name "MyAwesomeNode" --peers "https://api.rougechain.io/api"
                 </code>
               </div>
             </div>
@@ -622,8 +622,8 @@ export function NodeDashboard() {
               <div className="pb-4">
                 <h4 className="font-semibold text-sm mb-1">Get Some XRGE</h4>
                 <p className="text-xs text-muted-foreground mb-2">
-                  On the testnet, you can get free XRGE from the faucet — just paste your public key on the{" "}
-                  <a href="/wallet" className="text-primary underline">wallet page</a> and click "Request Faucet." You need at least <strong>1,000 XRGE</strong> to stake.
+                  You need XRGE to become a validator. Bridge assets from Base or acquire XRGE on{" "}
+                  <a href="/wallet" className="text-primary underline">the wallet page</a>. You need at least <strong>1,000 XRGE</strong> to stake.
                 </p>
               </div>
             </div>
@@ -655,7 +655,7 @@ export function NodeDashboard() {
                   Add <code className="text-xs bg-background px-1 rounded">--mine</code> to your node command. Your node will now create blocks and earn fees!
                 </p>
                 <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
-                  ./target/release/quantum-vault-daemon --api-port 5100 --mine --node-name "MyValidator" --peers "https://testnet.rougechain.io/api"
+                  ./target/release/quantum-vault-daemon --api-port 5100 --mine --node-name "MyValidator" --peers "https://api.rougechain.io/api"
                 </code>
                 <p className="text-xs text-muted-foreground mt-2">
                   💰 <strong>You're earning!</strong> Check your balance on the wallet page or visit <code className="bg-background px-1 rounded text-xs">http://localhost:5100</code> to see your node dashboard.

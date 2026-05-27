@@ -339,7 +339,7 @@ const Index = () => {
 
       <main className="relative z-10 max-w-4xl mx-auto px-4 py-12">
 
-        {/* Testnet Banner */}
+        {/* Network Banner */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}

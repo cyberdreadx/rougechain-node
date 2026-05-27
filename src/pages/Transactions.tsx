@@ -376,7 +376,7 @@ const Transactions = () => {
 
             {error && (
               <div className="text-sm text-destructive">
-                {error} Configure `VITE_CORE_API_URL_TESTNET` or start the core node.
+                {error} Check your network connection or try again later.
               </div>
             )}
 

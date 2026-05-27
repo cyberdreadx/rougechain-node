@@ -353,7 +353,7 @@ const Blockchain = () => {
                       <code className="block bg-background p-2 rounded mb-2">
                         cargo run -p quantum-vault-daemon -- --host 0.0.0.0 --port 4100 --api-port 5100 --mine
                       </code>
-                      <p className="text-xs">Or set <code className="bg-background px-1 rounded">VITE_NODE_API_URL_TESTNET</code> or <code className="bg-background px-1 rounded">VITE_NODE_API_URL_MAINNET</code> in your <code className="bg-background px-1 rounded">.env</code> file</p>
+                      <p className="text-xs">Configure your API URL in the <code className="bg-background px-1 rounded">.env</code> file or check your network connection</p>
                     </div>
                   </div>
                 )}

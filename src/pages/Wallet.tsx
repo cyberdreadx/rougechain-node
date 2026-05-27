@@ -96,11 +96,11 @@ const Wallet = () => {
     change: number;
     imageUrl?: string | null;
   } | null>(null);
-  const [isMainnet, setIsMainnet] = useState(false); // Default to false (show faucet) - safer for devnet/testnet
+  const [isMainnet, setIsMainnet] = useState(false); // Default based on network selection
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [chainIdLabel, setChainIdLabel] = useState<string>(CHAIN_ID);
   const [activeNetwork, setActiveNetwork] = useState<"testnet" | "mainnet">(
-    (localStorage.getItem(NETWORK_STORAGE_KEY) as "testnet" | "mainnet" | null) || "testnet"
+    (localStorage.getItem(NETWORK_STORAGE_KEY) as "testnet" | "mainnet" | null) || "mainnet"
   );
   const [isLocked, setIsLocked] = useState(false);
   const [unlockPassword, setUnlockPassword] = useState("");
@@ -169,7 +169,7 @@ const Wallet = () => {
     const checkNetwork = () => {
       // Check the user's explicit network selection from NetworkBadge
       const savedNetwork = localStorage.getItem(NETWORK_STORAGE_KEY) as "testnet" | "mainnet" | null;
-      const nextNetwork = savedNetwork ?? "testnet";
+      const nextNetwork = savedNetwork ?? "mainnet";
 
       if (nextNetwork !== activeNetwork) {
         setActiveNetwork(nextNetwork);
@@ -921,7 +921,7 @@ const Wallet = () => {
                 <span className="text-[10px]">Receive</span>
               </Button>
               
-              {/* Only show faucets on devnet/testnet */}
+              {/* Only show faucets on testnet */}
               {!isMainnet && (
                 <Button
                   variant="outline"
@@ -1047,7 +1047,7 @@ const Wallet = () => {
                   <div className="p-2 rounded-lg bg-secondary/30">
                     <p className="text-[10px] text-muted-foreground">Supply Model</p>
                     <p className="text-xs font-medium text-foreground">
-                      {networkLabel === "Mainnet" ? "Capped" : "Devnet/Testnet"}
+                      {networkLabel === "Mainnet" ? "Capped" : "Testnet"}
                     </p>
                 </div>
               </div>
