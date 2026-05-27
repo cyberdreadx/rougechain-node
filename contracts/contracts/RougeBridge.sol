@@ -28,6 +28,11 @@ contract RougeBridge is Ownable, ReentrancyGuard, Pausable {
 
     uint256 public timelockDuration = 24 hours;
 
+    /// @notice Pending emergency withdrawal request
+    uint256 public emergencyWithdrawRequestedAt;
+    bool public emergencyWithdrawRequested;
+    uint256 public constant EMERGENCY_TIMELOCK = 48 hours;
+
     struct TimelockRequest {
         address token; // address(0) for ETH
         address to;
@@ -78,6 +83,9 @@ contract RougeBridge is Ownable, ReentrancyGuard, Pausable {
     event GuardianUpdated(address indexed oldGuardian, address indexed newGuardian);
     event TokenSupported(address indexed token, bool supported);
     event ThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
+    event EmergencyWithdrawRequested(uint256 executeAfter);
+    event EmergencyWithdrawExecuted(uint256 ethAmount);
+    event EmergencyWithdrawCancelled();
 
     // -- Errors --
 
@@ -250,10 +258,31 @@ contract RougeBridge is Ownable, ReentrancyGuard, Pausable {
         timelockDuration = newDuration;
     }
 
+    /// @notice Request emergency ETH withdrawal (starts timelock)
+    function requestEmergencyWithdraw() external onlyOwner {
+        emergencyWithdrawRequestedAt = block.timestamp;
+        emergencyWithdrawRequested = true;
+        emit EmergencyWithdrawRequested(block.timestamp + EMERGENCY_TIMELOCK);
+    }
+
+    /// @notice Execute emergency ETH withdrawal after timelock
     function emergencyWithdrawETH() external onlyOwner {
+        require(emergencyWithdrawRequested, "No pending request");
+        require(
+            block.timestamp >= emergencyWithdrawRequestedAt + EMERGENCY_TIMELOCK,
+            "Timelock not expired"
+        );
+        emergencyWithdrawRequested = false;
         uint256 bal = address(this).balance;
         (bool ok,) = owner().call{value: bal}("");
         require(ok, "ETH transfer failed");
+        emit EmergencyWithdrawExecuted(bal);
+    }
+
+    /// @notice Cancel a pending emergency withdrawal
+    function cancelEmergencyWithdraw() external onlyGuardian {
+        emergencyWithdrawRequested = false;
+        emit EmergencyWithdrawCancelled();
     }
 
     function emergencyWithdrawERC20(address token) external onlyOwner {

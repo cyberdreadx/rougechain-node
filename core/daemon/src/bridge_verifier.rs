@@ -231,10 +231,20 @@ pub fn verify_receipt(
 // BRIDGE VAULT EVENT VERIFICATION (XRGE)
 // ============================================================================
 
-/// BridgeDeposit event signature:
+/// BridgeDeposit event signature (BridgeVault.sol):
 /// keccak256("BridgeDeposit(address,uint256,string,uint256)")
 pub const BRIDGE_DEPOSIT_EVENT_SIG: &str =
-    "0x8d68ee6e3f4ef7b32c1c9f5d7b4e9a2b1c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f";
+    "0x5787c7cf7a782a3836f23db1ed28764f1ae993eab4bf9602720553ac954249e2";
+
+/// BridgeDepositETH event signature (RougeBridge.sol):
+/// keccak256("BridgeDepositETH(address,uint256,string)")
+pub const BRIDGE_DEPOSIT_ETH_EVENT_SIG: &str =
+    "0x199f9b881bb41ea6533e9f7b2d26fe723dd14dc9a27d0e9499a247a6b863390b";
+
+/// BridgeDepositERC20 event signature (RougeBridge.sol):
+/// keccak256("BridgeDepositERC20(address,address,uint256,string)")
+pub const BRIDGE_DEPOSIT_ERC20_EVENT_SIG: &str =
+    "0x6b085bc41ba2809bc21cb6f39fa5a20d245548e5c9a36bc43f7c1b9ad1843978";
 
 /// Verify that a BridgeDeposit event was emitted in the XRGE vault tx.
 ///
@@ -260,8 +270,16 @@ pub fn verify_vault_deposit_event(
             continue;
         }
 
-        // Check if any log from the vault address has the sender in topics
-        // The BridgeDeposit event has sender as indexed topic[1]
+        // Verify topic[0] matches the BridgeDeposit event signature
+        let event_sig = log.topics[0].to_lowercase();
+        if event_sig != BRIDGE_DEPOSIT_EVENT_SIG
+            && event_sig != BRIDGE_DEPOSIT_ETH_EVENT_SIG
+            && event_sig != BRIDGE_DEPOSIT_ERC20_EVENT_SIG
+        {
+            continue; // Not a bridge deposit event
+        }
+
+        // Check sender in topic[1]
         if log.topics.len() >= 2 {
             let log_sender = log.topics[1].to_lowercase();
             if log_sender == sender_topic {
@@ -498,5 +516,54 @@ mod tests {
         let mut known = HashSet::new();
         known.insert("a".to_string());
         assert!(verify_bridge_batch(&inputs, &known).is_err());
+    }
+
+    #[test]
+    fn test_verify_vault_event_correct_sig() {
+        let sender = "0xabcdef1234567890abcdef1234567890abcdef12";
+        let sender_topic = format!(
+            "0x000000000000000000000000{}",
+            sender.trim_start_matches("0x")
+        );
+        let receipt = EvmReceipt {
+            status: "0x1".to_string(),
+            from: sender.to_string(),
+            to: Some("0xvault".to_string()),
+            block_number: "0xa".to_string(),
+            logs: vec![EvmLog {
+                address: "0xvault".to_string(),
+                topics: vec![
+                    BRIDGE_DEPOSIT_EVENT_SIG.to_string(),
+                    sender_topic,
+                ],
+                data: "0x".to_string(),
+            }],
+        };
+        assert!(verify_vault_deposit_event(&receipt, "0xvault", sender).is_ok());
+    }
+
+    #[test]
+    fn test_verify_vault_event_wrong_sig_rejected() {
+        let sender = "0xabcdef1234567890abcdef1234567890abcdef12";
+        let sender_topic = format!(
+            "0x000000000000000000000000{}",
+            sender.trim_start_matches("0x")
+        );
+        let receipt = EvmReceipt {
+            status: "0x1".to_string(),
+            from: sender.to_string(),
+            to: Some("0xvault".to_string()),
+            block_number: "0xa".to_string(),
+            logs: vec![EvmLog {
+                address: "0xvault".to_string(),
+                topics: vec![
+                    // Wrong event signature — should be rejected
+                    "0x0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+                    sender_topic,
+                ],
+                data: "0x".to_string(),
+            }],
+        };
+        assert!(verify_vault_deposit_event(&receipt, "0xvault", sender).is_err());
     }
 }

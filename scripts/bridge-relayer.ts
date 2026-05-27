@@ -64,9 +64,34 @@ const CHAIN_CONFIG: Record<string, { chain: Chain; rpc: string; usdc: string }> 
 
 const chainCfg = CHAIN_CONFIG[BASE_CHAIN] || CHAIN_CONFIG.sepolia;
 
+import { readFileSync, writeFileSync, existsSync } from "fs";
+import { join } from "path";
+
+const PROCESSED_FILE = join(process.env.BRIDGE_DATA_DIR || ".", ".bridge-processed-txs.json");
+
+function loadProcessedTxIds(): Set<string> {
+  try {
+    if (existsSync(PROCESSED_FILE)) {
+      const data = JSON.parse(readFileSync(PROCESSED_FILE, "utf-8"));
+      if (Array.isArray(data)) return new Set(data);
+    }
+  } catch (e: any) {
+    console.warn(`[relayer] Could not load processed tx IDs: ${e.message}`);
+  }
+  return new Set();
+}
+
+function saveProcessedTxIds(ids: Set<string>): void {
+  try {
+    writeFileSync(PROCESSED_FILE, JSON.stringify([...ids]), "utf-8");
+  } catch (e: any) {
+    console.warn(`[relayer] Could not persist processed tx IDs: ${e.message}`);
+  }
+}
+
 // ── State ───────────────────────────────────────────────────────
 
-const processedTxIds = new Set<string>();  // Already fulfilled (persists across polls)
+const processedTxIds = loadProcessedTxIds();  // Persisted to disk across restarts
 const inFlightTxIds = new Set<string>();   // Currently being processed
 let currentNonce: number | null = null;    // Managed nonce
 let isShuttingDown = false;
@@ -360,6 +385,7 @@ async function main() {
           if (ok) {
             console.log(`[ETH] ✓ Fulfilled ${w.tx_id} (${hash})`);
             processedTxIds.add(w.tx_id);
+            saveProcessedTxIds(processedTxIds);
             stats.ethFulfilled++;
           } else {
             console.warn(`[ETH] ✗ Fulfill API failed: ${w.tx_id}`);
@@ -426,6 +452,7 @@ async function main() {
           if (ok) {
             console.log(`[XRGE] ✓ Fulfilled ${w.tx_id} (${hash})`);
             processedTxIds.add(w.tx_id);
+            saveProcessedTxIds(processedTxIds);
             stats.xrgeFulfilled++;
           } else {
             console.warn(`[XRGE] ✗ Fulfill API failed: ${w.tx_id}`);
@@ -469,6 +496,8 @@ async function main() {
       `[relayer] Final stats: ETH=${stats.ethFulfilled}/${stats.ethFailed} ` +
       `XRGE=${stats.xrgeFulfilled}/${stats.xrgeFailed} polls=${stats.totalPolls}`
     );
+    // Persist state before exit
+    saveProcessedTxIds(processedTxIds);
     // Wait for in-flight txs
     if (inFlightTxIds.size > 0) {
       console.log(`[relayer] Waiting for ${inFlightTxIds.size} in-flight tx(s)...`);

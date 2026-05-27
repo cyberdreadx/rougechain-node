@@ -31,6 +31,11 @@ contract BridgeVault is Ownable, ReentrancyGuard {
     /// @notice Tracks processed L1 tx IDs to prevent duplicate releases
     mapping(string => bool) public processedL1Txs;
 
+    /// @notice Emergency withdrawal timelock
+    uint256 public emergencyWithdrawRequestedAt;
+    bool public emergencyWithdrawRequested;
+    uint256 public constant EMERGENCY_TIMELOCK = 48 hours;
+
     // ── Events ──────────────────────────────────────────────────────
 
     /// @notice Emitted when a user locks XRGE to bridge to L1
@@ -50,6 +55,8 @@ contract BridgeVault is Ownable, ReentrancyGuard {
 
     /// @notice Emitted on emergency withdrawal
     event EmergencyWithdraw(address indexed token, uint256 amount);
+    event EmergencyWithdrawRequested(uint256 executeAfter);
+    event EmergencyWithdrawCancelled();
 
     // ── Errors ──────────────────────────────────────────────────────
 
@@ -111,11 +118,21 @@ contract BridgeVault is Ownable, ReentrancyGuard {
 
     // ── Admin ───────────────────────────────────────────────────────
 
-    /**
-     * @notice Emergency: withdraw any ERC-20 stuck in the vault.
-     * @param token The ERC-20 token to withdraw
-     */
+    /// @notice Request emergency token withdrawal (starts 48h timelock)
+    function requestEmergencyWithdraw() external onlyOwner {
+        emergencyWithdrawRequestedAt = block.timestamp;
+        emergencyWithdrawRequested = true;
+        emit EmergencyWithdrawRequested(block.timestamp + EMERGENCY_TIMELOCK);
+    }
+
+    /// @notice Execute emergency withdrawal after timelock
     function emergencyWithdraw(address token) external onlyOwner {
+        require(emergencyWithdrawRequested, "No pending request");
+        require(
+            block.timestamp >= emergencyWithdrawRequestedAt + EMERGENCY_TIMELOCK,
+            "Timelock not expired"
+        );
+        emergencyWithdrawRequested = false;
         IERC20 t = IERC20(token);
         uint256 bal = t.balanceOf(address(this));
         t.safeTransfer(owner(), bal);
@@ -123,6 +140,12 @@ contract BridgeVault is Ownable, ReentrancyGuard {
             totalLocked = 0;
         }
         emit EmergencyWithdraw(token, bal);
+    }
+
+    /// @notice Cancel a pending emergency withdrawal
+    function cancelEmergencyWithdraw() external onlyOwner {
+        emergencyWithdrawRequested = false;
+        emit EmergencyWithdrawCancelled();
     }
 
     /**

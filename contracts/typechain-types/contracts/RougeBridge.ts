@@ -26,11 +26,15 @@ import type {
 export interface RougeBridgeInterface extends Interface {
   getFunction(
     nameOrSignature:
+      | "EMERGENCY_TIMELOCK"
+      | "cancelEmergencyWithdraw"
       | "cancelTimelock"
       | "depositERC20"
       | "depositETH"
       | "emergencyWithdrawERC20"
       | "emergencyWithdrawETH"
+      | "emergencyWithdrawRequested"
+      | "emergencyWithdrawRequestedAt"
       | "executeTimelock"
       | "getTimelockQueueLength"
       | "guardian"
@@ -42,6 +46,7 @@ export interface RougeBridgeInterface extends Interface {
       | "releaseERC20"
       | "releaseETH"
       | "renounceOwnership"
+      | "requestEmergencyWithdraw"
       | "setGuardian"
       | "setLargeWithdrawalThreshold"
       | "setSupportedToken"
@@ -59,6 +64,9 @@ export interface RougeBridgeInterface extends Interface {
       | "BridgeDepositETH"
       | "BridgeReleaseERC20"
       | "BridgeReleaseETH"
+      | "EmergencyWithdrawCancelled"
+      | "EmergencyWithdrawExecuted"
+      | "EmergencyWithdrawRequested"
       | "GuardianUpdated"
       | "OwnershipTransferred"
       | "Paused"
@@ -70,6 +78,14 @@ export interface RougeBridgeInterface extends Interface {
       | "Unpaused"
   ): EventFragment;
 
+  encodeFunctionData(
+    functionFragment: "EMERGENCY_TIMELOCK",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "cancelEmergencyWithdraw",
+    values?: undefined
+  ): string;
   encodeFunctionData(
     functionFragment: "cancelTimelock",
     values: [BigNumberish]
@@ -85,6 +101,14 @@ export interface RougeBridgeInterface extends Interface {
   ): string;
   encodeFunctionData(
     functionFragment: "emergencyWithdrawETH",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "emergencyWithdrawRequested",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "emergencyWithdrawRequestedAt",
     values?: undefined
   ): string;
   encodeFunctionData(
@@ -117,6 +141,10 @@ export interface RougeBridgeInterface extends Interface {
   ): string;
   encodeFunctionData(
     functionFragment: "renounceOwnership",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "requestEmergencyWithdraw",
     values?: undefined
   ): string;
   encodeFunctionData(
@@ -154,6 +182,14 @@ export interface RougeBridgeInterface extends Interface {
   encodeFunctionData(functionFragment: "unpause", values?: undefined): string;
 
   decodeFunctionResult(
+    functionFragment: "EMERGENCY_TIMELOCK",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "cancelEmergencyWithdraw",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
     functionFragment: "cancelTimelock",
     data: BytesLike
   ): Result;
@@ -168,6 +204,14 @@ export interface RougeBridgeInterface extends Interface {
   ): Result;
   decodeFunctionResult(
     functionFragment: "emergencyWithdrawETH",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "emergencyWithdrawRequested",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "emergencyWithdrawRequestedAt",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -197,6 +241,10 @@ export interface RougeBridgeInterface extends Interface {
   decodeFunctionResult(functionFragment: "releaseETH", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "renounceOwnership",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "requestEmergencyWithdraw",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -317,6 +365,40 @@ export namespace BridgeReleaseETHEvent {
     recipient: string;
     amount: bigint;
     l1TxId: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace EmergencyWithdrawCancelledEvent {
+  export type InputTuple = [];
+  export type OutputTuple = [];
+  export interface OutputObject {}
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace EmergencyWithdrawExecutedEvent {
+  export type InputTuple = [ethAmount: BigNumberish];
+  export type OutputTuple = [ethAmount: bigint];
+  export interface OutputObject {
+    ethAmount: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace EmergencyWithdrawRequestedEvent {
+  export type InputTuple = [executeAfter: BigNumberish];
+  export type OutputTuple = [executeAfter: bigint];
+  export interface OutputObject {
+    executeAfter: bigint;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -486,6 +568,10 @@ export interface RougeBridge extends BaseContract {
     event?: TCEvent
   ): Promise<this>;
 
+  EMERGENCY_TIMELOCK: TypedContractMethod<[], [bigint], "view">;
+
+  cancelEmergencyWithdraw: TypedContractMethod<[], [void], "nonpayable">;
+
   cancelTimelock: TypedContractMethod<
     [requestId: BigNumberish],
     [void],
@@ -511,6 +597,10 @@ export interface RougeBridge extends BaseContract {
   >;
 
   emergencyWithdrawETH: TypedContractMethod<[], [void], "nonpayable">;
+
+  emergencyWithdrawRequested: TypedContractMethod<[], [boolean], "view">;
+
+  emergencyWithdrawRequestedAt: TypedContractMethod<[], [bigint], "view">;
 
   executeTimelock: TypedContractMethod<
     [requestId: BigNumberish],
@@ -550,6 +640,8 @@ export interface RougeBridge extends BaseContract {
   >;
 
   renounceOwnership: TypedContractMethod<[], [void], "nonpayable">;
+
+  requestEmergencyWithdraw: TypedContractMethod<[], [void], "nonpayable">;
 
   setGuardian: TypedContractMethod<
     [newGuardian: AddressLike],
@@ -608,6 +700,12 @@ export interface RougeBridge extends BaseContract {
   ): T;
 
   getFunction(
+    nameOrSignature: "EMERGENCY_TIMELOCK"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "cancelEmergencyWithdraw"
+  ): TypedContractMethod<[], [void], "nonpayable">;
+  getFunction(
     nameOrSignature: "cancelTimelock"
   ): TypedContractMethod<[requestId: BigNumberish], [void], "nonpayable">;
   getFunction(
@@ -626,6 +724,12 @@ export interface RougeBridge extends BaseContract {
   getFunction(
     nameOrSignature: "emergencyWithdrawETH"
   ): TypedContractMethod<[], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "emergencyWithdrawRequested"
+  ): TypedContractMethod<[], [boolean], "view">;
+  getFunction(
+    nameOrSignature: "emergencyWithdrawRequestedAt"
+  ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
     nameOrSignature: "executeTimelock"
   ): TypedContractMethod<[requestId: BigNumberish], [void], "nonpayable">;
@@ -671,6 +775,9 @@ export interface RougeBridge extends BaseContract {
   >;
   getFunction(
     nameOrSignature: "renounceOwnership"
+  ): TypedContractMethod<[], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "requestEmergencyWithdraw"
   ): TypedContractMethod<[], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "setGuardian"
@@ -745,6 +852,27 @@ export interface RougeBridge extends BaseContract {
     BridgeReleaseETHEvent.InputTuple,
     BridgeReleaseETHEvent.OutputTuple,
     BridgeReleaseETHEvent.OutputObject
+  >;
+  getEvent(
+    key: "EmergencyWithdrawCancelled"
+  ): TypedContractEvent<
+    EmergencyWithdrawCancelledEvent.InputTuple,
+    EmergencyWithdrawCancelledEvent.OutputTuple,
+    EmergencyWithdrawCancelledEvent.OutputObject
+  >;
+  getEvent(
+    key: "EmergencyWithdrawExecuted"
+  ): TypedContractEvent<
+    EmergencyWithdrawExecutedEvent.InputTuple,
+    EmergencyWithdrawExecutedEvent.OutputTuple,
+    EmergencyWithdrawExecutedEvent.OutputObject
+  >;
+  getEvent(
+    key: "EmergencyWithdrawRequested"
+  ): TypedContractEvent<
+    EmergencyWithdrawRequestedEvent.InputTuple,
+    EmergencyWithdrawRequestedEvent.OutputTuple,
+    EmergencyWithdrawRequestedEvent.OutputObject
   >;
   getEvent(
     key: "GuardianUpdated"
@@ -853,6 +981,39 @@ export interface RougeBridge extends BaseContract {
       BridgeReleaseETHEvent.InputTuple,
       BridgeReleaseETHEvent.OutputTuple,
       BridgeReleaseETHEvent.OutputObject
+    >;
+
+    "EmergencyWithdrawCancelled()": TypedContractEvent<
+      EmergencyWithdrawCancelledEvent.InputTuple,
+      EmergencyWithdrawCancelledEvent.OutputTuple,
+      EmergencyWithdrawCancelledEvent.OutputObject
+    >;
+    EmergencyWithdrawCancelled: TypedContractEvent<
+      EmergencyWithdrawCancelledEvent.InputTuple,
+      EmergencyWithdrawCancelledEvent.OutputTuple,
+      EmergencyWithdrawCancelledEvent.OutputObject
+    >;
+
+    "EmergencyWithdrawExecuted(uint256)": TypedContractEvent<
+      EmergencyWithdrawExecutedEvent.InputTuple,
+      EmergencyWithdrawExecutedEvent.OutputTuple,
+      EmergencyWithdrawExecutedEvent.OutputObject
+    >;
+    EmergencyWithdrawExecuted: TypedContractEvent<
+      EmergencyWithdrawExecutedEvent.InputTuple,
+      EmergencyWithdrawExecutedEvent.OutputTuple,
+      EmergencyWithdrawExecutedEvent.OutputObject
+    >;
+
+    "EmergencyWithdrawRequested(uint256)": TypedContractEvent<
+      EmergencyWithdrawRequestedEvent.InputTuple,
+      EmergencyWithdrawRequestedEvent.OutputTuple,
+      EmergencyWithdrawRequestedEvent.OutputObject
+    >;
+    EmergencyWithdrawRequested: TypedContractEvent<
+      EmergencyWithdrawRequestedEvent.InputTuple,
+      EmergencyWithdrawRequestedEvent.OutputTuple,
+      EmergencyWithdrawRequestedEvent.OutputObject
     >;
 
     "GuardianUpdated(address,address)": TypedContractEvent<

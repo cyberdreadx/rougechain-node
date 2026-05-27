@@ -26,13 +26,18 @@ import type {
 export interface BridgeVaultInterface extends Interface {
   getFunction(
     nameOrSignature:
+      | "EMERGENCY_TIMELOCK"
+      | "cancelEmergencyWithdraw"
       | "deposit"
       | "depositNonce"
       | "emergencyWithdraw"
+      | "emergencyWithdrawRequested"
+      | "emergencyWithdrawRequestedAt"
       | "owner"
       | "processedL1Txs"
       | "release"
       | "renounceOwnership"
+      | "requestEmergencyWithdraw"
       | "totalLocked"
       | "transferOwnership"
       | "vaultBalance"
@@ -44,9 +49,19 @@ export interface BridgeVaultInterface extends Interface {
       | "BridgeDeposit"
       | "BridgeRelease"
       | "EmergencyWithdraw"
+      | "EmergencyWithdrawCancelled"
+      | "EmergencyWithdrawRequested"
       | "OwnershipTransferred"
   ): EventFragment;
 
+  encodeFunctionData(
+    functionFragment: "EMERGENCY_TIMELOCK",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "cancelEmergencyWithdraw",
+    values?: undefined
+  ): string;
   encodeFunctionData(
     functionFragment: "deposit",
     values: [BigNumberish, string]
@@ -59,6 +74,14 @@ export interface BridgeVaultInterface extends Interface {
     functionFragment: "emergencyWithdraw",
     values: [AddressLike]
   ): string;
+  encodeFunctionData(
+    functionFragment: "emergencyWithdrawRequested",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "emergencyWithdrawRequestedAt",
+    values?: undefined
+  ): string;
   encodeFunctionData(functionFragment: "owner", values?: undefined): string;
   encodeFunctionData(
     functionFragment: "processedL1Txs",
@@ -70,6 +93,10 @@ export interface BridgeVaultInterface extends Interface {
   ): string;
   encodeFunctionData(
     functionFragment: "renounceOwnership",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "requestEmergencyWithdraw",
     values?: undefined
   ): string;
   encodeFunctionData(
@@ -86,6 +113,14 @@ export interface BridgeVaultInterface extends Interface {
   ): string;
   encodeFunctionData(functionFragment: "xrgeToken", values?: undefined): string;
 
+  decodeFunctionResult(
+    functionFragment: "EMERGENCY_TIMELOCK",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "cancelEmergencyWithdraw",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "deposit", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "depositNonce",
@@ -93,6 +128,14 @@ export interface BridgeVaultInterface extends Interface {
   ): Result;
   decodeFunctionResult(
     functionFragment: "emergencyWithdraw",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "emergencyWithdrawRequested",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "emergencyWithdrawRequestedAt",
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "owner", data: BytesLike): Result;
@@ -103,6 +146,10 @@ export interface BridgeVaultInterface extends Interface {
   decodeFunctionResult(functionFragment: "release", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "renounceOwnership",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "requestEmergencyWithdraw",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -176,6 +223,28 @@ export namespace EmergencyWithdrawEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
+export namespace EmergencyWithdrawCancelledEvent {
+  export type InputTuple = [];
+  export type OutputTuple = [];
+  export interface OutputObject {}
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace EmergencyWithdrawRequestedEvent {
+  export type InputTuple = [executeAfter: BigNumberish];
+  export type OutputTuple = [executeAfter: bigint];
+  export interface OutputObject {
+    executeAfter: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
 export namespace OwnershipTransferredEvent {
   export type InputTuple = [previousOwner: AddressLike, newOwner: AddressLike];
   export type OutputTuple = [previousOwner: string, newOwner: string];
@@ -232,6 +301,10 @@ export interface BridgeVault extends BaseContract {
     event?: TCEvent
   ): Promise<this>;
 
+  EMERGENCY_TIMELOCK: TypedContractMethod<[], [bigint], "view">;
+
+  cancelEmergencyWithdraw: TypedContractMethod<[], [void], "nonpayable">;
+
   deposit: TypedContractMethod<
     [amount: BigNumberish, rougechainPubkey: string],
     [void],
@@ -246,6 +319,10 @@ export interface BridgeVault extends BaseContract {
     "nonpayable"
   >;
 
+  emergencyWithdrawRequested: TypedContractMethod<[], [boolean], "view">;
+
+  emergencyWithdrawRequestedAt: TypedContractMethod<[], [bigint], "view">;
+
   owner: TypedContractMethod<[], [string], "view">;
 
   processedL1Txs: TypedContractMethod<[arg0: string], [boolean], "view">;
@@ -257,6 +334,8 @@ export interface BridgeVault extends BaseContract {
   >;
 
   renounceOwnership: TypedContractMethod<[], [void], "nonpayable">;
+
+  requestEmergencyWithdraw: TypedContractMethod<[], [void], "nonpayable">;
 
   totalLocked: TypedContractMethod<[], [bigint], "view">;
 
@@ -275,6 +354,12 @@ export interface BridgeVault extends BaseContract {
   ): T;
 
   getFunction(
+    nameOrSignature: "EMERGENCY_TIMELOCK"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "cancelEmergencyWithdraw"
+  ): TypedContractMethod<[], [void], "nonpayable">;
+  getFunction(
     nameOrSignature: "deposit"
   ): TypedContractMethod<
     [amount: BigNumberish, rougechainPubkey: string],
@@ -287,6 +372,12 @@ export interface BridgeVault extends BaseContract {
   getFunction(
     nameOrSignature: "emergencyWithdraw"
   ): TypedContractMethod<[token: AddressLike], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "emergencyWithdrawRequested"
+  ): TypedContractMethod<[], [boolean], "view">;
+  getFunction(
+    nameOrSignature: "emergencyWithdrawRequestedAt"
+  ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
     nameOrSignature: "owner"
   ): TypedContractMethod<[], [string], "view">;
@@ -302,6 +393,9 @@ export interface BridgeVault extends BaseContract {
   >;
   getFunction(
     nameOrSignature: "renounceOwnership"
+  ): TypedContractMethod<[], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "requestEmergencyWithdraw"
   ): TypedContractMethod<[], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "totalLocked"
@@ -336,6 +430,20 @@ export interface BridgeVault extends BaseContract {
     EmergencyWithdrawEvent.InputTuple,
     EmergencyWithdrawEvent.OutputTuple,
     EmergencyWithdrawEvent.OutputObject
+  >;
+  getEvent(
+    key: "EmergencyWithdrawCancelled"
+  ): TypedContractEvent<
+    EmergencyWithdrawCancelledEvent.InputTuple,
+    EmergencyWithdrawCancelledEvent.OutputTuple,
+    EmergencyWithdrawCancelledEvent.OutputObject
+  >;
+  getEvent(
+    key: "EmergencyWithdrawRequested"
+  ): TypedContractEvent<
+    EmergencyWithdrawRequestedEvent.InputTuple,
+    EmergencyWithdrawRequestedEvent.OutputTuple,
+    EmergencyWithdrawRequestedEvent.OutputObject
   >;
   getEvent(
     key: "OwnershipTransferred"
@@ -377,6 +485,28 @@ export interface BridgeVault extends BaseContract {
       EmergencyWithdrawEvent.InputTuple,
       EmergencyWithdrawEvent.OutputTuple,
       EmergencyWithdrawEvent.OutputObject
+    >;
+
+    "EmergencyWithdrawCancelled()": TypedContractEvent<
+      EmergencyWithdrawCancelledEvent.InputTuple,
+      EmergencyWithdrawCancelledEvent.OutputTuple,
+      EmergencyWithdrawCancelledEvent.OutputObject
+    >;
+    EmergencyWithdrawCancelled: TypedContractEvent<
+      EmergencyWithdrawCancelledEvent.InputTuple,
+      EmergencyWithdrawCancelledEvent.OutputTuple,
+      EmergencyWithdrawCancelledEvent.OutputObject
+    >;
+
+    "EmergencyWithdrawRequested(uint256)": TypedContractEvent<
+      EmergencyWithdrawRequestedEvent.InputTuple,
+      EmergencyWithdrawRequestedEvent.OutputTuple,
+      EmergencyWithdrawRequestedEvent.OutputObject
+    >;
+    EmergencyWithdrawRequested: TypedContractEvent<
+      EmergencyWithdrawRequestedEvent.InputTuple,
+      EmergencyWithdrawRequestedEvent.OutputTuple,
+      EmergencyWithdrawRequestedEvent.OutputObject
     >;
 
     "OwnershipTransferred(address,address)": TypedContractEvent<
