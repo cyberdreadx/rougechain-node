@@ -425,3 +425,61 @@ export async function getBridgeHistory(pubkey: string): Promise<BridgeHistoryEnt
     return [];
   }
 }
+
+// ── Pending withdrawal status (relayer release tracking) ────────
+
+export type WithdrawalStatus = "pending" | "fulfilled" | "failed" | "refunded";
+
+export interface PendingWithdrawal {
+  txId: string;
+  evmAddress: string;
+  /** Units as reported by the daemon (qETH micro-units, or whole XRGE). */
+  amount: number;
+  tokenSymbol: string;
+  ownerPubkey: string;
+  status: WithdrawalStatus;
+  attempts: number;
+  lastError?: string;
+  createdAt: number;
+}
+
+function normalizePendingWithdrawal(w: any): PendingWithdrawal {
+  return {
+    txId: w.txId ?? w.tx_id ?? "",
+    evmAddress: w.evmAddress ?? w.evm_address ?? "",
+    amount: w.amountUnits ?? w.amount_units ?? w.amount ?? 0,
+    tokenSymbol: w.tokenSymbol ?? w.token_symbol ?? "qETH",
+    ownerPubkey: w.ownerPubkey ?? w.owner_pubkey ?? "",
+    status: (w.status as WithdrawalStatus) ?? "pending",
+    attempts: w.attempts ?? 0,
+    lastError: w.lastError ?? w.last_error ?? undefined,
+    createdAt: w.createdAt ?? w.created_at ?? 0,
+  };
+}
+
+/**
+ * Fetch in-flight withdrawals (ETH + XRGE) and their relayer release status.
+ * When `ownerPubkey` is provided, only withdrawals owned by that L1 key are returned.
+ */
+export async function getPendingWithdrawals(ownerPubkey?: string): Promise<PendingWithdrawal[]> {
+  const baseUrl = getCoreApiBaseUrl();
+  if (!baseUrl) return [];
+  const endpoints = ["/bridge/withdrawals", "/bridge/xrge/withdrawals"];
+  try {
+    const results = await Promise.all(
+      endpoints.map(async (path) => {
+        const res = await fetch(`${baseUrl}${path}`, {
+          headers: getCoreApiHeaders(),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) return [] as PendingWithdrawal[];
+        const data = await res.json().catch(() => ({ withdrawals: [] }));
+        return (data.withdrawals || []).map(normalizePendingWithdrawal);
+      })
+    );
+    const all = results.flat();
+    return ownerPubkey ? all.filter((w) => w.ownerPubkey === ownerPubkey) : all;
+  } catch {
+    return [];
+  }
+}

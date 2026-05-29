@@ -36,7 +36,7 @@ use tower_http::cors::{Any, AllowOrigin, CorsLayer};
 use crate::websocket::WsBroadcaster;
 
 use quantum_vault_storage::bridge_claim_store::BridgeClaimStore;
-use quantum_vault_storage::bridge_withdraw_store::BridgeWithdrawStore;
+use quantum_vault_storage::bridge_withdraw_store::{BridgeWithdrawStore, PendingWithdrawal, WithdrawalStatus};
 
 use crate::grpc::GrpcNode;
 use crate::node::{L1Node, NodeOptions};
@@ -790,6 +790,8 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/bridge/withdraw", post(bridge_withdraw))
         .route("/api/bridge/withdrawals", get(bridge_withdrawals))
         .route("/api/bridge/withdrawals/:tx_id", delete(bridge_withdrawal_fulfill))
+        .route("/api/bridge/withdrawals/:tx_id/failure", post(bridge_withdrawal_report_failure))
+        .route("/api/bridge/withdrawals/:tx_id/refund", post(bridge_withdrawal_refund))
         // XRGE bridge endpoints
         .route("/api/bridge/xrge/config", get(xrge_bridge_config))
         .route("/api/bridge/xrge/claim", post(xrge_bridge_claim))
@@ -798,6 +800,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/bridge/xrge/withdrawals/:tx_id", delete(xrge_bridge_fulfill))
         // Admin bridge endpoints
         .route("/api/bridge/admin/reclaim", post(bridge_admin_reclaim))
+        .route("/api/bridge/deposit/auto-claim", post(bridge_deposit_auto_claim))
         // Rollup endpoints (Phase 3)
         .route("/api/v2/rollup/status", get(rollup_status))
         .route("/api/v2/rollup/batch/:id", get(rollup_get_batch))
@@ -6821,16 +6824,54 @@ async fn bridge_admin_reclaim(
     if body.admin_key != expected {
         return Json(serde_json::json!({ "success": false, "error": "Invalid admin key" }));
     }
+    Json(process_bridge_reclaim(&state, &body.evm_tx_hash, &body.recipient_rougechain_pubkey, body.token.as_deref()).await)
+}
 
-    let token = body.token.as_deref().unwrap_or("ETH").to_uppercase();
-    let tx_hash = body.evm_tx_hash.trim_start_matches("0x").to_lowercase();
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DepositAutoClaimRequest {
+    evm_tx_hash: String,
+    recipient_rougechain_pubkey: String,
+    token: Option<String>,
+}
+
+/// Auto-claim a deposit discovered on-chain by the relayer's deposit watcher.
+/// Authenticated by the relayer secret (or an operator signature) and routed
+/// through the same verified reclaim path so deposits mint without a browser
+/// claim step. Dedup via the claim store keeps it idempotent with browser claims.
+async fn bridge_deposit_auto_claim(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> Json<serde_json::Value> {
+    if let Err(e) = authorize_relayer_or_operator(&state, &headers, &body).await {
+        return Json(serde_json::json!({ "success": false, "error": e }));
+    }
+    let req: DepositAutoClaimRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(e) => return Json(serde_json::json!({ "success": false, "error": format!("invalid request: {}", e) })),
+    };
+    Json(process_bridge_reclaim(&state, &req.evm_tx_hash, &req.recipient_rougechain_pubkey, req.token.as_deref()).await)
+}
+
+/// Shared deposit-reclaim core: verify the EVM tx on-chain, dedup, and mint to
+/// the recipient on L1. Used by both the admin reclaim and the relayer-driven
+/// deposit auto-claim. Returns a JSON body (never an HTTP error).
+async fn process_bridge_reclaim(
+    state: &AppState,
+    evm_tx_hash: &str,
+    recipient_rougechain_pubkey: &str,
+    token_opt: Option<&str>,
+) -> serde_json::Value {
+    let token = token_opt.unwrap_or("ETH").to_uppercase();
+    let tx_hash = evm_tx_hash.trim_start_matches("0x").to_lowercase();
     let tx_hash_hex = format!("0x{}", tx_hash);
-    let recipient = normalize_recipient(&body.recipient_rougechain_pubkey);
+    let recipient = normalize_recipient(recipient_rougechain_pubkey);
 
     // Check if already claimed
     let claim_key = if token == "XRGE" { format!("xrge:{}", tx_hash_hex) } else { tx_hash_hex.clone() };
     if state.bridge_claim_store.contains(&claim_key).await {
-        return Json(serde_json::json!({ "success": false, "error": "Transaction already claimed" }));
+        return serde_json::json!({ "success": false, "error": "Transaction already claimed" });
     }
 
     let client = reqwest::Client::new();
@@ -6841,17 +6882,17 @@ async fn bridge_admin_reclaim(
         "XRGE" => {
             let amount = match parse_erc20_transfer_amount(&client, rpc_url, &tx_hash_hex).await {
                 Ok(raw) => (raw as f64 / 1e18).round() as u64,
-                Err(e) => return Json(serde_json::json!({ "success": false, "error": format!("Failed to parse XRGE transfer: {}", e) })),
+                Err(e) => return serde_json::json!({ "success": false, "error": format!("Failed to parse XRGE transfer: {}", e) }),
             };
             if amount == 0 {
-                return Json(serde_json::json!({ "success": false, "error": "XRGE transfer amount is zero" }));
+                return serde_json::json!({ "success": false, "error": "XRGE transfer amount is zero" });
             }
             (amount, "XRGE")
         }
         "USDC" => {
             let amount = parse_erc20_transfer_amount(&client, rpc_url, &tx_hash_hex).await.unwrap_or(0);
             if amount == 0 {
-                return Json(serde_json::json!({ "success": false, "error": "No USDC Transfer event found in tx" }));
+                return serde_json::json!({ "success": false, "error": "No USDC Transfer event found in tx" });
             }
             (amount, "qUSDC")
         }
@@ -6865,7 +6906,7 @@ async fn bridge_admin_reclaim(
                     Ok(j) => {
                         match j.get("result") {
                             Some(serde_json::Value::Null) | None => {
-                                return Json(serde_json::json!({ "success": false, "error": "Transaction not found" }));
+                                return serde_json::json!({ "success": false, "error": "Transaction not found" });
                             }
                             Some(obj) => {
                                 let value_hex = obj.get("value").and_then(|v| v.as_str()).unwrap_or("0x0");
@@ -6876,11 +6917,11 @@ async fn bridge_admin_reclaim(
                                     // ERC-4337: check custody balance delta
                                     let custody = match &state.bridge_custody_address {
                                         Some(addr) if !addr.is_empty() => addr.to_lowercase(),
-                                        _ => return Json(serde_json::json!({ "success": false, "error": "Bridge custody address not set" })),
+                                        _ => return serde_json::json!({ "success": false, "error": "Bridge custody address not set" }),
                                     };
                                     let block_hex = obj.get("blockNumber").and_then(|v| v.as_str()).unwrap_or("");
                                     if block_hex.is_empty() {
-                                        return Json(serde_json::json!({ "success": false, "error": "Transaction not yet mined" }));
+                                        return serde_json::json!({ "success": false, "error": "Transaction not yet mined" });
                                     }
                                     let prev = format!("0x{:x}", u64::from_str_radix(block_hex.trim_start_matches("0x"), 16).unwrap_or(1).saturating_sub(1));
                                     let before = async {
@@ -6902,32 +6943,35 @@ async fn bridge_admin_reclaim(
                             }
                         }
                     }
-                    Err(e) => return Json(serde_json::json!({ "success": false, "error": format!("RPC parse error: {}", e) })),
+                    Err(e) => return serde_json::json!({ "success": false, "error": format!("RPC parse error: {}", e) }),
                 },
-                Err(e) => return Json(serde_json::json!({ "success": false, "error": format!("RPC error: {}", e) })),
+                Err(e) => return serde_json::json!({ "success": false, "error": format!("RPC error: {}", e) }),
             };
             let units = (tx_val / 1_000_000_000_000) as u64;
             if units == 0 {
-                return Json(serde_json::json!({ "success": false, "error": "ETH amount too small or zero" }));
+                return serde_json::json!({ "success": false, "error": "ETH amount too small or zero" });
             }
             (units, "qETH")
         }
     };
 
-    // Mark as claimed
-    if let Err(e) = state.bridge_claim_store.insert(claim_key).await {
-        return Json(serde_json::json!({ "success": false, "error": format!("Failed to persist claim: {}", e) }));
+    // Mark as claimed (reserve before minting; release on failure so it can retry)
+    if let Err(e) = state.bridge_claim_store.insert(claim_key.clone()).await {
+        return serde_json::json!({ "success": false, "error": format!("Failed to persist claim: {}", e) });
     }
 
-    eprintln!("[bridge-admin] Reclaiming tx {} -> {} {} for {}", tx_hash_hex, amount_units, mint_symbol, &recipient[..20.min(recipient.len())]);
+    eprintln!("[bridge-reclaim] Minting tx {} -> {} {} for {}", tx_hash_hex, amount_units, mint_symbol, &recipient[..20.min(recipient.len())]);
     use quantum_vault_crypto::{bytes_to_hex, sha256};
     use quantum_vault_types::encode_tx_v1;
     match state.node.submit_bridge_mint_tx(&recipient, amount_units, mint_symbol) {
         Ok(tx) => {
             let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
-            Json(serde_json::json!({ "success": true, "txId": id, "amount": amount_units, "token": mint_symbol }))
+            serde_json::json!({ "success": true, "txId": id, "amount": amount_units, "token": mint_symbol })
         }
-        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+        Err(e) => {
+            let _ = state.bridge_claim_store.remove(&claim_key).await;
+            serde_json::json!({ "success": false, "error": e })
+        }
     }
 }
 
@@ -7055,6 +7099,18 @@ struct BridgeWithdrawalItem {
     evm_address: String,
     amount_units: u64,
     created_at: i64,
+    owner_pubkey: String,
+    token_symbol: String,
+    status: WithdrawalStatus,
+    attempts: u32,
+    last_error: Option<String>,
+}
+
+/// True for an XRGE withdrawal, by the authoritative token_symbol field with a
+/// fallback to the legacy "xrge:" tx_id prefix for records written before the
+/// field existed.
+fn is_xrge_withdrawal(w: &PendingWithdrawal) -> bool {
+    w.token_symbol.eq_ignore_ascii_case("XRGE") || w.tx_id.starts_with("xrge:")
 }
 
 async fn bridge_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdrawalsResponse> {
@@ -7062,11 +7118,19 @@ async fn bridge_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdra
     Json(BridgeWithdrawalsResponse {
         withdrawals: list
             .into_iter()
+            // The ETH relayer must not pick up XRGE withdrawals — those are served
+            // by /api/bridge/xrge/withdrawals and released via the XRGE vault.
+            .filter(|w| !is_xrge_withdrawal(w))
             .map(|w| BridgeWithdrawalItem {
                 tx_id: w.tx_id,
                 evm_address: w.evm_address,
                 amount_units: w.amount_units,
                 created_at: w.created_at,
+                owner_pubkey: w.owner_pubkey,
+                token_symbol: w.token_symbol,
+                status: w.status,
+                attempts: w.attempts,
+                last_error: w.last_error,
             })
             .collect(),
     })
@@ -7326,15 +7390,17 @@ async fn xrge_bridge_withdraw(
 async fn xrge_bridge_withdrawals(State(state): State<AppState>) -> Json<serde_json::Value> {
     let list = state.bridge_withdraw_store.list().unwrap_or_default();
     let xrge_withdrawals: Vec<_> = list.into_iter()
-        .filter(|w| w.tx_id.starts_with("xrge:") || {
-            // TODO: once we tag token_symbol in PendingWithdrawal, filter properly
-            false
-        })
+        .filter(is_xrge_withdrawal)
         .map(|w| serde_json::json!({
             "tx_id": w.tx_id,
             "evm_address": w.evm_address,
             "amount": w.amount_units,
             "created_at": w.created_at,
+            "owner_pubkey": w.owner_pubkey,
+            "token_symbol": w.token_symbol,
+            "status": w.status,
+            "attempts": w.attempts,
+            "last_error": w.last_error,
         }))
         .collect();
     Json(serde_json::json!({ "withdrawals": xrge_withdrawals }))
@@ -7386,6 +7452,155 @@ async fn xrge_bridge_fulfill(
         Ok(true) => Json(BridgeFulfillResponse { success: true, error: None }),
         Ok(false) => Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found".to_string()) }),
         Err(e) => Json(BridgeFulfillResponse { success: false, error: Some(e) }),
+    }
+}
+
+/// Shared auth for relayer-driven bridge mutations: accepts either the relayer
+/// shared secret header or an operator-signed request body.
+async fn authorize_relayer_or_operator(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    body: &str,
+) -> Result<(), String> {
+    let relayer_auth = state
+        .bridge_relayer_secret
+        .as_ref()
+        .and_then(|secret| {
+            headers
+                .get("x-bridge-relayer-secret")
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v == secret.as_str())
+        })
+        .unwrap_or(false);
+    if relayer_auth {
+        return Ok(());
+    }
+    let signed: SignedTransactionRequest = serde_json::from_str(body)
+        .map_err(|_| "unauthorized: provide x-bridge-relayer-secret header or signed body".to_string())?;
+    if signed.public_key != state.node.get_node_public_key() {
+        return Err("unauthorized: only the node operator can perform this action".to_string());
+    }
+    verify_signed_tx(&signed)
+        .await
+        .map_err(|e| format!("signature verification failed: {}", e))?;
+    Ok(())
+}
+
+/// Number of failed release attempts after which a withdrawal becomes refund-eligible.
+const WITHDRAWAL_REFUND_THRESHOLD: u32 = 5;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WithdrawalStatusReport {
+    /// Error message from the failed release attempt, if any.
+    #[serde(default)]
+    error: Option<String>,
+}
+
+/// Relayer reports a failed release attempt. Bumps the attempt counter, persists
+/// the last error, and tells the relayer whether the refund threshold is reached.
+async fn bridge_withdrawal_report_failure(
+    State(state): State<AppState>,
+    Path(tx_id): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> Json<serde_json::Value> {
+    if let Err(e) = authorize_relayer_or_operator(&state, &headers, &body).await {
+        return Json(serde_json::json!({ "success": false, "error": e }));
+    }
+    let report: WithdrawalStatusReport = serde_json::from_str(&body).unwrap_or(WithdrawalStatusReport { error: None });
+    match state.bridge_withdraw_store.record_attempt(&tx_id, report.error.clone()) {
+        Ok(attempts) => {
+            let should_refund = attempts >= WITHDRAWAL_REFUND_THRESHOLD;
+            if should_refund {
+                eprintln!(
+                    "[bridge] ALERT: withdrawal {} has failed {} times (last error: {}) — refund-eligible",
+                    tx_id,
+                    attempts,
+                    report.error.as_deref().unwrap_or("n/a")
+                );
+            }
+            Json(serde_json::json!({
+                "success": true,
+                "attempts": attempts,
+                "shouldRefund": should_refund,
+                "threshold": WITHDRAWAL_REFUND_THRESHOLD,
+            }))
+        }
+        Err(e) => Json(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+/// Refund a withdrawal that could not be released on L1: re-mint the burned
+/// tokens back to the original owner. Deduped via the claim store so a refund
+/// can never be issued twice, and the pending entry is then cleared.
+async fn bridge_withdrawal_refund(
+    State(state): State<AppState>,
+    Path(tx_id): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> Json<serde_json::Value> {
+    if let Err(e) = authorize_relayer_or_operator(&state, &headers, &body).await {
+        return Json(serde_json::json!({ "success": false, "error": e }));
+    }
+
+    let w = match state.bridge_withdraw_store.get(&tx_id) {
+        Ok(Some(w)) => w,
+        Ok(None) => return Json(serde_json::json!({ "success": false, "error": "Withdrawal not found or already settled" })),
+        Err(e) => return Json(serde_json::json!({ "success": false, "error": e })),
+    };
+
+    if w.owner_pubkey.is_empty() {
+        return Json(serde_json::json!({
+            "success": false,
+            "error": "Withdrawal predates owner tracking; refund manually via admin reclaim"
+        }));
+    }
+
+    // Dedup: a refund is a mint, so guard it with the same claim store used for deposits.
+    // Reserve the key up front to block concurrent/double refunds; if the mint
+    // submission below fails we release it so the refund can be retried.
+    let refund_key = format!("refund:{}", tx_id);
+    if state.bridge_claim_store.contains(&refund_key).await {
+        return Json(serde_json::json!({ "success": false, "error": "Withdrawal already refunded" }));
+    }
+    if let Err(e) = state.bridge_claim_store.insert(refund_key.clone()).await {
+        return Json(serde_json::json!({ "success": false, "error": format!("Failed to persist refund: {}", e) }));
+    }
+
+    eprintln!(
+        "[bridge] Refunding withdrawal {} → {} {} to {}",
+        tx_id,
+        w.amount_units,
+        w.token_symbol,
+        &w.owner_pubkey[..20.min(w.owner_pubkey.len())]
+    );
+
+    use quantum_vault_crypto::{bytes_to_hex, sha256};
+    use quantum_vault_types::encode_tx_v1;
+    match state
+        .node
+        .submit_bridge_mint_tx(&w.owner_pubkey, w.amount_units, &w.token_symbol)
+    {
+        Ok(tx) => {
+            let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
+            let _ = state
+                .bridge_withdraw_store
+                .set_status(&tx_id, WithdrawalStatus::Refunded);
+            let _ = state.bridge_withdraw_store.remove(&tx_id);
+            Json(serde_json::json!({
+                "success": true,
+                "txId": id,
+                "amount": w.amount_units,
+                "token": w.token_symbol,
+                "recipient": w.owner_pubkey,
+            }))
+        }
+        Err(e) => {
+            // Roll back the reservation so the refund can be retried.
+            let _ = state.bridge_claim_store.remove(&refund_key).await;
+            Json(serde_json::json!({ "success": false, "error": e }))
+        }
     }
 }
 

@@ -38,6 +38,16 @@ impl BridgeClaimStore {
         self.persist().await
     }
 
+    /// Release a previously reserved key — used to roll back a refund reservation
+    /// when the subsequent mint submission fails, so the refund can be retried.
+    pub async fn remove(&self, tx_hash: &str) -> Result<(), String> {
+        {
+            let mut claimed = self.claimed.write().await;
+            claimed.remove(tx_hash);
+        }
+        self.persist().await
+    }
+
     async fn persist(&self) -> Result<(), String> {
         let claimed = self.claimed.read().await;
         let list: Vec<&String> = claimed.iter().collect();

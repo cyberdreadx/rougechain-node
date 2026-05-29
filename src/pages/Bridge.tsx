@@ -19,6 +19,8 @@ import {
   type XrgeBridgeConfig,
   getBridgeHistory,
   type BridgeHistoryEntry,
+  getPendingWithdrawals,
+  type PendingWithdrawal,
 } from "@/lib/bridge";
 import { createSignedBridgeWithdraw, type TransactionPayload, generateNonce } from "@/lib/pqc-signer";
 import { signViaExtension, getRougeChainProvider } from "@/lib/extension-bridge";
@@ -576,6 +578,11 @@ const Bridge = () => {
           </CardContent>
         </Card>
 
+        {/* In-flight withdrawal release status */}
+        {rougechainPubkey && (
+          <PendingWithdrawalsCard pubkey={rougechainPubkey} />
+        )}
+
         {/* Recent Bridge Activity */}
         {rougechainPubkey && (
           <BridgeActivityCard pubkey={rougechainPubkey} />
@@ -659,6 +666,77 @@ function BridgeActivityCard({ pubkey }: { pubkey: string }) {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Pending Withdrawal Status Card ──────────────────────────────
+
+function PendingWithdrawalsCard({ pubkey }: { pubkey: string }) {
+  const [withdrawals, setWithdrawals] = useState<PendingWithdrawal[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const entries = await getPendingWithdrawals(pubkey);
+      if (!cancelled) {
+        setWithdrawals(entries);
+        setLoading(false);
+      }
+    };
+    load();
+    // Poll while a release is in flight so the UI reflects relayer progress.
+    const timer = setInterval(load, 15000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [pubkey]);
+
+  // Nothing pending and nothing to report — keep the page clean.
+  if (!loading && withdrawals.length === 0) return null;
+
+  const statusStyle = (status: PendingWithdrawal["status"]): { label: string; cls: string } => {
+    switch (status) {
+      case "failed": return { label: "Retrying", cls: "text-amber-500" };
+      case "refunded": return { label: "Refunded", cls: "text-blue-500" };
+      case "fulfilled": return { label: "Released", cls: "text-green-500" };
+      default: return { label: "Pending", cls: "text-muted-foreground" };
+    }
+  };
+
+  return (
+    <Card className="border-border">
+      <CardContent className="p-0">
+        <div className="px-4 py-3 border-b border-border">
+          <h3 className="text-sm font-semibold text-foreground">Withdrawal Release Status</h3>
+        </div>
+        {loading ? (
+          <div className="py-6 text-center">
+            <Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" />
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {withdrawals.map((w) => {
+              const s = statusStyle(w.status);
+              return (
+                <div key={w.txId} className="flex items-center justify-between px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">
+                      {w.amount} {w.tokenSymbol} → {w.evmAddress.slice(0, 8)}…{w.evmAddress.slice(-4)}
+                    </p>
+                    {w.status === "failed" && (
+                      <p className="text-xs text-amber-500/80 truncate">
+                        {w.attempts} failed attempt{w.attempts === 1 ? "" : "s"}
+                        {w.lastError ? ` — ${w.lastError}` : ""}
+                      </p>
+                    )}
+                  </div>
+                  <p className={`text-xs font-medium whitespace-nowrap ${s.cls}`}>{s.label}</p>
+                </div>
+              );
+            })}
           </div>
         )}
       </CardContent>

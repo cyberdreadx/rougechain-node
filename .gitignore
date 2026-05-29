@@ -31,6 +31,11 @@ core/target/
 .env.local
 .env.*.local
 contracts/.env
+bridge-relayer.env
+
+# Bridge relayer runtime state (local, regenerated)
+.bridge-processed-txs.json
+.bridge-deposit-watcher.json
 
 # Local Netlify folder
 .netlify

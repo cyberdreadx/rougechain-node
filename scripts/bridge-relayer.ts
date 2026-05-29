@@ -29,6 +29,7 @@ import {
   createPublicClient,
   http,
   parseAbi,
+  parseAbiItem,
   getContract,
   keccak256,
   toBytes,
@@ -49,6 +50,18 @@ const VAULT_ADDRESS = process.env.XRGE_BRIDGE_VAULT;
 const RELAYER_SECRET = process.env.BRIDGE_RELAYER_SECRET || "";
 const CONFIRMATIONS = parseInt(process.env.CONFIRMATIONS || "2", 10);
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || "3", 10);
+// Optional webhook (e.g. Slack/Discord incoming webhook) for failure alerts.
+const ALERT_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL || "";
+// Auto-refund a withdrawal once the daemon reports it has crossed the failure threshold.
+const AUTO_REFUND = (process.env.AUTO_REFUND || "true").toLowerCase() !== "false";
+// Watch Base for deposit events and auto-claim them on L1 (no browser claim needed).
+const DEPOSIT_WATCHER = (process.env.DEPOSIT_WATCHER || "true").toLowerCase() !== "false";
+// Optional starting block for the deposit scan (defaults to current block on first run).
+const DEPOSIT_WATCH_FROM_BLOCK = process.env.DEPOSIT_WATCH_FROM_BLOCK
+  ? BigInt(process.env.DEPOSIT_WATCH_FROM_BLOCK)
+  : null;
+// Cap the number of blocks scanned per poll so a cold start can't request a huge range.
+const DEPOSIT_MAX_BLOCK_SPAN = BigInt(process.env.DEPOSIT_MAX_BLOCK_SPAN || "2000");
 
 // Multi-chain resolution
 const CHAIN_CONFIG: Record<string, { chain: Chain; rpc: string; usdc: string }> = {
@@ -70,6 +83,7 @@ import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 
 const PROCESSED_FILE = join(process.env.BRIDGE_DATA_DIR || ".", ".bridge-processed-txs.json");
+const DEPOSIT_STATE_FILE = join(process.env.BRIDGE_DATA_DIR || ".", ".bridge-deposit-watcher.json");
 
 function loadProcessedTxIds(): Set<string> {
   try {
@@ -91,10 +105,54 @@ function saveProcessedTxIds(ids: Set<string>): void {
   }
 }
 
+type DepositToken = "ETH" | "XRGE" | "USDC";
+interface DepositRecord { key: string; txHash: string; pubkey: string; token: DepositToken; }
+interface DepositWatcherState {
+  lastBlock: string | null;   // last fully-scanned block (decimal string)
+  claimed: string[];          // dedup keys for deposits already auto-claimed
+  pending: DepositRecord[];   // discovered deposits whose claim has not yet succeeded
+}
+
+interface DepositWatcher {
+  lastBlock: bigint | null;
+  claimed: Set<string>;
+  pending: Map<string, DepositRecord>;
+}
+
+function loadDepositState(): DepositWatcher {
+  try {
+    if (existsSync(DEPOSIT_STATE_FILE)) {
+      const data: DepositWatcherState = JSON.parse(readFileSync(DEPOSIT_STATE_FILE, "utf-8"));
+      return {
+        lastBlock: data.lastBlock ? BigInt(data.lastBlock) : null,
+        claimed: new Set(data.claimed || []),
+        pending: new Map((data.pending || []).map((r) => [r.key, r])),
+      };
+    }
+  } catch (e: any) {
+    console.warn(`[relayer] Could not load deposit watcher state: ${e.message}`);
+  }
+  return { lastBlock: null, claimed: new Set(), pending: new Map() };
+}
+
+function saveDepositState(w: DepositWatcher): void {
+  try {
+    const data: DepositWatcherState = {
+      lastBlock: w.lastBlock !== null ? w.lastBlock.toString() : null,
+      claimed: [...w.claimed],
+      pending: [...w.pending.values()],
+    };
+    writeFileSync(DEPOSIT_STATE_FILE, JSON.stringify(data), "utf-8");
+  } catch (e: any) {
+    console.warn(`[relayer] Could not persist deposit watcher state: ${e.message}`);
+  }
+}
+
 // ── State ───────────────────────────────────────────────────────
 
 const processedTxIds = loadProcessedTxIds();  // Persisted to disk across restarts
 const inFlightTxIds = new Set<string>();   // Currently being processed
+const depositWatcher = loadDepositState(); // Deposit scan cursor + claim dedup
 let currentNonce: number | null = null;    // Managed nonce
 let isShuttingDown = false;
 
@@ -105,8 +163,16 @@ const stats = {
   xrgeFulfilled: 0,
   ethFailed: 0,
   xrgeFailed: 0,
+  ethRefunded: 0,
+  xrgeRefunded: 0,
+  depositsClaimed: 0,
+  depositsFailed: 0,
+  alertsSent: 0,
   totalPolls: 0,
 };
+
+// De-dupe alerts so we don't spam the webhook every poll for the same withdrawal.
+const alertedTxIds = new Set<string>();
 
 // ── ABIs ────────────────────────────────────────────────────────
 
@@ -122,6 +188,17 @@ const ROUGE_BRIDGE_ABI = parseAbi([
 ]);
 
 const ROUGE_BRIDGE_ADDRESS = process.env.ROUGE_BRIDGE_ADDRESS;
+
+// Deposit events watched on Base to auto-claim on L1.
+const BRIDGE_DEPOSIT_ETH_EVENT = parseAbiItem(
+  "event BridgeDepositETH(address indexed sender, uint256 amount, string rougechainPubkey)"
+);
+const BRIDGE_DEPOSIT_ERC20_EVENT = parseAbiItem(
+  "event BridgeDepositERC20(address indexed sender, address indexed token, uint256 amount, string rougechainPubkey)"
+);
+const VAULT_DEPOSIT_EVENT = parseAbiItem(
+  "event BridgeDeposit(address indexed sender, uint256 amount, string rougechainPubkey, uint256 nonce)"
+);
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -273,6 +350,128 @@ async function fulfillXrgeWithdrawal(txId: string, evmTxHash: string): Promise<b
   }
 }
 
+/** Send a prominent alert to the console and, if configured, a webhook. De-duped per tx. */
+async function alert(key: string, message: string): Promise<void> {
+  console.error(`\n🚨 [ALERT] ${message}\n`);
+  if (alertedTxIds.has(key)) return;
+  alertedTxIds.add(key);
+  stats.alertsSent++;
+  if (!ALERT_WEBHOOK_URL) return;
+  try {
+    await fetch(ALERT_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: `🚨 RougeChain Bridge Relayer: ${message}` }),
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (e: any) {
+    console.warn(`[relayer] Alert webhook failed: ${e.message}`);
+  }
+}
+
+/**
+ * Report a failed release attempt to the daemon. The daemon bumps the attempt
+ * counter and tells us whether the withdrawal has crossed the refund threshold.
+ */
+async function reportWithdrawalFailure(
+  txId: string,
+  error: string,
+): Promise<{ shouldRefund: boolean; attempts: number }> {
+  try {
+    const res = await fetch(
+      `${CORE_API_URL}/api/bridge/withdrawals/${encodeURIComponent(txId)}/failure`,
+      {
+        method: "POST",
+        headers: {
+          "x-bridge-relayer-secret": RELAYER_SECRET,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ error }),
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    const data = await res.json().catch(() => ({}));
+    return { shouldRefund: data.shouldRefund === true, attempts: data.attempts || 0 };
+  } catch (e: any) {
+    console.warn(`[relayer] Failed to report withdrawal failure for ${txId}: ${e.message}`);
+    return { shouldRefund: false, attempts: 0 };
+  }
+}
+
+/**
+ * Auto-claim a deposit discovered on-chain: the daemon re-verifies the EVM tx,
+ * dedupes against browser claims, and mints to the recipient. Idempotent.
+ */
+async function autoClaimDeposit(
+  evmTxHash: string,
+  recipientRougechainPubkey: string,
+  token: "ETH" | "XRGE" | "USDC",
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${CORE_API_URL}/api/bridge/deposit/auto-claim`, {
+      method: "POST",
+      headers: {
+        "x-bridge-relayer-secret": RELAYER_SECRET,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ evmTxHash, recipientRougechainPubkey, token }),
+      signal: AbortSignal.timeout(20000),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data.success === true) return { ok: true };
+    return { ok: false, error: data.error || "unknown" };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/** Ask the daemon to refund a withdrawal (re-mint burned tokens to the owner). */
+async function refundWithdrawal(txId: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${CORE_API_URL}/api/bridge/withdrawals/${encodeURIComponent(txId)}/refund`,
+      {
+        method: "POST",
+        headers: {
+          "x-bridge-relayer-secret": RELAYER_SECRET,
+          "Content-Type": "application/json",
+        },
+        body: "{}",
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (data.success === true) return true;
+    console.warn(`[relayer] Refund API declined for ${txId}: ${data.error || "unknown"}`);
+    return false;
+  } catch (e: any) {
+    console.warn(`[relayer] Refund request failed for ${txId}: ${e.message}`);
+    return false;
+  }
+}
+
+/**
+ * Common failure handling: report the failure to the daemon, alert on repeated
+ * failure, and auto-refund once the daemon says the threshold is crossed.
+ */
+async function handleWithdrawalFailure(kind: "ETH" | "XRGE", txId: string, error: string): Promise<void> {
+  const { shouldRefund, attempts } = await reportWithdrawalFailure(txId, error);
+  if (attempts >= 3) {
+    await alert(txId, `${kind} withdrawal ${txId.slice(0, 16)}… has failed ${attempts}× (last: ${error})`);
+  }
+  if (shouldRefund && AUTO_REFUND) {
+    console.warn(`[${kind}] Attempting refund for ${txId} after ${attempts} failures`);
+    const refunded = await refundWithdrawal(txId);
+    if (refunded) {
+      await alert(`refund:${txId}`, `${kind} withdrawal ${txId.slice(0, 16)}… was REFUNDED on L1 after ${attempts} failures`);
+      processedTxIds.add(txId);
+      saveProcessedTxIds(processedTxIds);
+      if (kind === "ETH") stats.ethRefunded++;
+      else stats.xrgeRefunded++;
+    }
+  }
+}
+
 // ── Main ────────────────────────────────────────────────────────
 
 async function main() {
@@ -321,6 +520,13 @@ async function main() {
       client: { public: publicClient, wallet: walletClient },
     });
     console.log(`[relayer] RougeBridge: ${ROUGE_BRIDGE_ADDRESS}`);
+  }
+
+  if (DEPOSIT_WATCHER && (ROUGE_BRIDGE_ADDRESS || VAULT_ADDRESS)) {
+    const resume = depositWatcher.lastBlock !== null ? `resuming from block ${depositWatcher.lastBlock}` : "anchoring at chain head";
+    console.log(`[relayer] Deposit watcher: ENABLED (${resume}, ${depositWatcher.pending.size} pending)`);
+  } else {
+    console.log("[relayer] Deposit watcher: disabled");
   }
 
   // ── ETH withdrawals ─────────────────────────────────────────
@@ -379,6 +585,7 @@ async function main() {
             console.error(`[ETH] Tx REVERTED for ${w.tx_id}: ${hash}`);
             stats.ethFailed++;
             resetNonce();
+            await handleWithdrawalFailure("ETH", w.tx_id, `release tx reverted: ${hash}`);
             inFlightTxIds.delete(w.tx_id);
             continue;
           }
@@ -396,6 +603,7 @@ async function main() {
           console.error(`[ETH] Failed ${w.tx_id}: ${e.message}`);
           stats.ethFailed++;
           resetNonce();
+          await handleWithdrawalFailure("ETH", w.tx_id, e.message || "release failed");
         } finally {
           inFlightTxIds.delete(w.tx_id);
         }
@@ -446,6 +654,7 @@ async function main() {
             console.error(`[XRGE] Tx REVERTED for ${w.tx_id}: ${hash}`);
             stats.xrgeFailed++;
             resetNonce();
+            await handleWithdrawalFailure("XRGE", w.tx_id, `release tx reverted: ${hash}`);
             inFlightTxIds.delete(w.tx_id);
             continue;
           }
@@ -463,6 +672,7 @@ async function main() {
           console.error(`[XRGE] Failed ${w.tx_id}: ${e.message}`);
           stats.xrgeFailed++;
           resetNonce();
+          await handleWithdrawalFailure("XRGE", w.tx_id, e.message || "release failed");
         } finally {
           inFlightTxIds.delete(w.tx_id);
         }
@@ -472,11 +682,118 @@ async function main() {
     }
   };
 
+  // ── Deposit watcher (Base → L1 auto-claim) ──────────────────
+
+  /** Attempt to claim one discovered deposit; route the result into claimed/pending. */
+  const claimOne = async (d: DepositRecord): Promise<void> => {
+    const { ok, error } = await autoClaimDeposit(d.txHash, d.pubkey, d.token);
+    // "already claimed" means a browser claim beat us to it — treat as done.
+    if (ok || (error && error.toLowerCase().includes("already claimed"))) {
+      depositWatcher.claimed.add(d.key);
+      depositWatcher.pending.delete(d.key);
+      if (ok) {
+        stats.depositsClaimed++;
+        console.log(`[deposit] ✓ Auto-claimed ${d.token} ${d.txHash.slice(0, 12)}… → ${d.pubkey.slice(0, 12)}…`);
+      }
+    } else {
+      depositWatcher.pending.set(d.key, d);
+      stats.depositsFailed++;
+      console.warn(`[deposit] ✗ Auto-claim failed for ${d.token} ${d.txHash.slice(0, 12)}…: ${error}`);
+      await alert(`deposit:${d.key}`, `Deposit auto-claim failing for ${d.token} ${d.txHash.slice(0, 16)}…: ${error}`);
+    }
+  };
+
+  const processDeposits = async () => {
+    if (!DEPOSIT_WATCHER) return;
+    if (!ROUGE_BRIDGE_ADDRESS && !VAULT_ADDRESS) return;
+    try {
+      // 1) Retry any previously-discovered deposits whose claim hasn't landed yet.
+      for (const d of [...depositWatcher.pending.values()]) {
+        if (isShuttingDown) break;
+        await claimOne(d);
+      }
+
+      // 2) Scan newly-confirmed blocks for fresh deposits.
+      const head = await publicClient.getBlockNumber();
+      const safeHead = head - BigInt(CONFIRMATIONS);
+      if (safeHead <= 0n) return;
+
+      let fromBlock: bigint;
+      if (depositWatcher.lastBlock !== null) {
+        fromBlock = depositWatcher.lastBlock + 1n;
+      } else if (DEPOSIT_WATCH_FROM_BLOCK !== null) {
+        fromBlock = DEPOSIT_WATCH_FROM_BLOCK;
+      } else {
+        // First run with no explicit start: anchor at the current head (don't backfill).
+        depositWatcher.lastBlock = safeHead;
+        saveDepositState(depositWatcher);
+        console.log(`[deposit] Watcher anchored at block ${safeHead}`);
+        return;
+      }
+      if (fromBlock > safeHead) return; // nothing new confirmed
+
+      // Bound the span so a long downtime doesn't request an enormous range at once.
+      let toBlock = safeHead;
+      if (toBlock - fromBlock + 1n > DEPOSIT_MAX_BLOCK_SPAN) {
+        toBlock = fromBlock + DEPOSIT_MAX_BLOCK_SPAN - 1n;
+      }
+
+      const found: DepositRecord[] = [];
+      const pushLog = (log: any, token: DepositToken) => {
+        const txHash = (log.transactionHash || "").toLowerCase();
+        const pubkey = log.args?.rougechainPubkey as string | undefined;
+        if (!txHash || !pubkey) return;
+        found.push({ key: `${token}:${txHash}`, txHash, pubkey, token });
+      };
+
+      if (ROUGE_BRIDGE_ADDRESS) {
+        const ethLogs = await publicClient.getLogs({
+          address: ROUGE_BRIDGE_ADDRESS as `0x${string}`,
+          event: BRIDGE_DEPOSIT_ETH_EVENT, fromBlock, toBlock,
+        });
+        for (const log of ethLogs) pushLog(log, "ETH");
+
+        const erc20Logs = await publicClient.getLogs({
+          address: ROUGE_BRIDGE_ADDRESS as `0x${string}`,
+          event: BRIDGE_DEPOSIT_ERC20_EVENT, fromBlock, toBlock,
+        });
+        for (const log of erc20Logs) {
+          const tokenAddr = ((log.args as any)?.token as string || "").toLowerCase();
+          if (tokenAddr === chainCfg.usdc.toLowerCase()) pushLog(log, "USDC");
+          else console.warn(`[deposit] Skipping unsupported ERC20 ${tokenAddr} (tx ${log.transactionHash})`);
+        }
+      }
+      if (VAULT_ADDRESS) {
+        const xrgeLogs = await publicClient.getLogs({
+          address: VAULT_ADDRESS as `0x${string}`,
+          event: VAULT_DEPOSIT_EVENT, fromBlock, toBlock,
+        });
+        for (const log of xrgeLogs) pushLog(log, "XRGE");
+      }
+
+      if (found.length > 0) {
+        console.log(`[deposit] Blocks ${fromBlock}–${toBlock}: ${found.length} deposit event(s)`);
+      }
+      for (const d of found) {
+        if (isShuttingDown) break;
+        if (depositWatcher.claimed.has(d.key) || depositWatcher.pending.has(d.key)) continue;
+        await claimOne(d);
+      }
+
+      // Advance the cursor regardless of individual claim outcomes — failed ones
+      // live in `pending` and are retried each poll, so scanning always moves forward.
+      depositWatcher.lastBlock = toBlock;
+      saveDepositState(depositWatcher);
+    } catch (e: any) {
+      console.error("[deposit] Poll error:", e.message);
+    }
+  };
+
   // ── Polling loop ──────────────────────────────────────────────
 
   const run = async () => {
     stats.totalPolls++;
-    await Promise.all([processEthWithdrawals(), processXrgeWithdrawals()]);
+    await Promise.all([processEthWithdrawals(), processXrgeWithdrawals(), processDeposits()]);
 
     // Health log every 60 polls
     if (stats.totalPolls % 60 === 0) {
@@ -484,6 +801,8 @@ async function main() {
         `[health] uptime=${uptimeStr()} polls=${stats.totalPolls} ` +
         `eth_ok=${stats.ethFulfilled} eth_fail=${stats.ethFailed} ` +
         `xrge_ok=${stats.xrgeFulfilled} xrge_fail=${stats.xrgeFailed} ` +
+        `refunded=${stats.ethRefunded + stats.xrgeRefunded} alerts=${stats.alertsSent} ` +
+        `deposits_ok=${stats.depositsClaimed} deposits_pending=${depositWatcher.pending.size} ` +
         `processed=${processedTxIds.size} inflight=${inFlightTxIds.size}`
       );
     }
@@ -500,6 +819,7 @@ async function main() {
     );
     // Persist state before exit
     saveProcessedTxIds(processedTxIds);
+    saveDepositState(depositWatcher);
     // Wait for in-flight txs
     if (inFlightTxIds.size > 0) {
       console.log(`[relayer] Waiting for ${inFlightTxIds.size} in-flight tx(s)...`);

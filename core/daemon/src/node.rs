@@ -2901,11 +2901,19 @@ impl L1Node {
                 {
                     if let Some(evm_addr) = tx.payload.evm_address.as_ref() {
                         let token = tx.payload.token_symbol.as_deref().unwrap_or("qETH");
+                        // Legacy "xrge:" tx_id prefix is retained for relayer / claim-store
+                        // continuity; the authoritative discriminator is now token_symbol.
                         let prefix = if token == "XRGE" { "xrge:" } else { "" };
                         let raw_id = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
                         let tx_id = format!("{}{}", prefix, raw_id);
                         let amount = tx.payload.amount.unwrap_or(0);
-                        let _ = store.add(tx_id.clone(), evm_addr.clone(), amount);
+                        let _ = store.add(
+                            tx_id.clone(),
+                            evm_addr.clone(),
+                            amount,
+                            tx.from_pub_key.clone(),
+                            token.to_string(),
+                        );
                     }
                 }
             }
