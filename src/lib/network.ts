@@ -25,10 +25,7 @@ export function getCoreApiBaseUrl(): string {
     (import.meta.env.VITE_NODE_API_URL_TESTNET as string | undefined);
 
   if (network === "mainnet") {
-    if (!mainnetUrl) {
-      return "";
-    }
-    return normalizeApiBaseUrl(mainnetUrl);
+    return normalizeApiBaseUrl(mainnetUrl || defaultUrl);
   }
 
   return normalizeApiBaseUrl(testnetUrl || defaultUrl);

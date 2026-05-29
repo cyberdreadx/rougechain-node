@@ -9,7 +9,6 @@ KILL_TIMEOUT=10000
 
 NODE_ARGS="--mine --host 0.0.0.0 --api-port 5100"
 NODE_ARGS+=" --peers https://xrge-node.gltch.app/api"
-# NODE_ARGS+=" --node-name srv421059"
 
 echo "==> Pulling latest changes..."
 cd "$REPO_DIR"
@@ -31,8 +30,6 @@ fi
 echo "==> Restarting $PM2_NAME..."
 pm2 describe "$PM2_NAME" > /dev/null 2>&1 && pm2 delete "$PM2_NAME"
 sleep 2
-
-# Kill any zombie processes holding DB locks
 pkill -9 -f quantum-vault-daemon 2>/dev/null || true
 sleep 1
 

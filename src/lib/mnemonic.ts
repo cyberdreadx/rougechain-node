@@ -9,7 +9,7 @@
  */
 
 import { generateMnemonic as _genMnemonic, mnemonicToSeedSync, validateMnemonic as _validateMnemonic } from "@scure/bip39";
-import { wordlist } from "@scure/bip39/wordlists/english.js";
+import { wordlist } from "@scure/bip39/wordlists/english";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
