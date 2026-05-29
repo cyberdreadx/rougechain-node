@@ -60,7 +60,7 @@ const { balance } = await rc.getBalance(wallet.publicKey);
 | **DEX** | `rc.dex` | AMM pools, swaps with slippage protection, liquidity |
 | **NFTs** | `rc.nft` | RC-721 collections, mint, batch mint, royalties, freeze |
 | **Shielded** | `rc.shielded` | Private transfers with zk-STARK proofs, shield/unshield XRGE |
-| **Bridge** | `rc.bridge` | ETH ↔ qETH, USDC ↔ qUSDC, XRGE bridge (Base Mainnet/Sepolia) |
+| **Bridge** | `rc.bridge` | ETH ↔ qETH, USDC ↔ qUSDC, XRGE bridge (Base mainnet; auto-claim deposits, withdrawal status + auto-refund) |
 | **Rollup** | `rc` | zk-STARK batch proofs, rollup status, submit transfers |
 | **Social** | `rc.social` | Posts, timeline feed, reposts, likes, follows, comments |
 | **Mail** | `rc.mail` | On-chain encrypted email (`@rouge.quant`) |
@@ -273,37 +273,35 @@ const myNfts = await rc.nft.getByOwner(wallet.publicKey);
 
 ## Bridge (`rc.bridge`)
 
-Bridge assets between **Base Sepolia** and **RougeChain L1**. Supports ETH ↔ qETH, USDC ↔ qUSDC, and XRGE.
+Bridge assets between **Base mainnet** and **RougeChain L1**. Supports ETH ↔ qETH, USDC ↔ qUSDC, and XRGE.
 
 ```typescript
 // Check bridge status & supported tokens
 const config = await rc.bridge.getConfig();
-// { enabled: true, supportedTokens: ["ETH", "USDC"], chainId: 84532 }
+// { enabled: true, supportedTokens: ["ETH", "USDC"], chainId: 8453 }
 
-// Claim qETH after depositing ETH to custody address
+// Deposits are auto-claimed by the relayer's deposit watcher once your on-chain
+// deposit confirms — no claim call needed. claim() remains as a manual fallback:
 await rc.bridge.claim({
   evmTxHash: "0x...",
   evmAddress: "0x...",
   evmSignature: "0x...",
   recipientPubkey: wallet.publicKey,
-  token: "ETH",
+  token: "ETH", // or "USDC"
 });
 
-// Claim qUSDC after depositing USDC
-await rc.bridge.claim({
-  evmTxHash: "0x...",
-  evmAddress: "0x...",
-  evmSignature: "0x...",
-  recipientPubkey: wallet.publicKey,
-  token: "USDC",
-});
-
-// Withdraw qETH → receive ETH on Base Sepolia
+// Withdraw qETH → receive ETH on Base
 await rc.bridge.withdraw(wallet, {
   amount: 500_000,
   evmAddress: "0xYourAddress",
   tokenSymbol: "qETH",
 });
+
+// Track release status of your pending withdrawals
+const pending = await rc.bridge.getWithdrawals();
+// [{ txId, evmAddress, amountUnits, tokenSymbol: "qETH",
+//    status: "pending" | "failed" | "refunded", attempts, lastError, ownerPubkey }]
+// A withdrawal the relayer cannot release is auto-refunded (status: "refunded").
 
 // XRGE bridge
 const xrgeConfig = await rc.bridge.getXrgeConfig();
@@ -311,6 +309,7 @@ await rc.bridge.withdrawXrge(wallet, {
   amount: 1000,
   evmAddress: "0xYourAddress",
 });
+const xrgePending = await rc.bridge.getXrgeWithdrawals();
 ```
 
 ## Rollup (zk-STARK Batch Proofs)

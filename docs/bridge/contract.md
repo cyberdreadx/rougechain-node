@@ -1,6 +1,6 @@
 # RougeBridge Contract
 
-The `RougeBridge.sol` contract is a multi-asset bridge contract deployed on Base Sepolia that handles ETH and ERC-20 deposits/releases with enhanced security features.
+The `RougeBridge.sol` contract is a multi-asset bridge contract deployed on Base mainnet (`0x0c09C764AdC024497729cd452ECfeE8869d35d83`) that handles ETH and ERC-20 deposits/releases with enhanced security features.
 
 ## Features
 
@@ -64,4 +64,4 @@ function setLargeWithdrawalThreshold(uint256) external;  // Owner
 
 ## Deployment
 
-The contract is deployed on **Base Sepolia** (chain ID 84532). For mainnet, deploy with a Gnosis Safe multisig as the owner.
+The contract is live on **Base mainnet** (chain ID 8453) at `0x0c09C764AdC024497729cd452ECfeE8869d35d83`; the XRGE BridgeVault is at `0xb3f52f2C1bD5692494655cF59d8EE296D23bFAb5`. Base Sepolia (chain ID 84532) is used for testing. For production, the contract owner should be a Gnosis Safe multisig.

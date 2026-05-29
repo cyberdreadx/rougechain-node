@@ -291,13 +291,23 @@ export interface BridgeConfig {
   supportedTokens?: string[];
 }
 
+/** Relayer release lifecycle of a bridge withdrawal. */
+export type WithdrawalStatus = "pending" | "fulfilled" | "failed" | "refunded";
+
 export interface BridgeWithdrawal {
-  tx_id: string;
-  from_pub_key: string;
-  evm_address: string;
-  amount_units: number;
-  status: string;
-  created_at: number;
+  txId: string;
+  evmAddress: string;
+  /** ETH/qETH are micro-units (1e-6); XRGE is whole tokens. */
+  amountUnits: number;
+  createdAt: number;
+  /** RougeChain L1 public key of the withdrawer (refund recipient). */
+  ownerPubkey: string;
+  /** "XRGE", "qETH", "qUSDC", … — authoritative token discriminator. */
+  tokenSymbol: string;
+  status: WithdrawalStatus;
+  /** Failed relayer release attempts so far. */
+  attempts: number;
+  lastError?: string;
 }
 
 export interface XrgeBridgeConfig {

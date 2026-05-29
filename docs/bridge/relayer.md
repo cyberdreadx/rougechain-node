@@ -1,29 +1,40 @@
 # Bridge Relayer
 
-The bridge relayer is an off-chain process that monitors pending withdrawals on RougeChain and executes the corresponding releases on Base Sepolia.
+The bridge relayer is an off-chain process that connects RougeChain L1 with Base. It
+fulfills withdrawals (L1 → Base), watches for deposits to auto-claim (Base → L1), and
+refunds withdrawals that cannot be released.
+
+> For the full configuration table and operational notes, see
+> [`scripts/README.md`](https://github.com/cyberdreadx/quantum-vault/blob/main/scripts/README.md).
 
 ## How It Works
 
-1. Polls the RougeChain node for pending ETH and XRGE withdrawals
-2. For each pending withdrawal, sends the corresponding asset on Base Sepolia
-3. Marks the withdrawal as fulfilled on the node
+1. Polls the node for pending ETH and XRGE withdrawals and releases the corresponding asset on Base
+2. Marks each release fulfilled; on repeated failure, reports it and **auto-refunds** the owner on L1
+3. **Deposit watcher:** scans the bridge contracts for deposit events and auto-claims them on L1
+4. Alerts (console + optional webhook) on repeated failures
 
 ## Running the Relayer
 
+The relayer and the daemon share `bridge-relayer.env` (copy from `bridge-relayer.env.example`):
+
 ```bash
-# Required environment variables
-export CORE_API_URL="http://localhost:5101"
-export BRIDGE_CUSTODY_PRIVATE_KEY="0x..."   # EVM private key for the bridge wallet
-export BRIDGE_RELAYER_SECRET="your-secret"  # Shared secret for API authentication
-export BASE_SEPOLIA_RPC="https://sepolia.base.org"
+# Key variables (see bridge-relayer.env.example for the full list)
+CORE_API_URL="http://localhost:5100"
+BRIDGE_CUSTODY_PRIVATE_KEY="0x..."   # EVM private key for the bridge wallet
+BRIDGE_RELAYER_SECRET="your-secret"  # Shared secret for API authentication
+BASE_CHAIN="mainnet"
+BASE_RPC_URL="https://mainnet.base.org"   # NOTE: var name is BASE_RPC_URL
+ROUGE_BRIDGE_ADDRESS="0x..."         # RougeBridge contract address
+XRGE_BRIDGE_VAULT="0x..."            # BridgeVault contract address
+AUTO_REFUND="true"                   # Auto-refund failed withdrawals
+DEPOSIT_WATCHER="true"               # Auto-claim deposits
+# ALERT_WEBHOOK_URL=                 # Optional Slack/Discord webhook
 
-# Optional
-export XRGE_BRIDGE_VAULT="0x..."            # BridgeVault contract address
-export ROUGE_BRIDGE_ADDRESS="0x..."         # RougeBridge contract address
-export USDC_ADDRESS="0x036CbD53842c5426634e7929541eC2318f3dCF7e"
-export POLL_INTERVAL_MS="5000"
+# Production: systemd (replaces the old pm2 process — never run both)
+sudo systemctl restart bridge-relayer.service
 
-# Run
+# Local
 npx tsx scripts/bridge-relayer.ts
 ```
 

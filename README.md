@@ -64,9 +64,10 @@ RougeChain is a production-ready L1 blockchain built from genesis with NIST-appr
 - **Atomic Name Registry**: compare-and-swap name registration via sled
 
 ### Bridge
-- **qETH Bridge**: Bridge ETH from Base Sepolia to qETH on RougeChain
+- **qETH / qUSDC Bridge**: Bridge ETH and USDC from Base mainnet to RougeChain (and back)
 - **XRGE Bridge**: Two-way XRGE bridging to Base
-- **Relayer**: Automated bridge withdrawal fulfillment
+- **Deposit watcher**: deposits auto-claim on L1 — no manual claim step
+- **Relayer**: automated withdrawal release, with auto-refund on repeated failure
 
 ### Governance
 - **Proposals**: On-chain governance proposals per token

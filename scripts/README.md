@@ -1,46 +1,98 @@
 # Bridge Relayer
 
-The bridge relayer automates **bridge-out** fulfillment: it polls pending qETH→ETH withdrawals and sends ETH from the custody wallet to users on Base Sepolia.
+The bridge relayer connects RougeChain L1 with Base. It runs three jobs in one
+polling loop:
+
+1. **Withdrawal fulfillment (L1 → Base):** releases ETH and XRGE to users from the
+   custody wallet when they burn qETH/XRGE on L1.
+2. **Deposit watcher (Base → L1):** watches the bridge contracts for deposit events
+   and auto-claims them on L1 — users no longer need a manual browser claim.
+3. **Failure handling:** reports failed releases to the daemon, alerts on repeated
+   failure, and auto-refunds the burned tokens to the owner when a release can't be
+   completed.
 
 ## Requirements
 
-- **Custody wallet**: The same EVM address that receives bridge deposits (from Bridge In) must hold the private key. This wallet receives ETH and pays out withdrawals.
-- Base Sepolia RPC access (public or your own)
+- **Custody wallet**: the EVM address that holds bridge liquidity. Its private key
+  signs releases and it must hold enough ETH/XRGE (plus gas) to pay out withdrawals.
+- Base RPC access (mainnet by default).
+- Network access to the RougeChain node API.
 
-## Setup
+## Configuration
 
-1. Export the custody wallet's **private key** (the address configured as `QV_BRIDGE_CUSTODY_ADDRESS`).
-
-2. Set environment variables:
+The relayer and the daemon share `bridge-relayer.env` (loaded via systemd
+`EnvironmentFile`). Copy the template and fill it in:
 
 ```bash
-export CORE_API_URL="http://localhost:5101"       # RougeChain API
-export BRIDGE_CUSTODY_PRIVATE_KEY="0x..."        # Private key (required)
-export BASE_SEPOLIA_RPC="https://sepolia.base.org"  # Optional, default above
-export POLL_INTERVAL_MS=5000                     # Optional, default 5s
+cp bridge-relayer.env.example bridge-relayer.env
 ```
 
-3. Run the relayer:
+| Variable | Purpose |
+|----------|---------|
+| `CORE_API_URL` | RougeChain node API (e.g. `http://localhost:5100`) |
+| `BRIDGE_CUSTODY_PRIVATE_KEY` | Custody EOA private key (**required**) |
+| `BASE_CHAIN` | `mainnet` or `sepolia` (default `sepolia`) |
+| `BASE_RPC_URL` | Base RPC URL (this is the name the relayer reads — not `BASE_SEPOLIA_RPC`) |
+| `ROUGE_BRIDGE_ADDRESS` | RougeBridge contract (ETH/ERC20) |
+| `XRGE_BRIDGE_VAULT` | BridgeVault contract (XRGE) |
+| `BRIDGE_RELAYER_SECRET` | Shared secret authenticating relayer → daemon calls |
+| `POLL_INTERVAL_MS` | Poll interval (default 5000) |
+| `CONFIRMATIONS` | Confirmations before acting on a tx (default 2) |
+| `AUTO_REFUND` | Auto-refund failed withdrawals (default `true`) |
+| `ALERT_WEBHOOK_URL` | Optional Slack/Discord webhook for failure alerts |
+| `DEPOSIT_WATCHER` | Enable deposit auto-claim (default `true`) |
+| `DEPOSIT_WATCH_FROM_BLOCK` | Optional start block (default: anchor at chain head, no backfill) |
+| `DEPOSIT_MAX_BLOCK_SPAN` | Max blocks scanned per poll (default 2000) |
+
+## Running
+
+### systemd (production)
+
+The relayer runs as `bridge-relayer.service`:
+
+```bash
+sudo systemctl restart bridge-relayer.service
+journalctl -u bridge-relayer.service -f
+```
+
+> The unit runs `npx tsx scripts/bridge-relayer.ts` with `EnvironmentFile=bridge-relayer.env`.
+> It replaces the old pm2-managed process — do not run both at once, or two relayers
+> will share one nonce and double-release.
+
+### Local
 
 ```bash
 npm run relayer
 ```
 
-Or with env inline:
-
-```bash
-BRIDGE_CUSTODY_PRIVATE_KEY=0x... npm run relayer
-```
-
 ## Flow
 
-1. Polls `GET /api/bridge/withdrawals` every N seconds
-2. For each pending withdrawal: sends `amount_units × 10^12` wei to `evm_address`
-3. On success: calls `DELETE /api/bridge/withdrawals/:txId` to mark fulfilled
-4. Skips withdrawals if custody balance is insufficient (logs warning)
+**Withdrawals** — polls `GET /api/bridge/withdrawals` (ETH/USDC) and
+`GET /api/bridge/xrge/withdrawals` (XRGE):
+- Releases `amountUnits × 10^12` wei (ETH) or `amount × 10^18` (XRGE) to `evmAddress`.
+- On success: `DELETE /api/bridge/withdrawals/:txId` to mark fulfilled.
+- On failure: `POST /api/bridge/withdrawals/:txId/failure`. After repeated failures
+  the daemon flags `shouldRefund`, and the relayer calls
+  `POST /api/bridge/withdrawals/:txId/refund` to re-mint the tokens to the owner.
+
+**Deposits** — scans `BridgeDepositETH` / `BridgeDepositERC20` (RougeBridge) and
+`BridgeDeposit` (vault) over newly confirmed blocks, then calls
+`POST /api/bridge/deposit/auto-claim`. The daemon re-verifies the tx on-chain and
+dedupes against manual claims. Failed claims are retried each poll; the scan cursor
+and dedup set persist in `.bridge-deposit-watcher.json`.
+
+## Health log
+
+Every 60 polls:
+
+```
+[health] uptime=… polls=… eth_ok=… eth_fail=… xrge_ok=… xrge_fail=… \
+         refunded=… alerts=… deposits_ok=… deposits_pending=… processed=… inflight=…
+```
 
 ## Security
 
-- **Never expose `BRIDGE_CUSTODY_PRIVATE_KEY`** — use env vars, not config files
-- Run the relayer on a trusted machine with network access to both the node API and Base Sepolia
-- The custody wallet should only hold amounts needed for withdrawals (or keep excess in cold storage)
+- **Never commit `bridge-relayer.env`** — it holds the custody private key and relayer
+  secret. It is gitignored; commit only `bridge-relayer.env.example`.
+- Run on a trusted machine with access to both the node API and Base RPC.
+- Keep only the liquidity you need hot; hold excess in cold storage.

@@ -44,6 +44,7 @@ import type {
   Validator,
   BridgeConfig,
   BridgeWithdrawal,
+  WithdrawalStatus,
   XrgeBridgeConfig,
   TransferParams,
   CreateTokenParams,
@@ -759,6 +760,26 @@ class DexClient {
 
 // ===== Bridge Sub-client =====
 
+/**
+ * Normalize a withdrawal record into BridgeWithdrawal. The ETH endpoint returns
+ * camelCase and the XRGE endpoint returns snake_case; this accepts either.
+ */
+function normalizeBridgeWithdrawal(raw: Record<string, unknown>): BridgeWithdrawal {
+  const pick = <T>(camel: string, snake: string): T | undefined =>
+    (raw[camel] ?? raw[snake]) as T | undefined;
+  return {
+    txId: (pick<string>("txId", "tx_id") ?? "") as string,
+    evmAddress: (pick<string>("evmAddress", "evm_address") ?? "") as string,
+    amountUnits: (pick<number>("amountUnits", "amount_units") ?? (raw.amount as number) ?? 0),
+    createdAt: (pick<number>("createdAt", "created_at") ?? 0),
+    ownerPubkey: (pick<string>("ownerPubkey", "owner_pubkey") ?? "") as string,
+    tokenSymbol: (pick<string>("tokenSymbol", "token_symbol") ?? "qETH") as string,
+    status: ((raw.status as string) ?? "pending") as WithdrawalStatus,
+    attempts: (raw.attempts as number) ?? 0,
+    lastError: pick<string>("lastError", "last_error"),
+  };
+}
+
 class BridgeClient {
   constructor(private readonly rc: RougeChain) {}
 
@@ -776,11 +797,12 @@ class BridgeClient {
     }
   }
 
+  /** List pending ETH/qETH/qUSDC withdrawals with relayer release status. */
   async getWithdrawals(): Promise<BridgeWithdrawal[]> {
-    const data = await this.rc.get<{ withdrawals: BridgeWithdrawal[] }>(
+    const data = await this.rc.get<{ withdrawals: Record<string, unknown>[] }>(
       "/bridge/withdrawals"
     );
-    return data.withdrawals;
+    return (data.withdrawals ?? []).map(normalizeBridgeWithdrawal);
   }
 
   /** Withdraw qETH/qUSDC — signed client-side, private key never sent to server */
@@ -923,12 +945,13 @@ class BridgeClient {
     }
   }
 
+  /** List pending XRGE withdrawals with relayer release status. */
   async getXrgeWithdrawals(): Promise<BridgeWithdrawal[]> {
     try {
-      const data = await this.rc.get<{ withdrawals: BridgeWithdrawal[] }>(
+      const data = await this.rc.get<{ withdrawals: Record<string, unknown>[] }>(
         "/bridge/xrge/withdrawals"
       );
-      return data.withdrawals;
+      return (data.withdrawals ?? []).map(normalizeBridgeWithdrawal);
     } catch {
       return [];
     }

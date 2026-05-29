@@ -12,9 +12,10 @@ Unlike qETH/qUSDC (which are wrapped assets), XRGE is the native token of RougeC
 
 1. Approve the **BridgeVault** contract to spend your XRGE
 2. Call `deposit(amount, rougechainPubkey)` on the BridgeVault
-3. The vault locks your XRGE and emits a `BridgeDeposit` event
-4. Call the `/api/bridge/xrge/claim` endpoint with the transaction hash
-5. The node verifies the receipt and credits XRGE on L1
+3. The vault locks your XRGE and emits a `BridgeDeposit` event carrying your L1 key
+4. The relayer's **deposit watcher** detects the event and auto-claims it — XRGE is
+   credited to your L1 wallet after the node verifies the on-chain transfer. No manual
+   claim is needed. (`/api/bridge/xrge/claim` remains as a manual fallback.)
 
 ## Withdraw (L1 XRGE → Base XRGE)
 
@@ -22,6 +23,8 @@ Unlike qETH/qUSDC (which are wrapped assets), XRGE is the native token of RougeC
 2. Enter the amount and your Base EVM address
 3. Submit the signed withdrawal
 4. The relayer calls `release()` on the BridgeVault to unlock your XRGE on Base
+5. If the release can't be completed after repeated attempts, the withdrawal is
+   **auto-refunded** — your XRGE is re-minted on L1. Status is shown on the Bridge page.
 
 ## BridgeVault Contract
 
