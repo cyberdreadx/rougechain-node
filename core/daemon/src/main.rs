@@ -3230,6 +3230,55 @@ async fn register_peer(
     State(state): State<AppState>,
     Json(body): Json<RegisterPeerRequest>,
 ) -> Result<Json<RegisterPeerResponse>, StatusCode> {
+    // Chain-ID guard: only accept peers on our own network. This stops a
+    // foreign-chain node (e.g. devnet) from registering with — and later
+    // overwriting — a node on a different chain (e.g. mainnet).
+    let local_chain_id = state.node.chain_id();
+    let health_url = format!("{}/health", body.peer_url.trim_end_matches('/'));
+    match reqwest::Client::new()
+        .get(&health_url)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Ok(data) => {
+                let peer_chain_id = data
+                    .get("chain_id")
+                    .or_else(|| data.get("chainId"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if peer_chain_id != local_chain_id {
+                    eprintln!(
+                        "[peer] Rejected registration from {} — chain '{}' != ours '{}'",
+                        body.peer_url, peer_chain_id, local_chain_id
+                    );
+                    return Ok(Json(RegisterPeerResponse {
+                        success: false,
+                        message: format!(
+                            "Chain mismatch: peer is '{}', this node is '{}'",
+                            peer_chain_id, local_chain_id
+                        ),
+                    }));
+                }
+            }
+            Err(e) => {
+                eprintln!("[peer] Rejected registration from {} — bad /health response: {}", body.peer_url, e);
+                return Ok(Json(RegisterPeerResponse {
+                    success: false,
+                    message: "Could not verify peer chain_id".to_string(),
+                }));
+            }
+        },
+        Err(e) => {
+            eprintln!("[peer] Rejected registration from {} — unreachable /health: {}", body.peer_url, e);
+            return Ok(Json(RegisterPeerResponse {
+                success: false,
+                message: "Peer /health unreachable; cannot verify chain_id".to_string(),
+            }));
+        }
+    }
+
     let added = state.peer_manager.add_peer_with_name(body.peer_url.clone(), body.node_name.clone()).await;
     if added {
         let label = body.node_name.as_deref().unwrap_or("unnamed");

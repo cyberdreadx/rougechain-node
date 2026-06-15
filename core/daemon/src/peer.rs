@@ -238,7 +238,23 @@ async fn sync_from_peer(peer_url: &str, node: &L1Node, allow_genesis_reset: bool
     
     // Sort by height
     peer_blocks.sort_by_key(|b| b.header.height);
-    
+
+    // Chain-ID guard: refuse to sync from a peer on a different network.
+    // Without this, longest-chain sync (and especially the genesis-reset branch
+    // below) lets any peer with a taller chain overwrite this node's history —
+    // e.g. a devnet peer hijacking a mainnet node. Reject if ANY fetched block
+    // carries a chain_id other than ours.
+    let local_chain_id = node.chain_id();
+    if let Some(foreign) = peer_blocks
+        .iter()
+        .find(|b| b.header.chain_id != local_chain_id)
+    {
+        return Err(format!(
+            "Peer {} is on chain '{}' but we are '{}' — refusing sync",
+            peer_url, foreign.header.chain_id, local_chain_id
+        ));
+    }
+
     let local_height = node.get_tip_height()?;
     let peer_height = peer_blocks.last().map(|b| b.header.height).unwrap_or(0);
     
