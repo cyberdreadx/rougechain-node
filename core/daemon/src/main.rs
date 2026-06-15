@@ -354,7 +354,7 @@ async fn main() -> Result<(), String> {
     // Apply genesis allocations on first boot (chain height == 0)
     if let Some(ref gc) = genesis_config {
         let current_height = node.tip_height().unwrap_or(0);
-        if current_height == 0 && !gc.initial_allocations.is_empty() {
+        if current_height == 0 && (!gc.initial_allocations.is_empty() || !gc.initial_validators.is_empty()) {
             eprintln!("[main] Applying genesis allocations (chain is fresh)...");
             if let Err(e) = node.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators) {
                 eprintln!("[main] WARNING: Failed to apply genesis allocations: {}", e);
