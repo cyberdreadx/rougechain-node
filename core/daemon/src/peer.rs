@@ -265,7 +265,21 @@ async fn sync_from_peer(peer_url: &str, node: &L1Node, allow_genesis_reset: bool
                 let our_genesis = node.get_block(0)?;
                 let should_reset = match our_genesis {
                     None => true, // Fresh node with no genesis - accept peer chain
-                    Some(our_gen) => our_gen.hash != peer_genesis.hash,
+                    Some(our_gen) => {
+                        if our_gen.hash != peer_genesis.hash {
+                            // Same chain_id but a DIFFERENT genesis = an incompatible / orphaned
+                            // chain (e.g. a stale node still on a pre-reseed fork). Never reset an
+                            // established node onto it — that's how a longer stale chain could wipe
+                            // our real (e.g. freshly-staked) chain. Refuse outright.
+                            return Err(format!(
+                                "Peer {} genesis {} != ours {} — incompatible chain, refusing reset",
+                                peer_url,
+                                &peer_genesis.hash[..16.min(peer_genesis.hash.len())],
+                                &our_gen.hash[..16.min(our_gen.hash.len())]
+                            ));
+                        }
+                        false
+                    }
                 };
                 if should_reset {
                     eprintln!("[peer] Syncing chain from peer genesis");
@@ -310,6 +324,17 @@ async fn sync_from_peer(peer_url: &str, node: &L1Node, allow_genesis_reset: bool
                         }
                         full_blocks.sort_by_key(|b| b.header.height);
                         if !full_blocks.is_empty() && full_blocks[0].header.height == 0 {
+                            // Same genesis-hash guard on the fork-recovery path.
+                            if let Some(our_gen) = node.get_block(0)? {
+                                if our_gen.hash != full_blocks[0].hash {
+                                    return Err(format!(
+                                        "Peer {} genesis {} != ours {} — refusing fork-recovery reset",
+                                        peer_url,
+                                        &full_blocks[0].hash[..16.min(full_blocks[0].hash.len())],
+                                        &our_gen.hash[..16.min(our_gen.hash.len())]
+                                    ));
+                                }
+                            }
                             eprintln!("[peer] Resetting chain with {} blocks from peer", full_blocks.len());
                             node.reset_chain(&full_blocks)?;
                             return Ok(full_blocks.len() as u64);
