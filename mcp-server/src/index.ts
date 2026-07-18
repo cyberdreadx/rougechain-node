@@ -6,7 +6,7 @@
  * The first post-quantum, AI-agent-native programmable blockchain.
  *
  * Usage:
- *   ROUGECHAIN_URL=https://api.rougechain.io npx rougechain-mcp
+ *   ROUGECHAIN_URL=https://api.rougechain.io npx @rougechain/mcp-server
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
