@@ -138,6 +138,9 @@ struct Args {
     rate_limit_peer: u32,
     #[arg(long, env = "QV_FAUCET_WHITELIST")]
     faucet_whitelist: Option<String>,
+    /// Enable the public faucet endpoints (dev/testnet only). OFF by default — mainnet must never set this.
+    #[arg(long, env = "QV_FAUCET_ENABLED", default_value_t = false)]
+    faucet_enabled: bool,
     /// Comma-separated list of peer URLs to connect to (e.g., "http://node1.example.com:5100,http://node2.example.com:5100")
     #[arg(long, env = "QV_PEERS")]
     peers: Option<String>,
@@ -174,6 +177,7 @@ struct AppState {
     validator_limit: u32,  // Tier 1: validators (0 = unlimited)
     peer_limit: u32,       // Tier 2: registered peers
     faucet_whitelist: Vec<String>,
+    faucet_enabled: bool,
     peer_manager: Arc<peer::PeerManager>,
     ws_broadcaster: Arc<WsBroadcaster>,
     bridge_custody_address: Option<String>,
@@ -422,6 +426,7 @@ async fn main() -> Result<(), String> {
         validator_limit: args.rate_limit_validator,
         peer_limit: args.rate_limit_peer,
         faucet_whitelist: parse_whitelist(args.faucet_whitelist),
+        faucet_enabled: args.faucet_enabled,
         peer_manager: peer_manager.clone(),
         ws_broadcaster: ws_broadcaster.clone(),
         bridge_custody_address: args.bridge_custody_address.clone(),
@@ -3403,6 +3408,14 @@ async fn faucet(
     State(state): State<AppState>,
     Json(body): Json<FaucetRequest>,
 ) -> Result<Json<TxResponse>, StatusCode> {
+    if !state.faucet_enabled {
+        return Ok(Json(TxResponse {
+            success: false,
+            tx_id: None,
+            tx: None,
+            error: Some("Faucet is disabled on this network.".to_string()),
+        }));
+    }
     let node = &state.node;
     if !state.faucet_whitelist.is_empty() {
         let recipient = normalize_recipient(&body.recipient_public_key);
@@ -3504,6 +3517,14 @@ async fn bridge_faucet(
     State(state): State<AppState>,
     Json(body): Json<BridgeFaucetRequest>,
 ) -> Result<Json<TxResponse>, StatusCode> {
+    if !state.faucet_enabled {
+        return Ok(Json(TxResponse {
+            success: false,
+            tx_id: None,
+            tx: None,
+            error: Some("Faucet is disabled on this network.".to_string()),
+        }));
+    }
     let token = body.token.trim().to_string();
     if !BRIDGE_FAUCET_ALLOWED.iter().any(|t| t.eq_ignore_ascii_case(&token)) {
         return Ok(Json(TxResponse {
@@ -5900,8 +5921,14 @@ async fn v2_faucet(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !state.faucet_enabled {
+        return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({
+            "success": false,
+            "error": "Faucet is disabled on this network."
+        }))));
+    }
     let _ = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
-    
+
     let node = &state.node;
     let faucet_amount = 10000_u64;
 
