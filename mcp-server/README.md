@@ -6,11 +6,7 @@ The **first MCP-native blockchain integration** — lets AI agents (Claude, Chat
 
 ## Quick Start
 
-```bash
-cd mcp-server
-npm install
-npm run build
-```
+No install needed — the server is published on npm as [`@rougechain/mcp-server`](https://www.npmjs.com/package/@rougechain/mcp-server) and runs via `npx`.
 
 ### Claude Desktop Config
 
@@ -20,8 +16,8 @@ Add to `~/.config/claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "rougechain": {
-      "command": "node",
-      "args": ["/path/to/quantum-vault/mcp-server/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@rougechain/mcp-server"],
       "env": {
         "ROUGECHAIN_URL": "https://api.rougechain.io"
       }
@@ -30,6 +26,30 @@ Add to `~/.config/claude/claude_desktop_config.json`:
 }
 ```
 
+<details>
+<summary>Run from source instead</summary>
+
+```bash
+cd mcp-server
+npm install
+npm run build
+```
+
+Then point the config at the built file:
+
+```json
+{
+  "mcpServers": {
+    "rougechain": {
+      "command": "node",
+      "args": ["/path/to/quantum-vault/mcp-server/dist/index.js"],
+      "env": { "ROUGECHAIN_URL": "https://api.rougechain.io" }
+    }
+  }
+}
+```
+</details>
+
 ### Environment Variables
 
 | Variable | Default | Description |
@@ -37,7 +57,7 @@ Add to `~/.config/claude/claude_desktop_config.json`:
 | `ROUGECHAIN_URL` | `https://api.rougechain.io` | RougeChain API host (the `api.` subdomain — **not** the `rougechain.io` frontend, which serves the web app) |
 | `ROUGECHAIN_API_KEY` | (none) | Optional API key |
 
-## Available Tools (29)
+## Available Tools (30)
 
 ### Chain Info
 - `get_chain_stats` — Network stats (height, peers, validators, supply)
