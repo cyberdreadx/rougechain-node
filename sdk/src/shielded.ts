@@ -6,7 +6,7 @@
  *   nullifier  = SHA-256("ROUGECHAIN_NULLIFIER_V1"  || randomness || commitment)
  */
 
-import { sha256 } from "@noble/hashes/sha2";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "./utils.js";
 
 const COMMITMENT_DOMAIN = new TextEncoder().encode("ROUGECHAIN_COMMITMENT_V1");
