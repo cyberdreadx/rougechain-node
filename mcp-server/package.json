@@ -7,10 +7,16 @@
   "bin": {
     "rougechain-mcp": "dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsc && node dist/index.js"
+    "dev": "tsc && node dist/index.js",
+    "verify-pack": "node scripts/verify-pack.mjs",
+    "prepublishOnly": "node scripts/verify-pack.mjs"
   },
   "keywords": ["mcp", "rougechain", "blockchain", "post-quantum", "ai-agent"],
   "dependencies": {
