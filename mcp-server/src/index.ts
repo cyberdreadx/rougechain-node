@@ -6,7 +6,7 @@
  * The first post-quantum, AI-agent-native programmable blockchain.
  *
  * Usage:
- *   ROUGECHAIN_URL=https://rougechain.io npx rougechain-mcp
+ *   ROUGECHAIN_URL=https://api.rougechain.io npx rougechain-mcp
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -15,7 +15,9 @@ import { z } from "zod";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
-const BASE_URL = process.env.ROUGECHAIN_URL || "https://rougechain.io";
+// NOTE: this must be the API host (api.rougechain.io), NOT the frontend host
+// (rougechain.io), which serves the SPA index.html for every /api/* path.
+const BASE_URL = process.env.ROUGECHAIN_URL || "https://api.rougechain.io";
 const API = `${BASE_URL}/api`;
 const API_KEY = process.env.ROUGECHAIN_API_KEY || "";
 
@@ -68,7 +70,7 @@ server.tool(
   "Get a block by height from the RougeChain blockchain",
   { height: z.number().describe("Block height to retrieve") },
   async ({ height }) => {
-    const data = await apiGet(`/blocks/${height}`);
+    const data = await apiGet(`/block/${height}`);
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   }
 );
@@ -94,7 +96,7 @@ server.tool(
   },
   async ({ address, token }) => {
     const path = token
-      ? `/balance/${address}?token=${token}`
+      ? `/balance/${address}/${token}`
       : `/balance/${address}`;
     const data = await apiGet(path);
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
@@ -128,7 +130,7 @@ server.tool(
   "Get detailed metadata for a specific token by symbol",
   { symbol: z.string().describe("Token symbol (e.g. ROUGE)") },
   async ({ symbol }) => {
-    const data = await apiGet(`/tokens/${symbol}`);
+    const data = await apiGet(`/token/${symbol}/metadata`);
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   }
 );
@@ -138,7 +140,7 @@ server.tool(
   "Get the top holders of a specific token",
   { symbol: z.string().describe("Token symbol") },
   async ({ symbol }) => {
-    const data = await apiGet(`/tokens/${symbol}/holders`);
+    const data = await apiGet(`/token/${symbol}/holders`);
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   }
 );
@@ -164,7 +166,11 @@ server.tool(
     amount: z.number().describe("Amount of source token to swap"),
   },
   async ({ from, to, amount }) => {
-    const data = await apiGet(`/swap/quote?from=${from}&to=${to}&amount=${amount}`);
+    const data = await apiPost("/swap/quote", {
+      token_in: from,
+      token_out: to,
+      amount_in: amount,
+    });
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   }
 );

@@ -23,7 +23,7 @@ Add to `~/.config/claude/claude_desktop_config.json`:
       "command": "node",
       "args": ["/path/to/quantum-vault/mcp-server/dist/index.js"],
       "env": {
-        "ROUGECHAIN_URL": "https://rougechain.io"
+        "ROUGECHAIN_URL": "https://api.rougechain.io"
       }
     }
   }
@@ -34,7 +34,7 @@ Add to `~/.config/claude/claude_desktop_config.json`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ROUGECHAIN_URL` | `https://rougechain.io` | RougeChain node URL |
+| `ROUGECHAIN_URL` | `https://api.rougechain.io` | RougeChain API host (the `api.` subdomain — **not** the `rougechain.io` frontend, which serves the web app) |
 | `ROUGECHAIN_API_KEY` | (none) | Optional API key |
 
 ## Available Tools (29)
