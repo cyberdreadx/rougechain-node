@@ -157,14 +157,33 @@ After first run, data is stored at:
 
 ## Updating
 
+Bring your node up to the latest `main` with one command — it fetches, fast-forwards,
+rebuilds the release binary, restarts the service, and health-checks:
+
 ```bash
 cd rougechain-node
-git pull
+./scripts/update-node.sh
+```
+
+It refuses to run on a dirty working tree and only fast-forwards, so it never
+clobbers local changes. Override the defaults with env vars if your setup differs
+(systemd unit name, port, etc.):
+
+```bash
+ROUGECHAIN_SERVICE=my-node ROUGECHAIN_API_PORT=5100 ./scripts/update-node.sh
+```
+
+<details>
+<summary>Manual equivalent</summary>
+
+```bash
+cd rougechain-node
+git pull --ff-only
 cd core
 cargo build --release -p quantum-vault-daemon
-
-# Restart the node
+sudo systemctl restart rougechain   # your service name
 ```
+</details>
 
 ## Troubleshooting
 
