@@ -1,0 +1,91 @@
+# Dependabot version-update config.
+#
+# NOTE: This governs *version-update* PRs. Dependabot *security* alerts/updates are
+# toggled separately in repo Settings → Code security. Keep both on.
+#
+# Goal: surface real, actionable updates as a small number of grouped PRs, and stop
+# the dev-only Hardhat tooling in contracts/ from drowning out signal.
+
+version: 2
+updates:
+  # ---- Rust daemon (the chain) — highest signal ----
+  - package-ecosystem: cargo
+    directory: /core
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+
+  # ---- Frontend (root) ----
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-prod:
+        dependency-type: production
+      npm-dev:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  # ---- SDK (published package) ----
+  - package-ecosystem: npm
+    directory: /sdk
+    schedule:
+      interval: weekly
+    groups:
+      sdk-all:
+        patterns: ["*"]
+
+  # ---- MCP server (published package) ----
+  - package-ecosystem: npm
+    directory: /mcp-server
+    schedule:
+      interval: weekly
+    groups:
+      mcp-all:
+        patterns: ["*"]
+
+  # ---- Browser extension ----
+  - package-ecosystem: npm
+    directory: /browser-extension
+    schedule:
+      interval: weekly
+    groups:
+      ext-all:
+        patterns: ["*"]
+
+  # ---- Contracts: dev-only Hardhat tooling ----
+  # All updates here are build/test tooling (nothing ships on-chain). The remaining
+  # advisories require a breaking Hardhat 2 -> 3 (hardhat-toolbox 7) migration handled
+  # deliberately, not by an auto-PR. So: bundle everything into ONE weekly PR and hold
+  # back the major bumps that would force the migration.
+  - package-ecosystem: npm
+    directory: /contracts
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      contracts-all:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "hardhat"
+        update-types: [version-update:semver-major]
+      - dependency-name: "@nomicfoundation/hardhat-toolbox"
+        update-types: [version-update:semver-major]
+
+  # ---- Docker image ----
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+
+  # ---- GitHub Actions (if/when workflows are added) ----
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
