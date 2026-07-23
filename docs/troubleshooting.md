@@ -122,7 +122,7 @@ Common causes:
 - Check you're connected to the right network (Testnet vs local Devnet)
 - If using local devnet, make sure the daemon is running
 - Check browser console (`F12`) for the actual error
-- Verify CORS: the node only allows specific origins by default
+- Verify CORS: a self-hosted node only allows a built-in set of origins by default — set `QV_CORS_ORIGINS` or run with `--dev` (see [Configuration → Browser access](running-a-node/configuration.md)). The public `testnet`/`api.rougechain.io` endpoints already send `Access-Control-Allow-Origin: *`, so if you're hitting those, CORS is not the cause.
 
 ---
 

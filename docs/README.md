@@ -31,7 +31,7 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | **PWA Support** | Installable progressive web app for mobile and desktop |
 | **Social Layer** | Posts, timeline, reposts, likes, follows, comments, tips |
 | **CLI Wallet** | Command-line wallet with full chain access and social commands |
-| **SDK** | `@rougechain/sdk` v1.0.0 npm package for building dApps |
+| **SDK** | `@rougechain/sdk` v1.3.2 npm package for building dApps |
 | **EIP-1559 Dynamic Fees** | Base fee auto-adjusts per block, fee burning for deflationary pressure |
 | **Token Mint Authority** | Ongoing minting for custom tokens with supply cap enforcement |
 | **Validator Slashing** | Slash penalties for misbehavior, unbonding queue with 500-block delay |
@@ -57,6 +57,7 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 
 | Network | API Endpoint |
 |---------|--------------|
+| Mainnet | `https://api.rougechain.io/api` |
 | Testnet | `https://testnet.rougechain.io/api` |
 | Devnet (local) | `http://127.0.0.1:5100/api` |
 

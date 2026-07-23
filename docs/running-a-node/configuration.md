@@ -18,6 +18,23 @@ All node configuration is done via command-line flags or environment variables.
 | `--public-url` | `QV_PUBLIC_URL` | - | This node's public URL for peer discovery |
 | `--api-keys` | `QV_API_KEYS` | - | Comma-separated API keys |
 | `--rate-limit-per-minute` | - | `0` (unlimited) | Rate limit for API requests |
+| `--dev` | - | `false` | Dev mode: enables legacy v1 unsigned write endpoints **and** allows any CORS origin |
+| — | `QV_CORS_ORIGINS` | *(built-in list)* | Comma-separated origins allowed to call the API from a browser |
+| — | `QV_FAUCET_ENABLED` | `false` | Enable the faucet endpoints (testnet/dev only — never set on mainnet) |
+
+### Browser access (CORS)
+
+By default a node only accepts browser requests from a built-in allowlist (`localhost:5173`, `localhost:4173`, and the official `rougechain.io` / `rougee.app` origins). A dApp served from any other origin will get a CORS error in the browser (curl is unaffected). To allow your own front-end:
+
+```bash
+# Allowlist specific origins:
+export QV_CORS_ORIGINS="https://mydapp.example.com,http://localhost:3000"
+
+# Or, for local development, allow any origin:
+./quantum-vault-daemon --dev --api-port 5100
+```
+
+> `QV_CORS_ORIGINS` takes an explicit comma-separated list — setting it to `"*"` does **not** produce a wildcard. To serve a true `Access-Control-Allow-Origin: *` publicly (as `api.rougechain.io` does), terminate at a reverse proxy (nginx) that strips the node's CORS header and emits `*` itself.
 
 ## Examples
 

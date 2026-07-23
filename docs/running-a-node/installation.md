@@ -24,6 +24,7 @@ docker run -d \
   -p 5100:5100 \
   -v qv-data:/data \
   rougechain/node \
+  --host 0.0.0.0 --api-port 5100 \
   --mine --peers https://testnet.rougechain.io/api
 ```
 

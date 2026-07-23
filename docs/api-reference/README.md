@@ -6,14 +6,22 @@ The RougeChain node exposes a REST API on the configured `--api-port` (default: 
 
 ## Base URL
 
+Local node:
 ```
 http://127.0.0.1:5100/api
 ```
 
-For the public testnet:
+Public testnet:
 ```
 https://testnet.rougechain.io/api
 ```
+
+Public mainnet:
+```
+https://api.rougechain.io/api
+```
+
+Both public endpoints send `Access-Control-Allow-Origin: *`, so browser dApps and localhost dev servers can call them directly with no per-origin allowlisting. (The API has no cookie/session auth — every write is ML-DSA-65 signed — so a wildcard is safe, the same posture as public RPC providers.)
 
 ## Address Format
 

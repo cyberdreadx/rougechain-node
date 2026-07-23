@@ -13,8 +13,10 @@ The faucet distributes free XRGE tokens for testing on testnet.
 ```bash
 curl -X POST https://testnet.rougechain.io/api/faucet \
   -H "Content-Type: application/json" \
-  -d '{"publicKey": "your-public-key-here"}'
+  -d '{"recipientPublicKey": "your-hex-public-key-here"}'
 ```
+
+> The field is `recipientPublicKey` and must be a **raw hex public key**, not a `rouge1…` address. The faucet is enabled on testnet only — mainnet returns `"Faucet is disabled on this network."`
 
 Response:
 ```json
