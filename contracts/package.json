@@ -14,7 +14,7 @@
   "type": "commonjs",
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
-    "@types/node": "^25.3.3",
+    "@types/node": "^26.1.1",
     "hardhat": "^2.28.6",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
