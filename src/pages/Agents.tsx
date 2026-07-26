@@ -20,11 +20,35 @@ import {
   Heart,
   Users,
   Tag,
+  KeyRound,
+  Landmark,
+  Layers,
+  Lock,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 
-const toolCategories = [
+// Tools marked `write: true` sign a real transaction with ML-DSA-65 and are only
+// available when the MCP server is configured with a wallet (ROUGECHAIN_MNEMONIC).
+type AgentTool = { name: string; desc: string; write?: boolean };
+
+const toolCategories: {
+  title: string;
+  icon: typeof Blocks;
+  color: string;
+  bg: string;
+  tools: AgentTool[];
+}[] = [
+  {
+    title: "Wallet Keys",
+    icon: KeyRound,
+    color: "text-indigo-400",
+    bg: "bg-indigo-500/10",
+    tools: [
+      { name: "generate_wallet", desc: "Create a fresh ML-DSA-65 wallet + mnemonic" },
+      { name: "wallet_info", desc: "Configured signer, address, balance, write status" },
+    ],
+  },
   {
     title: "Chain",
     icon: Blocks,
@@ -44,6 +68,8 @@ const toolCategories = [
     tools: [
       { name: "get_balance", desc: "Check XRGE and token balances" },
       { name: "get_transaction", desc: "Look up any transaction by hash" },
+      { name: "send_transaction", desc: "Send XRGE or any token to an address", write: true },
+      { name: "burn_tokens", desc: "Permanently burn XRGE or a token", write: true },
     ],
   },
   {
@@ -55,6 +81,10 @@ const toolCategories = [
       { name: "list_tokens", desc: "All tokens on the network" },
       { name: "get_token", desc: "Token metadata, supply, and creator" },
       { name: "get_token_holders", desc: "Top holders and supply breakdown" },
+      { name: "create_token", desc: "Issue a new custom token", write: true },
+      { name: "mint_tokens", desc: "Mint more supply of a mintable token", write: true },
+      { name: "update_token_metadata", desc: "Update logo, links, description", write: true },
+      { name: "claim_token_metadata", desc: "Claim creator metadata authority", write: true },
     ],
   },
   {
@@ -65,6 +95,10 @@ const toolCategories = [
     tools: [
       { name: "list_pools", desc: "All AMM liquidity pools" },
       { name: "get_swap_quote", desc: "Quote a token swap with slippage" },
+      { name: "swap", desc: "Execute a swap on the AMM DEX", write: true },
+      { name: "create_pool", desc: "Create a new liquidity pool", write: true },
+      { name: "add_liquidity", desc: "Add liquidity and receive LP tokens", write: true },
+      { name: "remove_liquidity", desc: "Burn LP tokens to withdraw", write: true },
     ],
   },
   {
@@ -75,6 +109,24 @@ const toolCategories = [
     tools: [
       { name: "list_nft_collections", desc: "Browse NFT collections" },
       { name: "get_nft_collection", desc: "Collection metadata and tokens" },
+      { name: "nft_create_collection", desc: "Launch a new NFT collection", write: true },
+      { name: "nft_mint", desc: "Mint a single NFT", write: true },
+      { name: "nft_batch_mint", desc: "Mint many NFTs in one tx", write: true },
+      { name: "nft_transfer", desc: "Transfer an NFT (with optional sale price)", write: true },
+      { name: "nft_burn", desc: "Permanently burn an NFT", write: true },
+      { name: "nft_lock", desc: "Lock / unlock an NFT", write: true },
+      { name: "nft_freeze_collection", desc: "Freeze / unfreeze a collection", write: true },
+    ],
+  },
+  {
+    title: "Staking & Faucet",
+    icon: Layers,
+    color: "text-green-400",
+    bg: "bg-green-500/10",
+    tools: [
+      { name: "stake", desc: "Stake XRGE to secure the chain", write: true },
+      { name: "unstake", desc: "Unstake XRGE back to your wallet", write: true },
+      { name: "request_faucet", desc: "Claim testnet XRGE (testnet only)", write: true },
     ],
   },
   {
@@ -112,6 +164,12 @@ const toolCategories = [
       { name: "get_post_replies", desc: "Threaded replies to a post" },
       { name: "get_track_stats", desc: "Music track plays, likes, comments" },
       { name: "get_artist_stats", desc: "Artist followers and follow state" },
+      { name: "create_post", desc: "Publish a post on-chain", write: true },
+      { name: "delete_post", desc: "Delete your own post", write: true },
+      { name: "repost", desc: "Repost another user's post", write: true },
+      { name: "follow", desc: "Follow / unfollow an account", write: true },
+      { name: "like_track", desc: "Like / unlike a track or NFT", write: true },
+      { name: "comment_on_track", desc: "Comment on a track or NFT", write: true },
     ],
   },
   {
@@ -131,6 +189,17 @@ const toolCategories = [
     tools: [
       { name: "resolve_name", desc: "Resolve rouge.quant / qwalla.mail names" },
       { name: "reverse_lookup_name", desc: "Look up name for a wallet or public key" },
+      { name: "register_name", desc: "Register a name to a wallet", write: true },
+      { name: "release_name", desc: "Release a name you registered", write: true },
+    ],
+  },
+  {
+    title: "Bridge",
+    icon: Landmark,
+    color: "text-fuchsia-400",
+    bg: "bg-fuchsia-500/10",
+    tools: [
+      { name: "bridge_withdraw", desc: "Withdraw a bridged asset to an EVM address", write: true },
     ],
   },
   {
@@ -145,13 +214,33 @@ const toolCategories = [
   },
 ];
 
+const TOTAL_TOOLS = toolCategories.reduce((n, c) => n + c.tools.length, 0);
+const WRITE_TOOLS = toolCategories.reduce(
+  (n, c) => n + c.tools.filter((t) => t.write).length,
+  0,
+);
+
 const claudeConfig = `{
   "mcpServers": {
     "rougechain": {
       "command": "npx",
-      "args": ["rougechain-mcp"],
+      "args": ["-y", "@rougechain/mcp-server"],
       "env": {
-        "ROUGECHAIN_URL": "https://rougechain.io"
+        "ROUGECHAIN_URL": "https://api.rougechain.io"
+      }
+    }
+  }
+}`;
+
+// Same server, plus a wallet — unlocks the signed write tools.
+const claudeConfigWrite = `{
+  "mcpServers": {
+    "rougechain": {
+      "command": "npx",
+      "args": ["-y", "@rougechain/mcp-server"],
+      "env": {
+        "ROUGECHAIN_URL": "https://api.rougechain.io",
+        "ROUGECHAIN_MNEMONIC": "your twenty four word seed phrase here ..."
       }
     }
   }
@@ -216,7 +305,7 @@ const Agents = () => {
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               {[
                 { label: "AI Agent", sub: "Claude, GPT, Custom", icon: Bot, color: "text-violet-400", bg: "bg-violet-500/10" },
-                { label: "MCP Server", sub: "30 blockchain tools", icon: Terminal, color: "text-blue-400", bg: "bg-blue-500/10" },
+                { label: "MCP Server", sub: `${TOTAL_TOOLS} blockchain tools`, icon: Terminal, color: "text-blue-400", bg: "bg-blue-500/10" },
                 { label: "Node API", sub: "REST + JSON-RPC", icon: Globe, color: "text-emerald-400", bg: "bg-emerald-500/10" },
                 { label: "RougeChain L1", sub: "ML-DSA + ML-KEM", icon: Zap, color: "text-amber-400", bg: "bg-amber-500/10" },
               ].map((step, i) => (
@@ -250,7 +339,12 @@ const Agents = () => {
               <Zap className="w-5 h-5 text-primary" />
               What Agents Can Do
             </h2>
-            <p className="text-sm text-muted-foreground mb-6">30 tools across 11 categories — everything an agent needs to interact with the chain.</p>
+            <p className="text-sm text-muted-foreground mb-6">
+              {TOTAL_TOOLS} tools across {toolCategories.length} categories — {TOTAL_TOOLS - WRITE_TOOLS} read-only,
+              plus <span className="text-amber-400 font-medium">{WRITE_TOOLS} that sign real transactions</span>{" "}
+              (<Lock className="inline w-3 h-3 -mt-0.5" /> shown below). Write tools activate when the server is
+              configured with a wallet.
+            </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {toolCategories.map((cat) => {
@@ -282,6 +376,11 @@ const Agents = () => {
                         {cat.tools.map((tool) => (
                           <div key={tool.name} className="text-xs">
                             <code className="text-primary font-mono">{tool.name}</code>
+                            {tool.write && (
+                              <span className="inline-flex items-center gap-0.5 align-middle ml-1.5 rounded px-1 py-px text-[10px] font-medium bg-amber-500/15 text-amber-400">
+                                <Lock className="w-2.5 h-2.5" /> signs tx
+                              </span>
+                            )}
                             <span className="text-muted-foreground ml-1.5">— {tool.desc}</span>
                           </div>
                         ))}
@@ -313,14 +412,14 @@ const Agents = () => {
                   <span className="font-medium text-foreground text-sm">Install the MCP server</span>
                 </div>
                 <div className="relative rounded-lg bg-card border border-border overflow-hidden">
-                  <CopyButton text="npm install -g rougechain-mcp" />
+                  <CopyButton text="npm install -g @rougechain/mcp-server" />
                   <pre className="p-4 text-sm font-mono text-foreground overflow-x-auto">
                     <code>
-                      <span className="text-muted-foreground">$</span> npm install -g rougechain-mcp
+                      <span className="text-muted-foreground">$</span> npm install -g @rougechain/mcp-server
                     </code>
                   </pre>
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-2">Or use <code className="text-primary">npx rougechain-mcp</code> directly — no global install needed.</p>
+                <p className="text-[11px] text-muted-foreground mt-2">Or use <code className="text-primary">npx @rougechain/mcp-server</code> directly — no global install needed.</p>
               </div>
 
               {/* Step 2 */}
@@ -332,7 +431,7 @@ const Agents = () => {
                 <div className="space-y-3">
                   <div>
                     <div className="flex items-center gap-2 mb-1.5">
-                      <span className="text-xs font-medium text-muted-foreground">Claude Desktop</span>
+                      <span className="text-xs font-medium text-muted-foreground">Claude Desktop — read-only</span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 font-medium">Recommended</span>
                     </div>
                     <div className="relative rounded-lg bg-card border border-border overflow-hidden">
@@ -341,6 +440,26 @@ const Agents = () => {
                         <code>{claudeConfig}</code>
                       </pre>
                     </div>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="text-xs font-medium text-muted-foreground">Read + write</span>
+                      <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium">
+                        <Lock className="w-2.5 h-2.5" /> signs transactions
+                      </span>
+                    </div>
+                    <div className="relative rounded-lg bg-card border border-border overflow-hidden">
+                      <CopyButton text={claudeConfigWrite} />
+                      <pre className="p-4 text-xs font-mono text-foreground overflow-x-auto">
+                        <code>{claudeConfigWrite}</code>
+                      </pre>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-2">
+                      Add <code className="text-primary">ROUGECHAIN_MNEMONIC</code> to unlock the {WRITE_TOOLS} signing
+                      tools. Every transaction is signed locally with ML-DSA-65 — your seed phrase never leaves the
+                      server. Use a dedicated low-balance agent wallet; generate one with the{" "}
+                      <code className="text-primary">generate_wallet</code> tool.
+                    </p>
                   </div>
                 </div>
               </div>
@@ -375,6 +494,13 @@ const Agents = () => {
                       <Bot className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
                       <div>
                         <p className="text-muted-foreground italic">"Show me the latest posts on the social timeline and the top artists"</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-3">
+                      <Lock className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-muted-foreground italic">"Create a token called AGENT, seed a XRGE/AGENT pool, and post about the launch"</p>
+                        <p className="text-[11px] text-amber-400/80 mt-0.5">requires a wallet — signs real transactions</p>
                       </div>
                     </div>
                     <div className="flex gap-3">
