@@ -1,8 +1,19 @@
 # RougeChain MCP Server
 
-> AI agents can now interact with a post-quantum blockchain.
+> AI agents can now **read and transact on** a post-quantum blockchain.
 
-The **first MCP-native blockchain integration** — lets AI agents (Claude, ChatGPT, custom agents) read chain state, query tokens, check balances, deploy WASM smart contracts, and more using the [Model Context Protocol](https://modelcontextprotocol.io/).
+The **first MCP-native blockchain integration** — lets AI agents (Claude, ChatGPT, custom agents) read chain state, query tokens, check balances, deploy WASM smart contracts, **and — with a wallet configured — sign and submit real transactions** (transfers, swaps, token/NFT minting, staking, social posts, and more) using the [Model Context Protocol](https://modelcontextprotocol.io/).
+
+Every write is signed locally with **ML-DSA-65 (FIPS 204)** via [`@rougechain/sdk`](https://www.npmjs.com/package/@rougechain/sdk) — private keys never leave the server process.
+
+## Two modes
+
+| Mode | How | What the agent can do |
+|------|-----|-----------------------|
+| **Read-only** (default) | no wallet env | All query tools. Safe to expose anywhere. |
+| **Read + write** | set a wallet env (below) | Everything above **plus** signed transactions from that wallet. |
+
+Write tools are **only registered when a wallet is configured** — with no wallet, the server is strictly read-only and the transaction tools don't even appear.
 
 ## Quick Start
 
@@ -56,8 +67,48 @@ Then point the config at the built file:
 |----------|---------|-------------|
 | `ROUGECHAIN_URL` | `https://api.rougechain.io` | RougeChain API host (the `api.` subdomain — **not** the `rougechain.io` frontend, which serves the web app) |
 | `ROUGECHAIN_API_KEY` | (none) | Optional API key |
+| `ROUGECHAIN_MNEMONIC` | (none) | **Enables write mode.** 12/24-word BIP-39 seed of the signing wallet |
+| `ROUGECHAIN_PRIVATE_KEY` + `ROUGECHAIN_PUBLIC_KEY` | (none) | Alternative to the mnemonic — raw hex keys |
 
-## Available Tools (30)
+> ⚠️ **The mnemonic/private key controls real funds.** Only set it for a wallet you
+> intend the agent to spend from, keep it out of shared configs, and prefer a
+> low-balance "agent wallet". Need a fresh one? Call the `generate_wallet` tool.
+
+### Enabling write mode (Claude Desktop)
+
+```json
+{
+  "mcpServers": {
+    "rougechain": {
+      "command": "npx",
+      "args": ["-y", "@rougechain/mcp-server"],
+      "env": {
+        "ROUGECHAIN_URL": "https://api.rougechain.io",
+        "ROUGECHAIN_MNEMONIC": "word1 word2 … word24"
+      }
+    }
+  }
+}
+```
+
+## Available Tools
+
+### Wallet (always available)
+- `generate_wallet` — Create a fresh ML-DSA-65 wallet (mnemonic + address); not persisted
+- `wallet_info` — Show the configured signer, its address, live balance, and whether writes are enabled
+
+### ✍️ Write / transaction tools (write mode only — signed with ML-DSA-65)
+- **Value:** `send_transaction`, `burn_tokens`, `stake`, `unstake`, `request_faucet` (testnet)
+- **Tokens:** `create_token`, `mint_tokens`, `update_token_metadata`, `claim_token_metadata`
+- **DEX:** `swap`, `create_pool`, `add_liquidity`, `remove_liquidity`
+- **NFTs:** `nft_create_collection`, `nft_mint`, `nft_batch_mint`, `nft_transfer`, `nft_burn`, `nft_lock`, `nft_freeze_collection`
+- **Name service:** `register_name`, `release_name`
+- **Social:** `create_post`, `delete_post`, `repost`, `follow`, `like_track`, `comment_on_track`
+- **Bridge:** `bridge_withdraw`
+
+---
+
+### Read tools (always available)
 
 ### Chain Info
 - `get_chain_stats` — Network stats (height, peers, validators, supply)
