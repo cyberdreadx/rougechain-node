@@ -580,6 +580,7 @@ class NftClient {
     const tx = createSignedNftCreateCollection(wallet, params.symbol, params.name, {
       maxSupply: params.maxSupply,
       royaltyBps: params.royaltyBps,
+      royaltyRecipient: params.royaltyRecipient,
       image: params.image,
       description: params.description,
       publicMint: params.publicMint,

@@ -73,6 +73,7 @@ export interface TransactionPayload {
   image?: string;
   maxSupply?: number;
   royaltyBps?: number;
+  royaltyRecipient?: string;
   tokenId?: number;
   metadataUri?: string;
   attributes?: unknown;
@@ -522,6 +523,8 @@ export interface CreateNftCollectionParams {
   name: string;
   maxSupply?: number;
   royaltyBps?: number;
+  /** Wallet or contract address that receives secondary-sale royalties. Defaults to the creator when omitted. */
+  royaltyRecipient?: string;
   image?: string;
   description?: string;
   publicMint?: boolean;

@@ -5982,6 +5982,12 @@ async fn v2_nft_create_collection(
     let image = p.get("image").and_then(|v| v.as_str()).map(String::from);
     let max_supply = p.get("maxSupply").and_then(|v| v.as_u64());
     let royalty_bps = p.get("royaltyBps").and_then(|v| v.as_u64()).map(|v| v as u16);
+    let royalty_recipient = p
+        .get("royaltyRecipient")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from);
     let public_mint = p.get("publicMint").and_then(|v| v.as_bool());
     let mint_price = p.get("mintPrice").and_then(|v| v.as_f64());
     let token_gate_symbol = p.get("tokenGateSymbol").and_then(|v| v.as_str()).map(String::from);
@@ -6006,6 +6012,7 @@ async fn v2_nft_create_collection(
             nft_image: image,
             nft_max_supply: max_supply,
             nft_royalty_bps: royalty_bps,
+            nft_royalty_recipient: royalty_recipient,
             nft_public_mint: public_mint,
             nft_mint_price: mint_price,
             nft_token_gate_symbol: token_gate_symbol,
