@@ -15,9 +15,10 @@ import { RougeChain, Wallet } from '@rougechain/sdk';
 
 const rc = new RougeChain('https://testnet.rougechain.io/api');
 
-// Generate a new post-quantum wallet
+// Generate a new post-quantum wallet (24-word BIP-39 mnemonic + keypair)
 const wallet = Wallet.generate();
 console.log('Public key:', wallet.publicKey);
+console.log('Recovery phrase:', wallet.mnemonic); // save this to restore the wallet
 
 // Request testnet tokens
 await rc.faucet(wallet);
@@ -37,18 +38,34 @@ All signing happens client-side. Private keys never leave your application.
 ```typescript
 import { Wallet } from '@rougechain/sdk';
 
-// Generate new keypair
+// Generate a new wallet WITH a 24-word BIP-39 recovery phrase (default, recommended)
 const wallet = Wallet.generate();
+console.log(wallet.mnemonic); // "word1 word2 … word24"
 
-// Restore from saved keys
+// 12-word phrase instead of 24
+const wallet12 = Wallet.generate(128);
+
+// Generate from pure entropy — no mnemonic, cannot be seed-restored
+const random = Wallet.generateRandom();
+
+// Restore from a BIP-39 recovery phrase (optionally with a 25th-word passphrase)
+const fromSeed = Wallet.fromMnemonic('word1 word2 … word24');
+
+// Restore from saved hex keys
 const restored = Wallet.fromKeys(publicKey, privateKey);
 
-// Export for storage
-const keys = wallet.toJSON(); // { publicKey, privateKey }
+// Derive the short Bech32m address (rouge1…) from the public key
+const address = await wallet.address();
+
+// Export for storage — includes `mnemonic` when the wallet has one
+const keys = wallet.toJSON(); // { publicKey, privateKey, mnemonic? }
 
 // Verify keypair integrity
 const valid = wallet.verify(); // true
 ```
+
+> The mnemonic model is what the [MCP server](mcp-server.md) uses via `ROUGECHAIN_MNEMONIC`.
+> Store the phrase securely — anyone with it controls the wallet.
 
 ## Client
 
@@ -191,14 +208,39 @@ await rc.messenger.deleteMessage(wallet, messageId, conversationId);
 await rc.messenger.deleteConversation(wallet, conversationId);
 ```
 
+### Social (`rc.social`)
+
+On-chain posts, replies, reposts, follows, likes, and track comments. Writes are
+ML-DSA-65 signed; reads are public.
+
+```typescript
+// Reads
+await rc.social.getGlobalTimeline(50, 0);        // newest-first feed
+await rc.social.getPost(postId, viewerPubKey);   // single post + stats
+await rc.social.getUserPosts(pubKey);
+await rc.social.getPostReplies(postId);
+await rc.social.getTrackStats(trackId, viewerPubKey);
+await rc.social.getArtistStats(artistPubKey, viewerPubKey);
+
+// Writes (signed)
+await rc.social.createPost(wallet, 'gm from RougeChain');
+await rc.social.createPost(wallet, 'nice!', parentPostId); // reply
+await rc.social.deletePost(wallet, postId);
+await rc.social.toggleRepost(wallet, postId);
+await rc.social.toggleFollow(wallet, artistPubKey);
+await rc.social.toggleLike(wallet, trackId);
+await rc.social.postComment(wallet, trackId, 'great track');
+```
+
 ### Push Notifications
 
 ```typescript
-// Register for push notifications (PQC-signed)
-await rc.registerPushToken(publicKey, privateKey, 'ExponentPushToken[xxx]');
+// Register for push notifications (PQC-signed) — pass the wallet, not raw keys
+await rc.registerPushToken(wallet, 'ExponentPushToken[xxx]');           // platform defaults to "expo"
+await rc.registerPushToken(wallet, 'ExponentPushToken[xxx]', 'expo');
 
 // Unregister
-await rc.unregisterPushToken(publicKey, privateKey);
+await rc.unregisterPushToken(wallet);
 ```
 
 ### Address Resolution
@@ -216,49 +258,56 @@ const nonce = await rc.getNonce(publicKey);
 // → { nonce, next_nonce }
 ```
 
-### Token Allowances
+### Token Allowances (ERC-20 style approve / transferFrom)
+
+There are no `rc.approveAllowance` / `rc.transferFrom` convenience methods. Build the
+signed transaction with the exported signer helpers, then submit it with
+`rc.submitTx(endpoint, signedTx)`:
 
 ```typescript
-// ERC-20 style approve/transferFrom
-await rc.approveAllowance(wallet, { spender, token, amount });
-await rc.transferFrom(wallet, { owner, to, token, amount });
-await rc.freezeToken(wallet, { token, frozen: true });
+import {
+  createSignedTokenApproval,
+  createSignedTokenTransferFrom,
+} from '@rougechain/sdk';
+
+// Approve a spender to move up to `amount` of your MTK
+await rc.submitTx(
+  '/v2/token/approve',
+  createSignedTokenApproval(wallet, spenderPubKey, 'MTK', 1000),
+);
+
+// Spend an existing allowance on the owner's behalf
+await rc.submitTx(
+  '/v2/token/transfer-from',
+  createSignedTokenTransferFrom(wallet, ownerPubKey, recipientPubKey, 'MTK', 1000),
+);
+
+// Read current allowances (public)
+await rc.get('/token/allowances');
+await rc.get('/token/allowance');
 ```
+
+> **Freeze/unfreeze** a token you created is a creator-only signed request to
+> `/api/v2/token/freeze` (payload `{ tokenSymbol, frozen }`). There is no dedicated
+> SDK helper — sign it with the generic `signRequest(wallet, payload)` and post it.
 
 ### Multi-Sig Wallets
 
+Multi-sig **queries** are available today:
+
 ```typescript
-// Create a 2-of-3 multi-sig wallet
-await rc.sendTransaction(wallet, {
-  txType: 'multisig_create',
-  payload: {
-    multisig_signers: [keyA, keyB, keyC],
-    multisig_threshold: 2,
-    multisig_label: 'Team Treasury',
-  },
-});
-
-// Submit a transfer proposal
-await rc.sendTransaction(wallet, {
-  txType: 'multisig_submit',
-  payload: {
-    multisig_wallet_id: 'ms-abc123...',
-    multisig_proposal_tx_type: 'transfer',
-    multisig_proposal_payload: { to_pub_key_hex: recipient, amount: 1000 },
-  },
-});
-
-// Co-signer approves
-await rc.sendTransaction(coSignerWallet, {
-  txType: 'multisig_approve',
-  payload: { multisig_proposal_id: 'mp-def456...' },
-});
-
-// Query wallets + proposals
-const wallets = await rc.get('/multisig/wallets');
+const wallets   = await rc.get('/multisig/wallets');
 const myWallets = await rc.get(`/multisig/wallets/${myPubKey}`);
+const wallet_   = await rc.get(`/multisig/wallet/${walletId}`);
 const proposals = await rc.get(`/multisig/wallet/${walletId}/proposals`);
 ```
+
+> **Note:** creating a multi-sig wallet and submitting/approving proposals
+> (`multisig_create` / `multisig_submit` / `multisig_approve`) are on-chain
+> transaction types, but they are **not yet exposed through a stable SDK method or
+> public submit endpoint** — the node currently serves the multi-sig read routes
+> above only. Do not call `rc.sendTransaction(...)`; that method does not exist.
+> Multi-sig write support is tracked for a future release.
 
 ### Smart Contracts (`rc.shielded`)
 

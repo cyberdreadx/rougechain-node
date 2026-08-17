@@ -94,35 +94,19 @@ A multi-sig wallet requires `M` out of `N` co-signers to approve a transaction b
 ```typescript
 import { RougeChain } from '@rougechain/sdk';
 
-const rc = new RougeChain({ baseUrl: 'https://rougechain.io' });
+// The constructor takes the API base URL as a string (note the trailing /api)
+const rc = new RougeChain('https://api.rougechain.io/api');
 
-// Create a 2-of-3 wallet
-await rc.sendTransaction({
-  txType: 'multisig_create',
-  payload: {
-    multisig_signers: [keyA, keyB, keyC],
-    multisig_threshold: 2,
-    multisig_label: 'Team Treasury',
-  },
-});
-
-// Submit a transfer proposal
-await rc.sendTransaction({
-  txType: 'multisig_submit',
-  payload: {
-    multisig_wallet_id: 'ms-abc123...',
-    multisig_proposal_tx_type: 'transfer',
-    multisig_proposal_payload: { to_pub_key_hex: recipient, amount: 1000 },
-  },
-});
-
-// Co-signer approves
-await rc.sendTransaction({
-  txType: 'multisig_approve',
-  payload: { multisig_proposal_id: 'mp-def456...' },
-});
-
-// Query wallets
-const wallets = await rc.get('/api/multisig/wallets');
-const myWallets = await rc.get(`/api/multisig/wallets/${myPubKey}`);
+// Query multi-sig wallets and proposals (public reads)
+const wallets   = await rc.get('/multisig/wallets');
+const myWallets = await rc.get(`/multisig/wallets/${myPubKey}`);
+const wallet_   = await rc.get(`/multisig/wallet/${walletId}`);
+const proposals = await rc.get(`/multisig/wallet/${walletId}/proposals`);
 ```
+
+> **Writes are not yet exposed.** The `multisig_create` / `multisig_submit` /
+> `multisig_approve` transaction types above document the on-chain payload
+> structure, but the node currently serves only the multi-sig **read** routes —
+> there is no public submit endpoint and no SDK method (`rc.sendTransaction` does
+> not exist). Multi-sig proposal submission is tracked for a future release. See the
+> [SDK reference](sdk.md#multi-sig-wallets).
