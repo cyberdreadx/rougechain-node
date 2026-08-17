@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { RefreshCw, Send, Download, Droplets, Copy, Check, TrendingUp, ArrowDownUp, Shield, ShieldOff, AlertCircle, X } from "lucide-react";
 import type { UnifiedWallet } from "../../lib/unified-wallet";
 import { pubkeyToAddress, formatAddress, formatIdentity } from "../../lib/address";
+import { getActiveNetwork } from "../../lib/network";
 import {
     getWalletBalance,
     getWalletTransactions,
@@ -234,9 +235,9 @@ export default function WalletTab({ wallet }: Props) {
                     </div>
                 )}
 
-                {/* Action buttons — 3 + 2 grid */}
+                {/* Action buttons — Faucet only on testnet (mainnet has no faucet) */}
                 <div className="space-y-2 mt-3">
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className={`grid ${getActiveNetwork() === "testnet" ? "grid-cols-3" : "grid-cols-2"} gap-2`}>
                         <button
                             onClick={() => setShowSend(!showSend)}
                             className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold hover:bg-primary/90 active:scale-[0.96] transition-all shadow-md shadow-primary/20"
@@ -251,14 +252,16 @@ export default function WalletTab({ wallet }: Props) {
                             <Download className="w-4 h-4" />
                             <span className="text-[10px]">Receive</span>
                         </button>
-                        <button
-                            onClick={handleFaucet}
-                            disabled={isClaiming}
-                            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-accent/15 text-accent-foreground font-semibold hover:bg-accent/25 active:scale-[0.96] transition-all disabled:opacity-50"
-                        >
-                            <Droplets className={`w-4 h-4 ${isClaiming ? "animate-spin" : ""}`} />
-                            <span className="text-[10px]">{isClaiming ? "..." : "Faucet"}</span>
-                        </button>
+                        {getActiveNetwork() === "testnet" && (
+                            <button
+                                onClick={handleFaucet}
+                                disabled={isClaiming}
+                                className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-accent/15 text-accent-foreground font-semibold hover:bg-accent/25 active:scale-[0.96] transition-all disabled:opacity-50"
+                            >
+                                <Droplets className={`w-4 h-4 ${isClaiming ? "animate-spin" : ""}`} />
+                                <span className="text-[10px]">{isClaiming ? "..." : "Faucet"}</span>
+                            </button>
+                        )}
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                         <button
