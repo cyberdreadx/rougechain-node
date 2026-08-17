@@ -128,29 +128,32 @@ Deployed contracts are visible in the RougeChain explorer:
 
 ## SDK
 
+Contract helpers live on the `rc.shielded` sub-client. The constructor takes the API
+base URL as a **string** (note the trailing `/api`):
+
 ```typescript
 import { RougeChain } from '@rougechain/sdk';
 
-const rc = new RougeChain({ baseUrl: 'https://rougechain.io' });
+const rc = new RougeChain('https://api.rougechain.io/api');
 
 // Deploy
-const deploy = await rc.deployContract({
+const deploy = await rc.shielded.deployContract({
   wasm: base64WasmBytes,
   deployer: wallet.publicKey,
 });
 
 // Call
-const result = await rc.callContract({
+const result = await rc.shielded.callContract({
   contractAddr: deploy.address,
   method: 'increment',
   caller: wallet.publicKey,
 });
 
 // Query
-const meta = await rc.getContract(deploy.address);
-const events = await rc.getContractEvents(deploy.address);
-const allState = await rc.getContractState(deploy.address);         // full dump
-const single = await rc.getContractState(deploy.address, '636f756e74'); // single key
+const meta = await rc.shielded.getContract(deploy.address);
+const events = await rc.shielded.getContractEvents(deploy.address);
+const allState = await rc.shielded.getContractState(deploy.address);         // full dump
+const single = await rc.shielded.getContractState(deploy.address, '636f756e74'); // single key
 ```
 
 ## MCP Server (AI Agents)

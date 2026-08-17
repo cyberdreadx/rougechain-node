@@ -88,13 +88,9 @@ import { RougeChain } from "@rougechain/sdk";
 
 const rc = new RougeChain("https://testnet.rougechain.io/api");
 
-// Register
-await rc.registerPushToken(
-  publicKey,
-  privateKey,
-  "ExponentPushToken[xxx]"
-);
+// Register — pass the wallet, not raw keys (signing happens inside)
+await rc.registerPushToken(wallet, "ExponentPushToken[xxx]"); // platform defaults to "expo"
 
 // Unregister
-await rc.unregisterPushToken(publicKey, privateKey);
+await rc.unregisterPushToken(wallet);
 ```

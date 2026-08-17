@@ -51,25 +51,73 @@ npm run build
 
 ## DApp Integration
 
-The extension injects a `window.rougechain` provider object, similar to MetaMask's `window.ethereum`. DApps can use this to interact with the user's wallet.
+The extension (and the Qwalla mobile app's dApp browser) inject a `window.rougechain`
+provider object, similar to MetaMask's `window.ethereum` — but the API is
+RougeChain-specific, **not** the EVM/ethers API. In particular there is **no
+`getAddress()` and no `getNetwork()`**; you obtain the user's public key by calling
+`connect()`.
 
-### Detecting the Extension
+> ⚠️ **Common mistake:** calling `window.rougechain.getAddress()` throws
+> `e.getAddress is not a function`. That method does not exist — RougeChain is not
+> EVM-compatible. Use `connect()` (below) and read `.publicKey`.
+
+### Detecting the extension and connecting
 
 ```javascript
-if (window.rougechain) {
-  console.log('RougeChain wallet detected');
-  const address = await window.rougechain.getAddress();
+// 1. Detect
+if (!window.rougechain?.isRougeChain) {
+  throw new Error("RougeChain wallet not found — install the extension or open in Qwalla.");
 }
+
+// 2. Connect (prompts the user, returns their public key)
+const { publicKey, displayName, encryptionPublicKey } = await window.rougechain.connect();
+console.log("Connected:", publicKey);
+```
+
+The provider may not be injected the instant your script runs. Either check for it
+after the `rougechain#initialized` event, or poll briefly:
+
+```javascript
+function getProvider(timeoutMs = 3000) {
+  return new Promise((resolve, reject) => {
+    if (window.rougechain?.isRougeChain) return resolve(window.rougechain);
+    const onReady = () => resolve(window.rougechain);
+    window.addEventListener("rougechain#initialized", onReady, { once: true });
+    setTimeout(() => reject(new Error("RougeChain wallet not detected")), timeoutMs);
+  });
+}
+```
+
+### Deriving a `rouge1…` address
+
+`connect()` returns the **public key** (hex). If you need the short Bech32m
+`rouge1…` address, derive it with the SDK:
+
+```javascript
+import { pubkeyToAddress } from "@rougechain/sdk";
+const { publicKey } = await window.rougechain.connect();
+const address = await pubkeyToAddress(publicKey); // rouge1...
 ```
 
 ### Provider API
 
-| Method | Description |
-|--------|-------------|
-| `getAddress()` | Get the user's public key |
-| `signTransaction(tx)` | Sign a transaction with ML-DSA-65 |
-| `getBalance()` | Get the wallet's balance |
-| `getNetwork()` | Get the current network (testnet/devnet) |
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `isRougeChain` | `boolean` | Property — `true` on the authentic provider. Use it to detect the wallet. |
+| `connect()` | `→ { publicKey, displayName?, encryptionPublicKey? }` | Prompt the user to connect. Returns their public key. This replaces `getAddress()`. |
+| `getBalance()` | `→ { balance, tokens }` | Get the connected wallet's XRGE balance and token balances. |
+| `signTransaction(payload)` | `→ { signature, signedPayload }` | Sign a transaction payload with ML-DSA-65 (key never leaves the wallet). |
+| `sendTransaction(payload)` | `→ { txId }` | Sign **and** broadcast a transaction. |
+| `on(event, cb)` | `void` | Subscribe to events (e.g. account/connection changes). |
+| `removeListener(event, cb)` | `void` | Remove an event listener. |
+
+Authenticity: the genuine provider also sets a non-enumerable
+`Symbol.for("rougechain:authentic")` to `true`, so a dApp can guard against a page
+that pre-defines a fake `window.rougechain`:
+
+```javascript
+const authentic = window.rougechain?.[Symbol.for("rougechain:authentic")] === true;
+```
 
 ## Security
 
