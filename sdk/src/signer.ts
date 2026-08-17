@@ -285,6 +285,7 @@ export function createSignedNftCreateCollection(
   opts: {
     maxSupply?: number;
     royaltyBps?: number;
+    royaltyRecipient?: string;
     image?: string;
     description?: string;
     publicMint?: boolean;
@@ -301,6 +302,7 @@ export function createSignedNftCreateCollection(
     fee: 50,
     maxSupply: opts.maxSupply,
     royaltyBps: opts.royaltyBps,
+    royaltyRecipient: opts.royaltyRecipient,
     image: opts.image,
     description: opts.description,
     publicMint: opts.publicMint,

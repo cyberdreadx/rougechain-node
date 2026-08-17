@@ -53,6 +53,8 @@ pub struct TxPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nft_royalty_bps: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nft_royalty_recipient: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nft_token_id: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nft_token_name: Option<String>,

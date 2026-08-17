@@ -5064,7 +5064,13 @@ impl L1Node {
                     max_supply: tx.payload.nft_max_supply,
                     minted: 0,
                     royalty_bps: tx.payload.nft_royalty_bps.unwrap_or(0),
-                    royalty_recipient: tx.from_pub_key.clone(),
+                    // Defaults to the creator when unset/empty — preserves historical behavior.
+                    royalty_recipient: tx
+                        .payload
+                        .nft_royalty_recipient
+                        .clone()
+                        .filter(|r| !r.trim().is_empty())
+                        .unwrap_or_else(|| tx.from_pub_key.clone()),
                     frozen: false,
                     created_at: block_time,
                     public_mint: tx.payload.nft_public_mint.unwrap_or(false),
