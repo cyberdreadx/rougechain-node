@@ -21,12 +21,14 @@ export default defineConfig({
                 "service-worker": path.resolve(__dirname, "src/background/service-worker.ts"),
                 content: path.resolve(__dirname, "src/content/inject.ts"),
                 provider: path.resolve(__dirname, "src/content/provider.ts"),
+                "evm-provider": path.resolve(__dirname, "src/content/evm-provider.ts"),
             },
             output: {
                 entryFileNames: (chunkInfo) => {
                     if (chunkInfo.name === "service-worker") return "service-worker.js";
                     if (chunkInfo.name === "content") return "content.js";
                     if (chunkInfo.name === "provider") return "provider.js";
+                    if (chunkInfo.name === "evm-provider") return "evm-provider.js";
                     return "assets/[name]-[hash].js";
                 },
             },

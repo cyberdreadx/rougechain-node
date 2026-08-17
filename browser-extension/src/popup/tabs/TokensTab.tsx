@@ -10,10 +10,29 @@ import {
     type TokenMeta,
 } from "../../lib/pqc-wallet";
 import { invalidate } from "../../lib/api-cache";
+import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 
 interface Props {
     wallet: UnifiedWallet;
 }
+
+// --- Signing utilities (canonical sorted JSON + ML-DSA-65) ---
+const sortKeysDeep = (obj: any): any => {
+    if (Array.isArray(obj)) return obj.map(sortKeysDeep);
+    if (obj && typeof obj === "object") {
+        const sorted: any = {};
+        for (const k of Object.keys(obj).sort()) sorted[k] = sortKeysDeep(obj[k]);
+        return sorted;
+    }
+    return obj;
+};
+const hexToBytes = (hex: string): Uint8Array => {
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    return bytes;
+};
+const bytesToHex = (bytes: Uint8Array): string =>
+    Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
 
 export default function TokensTab({ wallet }: Props) {
     const [balances, setBalances] = useState<WalletBalance[]>([]);
@@ -54,16 +73,23 @@ export default function TokensTab({ wallet }: Props) {
         try {
             const baseUrl = getCoreApiBaseUrl();
             if (!baseUrl) throw new Error("No node configured");
-            const res = await fetch(`${baseUrl}/token/create`, {
+            // v2 client-side signed token creation (the v1 /token/create endpoint is retired — 410 Gone).
+            const payload = {
+                type: "create_token",
+                from: wallet.signingPublicKey,
+                token_name: tokenName,
+                token_symbol: tokenSymbol.toUpperCase(),
+                initial_supply: parseInt(tokenSupply),
+                timestamp: Date.now(),
+                nonce: bytesToHex(crypto.getRandomValues(new Uint8Array(16))),
+            };
+            const sorted = sortKeysDeep(payload);
+            const payloadBytes = new TextEncoder().encode(JSON.stringify(sorted));
+            const signature = bytesToHex(ml_dsa65.sign(payloadBytes, hexToBytes(wallet.signingPrivateKey)));
+            const res = await fetch(`${baseUrl}/v2/token/create`, {
                 method: "POST",
                 headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    fromPrivateKey: wallet.signingPrivateKey,
-                    fromPublicKey: wallet.signingPublicKey,
-                    tokenName,
-                    tokenSymbol: tokenSymbol.toUpperCase(),
-                    initialSupply: parseInt(tokenSupply),
-                }),
+                body: JSON.stringify({ payload: sorted, signature, public_key: wallet.signingPublicKey }),
             });
             const data = await res.json();
             if (data.success) {

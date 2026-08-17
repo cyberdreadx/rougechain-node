@@ -11,13 +11,17 @@ import { Shield, Link2, FileSignature, Send, AlertTriangle } from "lucide-react"
  *   origin — requesting site origin
  */
 
+type ApprovalType = "connect" | "sign" | "send" | "evm-connect" | "evm-personal-sign" | "evm-send";
+
 interface PendingRequest {
     id: string;
-    type: "connect" | "sign" | "send";
+    type: ApprovalType;
     origin: string;
     favicon?: string;
     payload?: Record<string, unknown>;
 }
+
+const isEvm = (t: ApprovalType) => t.startsWith("evm-");
 
 export default function ApprovalApp() {
     const [request, setRequest] = useState<PendingRequest | null>(null);
@@ -26,7 +30,7 @@ export default function ApprovalApp() {
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
         const id = params.get("id") || "";
-        const type = (params.get("type") || "connect") as PendingRequest["type"];
+        const type = (params.get("type") || "connect") as ApprovalType;
         const origin = params.get("origin") || "Unknown";
         const favicon = params.get("favicon") || "";
 
@@ -72,6 +76,13 @@ export default function ApprovalApp() {
         catch { return request.origin; }
     })();
 
+    const kind = request.type;
+    const isConnect = kind === "connect" || kind === "evm-connect";
+    const isSign = kind === "sign" || kind === "evm-personal-sign";
+    const isSend = kind === "send" || kind === "evm-send";
+    const evm = isEvm(kind);
+    const p = request.payload || {};
+
     return (
         <div className="flex flex-col h-screen bg-background text-foreground">
             {/* Header */}
@@ -86,21 +97,26 @@ export default function ApprovalApp() {
             <div className="flex-1 overflow-auto px-5 py-5 space-y-5">
                 {/* Icon + Type */}
                 <div className="flex flex-col items-center text-center space-y-3">
-                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${request.type === "connect"
+                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${isConnect
                         ? "bg-blue-500/10 text-blue-400"
-                        : request.type === "sign"
+                        : isSign
                             ? "bg-amber-500/10 text-amber-400"
                             : "bg-red-500/10 text-red-400"
                         }`}>
-                        {request.type === "connect" && <Link2 className="w-7 h-7" />}
-                        {request.type === "sign" && <FileSignature className="w-7 h-7" />}
-                        {request.type === "send" && <Send className="w-7 h-7" />}
+                        {isConnect && <Link2 className="w-7 h-7" />}
+                        {isSign && <FileSignature className="w-7 h-7" />}
+                        {isSend && <Send className="w-7 h-7" />}
                     </div>
                     <h2 className="text-lg font-semibold">
-                        {request.type === "connect" && "Connection Request"}
-                        {request.type === "sign" && "Signature Request"}
-                        {request.type === "send" && "Transaction Request"}
+                        {isConnect && "Connection Request"}
+                        {isSign && "Signature Request"}
+                        {isSend && "Transaction Request"}
                     </h2>
+                    {evm && (
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/20">
+                            {String(p.chain || "Base")} · EVM
+                        </span>
+                    )}
                 </div>
 
                 {/* Origin */}
@@ -189,6 +205,63 @@ export default function ApprovalApp() {
                         )}
                     </div>
                 )}
+                {/* EVM: connect */}
+                {kind === "evm-connect" && (
+                    <div className="space-y-3">
+                        <p className="text-sm text-muted-foreground text-center">
+                            This site wants to connect to your <span className="text-foreground font-medium">Base</span> account.
+                        </p>
+                        <div className="rounded-xl border border-border bg-card/30 p-4 space-y-1">
+                            <p className="text-xs text-muted-foreground uppercase tracking-wider">Base address</p>
+                            <p className="font-mono text-xs break-all">{String(p.address || "")}</p>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground text-center">
+                            It will be able to request transactions and signatures, which you approve here each time.
+                        </p>
+                    </div>
+                )}
+
+                {/* EVM: personal_sign */}
+                {kind === "evm-personal-sign" && (
+                    <div className="space-y-3">
+                        <p className="text-sm text-muted-foreground text-center">This site is requesting a signature from your Base account:</p>
+                        <div className="rounded-xl border border-border bg-card/30 p-3 max-h-[180px] overflow-auto">
+                            <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-all">{String(p.message ?? "")}</pre>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground font-mono break-all">Signer: {String(p.address || "")}</p>
+                    </div>
+                )}
+
+                {/* EVM: send transaction */}
+                {kind === "evm-send" && (
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-2 text-red-400 text-sm justify-center">
+                            <AlertTriangle className="w-4 h-4" />
+                            <span>This submits a transaction on {String(p.chain || "Base")}</span>
+                        </div>
+                        <div className="rounded-xl border border-border bg-card/30 p-4 space-y-2.5">
+                            <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">To</span>
+                                <span className="font-mono text-xs truncate max-w-[190px]">{String(p.to || "")}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">Value</span>
+                                <span className="font-semibold">{String(p.valueEth ?? "0")} ETH</span>
+                            </div>
+                            {!!p.hasData && (
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-muted-foreground">Contract call</span>
+                                    <span className="text-amber-400">Yes (has data)</span>
+                                </div>
+                            )}
+                            <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">From</span>
+                                <span className="font-mono text-xs truncate max-w-[190px]">{String(p.address || "")}</span>
+                            </div>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground text-center">Gas &amp; fees are filled automatically from the Base network.</p>
+                    </div>
+                )}
             </div>
 
             {/* Action Buttons */}
@@ -203,16 +276,16 @@ export default function ApprovalApp() {
                 <button
                     onClick={() => respond(true)}
                     disabled={closing}
-                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 ${request.type === "send"
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-50 ${isSend
                         ? "bg-red-500 hover:bg-red-600"
-                        : request.type === "sign"
+                        : isSign
                             ? "bg-amber-500 hover:bg-amber-600"
                             : "bg-blue-500 hover:bg-blue-600"
                         }`}
                 >
-                    {request.type === "connect" && "Connect"}
-                    {request.type === "sign" && "Sign"}
-                    {request.type === "send" && "Approve & Send"}
+                    {isConnect && "Connect"}
+                    {isSign && "Sign"}
+                    {isSend && "Approve & Send"}
                 </button>
             </div>
         </div>

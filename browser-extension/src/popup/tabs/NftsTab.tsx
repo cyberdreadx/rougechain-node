@@ -9,12 +9,33 @@ import {
     type NftCollection,
     type NftToken,
 } from "../../lib/pqc-wallet";
+import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 
 interface Props {
     wallet: UnifiedWallet;
 }
 
 type View = "gallery" | "create-collection" | "mint" | "transfer";
+
+// --- Signing utilities (mirror WalletTab: canonical sorted JSON + ML-DSA-65) ---
+const sortKeysDeep = (obj: any): any => {
+    if (Array.isArray(obj)) return obj.map(sortKeysDeep);
+    if (obj && typeof obj === "object") {
+        const sorted: any = {};
+        for (const k of Object.keys(obj).sort()) sorted[k] = sortKeysDeep(obj[k]);
+        return sorted;
+    }
+    return obj;
+};
+
+const hexToBytes = (hex: string): Uint8Array => {
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    return bytes;
+};
+
+const bytesToHex = (bytes: Uint8Array): string =>
+    Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
 
 export default function NftsTab({ wallet }: Props) {
     const [myNfts, setMyNfts] = useState<NftToken[]>([]);
@@ -28,6 +49,7 @@ export default function NftsTab({ wallet }: Props) {
     const [colName, setColName] = useState("");
     const [colMaxSupply, setColMaxSupply] = useState("");
     const [colRoyalty, setColRoyalty] = useState("");
+    const [colRoyaltyRecipient, setColRoyaltyRecipient] = useState("");
     const [colImage, setColImage] = useState("");
     const [colDescription, setColDescription] = useState("");
 
@@ -71,12 +93,18 @@ export default function NftsTab({ wallet }: Props) {
         setTimeout(() => setResult(null), 3000);
     };
 
-    const apiPost = async (endpoint: string, body: Record<string, unknown>) => {
+    // Canonicalize + ML-DSA-65 sign the payload, then submit the v2 signed tx.
+    // The node re-serializes the received payload and verifies the signature over
+    // the same sorted-key bytes, so signing sortKeysDeep(payload) is required.
+    const signAndPost = async (endpoint: string, payload: Record<string, unknown>) => {
         if (!baseUrl) throw new Error("No node configured");
+        const sorted = sortKeysDeep(payload);
+        const payloadBytes = new TextEncoder().encode(JSON.stringify(sorted));
+        const signature = bytesToHex(ml_dsa65.sign(payloadBytes, hexToBytes(wallet.signingPrivateKey)));
         const res = await fetch(`${baseUrl}${endpoint}`, {
             method: "POST",
             headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-            body: JSON.stringify(body),
+            body: JSON.stringify({ payload: sorted, signature, public_key: wallet.signingPublicKey }),
         });
         const data = await res.json();
         if (!data.success) throw new Error(data.error || "Failed");
@@ -88,26 +116,23 @@ export default function NftsTab({ wallet }: Props) {
         if (!colSymbol || !colName || isSubmitting) return;
         setIsSubmitting(true);
         try {
-            await apiPost("/v2/nft/collection/create", {
-                payload: {
-                    type: "nft_create_collection",
-                    from: wallet.signingPublicKey,
-                    symbol: colSymbol.toUpperCase(),
-                    name: colName,
-                    maxSupply: colMaxSupply ? parseInt(colMaxSupply) : undefined,
-                    royaltyBps: colRoyalty ? parseInt(colRoyalty) : undefined,
-                    image: colImage || undefined,
-                    description: colDescription || undefined,
-                    fee: 50,
-                    timestamp: Date.now(),
-                    nonce: crypto.randomUUID(),
-                },
-                signature: "",
-                public_key: wallet.signingPublicKey,
+            await signAndPost("/v2/nft/collection/create", {
+                type: "nft_create_collection",
+                from: wallet.signingPublicKey,
+                symbol: colSymbol.toUpperCase(),
+                name: colName,
+                maxSupply: colMaxSupply ? parseInt(colMaxSupply) : undefined,
+                royaltyBps: colRoyalty ? parseInt(colRoyalty) : undefined,
+                royaltyRecipient: colRoyaltyRecipient.trim() || undefined,
+                image: colImage || undefined,
+                description: colDescription || undefined,
+                fee: 50,
+                timestamp: Date.now(),
+                nonce: crypto.randomUUID(),
             });
             showResult(`Collection ${colSymbol.toUpperCase()} created`);
             setView("gallery");
-            setColSymbol(""); setColName(""); setColMaxSupply(""); setColRoyalty(""); setColImage(""); setColDescription("");
+            setColSymbol(""); setColName(""); setColMaxSupply(""); setColRoyalty(""); setColRoyaltyRecipient(""); setColImage(""); setColDescription("");
             refresh();
         } catch (err: any) {
             showResult(err.message, true);
@@ -119,19 +144,15 @@ export default function NftsTab({ wallet }: Props) {
         if (!mintColId || !mintName || isSubmitting) return;
         setIsSubmitting(true);
         try {
-            await apiPost("/v2/nft/mint", {
-                payload: {
-                    type: "nft_mint",
-                    from: wallet.signingPublicKey,
-                    collectionId: mintColId,
-                    name: mintName,
-                    metadataUri: mintUri || undefined,
-                    fee: 5,
-                    timestamp: Date.now(),
-                    nonce: crypto.randomUUID(),
-                },
-                signature: "",
-                public_key: wallet.signingPublicKey,
+            await signAndPost("/v2/nft/mint", {
+                type: "nft_mint",
+                from: wallet.signingPublicKey,
+                collectionId: mintColId,
+                name: mintName,
+                metadataUri: mintUri || undefined,
+                fee: 5,
+                timestamp: Date.now(),
+                nonce: crypto.randomUUID(),
             });
             showResult(`Minted "${mintName}"`);
             setView("gallery");
@@ -147,20 +168,16 @@ export default function NftsTab({ wallet }: Props) {
         if (!transferNft || !transferTo || isSubmitting) return;
         setIsSubmitting(true);
         try {
-            await apiPost("/v2/nft/transfer", {
-                payload: {
-                    type: "nft_transfer",
-                    from: wallet.signingPublicKey,
-                    collectionId: transferNft.collection_id,
-                    tokenId: transferNft.token_id,
-                    to: transferTo,
-                    salePrice: transferPrice ? parseFloat(transferPrice) : undefined,
-                    fee: 1,
-                    timestamp: Date.now(),
-                    nonce: crypto.randomUUID(),
-                },
-                signature: "",
-                public_key: wallet.signingPublicKey,
+            await signAndPost("/v2/nft/transfer", {
+                type: "nft_transfer",
+                from: wallet.signingPublicKey,
+                collectionId: transferNft.collection_id,
+                tokenId: transferNft.token_id,
+                to: transferTo,
+                salePrice: transferPrice ? parseFloat(transferPrice) : undefined,
+                fee: 1,
+                timestamp: Date.now(),
+                nonce: crypto.randomUUID(),
             });
             showResult(`Transferred "${transferNft.name}"`);
             setView("gallery");
@@ -177,18 +194,14 @@ export default function NftsTab({ wallet }: Props) {
         if (!confirm(`Burn "${nft.name}" permanently?`)) return;
         setIsSubmitting(true);
         try {
-            await apiPost("/v2/nft/burn", {
-                payload: {
-                    type: "nft_burn",
-                    from: wallet.signingPublicKey,
-                    collectionId: nft.collection_id,
-                    tokenId: nft.token_id,
-                    fee: 0.1,
-                    timestamp: Date.now(),
-                    nonce: crypto.randomUUID(),
-                },
-                signature: "",
-                public_key: wallet.signingPublicKey,
+            await signAndPost("/v2/nft/burn", {
+                type: "nft_burn",
+                from: wallet.signingPublicKey,
+                collectionId: nft.collection_id,
+                tokenId: nft.token_id,
+                fee: 0.1,
+                timestamp: Date.now(),
+                nonce: crypto.randomUUID(),
             });
             showResult(`Burned "${nft.name}"`);
             refresh();
@@ -202,19 +215,15 @@ export default function NftsTab({ wallet }: Props) {
         if (isSubmitting) return;
         setIsSubmitting(true);
         try {
-            await apiPost("/v2/nft/lock", {
-                payload: {
-                    type: "nft_lock",
-                    from: wallet.signingPublicKey,
-                    collectionId: nft.collection_id,
-                    tokenId: nft.token_id,
-                    locked: !nft.locked,
-                    fee: 0.1,
-                    timestamp: Date.now(),
-                    nonce: crypto.randomUUID(),
-                },
-                signature: "",
-                public_key: wallet.signingPublicKey,
+            await signAndPost("/v2/nft/lock", {
+                type: "nft_lock",
+                from: wallet.signingPublicKey,
+                collectionId: nft.collection_id,
+                tokenId: nft.token_id,
+                locked: !nft.locked,
+                fee: 0.1,
+                timestamp: Date.now(),
+                nonce: crypto.randomUUID(),
             });
             showResult(nft.locked ? "Unlocked" : "Locked");
             refresh();
@@ -246,6 +255,9 @@ export default function NftsTab({ wallet }: Props) {
                         <input type="number" placeholder="Royalty bps (250=2.5%)" value={colRoyalty} onChange={e => setColRoyalty(e.target.value)}
                             className="flex-1 px-3 py-2 rounded-lg bg-input border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
                     </div>
+                    <input placeholder="Royalty recipient address (optional, defaults to you)" value={colRoyaltyRecipient} onChange={e => setColRoyaltyRecipient(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg bg-input border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
+                    <p className="text-[10px] text-muted-foreground">Secondary-sale royalties go here. Leave blank to receive them yourself. Fixed at creation — must be a normal wallet, never a contract address (funds would be permanently lost).</p>
                     <p className="text-[10px] text-muted-foreground">Fee: 50 XRGE</p>
                     <button onClick={handleCreateCollection} disabled={!colSymbol || !colName || isSubmitting}
                         className="w-full py-2.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-50">

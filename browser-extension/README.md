@@ -5,10 +5,12 @@ Quantum-safe cryptocurrency wallet & encrypted messenger browser extension for R
 ## Features
 
 - **Wallet**: View balances, send/receive XRGE, claim faucet, custom token support
+- **Tokens**: Create custom tokens (client-side signed v2 transactions)
+- **NFTs**: Create collections (with settable royalty recipient), mint, transfer with sale-price royalties, burn, lock
 - **Messenger**: E2E encrypted chat using ML-KEM-768 + ML-DSA-65 with signed API requests
 - **Mail**: PQC-encrypted email with `@rouge.quant` addresses, multi-recipient CEK encryption
 - **Security**: Vault lock with AES-256-GCM encryption, auto-lock timer, PBKDF2 key derivation (600k iterations)
-- **Signed Requests**: All mail/messenger/name operations authenticated via ML-DSA-65 with anti-replay nonces
+- **Signed Requests**: All state-changing operations — transfers, token/NFT writes, mail/messenger/name — are signed client-side with ML-DSA-65 over canonical JSON, using the node's `/api/v2/*` endpoints with anti-replay timestamps/nonces
 - **TOFU**: Key fingerprint tracking with key-change warnings in messenger
 - **Cross-browser**: Chrome, Edge, Brave, Opera, Arc, Firefox (Manifest V3)
 
