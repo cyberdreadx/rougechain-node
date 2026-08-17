@@ -31,6 +31,17 @@ import { qethToHuman, humanToQeth, formatQethForDisplay } from "@/hooks/use-eth-
 type BridgeDirection = "deposit" | "withdraw";
 type BridgeAsset = "ETH" | "USDC" | "XRGE";
 
+// ── EIP-6963 multi-wallet discovery ──────────────────────────────────────
+// Lets the user pick which injected wallet to use (e.g. the RougeChain wallet
+// extension instead of MetaMask) when more than one is present.
+interface EIP1193Provider {
+  request(args: { method: string; params?: unknown[] | object }): Promise<unknown>;
+  on?(event: string, cb: (...args: unknown[]) => void): void;
+}
+interface EIP6963ProviderInfo { uuid: string; name: string; icon: string; rdns: string }
+interface EIP6963Detail { info: EIP6963ProviderInfo; provider: EIP1193Provider }
+const ROUGECHAIN_RDNS = "io.rougechain.wallet";
+
 const ASSETS: { id: BridgeAsset; label: string; icon: string; l1Label: string }[] = [
   { id: "ETH", label: "ETH", icon: "Ξ", l1Label: "qETH" },
   { id: "USDC", label: "USDC", icon: "$", l1Label: "qUSDC" },
@@ -57,6 +68,28 @@ const Bridge = () => {
   const [evmEthBalance, setEvmEthBalance] = useState(0);
   const [evmUsdcBalance, setEvmUsdcBalance] = useState(0);
   const [evmXrgeBalance, setEvmXrgeBalance] = useState(0);
+
+  // Discovered EIP-6963 wallets + the one currently selected.
+  const [discovered, setDiscovered] = useState<EIP6963Detail[]>([]);
+  const [selectedRdns, setSelectedRdns] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onAnnounce = (e: Event) => {
+      const detail = (e as CustomEvent<EIP6963Detail>).detail;
+      if (!detail?.info?.rdns) return;
+      setDiscovered((prev) => prev.some((p) => p.info.rdns === detail.info.rdns) ? prev : [...prev, detail]);
+    };
+    window.addEventListener("eip6963:announceProvider", onAnnounce as EventListener);
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+    return () => window.removeEventListener("eip6963:announceProvider", onAnnounce as EventListener);
+  }, []);
+
+  // Prefer the RougeChain wallet when present; otherwise the user's choice, else
+  // the first announced provider, else the legacy evmProvider.
+  const preferredDetail = discovered.find((d) => d.info.rdns === ROUGECHAIN_RDNS);
+  const selectedDetail = discovered.find((d) => d.info.rdns === selectedRdns) ?? preferredDetail ?? discovered[0];
+  const evmProvider = (selectedDetail?.provider
+    ?? (window as unknown as { ethereum?: EIP1193Provider }).ethereum) as EIP1193Provider | undefined;
 
   useEffect(() => {
     Promise.all([
@@ -93,19 +126,19 @@ const Bridge = () => {
   useEffect(refreshBalances, [config]);
 
   const refreshEvmBalances = async () => {
-    if (!evmAddress || typeof window.ethereum === "undefined") return;
+    if (!evmAddress || typeof evmProvider === "undefined") return;
     try {
-      const ethHex = await window.ethereum.request({ method: "eth_getBalance", params: [evmAddress, "latest"] }) as string;
+      const ethHex = await evmProvider.request({ method: "eth_getBalance", params: [evmAddress, "latest"] }) as string;
       setEvmEthBalance(Number(BigInt(ethHex)) / 1e18);
 
       const balanceOfSig = "0x70a08231" + evmAddress.slice(2).padStart(64, "0");
 
-      const usdcHex = await window.ethereum.request({ method: "eth_call", params: [{ to: usdcAddress, data: balanceOfSig }, "latest"] }) as string;
+      const usdcHex = await evmProvider.request({ method: "eth_call", params: [{ to: usdcAddress, data: balanceOfSig }, "latest"] }) as string;
       setEvmUsdcBalance(Number(BigInt(usdcHex)) / 1e6);
 
       const xrgeAddr = xrgeConfig?.tokenAddress;
       if (xrgeAddr) {
-        const xrgeHex = await window.ethereum.request({ method: "eth_call", params: [{ to: xrgeAddr, data: balanceOfSig }, "latest"] }) as string;
+        const xrgeHex = await evmProvider.request({ method: "eth_call", params: [{ to: xrgeAddr, data: balanceOfSig }, "latest"] }) as string;
         setEvmXrgeBalance(Number(BigInt(xrgeHex)) / 1e18);
       }
     } catch (e) {
@@ -122,19 +155,19 @@ const Bridge = () => {
   const usdcAddress = getUsdcAddress(detectedChainId);
 
   const connectEvm = async () => {
-    if (typeof window.ethereum === "undefined") {
+    if (typeof evmProvider === "undefined") {
       toast.error("Install a Base-compatible wallet (MetaMask, Coinbase Wallet, etc.)");
       return;
     }
     try {
       const chainIdHex = `0x${detectedChainId.toString(16)}`;
-      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: chainIdHex }] }).catch(async () => {
-        await window.ethereum.request({
+      await evmProvider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: chainIdHex }] }).catch(async () => {
+        await evmProvider.request({
           method: "wallet_addEthereumChain",
           params: [{ chainId: chainIdHex, chainName: chainConfig.name, nativeCurrency: chainConfig.nativeCurrency, rpcUrls: [chainConfig.rpcUrls.default.http[0]], blockExplorerUrls: [chainConfig.blockExplorers.default.url] }],
         });
       });
-      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" }) as string[];
+      const accounts = await evmProvider.request({ method: "eth_requestAccounts" }) as string[];
       setEvmAddress(accounts[0]);
       setEvmTarget(accounts[0]);
       toast.success(`Connected to ${chainLabel}`);
@@ -155,6 +188,7 @@ const Bridge = () => {
 
   const handleDeposit = async () => {
     if (!evmAddress) { toast.error("Connect your Base wallet first"); return; }
+    if (!evmProvider) { toast.error("No Base wallet available"); return; }
     if (!rougechainPubkey) { toast.error("RougeChain wallet not connected"); return; }
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum <= 0) { toast.error("Enter a valid amount"); return; }
@@ -174,12 +208,12 @@ const Bridge = () => {
 
         setStep("Approving XRGE...");
         const approveData = `0x095ea7b3${vaultAddr.slice(2).padStart(64, "0")}${BigInt(amountWei).toString(16).padStart(64, "0")}`;
-        const approveTxHash = await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: tokenAddr, data: approveData }] }) as string;
+        const approveTxHash = await evmProvider.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: tokenAddr, data: approveData }] }) as string;
 
         setStep("Waiting for approval confirmation...");
         for (let i = 0; i < 30; i++) {
           await new Promise(r => setTimeout(r, 2000));
-          const receipt = await window.ethereum.request({ method: "eth_getTransactionReceipt", params: [approveTxHash] });
+          const receipt = await evmProvider.request({ method: "eth_getTransactionReceipt", params: [approveTxHash] });
           if (receipt) break;
         }
 
@@ -187,13 +221,13 @@ const Bridge = () => {
         const pubkeyHex = Array.from(new TextEncoder().encode(rougechainPubkey)).map(b => b.toString(16).padStart(2, "0")).join("");
         const paddedPubkey = pubkeyHex.padEnd(Math.ceil(pubkeyHex.length / 64) * 64, "0");
         const depositData = "0xf1215d25" + BigInt(amountWei).toString(16).padStart(64, "0") + (64).toString(16).padStart(64, "0") + rougechainPubkey.length.toString(16).padStart(64, "0") + paddedPubkey;
-        const depositTx = await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: vaultAddr, data: depositData, gas: "0x7A120" }] }) as string;
+        const depositTx = await evmProvider.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: vaultAddr, data: depositData, gas: "0x7A120" }] }) as string;
 
         setStep("Waiting for deposit confirmation...");
         let depositConfirmed = false;
         for (let i = 0; i < 30; i++) {
           await new Promise(r => setTimeout(r, 2000));
-          const receipt = await window.ethereum.request({ method: "eth_getTransactionReceipt", params: [depositTx] }) as { status?: string } | null;
+          const receipt = await evmProvider.request({ method: "eth_getTransactionReceipt", params: [depositTx] }) as { status?: string } | null;
           if (receipt) {
             depositConfirmed = receipt.status === "0x1";
             break;
@@ -216,7 +250,7 @@ const Bridge = () => {
         if (asset === "ETH") {
           setStep("Sending ETH to bridge...");
           const weiHex = "0x" + (BigInt(Math.round(amountNum * 1e18))).toString(16);
-          const txHash = await window.ethereum.request({
+          const txHash = await evmProvider.request({
             method: "eth_sendTransaction",
             params: [{ from: evmAddress, to: config.custodyAddress, value: weiHex }],
           });
@@ -228,7 +262,7 @@ const Bridge = () => {
           const msgHex = "0x" + Array.from(new TextEncoder().encode(claimMsg)).map(b => b.toString(16).padStart(2, "0")).join("");
           let sig = "";
           try {
-            sig = await window.ethereum.request({ method: "personal_sign", params: [msgHex, evmAddress] }) as string;
+            sig = await evmProvider.request({ method: "personal_sign", params: [msgHex, evmAddress] }) as string;
           } catch {
             // Smart contract wallets (Base wallet) may not support personal_sign — backend handles this
           }
@@ -247,7 +281,7 @@ const Bridge = () => {
           const usdcAddr = usdcAddress;
           const usdcAmount = "0x" + (BigInt(Math.round(amountNum * 1e6))).toString(16);
           const transferData = `0xa9059cbb${config.custodyAddress.slice(2).padStart(64, "0")}${BigInt(usdcAmount).toString(16).padStart(64, "0")}`;
-          const txHash = await window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: usdcAddr, data: transferData }] });
+          const txHash = await evmProvider.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: usdcAddr, data: transferData }] });
           await new Promise(r => setTimeout(r, 5000));
 
           setStep("Signing claim...");
@@ -256,7 +290,7 @@ const Bridge = () => {
           const msgHex = "0x" + Array.from(new TextEncoder().encode(claimMsg)).map(b => b.toString(16).padStart(2, "0")).join("");
           let sig = "";
           try {
-            sig = await window.ethereum.request({ method: "personal_sign", params: [msgHex, evmAddress] }) as string;
+            sig = await evmProvider.request({ method: "personal_sign", params: [msgHex, evmAddress] }) as string;
           } catch {
             // Smart contract wallets may not support personal_sign
           }
@@ -525,12 +559,35 @@ const Bridge = () => {
                 <DeloreanLoader text={step || "Processing..."} />
               )}
 
+              {/* Wallet picker — shown when more than one injected wallet is present */}
+              {direction === "deposit" && !evmAddress && discovered.length > 1 && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Choose a wallet</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {discovered.map((d) => {
+                      const active = (selectedDetail?.info.rdns ?? "") === d.info.rdns;
+                      return (
+                        <button
+                          key={d.info.rdns}
+                          type="button"
+                          onClick={() => setSelectedRdns(d.info.rdns)}
+                          className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${active ? "border-primary bg-primary/10 text-foreground" : "border-border bg-card/40 text-muted-foreground hover:text-foreground"}`}
+                        >
+                          {d.info.icon ? <img src={d.info.icon} alt="" className="w-5 h-5 rounded" /> : <Wallet className="w-4 h-4" />}
+                          <span className="truncate">{d.info.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Connect wallet / Action button */}
               {direction === "deposit" && !evmAddress ? (
                 <Button onClick={connectEvm} variant="outline" className="w-full gap-2 h-12 whitespace-nowrap text-sm">
                   <Wallet className="w-4 h-4 shrink-0" />
-                  <span className="hidden sm:inline">Connect Base Wallet ({chainLabel})</span>
-                  <span className="sm:hidden">Connect Base Wallet</span>
+                  <span className="hidden sm:inline">Connect {selectedDetail?.info.name ?? "Base Wallet"} ({chainLabel})</span>
+                  <span className="sm:hidden">Connect {selectedDetail?.info.name ?? "Base Wallet"}</span>
                 </Button>
               ) : (
                 <Button

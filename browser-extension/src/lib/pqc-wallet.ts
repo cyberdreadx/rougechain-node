@@ -288,56 +288,9 @@ export function invalidateNfts(): void {
     invalidate("nftCollections");
 }
 
-// Send transaction via node API (server-side signing via tx/submit)
-export async function sendTransaction(
-    fromPrivateKey: string,
-    fromPublicKey: string,
-    toPublicKey: string,
-    amount: number,
-    symbol: string = "XRGE",
-    memo?: string
-): Promise<Block> {
-    const baseUrl = getCoreApiBaseUrl();
-    if (!baseUrl) throw new Error("Node not configured");
-
-    const res = await fetch(`${baseUrl}/tx/submit`, {
-        method: "POST",
-        headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({
-            fromPrivateKey,
-            fromPublicKey,
-            toPublicKey,
-            amount,
-            fee: BASE_TRANSFER_FEE,
-            ...(symbol !== "XRGE" ? { tokenSymbol: symbol } : {}),
-        }),
-    });
-
-    const text = await res.text();
-    if (!text) throw new Error(`Server returned empty response (status ${res.status})`);
-
-    let data;
-    try { data = JSON.parse(text); } catch { throw new Error(`Invalid response: ${text.substring(0, 100)}`); }
-
-    if (res.ok && data.success) {
-        invalidate("balance");
-        invalidate("blocks");
-        invalidate("tokens");
-        return {
-            index: 0,
-            timestamp: Date.now(),
-            data: JSON.stringify({ type: "transfer", from: fromPublicKey, to: toPublicKey, amount }),
-            previousHash: "",
-            hash: data.txId || "",
-            nonce: 0,
-            signature: "",
-            signerPublicKey: fromPublicKey,
-        };
-    }
-
-    if (data.error) throw new Error(data.error);
-    throw new Error(`Transaction failed: ${res.status} ${res.statusText}`);
-}
+// NOTE: XRGE/token transfers are submitted client-side signed via the node's
+// /api/v2/transfer endpoint (see WalletTab.handleSend). The old server-side-signing
+// /tx/submit endpoint is retired on-chain (returns 410 Gone), so it was removed here.
 
 // Claim faucet tokens
 export async function claimFaucet(publicKey: string): Promise<any> {

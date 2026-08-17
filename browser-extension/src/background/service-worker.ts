@@ -5,6 +5,8 @@
  */
 
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
+import { deriveEvmAccount, personalSign, hexToBytes as evmHexToBytes, decodeSignMessage, type EvmAccount } from "../lib/evm-wallet";
+import { rpc, fillSignAndSend, getChain, isSupportedChain, BASE_MAINNET_CHAIN_ID } from "../lib/evm-rpc";
 
 interface ConnectedSite {
     origin: string;
@@ -267,7 +269,7 @@ let approvalCounter = 0;
  * Returns `true` if approved, `false` if denied or window closed.
  */
 function requestApproval(
-    type: "connect" | "sign" | "send",
+    type: "connect" | "sign" | "send" | "evm-connect" | "evm-personal-sign" | "evm-send",
     origin: string,
     payload?: Record<string, unknown>
 ): Promise<boolean> {
@@ -494,7 +496,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     const txPayloadJson = serializePayload(txPayload);
                     const txSig = signPayload(txPayloadJson, wallet.privateKey);
 
-                    const res = await fetch(`${baseUrl}/v2/tx/submit`, {
+                    // v2 signed transfer route (/v2/tx/submit never existed → 404).
+                    const res = await fetch(`${baseUrl}/v2/transfer`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
@@ -522,4 +525,203 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })();
 
     return true; // keep the message channel open for async response
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EVM (Base) provider — window.ethereum bridge support
+// ═══════════════════════════════════════════════════════════════════════════
+
+const EVM_CHAIN_KEY = "rougechain-evm-chain";
+const EVM_ORIGINS_KEY = "rougechain-evm-origins";
+
+/** Derive the Base account from the unlocked wallet's mnemonic (null if locked/raw-key). */
+function getEvmAccount(): Promise<EvmAccount | null> {
+    return new Promise((resolve) => {
+        chrome.storage.local.get("pqc-unified-wallet", (data) => {
+            const raw = data["pqc-unified-wallet"];
+            if (!raw) { resolve(null); return; }
+            try {
+                const w = JSON.parse(raw);
+                resolve(deriveEvmAccount(w.mnemonic));
+            } catch { resolve(null); }
+        });
+    });
+}
+
+function getEvmChainId(): Promise<number> {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(EVM_CHAIN_KEY, (data) => {
+            const c = Number(data[EVM_CHAIN_KEY]);
+            resolve(isSupportedChain(c) ? c : BASE_MAINNET_CHAIN_ID);
+        });
+    });
+}
+function setEvmChainId(chainId: number): Promise<void> {
+    return new Promise((resolve) => chrome.storage.local.set({ [EVM_CHAIN_KEY]: chainId }, () => resolve()));
+}
+
+function getEvmOrigins(): Promise<string[]> {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(EVM_ORIGINS_KEY, (data) => {
+            try { resolve(data[EVM_ORIGINS_KEY] ? JSON.parse(data[EVM_ORIGINS_KEY]) : []); }
+            catch { resolve([]); }
+        });
+    });
+}
+async function addEvmOrigin(origin: string): Promise<void> {
+    const list = await getEvmOrigins();
+    if (!list.includes(origin)) {
+        list.push(origin);
+        await new Promise<void>((r) => chrome.storage.local.set({ [EVM_ORIGINS_KEY]: JSON.stringify(list) }, () => r()));
+    }
+}
+
+function emitEvm(tabId: number | undefined, event: string, data: unknown) {
+    if (tabId === undefined) return;
+    chrome.tabs.sendMessage(tabId, { type: "evm-event", event, data }).catch(() => { /* tab gone */ });
+}
+
+function weiToEth(hexWei: string | undefined): string {
+    if (!hexWei) return "0";
+    try {
+        const wei = BigInt(hexWei);
+        const whole = wei / 10n ** 18n;
+        const frac = (wei % 10n ** 18n).toString().padStart(18, "0").replace(/0+$/, "");
+        return frac ? `${whole}.${frac}` : `${whole}`;
+    } catch { return "0"; }
+}
+
+interface EvmResult { result?: unknown; error?: { code: number; message: string } }
+const evmErr = (code: number, message: string): EvmResult => ({ error: { code, message } });
+
+// Methods safe to proxy straight to the Base RPC (read-only).
+const READ_PROXY = new Set([
+    "eth_call", "eth_getBalance", "eth_getCode", "eth_getStorageAt",
+    "eth_estimateGas", "eth_gasPrice", "eth_maxPriorityFeePerGas", "eth_feeHistory",
+    "eth_blockNumber", "eth_getBlockByNumber", "eth_getBlockByHash",
+    "eth_getTransactionByHash", "eth_getTransactionReceipt", "eth_getTransactionCount",
+    "eth_getLogs", "eth_getProof", "eth_chainId", "net_version",
+]);
+
+async function handleEvmRequest(
+    method: string,
+    rawParams: unknown,
+    origin: string,
+    tabId: number | undefined,
+): Promise<EvmResult> {
+    const params = Array.isArray(rawParams) ? rawParams : [];
+    const chainId = await getEvmChainId();
+    const chain = getChain(chainId);
+
+    switch (method) {
+        case "eth_chainId":
+            return { result: chain.chainIdHex };
+        case "net_version":
+            return { result: String(chainId) };
+
+        case "eth_accounts": {
+            const origins = await getEvmOrigins();
+            if (!origins.includes(origin)) return { result: [] };
+            const acct = await getEvmAccount();
+            return { result: acct ? [acct.address] : [] };
+        }
+
+        case "eth_requestAccounts": {
+            const acct = await getEvmAccount();
+            if (!acct) return evmErr(4100, "No Base account — unlock a wallet created from a recovery phrase");
+            const origins = await getEvmOrigins();
+            if (!origins.includes(origin)) {
+                const approved = await requestApproval("evm-connect", origin, { address: acct.address, chain: chain.name });
+                if (!approved) return evmErr(4001, "User rejected the connection request");
+                await addEvmOrigin(origin);
+            }
+            emitEvm(tabId, "connect", { chainId: chain.chainIdHex });
+            emitEvm(tabId, "accountsChanged", [acct.address]);
+            return { result: [acct.address] };
+        }
+
+        case "wallet_switchEthereumChain": {
+            const target = parseInt((params[0] as { chainId?: string })?.chainId ?? "", 16);
+            if (!isSupportedChain(target)) {
+                return evmErr(4902, `Unrecognized chain. RougeChain wallet supports Base (${getChain(BASE_MAINNET_CHAIN_ID).chainIdHex}) and Base Sepolia only.`);
+            }
+            await setEvmChainId(target);
+            emitEvm(tabId, "chainChanged", getChain(target).chainIdHex);
+            return { result: null };
+        }
+
+        case "wallet_addEthereumChain": {
+            const target = parseInt((params[0] as { chainId?: string })?.chainId ?? "", 16);
+            if (!isSupportedChain(target)) {
+                return evmErr(4902, "RougeChain wallet only supports the Base networks.");
+            }
+            await setEvmChainId(target);
+            emitEvm(tabId, "chainChanged", getChain(target).chainIdHex);
+            return { result: null };
+        }
+
+        case "personal_sign": {
+            const acct = await getEvmAccount();
+            if (!acct) return evmErr(4100, "No Base account available");
+            const origins = await getEvmOrigins();
+            if (!origins.includes(origin)) return evmErr(4100, "Connect the site first (eth_requestAccounts)");
+            // params order is [message, address] per EIP-1191; tolerate the reverse.
+            const addrLc = acct.address.toLowerCase();
+            const msgParam = String(params[0]).toLowerCase() === addrLc ? String(params[1]) : String(params[0]);
+            const approved = await requestApproval("evm-personal-sign", origin, {
+                address: acct.address, chain: chain.name,
+                message: decodeSignMessage(msgParam), raw: msgParam,
+            });
+            if (!approved) return evmErr(4001, "User rejected the signature request");
+            const bytes = msgParam.startsWith("0x") ? evmHexToBytes(msgParam) : msgParam;
+            return { result: personalSign(acct.privateKey, bytes) };
+        }
+
+        case "eth_sendTransaction": {
+            const acct = await getEvmAccount();
+            if (!acct) return evmErr(4100, "No Base account available");
+            const origins = await getEvmOrigins();
+            if (!origins.includes(origin)) return evmErr(4100, "Connect the site first (eth_requestAccounts)");
+            const tx = (params[0] ?? {}) as { from?: string; to?: string; value?: string; data?: string; gas?: string };
+            if (!tx.to) return evmErr(-32602, "Transaction is missing 'to'");
+            const approved = await requestApproval("evm-send", origin, {
+                address: acct.address, chain: chain.name, chainId,
+                to: tx.to, valueEth: weiToEth(tx.value), hasData: !!(tx.data && tx.data !== "0x"),
+            });
+            if (!approved) return evmErr(4001, "User rejected the transaction");
+            try {
+                const hash = await fillSignAndSend(chainId, acct, { from: acct.address, to: tx.to, value: tx.value, data: tx.data, gas: tx.gas });
+                return { result: hash };
+            } catch (e: any) {
+                return evmErr(-32000, e?.message || "Transaction failed on Base");
+            }
+        }
+
+        case "eth_sign":
+        case "eth_signTypedData":
+        case "eth_signTypedData_v3":
+        case "eth_signTypedData_v4":
+            return evmErr(4200, `${method} is not supported by RougeChain wallet (blind-signing protection)`);
+
+        default: {
+            if (READ_PROXY.has(method)) {
+                try { return { result: await rpc(chainId, method, params) }; }
+                catch (e: any) { return evmErr(-32603, e?.message || `RPC error (${method})`); }
+            }
+            return evmErr(4200, `Unsupported method: ${method}`);
+        }
+    }
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type !== "evm-request") return false;
+    (async () => {
+        try {
+            const res = await handleEvmRequest(message.method, message.params, message.origin, sender.tab?.id);
+            sendResponse(res);
+        } catch (err: any) {
+            sendResponse({ error: { code: -32603, message: err?.message || "Internal error" } });
+        }
+    })();
+    return true;
 });

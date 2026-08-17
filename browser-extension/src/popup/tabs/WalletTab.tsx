@@ -132,15 +132,35 @@ export default function WalletTab({ wallet }: Props) {
         if (!sendTo || !sendAmount || isSending) return;
         setIsSending(true);
         try {
-            const { sendTransaction } = await import("../../lib/pqc-wallet");
-            await sendTransaction(
-                wallet.signingPrivateKey,
-                wallet.signingPublicKey,
-                sendTo,
-                parseFloat(sendAmount),
-                TOKEN_SYMBOL,
-                sendMemo || undefined
-            );
+            // v2 client-side signed transfer (the v1 /tx/submit endpoint is retired — 410 Gone).
+            const { getCoreApiBaseUrl, getCoreApiHeaders } = await import("../../lib/network");
+            const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
+            const { invalidate } = await import("../../lib/api-cache");
+            const baseUrl = getCoreApiBaseUrl();
+            if (!baseUrl) throw new Error("No node configured");
+
+            const payload = {
+                type: "transfer",
+                from: wallet.signingPublicKey,
+                to: sendTo,
+                amount: parseFloat(sendAmount),
+                token: TOKEN_SYMBOL,
+                timestamp: Date.now(),
+                nonce: bytesToHex(crypto.getRandomValues(new Uint8Array(16))),
+            };
+            const sorted = sortKeysDeep(payload);
+            const payloadBytes = new TextEncoder().encode(JSON.stringify(sorted));
+            const signature = bytesToHex(ml_dsa65.sign(payloadBytes, hexToBytes(wallet.signingPrivateKey)));
+
+            const res = await fetch(`${baseUrl}/v2/transfer`, {
+                method: "POST",
+                headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
+                body: JSON.stringify({ payload: sorted, signature, public_key: wallet.signingPublicKey }),
+            });
+            const data = await res.json();
+            if (!data.success) throw new Error(data.error || "Send failed");
+
+            invalidate("balance"); invalidate("blocks"); invalidate("tokens");
             setShowSend(false);
             setSendTo("");
             setSendAmount("");
@@ -364,8 +384,7 @@ export default function WalletTab({ wallet }: Props) {
                                     setIsShielding(true);
                                     try {
                                         const note = await createShieldedNote(amt, wallet.signingPublicKey);
-                                        // Submit shield tx
-                                        const { sendTransaction: sendTx } = await import("../../lib/pqc-wallet");
+                                        // Submit shield tx (v2 signed)
                                         const { getCoreApiBaseUrl, getCoreApiHeaders } = await import("../../lib/network");
                                         const baseUrl = getCoreApiBaseUrl();
                                         const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
