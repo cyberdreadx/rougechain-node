@@ -123,7 +123,7 @@ const Bridge = () => {
 
   const connectEvm = async () => {
     if (typeof window.ethereum === "undefined") {
-      toast.error("Install MetaMask or another Web3 wallet");
+      toast.error("Install a Base-compatible wallet (MetaMask, Coinbase Wallet, etc.)");
       return;
     }
     try {
@@ -529,8 +529,8 @@ const Bridge = () => {
               {direction === "deposit" && !evmAddress ? (
                 <Button onClick={connectEvm} variant="outline" className="w-full gap-2 h-12 whitespace-nowrap text-sm">
                   <Wallet className="w-4 h-4 shrink-0" />
-                  <span className="hidden sm:inline">Connect MetaMask ({chainLabel})</span>
-                  <span className="sm:hidden">Connect MetaMask</span>
+                  <span className="hidden sm:inline">Connect Base Wallet ({chainLabel})</span>
+                  <span className="sm:hidden">Connect Base Wallet</span>
                 </Button>
               ) : (
                 <Button
@@ -569,8 +569,8 @@ const Bridge = () => {
               <p className="text-xs text-muted-foreground text-center">
                 {direction === "deposit"
                   ? asset === "XRGE"
-                    ? "Approve + deposit in two MetaMask transactions. 1:1 conversion."
-                    : `Send ${asset} via MetaMask → auto-claim ${currentAsset.l1Label} on RougeChain. 1:1 conversion.`
+                    ? "Approve + deposit in two Base wallet transactions. 1:1 conversion."
+                    : `Send ${asset} via your Base wallet → auto-claim ${currentAsset.l1Label} on RougeChain. 1:1 conversion.`
                   : "Submit withdrawal → relayer processes on Base (typically < 2 min)."
                 }
               </p>
