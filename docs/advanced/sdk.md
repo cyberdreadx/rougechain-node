@@ -136,6 +136,8 @@ await rc.dex.removeLiquidity(wallet, { poolId: 'XRGE-MTK', lpAmount: 100 });
 
 ```typescript
 await rc.nft.createCollection(wallet, { symbol: 'ART', name: 'My Art', royaltyBps: 500, maxSupply: 10000 });
+// Route royalties to a specific wallet (defaults to the creator). Never use a contract address — funds would be lost.
+await rc.nft.createCollection(wallet, { symbol: 'ART2', name: 'Split Art', royaltyBps: 1000, royaltyRecipient: payoutWalletPubKey });
 await rc.nft.mint(wallet, { collectionId: 'abc123', name: 'Piece #1', metadataUri: '...' });
 await rc.nft.batchMint(wallet, { collectionId: 'abc123', names: ['#1', '#2'], uris: ['...', '...'] });
 await rc.nft.transfer(wallet, { collectionId: 'abc123', tokenId: 1, to: buyerPubKey, salePrice: 100 });
