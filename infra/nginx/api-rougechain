@@ -13,6 +13,17 @@ server {
     ssl_certificate /etc/letsencrypt/live/api.rougechain.io/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/api.rougechain.io/privkey.pem;
 
+    # --- SECURITY PAUSE 2026-08-19: bridge write routes + unverified token freeze ---
+    # Contains three unauth mainnet bugs: XRGE infinite-mint, qETH deposit-theft,
+    # token-freeze signature bypass. Daemon bridge is ALSO disabled (custody/vault
+    # unset); these nginx 403s are defense-in-depth + the only cover for token-freeze.
+    # Remove this block to restore once the code fix is deployed & verified.
+    location = /api/bridge/claim          { return 403; }
+    location = /api/bridge/xrge/claim     { return 403; }
+    location ^~ /api/bridge/withdraw      { return 403; }
+    location ^~ /api/bridge/xrge/withdraw { return 403; }
+    location = /api/v2/token/freeze       { return 403; }
+
     # WebSocket — not subject to CORS preflight, so no CORS headers here.
     # Must precede the /api/ block's OPTIONS short-circuit (longest prefix wins).
     location /api/ws {

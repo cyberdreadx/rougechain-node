@@ -1,0 +1,18 @@
+{
+  "name": "rougechain-evm-cli",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Terminal Base/EVM wallet for RougeChain — derives the Base account from the SAME 24-word mnemonic as the extension (m/44'/60'/0'/0/0) and can check balances + send on Base.",
+  "bin": {
+    "rougechain-evm": "index.mjs"
+  },
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "@scure/bip32": "^1.4.0",
+    "@scure/bip39": "^1.3.0",
+    "micro-eth-signer": "0.20.0"
+  }
+}

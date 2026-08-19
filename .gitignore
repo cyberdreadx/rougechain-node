@@ -32,6 +32,10 @@ core/target/
 .env.*.local
 contracts/.env
 bridge-relayer.env
+# Any backup/timestamped variant of a secret env must never be committed
+bridge-relayer.env.*
+!bridge-relayer.env.example
+*.env.bak*
 
 # Bridge relayer runtime state (local, regenerated)
 .bridge-processed-txs.json
