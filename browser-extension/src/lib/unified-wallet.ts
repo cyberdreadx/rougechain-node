@@ -182,7 +182,7 @@ export function autoLockWallet(): void {
  * session. Plaintext keys therefore never touch disk. Requires a password.
  */
 export async function persistNewWallet(wallet: UnifiedWallet, password: string): Promise<void> {
-    if (!password) throw new Error("A password is required to secure the wallet");
+    if (!password || password.length < 8) throw new Error("Password must be at least 8 characters");
     const upgraded = ensureCorrectKeys(wallet);
     const encrypted = await encryptWallet(upgraded, password);
     storage.setItem(ENCRYPTED_WALLET_KEY, encrypted);

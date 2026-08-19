@@ -64,15 +64,34 @@ impl BridgeClaimStore {
         self.persist().await
     }
 
+    /// Durable, crash-atomic write: serialize to a temp file, fsync it, then rename over
+    /// the real file (rename is atomic on the same filesystem) and fsync the directory.
+    /// A bare `fs::write` could leave a truncated/lost file after a crash mid-write, which
+    /// for a replay-nullifier set means a claimed tx hash could reappear as unclaimed on
+    /// restart (fail-open = double-mint). This persists BEFORE the caller mints, so the
+    /// only crash outcome is fail-closed (a durably-reserved key with no mint), never a
+    /// lost nullifier.
     async fn persist(&self) -> Result<(), String> {
         let claimed = self.claimed.read().await;
-        let list: Vec<&String> = claimed.iter().collect();
-        let list: Vec<String> = list.into_iter().cloned().collect();
+        let list: Vec<String> = claimed.iter().cloned().collect();
         drop(claimed);
         let data = serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?;
-        tokio::task::spawn_blocking({
-            let path = self.path.clone();
-            move || std::fs::write(path, data)
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+            use std::io::Write;
+            let tmp = path.with_extension("json.tmp");
+            {
+                let mut f = std::fs::File::create(&tmp)?;
+                f.write_all(data.as_bytes())?;
+                f.sync_all()?; // fsync the file contents
+            }
+            std::fs::rename(&tmp, &path)?; // atomic replace
+            if let Some(dir) = path.parent() {
+                if let Ok(d) = std::fs::File::open(dir) {
+                    let _ = d.sync_all(); // fsync the dir so the rename is durable
+                }
+            }
+            Ok(())
         })
         .await
         .map_err(|e| e.to_string())?
