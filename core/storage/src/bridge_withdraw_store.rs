@@ -50,6 +50,10 @@ pub struct PendingWithdrawal {
     pub last_error: Option<String>,
     #[serde(default)]
     pub updated_at: i64,
+    /// Base payout tx hash, recorded once the withdrawal was verified as paid on L1.
+    /// `None` while pending; set by `mark_fulfilled` after on-chain verification.
+    #[serde(default)]
+    pub payout_tx_hash: Option<String>,
 }
 
 pub struct BridgeWithdrawStore {
@@ -98,6 +102,7 @@ impl BridgeWithdrawStore {
                 attempts: 0,
                 last_error: None,
                 updated_at: now,
+                payout_tx_hash: None,
             });
         }
         self.persist()
@@ -142,6 +147,40 @@ impl BridgeWithdrawStore {
                     true
                 }
                 None => false,
+            }
+        };
+        if changed {
+            self.persist()?;
+        }
+        Ok(changed)
+    }
+
+    /// Non-terminal withdrawals the relayer still needs to act on (Pending or Failed-retry).
+    /// Fulfilled/Refunded records are kept for audit but hidden from the relayer poll so they
+    /// are never re-processed.
+    pub fn list_pending(&self) -> Result<Vec<PendingWithdrawal>, String> {
+        let pending = self.pending.read().map_err(|_| "lock")?;
+        Ok(pending
+            .iter()
+            .filter(|w| !matches!(w.status, WithdrawalStatus::Fulfilled | WithdrawalStatus::Refunded))
+            .cloned()
+            .collect())
+    }
+
+    /// Mark a withdrawal Fulfilled and record the verified Base payout tx hash. The record is
+    /// KEPT (not deleted) so the payout is auditable and cannot be silently re-created.
+    /// Returns Ok(false) if the tx_id is unknown or was already terminal.
+    pub fn mark_fulfilled(&self, tx_id: &str, payout_tx_hash: &str) -> Result<bool, String> {
+        let changed = {
+            let mut pending = self.pending.write().map_err(|_| "lock")?;
+            match pending.iter_mut().find(|w| w.tx_id == tx_id) {
+                Some(w) if !matches!(w.status, WithdrawalStatus::Fulfilled | WithdrawalStatus::Refunded) => {
+                    w.status = WithdrawalStatus::Fulfilled;
+                    w.payout_tx_hash = Some(payout_tx_hash.to_string());
+                    w.updated_at = chrono::Utc::now().timestamp_millis();
+                    true
+                }
+                _ => false,
             }
         };
         if changed {

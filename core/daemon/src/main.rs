@@ -1,5 +1,4 @@
 mod amm;
-mod bridge_verifier;
 mod dashboard;
 mod grpc;
 mod nft_store;
@@ -295,6 +294,8 @@ async fn main() -> Result<(), String> {
         .as_ref()
         .map(PathBuf::from)
         .unwrap_or_else(|| default_data_dir("core-node"));
+    // Load the persisted signed-tx replay guard so a restart cannot reopen the replay window.
+    init_replay_guard(&data_dir);
     // Load genesis config if provided
     let genesis_config = if let Some(ref genesis_path) = args.genesis {
         let genesis_data = std::fs::read_to_string(genesis_path)
@@ -4223,23 +4224,57 @@ struct SignedTransactionRequest {
 /// Verify a signed transaction from the frontend.
 /// Returns the serialized payload JSON on success (the exact bytes that were signed).
 /// Process-global cache of recently-seen signatures, for replay protection on every
-/// `verify_signed_tx` write path. Keyed by sha256(signature) → expiry (ms). Entries live only
-/// for the signature-validity window; after that the timestamp check rejects the request
-/// anyway, so the map stays small and a restart clearing it is safe.
+/// `verify_signed_tx` write path. Keyed by sha256(signature) → expiry (ms). PERSISTED to disk
+/// so a node restart cannot reopen the replay window: within a signature's 5-minute validity
+/// the entry is on disk and rejects the replay; past that the timestamp check rejects it. Net:
+/// every signature is usable exactly once, ever — even across restarts.
 static SEEN_SIGNATURES: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, i64>>> =
     std::sync::OnceLock::new();
+/// Path to the on-disk replay-guard file (set once at startup by `init_replay_guard`).
+static REPLAY_GUARD_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Load the persisted replay-guard entries (dropping any already-expired) and remember the file
+/// path so the guard survives a restart. Call once at startup with the node data dir.
+fn init_replay_guard(data_dir: &std::path::Path) {
+    let path = data_dir.join("replay_guard.json");
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut map = std::collections::HashMap::new();
+    if let Ok(data) = std::fs::read_to_string(&path) {
+        if let Ok(entries) = serde_json::from_str::<std::collections::HashMap<String, i64>>(&data) {
+            for (k, exp) in entries {
+                if exp > now { map.insert(k, exp); } // drop entries already past their window
+            }
+        }
+    }
+    let _ = SEEN_SIGNATURES.set(std::sync::Mutex::new(map));
+    let _ = REPLAY_GUARD_PATH.set(path);
+}
+
+/// Durably write the current guard map (small — entries expire in 5 min) via temp file + fsync +
+/// atomic rename, so a crash mid-write cannot corrupt or lose the set. Best-effort: a write
+/// failure does not fail the request (the in-memory guard still holds until the next restart).
+fn persist_replay_guard(map: &std::collections::HashMap<String, i64>) {
+    let Some(path) = REPLAY_GUARD_PATH.get() else { return };
+    let Ok(data) = serde_json::to_string(map) else { return };
+    let tmp = path.with_extension("json.tmp");
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::File::create(&tmp) {
+        if f.write_all(data.as_bytes()).is_ok() && f.sync_all().is_ok() {
+            let _ = std::fs::rename(&tmp, path);
+        }
+    }
+}
 
 /// Reject a signed request whose signature was already seen inside its validity window. The
-/// check-and-insert happens under a single lock, so two concurrent replays cannot both pass.
-/// This closes the in-window replay hole (the timestamp check alone allowed a captured signed
-/// request to be resubmitted for up to 5 minutes) with no client-side change, because it keys
-/// off the signature the client already sends.
+/// check-and-insert happens under a single lock, so two concurrent replays cannot both pass,
+/// and the set is persisted so a restart cannot reopen the window (no client-side change — it
+/// keys off the signature the client already sends).
 fn replay_guard(signature: &str, expiry_ms: i64) -> Result<(), String> {
     let now = chrono::Utc::now().timestamp_millis();
     let key = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(signature.as_bytes()));
     let cell = SEEN_SIGNATURES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     let mut map = cell.lock().map_err(|_| "replay guard unavailable".to_string())?;
-    // Bound memory: purge expired entries once the map grows.
+    // Bound memory/file size: purge expired entries once the map grows.
     if map.len() > 4096 {
         map.retain(|_, exp| *exp > now);
     }
@@ -4249,6 +4284,7 @@ fn replay_guard(signature: &str, expiry_ms: i64) -> Result<(), String> {
         }
     }
     map.insert(key, expiry_ms);
+    persist_replay_guard(&map);
     Ok(())
 }
 
@@ -7329,7 +7365,7 @@ fn is_xrge_withdrawal(w: &PendingWithdrawal) -> bool {
 }
 
 async fn bridge_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdrawalsResponse> {
-    let list = state.bridge_withdraw_store.list().unwrap_or_default();
+    let list = state.bridge_withdraw_store.list_pending().unwrap_or_default();
     Json(BridgeWithdrawalsResponse {
         withdrawals: list
             .into_iter()
@@ -7355,6 +7391,76 @@ async fn bridge_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdra
 struct BridgeFulfillResponse {
     success: bool,
     error: Option<String>,
+}
+
+/// Extract the Base payout tx hash from a relayer fulfill body — either a top-level
+/// `{ "evmTxHash": "0x…" }` (relayer-secret path) or inside a signed request's `payload`.
+fn payout_hash_from_body(body: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    v.get("evmTxHash")
+        .or_else(|| v.get("payout_tx_hash"))
+        .or_else(|| v.get("payload").and_then(|p| p.get("evmTxHash")))
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Verify a Base *native ETH* payout before a qETH withdrawal is marked fulfilled: the tx
+/// `from` must be custody, `to` the recipient, `value` at least what is owed, status success,
+/// with enough confirmations. Never trust the relayer's "done" without the on-chain receipt.
+async fn verify_native_eth_payout(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    tx_hash: &str,
+    from_custody: &str,
+    to_addr: &str,
+    min_wei: u128,
+) -> Result<(), String> {
+    let tx_hash = if tx_hash.starts_with("0x") { tx_hash.to_string() } else { format!("0x{}", tx_hash) };
+    let from_custody = from_custody.to_lowercase();
+    let to_addr = to_addr.to_lowercase();
+
+    let tx: serde_json::Value = client
+        .post(rpc_url)
+        .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionByHash","params":[tx_hash],"id":1}))
+        .send().await.map_err(|e| format!("RPC error: {}", e))?
+        .json().await.map_err(|e| format!("bad RPC response: {}", e))?;
+    let result = tx.get("result").filter(|v| !v.is_null())
+        .ok_or_else(|| "payout tx not found or not yet mined".to_string())?;
+    let tx_from = result.get("from").and_then(|v| v.as_str()).unwrap_or_default().to_lowercase();
+    let tx_to = result.get("to").and_then(|v| v.as_str()).unwrap_or_default().to_lowercase();
+    if tx_from != from_custody {
+        return Err(format!("payout sender {} is not the custody address {}", tx_from, from_custody));
+    }
+    if tx_to != to_addr {
+        return Err(format!("payout recipient {} does not match the withdrawal address {}", tx_to, to_addr));
+    }
+    let value_hex = result.get("value").and_then(|v| v.as_str()).unwrap_or("0x0");
+    let value_wei = u128::from_str_radix(value_hex.trim_start_matches("0x"), 16).unwrap_or(0);
+    if value_wei < min_wei {
+        return Err(format!("payout {} wei is less than the {} wei owed", value_wei, min_wei));
+    }
+
+    let receipt: serde_json::Value = client
+        .post(rpc_url)
+        .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":[tx_hash],"id":1}))
+        .send().await.map_err(|e| format!("RPC error: {}", e))?
+        .json().await.map_err(|e| format!("bad RPC response: {}", e))?;
+    let rec = receipt.get("result").filter(|v| !v.is_null())
+        .ok_or_else(|| "payout receipt not found".to_string())?;
+    if rec.get("status").and_then(|v| v.as_str()).unwrap_or("0x0") != "0x1" {
+        return Err("payout transaction reverted".to_string());
+    }
+    let block = rec.get("blockNumber").and_then(|v| v.as_str())
+        .and_then(|h| u64::from_str_radix(h.trim_start_matches("0x"), 16).ok())
+        .ok_or_else(|| "payout block missing".to_string())?;
+    let min_conf = bridge_min_confirmations();
+    if let Some(latest) = evm_latest_block(client, rpc_url).await {
+        if latest < block + min_conf {
+            return Err(format!("payout needs {} confirmations (block {}, latest {})", min_conf, block, latest));
+        }
+    }
+    Ok(())
 }
 
 async fn bridge_withdrawal_fulfill(
@@ -7399,19 +7505,31 @@ async fn bridge_withdrawal_fulfill(
         }
     }
 
-    match state.bridge_withdraw_store.remove(&tx_id) {
-        Ok(true) => Json(BridgeFulfillResponse {
-            success: true,
-            error: None,
-        }),
-        Ok(false) => Json(BridgeFulfillResponse {
-            success: false,
-            error: Some("Withdrawal not found or already fulfilled".to_string()),
-        }),
-        Err(e) => Json(BridgeFulfillResponse {
-            success: false,
-            error: Some(e),
-        }),
+    // SECURITY: never mark a withdrawal fulfilled on the relayer's word alone. Require the Base
+    // payout tx hash and verify on-chain that custody actually paid the recipient what is owed.
+    let payout_hash = match payout_hash_from_body(&body) {
+        Some(h) => h,
+        None => return Json(BridgeFulfillResponse { success: false, error: Some("missing evmTxHash (Base payout tx) in body".to_string()) }),
+    };
+    let record = match state.bridge_withdraw_store.get(&tx_id) {
+        Ok(Some(w)) => w,
+        Ok(None) => return Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found".to_string()) }),
+        Err(e) => return Json(BridgeFulfillResponse { success: false, error: Some(e) }),
+    };
+    let custody = match &state.bridge_custody_address {
+        Some(c) if !c.is_empty() => c.clone(),
+        _ => return Json(BridgeFulfillResponse { success: false, error: Some("bridge custody not configured".to_string()) }),
+    };
+    // qETH: 1 unit = 1e-6 ETH = 1e12 wei.
+    let min_wei = (record.amount_units as u128).saturating_mul(1_000_000_000_000u128);
+    let client = reqwest::Client::new();
+    if let Err(e) = verify_native_eth_payout(&client, &state.base_sepolia_rpc, &payout_hash, &custody, &record.evm_address, min_wei).await {
+        return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout not verified: {}", e)) });
+    }
+    match state.bridge_withdraw_store.mark_fulfilled(&tx_id, &payout_hash) {
+        Ok(true) => Json(BridgeFulfillResponse { success: true, error: None }),
+        Ok(false) => Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found or already fulfilled".to_string()) }),
+        Err(e) => Json(BridgeFulfillResponse { success: false, error: Some(e) }),
     }
 }
 
@@ -7606,7 +7724,7 @@ async fn xrge_bridge_withdraw(
 }
 
 async fn xrge_bridge_withdrawals(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let list = state.bridge_withdraw_store.list().unwrap_or_default();
+    let list = state.bridge_withdraw_store.list_pending().unwrap_or_default();
     let xrge_withdrawals: Vec<_> = list.into_iter()
         .filter(is_xrge_withdrawal)
         .map(|w| serde_json::json!({
@@ -7666,9 +7784,43 @@ async fn xrge_bridge_fulfill(
         }
     }
 
-    match state.bridge_withdraw_store.remove(&tx_id) {
+    // SECURITY: verify the on-chain XRGE payout (vault → recipient) before marking fulfilled.
+    let payout_hash = match payout_hash_from_body(&body) {
+        Some(h) => h,
+        None => return Json(BridgeFulfillResponse { success: false, error: Some("missing evmTxHash (Base payout tx) in body".to_string()) }),
+    };
+    let record = match state.bridge_withdraw_store.get(&tx_id) {
+        Ok(Some(w)) => w,
+        Ok(None) => return Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found".to_string()) }),
+        Err(e) => return Json(BridgeFulfillResponse { success: false, error: Some(e) }),
+    };
+    let vault = match &state.xrge_bridge_vault {
+        Some(v) if !v.is_empty() => v.to_lowercase(),
+        _ => return Json(BridgeFulfillResponse { success: false, error: Some("XRGE vault not configured".to_string()) }),
+    };
+    let token = state.xrge_bridge_token.clone();
+    let client = reqwest::Client::new();
+    let deposit = match parse_erc20_transfer_to(&client, &state.base_sepolia_rpc, &payout_hash, &token, &record.evm_address).await {
+        Ok(d) => d,
+        Err(e) => return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout not verified: {}", e)) }),
+    };
+    if deposit.from != vault {
+        return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout sender {} is not the XRGE vault {}", deposit.from, vault)) });
+    }
+    // XRGE: L1 whole-XRGE units → 18-decimal Base token.
+    let min_amount = (record.amount_units as u128).saturating_mul(1_000_000_000_000_000_000u128);
+    if deposit.amount < min_amount {
+        return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout {} is less than the {} owed", deposit.amount, min_amount)) });
+    }
+    let min_conf = bridge_min_confirmations();
+    if let Some(latest) = evm_latest_block(&client, &state.base_sepolia_rpc).await {
+        if latest < deposit.block + min_conf {
+            return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout needs {} confirmations (block {}, latest {})", min_conf, deposit.block, latest)) });
+        }
+    }
+    match state.bridge_withdraw_store.mark_fulfilled(&tx_id, &payout_hash) {
         Ok(true) => Json(BridgeFulfillResponse { success: true, error: None }),
-        Ok(false) => Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found".to_string()) }),
+        Ok(false) => Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found or already fulfilled".to_string()) }),
         Err(e) => Json(BridgeFulfillResponse { success: false, error: Some(e) }),
     }
 }
