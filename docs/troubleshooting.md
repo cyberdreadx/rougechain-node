@@ -154,7 +154,7 @@ Common causes:
 
 ### Can't stake — "insufficient balance"
 
-You need at least **1,000 XRGE** plus the transaction fee. Use the faucet multiple times if needed.
+You need at least **10,000 XRGE** plus the transaction fee — the 10,000 XRGE minimum is enforced on every stake call. Use the faucet if needed.
 
 ### Staked but not producing blocks
 

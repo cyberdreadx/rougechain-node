@@ -10,7 +10,7 @@ To create a new trading pool:
 4. Enter the initial amounts for each token
 5. Click **Create Pool**
 
-The initial token ratio sets the starting price. A 100 XRGE fee is charged for pool creation.
+The initial token ratio sets the starting price. A 10 XRGE fee is charged for pool creation.
 
 ## Adding Liquidity
 

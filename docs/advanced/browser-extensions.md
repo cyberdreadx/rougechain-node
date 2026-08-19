@@ -123,9 +123,9 @@ const authentic = window.rougechain?.[Symbol.for("rougechain:authentic")] === tr
 
 | Feature | Implementation |
 |---------|---------------|
-| **Vault encryption** | AES-256-GCM with PBKDF2-derived key |
+| **Vault encryption** | AES-256-GCM with a PBKDF2-derived key (600k iterations); a password (min 8 chars) is mandatory at wallet creation |
 | **Auto-lock** | Configurable timer via background service worker |
-| **Key storage** | `chrome.storage.local` (encrypted) |
+| **Key storage** | Encrypted blob in `chrome.storage.local`; the decrypted key is held only in `chrome.storage.session` (memory) and never written to disk. Legacy plaintext wallets are force-migrated to encrypted storage. |
 | **Signing** | ML-DSA-65 (FIPS 204) — quantum-resistant |
 | **Encryption** | ML-KEM-768 (FIPS 203) — quantum-resistant |
 

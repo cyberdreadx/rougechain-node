@@ -46,27 +46,35 @@ Returns network-wide statistics.
 
 ```json
 {
-  "blockHeight": 12345,
-  "totalTransactions": 98765,
-  "totalWallets": 432,
-  "totalValidators": 15,
-  "totalStaked": 150000.0,
-  "totalBurned": 5000.0,
-  "totalPools": 8,
-  "chainId": "rougechain-devnet-1"
+  "connected_peers": 3,
+  "network_height": 12345,
+  "is_mining": true,
+  "node_id": "abc123...",
+  "total_fees_collected": 1234.5,
+  "fees_in_last_block": 0.6,
+  "chain_id": "rougechain-devnet-1",
+  "finalized_height": 12300,
+  "ws_clients": 12,
+  "node_name": "node-1",
+  "base_fee": 0.001,
+  "total_fees_burned": 5000.0
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `blockHeight` | number | Current block height |
-| `totalTransactions` | number | Total transactions processed |
-| `totalWallets` | number | Unique wallets on the network |
-| `totalValidators` | number | Active validators |
-| `totalStaked` | number | Total XRGE staked |
-| `totalBurned` | number | Total XRGE burned |
-| `totalPools` | number | Number of AMM liquidity pools |
-| `chainId` | string | Chain identifier |
+| `connected_peers` | number | Currently connected peers |
+| `network_height` | number | Current block height |
+| `is_mining` | boolean | Whether this node is mining |
+| `node_id` | string | This node's ID |
+| `total_fees_collected` | number | Total fees collected |
+| `fees_in_last_block` | number | Fees collected in the last block |
+| `chain_id` | string | Chain identifier |
+| `finalized_height` | number | Last finalized block height |
+| `ws_clients` | number | Active WebSocket clients |
+| `node_name` | string \| null | Human-readable node name (optional) |
+| `base_fee` | number | Current EIP-1559 base fee |
+| `total_fees_burned` | number | Total fees (base fee) burned |
 
 ---
 
@@ -82,10 +90,18 @@ Get burned token statistics.
 
 ```json
 {
-  "totalBurned": 5000.0,
-  "burnAddress": "XRGE_BURN_0x000000000000000000000000000000000000000000000000000000000000DEAD"
+  "burned": {
+    "XRGE": 5000.0,
+    "qETH": 1.5
+  },
+  "total_xrge_burned": 5000.0
 }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `burned` | object | Per-token burned totals, keyed by token symbol |
+| `total_xrge_burned` | number | Total XRGE burned |
 
 ---
 

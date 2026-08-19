@@ -14,9 +14,8 @@ Content-Type: application/json
 ```json
 {
   "payload": {
-    "toPubKeyHex": "recipient-public-key-hex",
+    "to": "recipient-public-key-hex",
     "amount": 100.0,
-    "fee": 0.1,
     "token": "XRGE",
     "from": "sender-public-key-hex",
     "timestamp": 1706745600000,
@@ -29,11 +28,13 @@ Content-Type: application/json
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `toPubKeyHex` | string | Yes | Recipient's public key (hex) or `rouge1` address |
+| `to` | string | Yes | Recipient's public key (hex) or `rouge1` address |
 | `amount` | number | Yes | Amount to send |
-| `fee` | number | No | Transaction fee (default: 0.1) |
 | `token` | string | No | Token symbol (default: "XRGE") |
 
+> **Fee:** The transaction fee is enforced by the server; any client-supplied `fee` in
+> the payload is ignored.
+>
 > **Security:** Private keys never leave your application. The transaction is signed client-side using ML-DSA-65 and the server verifies the signature before processing.
 
 ### Response
@@ -68,27 +69,35 @@ GET /api/txs?limit=50&offset=0
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `limit` | number | 50 | Max transactions to return |
+| `limit` | number | 200 | Max transactions to return (max 1000) |
 | `offset` | number | 0 | Pagination offset |
 
 ### Response
+
+Each item wraps the transaction with its block context. The wrapper fields are camelCase
+(`txId`, `blockHeight`, `blockHash`, `blockTime`); the nested `tx` (a `TxV1`) is
+snake_case.
 
 ```json
 {
   "txs": [
     {
-      "version": 1,
-      "txType": "transfer",
-      "fromPubKey": "abc...",
-      "nonce": 1234567890,
-      "payload": {
-        "toPubKeyHex": "def...",
-        "amount": 100
-      },
-      "fee": 0.1,
-      "sig": "ghi...",
+      "txId": "abc123...",
       "blockHeight": 42,
-      "blockTime": 1706745600000
+      "blockHash": "xyz...",
+      "blockTime": 1706745600000,
+      "tx": {
+        "version": 1,
+        "tx_type": "transfer",
+        "from_pub_key": "abc...",
+        "nonce": 1234567890,
+        "payload": {
+          "to_pub_key_hex": "def...",
+          "amount": 100
+        },
+        "fee": 0.1,
+        "sig": "ghi..."
+      }
     }
   ],
   "total": 150
@@ -105,23 +114,30 @@ GET /api/tx/:hash
 
 ### Response
 
+`txId`, `blockHeight`, `blockHash`, and `blockTime` are top-level (not inside `tx`). The
+nested `tx` (a `TxV1`) is snake_case, and `receipt` carries the execution receipt when
+present.
+
 ```json
 {
   "success": true,
+  "txId": "abc123...",
+  "blockHeight": 42,
+  "blockHash": "xyz...",
+  "blockTime": 1706745600000,
   "tx": {
     "version": 1,
-    "txType": "transfer",
-    "fromPubKey": "abc...",
+    "tx_type": "transfer",
+    "from_pub_key": "abc...",
     "nonce": 1234567890,
     "payload": {
-      "toPubKeyHex": "def...",
+      "to_pub_key_hex": "def...",
       "amount": 100
     },
     "fee": 0.1,
-    "sig": "ghi...",
-    "blockHeight": 42,
-    "blockTime": 1706745600000
-  }
+    "sig": "ghi..."
+  },
+  "receipt": null
 }
 ```
 

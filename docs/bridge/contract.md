@@ -65,3 +65,12 @@ function setLargeWithdrawalThreshold(uint256) external;  // Owner
 ## Deployment
 
 The contract is live on **Base mainnet** (chain ID 8453) at `0x0c09C764AdC024497729cd452ECfeE8869d35d83`; the XRGE BridgeVault is at `0xb3f52f2C1bD5692494655cF59d8EE296D23bFAb5`. Base Sepolia (chain ID 84532) is used for testing. For production, the contract owner should be a Gnosis Safe multisig.
+
+## Daemon Withdraw Guardrails
+
+Independent of the on-chain contract, the RougeChain daemon enforces its own withdraw
+guardrails via environment variables:
+
+- `QV_BRIDGE_WITHDRAW_PAUSED` — emergency kill-switch; blocks all withdrawals when `true`
+- `QV_BRIDGE_MAX_WITHDRAW_UNITS` — per-transaction withdrawal cap (0/unset = no cap)
+- `QV_BRIDGE_MIN_CONFIRMATIONS` — required Base confirmation depth for deposit claims (default 6)

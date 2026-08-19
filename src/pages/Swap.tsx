@@ -50,7 +50,7 @@ interface Pool {
 }
 
 /** Tokens shown by default without searching — XRGE + major bridged assets */
-const MAJOR_TOKENS = new Set(["XRGE", "qETH", "qUSDC", "qBTC"]);
+const MAJOR_TOKENS = new Set(["XRGE", "qETH"]);
 
 // ─── Token Picker ──────────────────────────────────────────────
 interface TokenPickerProps {

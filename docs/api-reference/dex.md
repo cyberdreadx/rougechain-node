@@ -180,7 +180,7 @@ POST /api/v2/pool/create
 ```
 
 **Payload fields:** `token_a`, `token_b`, `amount_a`, `amount_b`
-**Fee:** 100 XRGE
+**Fee:** 10 XRGE
 
 ### Add Liquidity
 

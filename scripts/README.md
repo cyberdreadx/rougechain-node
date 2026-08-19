@@ -15,7 +15,7 @@ polling loop:
 
 - **Custody wallet**: the EVM address that holds bridge liquidity. Its private key
   signs releases and it must hold enough ETH/XRGE (plus gas) to pay out withdrawals.
-- Base RPC access (mainnet by default).
+- Base RPC access (defaults to Base Sepolia; set `BASE_CHAIN=mainnet` for the live Base bridge).
 - Network access to the RougeChain node API.
 
 ## Configuration

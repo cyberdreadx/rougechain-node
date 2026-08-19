@@ -17,8 +17,7 @@ Deploy a WASM smart contract to RougeChain.
 {
   "success": true,
   "address": "a1b2c3d4e5f6...",
-  "wasmSize": 12345,
-  "txHash": "4520936071b9..."
+  "wasmSize": 12345
 }
 ```
 
@@ -45,7 +44,6 @@ Execute a method on a deployed contract (mutating — creates an on-chain tx).
   "returnData": { ... },
   "gasUsed": 1500,
   "events": [],
-  "txHash": "b226a36688f0...",
   "error": null
 }
 ```

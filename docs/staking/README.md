@@ -13,9 +13,9 @@ RougeChain uses Proof of Stake (PoS) for consensus. Validators stake XRGE tokens
 
 | Requirement | Value |
 |-------------|-------|
-| Minimum stake | 10,000 XRGE |
-| Unbonding period | ~7 days |
-| Slashing | Not implemented (testnet) |
+| Minimum stake | 10,000 XRGE (enforced on every stake call) |
+| Unbonding period | 500 blocks |
+| Slashing | 10% per violation; jailed for 20 blocks; auto-slashed after 50 missed blocks |
 
 ## Become a Validator
 
@@ -117,9 +117,9 @@ Validators earn from an **EIP-1559-inspired fee model**:
 
 | Component | Distribution |
 |-----------|-------------|
-| Base fee | 50% burned, 50% to block proposer |
-| Priority fee (tip) | 100% to block proposer |
-| Minimum tip | 0.1 XRGE per block |
+| Base fee | 50% burned; the remaining 50% flows into the block's tip pool |
+| Tip pool | Proposer 20% · validators 70% (stake-weighted) · treasury 10% |
+| Minimum tip | 0.1 XRGE per block (subsidized from staking reserves if needed) |
 
 Fees are credited immediately when a block is finalized. See [Validator Economics](becoming-validator.md) for detailed reward calculations.
 

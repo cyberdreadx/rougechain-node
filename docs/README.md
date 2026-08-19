@@ -31,7 +31,7 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | **PWA Support** | Installable progressive web app for mobile and desktop |
 | **Social Layer** | Posts, timeline, reposts, likes, follows, comments, tips |
 | **CLI Wallet** | Command-line wallet with full chain access and social commands |
-| **SDK** | `@rougechain/sdk` v1.3.2 npm package for building dApps |
+| **SDK** | `@rougechain/sdk` v1.4.0 npm package for building dApps |
 | **EIP-1559 Dynamic Fees** | Base fee auto-adjusts per block, fee burning for deflationary pressure |
 | **Token Mint Authority** | Ongoing minting for custom tokens with supply cap enforcement |
 | **Validator Slashing** | Slash penalties for misbehavior, unbonding queue with 500-block delay |
@@ -55,11 +55,15 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 
 ## Network Info
 
-| Network | API Endpoint |
-|---------|--------------|
-| Mainnet | `https://api.rougechain.io/api` |
-| Testnet | `https://testnet.rougechain.io/api` |
-| Devnet (local) | `http://127.0.0.1:5100/api` |
+**Mainnet is live** (chain-id `rougechain-mainnet-1`) alongside the public testnet.
+
+| Network | Chain ID | API Endpoint |
+|---------|----------|--------------|
+| Mainnet | `rougechain-mainnet-1` | `https://api.rougechain.io/api` |
+| Testnet | — | `https://testnet.rougechain.io/api` |
+| Devnet (local) | — | `http://127.0.0.1:5101/api` |
+
+> A local node's default `--api-port` is **5101**.
 
 ## Tokens
 
@@ -69,7 +73,7 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 
 | Role | How it works |
 |------|-------------|
-| **Gas Token** | Every transaction pays fees in XRGE. Fees go to the block proposer. |
+| **Gas Token** | Every transaction pays fees in XRGE. 50% of the base fee is burned; the remaining tip pool is split proposer 20% / validators 70% (stake-weighted) / treasury 10%. |
 | **Staking Primitive** | Validators must stake XRGE to propose blocks. More stake = more proposals = more rewards. |
 | **DeFi Base Pair** | AMM liquidity pools trade against XRGE. It's the default quote currency on the built-in DEX. |
 | **Bridge Asset** | XRGE exists on both RougeChain (native) and Base (ERC-20) via the cross-chain bridge. |
@@ -95,7 +99,7 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | Minimum Stake | 10,000 XRGE |
 | Unbonding Period | 500 blocks |
 
-> **EIP-1559 Fee Model:** The base fee adjusts ±12.5% per block based on transaction volume (target: 10 txs/block). The base fee portion is **burned**, and only the priority tip goes to validators. Check current fees via `GET /api/fee`.
+> **EIP-1559 Fee Model:** The base fee adjusts ±12.5% per block based on transaction volume (target: 10 txs/block). **50% of the base fee is burned**; the remaining tip pool is split proposer 20% / validators 70% (stake-weighted) / treasury 10%. Check current fees via `GET /api/fee`.
 
 ### Burn Address
 

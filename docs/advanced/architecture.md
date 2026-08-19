@@ -180,5 +180,17 @@ The npm package `@rougechain/sdk` provides a programmatic interface for interact
 | **Keys never leave client** | All signing/encryption happens in-browser |
 | **Server is untrusted** | Server only stores encrypted data |
 | **Quantum-resistant** | NIST-approved PQC algorithms throughout |
-| **No seed phrases** | Keys are stored directly (backup via file export) |
+| **BIP-39 mnemonics** | Wallets derive from a 24-word BIP-39 mnemonic (256-bit entropy); the mnemonic is the primary backup. Keys are also encrypted at rest with AES-256-GCM (PBKDF2, 600k iterations) |
+| **Signed v2 writes** | `/api/v2` writes require an ML-DSA-65 signature over a canonical payload; legacy v1 write endpoints return `410 Gone` in production |
 | **Dual encryption** | Messages encrypted for both sender and recipient |
+
+### v2 Signed Write Requirements
+
+Every write through `/api/v2` is authenticated by signature, not by a session:
+
+1. The request is a signed envelope `{ payload, signature, public_key }`.
+2. The signature is an **ML-DSA-65** signature over the canonical `payload` bytes.
+3. `payload.timestamp` must fall within a **±5-minute** window of server time.
+4. `payload.from` must equal the signing public key (`public_key`).
+5. A **signature replay guard** (process-global `SEEN_SIGNATURES`, keyed by `sha256(signature)`, 5-minute window) rejects any signature already seen in-window.
+6. Legacy v1 write endpoints return **410 Gone** in production.
