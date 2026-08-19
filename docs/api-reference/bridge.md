@@ -16,11 +16,15 @@ Returns bridge status, custody address, chain ID, and supported tokens.
   "enabled": true,
   "custodyAddress": "0x...",
   "chainId": 8453,
-  "supportedTokens": ["ETH", "USDC"]
+  "supportedTokens": ["ETH"]
 }
 ```
 
-> `chainId` is `8453` on Base mainnet (`84532` on Base Sepolia).
+> `enabled` is `false` when the custody address is unset. `chainId` is `8453` on Base
+> mainnet (`84532` on Base Sepolia).
+>
+> Only **ETH** (→ qETH) is claimable through this endpoint today. qUSDC bridging is
+> planned but **not yet enabled** — do not treat USDC as claimable.
 
 ### Claim Bridge Deposit
 
@@ -28,7 +32,7 @@ Returns bridge status, custody address, chain ID, and supported tokens.
 POST /api/bridge/claim
 ```
 
-Claim wrapped tokens (qETH or qUSDC) after depositing on Base. (Usually automatic — see the auto-claim note below.)
+Claim wrapped **qETH** after depositing ETH on Base. (Usually automatic — see the auto-claim note below.) qUSDC is not mintable — USDC bridging is planned but not yet enabled.
 
 **Body:**
 ```json
@@ -41,7 +45,10 @@ Claim wrapped tokens (qETH or qUSDC) after depositing on Base. (Usually automati
 }
 ```
 
-The `token` field can be `"ETH"` (default) or `"USDC"`. The node verifies the EVM transaction, checks the signature, and mints the corresponding wrapped token.
+The `token` field is `"ETH"` (default); this mints qETH. `"USDC"` is not claimable yet.
+The node verifies the on-chain deposit (the `Transfer` to custody, not a caller-supplied
+amount), checks the EVM signature, requires the configured confirmation depth
+(`QV_BRIDGE_MIN_CONFIRMATIONS`, default 6), and then mints qETH.
 
 > **Auto-claim:** with the deposit watcher enabled (default), the relayer detects
 > `BridgeDepositETH` / `BridgeDepositERC20` events on Base and claims them for you
@@ -205,10 +212,16 @@ POST /api/bridge/xrge/claim
 {
   "evmTxHash": "0x...",
   "evmAddress": "0x...",
-  "amount": "1000000000000000000",
+  "evmSignature": "0x...",
   "recipientRougechainPubkey": "abc123..."
 }
 ```
+
+`evmSignature` is **required** — sign the claim message with the wallet that sent the
+XRGE. The mint amount and depositor are **derived from the on-chain
+`Transfer(from → vault)` log** emitted by the XRGE token; any caller-supplied `amount`
+is ignored. The deposit must reach the required confirmation depth
+(`QV_BRIDGE_MIN_CONFIRMATIONS`, default 6) before it mints.
 
 ### XRGE Withdraw
 

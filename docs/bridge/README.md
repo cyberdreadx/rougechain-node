@@ -7,20 +7,28 @@ RougeChain supports bridging assets between **Base mainnet** (EVM, chain id `845
 | EVM Asset | RougeChain Asset | Decimals | Direction |
 |-----------|-----------------|----------|-----------|
 | ETH       | qETH            | 6 (L1 units) | Both ways |
-| USDC      | qUSDC           | 6        | Both ways |
 | XRGE      | XRGE            | 18 (EVM) / whole units (L1) | Both ways |
+| USDC      | qUSDC           | 6        | Planned — not yet enabled |
+
+> qETH and XRGE are the supported bridge assets today. qUSDC is planned, not yet
+> enabled — USDC deposits are not claimable and USDC withdrawals are not served.
 
 ## How It Works
 
 ### Deposit (EVM → RougeChain)
 
-1. User deposits ETH, USDC, or XRGE into the **RougeBridge** / **BridgeVault** contract on Base
+1. User deposits ETH or XRGE into the **RougeBridge** / **BridgeVault** contract on Base
 2. The **deposit watcher** in the relayer detects the deposit event and auto-claims it
-   on L1 — the node verifies the deposit on-chain and mints the wrapped token (qETH,
-   qUSDC, or XRGE) to the recipient encoded in the deposit. No manual step is required.
+   on L1 — the node verifies the deposit on-chain and mints the wrapped token (qETH or
+   XRGE) to the recipient encoded in the deposit. No manual step is required.
 3. As a fallback, the user can still call the **claim** endpoint with the EVM tx hash
    (e.g. if the watcher is disabled). Claims are deduped, so auto- and manual claims of
    the same deposit can't double-mint.
+
+> Every claim is verified against the **actual on-chain Base deposit** (the `Transfer`
+> to the custody contract / vault) — never a caller-supplied amount — and requires a
+> valid EVM signature plus a confirmation depth (`QV_BRIDGE_MIN_CONFIRMATIONS`, default 6)
+> before minting.
 
 ### Withdrawal (RougeChain → EVM)
 

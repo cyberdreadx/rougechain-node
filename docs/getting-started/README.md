@@ -11,7 +11,7 @@ This guide will help you get up and running with RougeChain in minutes.
 
 1. Visit [rougechain.io](https://rougechain.io)
 2. Click "Wallet" in the sidebar
-3. Your wallet is automatically created and stored locally
+3. Create (or import) a wallet and set a password (min 8 chars) — your keys are encrypted at rest with AES-256-GCM (PBKDF2, 600k iterations) and the decrypted key lives only in memory, never on disk
 4. Use the faucet to get free testnet XRGE
 
 That's it! You now have a quantum-secure wallet.

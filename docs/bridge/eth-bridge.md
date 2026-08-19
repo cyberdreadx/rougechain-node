@@ -13,13 +13,14 @@ public key. This emits a `BridgeDepositETH` event carrying your recipient key.
 ### Step 2: Automatic claim
 
 The relayer's **deposit watcher** sees the event and claims it for you — qETH is minted
-to the RougeChain key you encoded in the deposit, usually within a couple of Base
-confirmations. **No manual claim step is needed.**
+to the RougeChain key you encoded in the deposit, once the deposit reaches the required
+confirmation depth (`QV_BRIDGE_MIN_CONFIRMATIONS`, default 6 Base confirmations).
+**No manual claim step is needed.**
 
 The node verifies before minting:
 - The transaction exists on Base and was sent to the correct contract
 - The amount and sender match the deposit
-- The transaction has sufficient confirmations
+- The transaction has at least the required confirmation depth (default 6)
 - It hasn't been claimed before (auto-claim and manual claim share one dedup store)
 
 **Manual fallback:** if the watcher is disabled, use the **Bridge In** tab — paste the

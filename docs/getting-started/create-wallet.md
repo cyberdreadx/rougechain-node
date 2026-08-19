@@ -1,6 +1,6 @@
 # Create a Wallet
 
-Your RougeChain wallet is automatically created when you first visit the app. Here's what you need to know about it.
+You explicitly create (or import) your RougeChain wallet and set a password (minimum 8 characters) at creation. Here's what you need to know about it.
 
 ## Wallet Components
 
@@ -39,7 +39,7 @@ All RougeChain wallets use **password-protected encrypted backups**. Plaintext k
 | Platform | Steps |
 |----------|-------|
 | **Web** (rougechain.io) | Wallet → Settings → Backup → Enter password → Download `.pqcbackup` file |
-| **Browser Extension** (qRougee) | Settings → Export Encrypted Backup → Enter password → Download |
+| **Browser Extension** (RougeChain Wallet) | Settings → Export Encrypted Backup → Enter password → Download |
 | **Mobile** (Qwalla) | Settings → Export Encrypted Backup → Enter password → Share/Save |
 
 #### How to Restore
@@ -121,8 +121,14 @@ const encryptionKeypair = ml_kem768.keygen(seed);
 
 ### Key Storage
 
+Keys are encrypted at rest with **AES-256-GCM** (PBKDF2, 600,000 iterations). Only the encrypted blob is persisted to disk; the decrypted key is held only in memory for the active session.
+
 | Platform | Storage |
 |----------|---------|
-| Web (rougechain.io) | `localStorage` → encrypted via vault password |
-| Browser Extension (qRougee) | `chrome.storage.local` → AES-256-GCM vault |
+| Web (rougechain.io) | encrypted blob in `localStorage`; decrypted key in memory only |
+| Browser Extension (RougeChain Wallet) | encrypted AES-256-GCM vault in `chrome.storage.local`; decrypted key in `chrome.storage.session`, never written to disk |
 | Mobile (Qwalla) | `expo-secure-store` → device keychain |
+
+### Terminal EVM Wallet (`tools/evm-cli`)
+
+For Base/EVM operations there's a companion terminal wallet, `rougechain-evm` (`tools/evm-cli`). It derives your Base account from the same 24-word mnemonic (read from the `ROUGECHAIN_MNEMONIC` env var) and supports `new`, `address`, `balance`, `send-eth`, and `send-token`.

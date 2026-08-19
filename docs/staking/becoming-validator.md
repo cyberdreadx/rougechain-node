@@ -34,12 +34,18 @@ If you're on testnet, use the faucet:
 curl -X POST https://testnet.rougechain.io/api/v2/stake \
   -H "Content-Type: application/json" \
   -d '{
-    "publicKey": "your-public-key-hex",
-    "amount": 1000,
-    "nonce": 1706745600000,
-    "signature": "your-ml-dsa65-signature-hex"
+    "payload": {
+      "amount": 10000,
+      "from": "your-public-key-hex",
+      "timestamp": 1706745600000,
+      "nonce": "random-hex"
+    },
+    "signature": "your-ml-dsa65-signature-hex",
+    "public_key": "your-public-key-hex"
   }'
 ```
+
+The request body is the signed envelope `{ payload, signature, public_key }`. The `from`, `timestamp`, and `nonce` fields live **inside** `payload`, and `from` must equal the signing public key.
 
 ## Step 3: Verify Your Validator Status
 
@@ -54,7 +60,7 @@ Look for your public key in the response:
   "validators": [
     {
       "publicKey": "your-public-key",
-      "stake": 1000.0,
+      "stake": 10000.0,
       "status": "active",
       "blocksProposed": 0
     }
@@ -76,17 +82,21 @@ While staking alone makes you a validator, running a node ensures you're online 
 
 ## Increasing Your Stake
 
-You can add more XRGE to increase your block proposal probability:
+You can add more XRGE to increase your block proposal probability. Note that the **10,000 XRGE minimum is enforced on every stake call** — a smaller top-up (e.g. 500 XRGE) is rejected — so each additional stake must itself be at least 10,000 XRGE:
 
 ```bash
-# Stake additional 500 XRGE
+# Stake an additional 10,000 XRGE
 curl -X POST https://testnet.rougechain.io/api/v2/stake \
   -H "Content-Type: application/json" \
   -d '{
-    "publicKey": "your-public-key-hex",
-    "amount": 500,
-    "nonce": 1706745600001,
-    "signature": "your-signature-hex"
+    "payload": {
+      "amount": 10000,
+      "from": "your-public-key-hex",
+      "timestamp": 1706745600001,
+      "nonce": "random-hex"
+    },
+    "signature": "your-signature-hex",
+    "public_key": "your-public-key-hex"
   }'
 ```
 

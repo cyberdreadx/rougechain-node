@@ -17,19 +17,19 @@ Open `http://localhost:5173` in your browser.
 
 ## Step 2: Create Your Wallet
 
-Your wallet is created automatically when you first visit. It includes:
+Create (or import) a wallet and set a password (min 8 characters) at creation. It includes:
 
 - **Address** (`rouge1...`) — Your compact Bech32m address, share freely
 - **Private Key** (ML-DSA-65) — Never share this!
 - **Encryption Key** (ML-KEM-768) — For secure messaging
 
-Keys are stored locally in your browser.
+Your keys are encrypted at rest with AES-256-GCM (PBKDF2, 600k iterations). The decrypted key lives only in memory (`chrome.storage.session`) and is never written to disk — only the encrypted blob is persisted. (Legacy plaintext wallets are force-migrated to encrypted storage on next unlock.)
 
 ## Step 3: Get Test Tokens
 
 1. Click **Wallet** in the sidebar
 2. Click **Request from Faucet**
-3. Receive 1,000 XRGE instantly
+3. Receive 10,000 XRGE instantly (24-hour cooldown per address)
 
 ## Step 4: Send Your First Transaction
 

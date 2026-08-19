@@ -2,7 +2,7 @@
 
 RougeChain is a production-ready L1 blockchain built from genesis with NIST-approved post-quantum cryptography (ML-DSA-65, ML-KEM-768). Every signature, transaction, and encrypted message is quantum-safe — not as a future patch, but as the foundation.
 
-**Live Testnet**: [rougechain.io](https://rougechain.io) | **API**: `https://testnet.rougechain.io/api` | **SDK**: `npm i @rougechain/sdk`
+**Mainnet is live** — [rougechain.io](https://rougechain.io) | **Mainnet API**: `https://api.rougechain.io/api` | **Testnet API**: `https://testnet.rougechain.io/api` | **SDK**: `npm i @rougechain/sdk`
 
 ## Features
 
@@ -25,8 +25,8 @@ RougeChain is a production-ready L1 blockchain built from genesis with NIST-appr
 - **Deploy + Call + Query**: Full contract lifecycle via API
 
 ### MCP Agentic Layer 🆕
-- **22 MCP Tools**: AI agents interact with RougeChain natively
-- **First MCP-Native Blockchain**: No other L1 has built-in MCP integration
+- **61 MCP Tools**: AI agents interact with RougeChain natively (read + write-gated)
+- **First MCP-Native Blockchain**: built-in Model Context Protocol integration
 - **Chain Queries**: Stats, blocks, balances, tokens, NFTs, pools, validators
 - **Contract Operations**: Deploy, call, read state, get events
 - **Claude Desktop Ready**: Drop-in `claude_desktop_config.json` support
@@ -64,10 +64,11 @@ RougeChain is a production-ready L1 blockchain built from genesis with NIST-appr
 - **Atomic Name Registry**: compare-and-swap name registration via sled
 
 ### Bridge
-- **qETH / qUSDC Bridge**: Bridge ETH and USDC from Base mainnet to RougeChain (and back)
+- **qETH Bridge**: Two-way ETH bridging between Base and RougeChain
 - **XRGE Bridge**: Two-way XRGE bridging to Base
-- **Deposit watcher**: deposits auto-claim on L1 — no manual claim step
+- **Deposit-verified**: every claim is validated against the actual on-chain Base deposit (Transfer to the custody/vault), never a caller-supplied amount, with a required EVM signature and confirmation depth
 - **Relayer**: automated withdrawal release, with auto-refund on repeated failure
+- _qUSDC support is planned and not yet enabled._
 
 ### Governance
 - **Proposals**: On-chain governance proposals per token
@@ -106,7 +107,7 @@ npm install @rougechain/sdk
 ```typescript
 import { RougeChain, Wallet } from '@rougechain/sdk';
 
-const rc = new RougeChain('https://rougechain.io/api');
+const rc = new RougeChain('https://api.rougechain.io/api');
 const wallet = Wallet.generate();
 
 // Check balance
@@ -133,7 +134,7 @@ Add to your Claude Desktop config:
     "rougechain": {
       "command": "node",
       "args": ["path/to/mcp-server/dist/index.js"],
-      "env": { "ROUGECHAIN_URL": "https://rougechain.io" }
+      "env": { "ROUGECHAIN_URL": "https://api.rougechain.io" }
     }
   }
 }
@@ -175,14 +176,16 @@ quantum-vault/
 
 | Property | Value |
 |----------|-------|
-| Chain ID | `rougechain-devnet-1` |
+| Mainnet Chain ID | `rougechain-mainnet-1` |
+| Testnet Chain ID | `rougechain-devnet-1` |
 | Native Token | XRGE |
 | Address Format | `rouge1...` (Bech32m) |
-| Testnet URL | `https://testnet.rougechain.io/api` |
+| Mainnet API | `https://api.rougechain.io/api` |
+| Testnet API | `https://testnet.rougechain.io/api` |
 | Frontend | `https://rougechain.io` |
 | Block Time | 400ms |
-| Signing | ML-DSA-65 (CRYSTALS-Dilithium) |
-| Encryption | ML-KEM-768 (CRYSTALS-Kyber) |
+| Signing | ML-DSA-65 (FIPS 204, formerly CRYSTALS-Dilithium) |
+| Encryption | ML-KEM-768 (FIPS 203, formerly CRYSTALS-Kyber) |
 
 ## License
 

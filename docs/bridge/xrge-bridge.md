@@ -15,7 +15,13 @@ Unlike qETH/qUSDC (which are wrapped assets), XRGE is the native token of RougeC
 3. The vault locks your XRGE and emits a `BridgeDeposit` event carrying your L1 key
 4. The relayer's **deposit watcher** detects the event and auto-claims it — XRGE is
    credited to your L1 wallet after the node verifies the on-chain transfer. No manual
-   claim is needed. (`/api/bridge/xrge/claim` remains as a manual fallback.)
+   claim is needed.
+
+The manual fallback endpoint `/api/bridge/xrge/claim` **requires an `evmSignature`** (sign
+the claim message with the wallet that sent the XRGE) and **ignores any caller-supplied
+`amount`** — the amount and depositor are derived from the actual on-chain
+`Transfer(from → vault)` log emitted by the XRGE token, and the deposit must reach the
+required confirmation depth (`QV_BRIDGE_MIN_CONFIRMATIONS`, default 6) before it mints.
 
 ## Withdraw (L1 XRGE → Base XRGE)
 

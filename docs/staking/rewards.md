@@ -6,14 +6,14 @@ Validators earn rewards for producing blocks on RougeChain.
 
 | Source | Description |
 |--------|-------------|
-| **Transaction fees** | All fees from transactions in your block |
+| **Transaction fees** | Your share of the tip pool from transactions in each block (proposer + stake-weighted validator share) |
 | **Base block reward** | Fixed reward per block (if configured) |
 
 ## How Rewards Work
 
 1. A validator is selected to propose a block
 2. The validator assembles pending transactions
-3. All transaction fees in that block go to the proposer
+3. Fees are split, not paid entirely to the proposer: **50% of the base fee is burned**, and the remaining tip pool is distributed **20% to the proposer, 70% among validators (stake-weighted), and 10% to the treasury**
 4. Rewards are credited immediately upon block finalization
 
 ## Fee Structure
@@ -24,9 +24,9 @@ Validators earn rewards for producing blocks on RougeChain.
 | Token creation | 100 XRGE |
 | Pool creation | 10 XRGE |
 | Swap | 0.3% (to LPs, not validators) |
-| Stake/Unstake | 0.1 XRGE |
+| Stake/Unstake | 1.0 XRGE |
 
-Validators earn the flat fees (transfer, token creation, pool creation, stake/unstake). Swap fees go to liquidity providers.
+The tip portion of these fees (after the base-fee burn) is split across the proposer, all validators (stake-weighted), and the treasury — see [How Rewards Work](#how-rewards-work). Swap fees go to liquidity providers, not validators.
 
 ## Estimated Returns
 

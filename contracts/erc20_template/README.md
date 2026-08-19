@@ -27,10 +27,16 @@ Output: `target/wasm32-unknown-unknown/release/rougechain_erc20.wasm`
 
 ## Deploy
 
+The endpoint takes a JSON body with the WASM bytecode base64-encoded in the `wasm`
+field (not a multipart file upload):
+
 ```bash
 curl -X POST https://testnet.rougechain.io/api/v2/contract/deploy \
-  -F "wasm=@target/wasm32-unknown-unknown/release/rougechain_erc20.wasm" \
-  -F "deployer=your-pubkey"
+  -H "Content-Type: application/json" \
+  -d "{
+    \"wasm\": \"$(base64 -w0 target/wasm32-unknown-unknown/release/rougechain_erc20.wasm)\",
+    \"deployer\": \"your-pubkey\"
+  }"
 ```
 
 ## Initialize

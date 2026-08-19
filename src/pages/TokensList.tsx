@@ -63,13 +63,6 @@ const BUILTIN_TOKENS: TokenInfo[] = [
     description: "Quantum-wrapped Ethereum — bridged via RougeChain Bridge (6 decimals)",
     created_at: 0,
   },
-  {
-    symbol: "qUSDC",
-    name: "qUSDC",
-    creator: "",
-    description: "Quantum-wrapped USDC stablecoin — bridged via RougeChain Bridge (6 decimals)",
-    created_at: 0,
-  },
 ];
 
 const TokensList = () => {

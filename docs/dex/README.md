@@ -15,7 +15,7 @@ All operations are signed client-side with ML-DSA-65 — your private key never 
 
 | Operation | Fee |
 |-----------|-----|
-| Create Pool | 100 XRGE |
+| Create Pool | 10 XRGE |
 | Swap | 0.3% of input + 1 XRGE tx fee |
 | Add Liquidity | 1 XRGE |
 | Remove Liquidity | 1 XRGE |

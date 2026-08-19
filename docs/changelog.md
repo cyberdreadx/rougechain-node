@@ -4,6 +4,17 @@ All notable changes to RougeChain.
 
 ---
 
+## Security Hardening — 2026-08-19
+
+### Security Hardening
+- **On-chain bridge verification** — The bridge now verifies the actual on-chain Base deposit instead of trusting caller-supplied messages. An XRGE claim requires an EVM signature and derives the credited amount from the on-chain `Transfer` log. The qETH EntryPoint/balance-delta claim path was removed in favor of a direct-to-custody, recipient-bound ECDSA claim only
+- **Signature replay guard** — Signed transactions are now protected by a process-global replay guard keyed by `sha256(signature)` with a 5-minute window, closing the in-window replay hole left by the timestamp check alone
+- **Bridge confirmation depth & limits** — Default bridge confirmation depth raised to **6**; added a withdraw kill-switch and a per-transaction withdrawal cap
+- **Token freeze authorization** — Token freeze now cryptographically verifies the request signature and requires `signer == creator`
+- **Wallet keys encrypted at rest** — Wallet keys are encrypted with **AES-256-GCM** (PBKDF2, 600k iterations) behind a mandatory password (min 8 chars); the decrypted key is kept only in memory and never written to disk, and legacy plaintext wallets are force-migrated
+
+---
+
 ## Testnet v0.2.4 — March 2026
 
 ### Added

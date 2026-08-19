@@ -9,7 +9,7 @@ Quantum-safe cryptocurrency wallet & encrypted messenger browser extension for R
 - **NFTs**: Create collections (with settable royalty recipient), mint, transfer with sale-price royalties, burn, lock
 - **Messenger**: E2E encrypted chat using ML-KEM-768 + ML-DSA-65 with signed API requests
 - **Mail**: PQC-encrypted email with `@rouge.quant` addresses, multi-recipient CEK encryption
-- **Security**: Vault lock with AES-256-GCM encryption, auto-lock timer, PBKDF2 key derivation (600k iterations)
+- **Security**: Wallet creation/import requires a mandatory password — keys are encrypted at rest with AES-256-GCM using a PBKDF2-derived key (600k iterations). The decrypted key is held in memory only (`chrome.storage.session`), never persisted in plaintext; vault lock + auto-lock timer clear it
 - **Signed Requests**: All state-changing operations — transfers, token/NFT writes, mail/messenger/name — are signed client-side with ML-DSA-65 over canonical JSON, using the node's `/api/v2/*` endpoints with anti-replay timestamps/nonces
 - **TOFU**: Key fingerprint tracking with key-change warnings in messenger
 - **Cross-browser**: Chrome, Edge, Brave, Opera, Arc, Firefox (Manifest V3)
@@ -51,7 +51,7 @@ browser-extension/
 ├── dist/                    # Built extension (load this in browser)
 ├── src/
 │   ├── lib/                 # Core libraries
-│   │   ├── storage.ts       # chrome.storage.local wrapper
+│   │   ├── storage.ts       # storage wrapper: decrypted keys → chrome.storage.session (memory-only), rest → chrome.storage.local
 │   │   ├── network.ts       # Node API configuration
 │   │   ├── address.ts       # rouge1… address utilities
 │   │   ├── api-cache.ts     # TTL-based API response cache

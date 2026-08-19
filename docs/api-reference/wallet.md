@@ -43,9 +43,8 @@ Content-Type: application/json
 ```json
 {
   "payload": {
-    "toPubKeyHex": "recipient-public-key-hex",
+    "to": "recipient-public-key-hex",
     "amount": 100,
-    "fee": 0.1,
     "token": "XRGE",
     "from": "sender-public-key-hex",
     "timestamp": 1706745600000,

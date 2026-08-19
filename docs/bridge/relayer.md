@@ -58,6 +58,15 @@ export BRIDGE_RELAYER_SECRET="your-secret"
 - **Without it** — Falls back to raw ETH transfers from the custody wallet (legacy mode)
 - **With `XRGE_BRIDGE_VAULT`** — Enables XRGE bridge support via the BridgeVault contract
 
+## Daemon Withdraw Guardrails
+
+Beyond the relayer config, the RougeChain daemon enforces withdraw guardrails via
+environment variables:
+
+- `QV_BRIDGE_WITHDRAW_PAUSED` — emergency kill-switch; blocks all withdrawals when `true`
+- `QV_BRIDGE_MAX_WITHDRAW_UNITS` — per-transaction withdrawal cap (0/unset = no cap)
+- `QV_BRIDGE_MIN_CONFIRMATIONS` — required Base confirmation depth for deposit claims (default 6)
+
 ## Security Considerations
 
 - The relayer's EVM private key should be stored securely (not in code)

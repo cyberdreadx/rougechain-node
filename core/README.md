@@ -89,12 +89,13 @@ cargo build --release
 # With bridge support
 ./target/release/quantum-vault-daemon --mine --bridge-custody-address 0xYOUR_ADDRESS
 
-# Full production example
+# Full production example (mainnet)
 ./target/release/quantum-vault-daemon \
   --mine \
   --host 0.0.0.0 \
-  --api-port 8900 \
-  --peers https://testnet.rougechain.io/api \
+  --api-port 5100 \
+  --chain-id rougechain-mainnet-1 \
+  --peers https://api.rougechain.io/api \
   --bridge-custody-address 0xYOUR_ADDRESS
 
 # Docker (recommended)
@@ -176,6 +177,7 @@ tmux attach -t daemon     # view logs
 | `--rate-limit-read-per-minute` | `0` | Read operation rate limit |
 | `--rate-limit-write-per-minute` | `0` | Write operation rate limit |
 | `--faucet-whitelist` | `None` | Faucet whitelist (env: `QV_FAUCET_WHITELIST`) |
+| `--dev` | `false` | Enable legacy v1 endpoints that accept raw private keys (UNSAFE — local dev only; without it, v1 write endpoints return `410 Gone`) |
 
 ## API Endpoints
 

@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Network, Wallet, MessageSquareLock, Shield, Lock, Activity, Zap, ExternalLink, TrendingUp, TrendingDown, ArrowDownUp, Droplets, Coins, Image, Cable, Mail as MailIcon, Server, Github, Chrome, ChevronLeft, ChevronRight, Bot, Code } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState, useCallback, useRef } from "react";
-import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
+import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/network";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { useXRGEPrice } from "@/hooks/use-xrge-price";
 import { formatUsd } from "@/lib/price-service";
@@ -131,7 +131,7 @@ const ExtensionBanner = () => {
 
 // Live Network Status Component
 const LiveNetworkStatus = () => {
-  const [stats, setStats] = useState<{ height: number; peers: number; isLive: boolean } | null>(null);
+  const [stats, setStats] = useState<{ height: number; peers: number; isLive: boolean; chainId?: string } | null>(null);
   const [pulseKey, setPulseKey] = useState(0);
 
   const fetchStats = useCallback(async () => {
@@ -157,6 +157,7 @@ const LiveNetworkStatus = () => {
             height: newHeight,
             peers: data.connected_peers || data.connectedPeers || 0,
             isLive: true,
+            chainId: data.chain_id || data.chainId || prev?.chainId,
           };
         });
       }
@@ -203,7 +204,7 @@ const LiveNetworkStatus = () => {
         <div className="flex items-center gap-4 text-sm font-mono">
           <div className="flex items-center gap-1.5">
             <Zap className="w-3.5 h-3.5 text-primary" />
-            <span className="text-primary/80">MAINNET</span>
+            <span className="text-primary/80">{getNetworkLabel(stats.chainId).toUpperCase()}</span>
           </div>
 
           <div className="h-4 w-px bg-primary/30" />

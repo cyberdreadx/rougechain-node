@@ -4,27 +4,27 @@ import { Shield, Lock, Fingerprint, Key } from "lucide-react";
 const securityFeatures = [
   {
     icon: Shield,
-    name: "CRYSTALS-Dilithium",
+    name: "ML-DSA-65",
     status: "Active",
-    description: "Post-quantum digital signatures",
+    description: "Post-quantum digital signatures (FIPS 204)",
   },
   {
     icon: Lock,
-    name: "CRYSTALS-Kyber",
+    name: "ML-KEM-768",
     status: "Active",
-    description: "Quantum-safe key encapsulation",
-  },
-  {
-    icon: Fingerprint,
-    name: "SPHINCS+",
-    status: "Active",
-    description: "Hash-based signatures backup",
+    description: "Quantum-safe message encryption (FIPS 203)",
   },
   {
     icon: Key,
-    name: "Hardware Binding",
+    name: "AES-256-GCM Vault",
     status: "Enabled",
-    description: "Secure element integration",
+    description: "Keys encrypted at rest (PBKDF2, 600k)",
+  },
+  {
+    icon: Fingerprint,
+    name: "Non-Custodial",
+    status: "Active",
+    description: "Keys stay on your device, never uploaded",
   },
 ];
 

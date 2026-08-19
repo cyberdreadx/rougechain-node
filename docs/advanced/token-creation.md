@@ -44,20 +44,24 @@ await rc.createToken(wallet, {
 
 ### Via v2 API
 
+The request body is the signed envelope `{ payload, signature, public_key }`. The `from`, `timestamp`, and `nonce` fields go **inside** `payload`, and `from` must equal the signing public key.
+
 ```bash
 curl -X POST https://testnet.rougechain.io/api/v2/token/create \
   -H "Content-Type: application/json" \
   -d '{
-    "publicKey": "your-public-key-hex",
     "payload": {
       "name": "My Token",
       "symbol": "MTK",
       "totalSupply": 1000000,
       "decimals": 8,
-      "image": "https://example.com/logo.png"
+      "image": "https://example.com/logo.png",
+      "from": "your-public-key-hex",
+      "timestamp": 1706745600000,
+      "nonce": "random-hex"
     },
-    "nonce": 1706745600000,
-    "signature": "your-ml-dsa65-signature-hex"
+    "signature": "your-ml-dsa65-signature-hex",
+    "public_key": "your-public-key-hex"
   }'
 ```
 
@@ -93,15 +97,17 @@ To make your token tradeable on the DEX:
 curl -X POST https://testnet.rougechain.io/api/v2/pool/create \
   -H "Content-Type: application/json" \
   -d '{
-    "publicKey": "your-public-key-hex",
     "payload": {
       "tokenA": "XRGE",
       "tokenB": "MTK",
       "amountA": 1000,
-      "amountB": 10000
+      "amountB": 10000,
+      "from": "your-public-key-hex",
+      "timestamp": 1706745600001,
+      "nonce": "random-hex"
     },
-    "nonce": 1706745600001,
-    "signature": "your-signature-hex"
+    "signature": "your-signature-hex",
+    "public_key": "your-public-key-hex"
   }'
 ```
 

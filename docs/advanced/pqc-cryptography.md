@@ -67,7 +67,7 @@ RougeChain uses the following libraries:
 
 | Component | Library |
 |-----------|---------|
-| Backend (Rust) | `pqcrypto` crate |
+| Backend (Rust) | `fips204` crate (`ml_dsa_65`) |
 | Frontend (JS) | `@noble/post-quantum` |
 
 All cryptographic operations happen locally - private keys never leave your device.
@@ -75,12 +75,18 @@ All cryptographic operations happen locally - private keys never leave your devi
 ## Key Generation
 
 ```rust
-// Rust example
-use pqcrypto_dilithium::dilithium3::*;
+// Rust example — fips204 ml_dsa_65 (FIPS 204)
+use fips204::ml_dsa_65;
+use fips204::traits::{Signer, Verifier};
 
-let (pk, sk) = keypair();
-let signature = sign(message, &sk);
-let valid = verify(message, &signature, &pk);
+// Generate an ML-DSA-65 keypair
+let (pk, sk) = ml_dsa_65::try_keygen().unwrap();
+
+// Sign a message (second arg is an optional context string)
+let signature = sk.try_sign(message, &[]).unwrap();
+
+// Verify
+let valid = pk.verify(message, &signature, &[]);
 ```
 
 ```typescript

@@ -6,7 +6,7 @@ The faucet distributes free XRGE tokens for testing on testnet.
 
 1. Go to the **Wallet** page
 2. Click **Request from Faucet**
-3. Receive 1,000 XRGE instantly
+3. Receive 10,000 XRGE instantly
 
 ## Using the API
 
@@ -16,13 +16,13 @@ curl -X POST https://testnet.rougechain.io/api/faucet \
   -d '{"recipientPublicKey": "your-hex-public-key-here"}'
 ```
 
-> The field is `recipientPublicKey` and must be a **raw hex public key**, not a `rouge1…` address. The faucet is enabled on testnet only — mainnet returns `"Faucet is disabled on this network."`
+> The field is `recipientPublicKey` and must be a **raw hex public key**, not a `rouge1…` address. The faucet is **OFF by default** and must be explicitly enabled with `--faucet-enabled` (or `QV_FAUCET_ENABLED=1`) — it is for dev/testnet only, and mainnet must never set it. When disabled, requests return `"Faucet is disabled on this network."`
 
 Response:
 ```json
 {
   "success": true,
-  "amount": 1000,
+  "amount": 10000,
   "txId": "abc123..."
 }
 ```
@@ -31,20 +31,21 @@ Response:
 
 | Condition | Limit |
 |-----------|-------|
-| Per address | 1 request / hour |
-| Per IP | 10 requests / hour |
-| Whitelisted | Unlimited |
+| Per address | 1 request / 24 hours |
+
+There is no per-IP rate limit. A request is also rejected if the recipient already has a pending faucet transaction, or if their balance exceeds the faucet threshold.
 
 ## Whitelisting
 
-For development or testing, addresses can be whitelisted:
+The whitelist **gates** faucet access — it does not grant a higher rate. When `QV_FAUCET_WHITELIST` is set, only the listed addresses may use the faucet; everyone else is blocked. Leave it unset to allow any address (subject to the 24-hour cooldown).
 
 ```bash
-# Start node with whitelist
-./quantum-vault-daemon --mine \
+# Start node with the faucet enabled and a whitelist
+./quantum-vault-daemon --mine --faucet-enabled \
   --faucet-whitelist "pubkey1,pubkey2,pubkey3"
 
-# Or via environment variable
+# Or via environment variables
+export QV_FAUCET_ENABLED=1
 export QV_FAUCET_WHITELIST="pubkey1,pubkey2"
 ./quantum-vault-daemon --mine
 ```
@@ -53,7 +54,7 @@ export QV_FAUCET_WHITELIST="pubkey1,pubkey2"
 
 ### "Rate limited"
 
-Wait an hour or use a different address.
+Each address can request once every 24 hours. Wait for the cooldown to elapse or use a different address.
 
 ### "Faucet disabled"
 
