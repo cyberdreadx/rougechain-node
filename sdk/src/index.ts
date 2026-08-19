@@ -14,6 +14,7 @@ export {
   signTransaction,
   verifyTransaction,
   serializePayload,
+  createSignedTransfer,
   createSignedBridgeWithdraw,
   createSignedTokenMetadataUpdate,
   createSignedTokenMetadataClaim,
