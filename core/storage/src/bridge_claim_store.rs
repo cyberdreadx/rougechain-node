@@ -38,6 +38,22 @@ impl BridgeClaimStore {
         self.persist().await
     }
 
+    /// Atomically reserve a claim key: returns `Ok(true)` if it was newly inserted, or
+    /// `Ok(false)` if it was already present. The check-and-insert happens under a single
+    /// write lock, so two concurrent claims for the same tx hash cannot both observe it as
+    /// absent and both mint (the non-atomic `contains()`-then-`insert()` pattern could).
+    /// Only persists when a new key was actually added.
+    pub async fn insert_if_absent(&self, tx_hash: String) -> Result<bool, String> {
+        let newly = {
+            let mut claimed = self.claimed.write().await;
+            claimed.insert(tx_hash) // HashSet::insert returns true if the value was not present
+        };
+        if newly {
+            self.persist().await?;
+        }
+        Ok(newly)
+    }
+
     /// Release a previously reserved key — used to roll back a refund reservation
     /// when the subsequent mint submission fails, so the refund can be retried.
     pub async fn remove(&self, tx_hash: &str) -> Result<(), String> {

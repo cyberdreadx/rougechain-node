@@ -175,6 +175,47 @@ export function autoLockWallet(): void {
     storage.removeItem(UNIFIED_WALLET_KEY);
 }
 
+/**
+ * Persist a newly created/imported wallet with mandatory encryption at rest.
+ * Stores ONLY the AES-256-GCM–encrypted blob to disk (chrome.storage.local) plus public
+ * metadata; the decrypted wallet is kept in memory-only session storage for the active
+ * session. Plaintext keys therefore never touch disk. Requires a password.
+ */
+export async function persistNewWallet(wallet: UnifiedWallet, password: string): Promise<void> {
+    if (!password) throw new Error("A password is required to secure the wallet");
+    const upgraded = ensureCorrectKeys(wallet);
+    const encrypted = await encryptWallet(upgraded, password);
+    storage.setItem(ENCRYPTED_WALLET_KEY, encrypted);
+    storage.setItem(WALLET_METADATA_KEY, JSON.stringify({
+        displayName: upgraded.displayName,
+        signingPublicKey: upgraded.signingPublicKey,
+    }));
+    // Unlocked for this session — session storage (memory only), never persisted to disk.
+    saveUnifiedWallet(upgraded);
+}
+
+/**
+ * True when a decrypted wallet is present but there is NO encrypted backup — i.e. a legacy
+ * plaintext-only wallet created before mandatory encryption. Such wallets must be migrated
+ * (prompt the user to set a password) before use.
+ */
+export function needsEncryptionMigration(): boolean {
+    return !hasEncryptedWallet() && loadUnifiedWallet() !== null;
+}
+
+/**
+ * Migrate a legacy plaintext wallet to encrypted-at-rest: encrypt it under the given
+ * password, then purge the plaintext copy that a previous version wrote to disk.
+ */
+export async function migrateToEncrypted(password: string): Promise<UnifiedWallet> {
+    const wallet = loadUnifiedWallet();
+    if (!wallet) throw new Error("No wallet to migrate");
+    await persistNewWallet(wallet, password);
+    // Remove the legacy plaintext that older builds persisted to chrome.storage.local.
+    storage.purgeLocalKey(UNIFIED_WALLET_KEY);
+    return wallet;
+}
+
 export function saveUnifiedWallet(wallet: UnifiedWallet): void {
     const upgraded = ensureCorrectKeys(wallet);
     storage.setItem(UNIFIED_WALLET_KEY, JSON.stringify(upgraded));

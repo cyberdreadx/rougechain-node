@@ -1,14 +1,15 @@
 import { useState } from "react";
 import { Loader2, Plus, Upload, KeyRound, Copy, Check, AlertTriangle, ArrowLeft } from "lucide-react";
 import { generateEncryptionKeypair, registerWalletOnNode } from "../../lib/pqc-messenger";
-import { saveUnifiedWallet, type UnifiedWallet } from "../../lib/unified-wallet";
+import { persistNewWallet, type UnifiedWallet } from "../../lib/unified-wallet";
 import { generateMnemonic, keypairFromMnemonic, validateMnemonic } from "../../lib/mnemonic";
+import SetPasswordScreen from "./SetPasswordScreen";
 
 interface Props {
     onCreated: (wallet: UnifiedWallet) => void;
 }
 
-type Screen = "home" | "show-seed" | "import-seed";
+type Screen = "home" | "show-seed" | "import-seed" | "set-password";
 
 export default function CreateWalletScreen({ onCreated }: Props) {
     const [name, setName] = useState("");
@@ -56,11 +57,16 @@ export default function CreateWalletScreen({ onCreated }: Props) {
         setIsCreating(false);
     };
 
+    // After the user has saved their seed, require a password before the wallet is stored.
     const handleConfirmSeed = async () => {
         if (!pendingWallet) return;
+        setScreen("set-password");
+    };
 
-        saveUnifiedWallet(pendingWallet);
-
+    // Encrypt + persist the pending wallet under the chosen password, then register + finish.
+    const finalizeWallet = async (password: string) => {
+        if (!pendingWallet) return;
+        await persistNewWallet(pendingWallet, password);
         try {
             await registerWalletOnNode({
                 id: pendingWallet.id,
@@ -69,7 +75,6 @@ export default function CreateWalletScreen({ onCreated }: Props) {
                 encryptionPublicKey: pendingWallet.encryptionPublicKey,
             });
         } catch { /* Node may be unavailable */ }
-
         onCreated(pendingWallet);
     };
 
@@ -109,18 +114,11 @@ export default function CreateWalletScreen({ onCreated }: Props) {
                 mnemonic: trimmed,
             };
 
-            saveUnifiedWallet(wallet);
-
-            try {
-                await registerWalletOnNode({
-                    id: wallet.id,
-                    displayName: wallet.displayName,
-                    signingPublicKey: wallet.signingPublicKey,
-                    encryptionPublicKey: wallet.encryptionPublicKey,
-                });
-            } catch { /* Node may be unavailable */ }
-
-            onCreated(wallet);
+            // Require a password before storing — go to the set-password step.
+            setPendingWallet(wallet);
+            setIsRecovering(false);
+            setScreen("set-password");
+            return;
         } catch (err) {
             console.error("Recovery failed:", err);
             setImportError("Recovery failed — try again");
@@ -139,12 +137,26 @@ export default function CreateWalletScreen({ onCreated }: Props) {
                 alert("Invalid wallet file");
                 return;
             }
-            saveUnifiedWallet(wallet);
-            onCreated(wallet);
+            // Require a password before storing — go to the set-password step.
+            setPendingWallet(wallet);
+            setScreen("set-password");
         } catch {
             alert("Failed to import wallet");
         }
     };
+
+    // Set-password screen (mandatory encryption before the wallet is stored)
+    if (screen === "set-password" && pendingWallet) {
+        return (
+            <SetPasswordScreen
+                title="Secure your wallet"
+                subtitle="Set a password to encrypt your keys on this device. You'll enter it to unlock the wallet each session."
+                submitLabel="Create Password"
+                onSubmit={finalizeWallet}
+                onBack={() => setScreen("home")}
+            />
+        );
+    }
 
     // Show seed phrase screen
     if (screen === "show-seed" && pendingWallet) {

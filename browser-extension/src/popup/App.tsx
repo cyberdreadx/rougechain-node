@@ -6,6 +6,8 @@ import {
     isWalletLocked,
     hasWallet,
     unlockUnifiedWallet,
+    needsEncryptionMigration,
+    migrateToEncrypted,
     type UnifiedWallet,
 } from "../lib/unified-wallet";
 import WalletTab from "./tabs/WalletTab";
@@ -16,6 +18,7 @@ import MailTab from "./tabs/MailTab";
 import SettingsTab from "./tabs/SettingsTab";
 import UnlockScreen from "./components/UnlockScreen";
 import CreateWalletScreen from "./components/CreateWalletScreen";
+import SetPasswordScreen from "./components/SetPasswordScreen";
 import { getCoreApiBaseUrl } from "../lib/network";
 
 type Tab = "wallet" | "tokens" | "nfts" | "messenger" | "mail" | "settings";
@@ -25,6 +28,7 @@ export default function App() {
     const [activeTab, setActiveTab] = useState<Tab>("wallet");
     const [wallet, setWallet] = useState<UnifiedWallet | null>(null);
     const [locked, setLocked] = useState(false);
+    const [needsMigration, setNeedsMigration] = useState(false);
 
     useEffect(() => {
         (async () => {
@@ -33,6 +37,7 @@ export default function App() {
             const isLocked = isWalletLocked();
             setWallet(w);
             setLocked(isLocked);
+            setNeedsMigration(needsEncryptionMigration());
             setReady(true);
         })();
     }, []);
@@ -68,6 +73,23 @@ export default function App() {
             <UnlockScreen
                 onUnlocked={(w) => {
                     setWallet(w);
+                    setLocked(false);
+                }}
+            />
+        );
+    }
+
+    // Legacy plaintext wallet — force encryption before use.
+    if (needsMigration && wallet) {
+        return (
+            <SetPasswordScreen
+                title="Secure your wallet"
+                subtitle="Your keys are currently stored unencrypted on this device. Set a password now to encrypt them at rest."
+                submitLabel="Encrypt Wallet"
+                onSubmit={async (password) => {
+                    const w = await migrateToEncrypted(password);
+                    setWallet(w);
+                    setNeedsMigration(false);
                     setLocked(false);
                 }}
             />
