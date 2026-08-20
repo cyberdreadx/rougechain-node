@@ -61,13 +61,18 @@ export function isBurnAddress(address: string): boolean {
 
 function buildAndSign(
   wallet: WalletKeys,
-  payload: Omit<TransactionPayload, "from" | "timestamp" | "nonce">
+  payload: Omit<TransactionPayload, "from" | "timestamp" | "nonce">,
+  accountNonce?: number
 ): SignedTransaction {
   const full: TransactionPayload = {
     ...payload,
     from: wallet.publicKey,
     timestamp: Date.now(),
     nonce: generateNonce(),
+    // Optional durable replay protection: the node enforces that this equals the account's next
+    // nonce, so a captured signed tx cannot be re-executed once the account advances (independent
+    // of the timestamp/replay window). Omit it and the node falls back to legacy behavior.
+    ...(accountNonce !== undefined ? { account_nonce: accountNonce } : {}),
   } as TransactionPayload;
   return signTransaction(full, wallet.privateKey, wallet.publicKey);
 }
@@ -77,9 +82,10 @@ export function createSignedTransfer(
   to: string,
   amount: number,
   fee = 1,
-  token = "XRGE"
+  token = "XRGE",
+  accountNonce?: number
 ): SignedTransaction {
-  return buildAndSign(wallet, { type: "transfer", to, amount, fee, token });
+  return buildAndSign(wallet, { type: "transfer", to, amount, fee, token }, accountNonce);
 }
 
 export function createSignedTokenCreation(

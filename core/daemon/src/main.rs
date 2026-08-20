@@ -4288,6 +4288,22 @@ fn replay_guard(signature: &str, expiry_ms: i64) -> Result<(), String> {
     Ok(())
 }
 
+/// Enforce a signed account nonce when the client includes one. When the signed payload carries
+/// an `account_nonce`, it must equal the account's next nonce — so a replay of the same signed
+/// payload (same fixed nonce) is rejected the moment the account advances, independent of the
+/// 5-minute replay window. Non-breaking: a payload WITHOUT `account_nonce` is accepted (legacy
+/// path, still covered by the persisted replay guard + timestamp window). A dedicated field name
+/// avoids any collision with unrelated payload keys.
+fn check_signed_nonce(node: &L1Node, pubkey: &str, payload: &serde_json::Value) -> Result<(), String> {
+    if let Some(n) = payload.get("account_nonce").and_then(|v| v.as_u64()) {
+        let expected = node.get_next_nonce(pubkey);
+        if n != expected {
+            return Err(format!("invalid account_nonce: expected {}, got {} (stale or replayed transaction)", expected, n));
+        }
+    }
+    Ok(())
+}
+
 async fn verify_signed_tx(req: &SignedTransactionRequest) -> Result<String, String> {
     let payload_bytes: Vec<u8> = if let Some(hex) = &req.payload_bytes_hex {
         let raw = quantum_vault_crypto::hex_to_bytes(hex)
@@ -5006,6 +5022,11 @@ async fn v2_transfer(
         }
     }
     
+    // Durable replay protection: if the client signed an account_nonce, enforce it.
+    if let Err(e) = check_signed_nonce(&state.node, &body.public_key, &body.payload) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
+    }
+
     let tx = TxV1 {
         version: 1,
         tx_type: "transfer".to_string(),
@@ -5242,6 +5263,10 @@ async fn v2_create_token(
         }))));
     }
     
+    if let Err(e) = check_signed_nonce(&state.node, &body.public_key, &body.payload) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
+    }
+
     let tx = TxV1 {
         version: 1,
         tx_type: "create_token".to_string(),
@@ -8055,6 +8080,10 @@ async fn v2_shield(
         }))));
     }
 
+    if let Err(e) = check_signed_nonce(&state.node, &body.public_key, &body.payload) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
+    }
+
     let tx = TxV1 {
         version: 1,
         tx_type: "shield".to_string(),
@@ -8165,6 +8194,10 @@ async fn v2_shielded_transfer(
         eprintln!("[shielded] STARK proof verified for shielded_transfer (fee={})", shielded_fee);
     }
 
+    if let Err(e) = check_signed_nonce(&state.node, &body.public_key, &body.payload) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
+    }
+
     let tx = TxV1 {
         version: 1,
         tx_type: "shielded_transfer".to_string(),
@@ -8268,6 +8301,10 @@ async fn v2_unshield(
             })))
         })?;
         eprintln!("[shielded] STARK proof verified for unshield (amount={}, fee={})", amount, fee);
+    }
+
+    if let Err(e) = check_signed_nonce(&state.node, &body.public_key, &body.payload) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
     }
 
     let tx = TxV1 {
@@ -8666,6 +8703,10 @@ async fn v2_token_mint(
             "success": false,
             "error": format!("Insufficient XRGE for mint fee: have {:.4}, need {:.4}", bal, fee)
         }))));
+    }
+
+    if let Err(e) = check_signed_nonce(&state.node, &body.public_key, &body.payload) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
     }
 
     let tx = TxV1 {
