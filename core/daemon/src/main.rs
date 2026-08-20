@@ -7095,6 +7095,74 @@ async fn bridge_deposit_auto_claim(
 /// Shared deposit-reclaim core: verify the EVM tx on-chain, dedup, and mint to
 /// the recipient on L1. Used by both the admin reclaim and the relayer-driven
 /// deposit auto-claim. Returns a JSON body (never an HTTP error).
+struct BridgeDepositEvent {
+    amount: u128,
+    rougechain_pubkey: String,
+    block: u64,
+}
+
+/// Parse the vault's `BridgeDeposit(address indexed sender, uint256 amount, string rougechainPubkey,
+/// uint256 nonce)` event from a Base tx. This is the AUTHORITATIVE on-chain source of both the
+/// deposited amount and the L1 recipient the depositor chose — so the relayer/admin reclaim path
+/// cannot redirect a mint. topic0 = keccak256 of the event signature.
+async fn parse_bridge_deposit_event(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    tx_hash: &str,
+    vault: &str,
+) -> Result<BridgeDepositEvent, String> {
+    const TOPIC0: &str = "0x5787c7cf7a782a3836f23db1ed28764f1ae993eab4bf9602720553ac954249e2";
+    let vault = vault.to_lowercase();
+    let receipt: serde_json::Value = client
+        .post(rpc_url)
+        .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":[tx_hash],"id":1}))
+        .send().await.map_err(|e| format!("RPC error: {}", e))?
+        .json().await.map_err(|e| format!("bad RPC response: {}", e))?;
+    let result = receipt.get("result").filter(|v| !v.is_null())
+        .ok_or_else(|| "transaction not found or not yet mined".to_string())?;
+    if result.get("status").and_then(|v| v.as_str()).unwrap_or("0x0") != "0x1" {
+        return Err("deposit transaction reverted".to_string());
+    }
+    let block = result.get("blockNumber").and_then(|v| v.as_str())
+        .and_then(|h| u64::from_str_radix(h.trim_start_matches("0x"), 16).ok())
+        .ok_or_else(|| "deposit block missing".to_string())?;
+    let logs = result.get("logs").and_then(|v| v.as_array())
+        .ok_or_else(|| "no logs in receipt".to_string())?;
+    for log in logs {
+        let addr = log.get("address").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        let topic0 = log.get("topics").and_then(|v| v.as_array())
+            .and_then(|t| t.get(0)).and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        if addr != vault || topic0 != TOPIC0 {
+            continue;
+        }
+        // data = abi.encode(uint256 amount, string rougechainPubkey, uint256 nonce)
+        let data_hex = log.get("data").and_then(|v| v.as_str()).unwrap_or("").trim_start_matches("0x");
+        let data = hex::decode(data_hex).map_err(|e| format!("bad log data: {}", e))?;
+        if data.len() < 96 {
+            return Err("BridgeDeposit data too short".to_string());
+        }
+        // amount (word 0) — reject if it exceeds u128 (top 16 bytes must be zero).
+        if data[0..16].iter().any(|&b| b != 0) {
+            return Err("BridgeDeposit amount exceeds u128".to_string());
+        }
+        let mut amt = [0u8; 16]; amt.copy_from_slice(&data[16..32]);
+        let amount = u128::from_be_bytes(amt);
+        // offset to the string (word 1), then length + bytes at that offset.
+        let mut off = [0u8; 8]; off.copy_from_slice(&data[56..64]);
+        let offset = u64::from_be_bytes(off) as usize;
+        if offset + 32 > data.len() { return Err("BridgeDeposit string offset out of range".to_string()); }
+        let mut lenb = [0u8; 8]; lenb.copy_from_slice(&data[offset + 24..offset + 32]);
+        let str_len = u64::from_be_bytes(lenb) as usize;
+        let start = offset + 32;
+        if start + str_len > data.len() { return Err("BridgeDeposit string length out of range".to_string()); }
+        let pubkey = String::from_utf8(data[start..start + str_len].to_vec())
+            .map_err(|_| "BridgeDeposit pubkey not valid UTF-8".to_string())?;
+        if pubkey.trim().is_empty() { return Err("BridgeDeposit pubkey empty".to_string()); }
+        return Ok(BridgeDepositEvent { amount, rougechain_pubkey: pubkey, block });
+    }
+    Err("no BridgeDeposit event to the vault in this transaction".to_string())
+}
+
 async fn process_bridge_reclaim(
     state: &AppState,
     evm_tx_hash: &str,
@@ -7104,7 +7172,7 @@ async fn process_bridge_reclaim(
     let token = token_opt.unwrap_or("ETH").to_uppercase();
     let tx_hash = evm_tx_hash.trim_start_matches("0x").to_lowercase();
     let tx_hash_hex = format!("0x{}", tx_hash);
-    let recipient = normalize_recipient(recipient_rougechain_pubkey);
+    let requested_recipient = normalize_recipient(recipient_rougechain_pubkey);
 
     // Check if already claimed
     let claim_key = if token == "XRGE" { format!("xrge:{}", tx_hash_hex) } else { tx_hash_hex.clone() };
@@ -7115,89 +7183,43 @@ async fn process_bridge_reclaim(
     let client = reqwest::Client::new();
     let rpc_url = &state.base_sepolia_rpc;
 
-    // Determine amount, binding it to the ACTUAL on-chain deposit destination (custody/vault)
-    // — never to an arbitrary Transfer log or a value tx sent to some third party.
-    let (amount_units, mint_symbol) = match token.as_str() {
+    // Determine amount AND recipient, both from the AUTHORITATIVE on-chain deposit. The L1
+    // recipient is read from the vault's on-chain BridgeDeposit event, NOT from the request
+    // body — so a relayer/admin caller cannot redirect the mint to an address of their choosing.
+    let (amount_units, mint_symbol, bound_recipient) = match token.as_str() {
         "XRGE" => {
             let vault = match &state.xrge_bridge_vault {
                 Some(v) if !v.is_empty() => v.clone(),
                 _ => return serde_json::json!({ "success": false, "error": "XRGE bridge not enabled" }),
             };
-            let token_addr = state.xrge_bridge_token.clone();
-            let deposit = match parse_erc20_transfer_to(&client, rpc_url, &tx_hash_hex, &token_addr, &vault).await {
+            let dep = match parse_bridge_deposit_event(&client, rpc_url, &tx_hash_hex, &vault).await {
                 Ok(d) => d,
-                Err(e) => return serde_json::json!({ "success": false, "error": format!("No verifiable XRGE deposit to the vault: {}", e) }),
+                Err(e) => return serde_json::json!({ "success": false, "error": format!("No verifiable BridgeDeposit to the vault: {}", e) }),
             };
-            let amount = (deposit.amount / 1_000_000_000_000_000_000u128) as u64;
-            if amount == 0 {
-                return serde_json::json!({ "success": false, "error": "XRGE transfer amount too small" });
+            // Fail-closed confirmation depth.
+            let min_conf = bridge_min_confirmations();
+            match evm_latest_block(&client, rpc_url).await {
+                Some(latest) => {
+                    if latest < dep.block + min_conf {
+                        return serde_json::json!({ "success": false, "error": format!("Need {} confirmations (tx block {}, latest {})", min_conf, dep.block, latest) });
+                    }
+                }
+                None => return serde_json::json!({ "success": false, "error": "could not verify confirmations (Base RPC unavailable) — refusing to credit" }),
             }
-            (amount, "XRGE")
+            let amount = (dep.amount / 1_000_000_000_000_000_000u128) as u64;
+            if amount == 0 {
+                return serde_json::json!({ "success": false, "error": "XRGE deposit amount too small" });
+            }
+            (amount, "XRGE", normalize_recipient(&dep.rougechain_pubkey))
         }
         "USDC" => {
             return serde_json::json!({ "success": false, "error": "USDC reclaim is temporarily unavailable during the security upgrade" });
         }
         _ => {
-            // ETH — require the deposit actually went to custody (direct value to custody, or an
-            // ERC-4337 custody balance delta). The old code credited ANY value tx, to any address.
-            let custody = match &state.bridge_custody_address {
-                Some(addr) if !addr.is_empty() => addr.to_lowercase(),
-                _ => return serde_json::json!({ "success": false, "error": "Bridge custody address not set" }),
-            };
-            let resp = client.post(rpc_url)
-                .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionByHash","params":[&tx_hash_hex],"id":1}))
-                .send().await;
-            let tx_val: u128 = match resp {
-                Ok(r) => match r.json::<serde_json::Value>().await {
-                    Ok(j) => {
-                        match j.get("result") {
-                            Some(serde_json::Value::Null) | None => {
-                                return serde_json::json!({ "success": false, "error": "Transaction not found" });
-                            }
-                            Some(obj) => {
-                                let tx_to = obj.get("to").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-                                let value_hex = obj.get("value").and_then(|v| v.as_str()).unwrap_or("0x0");
-                                let value_wei = u128::from_str_radix(value_hex.trim_start_matches("0x"), 16).unwrap_or(0);
-                                if value_wei > 0 {
-                                    if tx_to != custody {
-                                        return serde_json::json!({ "success": false, "error": format!("ETH was not sent to the custody address (to={}, custody={})", tx_to, custody) });
-                                    }
-                                    value_wei
-                                } else {
-                                    // ERC-4337: check custody balance delta
-                                    let block_hex = obj.get("blockNumber").and_then(|v| v.as_str()).unwrap_or("");
-                                    if block_hex.is_empty() {
-                                        return serde_json::json!({ "success": false, "error": "Transaction not yet mined" });
-                                    }
-                                    let prev = format!("0x{:x}", u64::from_str_radix(block_hex.trim_start_matches("0x"), 16).unwrap_or(1).saturating_sub(1));
-                                    let before = async {
-                                        let r = client.post(rpc_url)
-                                            .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getBalance","params":[&custody, &prev],"id":1}))
-                                            .send().await.ok()?;
-                                        let j: serde_json::Value = r.json().await.ok()?;
-                                        u128::from_str_radix(j.get("result")?.as_str()?.trim_start_matches("0x"), 16).ok()
-                                    }.await.unwrap_or(0);
-                                    let after = async {
-                                        let r = client.post(rpc_url)
-                                            .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getBalance","params":[&custody, block_hex],"id":1}))
-                                            .send().await.ok()?;
-                                        let j: serde_json::Value = r.json().await.ok()?;
-                                        u128::from_str_radix(j.get("result")?.as_str()?.trim_start_matches("0x"), 16).ok()
-                                    }.await.unwrap_or(0);
-                                    after.saturating_sub(before)
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => return serde_json::json!({ "success": false, "error": format!("RPC parse error: {}", e) }),
-                },
-                Err(e) => return serde_json::json!({ "success": false, "error": format!("RPC error: {}", e) }),
-            };
-            let units = (tx_val / 1_000_000_000_000) as u64;
-            if units == 0 {
-                return serde_json::json!({ "success": false, "error": "ETH amount too small or zero" });
-            }
-            (units, "qETH")
+            // ETH auto-claim/reclaim is DISABLED: a plain value transfer to custody carries no
+            // on-chain recipient, so this path cannot bind the mint destination. qETH deposits
+            // must use the signed /api/bridge/claim endpoint (recipient bound by the EVM signature).
+            return serde_json::json!({ "success": false, "error": "ETH auto-claim is disabled — use the signed /api/bridge/claim endpoint" });
         }
     };
 
@@ -7208,10 +7230,14 @@ async fn process_bridge_reclaim(
         Err(e) => return serde_json::json!({ "success": false, "error": format!("Failed to persist claim: {}", e) }),
     }
 
-    eprintln!("[bridge-reclaim] Minting tx {} -> {} {} for {}", tx_hash_hex, amount_units, mint_symbol, &recipient[..20.min(recipient.len())]);
+    if !requested_recipient.is_empty() && requested_recipient != bound_recipient {
+        eprintln!("[bridge-reclaim] request recipient {} != on-chain recipient {} — using on-chain",
+            &requested_recipient[..20.min(requested_recipient.len())], &bound_recipient[..20.min(bound_recipient.len())]);
+    }
+    eprintln!("[bridge-reclaim] Minting tx {} -> {} {} for {}", tx_hash_hex, amount_units, mint_symbol, &bound_recipient[..20.min(bound_recipient.len())]);
     use quantum_vault_crypto::{bytes_to_hex, sha256};
     use quantum_vault_types::encode_tx_v1;
-    match state.node.submit_bridge_mint_tx(&recipient, amount_units, mint_symbol) {
+    match state.node.submit_bridge_mint_tx(&bound_recipient, amount_units, mint_symbol) {
         Ok(tx) => {
             let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
             serde_json::json!({ "success": true, "txId": id, "amount": amount_units, "token": mint_symbol })
@@ -7455,10 +7481,14 @@ async fn verify_native_eth_payout(
         .and_then(|h| u64::from_str_radix(h.trim_start_matches("0x"), 16).ok())
         .ok_or_else(|| "payout block missing".to_string())?;
     let min_conf = bridge_min_confirmations();
-    if let Some(latest) = evm_latest_block(client, rpc_url).await {
-        if latest < block + min_conf {
-            return Err(format!("payout needs {} confirmations (block {}, latest {})", min_conf, block, latest));
+    match evm_latest_block(client, rpc_url).await {
+        Some(latest) => {
+            if latest < block + min_conf {
+                return Err(format!("payout needs {} confirmations (block {}, latest {})", min_conf, block, latest));
+            }
         }
+        // Fail closed: if we cannot read the chain head, we cannot prove depth — refuse.
+        None => return Err("could not verify confirmations (Base RPC unavailable) — refusing to fulfill".to_string()),
     }
     Ok(())
 }
@@ -7610,10 +7640,14 @@ async fn xrge_bridge_claim(
 
     // Confirmation depth (reorg protection).
     let min_confirmations = bridge_min_confirmations();
-    if let Some(latest) = evm_latest_block(&client, rpc_url).await {
-        if latest < deposit.block + min_confirmations {
-            return Json(serde_json::json!({ "success": false, "error": format!("Need {} confirmations (tx block {}, latest {})", min_confirmations, deposit.block, latest) }));
+    match evm_latest_block(&client, rpc_url).await {
+        Some(latest) => {
+            if latest < deposit.block + min_confirmations {
+                return Json(serde_json::json!({ "success": false, "error": format!("Need {} confirmations (tx block {}, latest {})", min_confirmations, deposit.block, latest) }));
+            }
         }
+        // Fail closed: no chain head = cannot prove depth = do not credit.
+        None => return Json(serde_json::json!({ "success": false, "error": "could not verify confirmations (Base RPC unavailable) — refusing to credit" })),
     }
 
     // Verify the recipient-bound signature by the depositor.
@@ -7813,10 +7847,14 @@ async fn xrge_bridge_fulfill(
         return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout {} is less than the {} owed", deposit.amount, min_amount)) });
     }
     let min_conf = bridge_min_confirmations();
-    if let Some(latest) = evm_latest_block(&client, &state.base_sepolia_rpc).await {
-        if latest < deposit.block + min_conf {
-            return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout needs {} confirmations (block {}, latest {})", min_conf, deposit.block, latest)) });
+    match evm_latest_block(&client, &state.base_sepolia_rpc).await {
+        Some(latest) => {
+            if latest < deposit.block + min_conf {
+                return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout needs {} confirmations (block {}, latest {})", min_conf, deposit.block, latest)) });
+            }
         }
+        // Fail closed: no chain head = cannot prove depth = do not fulfill.
+        None => return Json(BridgeFulfillResponse { success: false, error: Some("could not verify confirmations (Base RPC unavailable) — refusing to fulfill".to_string()) }),
     }
     match state.bridge_withdraw_store.mark_fulfilled(&tx_id, &payout_hash) {
         Ok(true) => Json(BridgeFulfillResponse { success: true, error: None }),

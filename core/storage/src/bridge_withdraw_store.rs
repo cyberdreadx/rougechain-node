@@ -189,11 +189,14 @@ impl BridgeWithdrawStore {
         Ok(changed)
     }
 
-    /// Remove a fulfilled/refunded withdrawal (called by relayer after sending L1, or after refund).
+    /// Remove a non-terminal withdrawal (refund rollback of a pending/failed row).
+    /// A Fulfilled row is NEVER deleted — it holds the audited payout tx hash, so erasing it
+    /// would destroy the proof a withdrawal was paid. Callers that hit a fulfilled tx_id get
+    /// `Ok(false)` (nothing removed).
     pub fn remove(&self, tx_id: &str) -> Result<bool, String> {
         let mut pending = self.pending.write().map_err(|_| "lock")?;
         let len_before = pending.len();
-        pending.retain(|w| w.tx_id != tx_id);
+        pending.retain(|w| w.tx_id != tx_id || matches!(w.status, WithdrawalStatus::Fulfilled));
         let removed = pending.len() < len_before;
         drop(pending);
         if removed {
