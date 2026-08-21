@@ -52,12 +52,38 @@ function signPayload(payloadJson: string, privateKeyHex: string): string {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === "auto-lock") {
+        // The decrypted wallet lives in chrome.storage.session (memory-only) once unlocked;
+        // clear both areas so auto-lock works regardless of which one holds it.
         chrome.storage.local.remove("pqc-unified-wallet");
+        try { chrome.storage.session?.remove("pqc-unified-wallet"); } catch { /* no session area */ }
     }
     if (alarm.name === "messenger-poll") {
         pollForNewMessages();
     }
 });
+
+// The unlocked (decrypted) wallet is routed to chrome.storage.session by the popup's storage
+// wrapper (see src/lib/storage.ts SESSION_KEYS) — memory-only, never on disk. The service worker
+// is a trusted context and can read session storage, so read it FIRST, then fall back to
+// chrome.storage.local for legacy/dev builds that kept a plaintext copy there. Reading only local
+// (the old behavior) made every dApp connect/sign report "Wallet is locked" even while the popup
+// showed unlocked.
+function readUnifiedWalletRaw(): Promise<string | null> {
+    return new Promise((resolve) => {
+        const fromLocal = () => chrome.storage.local.get("pqc-unified-wallet", (d) => {
+            const raw = d["pqc-unified-wallet"];
+            resolve(typeof raw === "string" ? raw : null);
+        });
+        let session: chrome.storage.StorageArea | null = null;
+        try { session = chrome.storage.session ?? null; } catch { session = null; }
+        if (!session) { fromLocal(); return; }
+        session.get("pqc-unified-wallet", (sd) => {
+            const raw = sd["pqc-unified-wallet"];
+            if (typeof raw === "string") { resolve(raw); return; }
+            fromLocal();
+        });
+    });
+}
 
 // ─── Messenger notification polling ─────────────────────
 
@@ -67,21 +93,17 @@ async function getFullWalletData(): Promise<{
     id: string; displayName: string;
     signingPublicKey: string; encryptionPublicKey: string;
 } | null> {
-    return new Promise((resolve) => {
-        chrome.storage.local.get("pqc-unified-wallet", (data) => {
-            const raw = data["pqc-unified-wallet"];
-            if (!raw) { resolve(null); return; }
-            try {
-                const w = JSON.parse(raw);
-                resolve({
-                    id: w.id,
-                    displayName: w.displayName,
-                    signingPublicKey: w.signingPublicKey,
-                    encryptionPublicKey: w.encryptionPublicKey,
-                });
-            } catch { resolve(null); }
-        });
-    });
+    const raw = await readUnifiedWalletRaw();
+    if (!raw) return null;
+    try {
+        const w = JSON.parse(raw);
+        return {
+            id: w.id,
+            displayName: w.displayName,
+            signingPublicKey: w.signingPublicKey,
+            encryptionPublicKey: w.encryptionPublicKey,
+        };
+    } catch { return null; }
 }
 
 async function loadSnapshot(): Promise<Record<string, string>> {
@@ -229,20 +251,14 @@ function saveConnectedSites(sites: ConnectedSite[]): Promise<void> {
     });
 }
 
-function getWalletData(): Promise<{ publicKey: string; privateKey: string } | null> {
-    return new Promise((resolve) => {
-        chrome.storage.local.get("pqc-unified-wallet", (data) => {
-            const raw = data["pqc-unified-wallet"];
-            if (!raw) { resolve(null); return; }
-            try {
-                const wallet = JSON.parse(raw);
-                resolve({
-                    publicKey: wallet.signingPublicKey,
-                    privateKey: wallet.signingPrivateKey,
-                });
-            } catch { resolve(null); }
-        });
-    });
+async function getWalletData(): Promise<{ publicKey: string; privateKey: string } | null> {
+    const raw = await readUnifiedWalletRaw();
+    if (!raw) return null;
+    try {
+        const wallet = JSON.parse(raw);
+        if (!wallet.signingPublicKey || !wallet.signingPrivateKey) return null;
+        return { publicKey: wallet.signingPublicKey, privateKey: wallet.signingPrivateKey };
+    } catch { return null; }
 }
 
 function getApiBaseUrl(): Promise<string> {
@@ -535,17 +551,13 @@ const EVM_CHAIN_KEY = "rougechain-evm-chain";
 const EVM_ORIGINS_KEY = "rougechain-evm-origins";
 
 /** Derive the Base account from the unlocked wallet's mnemonic (null if locked/raw-key). */
-function getEvmAccount(): Promise<EvmAccount | null> {
-    return new Promise((resolve) => {
-        chrome.storage.local.get("pqc-unified-wallet", (data) => {
-            const raw = data["pqc-unified-wallet"];
-            if (!raw) { resolve(null); return; }
-            try {
-                const w = JSON.parse(raw);
-                resolve(deriveEvmAccount(w.mnemonic));
-            } catch { resolve(null); }
-        });
-    });
+async function getEvmAccount(): Promise<EvmAccount | null> {
+    const raw = await readUnifiedWalletRaw();
+    if (!raw) return null;
+    try {
+        const w = JSON.parse(raw);
+        return deriveEvmAccount(w.mnemonic);
+    } catch { return null; }
 }
 
 function getEvmChainId(): Promise<number> {
