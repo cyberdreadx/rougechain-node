@@ -24,7 +24,9 @@
     "host_permissions": [
         "http://localhost:5100/*",
         "https://api.rougechain.io/*",
-        "https://testnet.rougechain.io/*"
+        "https://testnet.rougechain.io/*",
+        "https://mainnet.base.org/*",
+        "https://sepolia.base.org/*"
     ],
     "background": {
         "service_worker": "service-worker.js",
@@ -36,24 +38,23 @@
                 "https://rougechain.io/*",
                 "https://*.rougechain.io/*",
                 "https://testnet.rougechain.io/*",
+                "https://rougee.app/*",
+                "https://*.rougee.app/*",
                 "http://localhost/*"
             ],
-            "js": [
-                "content.js"
-            ],
+            "js": ["content.js"],
             "run_at": "document_start"
         }
     ],
     "web_accessible_resources": [
         {
-            "resources": [
-                "provider.js",
-                "approval.html"
-            ],
+            "resources": ["provider.js", "evm-provider.js"],
             "matches": [
                 "https://rougechain.io/*",
                 "https://*.rougechain.io/*",
                 "https://testnet.rougechain.io/*",
+                "https://rougee.app/*",
+                "https://*.rougee.app/*",
                 "http://localhost/*"
             ]
         }

@@ -134,32 +134,17 @@ export default function WalletTab({ wallet }: Props) {
         setIsSending(true);
         try {
             // v2 client-side signed transfer (the v1 /tx/submit endpoint is retired — 410 Gone).
-            const { getCoreApiBaseUrl, getCoreApiHeaders } = await import("../../lib/network");
-            const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
+            // withNonce: sign the durable account nonce so a captured tx cannot be replayed once the
+            // account advances (the node enforces account_nonce == next nonce on transfers).
+            const { signAndPostV2 } = await import("../../lib/tx-signer");
             const { invalidate } = await import("../../lib/api-cache");
-            const baseUrl = getCoreApiBaseUrl();
-            if (!baseUrl) throw new Error("No node configured");
 
-            const payload = {
+            await signAndPostV2(wallet, "/v2/transfer", {
                 type: "transfer",
-                from: wallet.signingPublicKey,
                 to: sendTo,
                 amount: parseFloat(sendAmount),
                 token: TOKEN_SYMBOL,
-                timestamp: Date.now(),
-                nonce: bytesToHex(crypto.getRandomValues(new Uint8Array(16))),
-            };
-            const sorted = sortKeysDeep(payload);
-            const payloadBytes = new TextEncoder().encode(JSON.stringify(sorted));
-            const signature = bytesToHex(ml_dsa65.sign(payloadBytes, hexToBytes(wallet.signingPrivateKey)));
-
-            const res = await fetch(`${baseUrl}/v2/transfer`, {
-                method: "POST",
-                headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-                body: JSON.stringify({ payload: sorted, signature, public_key: wallet.signingPublicKey }),
-            });
-            const data = await res.json();
-            if (!data.success) throw new Error(data.error || "Send failed");
+            }, { withNonce: true });
 
             invalidate("balance"); invalidate("blocks"); invalidate("tokens");
             setShowSend(false);
@@ -387,32 +372,13 @@ export default function WalletTab({ wallet }: Props) {
                                     setIsShielding(true);
                                     try {
                                         const note = await createShieldedNote(amt, wallet.signingPublicKey);
-                                        // Submit shield tx (v2 signed)
-                                        const { getCoreApiBaseUrl, getCoreApiHeaders } = await import("../../lib/network");
-                                        const baseUrl = getCoreApiBaseUrl();
-                                        const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
-
-                                        // Build, sign, submit
-                                        const payload = {
+                                        // Submit shield tx (v2 signed, durable account nonce enforced).
+                                        const { signAndPostV2 } = await import("../../lib/tx-signer");
+                                        await signAndPostV2(wallet, "/v2/shielded/shield", {
                                             type: "shield",
-                                            from: wallet.signingPublicKey,
                                             amount: amt,
                                             commitment: note.commitment,
-                                            timestamp: Date.now(),
-                                            nonce: bytesToHex(crypto.getRandomValues(new Uint8Array(16))),
-                                        };
-                                        const payloadBytes = new TextEncoder().encode(JSON.stringify(sortKeysDeep(payload)));
-                                        const sig = ml_dsa65.sign(payloadBytes, hexToBytes(wallet.signingPrivateKey));
-                                        const sigHex = bytesToHex(sig);
-
-                                        const sorted = sortKeysDeep(payload);
-                                        const res = await fetch(`${baseUrl}/v2/shielded/shield`, {
-                                            method: "POST",
-                                            headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-                                            body: JSON.stringify({ payload: sorted, signature: sigHex, public_key: wallet.signingPublicKey }),
-                                        });
-                                        const data = await res.json();
-                                        if (!data.success) throw new Error(data.error || "Shield failed");
+                                        }, { withNonce: true });
 
                                         // Auto-save note
                                         saveNote(note);
@@ -451,29 +417,13 @@ export default function WalletTab({ wallet }: Props) {
                                             onClick={async () => {
                                                 setUnshieldingNote(note.nullifier);
                                                 try {
-                                                    const { getCoreApiBaseUrl, getCoreApiHeaders } = await import("../../lib/network");
-                                                    const baseUrl = getCoreApiBaseUrl();
-                                                    const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
-                                                    const payload = {
+                                                    const { signAndPostV2 } = await import("../../lib/tx-signer");
+                                                    await signAndPostV2(wallet, "/v2/shielded/unshield", {
                                                         type: "unshield",
-                                                        from: wallet.signingPublicKey,
                                                         nullifiers: [note.nullifier],
                                                         amount: note.value,
                                                         proof: note.randomness,
-                                                        timestamp: Date.now(),
-                                                        nonce: bytesToHex(crypto.getRandomValues(new Uint8Array(16))),
-                                                    };
-                                                    const payloadBytes = new TextEncoder().encode(JSON.stringify(sortKeysDeep(payload)));
-                                                    const sig = ml_dsa65.sign(payloadBytes, hexToBytes(wallet.signingPrivateKey));
-                                                    const sigHex = bytesToHex(sig);
-                                                    const sorted = sortKeysDeep(payload);
-                                                    const res = await fetch(`${baseUrl}/v2/shielded/unshield`, {
-                                                        method: "POST",
-                                                        headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-                                                        body: JSON.stringify({ payload: sorted, signature: sigHex, public_key: wallet.signingPublicKey }),
-                                                    });
-                                                    const data = await res.json();
-                                                    if (!data.success) throw new Error(data.error || "Unshield failed");
+                                                    }, { withNonce: true });
                                                     markNoteSpent(note.nullifier);
                                                     setSavedNotes(getActiveNotes(wallet.signingPublicKey));
                                                     refreshData();

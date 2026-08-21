@@ -71,27 +71,15 @@ export default function TokensTab({ wallet }: Props) {
         setIsCreating(true);
         setCreateResult(null);
         try {
-            const baseUrl = getCoreApiBaseUrl();
-            if (!baseUrl) throw new Error("No node configured");
             // v2 client-side signed token creation (the v1 /token/create endpoint is retired — 410 Gone).
-            const payload = {
+            // withNonce: the node enforces account_nonce == next nonce on token creation.
+            const { signAndPostV2 } = await import("../../lib/tx-signer");
+            const data = await signAndPostV2(wallet, "/v2/token/create", {
                 type: "create_token",
-                from: wallet.signingPublicKey,
                 token_name: tokenName,
                 token_symbol: tokenSymbol.toUpperCase(),
                 initial_supply: parseInt(tokenSupply),
-                timestamp: Date.now(),
-                nonce: bytesToHex(crypto.getRandomValues(new Uint8Array(16))),
-            };
-            const sorted = sortKeysDeep(payload);
-            const payloadBytes = new TextEncoder().encode(JSON.stringify(sorted));
-            const signature = bytesToHex(ml_dsa65.sign(payloadBytes, hexToBytes(wallet.signingPrivateKey)));
-            const res = await fetch(`${baseUrl}/v2/token/create`, {
-                method: "POST",
-                headers: { ...getCoreApiHeaders(), "Content-Type": "application/json" },
-                body: JSON.stringify({ payload: sorted, signature, public_key: wallet.signingPublicKey }),
-            });
-            const data = await res.json();
+            }, { withNonce: true }).then((d) => d).catch((e) => ({ success: false, error: e.message }));
             if (data.success) {
                 invalidate("tokens");
                 invalidate("balance");

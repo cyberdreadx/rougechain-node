@@ -38,6 +38,8 @@
                 "https://rougechain.io/*",
                 "https://*.rougechain.io/*",
                 "https://testnet.rougechain.io/*",
+                "https://rougee.app/*",
+                "https://*.rougee.app/*",
                 "http://localhost/*"
             ],
             "js": ["content.js"],
@@ -51,6 +53,8 @@
                 "https://rougechain.io/*",
                 "https://*.rougechain.io/*",
                 "https://testnet.rougechain.io/*",
+                "https://rougee.app/*",
+                "https://*.rougee.app/*",
                 "http://localhost/*"
             ]
         }
