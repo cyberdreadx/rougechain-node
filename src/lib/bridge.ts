@@ -48,6 +48,26 @@ export function getBaseChainConfig(chainId: number) {
   return chainId === BASE_MAINNET_CHAIN_ID ? baseMainnet : baseSepolia;
 }
 
+/**
+ * The only Base chains we have addresses/explorers for. Anything else — or a
+ * missing chainId — must be treated as UNKNOWN and fail closed, never silently
+ * assumed to be mainnet (that footgun sends real XRGE against the wrong config).
+ */
+export function isKnownBaseChain(id: number | undefined | null): id is number {
+  return id === BASE_MAINNET_CHAIN_ID || id === BASE_SEPOLIA_CHAIN_ID;
+}
+
+/**
+ * The Base chain a given RougeChain L1 network is allowed to bridge against.
+ * Invariant: a testnet L1 must NEVER touch Base mainnet (real assets), and
+ * mainnet L1 must never touch Base Sepolia. A node reporting the wrong Base
+ * chain for its L1 (e.g. a testnet daemon reporting chainId 8453 + real XRGE)
+ * is a misconfiguration — the UI must fail closed rather than move real funds.
+ */
+export function expectedBaseChainId(network: "mainnet" | "testnet"): number {
+  return network === "mainnet" ? BASE_MAINNET_CHAIN_ID : BASE_SEPOLIA_CHAIN_ID;
+}
+
 /** Get the block explorer URL for a given chainId */
 export function getExplorerUrl(chainId: number): string {
   return chainId === BASE_MAINNET_CHAIN_ID
@@ -114,34 +134,38 @@ export const BRIDGE_VAULT_ABI = [
 export interface BridgeConfig {
   enabled: boolean;
   custodyAddress?: string;
-  chainId: number;
+  /** undefined = daemon did not report a recognized Base chain → fail closed. */
+  chainId?: number;
   supportedTokens?: string[];
 }
 
 /**
  * Fetch bridge configuration from daemon.
- * Auto-detects mainnet vs testnet from the returned chainId.
+ * Auto-detects mainnet vs testnet from the returned chainId. A missing or
+ * unrecognized chainId is left UNDEFINED (never coerced to mainnet) so callers
+ * can fail closed instead of bridging against the wrong network.
  */
 export async function getBridgeConfig(): Promise<BridgeConfig> {
   const baseUrl = getCoreApiBaseUrl();
   if (!baseUrl) {
-    return { enabled: false, chainId: BASE_MAINNET_CHAIN_ID };
+    return { enabled: false };
   }
   try {
     const res = await fetch(`${baseUrl}/bridge/config`, {
       headers: getCoreApiHeaders(),
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return { enabled: false, chainId: BASE_MAINNET_CHAIN_ID };
+    if (!res.ok) return { enabled: false };
     const data = await res.json().catch(() => ({}));
+    const rawChainId = typeof data.chainId === "number" ? data.chainId : undefined;
     return {
       enabled: data.enabled === true,
       custodyAddress: data.custodyAddress,
-      chainId: data.chainId ?? BASE_MAINNET_CHAIN_ID,
+      chainId: isKnownBaseChain(rawChainId) ? rawChainId : undefined,
       supportedTokens: data.supportedTokens,
     };
   } catch {
-    return { enabled: false, chainId: BASE_MAINNET_CHAIN_ID };
+    return { enabled: false };
   }
 }
 
@@ -254,34 +278,39 @@ export interface XrgeBridgeConfig {
   enabled: boolean;
   vaultAddress?: string;
   tokenAddress?: string;
-  chainId: number;
+  /** undefined = daemon did not report a recognized Base chain → fail closed. */
+  chainId?: number;
 }
 
 /**
  * Fetch XRGE bridge configuration from daemon.
- * Auto-selects correct token address based on chainId.
+ * Auto-selects correct token address based on chainId. If the daemon reports no
+ * recognized Base chain, chainId AND the derived token address are left
+ * undefined so the UI refuses to deposit rather than guessing mainnet XRGE.
  */
 export async function getXrgeBridgeConfig(): Promise<XrgeBridgeConfig> {
   const baseUrl = getCoreApiBaseUrl();
   if (!baseUrl) {
-    return { enabled: false, chainId: BASE_MAINNET_CHAIN_ID };
+    return { enabled: false };
   }
   try {
     const res = await fetch(`${baseUrl}/bridge/xrge/config`, {
       headers: getCoreApiHeaders(),
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return { enabled: false, chainId: BASE_MAINNET_CHAIN_ID };
+    if (!res.ok) return { enabled: false };
     const data = await res.json().catch(() => ({}));
-    const chainId = data.chainId ?? BASE_MAINNET_CHAIN_ID;
+    const rawChainId = typeof data.chainId === "number" ? data.chainId : undefined;
+    const chainId = isKnownBaseChain(rawChainId) ? rawChainId : undefined;
     return {
       enabled: data.enabled === true,
       vaultAddress: data.vaultAddress,
-      tokenAddress: data.tokenAddress || getXrgeAddress(chainId),
+      // Only fall back to a derived token address when we actually know the chain.
+      tokenAddress: data.tokenAddress || (chainId ? getXrgeAddress(chainId) : undefined),
       chainId,
     };
   } catch {
-    return { enabled: false, chainId: BASE_MAINNET_CHAIN_ID };
+    return { enabled: false };
   }
 }
 
