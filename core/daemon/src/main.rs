@@ -6615,8 +6615,20 @@ async fn nft_get_owner_nfts(
 struct BridgeConfigResponse {
     enabled: bool,
     custody_address: Option<String>,
-    chain_id: u64,
+    /// None (serialized as null) when no recognized Base chain is configured —
+    /// clients must treat that as "unknown network" and refuse to bridge.
+    chain_id: Option<u64>,
     supported_tokens: Vec<String>,
+}
+
+/// The Base chain the bridge is configured to talk to. Fail-safe by design:
+/// an unset / empty / unparseable `QV_BRIDGE_CHAIN_ID`, or any value that is not
+/// a recognized Base chain (mainnet 8453 or Sepolia 84532), yields None so the
+/// bridge advertises itself DISABLED rather than silently defaulting to Base
+/// mainnet — the footgun that let a mis-set testnet node point at real assets.
+fn configured_bridge_chain_id() -> Option<u64> {
+    let id: u64 = std::env::var("QV_BRIDGE_CHAIN_ID").ok()?.trim().parse().ok()?;
+    if id == 8453 || id == 84532 { Some(id) } else { None }
 }
 
 /// Convert a 32-byte ABI-encoded address topic (`0x000…<20 bytes>`) into a
@@ -6780,14 +6792,12 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 }
 
 async fn bridge_config(State(state): State<AppState>) -> Json<BridgeConfigResponse> {
-    let (enabled, custody_address) = match &state.bridge_custody_address {
-        Some(addr) if !addr.is_empty() => (true, Some(addr.clone())),
-        _ => (false, None),
-    };
-    let chain_id: u64 = std::env::var("QV_BRIDGE_CHAIN_ID")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(8453);
+    let chain_id = configured_bridge_chain_id();
+    let custody_ok = matches!(&state.bridge_custody_address, Some(addr) if !addr.is_empty());
+    // Fail closed: no recognized Base chain configured => bridge disabled, even
+    // if a custody address is present.
+    let enabled = custody_ok && chain_id.is_some();
+    let custody_address = if enabled { state.bridge_custody_address.clone() } else { None };
     Json(BridgeConfigResponse {
         enabled,
         custody_address,
@@ -7593,15 +7603,13 @@ async fn bridge_withdrawal_fulfill(
 // ============================================
 
 async fn xrge_bridge_config(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let enabled = state.xrge_bridge_vault.is_some();
-    let chain_id: u64 = std::env::var("QV_BRIDGE_CHAIN_ID")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(8453);
+    let chain_id = configured_bridge_chain_id();
+    // Fail closed: require BOTH a configured vault AND a recognized Base chain.
+    let enabled = state.xrge_bridge_vault.is_some() && chain_id.is_some();
     Json(serde_json::json!({
         "enabled": enabled,
-        "vaultAddress": state.xrge_bridge_vault,
-        "tokenAddress": state.xrge_bridge_token,
+        "vaultAddress": if enabled { state.xrge_bridge_vault.clone() } else { None },
+        "tokenAddress": if enabled { Some(state.xrge_bridge_token.clone()) } else { None },
         "chainId": chain_id,
     }))
 }
