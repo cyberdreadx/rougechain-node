@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { getBaseChainConfig, getUsdcAddress, BASE_MAINNET_CHAIN_ID } from "@/lib/bridge";
+import { getBaseChainConfig, getUsdcAddress, isKnownBaseChain, expectedBaseChainId, BASE_MAINNET_CHAIN_ID } from "@/lib/bridge";
+import { getActiveNetwork } from "@/lib/network";
 import {
   getBridgeConfig,
   claimBridgeDeposit,
@@ -148,15 +149,31 @@ const Bridge = () => {
 
   useEffect(() => { refreshEvmBalances(); }, [evmAddress, xrgeConfig]);
 
-  // Detect chain from daemon config
-  const detectedChainId = config?.chainId ?? xrgeConfig?.chainId ?? BASE_MAINNET_CHAIN_ID;
-  const chainConfig = getBaseChainConfig(detectedChainId);
+  // Detect chain from daemon config. No mainnet fallback: if neither config
+  // reports a recognized Base chain, detectedChainId stays undefined and the
+  // bridge fails closed (see the "Network not confirmed" guard in render).
+  const detectedChainId = config?.chainId ?? xrgeConfig?.chainId;
+  const networkKnown = isKnownBaseChain(detectedChainId);
+  // L1↔Base consistency: the RougeChain network the site is pointed at dictates
+  // which Base chain is legitimate. A testnet L1 reporting Base mainnet (real
+  // XRGE) is a misconfig — refuse to bridge rather than move real funds.
+  const activeNetwork = getActiveNetwork();
+  const expectedChainId = expectedBaseChainId(activeNetwork);
+  const networkMismatch = networkKnown && detectedChainId !== expectedChainId;
+  const bridgeSafe = networkKnown && !networkMismatch;
+  // Labels/addresses below are only ever used once networkKnown is true; the
+  // fallback here just keeps the helpers total for the unknown-network render.
+  const chainConfig = getBaseChainConfig(detectedChainId ?? BASE_MAINNET_CHAIN_ID);
   const chainLabel = chainConfig.name; // "Base" or "Base Sepolia"
-  const usdcAddress = getUsdcAddress(detectedChainId);
+  const usdcAddress = getUsdcAddress(detectedChainId ?? BASE_MAINNET_CHAIN_ID);
 
   const connectEvm = async () => {
     if (typeof evmProvider === "undefined") {
       toast.error("Install a Base-compatible wallet (MetaMask, Coinbase Wallet, etc.)");
+      return;
+    }
+    if (!isKnownBaseChain(detectedChainId) || networkMismatch) {
+      toast.error("Network not confirmed — bridge disabled to protect your funds");
       return;
     }
     try {
@@ -187,6 +204,7 @@ const Bridge = () => {
   // ── Deposit: Base → RougeChain ────────────────────────────────
 
   const handleDeposit = async () => {
+    if (!bridgeSafe) { toast.error("Network not confirmed — bridge disabled to protect your funds"); return; }
     if (!evmAddress) { toast.error("Connect your Base wallet first"); return; }
     if (!evmProvider) { toast.error("No Base wallet available"); return; }
     if (!rougechainPubkey) { toast.error("RougeChain wallet not connected"); return; }
@@ -342,6 +360,7 @@ const Bridge = () => {
   };
 
   const handleWithdraw = async () => {
+    if (!bridgeSafe) { toast.error("Network not confirmed — bridge disabled to protect your funds"); return; }
     const wallet = loadUnifiedWallet();
     const hasKey = !!wallet?.signingPrivateKey;
     const hasProvider = !!getRougeChainProvider();
@@ -414,6 +433,52 @@ const Bridge = () => {
           <CardContent className="p-8 text-center">
             <ArrowRightLeft className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
             <p className="text-muted-foreground">Bridge is not enabled on this node.</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Fail closed: the bridge is enabled but the node didn't report a recognized
+  // Base chain, so we can't tell mainnet from testnet. Refuse to render the form
+  // rather than default to mainnet and send real XRGE against the wrong config.
+  if (!networkKnown) {
+    return (
+      <div className="container max-w-lg py-12">
+        <Card className="border-amber-500/40">
+          <CardContent className="p-8 text-center space-y-2">
+            <ArrowRightLeft className="w-10 h-10 mx-auto mb-1 text-amber-500" />
+            <p className="font-semibold text-foreground">Network not confirmed</p>
+            <p className="text-sm text-muted-foreground">
+              This node didn't report a recognized Base chain, so the bridge can't
+              tell whether you're on Base mainnet or a testnet. Bridging is disabled
+              here to protect your funds. Check the node's bridge config
+              (<code className="text-xs">chainId</code> in <code className="text-xs">/bridge/config</code>)
+              and reload.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Fail closed: the node reports a valid Base chain, but the WRONG one for the
+  // RougeChain network the site is on (e.g. testnet L1 reporting Base mainnet +
+  // real XRGE). Bridging here would move real funds on a testnet — refuse.
+  if (networkMismatch) {
+    return (
+      <div className="container max-w-lg py-12">
+        <Card className="border-red-500/50">
+          <CardContent className="p-8 text-center space-y-2">
+            <ArrowRightLeft className="w-10 h-10 mx-auto mb-1 text-red-500" />
+            <p className="font-semibold text-foreground">Network mismatch — bridge disabled</p>
+            <p className="text-sm text-muted-foreground">
+              You're on the RougeChain <span className="font-medium capitalize">{activeNetwork}</span> network,
+              but this node's bridge reports <span className="font-medium">{chainLabel}</span> (chain {detectedChainId}).
+              A {activeNetwork} network must not bridge {activeNetwork === "testnet" ? "real mainnet assets" : "testnet assets"},
+              so bridging is disabled to protect your funds. This is a node misconfiguration —
+              its bridge <code className="text-xs">chainId</code>/token must match the {activeNetwork} Base chain.
+            </p>
           </CardContent>
         </Card>
       </div>
