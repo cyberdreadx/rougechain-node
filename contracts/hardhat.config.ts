@@ -4,7 +4,11 @@ import * as dotenv from "dotenv";
 
 dotenv.config();
 
-const DEPLOYER_KEY = process.env.DEPLOYER_PRIVATE_KEY || "";
+const _RAW_DEPLOYER_KEY = (process.env.DEPLOYER_PRIVATE_KEY || "").trim();
+// Accept the key with or without a 0x prefix (hardhat/ethers require 0x).
+const DEPLOYER_KEY = _RAW_DEPLOYER_KEY
+    ? (_RAW_DEPLOYER_KEY.startsWith("0x") ? _RAW_DEPLOYER_KEY : "0x" + _RAW_DEPLOYER_KEY)
+    : "";
 
 const config: HardhatUserConfig = {
     solidity: "0.8.20",
