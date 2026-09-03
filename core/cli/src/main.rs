@@ -19,6 +19,12 @@ struct Cli {
     #[arg(long, global = true)]
     wallet_dir: Option<PathBuf>,
 
+    /// Sign using a daemon `node-keys.json` instead of the wallet key store, so you
+    /// can fund/stake/query the exact key your validator node signs blocks with.
+    /// e.g. --node-keys ~/.quantum-vault/mainnet/node-keys.json
+    #[arg(long, global = true)]
+    node_keys: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -258,6 +264,36 @@ fn active_key(dir: &PathBuf) -> Option<SavedKey> {
     keys.into_iter().next()
 }
 
+/// Resolve the active signing key. With `--node-keys <path>` it loads the daemon's
+/// node-keys.json (a PQKeypair: `{ algorithm, public_key_hex, secret_key_hex }`) so
+/// the operator acts as the exact key their validator node signs blocks with —
+/// no copying between key stores. Otherwise, the first key in the wallet store.
+fn resolve_key(dir: &PathBuf, node_keys: &Option<PathBuf>) -> Option<SavedKey> {
+    if let Some(path) = node_keys {
+        let data = match std::fs::read_to_string(path) {
+            Ok(d) => d,
+            Err(e) => { eprintln!("Failed to read node-keys file {}: {}", path.display(), e); return None; }
+        };
+        let kp: Value = match serde_json::from_str(&data) {
+            Ok(v) => v,
+            Err(e) => { eprintln!("Failed to parse node-keys file {}: {}", path.display(), e); return None; }
+        };
+        let public_key_hex = kp.get("public_key_hex").and_then(|v| v.as_str());
+        let secret_key_hex = kp.get("secret_key_hex").and_then(|v| v.as_str());
+        match (public_key_hex, secret_key_hex) {
+            (Some(pk), Some(sk)) => Some(SavedKey {
+                label: Some("node-keys".to_string()),
+                public_key_hex: pk.to_string(),
+                secret_key_hex: sk.to_string(),
+                created_at: String::new(),
+            }),
+            _ => { eprintln!("node-keys file {} is missing public_key_hex/secret_key_hex", path.display()); None }
+        }
+    } else {
+        active_key(dir)
+    }
+}
+
 fn rpc_call(rpc: &str, method: &str, params: Value) -> Result<Value, String> {
     let client = reqwest::blocking::Client::new();
     let body = serde_json::json!({
@@ -295,8 +331,8 @@ fn api_post(rpc: &str, path: &str, body: Value) -> Result<Value, String> {
     resp.json().map_err(|e| format!("Parse error: {}", e))
 }
 
-fn submit_tx(rpc: &str, dir: &PathBuf, tx_type: &str, payload: Value, fee: u64) -> Result<(), String> {
-    let key = active_key(dir).ok_or("No keys found. Run: rougechain keygen")?;
+fn submit_tx(rpc: &str, dir: &PathBuf, node_keys: &Option<PathBuf>, tx_type: &str, payload: Value, fee: u64) -> Result<(), String> {
+    let key = resolve_key(dir, node_keys).ok_or("No signing key. Run: rougechain key-gen (or pass --node-keys <path>)")?;
 
     // Get nonce
     let nonce_result = rpc_call(rpc, "eth_getTransactionCount", serde_json::json!([&key.public_key_hex]))?;
@@ -407,6 +443,7 @@ fn submit_signed(rpc: &str, path: &str, req: Value) -> Result<Value, String> {
 fn main() {
     let cli = Cli::parse();
     let dir = wallet_dir(cli.wallet_dir.clone());
+    let node_keys = cli.node_keys.clone();
     let rpc = &cli.rpc;
 
     match cli.command {
@@ -430,7 +467,7 @@ fn main() {
         Commands::Keys => {
             let keys = load_keys(&dir);
             if keys.is_empty() {
-                println!("No keys found. Run: rougechain keygen");
+                println!("No keys found. Run: rougechain key-gen");
                 return;
             }
             for (i, k) in keys.iter().enumerate() {
@@ -440,7 +477,7 @@ fn main() {
         }
 
         Commands::Whoami => {
-            match active_key(&dir) {
+            match resolve_key(&dir, &node_keys) {
                 Some(k) => {
                     println!("PubKey:  {}...{}", &k.public_key_hex[..16], &k.public_key_hex[k.public_key_hex.len()-16..]);
                     println!("Label:   {}", k.label.as_deref().unwrap_or("(none)"));
@@ -448,12 +485,12 @@ fn main() {
                     let hash = hex::encode(&hash_bytes);
                     println!("Address: rouge1{}", &hash[..40]);
                 }
-                None => println!("No keys found. Run: rougechain keygen"),
+                None => println!("No keys found. Run: rougechain key-gen"),
             }
         }
 
         Commands::Balance { pubkey } => {
-            let pk = pubkey.unwrap_or_else(|| active_key(&dir).map(|k| k.public_key_hex).unwrap_or_default());
+            let pk = pubkey.unwrap_or_else(|| resolve_key(&dir, &node_keys).map(|k| k.public_key_hex).unwrap_or_default());
             if pk.is_empty() { eprintln!("No key specified"); return; }
             match rpc_call(rpc, "eth_getBalance", serde_json::json!([pk])) {
                 Ok(v) => println!("Balance: {} (raw hex)", v),
@@ -462,7 +499,7 @@ fn main() {
         }
 
         Commands::TokenBalances { pubkey } => {
-            let pk = pubkey.unwrap_or_else(|| active_key(&dir).map(|k| k.public_key_hex).unwrap_or_default());
+            let pk = pubkey.unwrap_or_else(|| resolve_key(&dir, &node_keys).map(|k| k.public_key_hex).unwrap_or_default());
             match rpc_call(rpc, "rouge_getAllTokenBalances", serde_json::json!([pk])) {
                 Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
                 Err(e) => eprintln!("Error: {}", e),
@@ -474,21 +511,21 @@ fn main() {
                 "to_pub_key_hex": to,
                 "amount": amount,
             });
-            if let Err(e) = submit_tx(rpc, &dir, "transfer", payload, fee) {
+            if let Err(e) = submit_tx(rpc, &dir, &node_keys, "transfer", payload, fee) {
                 eprintln!("Error: {}", e);
             }
         }
 
         Commands::Stake { amount } => {
             let payload = serde_json::json!({"amount": amount});
-            if let Err(e) = submit_tx(rpc, &dir, "stake", payload, 1) {
+            if let Err(e) = submit_tx(rpc, &dir, &node_keys, "stake", payload, 1) {
                 eprintln!("Error: {}", e);
             }
         }
 
         Commands::Unstake { amount } => {
             let payload = serde_json::json!({"amount": amount});
-            if let Err(e) = submit_tx(rpc, &dir, "unstake", payload, 1) {
+            if let Err(e) = submit_tx(rpc, &dir, &node_keys, "unstake", payload, 1) {
                 eprintln!("Error: {}", e);
             }
         }
@@ -533,14 +570,14 @@ fn main() {
                 "proposal_id": proposal_id,
                 "vote_option": option,
             });
-            if let Err(e) = submit_tx(rpc, &dir, "cast_vote", payload, 1) {
+            if let Err(e) = submit_tx(rpc, &dir, &node_keys, "cast_vote", payload, 1) {
                 eprintln!("Error: {}", e);
             }
         }
 
         Commands::Delegate { to } => {
             let payload = serde_json::json!({"to_pub_key_hex": to});
-            if let Err(e) = submit_tx(rpc, &dir, "delegate", payload, 1) {
+            if let Err(e) = submit_tx(rpc, &dir, &node_keys, "delegate", payload, 1) {
                 eprintln!("Error: {}", e);
             }
         }
@@ -567,7 +604,7 @@ fn main() {
         }
 
         Commands::History { pubkey, limit } => {
-            let pk = pubkey.unwrap_or_else(|| active_key(&dir).map(|k| k.public_key_hex).unwrap_or_default());
+            let pk = pubkey.unwrap_or_else(|| resolve_key(&dir, &node_keys).map(|k| k.public_key_hex).unwrap_or_default());
             match api_get(rpc, &format!("/api/indexer/address/{}?limit={}", pk, limit)) {
                 Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
                 Err(e) => eprintln!("Error: {}", e),
@@ -585,7 +622,7 @@ fn main() {
         // ── Name Registry ──
 
         Commands::RegisterName { name } => {
-            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let mut payload = serde_json::Map::new();
             payload.insert("name".to_string(), Value::String(name.clone()));
             payload.insert("walletId".to_string(), Value::String(key.public_key_hex.clone()));
@@ -601,7 +638,7 @@ fn main() {
         }
 
         Commands::ReleaseName { name } => {
-            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let mut payload = serde_json::Map::new();
             payload.insert("name".to_string(), Value::String(name.clone()));
             match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/names/release", req)) {
@@ -632,7 +669,7 @@ fn main() {
         }
 
         Commands::ReverseLookup { pubkey } => {
-            let pk = pubkey.unwrap_or_else(|| active_key(&dir).map(|k| k.public_key_hex).unwrap_or_default());
+            let pk = pubkey.unwrap_or_else(|| resolve_key(&dir, &node_keys).map(|k| k.public_key_hex).unwrap_or_default());
             if pk.is_empty() { eprintln!("No key specified"); return; }
             match api_get(rpc, &format!("/api/names/reverse/{}", pk)) {
                 Ok(v) => {
@@ -649,7 +686,7 @@ fn main() {
         // ── Mail ──
 
         Commands::SendMail { to, subject, body } => {
-            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let mut payload = serde_json::Map::new();
             payload.insert("to".to_string(), Value::String(to.clone()));
             payload.insert("subject".to_string(), Value::String(subject));
@@ -666,7 +703,7 @@ fn main() {
         }
 
         Commands::Inbox => {
-            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let mut payload = serde_json::Map::new();
             payload.insert("folder".to_string(), Value::String("inbox".to_string()));
             match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/mail/folder", req)) {
@@ -692,7 +729,7 @@ fn main() {
         }
 
         Commands::SentMail => {
-            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let mut payload = serde_json::Map::new();
             payload.insert("folder".to_string(), Value::String("sent".to_string()));
             match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/mail/folder", req)) {
@@ -704,7 +741,7 @@ fn main() {
         // ── Messenger ──
 
         Commands::RegisterMessenger { display_name } => {
-            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let mut payload = serde_json::Map::new();
             payload.insert("id".to_string(), Value::String(key.public_key_hex.clone()));
             payload.insert("displayName".to_string(), Value::String(display_name.clone()));
@@ -717,7 +754,7 @@ fn main() {
         }
 
         Commands::Conversations => {
-            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let payload = serde_json::Map::new();
             match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/messenger/conversations/list", req)) {
                 Ok(v) => {
@@ -743,7 +780,7 @@ fn main() {
         }
 
         Commands::CreateConversation { participants } => {
-            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let parts: Vec<Value> = participants.split(',').map(|s| Value::String(s.trim().to_string())).collect();
             let mut payload = serde_json::Map::new();
             payload.insert("participants".to_string(), Value::Array(parts));
@@ -760,7 +797,7 @@ fn main() {
         }
 
         Commands::Messages { conversation_id } => {
-            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let mut payload = serde_json::Map::new();
             payload.insert("conversationId".to_string(), Value::String(conversation_id));
             match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/messenger/messages/list", req)) {
@@ -787,7 +824,7 @@ fn main() {
         // ── Social ──
 
         Commands::Post { body, reply_to } => {
-            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let mut payload = serde_json::Map::new();
             payload.insert("body".to_string(), Value::String(body));
             if let Some(ref rt) = reply_to {
@@ -808,7 +845,7 @@ fn main() {
         }
 
         Commands::DeletePost { post_id } => {
-            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let mut payload = serde_json::Map::new();
             payload.insert("postId".to_string(), Value::String(post_id.clone()));
             match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/social/post/delete", req)) {
@@ -842,7 +879,7 @@ fn main() {
         }
 
         Commands::UserPosts { pubkey, limit } => {
-            let pk = pubkey.unwrap_or_else(|| active_key(&dir).map(|k| k.public_key_hex).unwrap_or_default());
+            let pk = pubkey.unwrap_or_else(|| resolve_key(&dir, &node_keys).map(|k| k.public_key_hex).unwrap_or_default());
             if pk.is_empty() { eprintln!("No key specified"); return; }
             match api_get(rpc, &format!("/api/social/user/{}/posts?limit={}", pk, limit)) {
                 Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
@@ -851,7 +888,7 @@ fn main() {
         }
 
         Commands::GetPost { post_id } => {
-            let viewer = active_key(&dir).map(|k| k.public_key_hex).unwrap_or_default();
+            let viewer = resolve_key(&dir, &node_keys).map(|k| k.public_key_hex).unwrap_or_default();
             let q = if viewer.is_empty() { String::new() } else { format!("?viewer={}", viewer) };
             match api_get(rpc, &format!("/api/social/post/{}{}", post_id, q)) {
                 Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
@@ -860,7 +897,7 @@ fn main() {
         }
 
         Commands::Like { id } => {
-            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let mut payload = serde_json::Map::new();
             payload.insert("trackId".to_string(), Value::String(id.clone()));
             match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/social/like", req)) {
@@ -874,7 +911,7 @@ fn main() {
         }
 
         Commands::Repost { post_id } => {
-            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let mut payload = serde_json::Map::new();
             payload.insert("postId".to_string(), Value::String(post_id.clone()));
             match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/social/repost", req)) {
@@ -888,7 +925,7 @@ fn main() {
         }
 
         Commands::Feed { limit } => {
-            let key = match active_key(&dir) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain keygen"); return; } };
+            let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let mut payload = serde_json::Map::new();
             payload.insert("limit".to_string(), serde_json::json!(limit));
             payload.insert("offset".to_string(), serde_json::json!(0));
