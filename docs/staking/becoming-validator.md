@@ -51,33 +51,22 @@ On first boot it logs:
 
 Your identity keypair now lives at `~/.quantum-vault/mainnet/node-keys.json` (fields: `algorithm`, `public_key_hex`, `secret_key_hex`). **Back this file up, offline.** Losing it means losing your validator identity — and the ability to unstake. Let the node sync to the chain tip before continuing.
 
-## Step 2 — Point the CLI at the *same* key
+## Step 2 — Point the CLI at your node's key
 
-The CLI signs staking transactions from `~/.rougechain/keys.json`. Make it use your node's key, so you stake the exact identity your node signs blocks with. Copy the two hex values out of `node-keys.json`:
+No key copying needed — the CLI signs **directly** from your node's identity file with the `--node-keys` flag, so you act as exactly the key your node signs blocks with:
 
 ```bash
-mkdir -p ~/.rougechain
-# Paste the two hex values from ~/.quantum-vault/mainnet/node-keys.json below:
-cat > ~/.rougechain/keys.json <<'JSON'
-[{
-  "label": "validator",
-  "public_key_hex": "<public_key_hex from node-keys.json>",
-  "secret_key_hex": "<secret_key_hex from node-keys.json>",
-  "created_at": "2026-01-01T00:00:00Z"
-}]
-JSON
-
-rougechain whoami   # should print your node's public key + rouge1 address
+rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json whoami
 ```
 
-> The CLI defaults to the mainnet RPC. Confirm `rougechain whoami` shows the **same** public key the daemon logged in Step 1.
+This prints your validator's public key + `rouge1…` address — confirm it matches the key the daemon logged in Step 1. Every command below uses the same `--node-keys` flag. (The CLI defaults to the mainnet RPC.)
 
 ## Step 3 — Fund and stake
 
-Send **≥ 10,000 XRGE (+ fee)** to your validator address (shown by `rougechain whoami`) from your main wallet. Then stake it:
+Send **≥ 10,000 XRGE (+ ~0.1 XRGE fee)** to your validator address (from `whoami` above) from your main wallet. Then stake it:
 
 ```bash
-rougechain stake 10000
+rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json stake 10000
 ```
 
 > The 10,000 minimum is enforced on **every** stake call — a smaller top-up is rejected. Each additional stake must itself be ≥ 10,000; totals accumulate.
@@ -124,8 +113,8 @@ Selection is **stake-weighted**, mixed with **quantum entropy** (ANU QRNG, falli
 
 ## Increasing stake / leaving
 
-- **Add stake:** run `rougechain stake 10000` again (≥ 10,000 each time).
-- **Leave:** `rougechain unstake <amount>` enters the **~500-block unbonding** queue; dropping below 10,000 removes you from the active set. See [Staking](README.md).
+- **Add stake:** `rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json stake 10000` again (≥ 10,000 each time).
+- **Leave:** `rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json unstake <amount>` enters the **~500-block unbonding** queue; dropping below 10,000 removes you from the active set. See [Staking](README.md).
 
 ## Testing on testnet first
 
