@@ -44,6 +44,10 @@ import { privateKeyToAccount } from "viem/accounts";
 
 const CORE_API_URL = process.env.CORE_API_URL || "http://localhost:5101";
 const PRIVATE_KEY = process.env.BRIDGE_CUSTODY_PRIVATE_KEY;
+// Optional dedicated hot key for XRGE vault release() (BridgeVaultV2's `relayer` role).
+// When set, XRGE releases are signed by THIS key while the custody key above stays for
+// ETH/RougeBridge — the on-chain role split. Falls back to the custody key when unset.
+const XRGE_RELAYER_KEY = process.env.XRGE_RELAYER_PRIVATE_KEY;
 const BASE_CHAIN = (process.env.BASE_CHAIN || "sepolia").toLowerCase();
 const POLL_MS = parseInt(process.env.POLL_INTERVAL_MS || "5000", 10);
 const VAULT_ADDRESS = process.env.XRGE_BRIDGE_VAULT;
@@ -153,7 +157,7 @@ function saveDepositState(w: DepositWatcher): void {
 const processedTxIds = loadProcessedTxIds();  // Persisted to disk across restarts
 const inFlightTxIds = new Set<string>();   // Currently being processed
 const depositWatcher = loadDepositState(); // Deposit scan cursor + claim dedup
-let currentNonce: number | null = null;    // Managed nonce
+const nonceState = new Map<string, number>(); // per-signer managed nonce (address→next)
 let isShuttingDown = false;
 
 // Stats
@@ -329,21 +333,24 @@ async function withRetry<T>(
   throw lastError;
 }
 
-/** Get next nonce, managing it manually to avoid stuck txs. */
+/** Get next nonce for a given signer, managed per-address to avoid stuck txs. */
 async function getNextNonce(publicClient: PublicClient, address: `0x${string}`): Promise<number> {
-  if (currentNonce === null) {
+  const key = address.toLowerCase();
+  if (!nonceState.has(key)) {
     // Seed from on-chain
-    currentNonce = await publicClient.getTransactionCount({ address, blockTag: "pending" });
-    console.log(`[relayer] Seeded nonce from chain: ${currentNonce}`);
+    const seeded = await publicClient.getTransactionCount({ address, blockTag: "pending" });
+    nonceState.set(key, seeded);
+    console.log(`[relayer] Seeded nonce for ${address.slice(0, 10)}…: ${seeded}`);
   }
-  const nonce = currentNonce;
-  currentNonce++;
+  const nonce = nonceState.get(key)!;
+  nonceState.set(key, nonce + 1);
   return nonce;
 }
 
-/** Reset nonce on failure (re-seed from chain next time). */
-function resetNonce() {
-  currentNonce = null;
+/** Reset a signer's nonce on failure (re-seed from chain next time). Omit to reset all. */
+function resetNonce(address?: `0x${string}`) {
+  if (address) nonceState.delete(address.toLowerCase());
+  else nonceState.clear();
 }
 
 // ── API calls ───────────────────────────────────────────────────
@@ -572,6 +579,15 @@ async function main() {
   const publicClient = createPublicClient({ chain: chainCfg.chain, transport });
   const walletClient = createWalletClient({ account, chain: chainCfg.chain, transport });
 
+  // Dedicated XRGE-release signer (BridgeVaultV2 role split). Falls back to the custody
+  // key when XRGE_RELAYER_PRIVATE_KEY is unset, so V1 / single-key setups are unchanged.
+  const xrgeAccount = XRGE_RELAYER_KEY?.trim()
+    ? privateKeyToAccount((XRGE_RELAYER_KEY.startsWith("0x") ? XRGE_RELAYER_KEY : `0x${XRGE_RELAYER_KEY}`) as `0x${string}`)
+    : account;
+  const xrgeWalletClient = xrgeAccount === account
+    ? walletClient
+    : createWalletClient({ account: xrgeAccount, chain: chainCfg.chain, transport });
+
   console.log(`╔══════════════════════════════════════════════════╗`);
   console.log(`║  RougeChain Bridge Relayer v2                    ║`);
   console.log(`╠══════════════════════════════════════════════════╣`);
@@ -590,9 +606,9 @@ async function main() {
     vaultContract = getContract({
       address: VAULT_ADDRESS as `0x${string}`,
       abi: BRIDGE_VAULT_ABI,
-      client: { public: publicClient, wallet: walletClient },
+      client: { public: publicClient, wallet: xrgeWalletClient },
     });
-    console.log(`[relayer] XRGE BridgeVault: ${VAULT_ADDRESS}`);
+    console.log(`[relayer] XRGE BridgeVault: ${VAULT_ADDRESS} (release signer: ${xrgeAccount.address}${xrgeAccount === account ? " = custody key" : " = dedicated XRGE key"})`);
   } else {
     console.log("[relayer] No XRGE_BRIDGE_VAULT — XRGE bridge disabled");
   }
@@ -670,7 +686,7 @@ async function main() {
           if (receipt.status !== "success") {
             console.error(`[ETH] Tx REVERTED for ${w.tx_id}: ${hash}`);
             stats.ethFailed++;
-            resetNonce();
+            resetNonce(account.address);
             await handleWithdrawalFailure("ETH", w.tx_id, `release tx reverted: ${hash}`);
             inFlightTxIds.delete(w.tx_id);
             continue;
@@ -688,7 +704,7 @@ async function main() {
         } catch (e: any) {
           console.error(`[ETH] Failed ${w.tx_id}: ${e.message}`);
           stats.ethFailed++;
-          resetNonce();
+          resetNonce(account.address);
           await handleWithdrawalFailure("ETH", w.tx_id, e.message || "release failed");
         } finally {
           inFlightTxIds.delete(w.tx_id);
@@ -718,7 +734,7 @@ async function main() {
 
         try {
           const weiAmount = xrgeToWei(w.amount);
-          const nonce = await getNextNonce(publicClient, account.address);
+          const nonce = await getNextNonce(publicClient, xrgeAccount.address);
 
           const hash = await withRetry(`XRGE-${w.tx_id.slice(0, 8)}`, async () => {
             return await (vaultContract as any).write.release([
@@ -738,7 +754,7 @@ async function main() {
 
           if (receipt.status !== "success") {
             console.error(`[XRGE] Tx REVERTED for ${w.tx_id}: ${hash}`);
-            resetNonce();
+            resetNonce(xrgeAccount.address);
             // A revert may just mean a PRIOR release already settled this l1TxId
             // (AlreadyProcessed). Reconcile against on-chain truth before ever
             // reporting failure — never refund an already-paid withdrawal.
@@ -761,7 +777,7 @@ async function main() {
           }
         } catch (e: any) {
           console.error(`[XRGE] Failed ${w.tx_id}: ${e.message}`);
-          resetNonce();
+          resetNonce(xrgeAccount.address);
           // The most common cause here is a release that mined but whose receipt we lost:
           // the retry reverts AlreadyProcessed and throws. Treat an already-processed
           // l1TxId as SUCCESS (fulfill it), never as a failure that could trigger a refund.
