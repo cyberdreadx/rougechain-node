@@ -180,7 +180,14 @@ const BRIDGE_VAULT_ABI = parseAbi([
   "function release(address to, uint256 amount, string l1TxId) external",
   "function totalLocked() external view returns (uint256)",
   "function vaultBalance() external view returns (uint256)",
+  "function processedL1Txs(string) external view returns (bool)",
 ]);
+
+// Emitted by the vault on a successful release() — used to reconcile a release that mined
+// but whose receipt we lost (see reconcileXrgeIfReleased).
+const BRIDGE_RELEASE_EVENT = parseAbiItem(
+  "event BridgeRelease(address indexed recipient, uint256 amount, string l1TxId)"
+);
 
 const ROUGE_BRIDGE_ABI = parseAbi([
   "function releaseETH(address to, uint256 amount, bytes32 l1TxId) external",
@@ -208,6 +215,85 @@ function unitsToWei(amountUnits: number): bigint {
 
 function xrgeToWei(amount: number): bigint {
   return BigInt(amount) * 10n ** 18n;
+}
+
+/** Scan recent vault BridgeRelease events for the tx that released a given L1 tx id. */
+async function findReleaseTxForL1(
+  publicClient: any,
+  vaultAddress: `0x${string}`,
+  l1TxId: string,
+): Promise<`0x${string}` | null> {
+  try {
+    const latest = await publicClient.getBlockNumber();
+    const WINDOW = 5000n;
+    for (let i = 0n; i < 12n; i++) {
+      const toBlock = latest - i * WINDOW;
+      if (toBlock < 0n) break;
+      const fromBlock = toBlock > WINDOW ? toBlock - WINDOW + 1n : 0n;
+      const logs = await publicClient.getLogs({
+        address: vaultAddress,
+        event: BRIDGE_RELEASE_EVENT,
+        fromBlock,
+        toBlock,
+      });
+      for (const lg of logs) {
+        if ((lg as any).args?.l1TxId === l1TxId) return lg.transactionHash as `0x${string}`;
+      }
+      if (fromBlock === 0n) break;
+    }
+  } catch (e: any) {
+    console.warn(`[XRGE] release-log scan failed for ${l1TxId}: ${e.message}`);
+  }
+  return null;
+}
+
+/**
+ * On-chain truth check + reconciliation for XRGE releases. The vault's release() is
+ * idempotent (reverts AlreadyProcessed on a duplicate), so a release that mined but whose
+ * receipt we lost looks like a "failure" to the naive path — which previously cascaded into
+ * an auto-refund and paid the user on BOTH chains. Before EVER treating an XRGE release as
+ * failed, ask the vault whether this l1TxId is already processed; if so, fulfill it against
+ * the real BridgeRelease tx and return true so the caller skips failure/refund entirely.
+ * Returns false when the release genuinely did not happen (safe to fail/refund) or when the
+ * check itself failed (the daemon refund guard is the authoritative backstop either way).
+ */
+async function reconcileXrgeIfReleased(
+  publicClient: any,
+  vaultAddress: `0x${string}`,
+  w: { tx_id: string; evm_address: string; amount: number },
+): Promise<boolean> {
+  let processed = false;
+  try {
+    processed = (await publicClient.readContract({
+      address: vaultAddress,
+      abi: BRIDGE_VAULT_ABI,
+      functionName: "processedL1Txs",
+      args: [w.tx_id],
+    })) as boolean;
+  } catch (e: any) {
+    console.warn(`[XRGE] reconcile read failed for ${w.tx_id}: ${e.message}`);
+    return false; // cannot confirm — let normal handling proceed; daemon guard still protects
+  }
+  if (!processed) return false;
+
+  const relTx = await findReleaseTxForL1(publicClient, vaultAddress, w.tx_id);
+  if (relTx) {
+    const ok = await fulfillXrgeWithdrawal(w.tx_id, relTx);
+    if (ok) {
+      console.log(`[XRGE] ✓ Reconciled ${w.tx_id}: already released, fulfilled via ${relTx}`);
+      processedTxIds.add(w.tx_id);
+      saveProcessedTxIds(processedTxIds);
+      stats.xrgeFulfilled++;
+    } else {
+      console.warn(`[XRGE] ✗ Reconcile: fulfill API rejected ${w.tx_id} (${relTx})`);
+    }
+  } else {
+    await alert(
+      `reconcile:${w.tx_id}`,
+      `XRGE ${w.tx_id.slice(0, 16)}… is processed on-chain but no BridgeRelease found in scan — MANUAL REVIEW, NOT refunding`,
+    );
+  }
+  return true; // handled — caller must NOT report failure or refund
 }
 
 function uptimeStr(): string {
@@ -652,10 +738,15 @@ async function main() {
 
           if (receipt.status !== "success") {
             console.error(`[XRGE] Tx REVERTED for ${w.tx_id}: ${hash}`);
-            stats.xrgeFailed++;
             resetNonce();
+            // A revert may just mean a PRIOR release already settled this l1TxId
+            // (AlreadyProcessed). Reconcile against on-chain truth before ever
+            // reporting failure — never refund an already-paid withdrawal.
+            if (await reconcileXrgeIfReleased(publicClient, VAULT_ADDRESS as `0x${string}`, w)) {
+              continue;
+            }
+            stats.xrgeFailed++;
             await handleWithdrawalFailure("XRGE", w.tx_id, `release tx reverted: ${hash}`);
-            inFlightTxIds.delete(w.tx_id);
             continue;
           }
 
@@ -670,8 +761,14 @@ async function main() {
           }
         } catch (e: any) {
           console.error(`[XRGE] Failed ${w.tx_id}: ${e.message}`);
-          stats.xrgeFailed++;
           resetNonce();
+          // The most common cause here is a release that mined but whose receipt we lost:
+          // the retry reverts AlreadyProcessed and throws. Treat an already-processed
+          // l1TxId as SUCCESS (fulfill it), never as a failure that could trigger a refund.
+          if (await reconcileXrgeIfReleased(publicClient, VAULT_ADDRESS as `0x${string}`, w)) {
+            continue;
+          }
+          stats.xrgeFailed++;
           await handleWithdrawalFailure("XRGE", w.tx_id, e.message || "release failed");
         } finally {
           inFlightTxIds.delete(w.tx_id);
