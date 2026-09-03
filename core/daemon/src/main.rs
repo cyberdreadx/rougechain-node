@@ -508,6 +508,31 @@ async fn main() -> Result<(), String> {
     eprintln!("[core-daemon] API server ready");
 
     if node.is_mining() {
+        // Validator sanity check: mining with a key that is NOT a staked validator
+        // produces blocks that peers reject — an otherwise silent failure. Warn loudly
+        // and point at the fix. (See docs/staking/becoming-validator.md.)
+        {
+            let node_pk = node.get_node_public_key();
+            let short = &node_pk[..16.min(node_pk.len())];
+            let staked = node
+                .get_validator_set()
+                .map(|(set, _total)| set.iter().any(|(pk, vs)| pk == &node_pk && vs.stake > 0))
+                .unwrap_or(false);
+            if staked {
+                eprintln!("[validator] ✓ node key {}… is a staked validator — mining active.", short);
+            } else {
+                eprintln!("──────────────────────────────────────────────────────────────");
+                eprintln!("⚠  [validator] Mining is ON, but this node's key ({}…) is NOT", short);
+                eprintln!("   a staked validator as this node currently sees the chain.");
+                eprintln!("   Peers REJECT blocks from unstaked proposers, so you will not");
+                eprintln!("   earn until this exact key is staked. To stake it:");
+                eprintln!("     1) fund this key with >= 10,000 XRGE, then");
+                eprintln!("     2) rougechain --node-keys <data-dir>/node-keys.json stake 10000");
+                eprintln!("   (If you just staked or are still syncing, it clears once confirmed.)");
+                eprintln!("   Guide: https://docs.rougechain.io/staking/becoming-validator.html");
+                eprintln!("──────────────────────────────────────────────────────────────");
+            }
+        }
         let miner = node.clone();
         let broadcast_pm = peer_manager.clone();
         let ws_bc = ws_broadcaster.clone();
