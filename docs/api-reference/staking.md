@@ -123,7 +123,7 @@ Content-Type: application/json
 
 ### Unbonding
 
-After unstaking, tokens enter an unbonding period (~7 days on testnet) before they become available in your balance.
+After unstaking, tokens enter an unbonding period (500 blocks) before they become available in your balance.
 
 ---
 

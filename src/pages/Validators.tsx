@@ -47,7 +47,7 @@ function RunNodeCta() {
         </div>
         <div className="flex gap-2">
           <Button asChild size="sm" variant="outline" className="flex-1 text-xs">
-            <a href="https://docs.rougechain.io/running-a-node/installation.html" target="_blank" rel="noopener noreferrer">
+            <a href="https://docs.rougechain.io/running-a-node/" target="_blank" rel="noopener noreferrer">
               Full Guide
             </a>
           </Button>

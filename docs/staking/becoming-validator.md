@@ -15,7 +15,7 @@ Your node stores this keypair at `<data-dir>/node-keys.json`. **The network reje
 
 ## Prerequisites
 
-- **≥ 10,000 XRGE** (+ ~1 XRGE fee) for the standard tier — see [tiers](#validator-tiers).
+- **≥ 10,000 XRGE** (+ ~0.1 XRGE fee) for the standard tier — see [tiers](#validator-tiers).
 - A **server** — see [system requirements](../running-a-node/README.md#system-requirements) and [installation](../running-a-node/installation.md).
 - The **daemon** (`quantum-vault-daemon`) and the **CLI** (`rougechain`).
 
