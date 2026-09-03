@@ -7972,6 +7972,65 @@ async fn bridge_withdrawal_report_failure(
     }
 }
 
+/// Query the BridgeVault's `processedL1Txs(string)` mapping for `l1_tx_id` via `eth_call`.
+/// Returns Ok(true) if the vault has ALREADY released tokens for this L1 tx (i.e. the Base
+/// payout happened), Ok(false) if it has not, and Err on any RPC/decoding failure. The caller
+/// MUST fail closed on Err — a refund is a mint, so "cannot prove the payout didn't happen"
+/// must never become "go ahead and re-mint". This is the mirror of the #8 fulfill-side check:
+/// #8 verified a payout before marking paid; this verifies the ABSENCE of a payout before
+/// refunding, closing the relayer double-spend (release mines → relayer mis-reports failure →
+/// auto-refund re-mints → user paid on both chains).
+async fn vault_l1tx_processed(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    vault: &str,
+    l1_tx_id: &str,
+) -> Result<bool, String> {
+    // selector = keccak256("processedL1Txs(string)")[..4]; hardcoded (no keccak dep in-tree,
+    // same convention as the hardcoded Transfer topic in parse_erc20_transfer_to).
+    const SELECTOR: &str = "f9a9c49f";
+    // ABI-encode one dynamic `string`: head = offset 0x20, then length, then the UTF-8 bytes
+    // right-padded to a 32-byte boundary.
+    let bytes = l1_tx_id.as_bytes();
+    let mut data = String::from("0x");
+    data.push_str(SELECTOR);
+    data.push_str(&format!("{:064x}", 32u64)); // offset to the string arg
+    data.push_str(&format!("{:064x}", bytes.len() as u64)); // string length in bytes
+    let mut hexbytes = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        hexbytes.push_str(&format!("{:02x}", b));
+    }
+    while hexbytes.len() % 64 != 0 {
+        hexbytes.push('0'); // right-pad to a full 32-byte word
+    }
+    data.push_str(&hexbytes);
+
+    let resp = client
+        .post(rpc_url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0", "method": "eth_call",
+            "params": [{ "to": vault, "data": data }, "latest"],
+            "id": 1,
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    if let Some(err) = json.get("error") {
+        return Err(format!("eth_call error: {}", err));
+    }
+    let result = json
+        .get("result")
+        .and_then(|v| v.as_str())
+        .ok_or("eth_call returned no result")?;
+    let hex = result.trim_start_matches("0x");
+    if hex.is_empty() {
+        return Err("empty eth_call result".to_string());
+    }
+    // bool return is a single 32-byte word; any nonzero nibble => true.
+    Ok(hex.chars().any(|c| c != '0'))
+}
+
 /// Refund a withdrawal that could not be released on L1: re-mint the burned
 /// tokens back to the original owner. Deduped via the claim store so a refund
 /// can never be issued twice, and the pending entry is then cleared.
@@ -7996,6 +8055,53 @@ async fn bridge_withdrawal_refund(
             "success": false,
             "error": "Withdrawal predates owner tracking; refund manually via admin reclaim"
         }));
+    }
+
+    // SECURITY (double-spend guard): never refund an XRGE withdrawal whose vault release
+    // already settled on Base. The relayer can mis-report a mined release as a failure
+    // (the retry then reverts AlreadyProcessed), which used to cascade into an auto-refund —
+    // paying the user on BOTH chains. Verify the vault's on-chain processedL1Txs before
+    // minting, and FAIL CLOSED if we cannot prove the payout did not happen.
+    if w.token_symbol.eq_ignore_ascii_case("XRGE") {
+        match state.xrge_bridge_vault.as_ref().filter(|v| !v.is_empty()) {
+            Some(vault) => {
+                let client = reqwest::Client::new();
+                match vault_l1tx_processed(&client, &state.base_sepolia_rpc, vault, &tx_id).await {
+                    Ok(true) => {
+                        // Payout already happened — refunding would double-spend. Settle the
+                        // record so the relayer stops retrying, and refuse the mint.
+                        let _ = state
+                            .bridge_withdraw_store
+                            .set_status(&tx_id, WithdrawalStatus::Fulfilled);
+                        eprintln!(
+                            "[bridge] REFUND BLOCKED for {}: vault already released on-chain (processedL1Txs=true) — marked fulfilled, not minting",
+                            tx_id
+                        );
+                        return Json(serde_json::json!({
+                            "success": false,
+                            "error": "Refund refused: the vault already released this withdrawal on Base (processedL1Txs=true). Marked fulfilled."
+                        }));
+                    }
+                    Ok(false) => { /* no on-chain release — safe to refund below */ }
+                    Err(e) => {
+                        eprintln!(
+                            "[bridge] REFUND BLOCKED for {}: could not verify vault release state: {} — failing closed",
+                            tx_id, e
+                        );
+                        return Json(serde_json::json!({
+                            "success": false,
+                            "error": format!("Refund refused: could not verify vault release state ({}). Not minting.", e)
+                        }));
+                    }
+                }
+            }
+            None => {
+                return Json(serde_json::json!({
+                    "success": false,
+                    "error": "Refund refused: XRGE vault not configured; cannot verify release state."
+                }));
+            }
+        }
     }
 
     // Dedup: a refund is a mint, so guard it with the same claim store used for deposits.
