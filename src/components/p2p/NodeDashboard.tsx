@@ -623,7 +623,7 @@ export function NodeDashboard() {
                 <h4 className="font-semibold text-sm mb-1">Get Some XRGE</h4>
                 <p className="text-xs text-muted-foreground mb-2">
                   You need XRGE to become a validator. Bridge assets from Base or acquire XRGE on{" "}
-                  <a href="/wallet" className="text-primary underline">the wallet page</a>. You need at least <strong>1,000 XRGE</strong> to stake.
+                  <a href="/wallet" className="text-primary underline">the wallet page</a>. You need at least <strong>10,000 XRGE</strong> to stake.
                 </p>
               </div>
             </div>

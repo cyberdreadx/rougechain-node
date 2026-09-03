@@ -16,7 +16,7 @@ This tells the node to produce blocks at the configured interval (default: 400ms
 
 | Requirement | Value |
 |-------------|-------|
-| Staked XRGE | Minimum 1,000 XRGE |
+| Staked XRGE | Minimum 10,000 XRGE |
 | Node uptime | Must be online to produce blocks |
 | Network sync | Node must be synced to chain tip |
 
@@ -80,7 +80,7 @@ Validators earn transaction fees from blocks they produce. Fees are credited imm
 ### Node not producing blocks
 
 - Ensure `--mine` flag is set
-- Verify you have enough XRGE staked (min 1,000)
+- Verify you have enough XRGE staked (min 10,000)
 - Check that your node is synced: `curl http://127.0.0.1:5100/api/health`
 
 ### Blocks not propagating
