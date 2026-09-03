@@ -511,9 +511,10 @@ export function ValidatorDashboard({
       <Card className="bg-muted/30 border-border">
         <CardContent className="p-4 text-sm text-muted-foreground space-y-2">
           <div className="font-semibold text-foreground">New validator checklist</div>
-          <div>1) Stake XRGE from your wallet to register.</div>
-          <div>2) Run a node using your validator keys (`--validatorPubKey`, `--validatorPrivKey`).</div>
-          <div>3) Keep the node online with peers to participate in votes.</div>
+          <div>1) Stake at least 10,000 XRGE from your validator wallet to register (10k standard · 100k operator · 1M genesis).</div>
+          <div>2) Run a node whose identity key (<code>node-keys.json</code>) is that same staked key, started with <code>--mine</code>.</div>
+          <div>3) Keep the node online with peers to propose blocks and vote.</div>
+          <div className="pt-1">See the <a href="https://docs.rougechain.io/staking/becoming-validator.html" className="text-primary underline">validator guide</a> for the full setup.</div>
         </CardContent>
       </Card>
 

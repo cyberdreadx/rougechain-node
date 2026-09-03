@@ -1,117 +1,133 @@
 # Becoming a Validator
 
-Validators produce blocks and earn transaction fees on RougeChain. This guide walks you through the full process.
+Validators propose blocks and earn fees on RougeChain. This guide targets **mainnet** (`rougechain-mainnet-1`, real value, no faucet). To practice first, see [Testing on testnet](#testing-on-testnet-first) at the end.
+
+## The one thing you must understand
+
+Your validator identity is a **single ML-DSA-65 keypair** that does two jobs:
+
+1. it **holds your stake** — staking from a key registers *that key* as a validator, and
+2. it **signs the blocks** your node proposes.
+
+Your node stores this keypair at `<data-dir>/node-keys.json`. **The network rejects any block whose proposer is not a staked validator** — so your node's `node-keys.json` key and your staked key must be the **same key**. If you stake from one key but run your node with a different (freshly generated) key, your blocks are rejected by every peer and you earn nothing, with no obvious error. This is the most common way to get validator setup wrong.
+
+> **Security:** this key signs blocks on an always-online, internet-facing server. Use a **dedicated key that holds only your stake** — never your main treasury wallet. If the server is compromised, the blast radius is limited to the staked amount.
 
 ## Prerequisites
 
-| Requirement | Details |
-|-------------|---------|
-| XRGE balance | At least 10,000 XRGE (+ fees) |
-| Wallet | A RougeChain wallet with signing keys |
-| Node (optional) | Running a node earns you more blocks |
+- **≥ 10,000 XRGE** (+ ~1 XRGE fee) for the standard tier — see [tiers](#validator-tiers).
+- A **server** — see [system requirements](../running-a-node/README.md#system-requirements) and [installation](../running-a-node/installation.md).
+- The **daemon** (`quantum-vault-daemon`) and the **CLI** (`rougechain`).
 
-## Step 1: Get XRGE
+## Validator tiers
 
-If you're on testnet, use the faucet:
+Your tier is derived automatically from your total stake:
 
-1. Visit [rougechain.io](https://rougechain.io)
-2. Go to **Wallet** and click **Request from Faucet**
-3. Repeat until you have at least 10,000 XRGE
+| Tier | Minimum stake | Commission on delegations |
+|------|---------------|---------------------------|
+| Standard | 10,000 XRGE | 5% |
+| Operator | 100,000 XRGE | 10% |
+| Genesis | 1,000,000 XRGE | 15% |
 
-## Step 2: Stake Tokens
+## Step 1 — Install and generate your node identity
 
-### Via Web UI
-
-1. Navigate to the **Validators** page
-2. Click **Stake**
-3. Enter your stake amount (minimum 10,000 XRGE)
-4. Confirm the transaction
-5. Your wallet signs the stake transaction with ML-DSA-65
-
-### Via v2 API (Client-Side Signing)
+Install the daemon ([installation guide](../running-a-node/installation.md)), then start it once so it creates its identity keypair and begins syncing:
 
 ```bash
-curl -X POST https://testnet.rougechain.io/api/v2/stake \
-  -H "Content-Type: application/json" \
-  -d '{
-    "payload": {
-      "amount": 10000,
-      "from": "your-public-key-hex",
-      "timestamp": 1706745600000,
-      "nonce": "random-hex"
-    },
-    "signature": "your-ml-dsa65-signature-hex",
-    "public_key": "your-public-key-hex"
-  }'
+./quantum-vault-daemon \
+  --genesis daemon/genesis-mainnet.json \
+  --chain-id rougechain-mainnet-1 \
+  --peers https://api.rougechain.io/api \
+  --data-dir ~/.quantum-vault/mainnet \
+  --api-port 5100 --port 4100 \
+  --node-name my-validator
 ```
 
-The request body is the signed envelope `{ payload, signature, public_key }`. The `from`, `timestamp`, and `nonce` fields live **inside** `payload`, and `from` must equal the signing public key.
+On first boot it logs:
 
-## Step 3: Verify Your Validator Status
+```
+[node] Generated and saved new node keys (pub: <your-node-pubkey>...)
+```
+
+Your identity keypair now lives at `~/.quantum-vault/mainnet/node-keys.json` (fields: `algorithm`, `public_key_hex`, `secret_key_hex`). **Back this file up, offline.** Losing it means losing your validator identity — and the ability to unstake. Let the node sync to the chain tip before continuing.
+
+## Step 2 — Point the CLI at the *same* key
+
+The CLI signs staking transactions from `~/.rougechain/keys.json`. Make it use your node's key, so you stake the exact identity your node signs blocks with. Copy the two hex values out of `node-keys.json`:
 
 ```bash
-curl "https://testnet.rougechain.io/api/validators"
+mkdir -p ~/.rougechain
+# Paste the two hex values from ~/.quantum-vault/mainnet/node-keys.json below:
+cat > ~/.rougechain/keys.json <<'JSON'
+[{
+  "label": "validator",
+  "public_key_hex": "<public_key_hex from node-keys.json>",
+  "secret_key_hex": "<secret_key_hex from node-keys.json>",
+  "created_at": "2026-01-01T00:00:00Z"
+}]
+JSON
+
+rougechain whoami   # should print your node's public key + rouge1 address
 ```
 
-Look for your public key in the response:
+> The CLI defaults to the mainnet RPC. Confirm `rougechain whoami` shows the **same** public key the daemon logged in Step 1.
 
-```json
-{
-  "validators": [
-    {
-      "publicKey": "your-public-key",
-      "stake": 10000.0,
-      "status": "active",
-      "blocksProposed": 0
-    }
-  ]
-}
+## Step 3 — Fund and stake
+
+Send **≥ 10,000 XRGE (+ fee)** to your validator address (shown by `rougechain whoami`) from your main wallet. Then stake it:
+
+```bash
+rougechain stake 10000
 ```
 
-## Step 4: Run a Mining Node (Recommended)
+> The 10,000 minimum is enforced on **every** stake call — a smaller top-up is rejected. Each additional stake must itself be ≥ 10,000; totals accumulate.
 
-While staking alone makes you a validator, running a node ensures you're online to produce blocks when selected:
+Verify you're registered:
+
+```bash
+rougechain validators        # or: curl https://api.rougechain.io/api/validators
+```
+
+Look for your public key with a `stake` ≥ 10,000 and `"status": "active"`.
+
+## Step 4 — Start mining
+
+Restart the daemon with `--mine` (same key, same data-dir), plus a public URL so peers can reach you:
 
 ```bash
 ./quantum-vault-daemon \
   --mine \
-  --api-port 5100 \
-  --peers "https://testnet.rougechain.io/api" \
-  --public-url "https://mynode.example.com"
+  --genesis daemon/genesis-mainnet.json \
+  --chain-id rougechain-mainnet-1 \
+  --peers https://api.rougechain.io/api \
+  --data-dir ~/.quantum-vault/mainnet \
+  --api-port 5100 --port 4100 \
+  --node-name my-validator \
+  --public-url https://my-validator.example.com
 ```
 
-## Increasing Your Stake
+Because your `node-keys.json` key is now a staked validator, peers accept your blocks. Watch `blocksProposed` climb for your key on the validators endpoint.
 
-You can add more XRGE to increase your block proposal probability. Note that the **10,000 XRGE minimum is enforced on every stake call** — a smaller top-up (e.g. 500 XRGE) is rejected — so each additional stake must itself be at least 10,000 XRGE:
+## Proposer selection
 
-```bash
-# Stake an additional 10,000 XRGE
-curl -X POST https://testnet.rougechain.io/api/v2/stake \
-  -H "Content-Type: application/json" \
-  -d '{
-    "payload": {
-      "amount": 10000,
-      "from": "your-public-key-hex",
-      "timestamp": 1706745600001,
-      "nonce": "random-hex"
-    },
-    "signature": "your-signature-hex",
-    "public_key": "your-public-key-hex"
-  }'
-```
+Selection is **stake-weighted**, mixed with **quantum entropy** (ANU QRNG, falling back to a local CSPRNG), plus block context for verifiability. Even a minimum-stake validator proposes blocks — just less often.
 
-Your total stake accumulates.
+## Security & slashing — read before you go live
 
-## Validator Selection Algorithm
+- **Dedicated key.** Keep only the stake in your validator key; never use your treasury wallet. (Done, if you followed Step 1.)
+- **One node per key.** **Never run two nodes with the same key** — double-signing is slashable equivocation.
+- **Back up `node-keys.json`** offline. It is the only copy of your validator identity.
+- **Don't expose the daemon port.** Bind to localhost, front it with nginx + TLS, and firewall the RPC/API port. See [public-node security](../p2p-networking/public-node.md). Do **not** open port 5100 to the public internet.
+- **Watch for missed blocks.** Missing **50 blocks** triggers an auto-slash; each violation costs **10%** of stake and jails you for ~20 blocks. Alert on your node being offline or lagging the chain tip (`/api/health` height vs the network).
+- **Never run `--dev`** on a mainnet node — it enables unsafe key-accepting endpoints.
+- **Avoid unattended auto-restart** (e.g. an auto-deploy cron) on a validator: a restart during your proposal slot loses blocks, and auto-pulling unreviewed code is a supply-chain risk. Upgrade deliberately.
 
-Proposer selection uses three factors:
+## Increasing stake / leaving
 
-1. **Stake weight** — Higher stake gives proportionally higher probability
-2. **Quantum entropy** — Sourced from [ANU QRNG](https://qrng.anu.edu.au/) (quantum vacuum fluctuations); falls back to local CSPRNG if unavailable
-3. **Block context** — Previous block hash and height are mixed into the seed for deterministic verifiability
+- **Add stake:** run `rougechain stake 10000` again (≥ 10,000 each time).
+- **Leave:** `rougechain unstake <amount>` enters the **~500-block unbonding** queue; dropping below 10,000 removes you from the active set. See [Staking](README.md).
 
-This means even validators with the minimum stake will produce blocks, just less frequently. The entropy source (`"quantum"` or `"local"`) is visible on the validator dashboard.
+## Testing on testnet first
 
-## Leaving the Validator Set
-
-See [Unstaking](../staking/README.md#unstake) — after unstaking below the minimum, you're removed from the active validator set.
+Practice the whole flow with no real value: swap the mainnet flags for testnet —
+`--chain-id rougechain-devnet-1`, `--peers https://testnet.rougechain.io/api`, `--data-dir ~/.quantum-vault/testnet` — point the CLI at it with `rougechain --rpc https://testnet.rougechain.io/api …`, and use the wallet **faucet** to get test XRGE. Everything else is identical.
