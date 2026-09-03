@@ -6,7 +6,7 @@ Run a RougeChain node without installing Rust or any build dependencies.
 
 Any VPS or machine with Docker installed. Minimum specs:
 
-- **1 vCPU**, 512 MB RAM, 5 GB SSD, 10 Mbps
+- **1 vCPU**, 1 GB RAM, 5 GB SSD, 10 Mbps
 - Recommended: 2 vCPU, 1–2 GB RAM, 20 GB SSD
 - A $5/month VPS is enough for testnet
 

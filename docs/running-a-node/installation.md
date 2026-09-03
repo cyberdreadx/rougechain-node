@@ -5,7 +5,7 @@
 | Resource | Minimum | Recommended |
 |----------|---------|-------------|
 | **CPU** | 1 vCPU | 2+ vCPU |
-| **RAM** | 512 MB | 1–2 GB |
+| **RAM** | 1 GB (run) · ~4 GB (build) | 2–4 GB |
 | **Disk** | 5 GB SSD | 20 GB SSD |
 | **Network** | 10 Mbps | 100 Mbps |
 | **OS** | Linux (Ubuntu 22.04+, Debian 12), macOS, Windows | Ubuntu 22.04 LTS |

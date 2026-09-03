@@ -28,7 +28,7 @@ The first peer(s) you connect to act as seeds for discovery. From them, your nod
 ./quantum-vault-daemon --peers "https://testnet.rougechain.io/api"
 
 # Multiple seeds for redundancy
-./quantum-vault-daemon --peers "https://testnet.rougechain.io,https://backup.example.com"
+./quantum-vault-daemon --peers "https://api.rougechain.io/api,https://backup.example.com"
 ```
 
 ## Self-Registration

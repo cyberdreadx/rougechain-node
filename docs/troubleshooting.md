@@ -58,9 +58,10 @@ brew install openssl
 | Check | How |
 |-------|-----|
 | Node is running | `curl http://127.0.0.1:5100/api/health` |
-| Peers are correct | Make sure `--peers` includes `/api`: `--peers "https://testnet.rougechain.io/api"` |
-| Firewall isn't blocking | Ensure port 5100 (or your `--api-port`) is open |
-| Testnet is reachable | `curl https://testnet.rougechain.io/api/health` |
+| Peers are correct | Make sure `--peers` includes `/api` (e.g. mainnet `--peers "https://api.rougechain.io/api"`) |
+| Genesis + chain-id match the network | Mainnet needs `--genesis daemon/genesis-mainnet.json --chain-id rougechain-mainnet-1`. A wrong/missing genesis or chain-id makes a fresh node fail to join — its `/api/health` `chain_id` must read `rougechain-mainnet-1` |
+| Firewall isn't blocking | Ensure your `--api-port` / P2P port reachability is correct |
+| Network is reachable | mainnet `curl https://api.rougechain.io/api/health` (or testnet `https://testnet.rougechain.io/api/health`) |
 
 **Peers value of 0**
 
@@ -158,10 +159,16 @@ You need at least **10,000 XRGE** plus the transaction fee — the 10,000 XRGE m
 
 ### Staked but not producing blocks
 
-- Ensure `--mine` flag is set on your node
+- **Most common cause: your node's key is not your staked key.** Your node signs
+  blocks with the keypair in `<data-dir>/node-keys.json`, and peers **reject**
+  blocks whose proposer isn't a staked validator. If you staked from one key but
+  the node runs with a different (auto-generated) key, your blocks are silently
+  rejected. The node's `node-keys.json` key and your staked key must be the
+  **same key** — see [Becoming a Validator](staking/becoming-validator.md).
+- Ensure the `--mine` flag is set on your node
 - Your node must be synced (height matches the network)
 - Validator selection is stake-weighted — with minimum stake, you'll produce blocks less frequently
-- Check your validator status: `GET /api/validators`
+- Check your validator status: `GET /api/validators` — your node's public key should appear with active stake
 
 ### Unstaked but balance not returned
 

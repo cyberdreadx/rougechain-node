@@ -24,7 +24,7 @@ Validators earn rewards for producing blocks on RougeChain.
 | Token creation | 100 XRGE |
 | Pool creation | 10 XRGE |
 | Swap | 0.3% (to LPs, not validators) |
-| Stake/Unstake | 1.0 XRGE |
+| Stake/Unstake | 0.1 XRGE |
 
 The tip portion of these fees (after the base-fee burn) is split across the proposer, all validators (stake-weighted), and the treasury — see [How Rewards Work](#how-rewards-work). Swap fees go to liquidity providers, not validators.
 
@@ -43,12 +43,15 @@ Rewards depend on:
 | Your stake | 10,000 XRGE |
 | Total staked | 100,000 XRGE |
 | Your share | 10% |
-| Blocks per day | ~86,400 (1s block time) |
-| Your blocks per day | ~8,640 |
-| Avg fee per block | 0.5 XRGE |
-| Daily earnings | ~4,320 XRGE |
+| Target block time | 400 ms |
+| Your share of proposed blocks | ~10% (stake-weighted) |
+| Avg fee per block | varies with network activity |
 
-These are approximate — actual returns vary with network conditions.
+Your earnings are your ~10% share of the fees in the blocks you propose. Blocks
+are produced as transactions arrive, so daily volume tracks real network
+activity — on a quiet chain that is low, and there is **no fixed "blocks per
+day."** These figures are illustrative, not a yield promise; actual returns vary
+with usage.
 
 ## Compounding
 

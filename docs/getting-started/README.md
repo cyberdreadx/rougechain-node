@@ -5,7 +5,7 @@ This guide will help you get up and running with RougeChain in minutes.
 ## Prerequisites
 
 - A modern web browser (Chrome, Firefox, Edge, Safari)
-- For running a node: Rust toolchain (1.70+)
+- For running a node: Rust toolchain (1.80+)
 
 ## Quickest Path
 

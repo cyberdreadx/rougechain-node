@@ -41,13 +41,13 @@ For better reliability, connect to multiple peers:
 ```bash
 ./quantum-vault-daemon \
   --api-port 5100 \
-  --peers "https://testnet.rougechain.io,https://node2.example.com,https://node3.example.com"
+  --peers "https://api.rougechain.io/api,https://node2.example.com,https://node3.example.com"
 ```
 
 Or via environment variable:
 
 ```bash
-export QV_PEERS="https://testnet.rougechain.io,https://node2.example.com"
+export QV_PEERS="https://api.rougechain.io/api,https://node2.example.com"
 ./quantum-vault-daemon --api-port 5100
 ```
 
@@ -110,21 +110,23 @@ Your Node                          Peer Node
     │   (discover new peers)           │
 ```
 
-## Firewall Configuration
+## Firewall & Exposure
 
-If running behind a firewall, ensure the API port is accessible:
+**Do not expose the daemon's REST API port (5100) to the public internet** — it
+serves state-changing endpoints. Bind the daemon to `127.0.0.1` and put a reverse
+proxy (nginx + TLS) in front of it; open only the proxy's port 443. See
+[Public Node Security](public-node.md).
 
-| Port | Protocol | Purpose |
-|------|----------|---------|
-| 5100 (default) | TCP/HTTP | REST API and P2P |
+| Port | Bind | Exposure |
+|------|------|----------|
+| 443 (nginx/TLS) | public | ✅ the only port open to the internet |
+| 5100 (daemon REST API) | `127.0.0.1` | ❌ never open to the public |
+| 4100 (P2P) | as needed | reachable by peers only; restrict where possible |
 
 ```bash
-# Linux (ufw)
-sudo ufw allow 5100/tcp
-
-# Linux (firewalld)
-sudo firewall-cmd --add-port=5100/tcp --permanent
-sudo firewall-cmd --reload
+# Expose ONLY the reverse proxy; keep the daemon API private:
+sudo ufw allow 443/tcp
+sudo ufw deny 5100/tcp
 ```
 
 ## Troubleshooting
