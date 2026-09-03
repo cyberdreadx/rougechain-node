@@ -9,8 +9,11 @@
 set -euo pipefail
 
 # Patterns for known live secrets + generic credential shapes.
-# Keep PRIVATE_KEY match narrow (=0x…) so pubkey/field names don't false-positive.
-PATTERNS='PRIVATE_KEY=0x[0-9a-fA-F]{16,}|bridge-secret-2026|secret_key_hex|BRIDGE_CUSTODY_PRIVATE_KEY=.+|BRIDGE_RELAYER_SECRET=.+'
+# Keep matches narrow so field names / docs don't false-positive:
+#  - PRIVATE_KEY only when assigned a 0x… value
+#  - secret_key_hex only when followed (within a few chars) by real key material
+#    (16+ hex), so prose/JSON that merely names the field is allowed.
+PATTERNS='PRIVATE_KEY=0x[0-9a-fA-F]{16,}|bridge-secret-2026|secret_key_hex.{0,6}[0-9a-fA-F]{16,}|BRIDGE_CUSTODY_PRIVATE_KEY=.+|BRIDGE_RELAYER_SECRET=.+'
 
 # Only scan added/changed lines in the staged diff. Exclude this hooks dir itself —
 # it necessarily contains the patterns above, and hook changes are always reviewed.
