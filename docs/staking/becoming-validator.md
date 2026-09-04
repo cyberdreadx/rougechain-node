@@ -71,13 +71,13 @@ rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json stake 10000
 
 > The 10,000 minimum is enforced on **every** stake call — a smaller top-up is rejected. Each additional stake must itself be ≥ 10,000; totals accumulate.
 
-Verify you're registered:
+Verify with the built-in diagnostic — it checks funded / staked / active / producing in one shot:
 
 ```bash
-rougechain validators        # or: curl https://api.rougechain.io/api/validators
+rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json validator-status
 ```
 
-Look for your public key with a `stake` ≥ 10,000 and `"status": "active"`.
+You want `✓ Staked` and `✓ In active set`. (It prints the exact fix next to anything that's ✗.)
 
 ## Step 4 — Start mining
 
@@ -95,7 +95,13 @@ Restart the daemon with `--mine` (same key, same data-dir), plus a public URL so
   --public-url https://my-validator.example.com
 ```
 
-Because your `node-keys.json` key is now a staked validator, peers accept your blocks. Watch `blocksProposed` climb for your key on the validators endpoint.
+Because your `node-keys.json` key is now a staked validator, peers accept your blocks. Check progress anytime with:
+
+```bash
+rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json validator-status
+```
+
+You're fully live once it shows `✓ Producing blocks`.
 
 ## Proposer selection
 

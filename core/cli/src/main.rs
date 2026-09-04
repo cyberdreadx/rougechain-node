@@ -73,6 +73,8 @@ enum Commands {
     },
     /// Get validator set
     Validators,
+    /// Diagnose your validator: funded / staked / active / producing (use with --node-keys)
+    ValidatorStatus,
     /// Get chain stats
     Stats,
     /// Get block by height
@@ -534,6 +536,75 @@ fn main() {
             match rpc_call(rpc, "rouge_getValidators", Value::Array(vec![])) {
                 Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
                 Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::ValidatorStatus => {
+            let key = match resolve_key(&dir, &node_keys) {
+                Some(k) => k,
+                None => { eprintln!("No signing key. Pass --node-keys <path> or run: rougechain key-gen"); return; }
+            };
+            let pk = key.public_key_hex;
+            let short = if pk.len() >= 16 { &pk[..16] } else { &pk[..] };
+            const MIN: f64 = 10_000.0;
+            let mark = |ok: bool| if ok { "\u{2713}" } else { "\u{2717}" };
+
+            println!("Validator {}…", short);
+
+            // Height of the node/network this CLI is pointed at (--rpc)
+            match api_get(rpc, "/api/health") {
+                Ok(h) => match h.get("height").and_then(|v| v.as_u64()) {
+                    Some(ht) => println!("  RPC height:        {} ({})", ht, rpc),
+                    None => println!("  RPC height:        ? (unexpected /api/health shape)"),
+                },
+                Err(_) => println!("  {} RPC unreachable: {}/api/health", mark(false), rpc),
+            }
+
+            // Balance
+            let balance = api_get(rpc, &format!("/api/balance/{}", pk)).ok()
+                .and_then(|b| b.get("balance").and_then(|v| v.as_f64()))
+                .unwrap_or(0.0);
+
+            // Validator-set entry for this key
+            let entry = api_get(rpc, "/api/validators").ok()
+                .and_then(|v| v.get("validators").and_then(|a| a.as_array()).cloned())
+                .and_then(|arr| arr.into_iter().find(|e|
+                    e.get("publicKey").and_then(|p| p.as_str()) == Some(pk.as_str())));
+            let staked = entry.as_ref().and_then(|e| e.get("stake")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let status = entry.as_ref().and_then(|e| e.get("status")).and_then(|v| v.as_str()).unwrap_or("not registered");
+            let blocks = entry.as_ref().and_then(|e| e.get("blocksProposed")).and_then(|v| v.as_u64()).unwrap_or(0);
+
+            // Funded
+            println!("  {} Funded:          {:.2} XRGE available", mark(balance > 0.0 || staked > 0.0), balance);
+
+            // Staked
+            if staked >= MIN {
+                let tier = if staked >= 1_000_000.0 { "genesis" }
+                    else if staked >= 100_000.0 { "operator" } else { "standard" };
+                println!("  {} Staked:          {:.0} XRGE ({} tier)", mark(true), staked, tier);
+            } else if staked > 0.0 {
+                println!("  {} Staked:          {:.0} XRGE — below the 10,000 minimum", mark(false), staked);
+            } else {
+                println!("  {} Staked:          not staked", mark(false));
+                if balance < MIN {
+                    println!("      → fund this key with at least 10,000 XRGE, then stake it:");
+                } else {
+                    println!("      → you hold enough; stake it:");
+                }
+                println!("      rougechain --node-keys <path> stake 10000");
+            }
+
+            // Active
+            println!("  {} In active set:   {}", mark(status == "active"), status);
+            if status == "jailed" {
+                println!("      → jailed for missed blocks; it clears after the jail window — keep the node online.");
+            }
+
+            // Producing
+            println!("  {} Producing blocks: {} proposed", mark(blocks > 0), blocks);
+            if staked >= MIN && blocks == 0 {
+                println!("      → staked but nothing proposed yet. Confirm the node runs with --mine as THIS key");
+                println!("        (node-keys.json) and is synced. Selection is stake-weighted, so low stake is rare.");
             }
         }
 
