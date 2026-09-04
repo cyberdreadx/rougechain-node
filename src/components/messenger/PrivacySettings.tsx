@@ -168,7 +168,7 @@ const PrivacySettings = ({ onClose, onProfileUpdated }: PrivacySettingsProps) =>
         <div className="overflow-y-auto flex-1 p-3 space-y-3">
           {/* Profile — inline name + save */}
           <div className="p-3 rounded-lg bg-muted/30 border border-border">
-            <Label htmlFor="displayName" className="text-[11px] text-muted-foreground flex items-center gap-1.5 mb-1.5">
+            <Label htmlFor="displayName" className="text-xs text-muted-foreground flex items-center gap-1.5 mb-1.5">
               <User className="w-3 h-3" /> Display Name
             </Label>
             <div className="flex gap-2">
@@ -196,7 +196,7 @@ const PrivacySettings = ({ onClose, onProfileUpdated }: PrivacySettingsProps) =>
               <Globe className="w-4 h-4 text-primary shrink-0" />
               <div className="min-w-0">
                 <p className="text-sm font-medium text-foreground leading-tight">Discoverable</p>
-                <p className="text-[11px] text-muted-foreground leading-tight mt-0.5">
+                <p className="text-xs text-muted-foreground leading-tight mt-0.5">
                   {settings.discoverable ? "Visible in New Chat picker" : "Hidden — address or QR only"}
                 </p>
               </div>
@@ -238,7 +238,7 @@ const PrivacySettings = ({ onClose, onProfileUpdated }: PrivacySettingsProps) =>
               )}
               <div className="min-w-0">
                 <p className="text-sm font-medium text-foreground leading-tight">Store Sent Messages</p>
-                <p className="text-[11px] text-muted-foreground leading-tight mt-0.5">
+                <p className="text-xs text-muted-foreground leading-tight mt-0.5">
                   {settings.storeSentMessages ? "Readable after refresh" : "Shows as encrypted"}
                 </p>
               </div>
@@ -252,14 +252,14 @@ const PrivacySettings = ({ onClose, onProfileUpdated }: PrivacySettingsProps) =>
           {/* Compact security note */}
           <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-accent/10 border border-accent/20">
             <AlertTriangle className="w-3.5 h-3.5 text-accent shrink-0 mt-0.5" />
-            <p className="text-[11px] text-muted-foreground leading-snug">
+            <p className="text-xs text-muted-foreground leading-snug">
               Data is stored in localStorage — as secure as your private keys. Anyone with browser access could read both.
             </p>
           </div>
 
           {/* Danger zone */}
           <div className="pt-2 border-t border-border space-y-2">
-            <p className="text-[10px] text-destructive/60 uppercase tracking-wider font-medium">Danger Zone</p>
+            <p className="text-xs text-destructive/60 uppercase tracking-wider font-medium">Danger Zone</p>
             <Button
               variant="outline"
               size="sm"

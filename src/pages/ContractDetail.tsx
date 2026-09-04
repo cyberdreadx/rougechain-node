@@ -428,7 +428,7 @@ const ContractDetail = () => {
                 </div>
                 {callResult.output != null && (
                   <div>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Output</p>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Output</p>
                     <code className="text-xs font-mono break-all">
                       {typeof callResult.output === "string" ? callResult.output : JSON.stringify(callResult.output)}
                     </code>
@@ -436,7 +436,7 @@ const ContractDetail = () => {
                 )}
                 {callResult.error && (
                   <div>
-                    <p className="text-[10px] text-red-500 uppercase tracking-wider mb-1">Error</p>
+                    <p className="text-xs text-red-500 uppercase tracking-wider mb-1">Error</p>
                     <code className="text-xs font-mono text-red-400 break-all">{callResult.error}</code>
                   </div>
                 )}

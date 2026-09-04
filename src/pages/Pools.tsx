@@ -487,19 +487,19 @@ const Pools = () => {
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                       <div>
                         <p className="text-muted-foreground">{pool.token_a} Reserve</p>
-                        <p className="font-mono font-medium">{formatNumber(pool.reserve_a, pool.token_a)}</p>
+                        <p className="font-mono font-medium break-all">{formatNumber(pool.reserve_a, pool.token_a)}</p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">{pool.token_b} Reserve</p>
-                        <p className="font-mono font-medium">{formatNumber(pool.reserve_b, pool.token_b)}</p>
+                        <p className="font-mono font-medium break-all">{formatNumber(pool.reserve_b, pool.token_b)}</p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">LP Supply</p>
-                        <p className="font-mono font-medium">{formatNumber(pool.total_lp_supply)}</p>
+                        <p className="font-mono font-medium break-all">{formatNumber(pool.total_lp_supply)}</p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">Your LP</p>
-                        <p className="font-mono font-medium">{formatNumber(lpBalances[pool.pool_id] || 0)}</p>
+                        <p className="font-mono font-medium break-all">{formatNumber(lpBalances[pool.pool_id] || 0)}</p>
                       </div>
                     </div>
                     

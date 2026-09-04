@@ -289,7 +289,7 @@ const Blockchain = () => {
                       <span className="text-xs text-muted-foreground">
                         Showing page {safePage} of {totalPages} ({totalHeight} blocks)
                       </span>
-                      <span className="text-[10px] text-muted-foreground hidden sm:inline">•</span>
+                      <span className="text-xs text-muted-foreground hidden sm:inline">•</span>
                       <span className="text-xs text-muted-foreground hidden sm:inline">• {pageSize} per page</span>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -297,7 +297,7 @@ const Blockchain = () => {
                         <button
                           type="button"
                           onClick={() => setViewMode("table")}
-                          className={`px-2 sm:px-3 py-1 text-[11px] rounded-full transition ${viewMode === "table" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                          className={`px-2 sm:px-3 py-1 text-xs rounded-full transition ${viewMode === "table" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
                             }`}
                         >
                           Table
@@ -305,7 +305,7 @@ const Blockchain = () => {
                         <button
                           type="button"
                           onClick={() => setViewMode("grid")}
-                          className={`px-2 sm:px-3 py-1 text-[11px] rounded-full transition ${viewMode === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                          className={`px-2 sm:px-3 py-1 text-xs rounded-full transition ${viewMode === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
                             }`}
                         >
                           Grid
@@ -438,12 +438,12 @@ const Blockchain = () => {
                   <div className="bg-card rounded-lg border border-border p-3">
                     <p className="text-xs text-muted-foreground">Signature Algo</p>
                     <p className="text-sm font-medium text-primary">ML-DSA-65</p>
-                    <p className="text-[10px] text-muted-foreground">FIPS 204</p>
+                    <p className="text-xs text-muted-foreground">FIPS 204</p>
                   </div>
                   <div className="bg-card rounded-lg border border-border p-3">
                     <p className="text-xs text-muted-foreground">Security Level</p>
                     <p className="text-sm font-medium text-foreground">NIST L3</p>
-                    <p className="text-[10px] text-muted-foreground">192-bit classical</p>
+                    <p className="text-xs text-muted-foreground">192-bit classical</p>
                   </div>
                 </motion.div>
               )}

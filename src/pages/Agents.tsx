@@ -377,7 +377,7 @@ const Agents = () => {
                           <div key={tool.name} className="text-xs">
                             <code className="text-primary font-mono">{tool.name}</code>
                             {tool.write && (
-                              <span className="inline-flex items-center gap-0.5 align-middle ml-1.5 rounded px-1 py-px text-[10px] font-medium bg-amber-500/15 text-amber-400">
+                              <span className="inline-flex items-center gap-0.5 align-middle ml-1.5 rounded px-1 py-px text-xs font-medium bg-amber-500/15 text-amber-400">
                                 <Lock className="w-2.5 h-2.5" /> signs tx
                               </span>
                             )}
@@ -419,7 +419,7 @@ const Agents = () => {
                     </code>
                   </pre>
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-2">Or use <code className="text-primary">npx @rougechain/mcp-server</code> directly — no global install needed.</p>
+                <p className="text-xs text-muted-foreground mt-2">Or use <code className="text-primary">npx @rougechain/mcp-server</code> directly — no global install needed.</p>
               </div>
 
               {/* Step 2 */}
@@ -432,7 +432,7 @@ const Agents = () => {
                   <div>
                     <div className="flex items-center gap-2 mb-1.5">
                       <span className="text-xs font-medium text-muted-foreground">Claude Desktop — read-only</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 font-medium">Recommended</span>
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 font-medium">Recommended</span>
                     </div>
                     <div className="relative rounded-lg bg-card border border-border overflow-hidden">
                       <CopyButton text={claudeConfig} />
@@ -444,7 +444,7 @@ const Agents = () => {
                   <div>
                     <div className="flex items-center gap-2 mb-1.5">
                       <span className="text-xs font-medium text-muted-foreground">Read + write</span>
-                      <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium">
+                      <span className="inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium">
                         <Lock className="w-2.5 h-2.5" /> signs transactions
                       </span>
                     </div>
@@ -454,7 +454,7 @@ const Agents = () => {
                         <code>{claudeConfigWrite}</code>
                       </pre>
                     </div>
-                    <p className="text-[11px] text-muted-foreground mt-2">
+                    <p className="text-xs text-muted-foreground mt-2">
                       Add <code className="text-primary">ROUGECHAIN_MNEMONIC</code> to unlock the {WRITE_TOOLS} signing
                       tools. Every transaction is signed locally with ML-DSA-65 — your seed phrase never leaves the
                       server. Use a dedicated low-balance agent wallet; generate one with the{" "}
@@ -500,7 +500,7 @@ const Agents = () => {
                       <Lock className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
                       <div>
                         <p className="text-muted-foreground italic">"Create a token called AGENT, seed a XRGE/AGENT pool, and post about the launch"</p>
-                        <p className="text-[11px] text-amber-400/80 mt-0.5">requires a wallet — signs real transactions</p>
+                        <p className="text-xs text-amber-400/80 mt-0.5">requires a wallet — signs real transactions</p>
                       </div>
                     </div>
                     <div className="flex gap-3">
@@ -541,7 +541,7 @@ const Agents = () => {
                 <div key={agent.name} className="rounded-xl border border-border p-4">
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-semibold text-foreground text-sm">{agent.name}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium">{agent.status}</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium">{agent.status}</span>
                   </div>
                   <p className="text-xs text-muted-foreground">{agent.desc}</p>
                 </div>

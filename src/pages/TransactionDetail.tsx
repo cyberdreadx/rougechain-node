@@ -383,7 +383,7 @@ const TransactionDetail = () => {
                   #{txData.blockHeight.toLocaleString()}
                 </Link>
                 {txData.blockHash && (
-                  <span className="text-xs font-mono text-muted-foreground ml-2 truncate hidden sm:inline">
+                  <span className="text-xs font-mono text-muted-foreground ml-2 truncate hidden sm:inline-block sm:max-w-[240px] align-bottom">
                     {txData.blockHash}
                   </span>
                 )}
@@ -632,17 +632,17 @@ const TransactionDetail = () => {
               {txData.receipt.logs.map((log: TxLog, i: number) => (
                 <div key={i} className="rounded-lg border border-border bg-background/60 p-3 space-y-2">
                   <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-[10px]">
+                    <Badge variant="secondary" className="text-xs">
                       #{i}
                     </Badge>
                     <span className="text-sm font-medium text-primary">{log.event ?? log.event_type ?? "—"}</span>
                   </div>
                   {(log.topics ?? []).length > 0 && (
                     <div>
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Topics</p>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Topics</p>
                       {(log.topics ?? []).map((topic, ti) => (
                         <div key={ti} className="flex items-center gap-2 py-0.5">
-                          <span className="text-[10px] text-muted-foreground w-4">[{ti}]</span>
+                          <span className="text-xs text-muted-foreground w-4">[{ti}]</span>
                           <code className="text-xs font-mono text-foreground break-all">{topic}</code>
                         </div>
                       ))}
@@ -650,7 +650,7 @@ const TransactionDetail = () => {
                   )}
                   {log.data && (
                     <div>
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Data</p>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Data</p>
                       <code className="text-xs font-mono text-muted-foreground break-all">{typeof log.data === "string" ? log.data : JSON.stringify(log.data)}</code>
                     </div>
                   )}

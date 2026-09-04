@@ -324,7 +324,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
                     variant="ghost"
                     size="sm"
                     onClick={() => setShowScanner(true)}
-                    className="h-6 px-2 text-[10px] gap-1"
+                    className="h-6 px-2 text-xs gap-1"
                   >
                     <QrCode className="w-3 h-3" />
                     Scan

@@ -86,7 +86,7 @@ const AssetList = ({ assets = [], emptyActionLabel, onEmptyAction, emptyHint, on
                     <span className="text-xs text-muted-foreground">{asset.value}</span>
                   )}
                   {asset.pricePerToken && (
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-xs text-muted-foreground">
                       @ {asset.pricePerToken}
                     </span>
                   )}

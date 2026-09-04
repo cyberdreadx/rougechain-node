@@ -334,7 +334,7 @@ export function ValidatorDashboard({
             </div>
           </div>
           {selectionInfo?.entropyHex && (
-            <div className="mt-3 text-[10px] text-muted-foreground font-mono break-all">
+            <div className="mt-3 text-xs text-muted-foreground font-mono break-all">
               {selectionInfo.entropySource} · {selectionInfo.entropyHex.slice(0, 32)}...
             </div>
           )}
@@ -460,8 +460,8 @@ export function ValidatorDashboard({
       <Card className="bg-card/50 backdrop-blur border-border">
         <CardContent className="p-4">
           {myValidator ? (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-3 min-w-0">
                 {(() => {
                   const TierIcon = tierConfig[myValidator.tier].icon;
                   return (
@@ -470,9 +470,9 @@ export function ValidatorDashboard({
                     </div>
                   );
                 })()}
-                <div>
-                  <div className="font-semibold">You're a {myValidator.tier} Validator</div>
-                  <div className="text-sm text-muted-foreground">
+                <div className="min-w-0">
+                  <div className="font-semibold truncate">You're a {myValidator.tier} Validator</div>
+                  <div className="text-sm text-muted-foreground truncate">
                     Staked: {formatStake(myValidator.stakedAmount)} XRGE • {myValidator.blocksValidated} validations
                   </div>
                   {(myValidator.slashCount ?? 0) > 0 && (
@@ -482,7 +482,7 @@ export function ValidatorDashboard({
                   )}
                 </div>
               </div>
-              <Badge className={`capitalize ${
+              <Badge className={`capitalize shrink-0 ${
                 myValidator.status === "active" ? "bg-green-500/20 text-green-500" :
                 myValidator.status === "jailed" ? "bg-red-500/20 text-red-500" :
                 "bg-yellow-500/20 text-yellow-500"

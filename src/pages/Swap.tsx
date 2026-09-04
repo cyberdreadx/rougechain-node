@@ -605,7 +605,7 @@ const Swap = () => {
             <CardContent className="pt-6 space-y-4">
               {/* Token In */}
               <div className="space-y-2">
-                <div className="flex justify-between text-sm text-muted-foreground">
+                <div className="flex flex-wrap gap-x-2 justify-between text-sm text-muted-foreground">
                   <span>You pay</span>
                   <span>Balance: {tokenInData ? formatTokenAmount(tokenInData.balance, tokenIn) : 0}</span>
                 </div>
@@ -654,7 +654,7 @@ const Swap = () => {
 
               {/* Token Out */}
               <div className="space-y-2">
-                <div className="flex justify-between text-sm text-muted-foreground">
+                <div className="flex flex-wrap gap-x-2 justify-between text-sm text-muted-foreground">
                   <span>You receive</span>
                   <span>Balance: {tokenOutData ? formatTokenAmount(tokenOutData.balance, tokenOut) : 0}</span>
                 </div>

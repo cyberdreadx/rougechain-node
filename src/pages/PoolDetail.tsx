@@ -259,25 +259,25 @@ const PoolDetail = () => {
           <Card>
             <CardContent className="pt-6">
               <p className="text-sm text-muted-foreground">{pool.token_a} Reserve</p>
-              <p className="text-2xl font-bold font-mono">{formatNumber(pool.reserve_a, pool.token_a)}</p>
+              <p className="text-2xl font-bold font-mono truncate">{formatNumber(pool.reserve_a, pool.token_a)}</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
               <p className="text-sm text-muted-foreground">{pool.token_b} Reserve</p>
-              <p className="text-2xl font-bold font-mono">{formatNumber(pool.reserve_b, pool.token_b)}</p>
+              <p className="text-2xl font-bold font-mono truncate">{formatNumber(pool.reserve_b, pool.token_b)}</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
               <p className="text-sm text-muted-foreground">Total Swaps</p>
-              <p className="text-2xl font-bold font-mono">{stats?.total_swaps || 0}</p>
+              <p className="text-2xl font-bold font-mono truncate">{stats?.total_swaps || 0}</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
               <p className="text-sm text-muted-foreground">24h Swaps</p>
-              <p className="text-2xl font-bold font-mono">{stats?.swap_count_24h || 0}</p>
+              <p className="text-2xl font-bold font-mono truncate">{stats?.swap_count_24h || 0}</p>
             </CardContent>
           </Card>
         </div>
@@ -285,8 +285,8 @@ const PoolDetail = () => {
         {/* Price Chart */}
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-3 min-w-0">
                 <TrendingUp className="w-5 h-5 text-primary" />
                 <CardTitle>Price Chart</CardTitle>
               </div>
@@ -307,7 +307,7 @@ const PoolDetail = () => {
                 </Button>
               </div>
             </div>
-            <div className="flex items-baseline gap-3 mt-2">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mt-2">
               <span className="text-3xl font-bold font-mono">{currentPrice.toFixed(6)}</span>
               <span className="text-sm text-muted-foreground">
                 {chartToken === "a" ? pool.token_b : pool.token_a} per {chartToken === "a" ? pool.token_a : pool.token_b}
@@ -373,18 +373,18 @@ const PoolDetail = () => {
                 {events.map((event) => (
                   <div
                     key={event.id}
-                    className="flex items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
+                    className="flex items-center justify-between gap-2 p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
                       {getEventIcon(event.event_type)}
-                      <div>
-                        <p className="font-medium">{getEventLabel(event, pool)}</p>
-                        <p className="text-xs text-muted-foreground">
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{getEventLabel(event, pool)}</p>
+                        <p className="text-xs text-muted-foreground truncate">
                           by {formatAddress(event.user_pub_key)}
                         </p>
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right shrink-0">
                       <p className="text-sm text-muted-foreground">{formatTime(event.timestamp)}</p>
                       <p className="text-xs text-muted-foreground">Block #{event.block_height}</p>
                     </div>

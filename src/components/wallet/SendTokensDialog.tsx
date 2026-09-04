@@ -433,7 +433,7 @@ const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-6 px-2 text-xs text-primary"
+                className="h-8 px-3 text-xs text-primary"
                 onClick={() => {
                   let maxAmount: number;
                   if (selectedToken === "XRGE") {
@@ -462,9 +462,9 @@ const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }
                 {selectedToken}
               </span>
             </div>
-            <div className="flex justify-between text-xs text-muted-foreground mt-1">
-              <span>Available: {isQeth ? formatQethForDisplay(rawSelectedBalance) : rawSelectedBalance.toLocaleString()} {selectedToken}</span>
-              <span>Fee: {BASE_TRANSFER_FEE} XRGE</span>
+            <div className="flex flex-wrap gap-x-2 justify-between text-xs text-muted-foreground mt-1">
+              <span className="truncate">Available: {isQeth ? formatQethForDisplay(rawSelectedBalance) : rawSelectedBalance.toLocaleString()} {selectedToken}</span>
+              <span className="shrink-0">Fee: {BASE_TRANSFER_FEE} XRGE</span>
             </div>
           </div>
 
@@ -490,7 +490,7 @@ const SendTokensDialog = ({ wallet, balances, initialToken, onClose, onSuccess }
                   <Shield className="w-3.5 h-3.5 text-primary" />
                   <span className="text-sm font-medium">Send Shielded</span>
                 </div>
-                <p className="text-[10px] text-muted-foreground mt-0.5">
+                <p className="text-xs text-muted-foreground mt-0.5">
                   Private transfer — recipient imports note to unshield
                 </p>
               </div>

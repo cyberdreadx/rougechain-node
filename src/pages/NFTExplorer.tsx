@@ -70,14 +70,14 @@ const TraitsList = ({ attributes }: { attributes: NFTToken["attributes"] }) => {
       {pairs.slice(0, 6).map(([trait, value]) => (
         <span
           key={trait}
-          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/10 border border-primary/20 text-[10px]"
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/10 border border-primary/20 text-xs"
         >
           <span className="text-muted-foreground">{trait}:</span>
           <span className="font-medium text-primary">{value}</span>
         </span>
       ))}
       {pairs.length > 6 && (
-        <span className="text-[10px] text-muted-foreground">+{pairs.length - 6} more</span>
+        <span className="text-xs text-muted-foreground">+{pairs.length - 6} more</span>
       )}
     </div>
   );
@@ -200,7 +200,7 @@ const TransferDialog = ({
                 </div>
                 <div>
                   <span className="text-muted-foreground">Goes to Creator</span>
-                  <p className="font-mono text-[10px] truncate">
+                  <p className="font-mono text-xs truncate">
                     <RougeAddressLink pubkey={royaltyRecipient} />
                   </p>
                 </div>

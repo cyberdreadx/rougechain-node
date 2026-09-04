@@ -113,7 +113,7 @@ const Node = ({ position, isValidator = false, name }: NodeProps) => {
           <div className="bg-black/95 backdrop-blur-md border border-red-500/60 rounded-lg px-3 py-1.5 text-xs whitespace-nowrap shadow-xl shadow-red-500/30">
             <span className="text-red-300 font-bold">{label}</span>
             {name && (
-              <span className="text-red-400/50 ml-2 text-[10px] uppercase tracking-wider">
+              <span className="text-red-400/50 ml-2 text-xs uppercase tracking-wider">
                 {isValidator ? "validator" : "peer"}
               </span>
             )}
@@ -596,7 +596,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
           {isLive && (
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-red-500/20 border border-red-500/40">
               <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-              <span className="text-[10px] text-red-400 font-mono font-bold tracking-wider">LIVE</span>
+              <span className="text-xs text-red-400 font-mono font-bold tracking-wider">LIVE</span>
             </div>
           )}
         </div>
@@ -608,18 +608,18 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
       {/* Node & Peer List - bottom left */}
       <div className="absolute bottom-4 left-4 z-20 pointer-events-auto max-w-[220px]">
         <div className="bg-black/80 backdrop-blur-md border border-red-500/20 rounded-lg px-3 py-2.5 shadow-lg">
-          <p className="text-[10px] text-red-400/60 uppercase tracking-wider font-mono mb-2">Active Nodes</p>
+          <p className="text-xs text-red-400/60 uppercase tracking-wider font-mono mb-2">Active Nodes</p>
           <div className="max-h-[120px] overflow-y-auto space-y-1.5 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-red-500/20">
             {/* Validators */}
             {Array.from({ length: displayNodes }).map((_, i) => {
               const name = nodeNames[i] || `Validator ${i + 1}`;
               const isMining = nodeStats[i]?.is_mining;
               return (
-                <div key={`v-${i}`} className="flex items-center gap-2 text-[11px]">
+                <div key={`v-${i}`} className="flex items-center gap-2 text-xs">
                   <div className="w-2 h-2 rounded-full bg-[#ff1744] shrink-0 shadow-sm shadow-red-500/50" />
                   <span className="text-red-300/80 truncate font-mono">{name}</span>
                   {isMining && (
-                    <span className="text-[9px] text-amber-400/70 ml-auto shrink-0">⛏</span>
+                    <span className="text-xs text-amber-400/70 ml-auto shrink-0">⛏</span>
                   )}
                 </div>
               );
@@ -629,7 +629,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
               const peerIdx = displayNodes + i;
               const name = nodeNames[peerIdx] || peerDetails[i]?.node_name || `Peer ${i + 1}`;
               return (
-                <div key={`p-${i}`} className="flex items-center gap-2 text-[11px]">
+                <div key={`p-${i}`} className="flex items-center gap-2 text-xs">
                   <div className="w-2 h-2 rounded-full bg-[#d500f9] shrink-0 shadow-sm shadow-fuchsia-500/50" />
                   <span className="text-fuchsia-300/80 truncate font-mono">{name}</span>
                 </div>
@@ -638,11 +638,11 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
           </div>
           {/* Color legend */}
           <div className="flex items-center gap-4 mt-2 pt-2 border-t border-red-500/10">
-            <div className="flex items-center gap-1.5 text-[10px]">
+            <div className="flex items-center gap-1.5 text-xs">
               <div className="w-2 h-2 rounded-full bg-[#ff1744]" />
               <span className="text-red-400/60">Validator</span>
             </div>
-            <div className="flex items-center gap-1.5 text-[10px]">
+            <div className="flex items-center gap-1.5 text-xs">
               <div className="w-2 h-2 rounded-full bg-[#d500f9]" />
               <span className="text-fuchsia-400/60">Peer</span>
             </div>
@@ -659,7 +659,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
         <div className="bg-black/80 backdrop-blur-md border border-red-500/30 rounded-lg px-3 py-2 flex items-center gap-3 shadow-lg shadow-red-500/10">
           <Users className="w-4 h-4 text-red-400 shrink-0" />
           <div className="text-right">
-            <p className="text-[10px] text-red-400/60 uppercase tracking-wider font-mono">Nodes</p>
+            <p className="text-xs text-red-400/60 uppercase tracking-wider font-mono">Nodes</p>
             <p className="text-lg font-bold text-red-400 leading-none font-mono">
               {isLoading ? "..." : displayNodes}
             </p>
@@ -668,7 +668,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
         <div className="bg-black/80 backdrop-blur-md border border-fuchsia-500/30 rounded-lg px-3 py-2 flex items-center gap-3 shadow-lg shadow-fuchsia-500/10">
           <Activity className="w-4 h-4 text-fuchsia-400 shrink-0" />
           <div className="text-right">
-            <p className="text-[10px] text-fuchsia-400/60 uppercase tracking-wider font-mono">Peers</p>
+            <p className="text-xs text-fuchsia-400/60 uppercase tracking-wider font-mono">Peers</p>
             <p className="text-lg font-bold text-fuchsia-400 leading-none font-mono">
               {isLoading ? "..." : displayPeers}
             </p>
@@ -676,7 +676,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
         </div>
         {nodeStats.length > 0 && (
           <div className="bg-black/80 backdrop-blur-md border border-amber-500/30 rounded-lg px-3 py-2 shadow-lg shadow-amber-500/10">
-            <p className="text-[10px] text-amber-400/60 uppercase tracking-wider font-mono">Mining</p>
+            <p className="text-xs text-amber-400/60 uppercase tracking-wider font-mono">Mining</p>
             <p className="text-lg font-bold text-amber-400 leading-none font-mono">
               {nodeStats.filter(s => s.is_mining).length} / {displayNodes}
             </p>
@@ -686,7 +686,7 @@ const GlobalNetworkGlobe = ({ className = "" }: GlobalNetworkGlobeProps) => {
 
       {/* Bottom right hint */}
       <div className="absolute bottom-4 right-4 z-20 pointer-events-none">
-        <p className="text-[10px] text-red-400/40 bg-black/60 backdrop-blur-sm px-2 py-1 rounded border border-red-500/10 font-mono">
+        <p className="text-xs text-red-400/40 bg-black/60 backdrop-blur-sm px-2 py-1 rounded border border-red-500/10 font-mono">
           drag • zoom • explore
         </p>
       </div>

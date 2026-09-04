@@ -181,7 +181,7 @@ const CreateTokenDialog = ({ wallet, balances, onClose, onSuccess }: CreateToken
                 <p className={`text-xs font-medium ${hasEnoughFee ? 'text-primary' : 'text-destructive'}`}>
                   Creation Fee: {TOKEN_CREATION_FEE} XRGE
                 </p>
-                <p className="text-[10px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   Your balance: {xrgeBalance.toLocaleString()} XRGE
                 </p>
               </div>
@@ -295,7 +295,7 @@ const CreateTokenDialog = ({ wallet, balances, onClose, onSuccess }: CreateToken
                         {imageUrl.startsWith("data:") ? "Uploaded (stored on-chain)" : "URL preview"}
                       </span>
                       {imageUrl.startsWith("data:") && (
-                        <span className="text-[10px] text-muted-foreground/60">
+                        <span className="text-xs text-muted-foreground/60">
                           {Math.round(imageUrl.length * 0.75 / 1024)} KB
                         </span>
                       )}
