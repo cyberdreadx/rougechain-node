@@ -6159,4 +6159,76 @@ mod live_amm_tests {
         let qtok_after = tok[&("user".to_string(), "QTOK".to_string())];
         assert_eq!(qtok_after - qtok_before, expected_out as u128);
     }
+
+    // ── Invariant conservation net for the T3c XRGE scale flip ────────────
+    // These assert balances through the PUBLIC get_balance accessor, which
+    // returns DISPLAY XRGE. Because display units don't change when the internal
+    // ledger moves from whole-XRGE f64 to quanta u128, these expected values are
+    // IDENTICAL before and after the flip. They pass now (f64); they must still
+    // pass after (quanta) — a dropped ×10^9 anywhere makes get_balance wrong and
+    // fails one of these. This is the independent safety net for the scale change.
+
+    fn transfer_tx(from: &str, to: &str, amount: u64, fee: f64) -> TxV1 {
+        TxV1 {
+            version: 1,
+            tx_type: "transfer".to_string(),
+            from_pub_key: from.to_string(),
+            nonce: 0,
+            payload: TxPayload {
+                to_pub_key_hex: Some(to.to_string()),
+                amount: Some(amount),
+                ..Default::default()
+            },
+            fee,
+            sig: String::new(),
+            signed_payload: None,
+        }
+    }
+
+    fn faucet_tx(to: &str, amount: u64) -> TxV1 {
+        let mut tx = transfer_tx(to, to, amount, 0.0);
+        tx.payload.faucet = Some(true);
+        tx
+    }
+
+    /// Apply a tx to the node's live balance maps (drives apply_balance_tx_inner).
+    fn apply_tx(node: &L1Node, node_pub: &str, tx: &TxV1) {
+        let mut bal = node.balances.lock().unwrap();
+        let mut tok = node.token_balances.lock().unwrap();
+        let mut burned = node.burned_tokens.lock().unwrap();
+        L1Node::apply_balance_tx_inner(
+            &mut bal, &mut tok, &mut burned, tx,
+            Some(&node.validator_store), node_pub, &node.unbonding_queue, 1, &node.shielded_supply,
+        );
+    }
+
+    #[test]
+    fn golden_faucet_then_transfer_conserves_display_balances() {
+        let (_dir, node) = test_node();
+        apply_tx(&node, "_rebuild_", &faucet_tx("alice", 100)); // mint 100 XRGE
+        assert_eq!(node.get_balance("alice").unwrap(), 100.0);
+
+        apply_tx(&node, "", &transfer_tx("alice", "bob", 30, 1.0)); // 30 + 1 fee
+        assert_eq!(node.get_balance("alice").unwrap(), 69.0, "alice = 100 - 30 - 1");
+        assert_eq!(node.get_balance("bob").unwrap(), 30.0);
+    }
+
+    #[test]
+    fn golden_fractional_fee_is_exact_in_display() {
+        let (_dir, node) = test_node();
+        apply_tx(&node, "_rebuild_", &faucet_tx("alice", 100));
+        apply_tx(&node, "", &transfer_tx("alice", "bob", 30, 0.1)); // fractional fee
+        let a = node.get_balance("alice").unwrap();
+        assert!((a - 69.9).abs() < 1e-6, "alice = 100 - 30 - 0.1, got {}", a);
+        assert_eq!(node.get_balance("bob").unwrap(), 30.0);
+    }
+
+    #[test]
+    fn golden_insufficient_balance_is_rejected() {
+        let (_dir, node) = test_node();
+        apply_tx(&node, "_rebuild_", &faucet_tx("alice", 10));
+        apply_tx(&node, "", &transfer_tx("alice", "bob", 30, 1.0)); // can't afford
+        assert_eq!(node.get_balance("alice").unwrap(), 10.0, "unchanged on rejection");
+        assert_eq!(node.get_balance("bob").unwrap(), 0.0);
+    }
 }
