@@ -57,6 +57,9 @@ function RunNodeCta() {
             </a>
           </Button>
         </div>
+        <Link to="/genesis-validators" className="block text-center text-xs text-primary hover:underline pt-1">
+          → Join the Genesis Validators program
+        </Link>
       </CardContent>
     </Card>
   );
