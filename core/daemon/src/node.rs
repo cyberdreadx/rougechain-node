@@ -102,7 +102,7 @@ pub struct L1Node {
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
     verified_tx_ids: Arc<Mutex<HashSet<String>>>,
     balances: Arc<Mutex<HashMap<String, f64>>>,
-    token_balances: Arc<Mutex<HashMap<TokenBalanceKey, f64>>>,
+    token_balances: Arc<Mutex<HashMap<TokenBalanceKey, u128>>>,
     lp_balances: Arc<Mutex<HashMap<TokenBalanceKey, u128>>>,  // LP token balances (integer counts; T3 flip)
     burned_tokens: Arc<Mutex<HashMap<String, f64>>>,  // Total burned per token symbol
     votes: Arc<Mutex<Vec<VoteMessage>>>,
@@ -343,7 +343,7 @@ impl L1Node {
             let shielded = *self.shielded_supply.lock().map_err(|_| "shielded lock")?;
 
             let bal_bytes = serde_json::to_vec(&*bal).map_err(|e| e.to_string())?;
-            let tok_vec: Vec<((String, String), f64)> = tok.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            let tok_vec: Vec<((String, String), u128)> = tok.iter().map(|(k, v)| (k.clone(), *v)).collect();
             let tok_bytes = serde_json::to_vec(&tok_vec).map_err(|e| e.to_string())?;
             let lp_vec: Vec<((String, String), u128)> = lp.iter().map(|(k, v)| (k.clone(), *v)).collect();
             let lp_bytes = serde_json::to_vec(&lp_vec).map_err(|e| e.to_string())?;
@@ -388,7 +388,7 @@ impl L1Node {
 
         let bal: HashMap<String, f64> = serde_json::from_slice(&bal_bytes)
             .map_err(|e| e.to_string())?;
-        let tok_vec: Vec<((String, String), f64)> = serde_json::from_slice(&tok_bytes)
+        let tok_vec: Vec<((String, String), u128)> = serde_json::from_slice(&tok_bytes)
             .map_err(|e| e.to_string())?;
         let lp_vec: Vec<((String, String), u128)> = serde_json::from_slice(&lp_bytes)
             .map_err(|e| e.to_string())?;
@@ -499,7 +499,7 @@ impl L1Node {
         }
         if let Ok(mut m) = self.token_balances.lock() {
             let before = m.len();
-            m.retain(|_, v| *v > 0.0);
+            m.retain(|_, v| *v > 0);
             total += before - m.len();
         }
         if let Ok(mut m) = self.lp_balances.lock() {
@@ -1033,15 +1033,15 @@ impl L1Node {
     pub fn get_token_balance(&self, public_key: &str, token_symbol: &str) -> Result<f64, String> {
         let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let key = (public_key.to_string(), token_symbol.to_string());
-        Ok(*token_balances.get(&key).unwrap_or(&0.0))
+        Ok(*token_balances.get(&key).unwrap_or(&0) as f64)
     }
 
     pub fn get_all_token_balances(&self, public_key: &str) -> Result<HashMap<String, f64>, String> {
         let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let mut result = HashMap::new();
         for ((pubkey, symbol), balance) in token_balances.iter() {
-            if pubkey == public_key && *balance > 0.0 {
-                result.insert(symbol.clone(), *balance);
+            if pubkey == public_key && *balance > 0 {
+                result.insert(symbol.clone(), *balance as f64);
             }
         }
         Ok(result)
@@ -1052,8 +1052,8 @@ impl L1Node {
         let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let mut result = HashMap::new();
         for ((pubkey, symbol), balance) in token_balances.iter() {
-            if symbol == token_symbol && *balance > 0.0 {
-                result.insert(pubkey.clone(), *balance);
+            if symbol == token_symbol && *balance > 0 {
+                result.insert(pubkey.clone(), *balance as f64);
             }
         }
         Ok(result)
@@ -2656,8 +2656,8 @@ impl L1Node {
 
                     // Check owner's token balance
                     let owner_key = (owner.clone(), symbol.clone());
-                    let owner_bal = *token_balances.get(&owner_key).unwrap_or(&0.0);
-                    if owner_bal < amount as f64 {
+                    let owner_bal = *token_balances.get(&owner_key).unwrap_or(&0);
+                    if owner_bal < amount as u128 {
                         eprintln!("[node] Rejecting transfer_from: owner {} balance {:.4} < {}", symbol, owner_bal, amount);
                         continue;
                     }
@@ -2666,9 +2666,9 @@ impl L1Node {
                     *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
                     actual_fees_collected += tx.fee;
 
-                    *token_balances.entry(owner_key).or_insert(0.0) -= amount as f64;
+                    *token_balances.entry(owner_key).or_insert(0) -= amount as u128;
                     let recipient_key = (to.clone(), symbol.clone());
-                    *token_balances.entry(recipient_key).or_insert(0.0) += amount as f64;
+                    *token_balances.entry(recipient_key).or_insert(0) += amount as u128;
 
                     // Decrement allowance
                     let new_allowance = quantum_vault_storage::allowance_store::Allowance {
@@ -2945,7 +2945,7 @@ impl L1Node {
     fn apply_amm_tx_inner(
         &self,
         balances: &mut HashMap<String, f64>,
-        token_balances: &mut HashMap<TokenBalanceKey, f64>,
+        token_balances: &mut HashMap<TokenBalanceKey, u128>,
         lp_balances: &mut HashMap<TokenBalanceKey, u128>,
         tx: &TxV1,
         block_time: u64,
@@ -2971,16 +2971,16 @@ impl L1Node {
                 }
                 if token_a != "XRGE" {
                     let key = (tx.from_pub_key.clone(), token_a.clone());
-                    let bal = *token_balances.get(&key).unwrap_or(&0.0);
-                    if bal < amount_a as f64 {
+                    let bal = *token_balances.get(&key).unwrap_or(&0);
+                    if bal < amount_a as u128 {
                         eprintln!("[node] Rejecting create_pool: insufficient {} ({:.4} < {})", token_a, bal, amount_a);
                         return Ok(());
                     }
                 }
                 if token_b != "XRGE" {
                     let key = (tx.from_pub_key.clone(), token_b.clone());
-                    let bal = *token_balances.get(&key).unwrap_or(&0.0);
-                    if bal < amount_b as f64 {
+                    let bal = *token_balances.get(&key).unwrap_or(&0);
+                    if bal < amount_b as u128 {
                         eprintln!("[node] Rejecting create_pool: insufficient {} ({:.4} < {})", token_b, bal, amount_b);
                         return Ok(());
                     }
@@ -3068,16 +3068,16 @@ impl L1Node {
                 }
                 if pool.token_a != "XRGE" {
                     let key = (tx.from_pub_key.clone(), pool.token_a.clone());
-                    let bal = *token_balances.get(&key).unwrap_or(&0.0);
-                    if bal < amount_a as f64 {
+                    let bal = *token_balances.get(&key).unwrap_or(&0);
+                    if bal < amount_a as u128 {
                         eprintln!("[node] Rejecting add_liquidity: insufficient {} ({:.4} < {})", pool.token_a, bal, amount_a);
                         return Ok(());
                     }
                 }
                 if pool.token_b != "XRGE" {
                     let key = (tx.from_pub_key.clone(), pool.token_b.clone());
-                    let bal = *token_balances.get(&key).unwrap_or(&0.0);
-                    if bal < amount_b as f64 {
+                    let bal = *token_balances.get(&key).unwrap_or(&0);
+                    if bal < amount_b as u128 {
                         eprintln!("[node] Rejecting add_liquidity: insufficient {} ({:.4} < {})", pool.token_b, bal, amount_b);
                         return Ok(());
                     }
@@ -3248,8 +3248,8 @@ impl L1Node {
                         return Ok(());
                     }
                     let token_key = (tx.from_pub_key.clone(), token_in.clone());
-                    let token_bal = *token_balances.get(&token_key).unwrap_or(&0.0);
-                    if token_bal < amount_in as f64 {
+                    let token_bal = *token_balances.get(&token_key).unwrap_or(&0);
+                    if token_bal < amount_in as u128 {
                         eprintln!("[node] Rejecting swap: insufficient {} balance ({:.4} < {})", token_in, token_bal, amount_in);
                         return Ok(());
                     }
@@ -3534,20 +3534,20 @@ impl L1Node {
     // thirty call sites, and the two AMM appliers can't silently diverge on it.
     fn amm_balance_of(
         balances: &HashMap<String, f64>,
-        token_balances: &HashMap<TokenBalanceKey, f64>,
+        token_balances: &HashMap<TokenBalanceKey, u128>,
         user: &str,
         token: &str,
     ) -> f64 {
         if token == "XRGE" {
             *balances.get(user).unwrap_or(&0.0)
         } else {
-            *token_balances.get(&(user.to_string(), token.to_string())).unwrap_or(&0.0)
+            *token_balances.get(&(user.to_string(), token.to_string())).unwrap_or(&0) as f64
         }
     }
 
     fn amm_debit(
         balances: &mut HashMap<String, f64>,
-        token_balances: &mut HashMap<TokenBalanceKey, f64>,
+        token_balances: &mut HashMap<TokenBalanceKey, u128>,
         user: &str,
         token: &str,
         amount: f64,
@@ -3555,13 +3555,13 @@ impl L1Node {
         if token == "XRGE" {
             *balances.entry(user.to_string()).or_insert(0.0) -= amount;
         } else {
-            *token_balances.entry((user.to_string(), token.to_string())).or_insert(0.0) -= amount;
+            *token_balances.entry((user.to_string(), token.to_string())).or_insert(0) -= amount as u128;
         }
     }
 
     fn amm_credit(
         balances: &mut HashMap<String, f64>,
-        token_balances: &mut HashMap<TokenBalanceKey, f64>,
+        token_balances: &mut HashMap<TokenBalanceKey, u128>,
         user: &str,
         token: &str,
         amount: f64,
@@ -3569,14 +3569,14 @@ impl L1Node {
         if token == "XRGE" {
             *balances.entry(user.to_string()).or_insert(0.0) += amount;
         } else {
-            *token_balances.entry((user.to_string(), token.to_string())).or_insert(0.0) += amount;
+            *token_balances.entry((user.to_string(), token.to_string())).or_insert(0) += amount as u128;
         }
     }
 
     /// Apply AMM balance effects during rebuild (doesn't modify pool_store)
     fn apply_amm_balance_effects(
         balances: &mut HashMap<String, f64>,
-        token_balances: &mut HashMap<TokenBalanceKey, f64>,
+        token_balances: &mut HashMap<TokenBalanceKey, u128>,
         lp_balances: &mut HashMap<TokenBalanceKey, u128>,
         tx: &TxV1,
         pool_store: &PoolStore,
@@ -3680,8 +3680,8 @@ impl L1Node {
                     } else {
                         if xrge_bal < tx.fee { return; }
                         let key = (tx.from_pub_key.clone(), token_in.clone());
-                        let tok_bal = *token_balances.get(&key).unwrap_or(&0.0);
-                        if tok_bal < amount_in as f64 {
+                        let tok_bal = *token_balances.get(&key).unwrap_or(&0);
+                        if tok_bal < amount_in as u128 {
                             eprintln!("[rebuild] Skipping swap: insufficient {} ({:.4} < {})", token_in, tok_bal, amount_in);
                             return;
                         }
@@ -3960,7 +3960,7 @@ impl L1Node {
                         } else {
                             let key = (tx.from_pub_key.clone(), proposal.token_symbol.to_uppercase());
                             if let Ok(tbals) = self.token_balances.lock() {
-                                *tbals.get(&key).unwrap_or(&0.0) as u64
+                                *tbals.get(&key).unwrap_or(&0) as u64
                             } else { 0 }
                         }
                     } else {
@@ -3982,7 +3982,7 @@ impl L1Node {
                                 } else {
                                     let key = (delegator.clone(), proposal.token_symbol.to_uppercase());
                                     if let Ok(tbals) = self.token_balances.lock() {
-                                        dw += *tbals.get(&key).unwrap_or(&0.0) as u64;
+                                        dw += *tbals.get(&key).unwrap_or(&0) as u64;
                                     }
                                 }
                             }
@@ -4331,7 +4331,7 @@ impl L1Node {
     
     fn apply_balance_tx_inner(
         balances: &mut HashMap<String, f64>,
-        token_balances: &mut HashMap<TokenBalanceKey, f64>,
+        token_balances: &mut HashMap<TokenBalanceKey, u128>,
         burned_tokens: &mut HashMap<String, f64>,
         tx: &TxV1,
         validator_store: Option<&quantum_vault_storage::validator_store::ValidatorStore>,
@@ -4362,20 +4362,20 @@ impl L1Node {
                             return;
                         }
                         let sender_key = (tx.from_pub_key.clone(), token_symbol.clone());
-                        let token_bal = *token_balances.get(&sender_key).unwrap_or(&0.0);
-                        if token_bal < amount {
+                        let token_bal = *token_balances.get(&sender_key).unwrap_or(&0);
+                        if token_bal < amount as u128 {
                             eprintln!("[node] Rejecting transfer: insufficient {} ({:.4} < {:.4})", token_symbol, token_bal, amount);
                             return;
                         }
 
                         *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                        *token_balances.entry(sender_key).or_insert(0.0) -= amount;
+                        *token_balances.entry(sender_key).or_insert(0) -= amount as u128;
                         
                         if is_burn {
                             *burned_tokens.entry(token_symbol.clone()).or_insert(0.0) += amount;
                         } else {
                             let recipient_key = (to_pub_key.clone(), token_symbol.clone());
-                            *token_balances.entry(recipient_key).or_insert(0.0) += amount;
+                            *token_balances.entry(recipient_key).or_insert(0) += amount as u128;
                         }
                     } else {
                         let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
@@ -4481,7 +4481,7 @@ impl L1Node {
                 if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
                     let total_supply = tx.payload.token_total_supply.unwrap_or(0) as f64;
                     let creator_key = (tx.from_pub_key.clone(), token_symbol.trim().to_uppercase());
-                    *token_balances.entry(creator_key).or_insert(0.0) += total_supply;
+                    *token_balances.entry(creator_key).or_insert(0) += total_supply as u128;
                 }
             }
             "mint_tokens" => {
@@ -4505,7 +4505,7 @@ impl L1Node {
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
                 // Credit minted tokens to creator
                 let creator_key = (tx.from_pub_key.clone(), sym);
-                *token_balances.entry(creator_key).or_insert(0.0) += amount;
+                *token_balances.entry(creator_key).or_insert(0) += amount as u128;
             }
             "bridge_mint" => {
                 // Only the node operator key can issue bridge mints (skip check during rebuild)
@@ -4523,7 +4523,7 @@ impl L1Node {
                             *balances.entry(to_pub_key.clone()).or_insert(0.0) += amount;
                         } else {
                             let recipient_key = (to_pub_key.clone(), token_symbol.clone());
-                            *token_balances.entry(recipient_key).or_insert(0.0) += amount;
+                            *token_balances.entry(recipient_key).or_insert(0) += amount as u128;
                         }
                     }
                 }
@@ -4548,13 +4548,13 @@ impl L1Node {
                             *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee + amount as f64;
                         } else {
                             let sender_key = (tx.from_pub_key.clone(), token_upper.clone());
-                            let token_bal = *token_balances.get(&sender_key).unwrap_or(&0.0);
-                            if token_bal < amount as f64 {
+                            let token_bal = *token_balances.get(&sender_key).unwrap_or(&0);
+                            if token_bal < amount as u128 {
                                 eprintln!("[node] Rejecting bridge_withdraw: insufficient {} ({:.4} < {})", token_upper, token_bal, amount);
                                 return;
                             }
                             *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                            *token_balances.entry(sender_key).or_insert(0.0) -= amount as f64;
+                            *token_balances.entry(sender_key).or_insert(0) -= amount as u128;
                         }
                         *burned_tokens.entry(token_upper).or_insert(0.0) += amount as f64;
                     }
@@ -4609,13 +4609,13 @@ impl L1Node {
                         return;
                     }
                     let key = (tx.from_pub_key.clone(), token_symbol.clone());
-                    let tok_bal = *token_balances.get(&key).unwrap_or(&0.0);
-                    if tok_bal < amount {
+                    let tok_bal = *token_balances.get(&key).unwrap_or(&0);
+                    if tok_bal < amount as u128 {
                         eprintln!("[node] Rejecting token_lock: insufficient {} ({:.4} < {:.4})", token_symbol, tok_bal, amount);
                         return;
                     }
                     *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                    *token_balances.entry(key).or_insert(0.0) -= amount;
+                    *token_balances.entry(key).or_insert(0) -= amount as u128;
                 } else {
                     // Lock XRGE
                     let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
@@ -4643,7 +4643,7 @@ impl L1Node {
                     let amount = tx.payload.amount.unwrap_or(0) as f64;
                     if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
                         let key = (tx.from_pub_key.clone(), token_symbol.clone());
-                        *token_balances.entry(key).or_insert(0.0) += amount;
+                        *token_balances.entry(key).or_insert(0) += amount as u128;
                     } else {
                         *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount;
                     }
@@ -4667,13 +4667,13 @@ impl L1Node {
                         return;
                     }
                     let key = (tx.from_pub_key.clone(), token_symbol.clone());
-                    let tok_bal = *token_balances.get(&key).unwrap_or(&0.0);
-                    if tok_bal < amount {
+                    let tok_bal = *token_balances.get(&key).unwrap_or(&0);
+                    if tok_bal < amount as u128 {
                         eprintln!("[node] Rejecting token_stake: insufficient {} ({:.4} < {:.4})", token_symbol, tok_bal, amount);
                         return;
                     }
                     *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                    *token_balances.entry(key).or_insert(0.0) -= amount;
+                    *token_balances.entry(key).or_insert(0) -= amount as u128;
                 }
             }
             "token_unstake" => {
@@ -4687,7 +4687,7 @@ impl L1Node {
                 // Credit tokens back
                 if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
                     let key = (tx.from_pub_key.clone(), token_symbol.clone());
-                    *token_balances.entry(key).or_insert(0.0) += amount;
+                    *token_balances.entry(key).or_insert(0) += amount as u128;
                 }
             }
             // ─── Governance ──────────────────────────────────────────
@@ -4724,14 +4724,14 @@ impl L1Node {
                 ) {
                     let amount = tx.payload.amount.unwrap_or(0) as f64;
                     let owner_key = (owner.clone(), token_symbol.clone());
-                    let owner_bal = *token_balances.get(&owner_key).unwrap_or(&0.0);
-                    if owner_bal < amount {
+                    let owner_bal = *token_balances.get(&owner_key).unwrap_or(&0);
+                    if owner_bal < amount as u128 {
                         eprintln!("[node] Rejecting token_transfer_from: insufficient {} balance", token_symbol);
                         return;
                     }
-                    *token_balances.entry(owner_key).or_insert(0.0) -= amount;
+                    *token_balances.entry(owner_key).or_insert(0) -= amount as u128;
                     let recipient_key = (to.clone(), token_symbol.clone());
-                    *token_balances.entry(recipient_key).or_insert(0.0) += amount;
+                    *token_balances.entry(recipient_key).or_insert(0) += amount as u128;
                 }
             }
             // ─── Airdrops ────────────────────────────────────────────
@@ -4749,16 +4749,16 @@ impl L1Node {
                 ) {
                     let total: u64 = amounts.iter().sum();
                     let sender_key = (tx.from_pub_key.clone(), token_symbol.clone());
-                    let tok_bal = *token_balances.get(&sender_key).unwrap_or(&0.0);
-                    if tok_bal < total as f64 {
+                    let tok_bal = *token_balances.get(&sender_key).unwrap_or(&0);
+                    if tok_bal < total as u128 {
                         eprintln!("[node] Rejecting token_airdrop: insufficient {} ({:.4} < {})", token_symbol, tok_bal, total);
                         return;
                     }
-                    *token_balances.entry(sender_key).or_insert(0.0) -= total as f64;
+                    *token_balances.entry(sender_key).or_insert(0) -= total as u128;
                     for (i, recipient) in recipients.iter().enumerate() {
                         if let Some(&amt) = amounts.get(i) {
                             let key = (recipient.clone(), token_symbol.clone());
-                            *token_balances.entry(key).or_insert(0.0) += amt as f64;
+                            *token_balances.entry(key).or_insert(0) += amt as u128;
                         }
                     }
                 }
@@ -5684,8 +5684,8 @@ mod ledger_tests {
     fn apply(
         balances: &mut HashMap<String, f64>,
         tx: &TxV1,
-    ) -> (HashMap<TokenBalanceKey, f64>, HashMap<String, f64>) {
-        let mut token_balances: HashMap<TokenBalanceKey, f64> = HashMap::new();
+    ) -> (HashMap<TokenBalanceKey, u128>, HashMap<String, f64>) {
+        let mut token_balances: HashMap<TokenBalanceKey, u128> = HashMap::new();
         let mut burned: HashMap<String, f64> = HashMap::new();
         let uq: Arc<Mutex<Vec<UnbondingEntry>>> = Arc::new(Mutex::new(Vec::new()));
         let ss = Arc::new(Mutex::new(0.0f64));
@@ -5892,7 +5892,7 @@ mod amm_replay_tests {
     fn swap_xrge_for_token_routes_through_get_amount_out() {
         let (_dir, ps) = seeded_store();
         let mut bal = HashMap::from([("user".to_string(), 10_000.0)]);
-        let mut tok: HashMap<TokenBalanceKey, f64> = HashMap::new();
+        let mut tok: HashMap<TokenBalanceKey, u128> = HashMap::new();
         let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
 
         let tx = amm_tx(
@@ -5912,7 +5912,7 @@ mod amm_replay_tests {
         assert!((bal["user"] - 8_999.9).abs() < 1e-9, "xrge = {}", bal["user"]);
         // token_out credited exactly what the AMM math yields for these reserves
         let expected = amm::get_amount_out(1_000, 100_000, 200_000).unwrap();
-        assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], expected as f64);
+        assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], expected as u128);
         assert!(lp.is_empty());
     }
 
@@ -5921,8 +5921,8 @@ mod amm_replay_tests {
         let (_dir, ps) = seeded_store();
         // pool.token_a = QTOK, token_b = XRGE → amount_a is QTOK, amount_b is XRGE
         let mut bal = HashMap::from([("user".to_string(), 50_000.0)]);
-        let mut tok: HashMap<TokenBalanceKey, f64> =
-            HashMap::from([(("user".to_string(), "QTOK".to_string()), 50_000.0)]);
+        let mut tok: HashMap<TokenBalanceKey, u128> =
+            HashMap::from([(("user".to_string(), "QTOK".to_string()), 50_000u128)]);
         let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
 
         let tx = amm_tx(
@@ -5939,7 +5939,7 @@ mod amm_replay_tests {
         L1Node::apply_amm_balance_effects(&mut bal, &mut tok, &mut lp, &tx, &ps);
 
         assert!((bal["user"] - (50_000.0 - 0.1 - 10_000.0)).abs() < 1e-9, "xrge = {}", bal["user"]);
-        assert!((tok[&("user".to_string(), "QTOK".to_string())] - 30_000.0).abs() < 1e-9);
+        assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], 30_000u128);
         let expected_lp = amm::calculate_lp_mint(20_000, 10_000, 200_000, 100_000, 141_421).unwrap();
         assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], expected_lp as u128);
     }
@@ -5948,7 +5948,7 @@ mod amm_replay_tests {
     fn swap_is_skipped_when_xrge_cannot_cover_amount_plus_fee() {
         let (_dir, ps) = seeded_store();
         let mut bal = HashMap::from([("user".to_string(), 500.0)]); // < 1000 + fee
-        let mut tok: HashMap<TokenBalanceKey, f64> = HashMap::new();
+        let mut tok: HashMap<TokenBalanceKey, u128> = HashMap::new();
         let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
 
         let tx = amm_tx(
@@ -5974,8 +5974,8 @@ mod amm_replay_tests {
     fn create_pool_debits_and_mints_initial_lp() {
         let (_dir, ps) = seeded_store(); // pool QTOK-XRGE already exists
         let mut bal = HashMap::from([("user".to_string(), 500_000.0)]);
-        let mut tok: HashMap<TokenBalanceKey, f64> =
-            HashMap::from([(("user".to_string(), "QTOK".to_string()), 500_000.0)]);
+        let mut tok: HashMap<TokenBalanceKey, u128> =
+            HashMap::from([(("user".to_string(), "QTOK".to_string()), 500_000u128)]);
         let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
 
         let tx = amm_tx(
@@ -5993,7 +5993,7 @@ mod amm_replay_tests {
         L1Node::apply_amm_balance_effects(&mut bal, &mut tok, &mut lp, &tx, &ps);
 
         assert!((bal["user"] - (500_000.0 - 0.1 - 100_000.0)).abs() < 1e-9);
-        assert!((tok[&("user".to_string(), "QTOK".to_string())] - 300_000.0).abs() < 1e-9);
+        assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], 300_000u128);
         // initial LP = floor(sqrt(a*b)) - 1000
         let expected_lp = ((100_000.0_f64 * 200_000.0).sqrt() as u64).saturating_sub(1000);
         assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], expected_lp as u128);
@@ -6003,7 +6003,7 @@ mod amm_replay_tests {
     fn remove_liquidity_burns_lp_and_returns_both_tokens() {
         let (_dir, ps) = seeded_store();
         let mut bal = HashMap::from([("user".to_string(), 10.0)]);
-        let mut tok: HashMap<TokenBalanceKey, f64> = HashMap::new();
+        let mut tok: HashMap<TokenBalanceKey, u128> = HashMap::new();
         let mut lp: HashMap<TokenBalanceKey, u128> =
             HashMap::from([(("user".to_string(), "QTOK-XRGE".to_string()), 50_000u128)]);
 
@@ -6024,7 +6024,7 @@ mod amm_replay_tests {
         assert!((bal.get("user").copied().unwrap_or(0.0) - (10.0 - 0.1 + out_b as f64)).abs() < 1e-9);
         assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], 40_000u128);
         // token_a = QTOK returned to token_balances, token_b = XRGE returned to native
-        assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], out_a as f64);
+        assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], out_a as u128);
     }
 }
 
@@ -6106,8 +6106,8 @@ mod live_amm_tests {
     fn live_create_pool_then_swap_updates_reserves_and_balances() {
         let (_dir, node) = test_node();
         let mut bal = HashMap::from([("user".to_string(), 1_000_000.0)]);
-        let mut tok: HashMap<TokenBalanceKey, f64> =
-            HashMap::from([(("user".to_string(), "QTOK".to_string()), 1_000_000.0)]);
+        let mut tok: HashMap<TokenBalanceKey, u128> =
+            HashMap::from([(("user".to_string(), "QTOK".to_string()), 1_000_000u128)]);
         let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
 
         // create_pool: token_a=XRGE amount 100_000, token_b=QTOK amount 200_000
@@ -6133,7 +6133,7 @@ mod live_amm_tests {
         assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], pool.total_lp_supply as u128);
         // Balances debited fee + provided liquidity.
         assert!((bal["user"] - (1_000_000.0 - 0.1 - 100_000.0)).abs() < 1e-9, "xrge={}", bal["user"]);
-        assert!((tok[&("user".to_string(), "QTOK".to_string())] - 800_000.0).abs() < 1e-9);
+        assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], 800_000u128);
 
         // Swap 1_000 XRGE -> QTOK.
         let expected_out = amm::get_amount_out(1_000, 100_000, 200_000).unwrap();
@@ -6157,6 +6157,6 @@ mod live_amm_tests {
         assert_eq!(pool2.reserve_a, 200_000 - expected_out, "QTOK reserve after swap");
         // User received exactly the AMM output.
         let qtok_after = tok[&("user".to_string(), "QTOK".to_string())];
-        assert_eq!(qtok_after - qtok_before, expected_out as f64);
+        assert_eq!(qtok_after - qtok_before, expected_out as u128);
     }
 }
