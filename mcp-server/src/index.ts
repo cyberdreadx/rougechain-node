@@ -587,7 +587,7 @@ if (signer) {
 
   server.tool(
     "stake",
-    "Stake XRGE from the configured wallet to participate in consensus / earn rewards.",
+    "Stake XRGE from the configured wallet to become a validator / earn rewards. Minimum 10,000 XRGE, enforced on every stake call (tiers: 10k standard, 100k operator, 1M genesis). The staking wallet's own key becomes the validator identity.",
     {
       amount: z.number().positive().describe("Amount of XRGE to stake"),
       fee: z.number().optional().describe("Network fee (default 1)"),
