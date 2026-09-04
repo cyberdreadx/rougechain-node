@@ -492,7 +492,7 @@ const TokenExplorer = () => {
 
         {/* Supply Breakdown (only for XRGE or tokens with shielded/burned data) */}
         {(circulatingSupply > 0 || shieldedSupply > 0 || burnedSupply > 0) && (
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Card className="border-emerald-500/20">
               <CardContent className="pt-4">
                 <div className="flex items-center gap-2 text-emerald-400 mb-1">

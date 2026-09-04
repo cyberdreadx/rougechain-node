@@ -165,17 +165,17 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
               className="flex items-center justify-between px-4 py-3 hover:bg-secondary/50 transition-colors cursor-pointer"
               onClick={() => setSelectedTx(tx)}
             >
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center flex-shrink-0">
                   {getIcon(tx.type)}
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-sm font-medium text-foreground">{getTypeLabel(tx.type)}</p>
-                  <p className="text-xs text-muted-foreground font-mono">{tx.address}</p>
+                  <p className="text-xs text-muted-foreground font-mono truncate">{tx.address}</p>
                 </div>
               </div>
-              
-              <div className="text-right">
+
+              <div className="text-right shrink-0 pl-2">
                 <p className={`text-sm font-medium font-mono ${
                   tx.type === "receive" || tx.type === "unstake" ? "text-success" : 
                   tx.type === "send" || tx.type === "stake" ? "text-destructive" : 

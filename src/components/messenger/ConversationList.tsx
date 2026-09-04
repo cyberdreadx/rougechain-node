@@ -185,7 +185,7 @@ const ConversationList = ({ conversations, selectedId, wallet, currentWalletId, 
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive transition-opacity"
+              className="h-8 w-8 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive transition-opacity"
               onClick={(e) => handleDelete(e, conversation.id)}
               disabled={deletingId === conversation.id}
               title="Delete conversation"

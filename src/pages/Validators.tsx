@@ -124,7 +124,7 @@ export default function Validators() {
       </div>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-6 md:py-8 relative z-10">
+      <main className="container mx-auto max-w-6xl px-4 py-6 md:py-8 relative z-10">
         {/* Mobile: Wallet balance first */}
         <div className="lg:hidden mb-6">
           <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/30">
