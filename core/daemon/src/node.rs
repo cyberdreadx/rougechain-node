@@ -5870,3 +5870,153 @@ mod ledger_tests {
         assert_eq!(sa, sc, "identical inputs must produce identical distribution");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 1 / T2 characterization tests for the rebuild AMM apply path
+// (`apply_amm_balance_effects`). These PIN the current f64 behaviour so the
+// upcoming consolidation (merging the live `apply_amm_tx_inner` and this
+// rebuild mirror into one applier) and the later f64->u128 flip can be proven
+// behaviour-preserving. Effects are asserted against the `amm` math module,
+// so these pin the apply/routing logic, not the math.
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod amm_replay_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static CTR: AtomicU64 = AtomicU64::new(0);
+
+    struct TmpDir(std::path::PathBuf);
+    impl TmpDir {
+        fn new() -> Self {
+            let mut p = std::env::temp_dir();
+            let n = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            p.push(format!("rvm-amm-{}-{}-{}", std::process::id(), n, CTR.fetch_add(1, Ordering::SeqCst)));
+            std::fs::create_dir_all(&p).unwrap();
+            TmpDir(p)
+        }
+    }
+    impl Drop for TmpDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A pool store seeded with one pool: QTOK/XRGE (sorted -> token_a=QTOK,
+    /// token_b=XRGE), reserves QTOK=200_000 / XRGE=100_000, LP supply 141_421.
+    fn seeded_store() -> (TmpDir, PoolStore) {
+        let dir = TmpDir::new();
+        let ps = PoolStore::new(dir.0.as_path()).unwrap();
+        let pool = LiquidityPool {
+            pool_id: "QTOK-XRGE".to_string(),
+            token_a: "QTOK".to_string(),
+            token_b: "XRGE".to_string(),
+            reserve_a: 200_000,
+            reserve_b: 100_000,
+            total_lp_supply: 141_421,
+            fee_rate: 0.003,
+            created_at: 0,
+            creator_pub_key: "creator".to_string(),
+        };
+        ps.save_pool(&pool).unwrap();
+        (dir, ps)
+    }
+
+    fn amm_tx(tx_type: &str, from: &str, fee: f64, payload: TxPayload) -> TxV1 {
+        TxV1 {
+            version: 1,
+            tx_type: tx_type.to_string(),
+            from_pub_key: from.to_string(),
+            nonce: 0,
+            payload,
+            fee,
+            sig: String::new(),
+            signed_payload: None,
+        }
+    }
+
+    #[test]
+    fn swap_xrge_for_token_routes_through_get_amount_out() {
+        let (_dir, ps) = seeded_store();
+        let mut bal = HashMap::from([("user".to_string(), 10_000.0)]);
+        let mut tok: HashMap<TokenBalanceKey, f64> = HashMap::new();
+        let mut lp: HashMap<TokenBalanceKey, f64> = HashMap::new();
+
+        let tx = amm_tx(
+            "swap",
+            "user",
+            0.1,
+            TxPayload {
+                token_a_symbol: Some("XRGE".to_string()), // token_in
+                token_b_symbol: Some("QTOK".to_string()), // token_out
+                amount_a: Some(1_000),
+                ..Default::default()
+            },
+        );
+        L1Node::apply_amm_balance_effects(&mut bal, &mut tok, &mut lp, &tx, &ps);
+
+        // XRGE debited: amount_in (1000) + fee (0.1)
+        assert!((bal["user"] - 8_999.9).abs() < 1e-9, "xrge = {}", bal["user"]);
+        // token_out credited exactly what the AMM math yields for these reserves
+        let expected = amm::get_amount_out(1_000, 100_000, 200_000).unwrap();
+        assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], expected as f64);
+        assert!(lp.is_empty());
+    }
+
+    #[test]
+    fn add_liquidity_mints_lp_per_amm_math() {
+        let (_dir, ps) = seeded_store();
+        // pool.token_a = QTOK, token_b = XRGE → amount_a is QTOK, amount_b is XRGE
+        let mut bal = HashMap::from([("user".to_string(), 50_000.0)]);
+        let mut tok: HashMap<TokenBalanceKey, f64> =
+            HashMap::from([(("user".to_string(), "QTOK".to_string()), 50_000.0)]);
+        let mut lp: HashMap<TokenBalanceKey, f64> = HashMap::new();
+
+        let tx = amm_tx(
+            "add_liquidity",
+            "user",
+            0.1,
+            TxPayload {
+                pool_id: Some("QTOK-XRGE".to_string()),
+                amount_a: Some(20_000), // QTOK
+                amount_b: Some(10_000), // XRGE
+                ..Default::default()
+            },
+        );
+        L1Node::apply_amm_balance_effects(&mut bal, &mut tok, &mut lp, &tx, &ps);
+
+        assert!((bal["user"] - (50_000.0 - 0.1 - 10_000.0)).abs() < 1e-9, "xrge = {}", bal["user"]);
+        assert!((tok[&("user".to_string(), "QTOK".to_string())] - 30_000.0).abs() < 1e-9);
+        let expected_lp = amm::calculate_lp_mint(20_000, 10_000, 200_000, 100_000, 141_421).unwrap();
+        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], expected_lp as f64);
+    }
+
+    #[test]
+    fn swap_is_skipped_when_xrge_cannot_cover_amount_plus_fee() {
+        let (_dir, ps) = seeded_store();
+        let mut bal = HashMap::from([("user".to_string(), 500.0)]); // < 1000 + fee
+        let mut tok: HashMap<TokenBalanceKey, f64> = HashMap::new();
+        let mut lp: HashMap<TokenBalanceKey, f64> = HashMap::new();
+
+        let tx = amm_tx(
+            "swap",
+            "user",
+            0.1,
+            TxPayload {
+                token_a_symbol: Some("XRGE".to_string()),
+                token_b_symbol: Some("QTOK".to_string()),
+                amount_a: Some(1_000),
+                ..Default::default()
+            },
+        );
+        L1Node::apply_amm_balance_effects(&mut bal, &mut tok, &mut lp, &tx, &ps);
+
+        // Rejected: nothing moved.
+        assert_eq!(bal["user"], 500.0);
+        assert!(tok.is_empty());
+        assert!(lp.is_empty());
+    }
+}
