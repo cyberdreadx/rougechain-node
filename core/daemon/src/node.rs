@@ -103,7 +103,7 @@ pub struct L1Node {
     verified_tx_ids: Arc<Mutex<HashSet<String>>>,
     balances: Arc<Mutex<HashMap<String, f64>>>,
     token_balances: Arc<Mutex<HashMap<TokenBalanceKey, f64>>>,
-    lp_balances: Arc<Mutex<HashMap<TokenBalanceKey, f64>>>,  // LP token balances
+    lp_balances: Arc<Mutex<HashMap<TokenBalanceKey, u128>>>,  // LP token balances (integer counts; T3 flip)
     burned_tokens: Arc<Mutex<HashMap<String, f64>>>,  // Total burned per token symbol
     votes: Arc<Mutex<Vec<VoteMessage>>>,
     finalized_height: Arc<Mutex<u64>>,
@@ -345,7 +345,7 @@ impl L1Node {
             let bal_bytes = serde_json::to_vec(&*bal).map_err(|e| e.to_string())?;
             let tok_vec: Vec<((String, String), f64)> = tok.iter().map(|(k, v)| (k.clone(), *v)).collect();
             let tok_bytes = serde_json::to_vec(&tok_vec).map_err(|e| e.to_string())?;
-            let lp_vec: Vec<((String, String), f64)> = lp.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            let lp_vec: Vec<((String, String), u128)> = lp.iter().map(|(k, v)| (k.clone(), *v)).collect();
             let lp_bytes = serde_json::to_vec(&lp_vec).map_err(|e| e.to_string())?;
             let burned_bytes = serde_json::to_vec(&*burned).map_err(|e| e.to_string())?;
 
@@ -390,7 +390,7 @@ impl L1Node {
             .map_err(|e| e.to_string())?;
         let tok_vec: Vec<((String, String), f64)> = serde_json::from_slice(&tok_bytes)
             .map_err(|e| e.to_string())?;
-        let lp_vec: Vec<((String, String), f64)> = serde_json::from_slice(&lp_bytes)
+        let lp_vec: Vec<((String, String), u128)> = serde_json::from_slice(&lp_bytes)
             .map_err(|e| e.to_string())?;
         let burned: HashMap<String, f64> = serde_json::from_slice(&burned_bytes)
             .map_err(|e| e.to_string())?;
@@ -504,7 +504,7 @@ impl L1Node {
         }
         if let Ok(mut m) = self.lp_balances.lock() {
             let before = m.len();
-            m.retain(|_, v| *v > 0.0);
+            m.retain(|_, v| *v > 0);
             total += before - m.len();
         }
         total
@@ -1418,15 +1418,15 @@ impl L1Node {
     pub fn get_lp_balance(&self, public_key: &str, pool_id: &str) -> Result<f64, String> {
         let lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
         let key = (public_key.to_string(), pool_id.to_string());
-        Ok(*lp_balances.get(&key).unwrap_or(&0.0))
+        Ok(*lp_balances.get(&key).unwrap_or(&0) as f64)
     }
 
     pub fn get_all_lp_balances(&self, public_key: &str) -> Result<HashMap<String, f64>, String> {
         let lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
         let mut result = HashMap::new();
         for ((pubkey, pool_id), balance) in lp_balances.iter() {
-            if pubkey == public_key && *balance > 0.0 {
-                result.insert(pool_id.clone(), *balance);
+            if pubkey == public_key && *balance > 0 {
+                result.insert(pool_id.clone(), *balance as f64);
             }
         }
         Ok(result)
@@ -2946,7 +2946,7 @@ impl L1Node {
         &self,
         balances: &mut HashMap<String, f64>,
         token_balances: &mut HashMap<TokenBalanceKey, f64>,
-        lp_balances: &mut HashMap<TokenBalanceKey, f64>,
+        lp_balances: &mut HashMap<TokenBalanceKey, u128>,
         tx: &TxV1,
         block_time: u64,
         block_height: u64,
@@ -3005,7 +3005,7 @@ impl L1Node {
                 
                 // Mint LP tokens to creator
                 let lp_key = (tx.from_pub_key.clone(), pool.pool_id.clone());
-                *lp_balances.entry(lp_key).or_insert(0.0) += pool.total_lp_supply as f64;
+                *lp_balances.entry(lp_key).or_insert(0) += pool.total_lp_supply as u128;
                 
                 self.pool_store.save_pool(&pool)?;
                 
@@ -3107,7 +3107,7 @@ impl L1Node {
                 
                 // Mint LP tokens
                 let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
-                *lp_balances.entry(lp_key).or_insert(0.0) += lp_amount as f64;
+                *lp_balances.entry(lp_key).or_insert(0) += lp_amount as u128;
                 
                 // Save event
                 let event = PoolEvent {
@@ -3163,8 +3163,8 @@ impl L1Node {
                     return Ok(());
                 }
                 let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
-                let lp_bal = *lp_balances.get(&lp_key).unwrap_or(&0.0);
-                if lp_bal < lp_amount as f64 {
+                let lp_bal = *lp_balances.get(&lp_key).unwrap_or(&0);
+                if lp_bal < lp_amount as u128 {
                     eprintln!("[node] Rejecting remove_liquidity: insufficient LP tokens ({:.4} < {})", lp_bal, lp_amount);
                     return Ok(());
                 }
@@ -3182,7 +3182,7 @@ impl L1Node {
                 
                 // Burn LP tokens
                 let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
-                *lp_balances.entry(lp_key).or_insert(0.0) -= lp_amount as f64;
+                *lp_balances.entry(lp_key).or_insert(0) -= lp_amount as u128;
                 
                 // Return tokens
                 Self::amm_credit(balances, token_balances, &tx.from_pub_key, &pool.token_a, amount_a as f64);
@@ -3577,7 +3577,7 @@ impl L1Node {
     fn apply_amm_balance_effects(
         balances: &mut HashMap<String, f64>,
         token_balances: &mut HashMap<TokenBalanceKey, f64>,
-        lp_balances: &mut HashMap<TokenBalanceKey, f64>,
+        lp_balances: &mut HashMap<TokenBalanceKey, u128>,
         tx: &TxV1,
         pool_store: &PoolStore,
     ) {
@@ -3609,7 +3609,7 @@ impl L1Node {
                     if let Ok(Some(_pool)) = pool_store.get_pool(&pool_id) {
                         let initial_lp = ((amount_a as f64 * amount_b as f64).sqrt() as u64).saturating_sub(1000);
                         let lp_key = (tx.from_pub_key.clone(), pool_id);
-                        *lp_balances.entry(lp_key).or_insert(0.0) += initial_lp as f64;
+                        *lp_balances.entry(lp_key).or_insert(0) += initial_lp as u128;
                     }
                 }
             }
@@ -3635,7 +3635,7 @@ impl L1Node {
 
                         if let Some(lp_amount) = amm::calculate_lp_mint(amount_a, amount_b, pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
                             let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
-                            *lp_balances.entry(lp_key).or_insert(0.0) += lp_amount as f64;
+                            *lp_balances.entry(lp_key).or_insert(0) += lp_amount as u128;
                         }
                     }
                 }
@@ -3649,13 +3649,13 @@ impl L1Node {
                     let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
                     if xrge_bal < tx.fee { return; }
                     let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
-                    let lp_bal = *lp_balances.get(&lp_key).unwrap_or(&0.0);
-                    if lp_bal < lp_amount as f64 { return; }
+                    let lp_bal = *lp_balances.get(&lp_key).unwrap_or(&0);
+                    if lp_bal < lp_amount as u128 { return; }
 
                     *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
                     
                     if let Ok(Some(pool)) = pool_store.get_pool(pool_id) {
-                        *lp_balances.entry(lp_key).or_insert(0.0) -= lp_amount as f64;
+                        *lp_balances.entry(lp_key).or_insert(0) -= lp_amount as u128;
                         
                         if let Some((amount_a, amount_b)) = amm::calculate_remove_liquidity(lp_amount, pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
                             Self::amm_credit(balances, token_balances, &tx.from_pub_key, &pool.token_a, amount_a as f64);
@@ -5893,7 +5893,7 @@ mod amm_replay_tests {
         let (_dir, ps) = seeded_store();
         let mut bal = HashMap::from([("user".to_string(), 10_000.0)]);
         let mut tok: HashMap<TokenBalanceKey, f64> = HashMap::new();
-        let mut lp: HashMap<TokenBalanceKey, f64> = HashMap::new();
+        let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
 
         let tx = amm_tx(
             "swap",
@@ -5923,7 +5923,7 @@ mod amm_replay_tests {
         let mut bal = HashMap::from([("user".to_string(), 50_000.0)]);
         let mut tok: HashMap<TokenBalanceKey, f64> =
             HashMap::from([(("user".to_string(), "QTOK".to_string()), 50_000.0)]);
-        let mut lp: HashMap<TokenBalanceKey, f64> = HashMap::new();
+        let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
 
         let tx = amm_tx(
             "add_liquidity",
@@ -5941,7 +5941,7 @@ mod amm_replay_tests {
         assert!((bal["user"] - (50_000.0 - 0.1 - 10_000.0)).abs() < 1e-9, "xrge = {}", bal["user"]);
         assert!((tok[&("user".to_string(), "QTOK".to_string())] - 30_000.0).abs() < 1e-9);
         let expected_lp = amm::calculate_lp_mint(20_000, 10_000, 200_000, 100_000, 141_421).unwrap();
-        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], expected_lp as f64);
+        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], expected_lp as u128);
     }
 
     #[test]
@@ -5949,7 +5949,7 @@ mod amm_replay_tests {
         let (_dir, ps) = seeded_store();
         let mut bal = HashMap::from([("user".to_string(), 500.0)]); // < 1000 + fee
         let mut tok: HashMap<TokenBalanceKey, f64> = HashMap::new();
-        let mut lp: HashMap<TokenBalanceKey, f64> = HashMap::new();
+        let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
 
         let tx = amm_tx(
             "swap",
@@ -5976,7 +5976,7 @@ mod amm_replay_tests {
         let mut bal = HashMap::from([("user".to_string(), 500_000.0)]);
         let mut tok: HashMap<TokenBalanceKey, f64> =
             HashMap::from([(("user".to_string(), "QTOK".to_string()), 500_000.0)]);
-        let mut lp: HashMap<TokenBalanceKey, f64> = HashMap::new();
+        let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
 
         let tx = amm_tx(
             "create_pool",
@@ -5996,7 +5996,7 @@ mod amm_replay_tests {
         assert!((tok[&("user".to_string(), "QTOK".to_string())] - 300_000.0).abs() < 1e-9);
         // initial LP = floor(sqrt(a*b)) - 1000
         let expected_lp = ((100_000.0_f64 * 200_000.0).sqrt() as u64).saturating_sub(1000);
-        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], expected_lp as f64);
+        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], expected_lp as u128);
     }
 
     #[test]
@@ -6004,8 +6004,8 @@ mod amm_replay_tests {
         let (_dir, ps) = seeded_store();
         let mut bal = HashMap::from([("user".to_string(), 10.0)]);
         let mut tok: HashMap<TokenBalanceKey, f64> = HashMap::new();
-        let mut lp: HashMap<TokenBalanceKey, f64> =
-            HashMap::from([(("user".to_string(), "QTOK-XRGE".to_string()), 50_000.0)]);
+        let mut lp: HashMap<TokenBalanceKey, u128> =
+            HashMap::from([(("user".to_string(), "QTOK-XRGE".to_string()), 50_000u128)]);
 
         let tx = amm_tx(
             "remove_liquidity",
@@ -6022,7 +6022,7 @@ mod amm_replay_tests {
         let (out_a, out_b) = amm::calculate_remove_liquidity(10_000, 200_000, 100_000, 141_421).unwrap();
         // fee debited, LP burned
         assert!((bal.get("user").copied().unwrap_or(0.0) - (10.0 - 0.1 + out_b as f64)).abs() < 1e-9);
-        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], 40_000.0);
+        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], 40_000u128);
         // token_a = QTOK returned to token_balances, token_b = XRGE returned to native
         assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], out_a as f64);
     }
@@ -6108,7 +6108,7 @@ mod live_amm_tests {
         let mut bal = HashMap::from([("user".to_string(), 1_000_000.0)]);
         let mut tok: HashMap<TokenBalanceKey, f64> =
             HashMap::from([(("user".to_string(), "QTOK".to_string()), 1_000_000.0)]);
-        let mut lp: HashMap<TokenBalanceKey, f64> = HashMap::new();
+        let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
 
         // create_pool: token_a=XRGE amount 100_000, token_b=QTOK amount 200_000
         let create = amm_tx(
@@ -6130,7 +6130,7 @@ mod live_amm_tests {
         assert_eq!(pool.reserve_a, 200_000);
         assert_eq!(pool.reserve_b, 100_000);
         // Creator LP == the pool's initial supply.
-        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], pool.total_lp_supply as f64);
+        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], pool.total_lp_supply as u128);
         // Balances debited fee + provided liquidity.
         assert!((bal["user"] - (1_000_000.0 - 0.1 - 100_000.0)).abs() < 1e-9, "xrge={}", bal["user"]);
         assert!((tok[&("user".to_string(), "QTOK".to_string())] - 800_000.0).abs() < 1e-9);
