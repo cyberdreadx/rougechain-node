@@ -2990,19 +2990,8 @@ impl L1Node {
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
                 
                 // Deduct tokens from creator
-                if token_a == "XRGE" {
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_a as f64;
-                } else {
-                    let key = (tx.from_pub_key.clone(), token_a.clone());
-                    *token_balances.entry(key).or_insert(0.0) -= amount_a as f64;
-                }
-                
-                if token_b == "XRGE" {
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_b as f64;
-                } else {
-                    let key = (tx.from_pub_key.clone(), token_b.clone());
-                    *token_balances.entry(key).or_insert(0.0) -= amount_b as f64;
-                }
+                Self::amm_debit(balances, token_balances, &tx.from_pub_key, token_a, amount_a as f64);
+                Self::amm_debit(balances, token_balances, &tx.from_pub_key, token_b, amount_b as f64);
                 
                 // Create pool
                 let pool = LiquidityPool::new(
@@ -3098,19 +3087,8 @@ impl L1Node {
                 *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
                 
                 // Deduct tokens
-                if pool.token_a == "XRGE" {
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_a as f64;
-                } else {
-                    let key = (tx.from_pub_key.clone(), pool.token_a.clone());
-                    *token_balances.entry(key).or_insert(0.0) -= amount_a as f64;
-                }
-                
-                if pool.token_b == "XRGE" {
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_b as f64;
-                } else {
-                    let key = (tx.from_pub_key.clone(), pool.token_b.clone());
-                    *token_balances.entry(key).or_insert(0.0) -= amount_b as f64;
-                }
+                Self::amm_debit(balances, token_balances, &tx.from_pub_key, &pool.token_a, amount_a as f64);
+                Self::amm_debit(balances, token_balances, &tx.from_pub_key, &pool.token_b, amount_b as f64);
                 
                 // Calculate LP tokens to mint
                 let lp_amount = amm::calculate_lp_mint(
@@ -3207,19 +3185,8 @@ impl L1Node {
                 *lp_balances.entry(lp_key).or_insert(0.0) -= lp_amount as f64;
                 
                 // Return tokens
-                if pool.token_a == "XRGE" {
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount_a as f64;
-                } else {
-                    let key = (tx.from_pub_key.clone(), pool.token_a.clone());
-                    *token_balances.entry(key).or_insert(0.0) += amount_a as f64;
-                }
-                
-                if pool.token_b == "XRGE" {
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount_b as f64;
-                } else {
-                    let key = (tx.from_pub_key.clone(), pool.token_b.clone());
-                    *token_balances.entry(key).or_insert(0.0) += amount_b as f64;
-                }
+                Self::amm_credit(balances, token_balances, &tx.from_pub_key, &pool.token_a, amount_a as f64);
+                Self::amm_credit(balances, token_balances, &tx.from_pub_key, &pool.token_b, amount_b as f64);
                 
                 // Update pool
                 pool.reserve_a -= amount_a;
@@ -3331,12 +3298,7 @@ impl L1Node {
                     
                     // Deduct input token (only on first hop)
                     if i == 0 {
-                        if t_in == "XRGE" {
-                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= current_amount as f64;
-                        } else {
-                            let key = (tx.from_pub_key.clone(), t_in.clone());
-                            *token_balances.entry(key).or_insert(0.0) -= current_amount as f64;
-                        }
+                        Self::amm_debit(balances, token_balances, &tx.from_pub_key, t_in, current_amount as f64);
                     }
                     
                     // Update pool reserves
@@ -3364,12 +3326,7 @@ impl L1Node {
                 
                 // Credit output token
                 let final_token = path.last().unwrap();
-                if final_token == "XRGE" {
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += current_amount as f64;
-                } else {
-                    let key = (tx.from_pub_key.clone(), final_token.clone());
-                    *token_balances.entry(key).or_insert(0.0) += current_amount as f64;
-                }
+                Self::amm_credit(balances, token_balances, &tx.from_pub_key, final_token, current_amount as f64);
                 
                 // Save swap event for the primary pool (direct swap) or first hop
                 let primary_pool_id = LiquidityPool::make_pool_id(token_in, token_out);
@@ -3569,6 +3526,53 @@ impl L1Node {
         Ok(())
     }
     
+    // ── Shared AMM balance primitives (XRGE → native ledger, else token map) ──
+    // The create_pool/add_liquidity/remove_liquidity/swap appliers — both the
+    // live path and the rebuild mirror — repeat the "if token == XRGE debit the
+    // native ledger, else the token map" dichotomy ~30 times. Centralising it
+    // here means the f64→u128 flip (T3) touches these three functions instead of
+    // thirty call sites, and the two AMM appliers can't silently diverge on it.
+    fn amm_balance_of(
+        balances: &HashMap<String, f64>,
+        token_balances: &HashMap<TokenBalanceKey, f64>,
+        user: &str,
+        token: &str,
+    ) -> f64 {
+        if token == "XRGE" {
+            *balances.get(user).unwrap_or(&0.0)
+        } else {
+            *token_balances.get(&(user.to_string(), token.to_string())).unwrap_or(&0.0)
+        }
+    }
+
+    fn amm_debit(
+        balances: &mut HashMap<String, f64>,
+        token_balances: &mut HashMap<TokenBalanceKey, f64>,
+        user: &str,
+        token: &str,
+        amount: f64,
+    ) {
+        if token == "XRGE" {
+            *balances.entry(user.to_string()).or_insert(0.0) -= amount;
+        } else {
+            *token_balances.entry((user.to_string(), token.to_string())).or_insert(0.0) -= amount;
+        }
+    }
+
+    fn amm_credit(
+        balances: &mut HashMap<String, f64>,
+        token_balances: &mut HashMap<TokenBalanceKey, f64>,
+        user: &str,
+        token: &str,
+        amount: f64,
+    ) {
+        if token == "XRGE" {
+            *balances.entry(user.to_string()).or_insert(0.0) += amount;
+        } else {
+            *token_balances.entry((user.to_string(), token.to_string())).or_insert(0.0) += amount;
+        }
+    }
+
     /// Apply AMM balance effects during rebuild (doesn't modify pool_store)
     fn apply_amm_balance_effects(
         balances: &mut HashMap<String, f64>,
@@ -3594,31 +3598,13 @@ impl L1Node {
                         eprintln!("[rebuild] Skipping create_pool: insufficient XRGE ({:.4} < {:.4})", xrge_bal, xrge_needed);
                         return;
                     }
-                    if token_a != "XRGE" {
-                        let key = (tx.from_pub_key.clone(), token_a.clone());
-                        let bal = *token_balances.get(&key).unwrap_or(&0.0);
-                        if bal < amount_a as f64 { return; }
-                    }
-                    if token_b != "XRGE" {
-                        let key = (tx.from_pub_key.clone(), token_b.clone());
-                        let bal = *token_balances.get(&key).unwrap_or(&0.0);
-                        if bal < amount_b as f64 { return; }
-                    }
+                    if token_a != "XRGE" && Self::amm_balance_of(balances, token_balances, &tx.from_pub_key, token_a) < amount_a as f64 { return; }
+                    if token_b != "XRGE" && Self::amm_balance_of(balances, token_balances, &tx.from_pub_key, token_b) < amount_b as f64 { return; }
 
                     *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                    if token_a == "XRGE" {
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_a as f64;
-                    } else {
-                        let key = (tx.from_pub_key.clone(), token_a.clone());
-                        *token_balances.entry(key).or_insert(0.0) -= amount_a as f64;
-                    }
-                    if token_b == "XRGE" {
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_b as f64;
-                    } else {
-                        let key = (tx.from_pub_key.clone(), token_b.clone());
-                        *token_balances.entry(key).or_insert(0.0) -= amount_b as f64;
-                    }
-                    
+                    Self::amm_debit(balances, token_balances, &tx.from_pub_key, token_a, amount_a as f64);
+                    Self::amm_debit(balances, token_balances, &tx.from_pub_key, token_b, amount_b as f64);
+
                     let pool_id = LiquidityPool::make_pool_id(token_a, token_b);
                     if let Ok(Some(_pool)) = pool_store.get_pool(&pool_id) {
                         let initial_lp = ((amount_a as f64 * amount_b as f64).sqrt() as u64).saturating_sub(1000);
@@ -3640,29 +3626,13 @@ impl L1Node {
                         if pool.token_a == "XRGE" { xrge_needed += amount_a as f64; }
                         if pool.token_b == "XRGE" { xrge_needed += amount_b as f64; }
                         if xrge_bal < xrge_needed { return; }
-                        if pool.token_a != "XRGE" {
-                            let key = (tx.from_pub_key.clone(), pool.token_a.clone());
-                            if *token_balances.get(&key).unwrap_or(&0.0) < amount_a as f64 { return; }
-                        }
-                        if pool.token_b != "XRGE" {
-                            let key = (tx.from_pub_key.clone(), pool.token_b.clone());
-                            if *token_balances.get(&key).unwrap_or(&0.0) < amount_b as f64 { return; }
-                        }
+                        if pool.token_a != "XRGE" && Self::amm_balance_of(balances, token_balances, &tx.from_pub_key, &pool.token_a) < amount_a as f64 { return; }
+                        if pool.token_b != "XRGE" && Self::amm_balance_of(balances, token_balances, &tx.from_pub_key, &pool.token_b) < amount_b as f64 { return; }
 
                         *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                        if pool.token_a == "XRGE" {
-                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_a as f64;
-                        } else {
-                            let key = (tx.from_pub_key.clone(), pool.token_a.clone());
-                            *token_balances.entry(key).or_insert(0.0) -= amount_a as f64;
-                        }
-                        if pool.token_b == "XRGE" {
-                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_b as f64;
-                        } else {
-                            let key = (tx.from_pub_key.clone(), pool.token_b.clone());
-                            *token_balances.entry(key).or_insert(0.0) -= amount_b as f64;
-                        }
-                        
+                        Self::amm_debit(balances, token_balances, &tx.from_pub_key, &pool.token_a, amount_a as f64);
+                        Self::amm_debit(balances, token_balances, &tx.from_pub_key, &pool.token_b, amount_b as f64);
+
                         if let Some(lp_amount) = amm::calculate_lp_mint(amount_a, amount_b, pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
                             let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
                             *lp_balances.entry(lp_key).or_insert(0.0) += lp_amount as f64;
@@ -3688,18 +3658,8 @@ impl L1Node {
                         *lp_balances.entry(lp_key).or_insert(0.0) -= lp_amount as f64;
                         
                         if let Some((amount_a, amount_b)) = amm::calculate_remove_liquidity(lp_amount, pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
-                            if pool.token_a == "XRGE" {
-                                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount_a as f64;
-                            } else {
-                                let key = (tx.from_pub_key.clone(), pool.token_a.clone());
-                                *token_balances.entry(key).or_insert(0.0) += amount_a as f64;
-                            }
-                            if pool.token_b == "XRGE" {
-                                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount_b as f64;
-                            } else {
-                                let key = (tx.from_pub_key.clone(), pool.token_b.clone());
-                                *token_balances.entry(key).or_insert(0.0) += amount_b as f64;
-                            }
+                            Self::amm_credit(balances, token_balances, &tx.from_pub_key, &pool.token_a, amount_a as f64);
+                            Self::amm_credit(balances, token_balances, &tx.from_pub_key, &pool.token_b, amount_b as f64);
                         }
                     }
                 }
@@ -3730,14 +3690,9 @@ impl L1Node {
                     *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
                     
                     let path = tx.payload.swap_path.clone().unwrap_or_else(|| vec![token_in.clone(), token_out.clone()]);
-                    
-                    if token_in == "XRGE" {
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_in as f64;
-                    } else {
-                        let key = (tx.from_pub_key.clone(), token_in.clone());
-                        *token_balances.entry(key).or_insert(0.0) -= amount_in as f64;
-                    }
-                    
+
+                    Self::amm_debit(balances, token_balances, &tx.from_pub_key, token_in, amount_in as f64);
+
                     let mut current_amount = amount_in;
                     for i in 0..(path.len() - 1) {
                         let t_in = &path[i];
@@ -3754,12 +3709,7 @@ impl L1Node {
                     }
                     
                     let final_token = path.last().unwrap_or(token_out);
-                    if final_token == "XRGE" {
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += current_amount as f64;
-                    } else {
-                        let key = (tx.from_pub_key.clone(), final_token.clone());
-                        *token_balances.entry(key).or_insert(0.0) += current_amount as f64;
-                    }
+                    Self::amm_credit(balances, token_balances, &tx.from_pub_key, final_token, current_amount as f64);
                 }
             }
             _ => {}
@@ -6018,6 +5968,63 @@ mod amm_replay_tests {
         assert_eq!(bal["user"], 500.0);
         assert!(tok.is_empty());
         assert!(lp.is_empty());
+    }
+
+    #[test]
+    fn create_pool_debits_and_mints_initial_lp() {
+        let (_dir, ps) = seeded_store(); // pool QTOK-XRGE already exists
+        let mut bal = HashMap::from([("user".to_string(), 500_000.0)]);
+        let mut tok: HashMap<TokenBalanceKey, f64> =
+            HashMap::from([(("user".to_string(), "QTOK".to_string()), 500_000.0)]);
+        let mut lp: HashMap<TokenBalanceKey, f64> = HashMap::new();
+
+        let tx = amm_tx(
+            "create_pool",
+            "user",
+            0.1,
+            TxPayload {
+                token_a_symbol: Some("XRGE".to_string()),
+                token_b_symbol: Some("QTOK".to_string()),
+                amount_a: Some(100_000), // XRGE
+                amount_b: Some(200_000), // QTOK
+                ..Default::default()
+            },
+        );
+        L1Node::apply_amm_balance_effects(&mut bal, &mut tok, &mut lp, &tx, &ps);
+
+        assert!((bal["user"] - (500_000.0 - 0.1 - 100_000.0)).abs() < 1e-9);
+        assert!((tok[&("user".to_string(), "QTOK".to_string())] - 300_000.0).abs() < 1e-9);
+        // initial LP = floor(sqrt(a*b)) - 1000
+        let expected_lp = ((100_000.0_f64 * 200_000.0).sqrt() as u64).saturating_sub(1000);
+        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], expected_lp as f64);
+    }
+
+    #[test]
+    fn remove_liquidity_burns_lp_and_returns_both_tokens() {
+        let (_dir, ps) = seeded_store();
+        let mut bal = HashMap::from([("user".to_string(), 10.0)]);
+        let mut tok: HashMap<TokenBalanceKey, f64> = HashMap::new();
+        let mut lp: HashMap<TokenBalanceKey, f64> =
+            HashMap::from([(("user".to_string(), "QTOK-XRGE".to_string()), 50_000.0)]);
+
+        let tx = amm_tx(
+            "remove_liquidity",
+            "user",
+            0.1,
+            TxPayload {
+                pool_id: Some("QTOK-XRGE".to_string()),
+                lp_amount: Some(10_000),
+                ..Default::default()
+            },
+        );
+        L1Node::apply_amm_balance_effects(&mut bal, &mut tok, &mut lp, &tx, &ps);
+
+        let (out_a, out_b) = amm::calculate_remove_liquidity(10_000, 200_000, 100_000, 141_421).unwrap();
+        // fee debited, LP burned
+        assert!((bal.get("user").copied().unwrap_or(0.0) - (10.0 - 0.1 + out_b as f64)).abs() < 1e-9);
+        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], 40_000.0);
+        // token_a = QTOK returned to token_balances, token_b = XRGE returned to native
+        assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], out_a as f64);
     }
 }
 
