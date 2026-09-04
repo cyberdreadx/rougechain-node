@@ -39,6 +39,15 @@ pub fn fee_to_quanta(fee_xrge: f64) -> u128 {
     (fee_xrge * QUANTA_PER_XRGE as f64 + 0.5) as u128
 }
 
+/// Any `f64`-XRGE value — a whole amount *or* a fractional fee — → quanta,
+/// rounded half-up. In the ledger, AMM/transfer XRGE amounts arrive as whole
+/// `f64` and fees as fractional `f64`; both convert through here so the scaling
+/// is defined in exactly one place.
+#[inline]
+pub fn xrge_f64_to_quanta(x: f64) -> u128 {
+    fee_to_quanta(x)
+}
+
 /// Quanta → display XRGE. **Serialization boundary only** — presentation, never
 /// consensus. Reintroducing `f64` here is safe because the value is only shown
 /// to clients; the ledger itself stays integer.
