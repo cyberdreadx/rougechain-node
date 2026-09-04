@@ -5694,3 +5694,179 @@ impl L1Node {
     }
 
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 0 ledger determinism harness.
+//
+// Unit tests for the two building blocks of balance state — the per-tx
+// applier and the fee distributor — that block replay must reproduce
+// identically on every node. These are the first tests of the native ledger
+// and lock in the properties the integer-ledger / state-root work depends on:
+// keyed mutation is map-order-independent, the fee split is exactly 20/70/10
+// stake-weighted, and distribution is deterministic. If any drifts, a test
+// fails before the divergence could reach consensus.
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod ledger_tests {
+    use super::*;
+
+    const EPS: f64 = 1e-9;
+
+    fn transfer_tx(from: &str, to: &str, amount: u64, fee: f64, token: Option<&str>) -> TxV1 {
+        TxV1 {
+            version: 1,
+            tx_type: "transfer".to_string(),
+            from_pub_key: from.to_string(),
+            nonce: 0,
+            payload: TxPayload {
+                to_pub_key_hex: Some(to.to_string()),
+                amount: Some(amount),
+                token_symbol: token.map(|s| s.to_string()),
+                ..Default::default()
+            },
+            fee,
+            sig: String::new(),
+            signed_payload: None,
+        }
+    }
+
+    /// Apply one tx to `balances`, returning the (token_balances, burned_tokens) maps.
+    fn apply(
+        balances: &mut HashMap<String, f64>,
+        tx: &TxV1,
+    ) -> (HashMap<TokenBalanceKey, f64>, HashMap<String, f64>) {
+        let mut token_balances: HashMap<TokenBalanceKey, f64> = HashMap::new();
+        let mut burned: HashMap<String, f64> = HashMap::new();
+        let uq: Arc<Mutex<Vec<UnbondingEntry>>> = Arc::new(Mutex::new(Vec::new()));
+        let ss = Arc::new(Mutex::new(0.0f64));
+        L1Node::apply_balance_tx_inner(
+            balances, &mut token_balances, &mut burned, tx, None, "", &uq, 1, &ss,
+        );
+        (token_balances, burned)
+    }
+
+    fn dist(
+        balances: &mut HashMap<String, f64>,
+        total_fees: f64,
+        proposer: &str,
+        stakes: &BTreeMap<String, u128>,
+        base_fee: f64,
+        tx_count: usize,
+    ) {
+        let burned = Arc::new(Mutex::new(0.0f64));
+        L1Node::distribute_fees(balances, total_fees, proposer, stakes, base_fee, tx_count, &burned);
+    }
+
+    fn near(a: f64, b: f64) -> bool {
+        (a - b).abs() < EPS
+    }
+
+    // ── apply_balance_tx_inner ────────────────────────────────────────
+
+    #[test]
+    fn transfer_debits_sender_and_credits_recipient() {
+        let mut b = HashMap::from([("alice".to_string(), 100.0)]);
+        apply(&mut b, &transfer_tx("alice", "bob", 30, 1.0, None));
+        assert!(near(b["alice"], 69.0), "sender debited amount+fee: {}", b["alice"]);
+        assert!(near(b["bob"], 30.0), "recipient credited amount: {}", b["bob"]);
+    }
+
+    #[test]
+    fn transfer_with_insufficient_balance_is_rejected() {
+        let mut b = HashMap::from([("alice".to_string(), 10.0)]);
+        apply(&mut b, &transfer_tx("alice", "bob", 30, 1.0, None));
+        assert!(near(b["alice"], 10.0), "sender untouched on rejection");
+        assert!(!b.contains_key("bob"), "recipient not credited on rejection");
+    }
+
+    #[test]
+    fn transfer_result_is_map_order_independent() {
+        // Same logical state, different HashMap insertion order → identical result.
+        let mut b1 = HashMap::new();
+        b1.insert("alice".to_string(), 100.0);
+        b1.insert("zzz".to_string(), 5.0);
+        let mut b2 = HashMap::new();
+        b2.insert("zzz".to_string(), 5.0);
+        b2.insert("alice".to_string(), 100.0);
+
+        apply(&mut b1, &transfer_tx("alice", "bob", 30, 1.0, None));
+        apply(&mut b2, &transfer_tx("alice", "bob", 30, 1.0, None));
+
+        let s1: BTreeMap<_, _> = b1.into_iter().collect();
+        let s2: BTreeMap<_, _> = b2.into_iter().collect();
+        assert_eq!(s1, s2, "keyed mutation must not depend on map iteration order");
+    }
+
+    #[test]
+    fn burn_transfer_credits_burned_not_recipient() {
+        let mut b = HashMap::from([("alice".to_string(), 100.0)]);
+        let (_tb, burned) = apply(&mut b, &transfer_tx("alice", BURN_ADDRESS, 30, 1.0, None));
+        assert!(near(b["alice"], 69.0), "sender still debited amount+fee");
+        assert!(!b.contains_key(BURN_ADDRESS), "burn address is not credited a balance");
+        assert!(near(*burned.get("XRGE").unwrap_or(&0.0), 30.0), "burned XRGE tracked");
+    }
+
+    // ── distribute_fees ───────────────────────────────────────────────
+
+    #[test]
+    fn fee_split_is_20_70_10() {
+        let mut b = HashMap::new();
+        let stakes = BTreeMap::from([("val1".to_string(), 100u128)]);
+        // base_fee 0 => no burn, no floor subsidy; whole 100 is the tip pool.
+        dist(&mut b, 100.0, "prop", &stakes, 0.0, 0);
+        assert!(near(b["prop"], 20.0), "proposer 20%: {}", b["prop"]);
+        assert!(near(b["val1"], 70.0), "validators 70%: {}", b["val1"]);
+        assert!(near(b["__treasury__"], 10.0), "treasury 10%: {}", b["__treasury__"]);
+        let total: f64 = b.values().sum();
+        assert!(near(total, 100.0), "no value created or lost: {}", total);
+    }
+
+    #[test]
+    fn validator_pool_is_stake_weighted() {
+        let mut b = HashMap::new();
+        let stakes = BTreeMap::from([("v1".to_string(), 100u128), ("v2".to_string(), 300u128)]);
+        dist(&mut b, 100.0, "prop", &stakes, 0.0, 0);
+        // validator pool = 70, split 25% / 75%
+        assert!(near(b["v1"], 17.5), "v1 = 25% of 70: {}", b["v1"]);
+        assert!(near(b["v2"], 52.5), "v2 = 75% of 70: {}", b["v2"]);
+    }
+
+    #[test]
+    fn empty_stake_gives_validator_pool_to_proposer() {
+        let mut b = HashMap::new();
+        let stakes: BTreeMap<String, u128> = BTreeMap::new();
+        dist(&mut b, 100.0, "prop", &stakes, 0.0, 0);
+        // proposer gets proposer_share (20) + validator_pool (70) = 90; treasury 10.
+        assert!(near(b["prop"], 90.0), "proposer absorbs validator pool: {}", b["prop"]);
+        assert!(near(b["__treasury__"], 10.0));
+    }
+
+    #[test]
+    fn tip_floor_is_subsidized_from_staking_reserve() {
+        let mut b = HashMap::from([("__staking_rewards__".to_string(), 1.0)]);
+        let stakes = BTreeMap::from([("v1".to_string(), 100u128)]);
+        // total_fees 0 => tip_pool 0 < MIN_TIP_FLOOR(0.1); subsidize 0.1 from reserve.
+        dist(&mut b, 0.0, "prop", &stakes, 0.0, 0);
+        assert!(near(b["__staking_rewards__"], 0.9), "reserve drained by floor: {}", b["__staking_rewards__"]);
+        // the 0.1 floor is then split 20/70/10
+        assert!(near(b["prop"], 0.02));
+        assert!(near(b["v1"], 0.07));
+        assert!(near(b["__treasury__"], 0.01));
+    }
+
+    #[test]
+    fn distribution_is_deterministic() {
+        let stakes = BTreeMap::from([
+            ("v1".to_string(), 111u128),
+            ("v2".to_string(), 333u128),
+            ("v3".to_string(), 555u128),
+        ]);
+        let mut a = HashMap::new();
+        let mut c = HashMap::new();
+        dist(&mut a, 123.456, "prop", &stakes, 0.5, 7);
+        dist(&mut c, 123.456, "prop", &stakes, 0.5, 7);
+        let sa: BTreeMap<_, _> = a.into_iter().collect();
+        let sc: BTreeMap<_, _> = c.into_iter().collect();
+        assert_eq!(sa, sc, "identical inputs must produce identical distribution");
+    }
+}
