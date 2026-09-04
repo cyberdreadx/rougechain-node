@@ -323,29 +323,30 @@ const PoolDetail = () => {
             {chartData.length > 0 ? (
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis
                     dataKey="time"
-                    stroke="#666"
-                    tick={{ fill: '#888', fontSize: 12 }}
+                    stroke="hsl(var(--muted-foreground))"
+                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
                   />
                   <YAxis
-                    stroke="#666"
-                    tick={{ fill: '#888', fontSize: 12 }}
+                    stroke="hsl(var(--muted-foreground))"
+                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
                     tickFormatter={(v) => v.toFixed(4)}
                   />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: '#1a1a1a',
-                      border: '1px solid #333',
-                      borderRadius: '8px'
+                      backgroundColor: 'hsl(var(--popover))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '8px',
+                      color: 'hsl(var(--popover-foreground))'
                     }}
-                    labelStyle={{ color: '#888' }}
+                    labelStyle={{ color: 'hsl(var(--muted-foreground))' }}
                   />
                   <Line
                     type="monotone"
                     dataKey="price"
-                    stroke="#22c55e"
+                    stroke="hsl(var(--primary))"
                     strokeWidth={2}
                     dot={false}
                   />

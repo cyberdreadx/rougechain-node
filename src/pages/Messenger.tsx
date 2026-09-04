@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw, ArrowDownUp, Copy, KeyRound, UserCircle, Bell, BellOff } from "lucide-react";
+import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw, ArrowDownUp, Copy, KeyRound, UserCircle, Bell, BellOff, MoreHorizontal } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -449,40 +450,49 @@ const Messenger = () => {
           </div>
         </div>
         <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setShowSwapWidget(true)}
-            title="Quick Swap"
-          >
-            <ArrowDownUp className="w-4 h-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleReregister}
-            disabled={isReregistering}
-            title="Re-register wallet with network"
-          >
-            <RefreshCw className={`w-4 h-4 ${isReregistering ? "animate-spin" : ""}`} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleRegenerateKeys}
-            disabled={isRegeneratingKeys}
-            title="Regenerate encryption keys (fixes key mismatch errors)"
-          >
-            <KeyRound className={`w-4 h-4 ${isRegeneratingKeys ? "animate-spin" : ""}`} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setShowWalletBackup(true)}
-            title="Backup Wallet"
-          >
-            <Download className="w-4 h-4" />
-          </Button>
+          {/* Secondary actions: inline on desktop, folded into a ⋯ menu on mobile */}
+          <div className="hidden sm:flex items-center gap-2">
+            <Button variant="ghost" size="icon" onClick={() => setShowSwapWidget(true)} title="Quick Swap">
+              <ArrowDownUp className="w-4 h-4" />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={handleReregister} disabled={isReregistering} title="Re-register wallet with network">
+              <RefreshCw className={`w-4 h-4 ${isReregistering ? "animate-spin" : ""}`} />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={handleRegenerateKeys} disabled={isRegeneratingKeys} title="Regenerate encryption keys (fixes key mismatch errors)">
+              <KeyRound className={`w-4 h-4 ${isRegeneratingKeys ? "animate-spin" : ""}`} />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={() => setShowWalletBackup(true)} title="Backup Wallet">
+              <Download className="w-4 h-4" />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={() => setShowPrivacySettings(true)} title="Privacy Settings">
+              <Settings className="w-4 h-4" />
+            </Button>
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="sm:hidden" title="More actions">
+                <MoreHorizontal className="w-4 h-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setShowSwapWidget(true)}>
+                <ArrowDownUp className="w-4 h-4 mr-2" /> Quick Swap
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleReregister} disabled={isReregistering}>
+                <RefreshCw className={`w-4 h-4 mr-2 ${isReregistering ? "animate-spin" : ""}`} /> Re-register wallet
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleRegenerateKeys} disabled={isRegeneratingKeys}>
+                <KeyRound className={`w-4 h-4 mr-2 ${isRegeneratingKeys ? "animate-spin" : ""}`} /> Regenerate keys
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowWalletBackup(true)}>
+                <Download className="w-4 h-4 mr-2" /> Backup wallet
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowPrivacySettings(true)}>
+                <Settings className="w-4 h-4 mr-2" /> Privacy settings
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {/* Notifications — kept visible on all sizes */}
           <Button
             variant="ghost"
             size="icon"
@@ -503,14 +513,6 @@ const Messenger = () => {
             title={notifEnabled ? "Mute notifications" : "Enable notifications"}
           >
             {notifEnabled ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4 text-muted-foreground" />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setShowPrivacySettings(true)}
-            title="Privacy Settings"
-          >
-            <Settings className="w-4 h-4" />
           </Button>
           <Button
             variant="outline"

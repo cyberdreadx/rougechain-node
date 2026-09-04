@@ -214,7 +214,7 @@ function ComposeView({
           </span>
         )}
       </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 w-full max-w-3xl mx-auto">
         <div>
           <label className="text-xs text-muted-foreground uppercase tracking-wider font-medium">To</label>
           <Input
@@ -500,7 +500,7 @@ function ReadView({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto w-full max-w-3xl mx-auto">
         {hasThread ? (
           <div>
             {thread.map((threadItem, idx) => (
@@ -621,7 +621,7 @@ function SettingsView({
         <span className="font-medium">Mail Settings</span>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 w-full max-w-3xl mx-auto">
         {/* Signature */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
@@ -990,7 +990,7 @@ const MailPage = () => {
       </AnimatePresence>
 
       {/* Folder tabs */}
-      <div className="flex border-b border-border relative z-10">
+      <div className="flex border-b border-border relative z-10 w-full max-w-5xl mx-auto">
         {([
           { id: "inbox" as Folder, label: "Inbox", icon: Inbox, badge: unreadCount },
           { id: "sent" as Folder, label: "Sent", icon: SendHorizonal },
@@ -1018,7 +1018,7 @@ const MailPage = () => {
       </div>
 
       {/* Message list */}
-      <div className="flex-1 overflow-y-auto relative z-10">
+      <div className="flex-1 overflow-y-auto relative z-10 w-full max-w-5xl mx-auto">
         {isLoadingMail ? (
           <div className="flex items-center justify-center h-48">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
