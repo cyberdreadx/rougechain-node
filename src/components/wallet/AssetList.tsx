@@ -69,15 +69,15 @@ const AssetList = ({ assets = [], emptyActionLabel, onEmptyAction, emptyHint, on
               className="flex items-center justify-between px-4 py-3 hover:bg-secondary/50 transition-colors cursor-pointer group"
               onClick={() => onAssetClick?.(asset)}
             >
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
                 {renderIcon(asset)}
-                <div>
-                  <p className="text-sm font-medium text-foreground">{asset.name}</p>
-                  <p className="text-xs text-muted-foreground">{asset.symbol}</p>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground truncate">{asset.name}</p>
+                  <p className="text-xs text-muted-foreground truncate">{asset.symbol}</p>
                 </div>
               </div>
-              
-              <div className="text-right">
+
+              <div className="text-right shrink-0 pl-2">
                 <p className="text-sm font-medium text-foreground">{asset.balance}</p>
                 <div className="flex flex-col items-end gap-0.5">
                   {asset.usdValue ? (

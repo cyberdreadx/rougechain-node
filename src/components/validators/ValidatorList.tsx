@@ -121,7 +121,7 @@ export function ValidatorList({ onSelectValidator }: ValidatorListProps) {
                 onClick={() => onSelectValidator?.(validator)}
                 className={`p-4 rounded-lg border cursor-pointer transition-all hover:scale-[1.01] ${tierConfig[validator.tier].bgClass}`}
               >
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
                       <span className={`text-xs font-bold ${index < 3 ? "text-primary" : "text-muted-foreground"}`}>
@@ -143,7 +143,7 @@ export function ValidatorList({ onSelectValidator }: ValidatorListProps) {
                           {validator.tier}
                         </Badge>
                       </div>
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1">
                           <div className={`w-2 h-2 rounded-full ${status.color}`} />
                           {status.label}
@@ -174,15 +174,17 @@ export function ValidatorList({ onSelectValidator }: ValidatorListProps) {
                       </div>
                     </div>
                   </div>
-                  <div className="text-right flex-shrink-0">
-                    <div className="font-semibold text-sm">
-                      {formatStake(validator.stakedAmount)} XRGE
+                  <div className="flex items-center justify-between gap-2 pl-10 sm:pl-0 flex-shrink-0">
+                    <div className="sm:text-right">
+                      <div className="font-semibold text-sm">
+                        {formatStake(validator.stakedAmount)} XRGE
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {votingPower.toFixed(2)}% voting power
+                      </div>
                     </div>
-                    <div className="text-xs text-muted-foreground">
-                      {votingPower.toFixed(2)}% voting power
-                    </div>
+                    <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                   </div>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                 </div>
                 <div className="mt-3">
                   <Progress value={votingPower} className="h-1" />

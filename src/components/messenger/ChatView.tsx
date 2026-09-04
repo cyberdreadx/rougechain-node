@@ -840,8 +840,8 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <p className="font-medium text-foreground">{getConversationName()}</p>
+          <div className="flex items-center gap-2 min-w-0">
+            <p className="font-medium text-foreground truncate">{getConversationName()}</p>
             {isRecipientBot && (
               <span className="px-1.5 py-0.5 text-[10px] rounded bg-primary/20 text-primary">
                 AI
@@ -1407,6 +1407,7 @@ const MessageBubble = ({
       className={`flex ${isOwn ? "justify-end" : "justify-start"}`}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => setShowActions(false)}
+      onClick={() => setShowActions((s) => !s)}
     >
       <div className="relative">
         {/* Action buttons (reply/react) */}

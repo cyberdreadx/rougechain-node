@@ -231,10 +231,10 @@ export function NodeDashboard() {
       </div>
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <Server className="h-6 w-6 text-primary" />
-            <h2 className="text-2xl font-bold">Quantum Vault Core Daemons</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Server className="h-6 w-6 text-primary flex-shrink-0" />
+            <h2 className="text-xl md:text-2xl font-bold">Quantum Vault Core Daemons</h2>
           </div>
           <Badge variant={daemonStats.length > 0 ? "default" : "secondary"} className={daemonStats.length > 0 ? "bg-green-500" : ""}>
             {isChecking ? "Checking..." : daemonStats.length > 0 ? `Network Online · ${validatorCount || daemonStats.length} Validators` : "No Daemons Detected"}

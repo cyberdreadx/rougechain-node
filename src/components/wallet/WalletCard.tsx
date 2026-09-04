@@ -80,7 +80,7 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.2 }}
-              className="text-4xl font-bold text-gradient-quantum"
+              className="text-3xl sm:text-4xl font-bold text-gradient-quantum break-all"
             >
               {balance || "0"} XRGE
             </motion.h2>
