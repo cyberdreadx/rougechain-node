@@ -264,7 +264,7 @@ const ChatPayment = ({
             )}
           </Button>
 
-          <p className="text-[10px] text-center text-muted-foreground">
+          <p className="text-xs text-center text-muted-foreground">
             Fee: {BASE_TRANSFER_FEE} XRGE • Signed with ML-DSA-65
           </p>
         </div>
@@ -310,7 +310,7 @@ export const PaymentBubble = ({
           <p className="text-xs text-muted-foreground italic">"{payment.memo}"</p>
         </div>
       )}
-      <div className={`px-4 py-1.5 text-[10px] flex items-center gap-1 ${
+      <div className={`px-4 py-1.5 text-xs flex items-center gap-1 ${
         isOwn ? "bg-primary/10 text-primary" : "bg-emerald-500/10 text-emerald-500"
       }`}>
         <CheckCircle2 className="w-3 h-3" />
@@ -387,7 +387,7 @@ export const PaymentRequestBubble = ({
           </button>
         </div>
       )}
-      <div className="px-4 py-1.5 text-[10px] flex items-center gap-1 bg-amber-500/10 text-amber-600">
+      <div className="px-4 py-1.5 text-xs flex items-center gap-1 bg-amber-500/10 text-amber-600">
         <DollarSign className="w-3 h-3" />
         <span>Payment Request</span>
       </div>

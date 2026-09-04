@@ -304,7 +304,7 @@ export function Sidebar({ children }: SidebarProps) {
           >
             <Wallet className="w-3 h-3 flex-shrink-0 text-primary" />
             <span className="font-mono text-foreground/80 truncate">{formatAddress(walletAddress)}</span>
-            <span className="ml-auto text-[10px] text-muted-foreground">{copied ? "✓" : "Copy"}</span>
+            <span className="ml-auto text-xs text-muted-foreground">{copied ? "✓" : "Copy"}</span>
           </button>
         </div>
       )}
@@ -326,7 +326,7 @@ export function Sidebar({ children }: SidebarProps) {
                   (expanded || isMobile) ? "opacity-100" : "opacity-0 h-0 pt-0 pb-0 overflow-hidden"
                 )}
               >
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">{group.title}</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/60">{group.title}</span>
                 <ChevronDown className={cn(
                   "w-3 h-3 text-muted-foreground/40 transition-transform duration-200",
                   collapsed && "-rotate-90"
@@ -374,7 +374,7 @@ export function Sidebar({ children }: SidebarProps) {
                   )}>
                     {item.label}
                     {badge > 0 && (expanded || isMobile) && (
-                      <span className="min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground leading-none px-1">
+                      <span className="min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground leading-none px-1">
                         {badge > 99 ? "99+" : badge}
                       </span>
                     )}
@@ -391,7 +391,7 @@ export function Sidebar({ children }: SidebarProps) {
           "px-3 pt-2 pb-0.5 transition-all duration-300",
           (expanded || isMobile) ? "opacity-100" : "opacity-0 h-0 pt-0 pb-0 overflow-hidden"
         )}>
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Resources</span>
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/60">Resources</span>
         </div>
         <a
           href="https://docs.rougechain.io"

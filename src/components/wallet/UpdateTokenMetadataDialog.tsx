@@ -220,7 +220,7 @@ const UpdateTokenMetadataDialog = ({
                         {image.startsWith("data:") ? "Uploaded (stored on-chain)" : "URL"}
                       </span>
                       {image.startsWith("data:") && (
-                        <span className="text-[10px] text-muted-foreground/60">
+                        <span className="text-xs text-muted-foreground/60">
                           {Math.round(image.length * 0.75 / 1024)} KB
                         </span>
                       )}

@@ -161,7 +161,7 @@ const ConversationList = ({ conversations, selectedId, wallet, currentWalletId, 
               <div className="flex items-center gap-2">
                 <ConversationNameDisplay name={getConversationName(conversation)} pubkey={getConversationPubkey(conversation)} />
                 {(conversation.unreadCount ?? 0) > 0 && (
-                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center">
                     {conversation.unreadCount! > 9 ? "9+" : conversation.unreadCount}
                   </span>
                 )}
@@ -178,7 +178,7 @@ const ConversationList = ({ conversations, selectedId, wallet, currentWalletId, 
               )}
             </div>
             {conversation.lastMessageAt && (
-              <span className="text-[10px] text-muted-foreground flex-shrink-0 self-start mt-1">
+              <span className="text-xs text-muted-foreground flex-shrink-0 self-start mt-1">
                 {formatRelativeTime(conversation.lastMessageAt)}
               </span>
             )}

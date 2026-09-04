@@ -178,15 +178,15 @@ const UnshieldDialog = ({ wallet, onClose, onSuccess }: UnshieldDialogProps) => 
                   </div>
                 </div>
 
-                <p className="text-[10px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   Commitment: {truncateHash(note.commitment)}
                 </p>
-                <p className="text-[10px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   Created: {new Date(note.createdAt).toLocaleString()}
                 </p>
 
                 {expandedNote === note.nullifier && (
-                  <div className="mt-2 p-2 rounded bg-background/50 text-[9px] font-mono break-all space-y-1">
+                  <div className="mt-2 p-2 rounded bg-background/50 text-xs font-mono break-all space-y-1">
                     <div><span className="text-muted-foreground">nullifier:</span> {note.nullifier}</div>
                     <div><span className="text-muted-foreground">randomness:</span> {note.randomness}</div>
                     <div><span className="text-muted-foreground">commitment:</span> {note.commitment}</div>

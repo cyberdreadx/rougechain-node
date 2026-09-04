@@ -245,7 +245,7 @@ const NetworkStatsBar = () => {
           >
             <item.icon className={`w-4 h-4 ${item.color}`} />
             <div className="flex flex-col">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
+              <span className="text-xs text-muted-foreground uppercase tracking-wide">
                 {item.label}
               </span>
               <span className={`text-sm font-semibold ${item.color}`}>
@@ -258,7 +258,7 @@ const NetworkStatsBar = () => {
         {/* Live indicator */}
         <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-success/10 border border-success/20">
           <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
-          <span className="text-[10px] text-success font-medium uppercase">Live</span>
+          <span className="text-xs text-success font-medium uppercase">Live</span>
         </div>
       </div>
     </motion.div>

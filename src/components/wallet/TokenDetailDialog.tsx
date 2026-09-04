@@ -190,7 +190,7 @@ const TokenDetailDialog = ({
         </svg>
         
         {/* Price labels */}
-        <div className="flex justify-between text-[10px] text-muted-foreground px-2">
+        <div className="flex justify-between text-xs text-muted-foreground px-2">
           <span>{new Date(priceHistory[0].timestamp).toLocaleDateString()}</span>
           <span>{new Date(priceHistory[priceHistory.length - 1].timestamp).toLocaleDateString()}</span>
         </div>

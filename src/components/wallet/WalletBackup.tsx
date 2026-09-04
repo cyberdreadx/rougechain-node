@@ -343,7 +343,7 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
                 <div className="grid grid-cols-3 gap-2">
                   {wallet?.mnemonic?.split(" ").map((word, i) => (
                     <div key={i} className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-muted/50 border border-border">
-                      <span className="text-[10px] text-muted-foreground w-5 text-right">{i + 1}.</span>
+                      <span className="text-xs text-muted-foreground w-5 text-right">{i + 1}.</span>
                       <span className="text-xs font-mono text-foreground">{word}</span>
                     </div>
                   ))}
@@ -415,8 +415,8 @@ const WalletBackup = ({ wallet, onClose, onImport, onLocked, vaultSettings, onUp
                   {wallet.signingPublicKey.slice(0, 20)}...
                 </p>
                 <div className="flex gap-2 mt-2">
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-primary/20 text-primary">ML-DSA-65</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-accent/20 text-accent">ML-KEM-768</span>
+                  <span className="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary">ML-DSA-65</span>
+                  <span className="text-xs px-2 py-0.5 rounded bg-accent/20 text-accent">ML-KEM-768</span>
                 </div>
               </div>
             )}

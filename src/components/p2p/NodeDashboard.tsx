@@ -469,7 +469,7 @@ export function NodeDashboard() {
                 <p className="text-xs text-muted-foreground mb-2">
                   If you don't have Rust yet, run this in your terminal. It takes about 2 minutes.
                 </p>
-                <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
+                <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all whitespace-pre-wrap break-all">
                   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
                 </code>
               </div>
@@ -487,10 +487,10 @@ export function NodeDashboard() {
                   Clone the code from GitHub and build it. This takes a few minutes the first time.
                 </p>
                 <div className="space-y-1.5">
-                  <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
+                  <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all whitespace-pre-wrap break-all">
                     git clone https://github.com/cyberdreadx/rougechain-node.git
                   </code>
-                  <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
+                  <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all whitespace-pre-wrap break-all">
                     cd rougechain-node/core && cargo build --release -p quantum-vault-daemon
                   </code>
                 </div>
@@ -508,7 +508,7 @@ export function NodeDashboard() {
                 <p className="text-xs text-muted-foreground mb-2">
                   That's it! Run this one command. Your node will connect to the network, sync the blockchain, and start running.
                 </p>
-                <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
+                <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all whitespace-pre-wrap break-all">
                   ./target/release/quantum-vault-daemon --api-port 5100 --peers "https://api.rougechain.io/api"
                 </code>
                 <p className="text-xs text-muted-foreground mt-2">
@@ -528,7 +528,7 @@ export function NodeDashboard() {
                   Want your node to show up with a name on the{" "}
                   <a href="/blockchain" className="text-primary underline">network globe</a>? Add <code className="text-xs bg-background px-1 rounded">--node-name</code>:
                 </p>
-                <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
+                <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all whitespace-pre-wrap break-all">
                   ./target/release/quantum-vault-daemon --api-port 5100 --node-name "MyAwesomeNode" --peers "https://api.rougechain.io/api"
                 </code>
               </div>
@@ -654,7 +654,7 @@ export function NodeDashboard() {
                 <p className="text-xs text-muted-foreground mb-2">
                   Add <code className="text-xs bg-background px-1 rounded">--mine</code> to your node command. Your node will now create blocks and earn fees!
                 </p>
-                <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all">
+                <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all whitespace-pre-wrap break-all">
                   ./target/release/quantum-vault-daemon --api-port 5100 --mine --node-name "MyValidator" --peers "https://api.rougechain.io/api"
                 </code>
                 <p className="text-xs text-muted-foreground mt-2">

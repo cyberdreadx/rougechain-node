@@ -119,7 +119,7 @@ const MiningPanel = ({
       <div className="flex items-center gap-2">
         <Pickaxe className="w-5 h-5 text-primary" />
         <h3 className="text-sm font-semibold text-foreground">Mining Console</h3>
-        <span className="ml-auto px-2 py-0.5 text-[10px] rounded bg-success/20 text-success border border-success/30">
+        <span className="ml-auto px-2 py-0.5 text-xs rounded bg-success/20 text-success border border-success/30">
           REAL PQC
         </span>
       </div>
@@ -204,7 +204,7 @@ const MiningPanel = ({
           <div className="flex items-center gap-2">
             <Key className="w-4 h-4 text-primary" />
             <span className="text-xs font-medium text-foreground">Active Keypair</span>
-            <span className="ml-auto px-1.5 py-0.5 text-[10px] rounded bg-primary/20 text-primary">
+            <span className="ml-auto px-1.5 py-0.5 text-xs rounded bg-primary/20 text-primary">
               FIPS 204
             </span>
           </div>
@@ -215,7 +215,7 @@ const MiningPanel = ({
             <p className="text-xs text-muted-foreground">
               Algorithm: <span className="text-primary font-medium">ML-DSA-65</span>
             </p>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               (1952 byte public key, ~3300 byte signatures)
             </p>
           </div>

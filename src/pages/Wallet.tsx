@@ -851,7 +851,7 @@ const Wallet = () => {
                 ) : (
                   <WifiOff className="w-3 h-3 text-destructive" />
                 )}
-                <span className="text-[11px] text-muted-foreground hidden sm:inline">
+                <span className="text-xs text-muted-foreground hidden sm:inline">
                   {formatLastUpdated(lastUpdated)}
                 </span>
               </div>
@@ -907,7 +907,7 @@ const Wallet = () => {
                 <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
                   <Send className="w-4 h-4 text-primary" />
                 </div>
-                <span className="text-[10px]">Send</span>
+                <span className="text-xs">Send</span>
               </Button>
               
               <Button
@@ -918,7 +918,7 @@ const Wallet = () => {
                 <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
                   <Download className="w-4 h-4 text-success" />
                 </div>
-                <span className="text-[10px]">Receive</span>
+                <span className="text-xs">Receive</span>
               </Button>
               
               {/* Only show faucets on testnet */}
@@ -936,7 +936,7 @@ const Wallet = () => {
                       <Droplets className="w-4 h-4 text-accent" />
                     )}
                   </div>
-                  <span className="text-[10px]">XRGE</span>
+                  <span className="text-xs">XRGE</span>
                 </Button>
               )}
               {!isMainnet && (
@@ -953,7 +953,7 @@ const Wallet = () => {
                       <DollarSign className="w-4 h-4 text-green-500" />
                     )}
                   </div>
-                  <span className="text-[10px]">qUSDC</span>
+                  <span className="text-xs">qUSDC</span>
                 </Button>
               )}
 
@@ -965,7 +965,7 @@ const Wallet = () => {
                 <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
                   <Plus className="w-4 h-4 text-primary" />
                 </div>
-                <span className="text-[10px]">Create</span>
+                <span className="text-xs">Create</span>
               </Button>
 
               <Button
@@ -977,7 +977,7 @@ const Wallet = () => {
                 <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
                   <Shield className="w-4 h-4 text-primary" />
                 </div>
-                <span className="text-[10px]">Shield</span>
+                <span className="text-xs">Shield</span>
               </Button>
 
               <Button
@@ -988,7 +988,7 @@ const Wallet = () => {
                 <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
                   <ShieldOff className="w-4 h-4 text-accent" />
                 </div>
-                <span className="text-[10px]">Unshield</span>
+                <span className="text-xs">Unshield</span>
               </Button>
               
               <Button
@@ -999,7 +999,7 @@ const Wallet = () => {
                 <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
                   <Unlink className="w-4 h-4 text-destructive" />
                 </div>
-                <span className="text-[10px]">Disconnect</span>
+                <span className="text-xs">Disconnect</span>
               </Button>
             </div>
 
@@ -1025,27 +1025,27 @@ const Wallet = () => {
               <div className="p-3 rounded-lg bg-secondary/50 border border-border mb-3">
                 <p className="text-xs text-muted-foreground mb-1">Token Type</p>
                 <p className="text-xs font-mono text-foreground">Native Chain Token</p>
-                <p className="text-[10px] text-muted-foreground mt-1">XRGE is the native currency of RougeChain</p>
+                <p className="text-xs text-muted-foreground mt-1">XRGE is the native currency of RougeChain</p>
               </div>
 
                 <div className="grid grid-cols-2 gap-2 mb-3">
                 <div className="p-2 rounded-lg bg-secondary/30">
-                  <p className="text-[10px] text-muted-foreground">Name</p>
+                  <p className="text-xs text-muted-foreground">Name</p>
                   <p className="text-xs font-medium text-foreground">{TOKEN_NAME}</p>
                 </div>
                 <div className="p-2 rounded-lg bg-secondary/30">
-                    <p className="text-[10px] text-muted-foreground">Network</p>
+                    <p className="text-xs text-muted-foreground">Network</p>
                     <p className="text-xs font-medium text-foreground">{networkLabel}</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 mb-3">
                   <div className="p-2 rounded-lg bg-secondary/30">
-                    <p className="text-[10px] text-muted-foreground">Chain ID</p>
+                    <p className="text-xs text-muted-foreground">Chain ID</p>
                     <p className="text-xs font-mono text-foreground">{chainIdLabel}</p>
                   </div>
                   <div className="p-2 rounded-lg bg-secondary/30">
-                    <p className="text-[10px] text-muted-foreground">Supply Model</p>
+                    <p className="text-xs text-muted-foreground">Supply Model</p>
                     <p className="text-xs font-medium text-foreground">
                       {networkLabel === "Mainnet" ? "Capped" : "Testnet"}
                     </p>
@@ -1088,7 +1088,7 @@ const Wallet = () => {
                     style={{ width: `${(circulatingSupply / TOTAL_SUPPLY) * 100}%` }}
                   />
                 </div>
-                <p className="text-[10px] text-muted-foreground text-center">
+                <p className="text-xs text-muted-foreground text-center">
                   {((circulatingSupply / TOTAL_SUPPLY) * 100).toFixed(6)}% in circulation
                 </p>
               </div>

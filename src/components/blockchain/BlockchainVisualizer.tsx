@@ -51,7 +51,7 @@ const BlockCard = ({ block, index, isFirst }: { block: Block; index: number; isF
               <span className="text-primary font-bold text-xs">#{block.index}</span>
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground">Block</p>
+              <p className="text-xs text-muted-foreground">Block</p>
               <p className="text-xs font-medium text-foreground">
                 {block.index === 0 ? "Genesis" : `Block ${block.index}`}
               </p>
@@ -66,7 +66,7 @@ const BlockCard = ({ block, index, isFirst }: { block: Block; index: number; isF
         </div>
 
         {/* Block data */}
-        <div className="space-y-2 text-[11px]">
+        <div className="space-y-2 text-xs">
           <div className="flex items-start gap-2 p-2 rounded-lg bg-muted/50">
             <Hash className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
             <div className="min-w-0">
@@ -95,7 +95,7 @@ const BlockCard = ({ block, index, isFirst }: { block: Block; index: number; isF
         </div>
 
         {/* Compact footer */}
-        <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
+        <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
           <span>{getTxCount()} tx</span>
           <span className="text-success flex items-center gap-1">
             <div className="w-1.5 h-1.5 rounded-full bg-success" />

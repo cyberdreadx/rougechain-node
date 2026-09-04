@@ -66,12 +66,12 @@ const PQCInfo = () => {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <p className="text-sm font-medium text-foreground">{algo.name}</p>
-                    <span className="px-1.5 py-0.5 text-[10px] rounded bg-success/20 text-success">
+                    <span className="px-1.5 py-0.5 text-xs rounded bg-success/20 text-success">
                       {algo.status}
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground mb-2">{algo.description}</p>
-                  <div className="flex gap-4 text-[10px] text-muted-foreground">
+                  <div className="flex gap-4 text-xs text-muted-foreground">
                     <span>Key: {algo.keySize}</span>
                     <span>Sig: {algo.sigSize}</span>
                   </div>
@@ -95,7 +95,7 @@ const PQCInfo = () => {
               className="h-full bg-gradient-to-r from-primary to-success"
             />
           </div>
-          <p className="text-[10px] text-muted-foreground mt-1">
+          <p className="text-xs text-muted-foreground mt-1">
             Equivalent to AES-192 classical security
           </p>
         </div>

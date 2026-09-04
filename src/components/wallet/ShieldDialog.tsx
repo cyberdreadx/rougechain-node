@@ -145,20 +145,20 @@ const ShieldDialog = ({ wallet, xrgeBalance, onClose, onSuccess }: ShieldDialogP
             <div className="bg-muted/50 rounded-lg p-3 border border-border">
               <div className="space-y-2">
                 <div>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Commitment</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Commitment</p>
                   <p className="text-xs font-mono text-foreground break-all">{resultNote.commitment}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Nullifier</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Nullifier</p>
                   <p className="text-xs font-mono text-foreground break-all">{resultNote.nullifier}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Randomness</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Randomness</p>
                   <p className="text-xs font-mono text-foreground break-all">{resultNote.randomness}</p>
                 </div>
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Value</p>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider">Value</p>
                     <p className="text-sm font-bold text-primary">{resultNote.value} XRGE</p>
                   </div>
                 </div>
@@ -192,7 +192,7 @@ const ShieldDialog = ({ wallet, xrgeBalance, onClose, onSuccess }: ShieldDialogP
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-6 px-2 text-xs text-primary"
+                  className="h-8 px-3 text-xs text-primary"
                   onClick={() => setAmount(Math.max(0, Math.floor(xrgeBalance - SHIELD_FEE)).toString())}
                 >
                   Max
@@ -213,9 +213,9 @@ const ShieldDialog = ({ wallet, xrgeBalance, onClose, onSuccess }: ShieldDialogP
                   XRGE
                 </span>
               </div>
-              <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                <span>Available: {xrgeBalance.toLocaleString()} XRGE</span>
-                <span>Fee: {SHIELD_FEE} XRGE</span>
+              <div className="flex flex-wrap gap-x-2 justify-between text-xs text-muted-foreground mt-1">
+                <span className="truncate">Available: {xrgeBalance.toLocaleString()} XRGE</span>
+                <span className="shrink-0">Fee: {SHIELD_FEE} XRGE</span>
               </div>
             </div>
 

@@ -91,7 +91,7 @@ const EncryptionDetailsPanel = ({
     <Button
       variant="ghost"
       size="icon"
-      className="h-6 w-6 shrink-0"
+      className="h-8 w-8 shrink-0"
       onClick={() => copyToClipboard(text, field)}
     >
       {copiedField === field ? (
@@ -843,24 +843,24 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
           <div className="flex items-center gap-2 min-w-0">
             <p className="font-medium text-foreground truncate">{getConversationName()}</p>
             {isRecipientBot && (
-              <span className="px-1.5 py-0.5 text-[10px] rounded bg-primary/20 text-primary">
+              <span className="px-1.5 py-0.5 text-xs rounded bg-primary/20 text-primary">
                 AI
               </span>
             )}
             {tofuWarning && !isRecipientBot && (
-              <span className="px-1.5 py-0.5 text-[10px] rounded bg-destructive/20 text-destructive font-medium" title="This contact's keys have changed since you first communicated">
+              <span className="px-1.5 py-0.5 text-xs rounded bg-destructive/20 text-destructive font-medium" title="This contact's keys have changed since you first communicated">
                 Key Changed
               </span>
             )}
             {fingerprint && !isRecipientBot && !tofuWarning && (
-              <span className="px-1.5 py-0.5 text-[10px] rounded bg-green-500/20 text-green-600 dark:text-green-400 font-mono" title={`Fingerprint: ${fingerprint}`}>
+              <span className="px-1.5 py-0.5 text-xs rounded bg-green-500/20 text-green-600 dark:text-green-400 font-mono" title={`Fingerprint: ${fingerprint}`}>
                 {fingerprint.substring(0, 9)}
               </span>
             )}
           </div>
           {recipient && !isRecipientBot && (
             <button
-              className="text-[10px] sm:text-xs text-muted-foreground font-mono hover:text-foreground transition-colors flex items-center gap-1 w-full"
+              className="text-xs sm:text-xs text-muted-foreground font-mono hover:text-foreground transition-colors flex items-center gap-1 w-full"
               onClick={() => {
                 const address = recipient.signingPublicKey || recipient.encryptionPublicKey || "";
                 navigator.clipboard.writeText(address);
@@ -914,7 +914,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
                 <X className="w-3 h-3" />
               </Button>
             </div>
-            {searchQuery && <p className="text-[10px] text-muted-foreground mt-1">{visibleMessages.length} result{visibleMessages.length !== 1 ? "s" : ""}</p>}
+            {searchQuery && <p className="text-xs text-muted-foreground mt-1">{visibleMessages.length} result{visibleMessages.length !== 1 ? "s" : ""}</p>}
           </motion.div>
         )}
       </AnimatePresence>
@@ -1034,7 +1034,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
                 <X className="w-3 h-3" />
               </button>
             </div>
-            <p className="text-[10px] text-muted-foreground mt-1 truncate max-w-[200px]">
+            <p className="text-xs text-muted-foreground mt-1 truncate max-w-[200px]">
               {stagedMedia.file.name} ({(stagedMedia.file.size / 1024).toFixed(0)} KB)
             </p>
           </div>
@@ -1510,7 +1510,7 @@ const MessageBubble = ({
                     }}
                   />
                   {message.mediaFileName && !isSpoiler && (
-                    <p className="text-[10px] opacity-50 mt-1">{message.mediaFileName}</p>
+                    <p className="text-xs opacity-50 mt-1">{message.mediaFileName}</p>
                   )}
                 </div>
               ) : message.mediaUrl && message.messageType === "video" ? (
@@ -1522,7 +1522,7 @@ const MessageBubble = ({
                     onClick={(e) => e.stopPropagation()}
                   />
                   {message.mediaFileName && !isSpoiler && (
-                    <p className="text-[10px] opacity-50 mt-1">{message.mediaFileName}</p>
+                    <p className="text-xs opacity-50 mt-1">{message.mediaFileName}</p>
                   )}
                 </div>
               ) : (() => {
@@ -1569,7 +1569,7 @@ const MessageBubble = ({
               <XCircle className="w-3 h-3 text-destructive" />
             )}
           </div>
-          <p className="text-[10px] opacity-40 mt-0.5 text-right">Tap for details</p>
+          <p className="text-xs opacity-40 mt-0.5 text-right">Tap for details</p>
         </motion.div>
       </div>
     </motion.div>

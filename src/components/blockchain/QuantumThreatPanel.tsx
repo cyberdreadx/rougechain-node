@@ -67,36 +67,36 @@ export function QuantumThreatPanel() {
 
           {/* ECDSA — broken by quantum */}
           <div className="p-2 rounded bg-destructive/10 border border-destructive/20">
-            <p className="text-[10px] font-medium text-destructive mb-1.5">ECDSA (Bitcoin, Ethereum)</p>
+            <p className="text-xs font-medium text-destructive mb-1.5">ECDSA (Bitcoin, Ethereum)</p>
             <div className="grid grid-cols-2 gap-2">
               <div className="text-center p-1.5 rounded bg-background/50">
-                <p className="text-[10px] text-muted-foreground">Classical</p>
+                <p className="text-xs text-muted-foreground">Classical</p>
                 <p className="text-xs font-mono font-bold text-foreground">2<sup>128</sup> ops</p>
               </div>
               <div className="text-center p-1.5 rounded bg-destructive/15">
-                <p className="text-[10px] text-destructive">Quantum</p>
+                <p className="text-xs text-destructive">Quantum</p>
                 <p className="text-xs font-mono font-bold text-destructive">~2<sup>0</sup> ops</p>
               </div>
             </div>
-            <p className="text-[10px] text-center text-destructive mt-1">
+            <p className="text-xs text-center text-destructive mt-1">
               Shor's algorithm breaks it instantly
             </p>
           </div>
 
           {/* ML-DSA — quantum safe */}
           <div className="p-2 rounded bg-success/10 border border-success/20">
-            <p className="text-[10px] font-medium text-success mb-1.5">ML-DSA-65 (RougeChain)</p>
+            <p className="text-xs font-medium text-success mb-1.5">ML-DSA-65 (RougeChain)</p>
             <div className="grid grid-cols-2 gap-2">
               <div className="text-center p-1.5 rounded bg-background/50">
-                <p className="text-[10px] text-muted-foreground">Classical</p>
+                <p className="text-xs text-muted-foreground">Classical</p>
                 <p className="text-xs font-mono font-bold text-foreground">2<sup>128</sup> ops</p>
               </div>
               <div className="text-center p-1.5 rounded bg-success/15">
-                <p className="text-[10px] text-success">Quantum</p>
+                <p className="text-xs text-success">Quantum</p>
                 <p className="text-xs font-mono font-bold text-success">2<sup>128</sup> ops</p>
               </div>
             </div>
-            <p className="text-[10px] text-center text-success mt-1">
+            <p className="text-xs text-center text-success mt-1">
               No quantum advantage — equally hard for both
             </p>
           </div>
@@ -107,7 +107,7 @@ export function QuantumThreatPanel() {
           <Lock className="w-4 h-4 text-success" />
           <div>
             <p className="text-xs font-medium text-success">RougeChain is Protected</p>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Using NIST-standardized ML-DSA-65 (FIPS 204)
             </p>
           </div>

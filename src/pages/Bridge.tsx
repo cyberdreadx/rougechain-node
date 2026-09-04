@@ -551,7 +551,7 @@ const Bridge = () => {
                         <span>{a.icon}</span>
                         {a.label}
                       </div>
-                      <span className={`text-[10px] font-normal truncate max-w-full px-1 ${asset === a.id ? "text-primary-foreground/70" : "text-muted-foreground/60"}`}>
+                      <span className={`text-xs font-normal truncate max-w-full px-1 ${asset === a.id ? "text-primary-foreground/70" : "text-muted-foreground/60"}`}>
                         {balLabel}
                       </span>
                     </button>
@@ -561,7 +561,7 @@ const Bridge = () => {
 
               {/* From */}
               <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                   <span className="text-xs text-muted-foreground">From · {fromChain}</span>
                   {direction === "withdraw" && (
                     <span className="text-xs text-muted-foreground">Balance: {getL1Balance()}</span>
@@ -784,7 +784,7 @@ function BridgeActivityCard({ pubkey }: { pubkey: string }) {
                   }`}>
                     {entry.direction === "deposit" ? "+" : "-"}{entry.amount} {entry.symbol}
                   </p>
-                  <p className="text-[10px] text-muted-foreground capitalize">{entry.status}</p>
+                  <p className="text-xs text-muted-foreground capitalize">{entry.status}</p>
                 </div>
               </div>
             ))}

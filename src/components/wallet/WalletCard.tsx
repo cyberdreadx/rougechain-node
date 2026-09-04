@@ -116,13 +116,13 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
                 <button
                   type="button"
                   onClick={copyAddress}
-                  className="text-[11px] text-primary hover:underline"
+                  className="text-xs text-primary hover:underline"
                 >
                   {copied ? "Copied" : "Copy address"}
                 </button>
                 <a
                   href="/blockchain"
-                  className="text-[11px] text-muted-foreground hover:underline inline-flex items-center gap-1"
+                  className="text-xs text-muted-foreground hover:underline inline-flex items-center gap-1"
                 >
                   View on chain <ExternalLink className="w-3 h-3" />
                 </a>

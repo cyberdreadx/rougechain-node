@@ -238,7 +238,7 @@ const Contracts = () => {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                       {contract.wasm_size != null && (
                         <span className="font-mono">{contract.wasm_size.toLocaleString()} bytes</span>
                       )}

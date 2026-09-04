@@ -81,7 +81,7 @@ export function MainNav() {
               <span className={`h-2 w-2 rounded-full ${getActiveNetwork() === "mainnet" ? "bg-success" : "bg-amber-500"}`} />
               <span className="font-medium text-foreground">{networkLabel}</span>
               {chainId && <span className="text-muted-foreground">·</span>}
-              {chainId && <span className="font-mono text-[10px]">{chainId}</span>}
+              {chainId && <span className="font-mono text-xs">{chainId}</span>}
             </div>
           </div>
 

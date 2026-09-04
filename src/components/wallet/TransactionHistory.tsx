@@ -193,7 +193,7 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
                 <div className="flex items-center justify-end gap-1">
                   <p className="text-xs text-muted-foreground">{tx.timeLabel}</p>
                   {tx.fee && tx.fee > 0 && (
-                    <span className="text-[10px] text-muted-foreground">• {tx.fee} fee</span>
+                    <span className="text-xs text-muted-foreground">• {tx.fee} fee</span>
                   )}
                 </div>
               </div>

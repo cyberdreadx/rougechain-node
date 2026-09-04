@@ -129,7 +129,7 @@ export const ReactionBadges = ({ reactions, onReact }: ReactionBadgesProps) => {
           }`}
         >
           <span className="text-sm">{emoji}</span>
-          {count > 1 && <span className="text-[10px] font-medium">{count}</span>}
+          {count > 1 && <span className="text-xs font-medium">{count}</span>}
         </button>
       ))}
     </div>

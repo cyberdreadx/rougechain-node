@@ -61,7 +61,7 @@ export const ReplyComposer = ({ replyingToText, replyingToSender, onCancel }: Re
   >
     <Reply className="w-3.5 h-3.5 text-primary flex-shrink-0" />
     <div className="flex-1 min-w-0">
-      <p className="text-[10px] text-primary font-medium">{replyingToSender}</p>
+      <p className="text-xs text-primary font-medium">{replyingToSender}</p>
       <p className="text-xs text-muted-foreground truncate">{replyingToText}</p>
     </div>
     <button
