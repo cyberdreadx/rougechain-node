@@ -37,7 +37,7 @@
   "homepage": "https://rougechain.io",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cyberdreadx/rougechain-node",
+    "url": "git+https://github.com/cyberdreadx/rougechain-node.git",
     "directory": "sdk"
   },
   "license": "MIT",
