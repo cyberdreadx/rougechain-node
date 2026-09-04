@@ -42,6 +42,7 @@ import type {
   NftCollection,
   NftToken,
   Validator,
+  ValidatorStatus,
   BridgeConfig,
   BridgeWithdrawal,
   WithdrawalStatus,
@@ -264,6 +265,41 @@ export class RougeChain {
 
   async getValidatorStats(): Promise<unknown> {
     return this.get("/validators/stats");
+  }
+
+  /**
+   * One-shot validator health for a key: balance, stake (+tier), active-set
+   * membership, and blocks proposed. Mirrors the `rougechain validator-status`
+   * CLI diagnostic. Minimum stake is 10,000 XRGE. Reads camelCase fields from
+   * /validators (tolerating snake_case too).
+   */
+  async getValidatorStatus(publicKey: string): Promise<ValidatorStatus> {
+    const [bal, vals] = await Promise.all([
+      this.getBalance(publicKey),
+      this.get<{ validators: Array<Record<string, unknown>> }>("/validators"),
+    ]);
+    const entry = (vals.validators ?? []).find(
+      (v) => (v.publicKey ?? v.public_key) === publicKey,
+    );
+    const staked = entry ? Number(entry.stake ?? 0) : 0;
+    const tier =
+      staked >= 1_000_000 ? "genesis"
+      : staked >= 100_000 ? "operator"
+      : staked >= 10_000 ? "standard"
+      : "none";
+    const status = entry ? String(entry.status ?? "unknown") : "not registered";
+    return {
+      publicKey,
+      balance: bal.balance,
+      staked,
+      tier,
+      status,
+      inActiveSet: status === "active",
+      blocksProposed: entry
+        ? Number(entry.blocksProposed ?? entry.blocks_proposed ?? 0)
+        : 0,
+      meetsMinimum: staked >= 10_000,
+    };
   }
 
   async getFinality(): Promise<{

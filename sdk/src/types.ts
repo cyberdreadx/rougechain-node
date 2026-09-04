@@ -283,6 +283,23 @@ export interface Validator {
   uptime: number;
 }
 
+/** One-shot validator health for a key (see RougeChain.getValidatorStatus). */
+export interface ValidatorStatus {
+  publicKey: string;
+  /** Liquid XRGE balance held by the key. */
+  balance: number;
+  /** XRGE currently staked by this key. */
+  staked: number;
+  /** Tier derived from stake: none (<10k) · standard (10k) · operator (100k) · genesis (1M). */
+  tier: "none" | "standard" | "operator" | "genesis";
+  /** Validator-set status: "active" | "jailed" | "inactive" | "not registered". */
+  status: string;
+  inActiveSet: boolean;
+  blocksProposed: number;
+  /** True once staked >= the 10,000 XRGE minimum. */
+  meetsMinimum: boolean;
+}
+
 // ===== Bridge =====
 
 export interface BridgeConfig {
