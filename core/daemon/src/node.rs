@@ -6020,3 +6020,136 @@ mod amm_replay_tests {
         assert!(lp.is_empty());
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 1 / T2 — L1Node test harness + live AMM apply characterization.
+//
+// Stands up a real L1Node against temp sled stores (the unlock for guarding
+// the consolidation, the f64->u128 flip, and golden replay tests). Then pins
+// the LIVE apply_amm_tx_inner — which, unlike the rebuild mirror, creates the
+// pool and mutates reserves — so the T2 merge can be proven behaviour-
+// preserving on both sides.
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod live_amm_tests {
+    use super::*;
+    use quantum_vault_types::ChainConfig;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static CTR: AtomicU64 = AtomicU64::new(0);
+
+    struct TmpDir(std::path::PathBuf);
+    impl TmpDir {
+        fn new() -> Self {
+            let mut p = std::env::temp_dir();
+            let n = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            p.push(format!("rvm-node-{}-{}-{}", std::process::id(), n, CTR.fetch_add(1, Ordering::SeqCst)));
+            std::fs::create_dir_all(&p).unwrap();
+            TmpDir(p)
+        }
+    }
+    impl Drop for TmpDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Construct a real L1Node backed by a throwaway data dir.
+    fn test_node() -> (TmpDir, L1Node) {
+        let dir = TmpDir::new();
+        let node = L1Node::new(NodeOptions {
+            data_dir: dir.0.clone(),
+            chain: ChainConfig {
+                chain_id: "test".to_string(),
+                genesis_time: 0,
+                block_time_ms: 1000,
+            },
+            mine: false,
+            bridge_withdraw_store: None,
+        })
+        .expect("test node");
+        (dir, node)
+    }
+
+    fn amm_tx(tx_type: &str, from: &str, fee: f64, payload: TxPayload) -> TxV1 {
+        TxV1 {
+            version: 1,
+            tx_type: tx_type.to_string(),
+            from_pub_key: from.to_string(),
+            nonce: 0,
+            payload,
+            fee,
+            sig: String::new(),
+            signed_payload: None,
+        }
+    }
+
+    #[test]
+    fn node_constructs_against_temp_stores() {
+        let (_dir, node) = test_node();
+        // Fresh node: empty ledger, no pools.
+        assert_eq!(node.get_balance("nobody").unwrap(), 0.0);
+        assert!(node.pool_store.list_pools().unwrap().is_empty());
+    }
+
+    #[test]
+    fn live_create_pool_then_swap_updates_reserves_and_balances() {
+        let (_dir, node) = test_node();
+        let mut bal = HashMap::from([("user".to_string(), 1_000_000.0)]);
+        let mut tok: HashMap<TokenBalanceKey, f64> =
+            HashMap::from([(("user".to_string(), "QTOK".to_string()), 1_000_000.0)]);
+        let mut lp: HashMap<TokenBalanceKey, f64> = HashMap::new();
+
+        // create_pool: token_a=XRGE amount 100_000, token_b=QTOK amount 200_000
+        let create = amm_tx(
+            "create_pool",
+            "user",
+            0.1,
+            TxPayload {
+                token_a_symbol: Some("XRGE".to_string()),
+                token_b_symbol: Some("QTOK".to_string()),
+                amount_a: Some(100_000),
+                amount_b: Some(200_000),
+                ..Default::default()
+            },
+        );
+        node.apply_amm_tx_inner(&mut bal, &mut tok, &mut lp, &create, 0, 1).unwrap();
+
+        // Pool persisted (sorted QTOK-XRGE): reserve_a=QTOK=200_000, reserve_b=XRGE=100_000.
+        let pool = node.pool_store.get_pool("QTOK-XRGE").unwrap().unwrap();
+        assert_eq!(pool.reserve_a, 200_000);
+        assert_eq!(pool.reserve_b, 100_000);
+        // Creator LP == the pool's initial supply.
+        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], pool.total_lp_supply as f64);
+        // Balances debited fee + provided liquidity.
+        assert!((bal["user"] - (1_000_000.0 - 0.1 - 100_000.0)).abs() < 1e-9, "xrge={}", bal["user"]);
+        assert!((tok[&("user".to_string(), "QTOK".to_string())] - 800_000.0).abs() < 1e-9);
+
+        // Swap 1_000 XRGE -> QTOK.
+        let expected_out = amm::get_amount_out(1_000, 100_000, 200_000).unwrap();
+        let swap = amm_tx(
+            "swap",
+            "user",
+            0.1,
+            TxPayload {
+                token_a_symbol: Some("XRGE".to_string()),
+                token_b_symbol: Some("QTOK".to_string()),
+                amount_a: Some(1_000),
+                ..Default::default()
+            },
+        );
+        let qtok_before = tok[&("user".to_string(), "QTOK".to_string())];
+        node.apply_amm_tx_inner(&mut bal, &mut tok, &mut lp, &swap, 0, 2).unwrap();
+
+        // Live path mutates reserves: XRGE reserve grew by the input.
+        let pool2 = node.pool_store.get_pool("QTOK-XRGE").unwrap().unwrap();
+        assert_eq!(pool2.reserve_b, 101_000, "XRGE reserve after swap");
+        assert_eq!(pool2.reserve_a, 200_000 - expected_out, "QTOK reserve after swap");
+        // User received exactly the AMM output.
+        let qtok_after = tok[&("user".to_string(), "QTOK".to_string())];
+        assert_eq!(qtok_after - qtok_before, expected_out as f64);
+    }
+}
