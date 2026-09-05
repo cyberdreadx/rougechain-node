@@ -33,6 +33,7 @@ use quantum_vault_types::{
 };
 
 use crate::amm;
+use crate::units::{fee_to_quanta, xrge_f64_to_quanta, quanta_to_display, mul_div};
 use crate::nft_store::{NftCollection, NftStore, NftToken};
 use crate::pool_store::{LiquidityPool, PoolStore};
 use crate::pool_events::{PoolEvent, PoolEventStore, PoolEventType, PriceSnapshot};
@@ -45,11 +46,47 @@ const UNBONDING_BLOCKS: u64 = 500;             // ~8 hours at 1 block/min
 const MISSED_BLOCK_SLASH_THRESHOLD: u64 = 50;  // Auto-slash after 50 missed blocks
 const MAX_MEMPOOL: usize = 2000;
 
-// EIP-1559 dynamic fee constants
-const BASE_FEE_INITIAL: f64 = 0.1;           // Initial base fee (XRGE)
-const BASE_FEE_MAX_CHANGE_DENOM: f64 = 8.0;  // Max 12.5% change per block
-const TARGET_TXS_PER_BLOCK: usize = 10;      // Target block fullness
-const BASE_FEE_FLOOR: f64 = 0.001;           // Minimum base fee
+// EIP-1559 dynamic fee constants. The base fee is consensus state — it sets each
+// block's burn — so it is stored and updated in integer **quanta**. The old f64
+// arithmetic and decimal-string storage were a replay-fork hazard (T6).
+const BASE_FEE_INITIAL_QUANTA: u128 = 100_000_000; // 0.1 XRGE
+const BASE_FEE_FLOOR_QUANTA: u128 = 1_000_000;     // 0.001 XRGE minimum
+const BASE_FEE_MAX_CHANGE_DENOM: u128 = 8;         // Max 12.5% change per block
+const TARGET_TXS_PER_BLOCK: usize = 10;            // Target block fullness
+
+/// Balance-snapshot format version. v2 = integer-quanta ledger (u128 balances,
+/// token/lp base units). A v1 (pre-integer, f64 XRGE) snapshot MUST NOT be
+/// loaded by v2 code: a whole-number f64 balance like `{"alice": 100}` parses as
+/// u128 `100` (= 0.0000001 XRGE) instead of `100 * 10^9` quanta — a silent
+/// corruption. Bumping this and rejecting any other version forces a safe full
+/// rebuild from chain history instead. Bump on every ledger-representation change.
+const SNAPSHOT_VERSION: u32 = 2;
+
+/// ─────────────────────────────────────────────────────────────────────────
+/// THE V2 FORK SWITCH (T11).
+///
+/// RougeChain **v2** — integer quanta ledger (Phase 1), state-root commitment
+/// (Phase 2), and contract XRGE custody (Phase 3) — all activate together at
+/// this one block height. Everything above is dormant below it: headers carry
+/// no state root and none is verified, and contract `balance_deltas` are
+/// discarded exactly as on today's mainnet. So while this is `u64::MAX`, the
+/// live chain is byte-for-byte unchanged.
+///
+/// Scheduling the coordinated hard fork = change THIS ONE NUMBER to the agreed
+/// height, in a release that EVERY validator runs *before* that height is
+/// reached. Setting it wrong, or letting even one validator cross the height on
+/// an old binary, splits the network. Follow the T11 runbook — do not flip this
+/// casually. Tests activate from genesis (height 0).
+#[cfg(not(test))]
+const V2_FORK_HEIGHT: u64 = 18;
+#[cfg(test)]
+const V2_FORK_HEIGHT: u64 = 0;
+
+/// Phase 2 (state root) and Phase 3 (contract custody) share the single v2 fork
+/// height — they are one coordinated upgrade, and custody relies on the state
+/// root as its divergence backstop, so they must never activate apart.
+const STATE_ROOT_ACTIVATION_HEIGHT: u64 = V2_FORK_HEIGHT;
+const CONTRACT_CUSTODY_ACTIVATION_HEIGHT: u64 = V2_FORK_HEIGHT;
 
 /// The official burn address - tokens sent here are permanently destroyed
 /// This is a deterministic address derived from "QUANTUM_VAULT_BURN_ADDRESS_V1"
@@ -101,9 +138,9 @@ pub struct L1Node {
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
     verified_tx_ids: Arc<Mutex<HashSet<String>>>,
-    balances: Arc<Mutex<HashMap<String, f64>>>,
-    token_balances: Arc<Mutex<HashMap<TokenBalanceKey, f64>>>,
-    lp_balances: Arc<Mutex<HashMap<TokenBalanceKey, f64>>>,  // LP token balances
+    balances: Arc<Mutex<HashMap<String, u128>>>,  // native XRGE in quanta (1 XRGE = 1e9); T3c flip
+    token_balances: Arc<Mutex<HashMap<TokenBalanceKey, u128>>>,
+    lp_balances: Arc<Mutex<HashMap<TokenBalanceKey, u128>>>,  // LP token balances (integer counts; T3 flip)
     burned_tokens: Arc<Mutex<HashMap<String, f64>>>,  // Total burned per token symbol
     votes: Arc<Mutex<Vec<VoteMessage>>>,
     finalized_height: Arc<Mutex<u64>>,
@@ -343,12 +380,13 @@ impl L1Node {
             let shielded = *self.shielded_supply.lock().map_err(|_| "shielded lock")?;
 
             let bal_bytes = serde_json::to_vec(&*bal).map_err(|e| e.to_string())?;
-            let tok_vec: Vec<((String, String), f64)> = tok.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            let tok_vec: Vec<((String, String), u128)> = tok.iter().map(|(k, v)| (k.clone(), *v)).collect();
             let tok_bytes = serde_json::to_vec(&tok_vec).map_err(|e| e.to_string())?;
-            let lp_vec: Vec<((String, String), f64)> = lp.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            let lp_vec: Vec<((String, String), u128)> = lp.iter().map(|(k, v)| (k.clone(), *v)).collect();
             let lp_bytes = serde_json::to_vec(&lp_vec).map_err(|e| e.to_string())?;
             let burned_bytes = serde_json::to_vec(&*burned).map_err(|e| e.to_string())?;
 
+            self.snapshot_db.insert(b"version", &SNAPSHOT_VERSION.to_be_bytes()).map_err(|e| e.to_string())?;
             self.snapshot_db.insert(b"height", &height.to_be_bytes()).map_err(|e| e.to_string())?;
             self.snapshot_db.insert(b"balances", bal_bytes).map_err(|e| e.to_string())?;
             self.snapshot_db.insert(b"token_balances", tok_bytes).map_err(|e| e.to_string())?;
@@ -366,6 +404,21 @@ impl L1Node {
 
     /// Try to load a balance snapshot from sled. Returns Ok(height) if successful.
     fn load_balance_snapshot(&self) -> Result<u64, String> {
+        // Reject any snapshot not written in the current format. A missing tag is
+        // a pre-v2 (f64) snapshot; a different tag is a future format. Either way,
+        // erroring here makes init() fall back to a full rebuild from history —
+        // never a silent misread of f64 XRGE as integer quanta.
+        let version = self.snapshot_db.get(b"version")
+            .map_err(|e| e.to_string())?
+            .and_then(|v| v.as_ref().try_into().ok().map(u32::from_be_bytes))
+            .ok_or("snapshot has no version tag (pre-v2) — rebuilding")?;
+        if version != SNAPSHOT_VERSION {
+            return Err(format!(
+                "snapshot version {} != {} (integer-quanta) — rebuilding",
+                version, SNAPSHOT_VERSION
+            ));
+        }
+
         let height_bytes = self.snapshot_db.get(b"height")
             .map_err(|e| e.to_string())?
             .ok_or("no snapshot")?;
@@ -386,11 +439,11 @@ impl L1Node {
         let shielded_bytes = self.snapshot_db.get(b"shielded_supply")
             .map_err(|e| e.to_string())?.ok_or("no shielded_supply")?;
 
-        let bal: HashMap<String, f64> = serde_json::from_slice(&bal_bytes)
+        let bal: HashMap<String, u128> = serde_json::from_slice(&bal_bytes)
             .map_err(|e| e.to_string())?;
-        let tok_vec: Vec<((String, String), f64)> = serde_json::from_slice(&tok_bytes)
+        let tok_vec: Vec<((String, String), u128)> = serde_json::from_slice(&tok_bytes)
             .map_err(|e| e.to_string())?;
-        let lp_vec: Vec<((String, String), f64)> = serde_json::from_slice(&lp_bytes)
+        let lp_vec: Vec<((String, String), u128)> = serde_json::from_slice(&lp_bytes)
             .map_err(|e| e.to_string())?;
         let burned: HashMap<String, f64> = serde_json::from_slice(&burned_bytes)
             .map_err(|e| e.to_string())?;
@@ -494,17 +547,17 @@ impl L1Node {
         let mut total = 0;
         if let Ok(mut m) = self.balances.lock() {
             let before = m.len();
-            m.retain(|_, v| *v > 0.0);
+            m.retain(|_, v| *v > 0);
             total += before - m.len();
         }
         if let Ok(mut m) = self.token_balances.lock() {
             let before = m.len();
-            m.retain(|_, v| *v > 0.0);
+            m.retain(|_, v| *v > 0);
             total += before - m.len();
         }
         if let Ok(mut m) = self.lp_balances.lock() {
             let before = m.len();
-            m.retain(|_, v| *v > 0.0);
+            m.retain(|_, v| *v > 0);
             total += before - m.len();
         }
         total
@@ -538,7 +591,7 @@ impl L1Node {
 
         // Credit initial allocations
         for alloc in allocations {
-            *balances.entry(alloc.address.clone()).or_insert(0.0) += alloc.amount as f64;
+            *balances.entry(alloc.address.clone()).or_insert(0) += xrge_f64_to_quanta(alloc.amount as f64);
             eprintln!("[genesis] Allocated {} XRGE → {} {}",
                 alloc.amount, &alloc.address[..16.min(alloc.address.len())],
                 alloc.label.as_deref().unwrap_or(""));
@@ -637,10 +690,10 @@ impl L1Node {
             }
             
             // Distribute fees for this block
-            let total_fees: f64 = block.txs.iter().map(|tx| tx.fee).sum();
-            if total_fees > 0.0 {
+            let total_fees: u128 = block.txs.iter().map(|tx| fee_to_quanta(tx.fee)).sum();
+            if total_fees > 0 {
                 let stakes = self.get_validator_stakes_at_height(block.header.height)?;
-                let base_fee = self.get_base_fee();
+                let base_fee = self.get_base_fee_quanta();
                 Self::distribute_fees(
                     &mut balances,
                     total_fees,
@@ -653,7 +706,7 @@ impl L1Node {
             }
             // Update base fee for next block
             let next_base_fee = self.calculate_next_base_fee(block.txs.len());
-            self.set_base_fee(next_base_fee);
+            self.set_base_fee_quanta(next_base_fee);
         }
         
         let final_height = blocks.last().map(|b| b.header.height).unwrap_or(0);
@@ -761,9 +814,47 @@ impl L1Node {
         }
         
         // Apply state BEFORE storing to disk (atomic: don't store blocks we can't apply)
-        self.apply_balance_block(&block)?;
+        //
+        // Phase 2: at/after the activation height, the block header commits to the
+        // post-state root. Snapshot the money maps first so a bad root can be
+        // rejected and the ledger restored exactly (side-effect stores are rebuilt
+        // from history on restart; the rejected block is never persisted).
+        let verify_root = block.header.height >= STATE_ROOT_ACTIVATION_HEIGHT;
+        let custody_active = block.header.height >= CONTRACT_CUSTODY_ACTIVATION_HEIGHT;
+        // Snapshot when either feature is live, so we can roll the money ledger
+        // back exactly on a rejected block — whether it's rejected by a
+        // fail-closed apply error (e.g. a bad contract) or a root mismatch.
+        let pre_snapshot = if verify_root || custody_active {
+            Some(self.snapshot_balance_maps()?)
+        } else {
+            None
+        };
+
+        // Any apply error (P3-4 fail-closed contract rejection included) must not
+        // leave the ledger partially mutated.
+        if let Err(e) = self.apply_balance_block(&block) {
+            if let Some(snap) = pre_snapshot {
+                let _ = self.restore_balance_maps(snap);
+            }
+            return Err(e);
+        }
+
+        if verify_root {
+            let computed = self.compute_current_state_root()?;
+            if block.header.state_root.as_deref() != Some(computed.as_str()) {
+                // Divergence (or a faulty/malicious proposer): roll back and reject.
+                if let Some(snap) = pre_snapshot {
+                    let _ = self.restore_balance_maps(snap);
+                }
+                return Err(format!(
+                    "state root mismatch at height {}: header={:?}, computed={}",
+                    block.header.height, block.header.state_root, computed
+                ));
+            }
+        }
+
         self.apply_validator_block(&block)?;
-        
+
         // Only persist after state was applied successfully
         self.store.append_block(&block)?;
         
@@ -797,7 +888,7 @@ impl L1Node {
 
     pub fn get_balance(&self, public_key: &str) -> Result<f64, String> {
         let balances = self.balances.lock().map_err(|_| "balance lock")?;
-        Ok(*balances.get(public_key).unwrap_or(&0.0))
+        Ok(quanta_to_display(*balances.get(public_key).unwrap_or(&0)))
     }
 
     /// Get a transaction receipt by hash.
@@ -1033,15 +1124,15 @@ impl L1Node {
     pub fn get_token_balance(&self, public_key: &str, token_symbol: &str) -> Result<f64, String> {
         let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let key = (public_key.to_string(), token_symbol.to_string());
-        Ok(*token_balances.get(&key).unwrap_or(&0.0))
+        Ok(*token_balances.get(&key).unwrap_or(&0) as f64)
     }
 
     pub fn get_all_token_balances(&self, public_key: &str) -> Result<HashMap<String, f64>, String> {
         let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let mut result = HashMap::new();
         for ((pubkey, symbol), balance) in token_balances.iter() {
-            if pubkey == public_key && *balance > 0.0 {
-                result.insert(symbol.clone(), *balance);
+            if pubkey == public_key && *balance > 0 {
+                result.insert(symbol.clone(), *balance as f64);
             }
         }
         Ok(result)
@@ -1052,8 +1143,8 @@ impl L1Node {
         let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let mut result = HashMap::new();
         for ((pubkey, symbol), balance) in token_balances.iter() {
-            if symbol == token_symbol && *balance > 0.0 {
-                result.insert(pubkey.clone(), *balance);
+            if symbol == token_symbol && *balance > 0 {
+                result.insert(pubkey.clone(), *balance as f64);
             }
         }
         Ok(result)
@@ -1063,8 +1154,8 @@ impl L1Node {
     pub fn get_all_native_balances(&self) -> Result<HashMap<String, f64>, String> {
         let balances = self.balances.lock().map_err(|_| "balance lock")?;
         Ok(balances.iter()
-            .filter(|(_, b)| **b > 0.0)
-            .map(|(k, v)| (k.clone(), *v))
+            .filter(|(_, b)| **b > 0)
+            .map(|(k, v)| (k.clone(), quanta_to_display(*v)))
             .collect())
     }
 
@@ -1418,15 +1509,15 @@ impl L1Node {
     pub fn get_lp_balance(&self, public_key: &str, pool_id: &str) -> Result<f64, String> {
         let lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
         let key = (public_key.to_string(), pool_id.to_string());
-        Ok(*lp_balances.get(&key).unwrap_or(&0.0))
+        Ok(*lp_balances.get(&key).unwrap_or(&0) as f64)
     }
 
     pub fn get_all_lp_balances(&self, public_key: &str) -> Result<HashMap<String, f64>, String> {
         let lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
         let mut result = HashMap::new();
         for ((pubkey, pool_id), balance) in lp_balances.iter() {
-            if pubkey == public_key && *balance > 0.0 {
-                result.insert(pool_id.clone(), *balance);
+            if pubkey == public_key && *balance > 0 {
+                result.insert(pool_id.clone(), *balance as f64);
             }
         }
         Ok(result)
@@ -1847,6 +1938,7 @@ impl L1Node {
         &self,
         deployer: &str,
         contract_addr: &str,
+        wasm_base64: &str,
         wasm_size: usize,
     ) -> Result<TxV1, String> {
         let keys = self.keys.lock().map_err(|_| "keys lock")?.clone();
@@ -1857,6 +1949,9 @@ impl L1Node {
             nonce: self.get_next_nonce(&keys.public_key_hex),
             payload: TxPayload {
                 contract_addr: Some(contract_addr.to_string()),
+                // Carry the bytecode on-chain so every importing node can install
+                // it and re-execute the contract identically (P3-3).
+                contract_wasm: Some(wasm_base64.to_string()),
                 amount: Some(wasm_size as u64),
                 to_pub_key_hex: Some(deployer.to_string()),
                 ..Default::default()
@@ -1879,6 +1974,7 @@ impl L1Node {
         caller: &str,
         contract_addr: &str,
         method: &str,
+        args: &serde_json::Value,
         gas_used: u64,
         success: bool,
     ) -> Result<TxV1, String> {
@@ -1891,6 +1987,9 @@ impl L1Node {
             payload: TxPayload {
                 contract_addr: Some(contract_addr.to_string()),
                 contract_method: Some(method.to_string()),
+                // Carry the call args so the on-chain re-execution (which is what
+                // actually applies balance deltas, P3-4) matches this call. (P3-5)
+                contract_args: if args.is_null() { None } else { Some(args.clone()) },
                 contract_gas_limit: Some(gas_used),
                 to_pub_key_hex: if caller.is_empty() { None } else { Some(caller.to_string()) },
                 reason: if success { None } else { Some("failed".to_string()) },
@@ -2245,15 +2344,43 @@ impl L1Node {
             return Ok(None);
         }
         let tip = self.store.get_tip()?;
-        let header = BlockHeaderV1 {
+        let height = tip.height + 1;
+        let time = Utc::now().timestamp_millis() as u64;
+        let proposer_pub_key = self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone();
+        let tx_hash = compute_tx_hash(&txs);
+
+        // Phase 2: commit to the POST-state root, so the block header must be
+        // sealed AFTER applying the block. apply_balance_block reads only
+        // header.{height,time,proposer_pub_key} and txs — never sig/hash/state_root
+        // — so a preliminary header (unsigned, no root) is sufficient to apply.
+        let prelim_header = BlockHeaderV1 {
             version: 1,
             chain_id: self.opts.chain.chain_id.clone(),
-            height: tip.height + 1,
-            time: Utc::now().timestamp_millis() as u64,
+            height,
+            time,
             prev_hash: tip.hash.clone(),
-            tx_hash: compute_tx_hash(&txs),
-            proposer_pub_key: self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone(),
+            tx_hash: tx_hash.clone(),
+            proposer_pub_key: proposer_pub_key.clone(),
+            state_root: None,
         };
+        let prelim_block = BlockV1 {
+            version: 1,
+            header: prelim_header.clone(),
+            txs: txs.clone(),
+            proposer_sig: String::new(),
+            hash: String::new(),
+        };
+        // Apply to state ONCE, here. (The old post-append apply_balance_block call
+        // is intentionally removed — applying twice would double-charge fees.)
+        self.apply_balance_block(&prelim_block)?;
+
+        // Stamp the post-state root, gated on the activation height.
+        let state_root = if height >= STATE_ROOT_ACTIVATION_HEIGHT {
+            Some(self.compute_current_state_root()?)
+        } else {
+            None
+        };
+        let header = BlockHeaderV1 { state_root, ..prelim_header };
         let header_bytes = encode_header_v1(&header);
         let proposer_sig = pqc_sign(&self.keys.lock().map_err(|_| "keys lock")?.secret_key_hex, &header_bytes)?;
         let hash = compute_block_hash(&header_bytes, &proposer_sig);
@@ -2277,7 +2404,6 @@ impl L1Node {
         }
 
         self.store.append_block(&block)?;
-        self.apply_balance_block(&block)?;
         self.apply_validator_block(&block)?;
         *self.finalized_height.lock().map_err(|_| "finality lock")? = block.header.height;
         // Note: finalized_height set here as proposer (single-validator mode).
@@ -2434,17 +2560,27 @@ impl L1Node {
     const VALIDATOR_FEE_SHARE: f64 = 0.70;  // 70% split among validators by stake
     const TREASURY_FEE_SHARE: f64 = 0.10;  // 10% to community treasury
 
-    /// Get the current base fee
-    pub fn get_base_fee(&self) -> f64 {
+    /// Current base fee in **quanta** — the consensus source of truth.
+    ///
+    /// New format is an integer-quanta decimal string; a legacy f64-XRGE string
+    /// (pre-T6 fee_db) is still read and converted, so an existing node upgrades
+    /// cleanly. Missing → [`BASE_FEE_INITIAL_QUANTA`].
+    fn get_base_fee_quanta(&self) -> u128 {
         self.fee_db.get(b"base_fee").ok().flatten()
             .and_then(|v| String::from_utf8(v.to_vec()).ok())
-            .and_then(|s| s.parse::<f64>().ok())
-            .unwrap_or(BASE_FEE_INITIAL)
+            .and_then(|s| s.parse::<u128>().ok().or_else(|| s.parse::<f64>().ok().map(fee_to_quanta)))
+            .unwrap_or(BASE_FEE_INITIAL_QUANTA)
     }
 
-    /// Persist base fee
-    fn set_base_fee(&self, fee: f64) {
-        let _ = self.fee_db.insert(b"base_fee", fee.to_string().as_bytes());
+    /// Get the current base fee as **display XRGE**. Serialization boundary only
+    /// (metrics/RPC/header) — never fed back into consensus.
+    pub fn get_base_fee(&self) -> f64 {
+        quanta_to_display(self.get_base_fee_quanta())
+    }
+
+    /// Persist the base fee (quanta), stored as an integer decimal string.
+    fn set_base_fee_quanta(&self, quanta: u128) {
+        let _ = self.fee_db.insert(b"base_fee", quanta.to_string().as_bytes());
         let _ = self.fee_db.flush();
     }
 
@@ -2460,22 +2596,102 @@ impl L1Node {
         let _ = self.fee_db.flush();
     }
 
-    /// Calculate next base fee based on block fullness (EIP-1559)
-    fn calculate_next_base_fee(&self, tx_count: usize) -> f64 {
-        let current = self.get_base_fee();
+    /// Calculate the next base fee (quanta) from block fullness (EIP-1559).
+    /// All integer: `delta = current * |txs - target| / (target * denom)` via
+    /// `mul_div`, floored at [`BASE_FEE_FLOOR_QUANTA`]. Deterministic across
+    /// nodes and replays — no f64.
+    fn calculate_next_base_fee(&self, tx_count: usize) -> u128 {
+        let current = self.get_base_fee_quanta();
         if tx_count == TARGET_TXS_PER_BLOCK {
             return current; // At target, no change
         }
-        let delta = if tx_count > TARGET_TXS_PER_BLOCK {
-            // Above target → increase
-            let excess = tx_count - TARGET_TXS_PER_BLOCK;
-            current * (excess as f64) / (TARGET_TXS_PER_BLOCK as f64) / BASE_FEE_MAX_CHANGE_DENOM
+        let divisor = (TARGET_TXS_PER_BLOCK as u128) * BASE_FEE_MAX_CHANGE_DENOM;
+        if tx_count > TARGET_TXS_PER_BLOCK {
+            // Above target → increase by 1/8 per (excess/target) of the block.
+            let excess = (tx_count - TARGET_TXS_PER_BLOCK) as u128;
+            let delta = mul_div(current, excess, divisor);
+            current.saturating_add(delta).max(BASE_FEE_FLOOR_QUANTA)
         } else {
-            // Below target → decrease
-            let deficit = TARGET_TXS_PER_BLOCK - tx_count;
-            -(current * (deficit as f64) / (TARGET_TXS_PER_BLOCK as f64) / BASE_FEE_MAX_CHANGE_DENOM)
-        };
-        (current + delta).max(BASE_FEE_FLOOR)
+            // Below target → decrease, never below the floor.
+            let deficit = (TARGET_TXS_PER_BLOCK - tx_count) as u128;
+            let delta = mul_div(current, deficit, divisor);
+            current.saturating_sub(delta).max(BASE_FEE_FLOOR_QUANTA)
+        }
+    }
+
+    /// Canonical state root over the CURRENT in-memory balance ledger
+    /// (native + token + LP), via the `state_root` module. Pure read.
+    ///
+    /// This is the primitive Phase 2 is built on: the producer stamps it into a
+    /// block header (P2-4) and importers recompute it after applying a block to
+    /// check it against the proposer's (P2-5). Callers must NOT already hold the
+    /// balance/token/lp locks — this takes them in the canonical order
+    /// (balances → token → lp) matching `apply_balance_block`, so there is no
+    /// deadlock as long as no caller holds a later lock first.
+    #[allow(dead_code)] // wired into production/import in P2-4/P2-5
+    fn compute_current_state_root(&self) -> Result<String, String> {
+        let balances = self.balances.lock().map_err(|_| "balance lock")?;
+        let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        let lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+        Ok(crate::state_root::compute_state_root(
+            &balances,
+            &token_balances,
+            &lp_balances,
+        ))
+    }
+
+    /// Snapshot of the native XRGE ledger in quanta, for read-only contract
+    /// simulation (RPC dry-run) — so `host_get_balance` sees real balances with
+    /// no risk of committing state. (P3-5)
+    pub fn native_balances_quanta(&self) -> HashMap<String, u128> {
+        self.balances.lock().map(|b| b.clone()).unwrap_or_default()
+    }
+
+    /// Public accessor for the current ledger state root (display/debugging).
+    /// Lets an operator compare nodes at the same height to spot divergence; it
+    /// is the same value the block header commits at/after activation.
+    pub fn get_state_root(&self) -> Result<String, String> {
+        self.compute_current_state_root()
+    }
+
+    /// Clone the three in-memory balance maps. Used by import (P2-5) to take a
+    /// pre-apply snapshot so a block whose state root doesn't match can be
+    /// rejected and the money ledger restored exactly, without a full
+    /// speculative apply of the side-effect stores. Callers must not hold the
+    /// locks; taken in canonical order.
+    #[allow(dead_code)] // used by import verification in P2-5
+    fn snapshot_balance_maps(
+        &self,
+    ) -> Result<
+        (
+            HashMap<String, u128>,
+            HashMap<TokenBalanceKey, u128>,
+            HashMap<TokenBalanceKey, u128>,
+        ),
+        String,
+    > {
+        let balances = self.balances.lock().map_err(|_| "balance lock")?;
+        let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        let lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+        Ok((balances.clone(), token_balances.clone(), lp_balances.clone()))
+    }
+
+    /// Restore the three in-memory balance maps from a snapshot (rollback).
+    /// Pairs with [`snapshot_balance_maps`]; taken in canonical order.
+    #[allow(dead_code)] // used by import verification in P2-5
+    fn restore_balance_maps(
+        &self,
+        snap: (
+            HashMap<String, u128>,
+            HashMap<TokenBalanceKey, u128>,
+            HashMap<TokenBalanceKey, u128>,
+        ),
+    ) -> Result<(), String> {
+        let (b, t, l) = snap;
+        *self.balances.lock().map_err(|_| "balance lock")? = b;
+        *self.token_balances.lock().map_err(|_| "token balance lock")? = t;
+        *self.lp_balances.lock().map_err(|_| "lp balance lock")? = l;
+        Ok(())
     }
 
     fn apply_balance_block(&self, block: &BlockV1) -> Result<(), String> {
@@ -2485,7 +2701,7 @@ impl L1Node {
         let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
         
         // Track actual fees collected (not all tx fees -- rejected txs don't pay)
-        let mut actual_fees_collected = 0.0_f64;
+        let mut actual_fees_collected: u128 = 0;
 
         let node_pub_key = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         // Apply transaction effects (transfers, stakes, etc.) - fees deducted from senders
@@ -2530,7 +2746,7 @@ impl L1Node {
                 _ => {}
             }
 
-            let before = balances.values().sum::<f64>();
+            let before = balances.values().sum::<u128>();
             Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block.header.height, &self.shielded_supply);
             // Commit sequential nonce for this sender
             let _ = self.nonce_db.insert(tx.from_pub_key.as_bytes(), &tx.nonce.to_be_bytes());
@@ -2556,12 +2772,12 @@ impl L1Node {
             if let Some(ref to_pk) = tx.payload.to_pub_key_hex {
                 self.index_address(to_pk);
             }
-            let after = balances.values().sum::<f64>();
-            let deducted = before - after;
-            if deducted > 0.0 { actual_fees_collected += tx.fee.min(deducted); }
+            let after = balances.values().sum::<u128>();
+            let deducted = before.saturating_sub(after);
+            if deducted > 0 { actual_fees_collected += fee_to_quanta(tx.fee).min(deducted); }
             
             // Handle AMM transactions
-            let before_amm = balances.values().sum::<f64>();
+            let before_amm = balances.values().sum::<u128>();
             self.apply_amm_tx_inner(
                 &mut balances,
                 &mut token_balances,
@@ -2570,20 +2786,20 @@ impl L1Node {
                 block.header.time,
                 block.header.height,
             )?;
-            let after_amm = balances.values().sum::<f64>();
-            let deducted_amm = before_amm - after_amm;
-            if deducted_amm > 0.0 { actual_fees_collected += tx.fee.min(deducted_amm); }
+            let after_amm = balances.values().sum::<u128>();
+            let deducted_amm = before_amm.saturating_sub(after_amm);
+            if deducted_amm > 0 { actual_fees_collected += fee_to_quanta(tx.fee).min(deducted_amm); }
 
             // Handle NFT transactions
-            let before_nft = balances.values().sum::<f64>();
+            let before_nft = balances.values().sum::<u128>();
             self.apply_nft_tx_inner(
                 &mut balances,
                 tx,
                 block.header.time,
             )?;
-            let after_nft = balances.values().sum::<f64>();
-            let deducted_nft = before_nft - after_nft;
-            if deducted_nft > 0.0 { actual_fees_collected += tx.fee.min(deducted_nft); }
+            let after_nft = balances.values().sum::<u128>();
+            let deducted_nft = before_nft.saturating_sub(after_nft);
+            if deducted_nft > 0 { actual_fees_collected += fee_to_quanta(tx.fee).min(deducted_nft); }
 
             // Handle allowance transactions (approve / transfer_from)
             match tx.tx_type.as_str() {
@@ -2599,13 +2815,13 @@ impl L1Node {
                     let amount = tx.payload.allowance_amount.unwrap_or(0);
 
                     // Fee guard
-                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                    if xrge_bal < tx.fee {
+                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                    if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                         eprintln!("[node] Rejecting approve: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
                         continue;
                     }
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                    actual_fees_collected += tx.fee;
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
+                    actual_fees_collected += fee_to_quanta(tx.fee);
 
                     let allowance = quantum_vault_storage::allowance_store::Allowance {
                         owner: tx.from_pub_key.clone(),
@@ -2637,8 +2853,8 @@ impl L1Node {
                     }
 
                     // Fee guard (spender pays gas)
-                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                    if xrge_bal < tx.fee {
+                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                    if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                         eprintln!("[node] Rejecting transfer_from: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
                         continue;
                     }
@@ -2656,19 +2872,19 @@ impl L1Node {
 
                     // Check owner's token balance
                     let owner_key = (owner.clone(), symbol.clone());
-                    let owner_bal = *token_balances.get(&owner_key).unwrap_or(&0.0);
-                    if owner_bal < amount as f64 {
+                    let owner_bal = *token_balances.get(&owner_key).unwrap_or(&0);
+                    if owner_bal < amount as u128 {
                         eprintln!("[node] Rejecting transfer_from: owner {} balance {:.4} < {}", symbol, owner_bal, amount);
                         continue;
                     }
 
                     // Execute: deduct fee from spender, move tokens owner→recipient, decrement allowance
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                    actual_fees_collected += tx.fee;
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
+                    actual_fees_collected += fee_to_quanta(tx.fee);
 
-                    *token_balances.entry(owner_key).or_insert(0.0) -= amount as f64;
+                    *token_balances.entry(owner_key).or_insert(0) -= amount as u128;
                     let recipient_key = (to.clone(), symbol.clone());
-                    *token_balances.entry(recipient_key).or_insert(0.0) += amount as f64;
+                    *token_balances.entry(recipient_key).or_insert(0) += amount as u128;
 
                     // Decrement allowance
                     let new_allowance = quantum_vault_storage::allowance_store::Allowance {
@@ -2771,10 +2987,10 @@ impl L1Node {
                                             proposal.payload.get("to_pub_key_hex").and_then(|v| v.as_str()),
                                             proposal.payload.get("amount").and_then(|v| v.as_u64()),
                                         ) {
-                                            let b = balances.entry(wallet.creator.clone()).or_insert(0.0);
-                                            if *b >= amount as f64 {
-                                                *b -= amount as f64;
-                                                *balances.entry(to.to_string()).or_insert(0.0) += amount as f64;
+                                            let b = balances.entry(wallet.creator.clone()).or_insert(0);
+                                            if *b >= xrge_f64_to_quanta(amount as f64) {
+                                                *b -= xrge_f64_to_quanta(amount as f64);
+                                                *balances.entry(to.to_string()).or_insert(0) += xrge_f64_to_quanta(amount as f64);
                                                 eprintln!("[node] Multisig transfer: {} XRGE from {} to {}", amount, wallet.creator, &to[..16]);
                                             }
                                         }
@@ -2806,26 +3022,39 @@ impl L1Node {
                             None => { eprintln!("[node] Skipping contract_deploy: no contract_addr"); continue; }
                         };
                         // Fee deduction
-                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                        if xrge_bal < tx.fee {
+                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                        if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                             eprintln!("[node] Rejecting contract_deploy: insufficient fee ({:.4} < {:.4})", xrge_bal, tx.fee);
                             continue;
                         }
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                        actual_fees_collected += tx.fee;
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
+                        actual_fees_collected += fee_to_quanta(tx.fee);
 
-                        // If we have the contract store, verify the deployment is recorded
-                        if let Some(ref cs) = self.contract_store {
+                        // Install the bytecode carried in the tx so THIS node holds
+                        // the code and can re-execute the contract identically (P3-3).
+                        // Without this, a peer missing the code would silently skip
+                        // its calls and diverge from the rest of the network.
+                        if let (Some(ref rt), Some(ref cs)) = (&self.wasm_runtime, &self.contract_store) {
                             match cs.get_contract(contract_addr) {
-                                Ok(Some(_)) => {
-                                    eprintln!("[node] Block import: contract_deploy {} already stored", &contract_addr[..16.min(contract_addr.len())]);
-                                }
+                                Ok(Some(_)) => {} // already installed — idempotent
                                 Ok(None) => {
-                                    eprintln!("[node] Block import: contract_deploy {} — bytecode not available on this peer (will fetch later)", &contract_addr[..16.min(contract_addr.len())]);
+                                    match tx.payload.contract_wasm.as_deref() {
+                                        Some(wasm_b64) => {
+                                            use base64::Engine as _;
+                                            match base64::engine::general_purpose::STANDARD.decode(wasm_b64) {
+                                                Ok(wasm_bytes) => {
+                                                    match rt.install_contract(cs, contract_addr, deployer, &wasm_bytes, block.header.height) {
+                                                        Ok(()) => eprintln!("[node] Block import: installed contract {} from tx bytecode", &contract_addr[..16.min(contract_addr.len())]),
+                                                        Err(e) => eprintln!("[node] Block import: contract install failed: {} (non-fatal pre-activation)", e),
+                                                    }
+                                                }
+                                                Err(e) => eprintln!("[node] Block import: contract_deploy bad base64: {} (non-fatal)", e),
+                                            }
+                                        }
+                                        None => eprintln!("[node] Block import: contract_deploy {} — no bytecode in tx (legacy)", &contract_addr[..16.min(contract_addr.len())]),
+                                    }
                                 }
-                                Err(e) => {
-                                    eprintln!("[node] Block import: contract_deploy check error: {}", e);
-                                }
+                                Err(e) => eprintln!("[node] Block import: contract_deploy check error: {}", e),
                             }
                         }
                         eprintln!("[node] Processed contract_deploy tx: deployer={}... addr={}", &deployer[..16.min(deployer.len())], &contract_addr[..16.min(contract_addr.len())]);
@@ -2846,21 +3075,24 @@ impl L1Node {
                         }
 
                         // Fee deduction
-                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                        if xrge_bal < tx.fee {
+                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                        if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                             eprintln!("[node] Rejecting contract_call: insufficient fee ({:.4} < {:.4})", xrge_bal, tx.fee);
                             continue;
                         }
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                        actual_fees_collected += tx.fee;
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
+                        actual_fees_collected += fee_to_quanta(tx.fee);
 
-                        // Re-execute the contract call if runtime is available
+                        // Re-execute the contract call if runtime is available.
+                        let custody_active = block.header.height >= CONTRACT_CUSTODY_ACTIVATION_HEIGHT;
                         if let (Some(ref rt), Some(ref cs)) = (&self.wasm_runtime, &self.contract_store) {
-                            let call_balances: HashMap<String, u64> = balances.iter()
-                                .map(|(k, v)| (k.clone(), (*v as u64)))
-                                .collect();
+                            // Full quanta balances — no u64 truncation (P3-2). The VM
+                            // ABI is quanta-native, so pass the ledger as-is.
+                            let call_balances: HashMap<String, u128> = balances.clone();
                             let tx_hash_str = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
-                            let args = serde_json::Value::Object(serde_json::Map::new());
+                            // Real call args from the tx payload (P3-2) — not an empty map.
+                            let args = tx.payload.contract_args.clone()
+                                .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
                             match rt.execute_contract(
                                 cs,
                                 contract_addr,
@@ -2875,14 +3107,55 @@ impl L1Node {
                             ) {
                                 Ok(result) => {
                                     block_fuel_used += result.gas_used;
-                                    eprintln!("[node] Block import: contract_call {} method={} gas={} success={}", 
+                                    eprintln!("[node] contract_call {} method={} gas={} success={}",
                                         &contract_addr[..16.min(contract_addr.len())], method, result.gas_used, result.success);
+
+                                    // P3-4: apply the contract's XRGE moves to the ledger,
+                                    // gated on the custody activation height. A failed
+                                    // contract (revert / out-of-gas) carries no deltas.
+                                    if custody_active && result.success {
+                                        // v1 is SINGLE-HOP: result.balance_deltas holds only
+                                        // the top-level contract's own transfers; sub-call
+                                        // XRGE moves are not surfaced. If the call made cross-
+                                        // calls, deterministically apply nothing rather than
+                                        // silently move a partial set (documented v1 limit).
+                                        let did_cross_call = result.cross_call_results
+                                            .as_ref().map_or(false, |v| !v.is_empty());
+                                        if did_cross_call {
+                                            eprintln!("[node] contract_call {} used cross-calls; XRGE deltas NOT applied (single-hop v1)",
+                                                &contract_addr[..16.min(contract_addr.len())]);
+                                        } else if let Some(ref deltas) = result.balance_deltas {
+                                            // Conservation + overdraft enforced here; an Err
+                                            // means the VM emitted invalid deltas — a genuine
+                                            // invariant break, so fail closed (reject block).
+                                            crate::units::apply_balance_deltas(&mut balances, deltas)
+                                                .map_err(|e| format!(
+                                                    "contract {} balance deltas rejected: {}",
+                                                    contract_addr, e
+                                                ))?;
+                                        }
+                                    }
                                 }
                                 Err(e) => {
-                                    // Contract not found on this peer or execution error — log but don't reject block
-                                    eprintln!("[node] Block import: contract_call failed: {} (non-fatal)", e);
+                                    // Could not execute (e.g. bytecode missing). Pre-activation
+                                    // this is non-fatal; once custody is active it MUST fail
+                                    // closed — a node that can't run the contract must not be
+                                    // allowed to silently diverge from those that can.
+                                    if custody_active {
+                                        return Err(format!(
+                                            "contract_call execution failed under active custody: {}",
+                                            e
+                                        ));
+                                    }
+                                    eprintln!("[node] contract_call failed: {} (non-fatal pre-activation)", e);
                                 }
                             }
+                        } else if custody_active {
+                            // Custody is active but this node has no runtime/store — it cannot
+                            // validate the call, so it must not accept the block.
+                            return Err(
+                                "contract_call requires the WASM runtime under active custody".to_string(),
+                            );
                         }
                     }
                     _ => {}
@@ -2920,8 +3193,8 @@ impl L1Node {
         }
         
         // Distribute only actually collected fees
-        if actual_fees_collected > 0.0 {
-            let base_fee = self.get_base_fee();
+        if actual_fees_collected > 0 {
+            let base_fee = self.get_base_fee_quanta();
             Self::distribute_fees(
                 &mut balances,
                 actual_fees_collected,
@@ -2935,7 +3208,7 @@ impl L1Node {
 
         // EIP-1559: recalculate base fee for next block
         let next_base_fee = self.calculate_next_base_fee(block.txs.len());
-        self.set_base_fee(next_base_fee);
+        self.set_base_fee_quanta(next_base_fee);
         self.persist_fees_burned();
         
         Ok(())
@@ -2944,9 +3217,9 @@ impl L1Node {
     /// Apply AMM-specific transaction effects
     fn apply_amm_tx_inner(
         &self,
-        balances: &mut HashMap<String, f64>,
-        token_balances: &mut HashMap<TokenBalanceKey, f64>,
-        lp_balances: &mut HashMap<TokenBalanceKey, f64>,
+        balances: &mut HashMap<String, u128>,
+        token_balances: &mut HashMap<TokenBalanceKey, u128>,
+        lp_balances: &mut HashMap<TokenBalanceKey, u128>,
         tx: &TxV1,
         block_time: u64,
         block_height: u64,
@@ -2964,45 +3237,34 @@ impl L1Node {
                 let mut xrge_needed = tx.fee;
                 if token_a == "XRGE" { xrge_needed += amount_a as f64; }
                 if token_b == "XRGE" { xrge_needed += amount_b as f64; }
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < xrge_needed {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(xrge_needed) {
                     eprintln!("[node] Rejecting create_pool: insufficient XRGE ({:.4} < {:.4})", xrge_bal, xrge_needed);
                     return Ok(());
                 }
                 if token_a != "XRGE" {
                     let key = (tx.from_pub_key.clone(), token_a.clone());
-                    let bal = *token_balances.get(&key).unwrap_or(&0.0);
-                    if bal < amount_a as f64 {
+                    let bal = *token_balances.get(&key).unwrap_or(&0);
+                    if bal < amount_a as u128 {
                         eprintln!("[node] Rejecting create_pool: insufficient {} ({:.4} < {})", token_a, bal, amount_a);
                         return Ok(());
                     }
                 }
                 if token_b != "XRGE" {
                     let key = (tx.from_pub_key.clone(), token_b.clone());
-                    let bal = *token_balances.get(&key).unwrap_or(&0.0);
-                    if bal < amount_b as f64 {
+                    let bal = *token_balances.get(&key).unwrap_or(&0);
+                    if bal < amount_b as u128 {
                         eprintln!("[node] Rejecting create_pool: insufficient {} ({:.4} < {})", token_b, bal, amount_b);
                         return Ok(());
                     }
                 }
                 
                 // Deduct XRGE fee
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                 
                 // Deduct tokens from creator
-                if token_a == "XRGE" {
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_a as f64;
-                } else {
-                    let key = (tx.from_pub_key.clone(), token_a.clone());
-                    *token_balances.entry(key).or_insert(0.0) -= amount_a as f64;
-                }
-                
-                if token_b == "XRGE" {
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_b as f64;
-                } else {
-                    let key = (tx.from_pub_key.clone(), token_b.clone());
-                    *token_balances.entry(key).or_insert(0.0) -= amount_b as f64;
-                }
+                Self::amm_debit(balances, token_balances, &tx.from_pub_key, token_a, amount_a as f64);
+                Self::amm_debit(balances, token_balances, &tx.from_pub_key, token_b, amount_b as f64);
                 
                 // Create pool
                 let pool = LiquidityPool::new(
@@ -3016,7 +3278,7 @@ impl L1Node {
                 
                 // Mint LP tokens to creator
                 let lp_key = (tx.from_pub_key.clone(), pool.pool_id.clone());
-                *lp_balances.entry(lp_key).or_insert(0.0) += pool.total_lp_supply as f64;
+                *lp_balances.entry(lp_key).or_insert(0) += pool.total_lp_supply as u128;
                 
                 self.pool_store.save_pool(&pool)?;
                 
@@ -3072,45 +3334,34 @@ impl L1Node {
                 let mut xrge_needed = tx.fee;
                 if pool.token_a == "XRGE" { xrge_needed += amount_a as f64; }
                 if pool.token_b == "XRGE" { xrge_needed += amount_b as f64; }
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < xrge_needed {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(xrge_needed) {
                     eprintln!("[node] Rejecting add_liquidity: insufficient XRGE ({:.4} < {:.4})", xrge_bal, xrge_needed);
                     return Ok(());
                 }
                 if pool.token_a != "XRGE" {
                     let key = (tx.from_pub_key.clone(), pool.token_a.clone());
-                    let bal = *token_balances.get(&key).unwrap_or(&0.0);
-                    if bal < amount_a as f64 {
+                    let bal = *token_balances.get(&key).unwrap_or(&0);
+                    if bal < amount_a as u128 {
                         eprintln!("[node] Rejecting add_liquidity: insufficient {} ({:.4} < {})", pool.token_a, bal, amount_a);
                         return Ok(());
                     }
                 }
                 if pool.token_b != "XRGE" {
                     let key = (tx.from_pub_key.clone(), pool.token_b.clone());
-                    let bal = *token_balances.get(&key).unwrap_or(&0.0);
-                    if bal < amount_b as f64 {
+                    let bal = *token_balances.get(&key).unwrap_or(&0);
+                    if bal < amount_b as u128 {
                         eprintln!("[node] Rejecting add_liquidity: insufficient {} ({:.4} < {})", pool.token_b, bal, amount_b);
                         return Ok(());
                     }
                 }
                 
                 // Deduct fee
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                 
                 // Deduct tokens
-                if pool.token_a == "XRGE" {
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_a as f64;
-                } else {
-                    let key = (tx.from_pub_key.clone(), pool.token_a.clone());
-                    *token_balances.entry(key).or_insert(0.0) -= amount_a as f64;
-                }
-                
-                if pool.token_b == "XRGE" {
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_b as f64;
-                } else {
-                    let key = (tx.from_pub_key.clone(), pool.token_b.clone());
-                    *token_balances.entry(key).or_insert(0.0) -= amount_b as f64;
-                }
+                Self::amm_debit(balances, token_balances, &tx.from_pub_key, &pool.token_a, amount_a as f64);
+                Self::amm_debit(balances, token_balances, &tx.from_pub_key, &pool.token_b, amount_b as f64);
                 
                 // Calculate LP tokens to mint
                 let lp_amount = amm::calculate_lp_mint(
@@ -3129,7 +3380,7 @@ impl L1Node {
                 
                 // Mint LP tokens
                 let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
-                *lp_balances.entry(lp_key).or_insert(0.0) += lp_amount as f64;
+                *lp_balances.entry(lp_key).or_insert(0) += lp_amount as u128;
                 
                 // Save event
                 let event = PoolEvent {
@@ -3179,20 +3430,20 @@ impl L1Node {
                 };
 
                 // Balance guard: check XRGE for fee and LP token balance
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting remove_liquidity: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
                     return Ok(());
                 }
                 let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
-                let lp_bal = *lp_balances.get(&lp_key).unwrap_or(&0.0);
-                if lp_bal < lp_amount as f64 {
+                let lp_bal = *lp_balances.get(&lp_key).unwrap_or(&0);
+                if lp_bal < lp_amount as u128 {
                     eprintln!("[node] Rejecting remove_liquidity: insufficient LP tokens ({:.4} < {})", lp_bal, lp_amount);
                     return Ok(());
                 }
                 
                 // Deduct fee
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                 
                 // Calculate tokens to return
                 let (amount_a, amount_b) = amm::calculate_remove_liquidity(
@@ -3204,22 +3455,11 @@ impl L1Node {
                 
                 // Burn LP tokens
                 let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
-                *lp_balances.entry(lp_key).or_insert(0.0) -= lp_amount as f64;
+                *lp_balances.entry(lp_key).or_insert(0) -= lp_amount as u128;
                 
                 // Return tokens
-                if pool.token_a == "XRGE" {
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount_a as f64;
-                } else {
-                    let key = (tx.from_pub_key.clone(), pool.token_a.clone());
-                    *token_balances.entry(key).or_insert(0.0) += amount_a as f64;
-                }
-                
-                if pool.token_b == "XRGE" {
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount_b as f64;
-                } else {
-                    let key = (tx.from_pub_key.clone(), pool.token_b.clone());
-                    *token_balances.entry(key).or_insert(0.0) += amount_b as f64;
-                }
+                Self::amm_credit(balances, token_balances, &tx.from_pub_key, &pool.token_a, amount_a as f64);
+                Self::amm_credit(balances, token_balances, &tx.from_pub_key, &pool.token_b, amount_b as f64);
                 
                 // Update pool
                 pool.reserve_a -= amount_a;
@@ -3269,27 +3509,27 @@ impl L1Node {
                 let min_amount_out = tx.payload.min_amount_out.unwrap_or(0);
 
                 // Balance guard: reject swap if user cannot afford it
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
                 if token_in == "XRGE" {
-                    if xrge_bal < amount_in as f64 + tx.fee {
+                    if xrge_bal < xrge_f64_to_quanta(amount_in as f64 + tx.fee) {
                         eprintln!("[node] Rejecting swap: insufficient XRGE balance ({:.4} < {:.4})", xrge_bal, amount_in as f64 + tx.fee);
                         return Ok(());
                     }
                 } else {
-                    if xrge_bal < tx.fee {
+                    if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                         eprintln!("[node] Rejecting swap: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
                         return Ok(());
                     }
                     let token_key = (tx.from_pub_key.clone(), token_in.clone());
-                    let token_bal = *token_balances.get(&token_key).unwrap_or(&0.0);
-                    if token_bal < amount_in as f64 {
+                    let token_bal = *token_balances.get(&token_key).unwrap_or(&0);
+                    if token_bal < amount_in as u128 {
                         eprintln!("[node] Rejecting swap: insufficient {} balance ({:.4} < {})", token_in, token_bal, amount_in);
                         return Ok(());
                     }
                 }
                 
                 // Deduct fee
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                 
                 // Get swap path (direct or multi-hop)
                 let path = tx.payload.swap_path.clone().unwrap_or_else(|| vec![token_in.clone(), token_out.clone()]);
@@ -3331,12 +3571,7 @@ impl L1Node {
                     
                     // Deduct input token (only on first hop)
                     if i == 0 {
-                        if t_in == "XRGE" {
-                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= current_amount as f64;
-                        } else {
-                            let key = (tx.from_pub_key.clone(), t_in.clone());
-                            *token_balances.entry(key).or_insert(0.0) -= current_amount as f64;
-                        }
+                        Self::amm_debit(balances, token_balances, &tx.from_pub_key, t_in, current_amount as f64);
                     }
                     
                     // Update pool reserves
@@ -3364,12 +3599,7 @@ impl L1Node {
                 
                 // Credit output token
                 let final_token = path.last().unwrap();
-                if final_token == "XRGE" {
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += current_amount as f64;
-                } else {
-                    let key = (tx.from_pub_key.clone(), final_token.clone());
-                    *token_balances.entry(key).or_insert(0.0) += current_amount as f64;
-                }
+                Self::amm_credit(balances, token_balances, &tx.from_pub_key, final_token, current_amount as f64);
                 
                 // Save swap event for the primary pool (direct swap) or first hop
                 let primary_pool_id = LiquidityPool::make_pool_id(token_in, token_out);
@@ -3454,7 +3684,7 @@ impl L1Node {
         let mut created_token_symbols: HashSet<String> = HashSet::new();
 
         for block in &blocks {
-            let mut actual_fees_collected: f64 = 0.0;
+            let mut actual_fees_collected: u128 = 0;
 
             for tx in &block.txs {
                 // Skip duplicate create_token txs (same symbol already created)
@@ -3468,7 +3698,7 @@ impl L1Node {
                     }
                 }
 
-                let sum_before: f64 = balances.values().sum();
+                let sum_before: u128 = balances.values().sum();
 
                 Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height, &self.shielded_supply);
 
@@ -3505,18 +3735,18 @@ impl L1Node {
                 self.apply_shielded_state_effects(tx);
                 self.apply_web3_state_effects(tx, block.header.height);
 
-                let sum_after: f64 = balances.values().sum();
-                let fee_delta = sum_before - sum_after;
-                if fee_delta > 0.0 {
-                    actual_fees_collected += fee_delta;
-                } else if fee_delta == 0.0 && tx.fee > 0.0 {
+                let sum_after: u128 = balances.values().sum();
+                let fee_delta = sum_before as i128 - sum_after as i128;
+                if fee_delta > 0 {
+                    actual_fees_collected += fee_delta as u128;
+                } else if fee_delta == 0 && tx.fee > 0.0 {
                     skipped_txs += 1;
                 }
             }
             
-            if actual_fees_collected > 0.0 {
+            if actual_fees_collected > 0 {
                 let stakes = self.get_validator_stakes_at_height(block.header.height)?;
-                let base_fee = self.get_base_fee();
+                let base_fee = self.get_base_fee_quanta();
                 Self::distribute_fees(
                     &mut balances,
                     actual_fees_collected,
@@ -3569,11 +3799,58 @@ impl L1Node {
         Ok(())
     }
     
+    // ── Shared AMM balance primitives (XRGE → native ledger, else token map) ──
+    // The create_pool/add_liquidity/remove_liquidity/swap appliers — both the
+    // live path and the rebuild mirror — repeat the "if token == XRGE debit the
+    // native ledger, else the token map" dichotomy ~30 times. Centralising it
+    // here means the f64→u128 flip (T3) touches these three functions instead of
+    // thirty call sites, and the two AMM appliers can't silently diverge on it.
+    fn amm_balance_of(
+        balances: &HashMap<String, u128>,
+        token_balances: &HashMap<TokenBalanceKey, u128>,
+        user: &str,
+        token: &str,
+    ) -> f64 {
+        if token == "XRGE" {
+            quanta_to_display(*balances.get(user).unwrap_or(&0))
+        } else {
+            *token_balances.get(&(user.to_string(), token.to_string())).unwrap_or(&0) as f64
+        }
+    }
+
+    fn amm_debit(
+        balances: &mut HashMap<String, u128>,
+        token_balances: &mut HashMap<TokenBalanceKey, u128>,
+        user: &str,
+        token: &str,
+        amount: f64,
+    ) {
+        if token == "XRGE" {
+            *balances.entry(user.to_string()).or_insert(0) -= xrge_f64_to_quanta(amount);
+        } else {
+            *token_balances.entry((user.to_string(), token.to_string())).or_insert(0) -= amount as u128;
+        }
+    }
+
+    fn amm_credit(
+        balances: &mut HashMap<String, u128>,
+        token_balances: &mut HashMap<TokenBalanceKey, u128>,
+        user: &str,
+        token: &str,
+        amount: f64,
+    ) {
+        if token == "XRGE" {
+            *balances.entry(user.to_string()).or_insert(0) += xrge_f64_to_quanta(amount);
+        } else {
+            *token_balances.entry((user.to_string(), token.to_string())).or_insert(0) += amount as u128;
+        }
+    }
+
     /// Apply AMM balance effects during rebuild (doesn't modify pool_store)
     fn apply_amm_balance_effects(
-        balances: &mut HashMap<String, f64>,
-        token_balances: &mut HashMap<TokenBalanceKey, f64>,
-        lp_balances: &mut HashMap<TokenBalanceKey, f64>,
+        balances: &mut HashMap<String, u128>,
+        token_balances: &mut HashMap<TokenBalanceKey, u128>,
+        lp_balances: &mut HashMap<TokenBalanceKey, u128>,
         tx: &TxV1,
         pool_store: &PoolStore,
     ) {
@@ -3586,44 +3863,28 @@ impl L1Node {
                     tx.payload.amount_b,
                 ) {
                     // Balance guard
-                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
                     let mut xrge_needed = tx.fee;
                     if token_a == "XRGE" { xrge_needed += amount_a as f64; }
                     if token_b == "XRGE" { xrge_needed += amount_b as f64; }
-                    if xrge_bal < xrge_needed {
+                    if xrge_bal < xrge_f64_to_quanta(xrge_needed) {
                         eprintln!("[rebuild] Skipping create_pool: insufficient XRGE ({:.4} < {:.4})", xrge_bal, xrge_needed);
                         return;
                     }
-                    if token_a != "XRGE" {
-                        let key = (tx.from_pub_key.clone(), token_a.clone());
-                        let bal = *token_balances.get(&key).unwrap_or(&0.0);
-                        if bal < amount_a as f64 { return; }
-                    }
-                    if token_b != "XRGE" {
-                        let key = (tx.from_pub_key.clone(), token_b.clone());
-                        let bal = *token_balances.get(&key).unwrap_or(&0.0);
-                        if bal < amount_b as f64 { return; }
-                    }
+                    if token_a != "XRGE" && Self::amm_balance_of(balances, token_balances, &tx.from_pub_key, token_a) < amount_a as f64 { return; }
+                    if token_b != "XRGE" && Self::amm_balance_of(balances, token_balances, &tx.from_pub_key, token_b) < amount_b as f64 { return; }
 
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                    if token_a == "XRGE" {
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_a as f64;
-                    } else {
-                        let key = (tx.from_pub_key.clone(), token_a.clone());
-                        *token_balances.entry(key).or_insert(0.0) -= amount_a as f64;
-                    }
-                    if token_b == "XRGE" {
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_b as f64;
-                    } else {
-                        let key = (tx.from_pub_key.clone(), token_b.clone());
-                        *token_balances.entry(key).or_insert(0.0) -= amount_b as f64;
-                    }
-                    
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
+                    Self::amm_debit(balances, token_balances, &tx.from_pub_key, token_a, amount_a as f64);
+                    Self::amm_debit(balances, token_balances, &tx.from_pub_key, token_b, amount_b as f64);
+
                     let pool_id = LiquidityPool::make_pool_id(token_a, token_b);
                     if let Ok(Some(_pool)) = pool_store.get_pool(&pool_id) {
-                        let initial_lp = ((amount_a as f64 * amount_b as f64).sqrt() as u64).saturating_sub(1000);
+                        // isqrt (not f64 sqrt): must match LiquidityPool::new's live
+                        // computation exactly, or rebuild would diverge from live state.
+                        let initial_lp = (crate::units::isqrt(amount_a as u128 * amount_b as u128) as u64).saturating_sub(1000);
                         let lp_key = (tx.from_pub_key.clone(), pool_id);
-                        *lp_balances.entry(lp_key).or_insert(0.0) += initial_lp as f64;
+                        *lp_balances.entry(lp_key).or_insert(0) += initial_lp as u128;
                     }
                 }
             }
@@ -3635,37 +3896,21 @@ impl L1Node {
                 ) {
                     if let Ok(Some(pool)) = pool_store.get_pool(pool_id) {
                         // Balance guard
-                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
                         let mut xrge_needed = tx.fee;
                         if pool.token_a == "XRGE" { xrge_needed += amount_a as f64; }
                         if pool.token_b == "XRGE" { xrge_needed += amount_b as f64; }
-                        if xrge_bal < xrge_needed { return; }
-                        if pool.token_a != "XRGE" {
-                            let key = (tx.from_pub_key.clone(), pool.token_a.clone());
-                            if *token_balances.get(&key).unwrap_or(&0.0) < amount_a as f64 { return; }
-                        }
-                        if pool.token_b != "XRGE" {
-                            let key = (tx.from_pub_key.clone(), pool.token_b.clone());
-                            if *token_balances.get(&key).unwrap_or(&0.0) < amount_b as f64 { return; }
-                        }
+                        if xrge_bal < xrge_f64_to_quanta(xrge_needed) { return; }
+                        if pool.token_a != "XRGE" && Self::amm_balance_of(balances, token_balances, &tx.from_pub_key, &pool.token_a) < amount_a as f64 { return; }
+                        if pool.token_b != "XRGE" && Self::amm_balance_of(balances, token_balances, &tx.from_pub_key, &pool.token_b) < amount_b as f64 { return; }
 
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                        if pool.token_a == "XRGE" {
-                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_a as f64;
-                        } else {
-                            let key = (tx.from_pub_key.clone(), pool.token_a.clone());
-                            *token_balances.entry(key).or_insert(0.0) -= amount_a as f64;
-                        }
-                        if pool.token_b == "XRGE" {
-                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_b as f64;
-                        } else {
-                            let key = (tx.from_pub_key.clone(), pool.token_b.clone());
-                            *token_balances.entry(key).or_insert(0.0) -= amount_b as f64;
-                        }
-                        
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
+                        Self::amm_debit(balances, token_balances, &tx.from_pub_key, &pool.token_a, amount_a as f64);
+                        Self::amm_debit(balances, token_balances, &tx.from_pub_key, &pool.token_b, amount_b as f64);
+
                         if let Some(lp_amount) = amm::calculate_lp_mint(amount_a, amount_b, pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
                             let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
-                            *lp_balances.entry(lp_key).or_insert(0.0) += lp_amount as f64;
+                            *lp_balances.entry(lp_key).or_insert(0) += lp_amount as u128;
                         }
                     }
                 }
@@ -3676,30 +3921,20 @@ impl L1Node {
                     tx.payload.lp_amount,
                 ) {
                     // Balance guard: check fee + LP tokens
-                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                    if xrge_bal < tx.fee { return; }
+                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                    if xrge_bal < xrge_f64_to_quanta(tx.fee) { return; }
                     let lp_key = (tx.from_pub_key.clone(), pool_id.clone());
-                    let lp_bal = *lp_balances.get(&lp_key).unwrap_or(&0.0);
-                    if lp_bal < lp_amount as f64 { return; }
+                    let lp_bal = *lp_balances.get(&lp_key).unwrap_or(&0);
+                    if lp_bal < lp_amount as u128 { return; }
 
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                     
                     if let Ok(Some(pool)) = pool_store.get_pool(pool_id) {
-                        *lp_balances.entry(lp_key).or_insert(0.0) -= lp_amount as f64;
+                        *lp_balances.entry(lp_key).or_insert(0) -= lp_amount as u128;
                         
                         if let Some((amount_a, amount_b)) = amm::calculate_remove_liquidity(lp_amount, pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
-                            if pool.token_a == "XRGE" {
-                                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount_a as f64;
-                            } else {
-                                let key = (tx.from_pub_key.clone(), pool.token_a.clone());
-                                *token_balances.entry(key).or_insert(0.0) += amount_a as f64;
-                            }
-                            if pool.token_b == "XRGE" {
-                                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount_b as f64;
-                            } else {
-                                let key = (tx.from_pub_key.clone(), pool.token_b.clone());
-                                *token_balances.entry(key).or_insert(0.0) += amount_b as f64;
-                            }
+                            Self::amm_credit(balances, token_balances, &tx.from_pub_key, &pool.token_a, amount_a as f64);
+                            Self::amm_credit(balances, token_balances, &tx.from_pub_key, &pool.token_b, amount_b as f64);
                         }
                     }
                 }
@@ -3711,33 +3946,28 @@ impl L1Node {
                     tx.payload.amount_a,
                 ) {
                     // Balance guard
-                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
                     if token_in == "XRGE" {
-                        if xrge_bal < amount_in as f64 + tx.fee {
+                        if xrge_bal < xrge_f64_to_quanta(amount_in as f64 + tx.fee) {
                             eprintln!("[rebuild] Skipping swap: insufficient XRGE ({:.4} < {:.4})", xrge_bal, amount_in as f64 + tx.fee);
                             return;
                         }
                     } else {
-                        if xrge_bal < tx.fee { return; }
+                        if xrge_bal < xrge_f64_to_quanta(tx.fee) { return; }
                         let key = (tx.from_pub_key.clone(), token_in.clone());
-                        let tok_bal = *token_balances.get(&key).unwrap_or(&0.0);
-                        if tok_bal < amount_in as f64 {
+                        let tok_bal = *token_balances.get(&key).unwrap_or(&0);
+                        if tok_bal < amount_in as u128 {
                             eprintln!("[rebuild] Skipping swap: insufficient {} ({:.4} < {})", token_in, tok_bal, amount_in);
                             return;
                         }
                     }
 
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                     
                     let path = tx.payload.swap_path.clone().unwrap_or_else(|| vec![token_in.clone(), token_out.clone()]);
-                    
-                    if token_in == "XRGE" {
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount_in as f64;
-                    } else {
-                        let key = (tx.from_pub_key.clone(), token_in.clone());
-                        *token_balances.entry(key).or_insert(0.0) -= amount_in as f64;
-                    }
-                    
+
+                    Self::amm_debit(balances, token_balances, &tx.from_pub_key, token_in, amount_in as f64);
+
                     let mut current_amount = amount_in;
                     for i in 0..(path.len() - 1) {
                         let t_in = &path[i];
@@ -3754,12 +3984,7 @@ impl L1Node {
                     }
                     
                     let final_token = path.last().unwrap_or(token_out);
-                    if final_token == "XRGE" {
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += current_amount as f64;
-                    } else {
-                        let key = (tx.from_pub_key.clone(), final_token.clone());
-                        *token_balances.entry(key).or_insert(0.0) += current_amount as f64;
-                    }
+                    Self::amm_credit(balances, token_balances, &tx.from_pub_key, final_token, current_amount as f64);
                 }
             }
             _ => {}
@@ -3768,20 +3993,20 @@ impl L1Node {
     
     /// Deduct NFT fees during balance rebuild (NFT state is rebuilt separately in rebuild_nft_state)
     fn apply_nft_balance_effects(
-        balances: &mut HashMap<String, f64>,
+        balances: &mut HashMap<String, u128>,
         tx: &TxV1,
     ) {
         match tx.tx_type.as_str() {
             "nft_create_collection" | "nft_mint" | "nft_batch_mint"
             | "nft_burn" | "nft_lock" | "nft_freeze_collection" => {
-                let bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if bal < tx.fee { return; }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                let bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if bal < fee_to_quanta(tx.fee) { return; }
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
             }
             "nft_transfer" => {
-                let bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if bal < tx.fee { return; }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                let bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if bal < fee_to_quanta(tx.fee) { return; }
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
             }
             _ => {}
         }
@@ -4005,12 +4230,12 @@ impl L1Node {
                     let own_weight = if let Ok(Some(ref proposal)) = self.governance_store.get_proposal(proposal_id) {
                         if proposal.token_symbol.to_uppercase() == "XRGE" {
                             if let Ok(bals) = self.balances.lock() {
-                                *bals.get(&tx.from_pub_key).unwrap_or(&0.0) as u64
+                                quanta_to_display(*bals.get(&tx.from_pub_key).unwrap_or(&0)) as u64
                             } else { 0 }
                         } else {
                             let key = (tx.from_pub_key.clone(), proposal.token_symbol.to_uppercase());
                             if let Ok(tbals) = self.token_balances.lock() {
-                                *tbals.get(&key).unwrap_or(&0.0) as u64
+                                *tbals.get(&key).unwrap_or(&0) as u64
                             } else { 0 }
                         }
                     } else {
@@ -4027,12 +4252,12 @@ impl L1Node {
                                 }
                                 if proposal.token_symbol.to_uppercase() == "XRGE" {
                                     if let Ok(bals) = self.balances.lock() {
-                                        dw += *bals.get(delegator).unwrap_or(&0.0) as u64;
+                                        dw += quanta_to_display(*bals.get(delegator).unwrap_or(&0)) as u64;
                                     }
                                 } else {
                                     let key = (delegator.clone(), proposal.token_symbol.to_uppercase());
                                     if let Ok(tbals) = self.token_balances.lock() {
-                                        dw += *tbals.get(&key).unwrap_or(&0.0) as u64;
+                                        dw += *tbals.get(&key).unwrap_or(&0) as u64;
                                     }
                                 }
                             }
@@ -4101,10 +4326,10 @@ impl L1Node {
                                             ) {
                                                 if let Ok(mut bals) = self.balances.lock() {
                                                     let treasury_key = "__treasury__".to_string();
-                                                    let treasury_bal = *bals.get(&treasury_key).unwrap_or(&0.0);
-                                                    if treasury_bal >= amount as f64 {
-                                                        *bals.entry(treasury_key).or_insert(0.0) -= amount as f64;
-                                                        *bals.entry(to.to_string()).or_insert(0.0) += amount as f64;
+                                                    let treasury_bal = *bals.get(&treasury_key).unwrap_or(&0);
+                                                    if treasury_bal >= xrge_f64_to_quanta(amount as f64) {
+                                                        *bals.entry(treasury_key).or_insert(0) -= xrge_f64_to_quanta(amount as f64);
+                                                        *bals.entry(to.to_string()).or_insert(0) += xrge_f64_to_quanta(amount as f64);
                                                         eprintln!("[node] Treasury spend: {} XRGE to {}", amount, &to[..16.min(to.len())]);
                                                     } else {
                                                         eprintln!("[node] Treasury spend failed: insufficient funds");
@@ -4326,62 +4551,71 @@ impl L1Node {
     /// Distribute block fees: 20% to proposer, 70% to validators (stake-weighted), 10% to treasury.
     /// Half the base fee is burned; the remainder plus priority tips form the distributable pool.
     /// A minimum tip floor is enforced, subsidised from `__staking_rewards__` if needed.
+    /// Integer fee distribution (all amounts in quanta). Half the base fee is
+    /// burned; the remainder plus priority tips form the pool, floored at
+    /// MIN_TIP_FLOOR (subsidised from `__staking_rewards__`). The pool is split
+    /// 20/70/10 proposer/validators(by stake)/treasury, with the treasury taking
+    /// the exact integer remainder so proposer + validators + treasury == pool.
     fn distribute_fees(
-        balances: &mut HashMap<String, f64>,
-        total_fees: f64,
+        balances: &mut HashMap<String, u128>,
+        total_fees: u128,                     // quanta collected this block
         proposer_pub_key: &str,
         validator_stakes: &BTreeMap<String, u128>,
-        base_fee_per_tx: f64,
+        base_fee_per_tx_quanta: u128,         // base fee per tx, in quanta
         tx_count: usize,
-        total_fees_burned: &Arc<Mutex<f64>>,
+        total_fees_burned: &Arc<Mutex<f64>>,  // display-XRGE accumulator
     ) {
-        let total_base_fees = base_fee_per_tx * tx_count as f64;
-        let burned = (total_base_fees * Self::BASE_FEE_BURN_RATIO).min(total_fees);
+        let total_base_fees = base_fee_per_tx_quanta.saturating_mul(tx_count as u128);
+        let burned = mul_div(total_base_fees, 1, 2).min(total_fees); // BASE_FEE_BURN_RATIO = 0.5
         let mut tip_pool = total_fees - burned;
 
-        if burned > 0.0 {
+        if burned > 0 {
             if let Ok(mut b) = total_fees_burned.lock() {
-                *b += burned;
+                *b += quanta_to_display(burned);
             }
         }
 
-        if tip_pool < Self::MIN_TIP_FLOOR {
-            let subsidy = Self::MIN_TIP_FLOOR - tip_pool;
-            let reserve = balances.get("__staking_rewards__").copied().unwrap_or(0.0);
+        let min_floor = fee_to_quanta(Self::MIN_TIP_FLOOR);
+        if tip_pool < min_floor {
+            let subsidy = min_floor - tip_pool;
+            let reserve = balances.get("__staking_rewards__").copied().unwrap_or(0);
             let actual_subsidy = subsidy.min(reserve);
-            if actual_subsidy > 0.0 {
-                *balances.entry("__staking_rewards__".to_string()).or_insert(0.0) -= actual_subsidy;
+            if actual_subsidy > 0 {
+                *balances.entry("__staking_rewards__".to_string()).or_insert(0) -= actual_subsidy;
                 tip_pool += actual_subsidy;
             }
         }
 
-        if tip_pool <= 0.0 {
+        if tip_pool == 0 {
             return;
         }
 
-        let proposer_share = tip_pool * Self::PROPOSER_FEE_SHARE;
-        *balances.entry(proposer_pub_key.to_string()).or_insert(0.0) += proposer_share;
+        // 20 / 70 / 10 split (PROPOSER/VALIDATOR/TREASURY_FEE_SHARE).
+        let proposer_share = mul_div(tip_pool, 20, 100);
+        *balances.entry(proposer_pub_key.to_string()).or_insert(0) += proposer_share;
 
-        let validator_pool = tip_pool * Self::VALIDATOR_FEE_SHARE;
+        let validator_pool = mul_div(tip_pool, 70, 100);
         let total_stake: u128 = validator_stakes.values().sum();
-
+        let mut validator_distributed: u128 = 0;
         if total_stake > 0 {
             for (validator_pub_key, stake) in validator_stakes {
-                let stake_ratio = *stake as f64 / total_stake as f64;
-                let validator_share = validator_pool * stake_ratio;
-                *balances.entry(validator_pub_key.clone()).or_insert(0.0) += validator_share;
+                let share = mul_div(validator_pool, *stake, total_stake);
+                *balances.entry(validator_pub_key.clone()).or_insert(0) += share;
+                validator_distributed += share;
             }
         } else {
-            *balances.entry(proposer_pub_key.to_string()).or_insert(0.0) += validator_pool;
+            *balances.entry(proposer_pub_key.to_string()).or_insert(0) += validator_pool;
+            validator_distributed = validator_pool;
         }
 
-        let treasury_share = tip_pool * Self::TREASURY_FEE_SHARE;
-        *balances.entry("__treasury__".to_string()).or_insert(0.0) += treasury_share;
+        // Treasury takes the exact remainder (its ~10% plus integer dust).
+        let treasury_share = tip_pool - proposer_share - validator_distributed;
+        *balances.entry("__treasury__".to_string()).or_insert(0) += treasury_share;
     }
     
     fn apply_balance_tx_inner(
-        balances: &mut HashMap<String, f64>,
-        token_balances: &mut HashMap<TokenBalanceKey, f64>,
+        balances: &mut HashMap<String, u128>,
+        token_balances: &mut HashMap<TokenBalanceKey, u128>,
         burned_tokens: &mut HashMap<String, f64>,
         tx: &TxV1,
         validator_store: Option<&quantum_vault_storage::validator_store::ValidatorStore>,
@@ -4401,57 +4635,57 @@ impl L1Node {
 
                     if is_faucet {
                         // Faucet mint: credit recipient without debiting sender
-                        *balances.entry(to_pub_key.clone()).or_insert(0.0) += amount;
+                        *balances.entry(to_pub_key.clone()).or_insert(0) += xrge_f64_to_quanta(amount);
                         return;
                     }
 
                     if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
-                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                        if xrge_bal < tx.fee {
+                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                        if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                             eprintln!("[node] Rejecting transfer: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
                             return;
                         }
                         let sender_key = (tx.from_pub_key.clone(), token_symbol.clone());
-                        let token_bal = *token_balances.get(&sender_key).unwrap_or(&0.0);
-                        if token_bal < amount {
+                        let token_bal = *token_balances.get(&sender_key).unwrap_or(&0);
+                        if token_bal < amount as u128 {
                             eprintln!("[node] Rejecting transfer: insufficient {} ({:.4} < {:.4})", token_symbol, token_bal, amount);
                             return;
                         }
 
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                        *token_balances.entry(sender_key).or_insert(0.0) -= amount;
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
+                        *token_balances.entry(sender_key).or_insert(0) -= amount as u128;
                         
                         if is_burn {
                             *burned_tokens.entry(token_symbol.clone()).or_insert(0.0) += amount;
                         } else {
                             let recipient_key = (to_pub_key.clone(), token_symbol.clone());
-                            *token_balances.entry(recipient_key).or_insert(0.0) += amount;
+                            *token_balances.entry(recipient_key).or_insert(0) += amount as u128;
                         }
                     } else {
-                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                        if xrge_bal < amount + tx.fee {
+                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                        if xrge_bal < xrge_f64_to_quanta(amount + tx.fee) {
                             eprintln!("[node] Rejecting transfer: insufficient XRGE ({:.4} < {:.4})", xrge_bal, amount + tx.fee);
                             return;
                         }
 
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount + tx.fee;
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(amount + tx.fee);
                         
                         if is_burn {
                             *burned_tokens.entry("XRGE".to_string()).or_insert(0.0) += amount;
                         } else {
-                            *balances.entry(to_pub_key.clone()).or_insert(0.0) += amount;
+                            *balances.entry(to_pub_key.clone()).or_insert(0) += xrge_f64_to_quanta(amount);
                         }
                     }
                 }
             }
             "stake" => {
                 let amount = tx.payload.amount.unwrap_or(0) as f64;
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < amount + tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(amount + tx.fee) {
                     eprintln!("[node] Rejecting stake: insufficient XRGE ({:.4} < {:.4})", xrge_bal, amount + tx.fee);
                     return;
                 }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount + tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(amount + tx.fee);
             }
             "unstake" => {
                 let amount = tx.payload.amount.unwrap_or(0) as f64;
@@ -4466,13 +4700,13 @@ impl L1Node {
                         return;
                     }
                 }
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting unstake: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
                     return;
                 }
                 // Deduct fee now, queue the unbonding (funds released after UNBONDING_BLOCKS)
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                 if let Ok(mut queue) = unbonding_queue.lock() {
                     let release_at = block_height + UNBONDING_BLOCKS;
                     queue.push(UnbondingEntry {
@@ -4521,17 +4755,17 @@ impl L1Node {
                     eprintln!("[node] Rejecting create_token: missing symbol");
                     return;
                 }
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting create_token: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
                     return;
                 }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                 
                 if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
                     let total_supply = tx.payload.token_total_supply.unwrap_or(0) as f64;
                     let creator_key = (tx.from_pub_key.clone(), token_symbol.trim().to_uppercase());
-                    *token_balances.entry(creator_key).or_insert(0.0) += total_supply;
+                    *token_balances.entry(creator_key).or_insert(0) += total_supply as u128;
                 }
             }
             "mint_tokens" => {
@@ -4547,15 +4781,15 @@ impl L1Node {
                     return;
                 }
                 // Fee
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting mint_tokens: insufficient XRGE for fee");
                     return;
                 }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                 // Credit minted tokens to creator
                 let creator_key = (tx.from_pub_key.clone(), sym);
-                *token_balances.entry(creator_key).or_insert(0.0) += amount;
+                *token_balances.entry(creator_key).or_insert(0) += amount as u128;
             }
             "bridge_mint" => {
                 // Only the node operator key can issue bridge mints (skip check during rebuild)
@@ -4570,10 +4804,10 @@ impl L1Node {
                     let amount = tx.payload.amount.unwrap_or(0) as f64;
                     if amount > 0.0 {
                         if token_symbol.to_uppercase() == "XRGE" {
-                            *balances.entry(to_pub_key.clone()).or_insert(0.0) += amount;
+                            *balances.entry(to_pub_key.clone()).or_insert(0) += xrge_f64_to_quanta(amount);
                         } else {
                             let recipient_key = (to_pub_key.clone(), token_symbol.clone());
-                            *token_balances.entry(recipient_key).or_insert(0.0) += amount;
+                            *token_balances.entry(recipient_key).or_insert(0) += amount as u128;
                         }
                     }
                 }
@@ -4585,26 +4819,26 @@ impl L1Node {
                 ) {
                     if amount > 0 {
                         let token_upper = token_symbol.to_uppercase();
-                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                        if xrge_bal < tx.fee {
+                        let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                        if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                             eprintln!("[node] Rejecting bridge_withdraw: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
                             return;
                         }
                         if token_upper == "XRGE" {
-                            if xrge_bal - tx.fee < amount as f64 {
-                                eprintln!("[node] Rejecting bridge_withdraw: insufficient XRGE ({:.4} < {})", xrge_bal - tx.fee, amount);
+                            if xrge_bal.saturating_sub(fee_to_quanta(tx.fee)) < xrge_f64_to_quanta(amount as f64) {
+                                eprintln!("[node] Rejecting bridge_withdraw: insufficient XRGE ({:.4} < {})", quanta_to_display(xrge_bal.saturating_sub(fee_to_quanta(tx.fee))), amount);
                                 return;
                             }
-                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee + amount as f64;
+                            *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee + amount as f64);
                         } else {
                             let sender_key = (tx.from_pub_key.clone(), token_upper.clone());
-                            let token_bal = *token_balances.get(&sender_key).unwrap_or(&0.0);
-                            if token_bal < amount as f64 {
+                            let token_bal = *token_balances.get(&sender_key).unwrap_or(&0);
+                            if token_bal < amount as u128 {
                                 eprintln!("[node] Rejecting bridge_withdraw: insufficient {} ({:.4} < {})", token_upper, token_bal, amount);
                                 return;
                             }
-                            *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                            *token_balances.entry(sender_key).or_insert(0.0) -= amount as f64;
+                            *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
+                            *token_balances.entry(sender_key).or_insert(0) -= amount as u128;
                         }
                         *burned_tokens.entry(token_upper).or_insert(0.0) += amount as f64;
                     }
@@ -4613,27 +4847,27 @@ impl L1Node {
             "slash" => {}
             // Shielded transactions: fee deduction only (state is handled separately)
             "shield" => {
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
                 let shield_amount = tx.payload.shielded_value.unwrap_or(0) as f64;
-                if xrge_bal < shield_amount + tx.fee {
+                if xrge_bal < xrge_f64_to_quanta(shield_amount + tx.fee) {
                     eprintln!("[node] Rejecting shield: insufficient XRGE ({:.4} < {:.4})", xrge_bal, shield_amount + tx.fee);
                     return;
                 }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= shield_amount + tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(shield_amount + tx.fee);
                 // Track shielded supply
                 if let Ok(mut sp) = shielded_supply.lock() {
                     *sp += shield_amount;
                 }
             }
             "unshield" => {
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting unshield: insufficient XRGE for fee");
                     return;
                 }
                 let unshield_amount = tx.payload.shielded_value.unwrap_or(0) as f64;
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += unshield_amount;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) += xrge_f64_to_quanta(unshield_amount);
                 // Track shielded supply
                 if let Ok(mut sp) = shielded_supply.lock() {
                     *sp = (*sp - unshield_amount).max(0.0);
@@ -4641,49 +4875,49 @@ impl L1Node {
             }
             "shielded_transfer" => {
                 // Fee is deducted from public balance (fee is always public)
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting shielded_transfer: insufficient XRGE for fee");
                     return;
                 }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
             }
             // ─── Token Locking ───────────────────────────────────────
             "token_lock" => {
                 let amount = tx.payload.amount.unwrap_or(0) as f64;
                 if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
                     // Lock custom token
-                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                    if xrge_bal < tx.fee {
+                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                    if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                         eprintln!("[node] Rejecting token_lock: insufficient XRGE for fee");
                         return;
                     }
                     let key = (tx.from_pub_key.clone(), token_symbol.clone());
-                    let tok_bal = *token_balances.get(&key).unwrap_or(&0.0);
-                    if tok_bal < amount {
+                    let tok_bal = *token_balances.get(&key).unwrap_or(&0);
+                    if tok_bal < amount as u128 {
                         eprintln!("[node] Rejecting token_lock: insufficient {} ({:.4} < {:.4})", token_symbol, tok_bal, amount);
                         return;
                     }
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                    *token_balances.entry(key).or_insert(0.0) -= amount;
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
+                    *token_balances.entry(key).or_insert(0) -= amount as u128;
                 } else {
                     // Lock XRGE
-                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                    if xrge_bal < amount + tx.fee {
+                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                    if xrge_bal < xrge_f64_to_quanta(amount + tx.fee) {
                         eprintln!("[node] Rejecting token_lock: insufficient XRGE ({:.4} < {:.4})", xrge_bal, amount + tx.fee);
                         return;
                     }
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= amount + tx.fee;
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(amount + tx.fee);
                 }
             }
             "token_unlock" => {
                 // Balance credit happens in apply_web3_state_effects after lock validation
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting token_unlock: insufficient XRGE for fee");
                     return;
                 }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                 // The actual balance credit is handled in apply_web3_state_effects
                 // after verifying lock ownership and height
                 if let Some(_lock_id) = tx.payload.lock_id.as_ref() {
@@ -4693,79 +4927,79 @@ impl L1Node {
                     let amount = tx.payload.amount.unwrap_or(0) as f64;
                     if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
                         let key = (tx.from_pub_key.clone(), token_symbol.clone());
-                        *token_balances.entry(key).or_insert(0.0) += amount;
+                        *token_balances.entry(key).or_insert(0) += amount as u128;
                     } else {
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += amount;
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0) += xrge_f64_to_quanta(amount);
                     }
                 }
             }
             // ─── Token Staking (custom token pools) ──────────────────
             "create_staking_pool" => {
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting create_staking_pool: insufficient XRGE for fee");
                     return;
                 }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
             }
             "token_stake" => {
                 let amount = tx.payload.amount.unwrap_or(0) as f64;
                 if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
-                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                    if xrge_bal < tx.fee {
+                    let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                    if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                         eprintln!("[node] Rejecting token_stake: insufficient XRGE for fee");
                         return;
                     }
                     let key = (tx.from_pub_key.clone(), token_symbol.clone());
-                    let tok_bal = *token_balances.get(&key).unwrap_or(&0.0);
-                    if tok_bal < amount {
+                    let tok_bal = *token_balances.get(&key).unwrap_or(&0);
+                    if tok_bal < amount as u128 {
                         eprintln!("[node] Rejecting token_stake: insufficient {} ({:.4} < {:.4})", token_symbol, tok_bal, amount);
                         return;
                     }
-                    *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
-                    *token_balances.entry(key).or_insert(0.0) -= amount;
+                    *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
+                    *token_balances.entry(key).or_insert(0) -= amount as u128;
                 }
             }
             "token_unstake" => {
                 let amount = tx.payload.amount.unwrap_or(0) as f64;
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting token_unstake: insufficient XRGE for fee");
                     return;
                 }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                 // Credit tokens back
                 if let Some(token_symbol) = tx.payload.token_symbol.as_ref() {
                     let key = (tx.from_pub_key.clone(), token_symbol.clone());
-                    *token_balances.entry(key).or_insert(0.0) += amount;
+                    *token_balances.entry(key).or_insert(0) += amount as u128;
                 }
             }
             // ─── Governance ──────────────────────────────────────────
             "create_proposal" | "cast_vote" | "execute_proposal" => {
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting {}: insufficient XRGE for fee", tx.tx_type);
                     return;
                 }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
             }
             // ─── Allowances ──────────────────────────────────────────
             "token_approve" => {
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting token_approve: insufficient XRGE for fee");
                     return;
                 }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
             }
             "token_transfer_from" => {
                 // Spender pays the fee, owner's tokens are transferred
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting token_transfer_from: insufficient XRGE for fee");
                     return;
                 }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                 // Actual token transfer deducted from owner, credited to recipient
                 if let (Some(owner), Some(to), Some(token_symbol)) = (
                     tx.payload.owner_pub_key.as_ref(),
@@ -4774,24 +5008,24 @@ impl L1Node {
                 ) {
                     let amount = tx.payload.amount.unwrap_or(0) as f64;
                     let owner_key = (owner.clone(), token_symbol.clone());
-                    let owner_bal = *token_balances.get(&owner_key).unwrap_or(&0.0);
-                    if owner_bal < amount {
+                    let owner_bal = *token_balances.get(&owner_key).unwrap_or(&0);
+                    if owner_bal < amount as u128 {
                         eprintln!("[node] Rejecting token_transfer_from: insufficient {} balance", token_symbol);
                         return;
                     }
-                    *token_balances.entry(owner_key).or_insert(0.0) -= amount;
+                    *token_balances.entry(owner_key).or_insert(0) -= amount as u128;
                     let recipient_key = (to.clone(), token_symbol.clone());
-                    *token_balances.entry(recipient_key).or_insert(0.0) += amount;
+                    *token_balances.entry(recipient_key).or_insert(0) += amount as u128;
                 }
             }
             // ─── Airdrops ────────────────────────────────────────────
             "token_airdrop" => {
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting token_airdrop: insufficient XRGE for fee");
                     return;
                 }
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                 if let (Some(recipients), Some(amounts), Some(token_symbol)) = (
                     tx.payload.airdrop_recipients.as_ref(),
                     tx.payload.airdrop_amounts.as_ref(),
@@ -4799,16 +5033,16 @@ impl L1Node {
                 ) {
                     let total: u64 = amounts.iter().sum();
                     let sender_key = (tx.from_pub_key.clone(), token_symbol.clone());
-                    let tok_bal = *token_balances.get(&sender_key).unwrap_or(&0.0);
-                    if tok_bal < total as f64 {
+                    let tok_bal = *token_balances.get(&sender_key).unwrap_or(&0);
+                    if tok_bal < total as u128 {
                         eprintln!("[node] Rejecting token_airdrop: insufficient {} ({:.4} < {})", token_symbol, tok_bal, total);
                         return;
                     }
-                    *token_balances.entry(sender_key).or_insert(0.0) -= total as f64;
+                    *token_balances.entry(sender_key).or_insert(0) -= total as u128;
                     for (i, recipient) in recipients.iter().enumerate() {
                         if let Some(&amt) = amounts.get(i) {
                             let key = (recipient.clone(), token_symbol.clone());
-                            *token_balances.entry(key).or_insert(0.0) += amt as f64;
+                            *token_balances.entry(key).or_insert(0) += amt as u128;
                         }
                     }
                 }
@@ -4874,7 +5108,7 @@ impl L1Node {
             if !released.is_empty() {
                 if let Ok(mut balances) = self.balances.lock() {
                     for entry in &released {
-                        *balances.entry(entry.delegator.clone()).or_insert(0.0) += entry.amount;
+                        *balances.entry(entry.delegator.clone()).or_insert(0) += xrge_f64_to_quanta(entry.amount);
                         eprintln!("[node] Unbonding released: {:.4} XRGE to {}",
                             entry.amount, &entry.delegator[..8.min(entry.delegator.len())]);
                     }
@@ -5036,7 +5270,7 @@ impl L1Node {
     /// Apply NFT transaction effects during block processing
     fn apply_nft_tx_inner(
         &self,
-        balances: &mut HashMap<String, f64>,
+        balances: &mut HashMap<String, u128>,
         tx: &TxV1,
         block_time: u64,
     ) -> Result<(), String> {
@@ -5046,13 +5280,13 @@ impl L1Node {
                 let name = tx.payload.nft_collection_name.as_ref().ok_or("missing nft_collection_name")?;
                 let collection_id = NftCollection::make_collection_id(&tx.from_pub_key, symbol);
 
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting nft_create_collection: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
                     return Ok(());
                 }
 
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
 
                 let col = NftCollection {
                     collection_id,
@@ -5126,16 +5360,16 @@ impl L1Node {
                 }
 
                 let total_cost = tx.fee + mint_cost;
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < total_cost {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(total_cost) {
                     eprintln!("[node] Rejecting nft_mint: insufficient XRGE ({:.4} < {:.4})", xrge_bal, total_cost);
                     return Ok(());
                 }
 
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= total_cost;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(total_cost);
                 // Pay mint price to collection creator
                 if mint_cost > 0.0 {
-                    *balances.entry(col.creator.clone()).or_insert(0.0) += mint_cost;
+                    *balances.entry(col.creator.clone()).or_insert(0) += xrge_f64_to_quanta(mint_cost);
                 }
 
                 let token_id = col.minted + 1;
@@ -5183,13 +5417,13 @@ impl L1Node {
                     }
                 }
 
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting nft_batch_mint: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
                     return Ok(());
                 }
 
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
 
                 let uris = tx.payload.nft_batch_uris.as_ref();
                 let attrs = tx.payload.nft_batch_attributes.as_ref();
@@ -5249,18 +5483,18 @@ impl L1Node {
                     }
                 }
 
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < total_cost {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(total_cost) {
                     eprintln!("[node] Rejecting nft_transfer: insufficient XRGE ({:.4} < {:.4})", xrge_bal, total_cost);
                     return Ok(());
                 }
 
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
 
                 if royalty_amount > 0.0 {
                     if let Some(col) = self.nft_store.get_collection(col_id)? {
-                        *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= royalty_amount;
-                        *balances.entry(col.royalty_recipient.clone()).or_insert(0.0) += royalty_amount;
+                        *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(royalty_amount);
+                        *balances.entry(col.royalty_recipient.clone()).or_insert(0) += xrge_f64_to_quanta(royalty_amount);
                     }
                 }
 
@@ -5282,13 +5516,13 @@ impl L1Node {
                     return Ok(());
                 }
 
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting nft_burn: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
                     return Ok(());
                 }
 
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                 self.nft_store.delete_token(col_id, token_id)?;
             }
             "nft_lock" => {
@@ -5306,13 +5540,13 @@ impl L1Node {
                     return Ok(());
                 }
 
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting nft_lock: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
                     return Ok(());
                 }
 
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
 
                 token.locked = locked;
                 self.nft_store.save_token(&token)?;
@@ -5331,13 +5565,13 @@ impl L1Node {
                     return Ok(());
                 }
 
-                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0.0);
-                if xrge_bal < tx.fee {
+                let xrge_bal = *balances.get(&tx.from_pub_key).unwrap_or(&0);
+                if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting nft_freeze_collection: insufficient XRGE ({:.4} < {:.4})", xrge_bal, tx.fee);
                     return Ok(());
                 }
 
-                *balances.entry(tx.from_pub_key.clone()).or_insert(0.0) -= tx.fee;
+                *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
 
                 col.frozen = frozen;
                 self.nft_store.save_collection(&col)?;
@@ -5358,7 +5592,7 @@ impl L1Node {
 
         let mut col_count = 0u32;
         let mut token_count = 0u32;
-        let mut dummy_balances: HashMap<String, f64> = HashMap::new();
+        let mut dummy_balances: HashMap<String, u128> = HashMap::new();
 
         for block in &blocks {
             for tx in &block.txs {
@@ -5375,7 +5609,7 @@ impl L1Node {
                             token_count += tx.payload.nft_batch_names.as_ref().map(|n| n.len() as u32).unwrap_or(0);
                         }
                         // Ensure sender has enough balance for fee checks during rebuild
-                        *dummy_balances.entry(tx.from_pub_key.clone()).or_insert(0.0) += tx.fee + 1.0;
+                        *dummy_balances.entry(tx.from_pub_key.clone()).or_insert(0) += xrge_f64_to_quanta(tx.fee + 1.0);
                         let _ = self.apply_nft_tx_inner(&mut dummy_balances, tx, block.header.time);
                     }
                     _ => {}
@@ -5693,4 +5927,1111 @@ impl L1Node {
         self.social_store.get_post_stats(post_id, viewer)
     }
 
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 0 ledger determinism harness.
+//
+// Unit tests for the two building blocks of balance state — the per-tx
+// applier and the fee distributor — that block replay must reproduce
+// identically on every node. These are the first tests of the native ledger
+// and lock in the properties the integer-ledger / state-root work depends on:
+// keyed mutation is map-order-independent, the fee split is exactly 20/70/10
+// stake-weighted, and distribution is deterministic. If any drifts, a test
+// fails before the divergence could reach consensus.
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod ledger_tests {
+    use super::*;
+
+    const EPS: f64 = 1e-9;
+    const Q: u128 = 1_000_000_000; // quanta per XRGE (native ledger is now integer quanta)
+
+    fn transfer_tx(from: &str, to: &str, amount: u64, fee: f64, token: Option<&str>) -> TxV1 {
+        TxV1 {
+            version: 1,
+            tx_type: "transfer".to_string(),
+            from_pub_key: from.to_string(),
+            nonce: 0,
+            payload: TxPayload {
+                to_pub_key_hex: Some(to.to_string()),
+                amount: Some(amount),
+                token_symbol: token.map(|s| s.to_string()),
+                ..Default::default()
+            },
+            fee,
+            sig: String::new(),
+            signed_payload: None,
+        }
+    }
+
+    /// Apply one tx to `balances`, returning the (token_balances, burned_tokens) maps.
+    fn apply(
+        balances: &mut HashMap<String, u128>,
+        tx: &TxV1,
+    ) -> (HashMap<TokenBalanceKey, u128>, HashMap<String, f64>) {
+        let mut token_balances: HashMap<TokenBalanceKey, u128> = HashMap::new();
+        let mut burned: HashMap<String, f64> = HashMap::new();
+        let uq: Arc<Mutex<Vec<UnbondingEntry>>> = Arc::new(Mutex::new(Vec::new()));
+        let ss = Arc::new(Mutex::new(0.0f64));
+        L1Node::apply_balance_tx_inner(
+            balances, &mut token_balances, &mut burned, tx, None, "", &uq, 1, &ss,
+        );
+        (token_balances, burned)
+    }
+
+    fn dist(
+        balances: &mut HashMap<String, u128>,
+        total_fees: u128,
+        proposer: &str,
+        stakes: &BTreeMap<String, u128>,
+        base_fee_quanta: u128,
+        tx_count: usize,
+    ) {
+        let burned = Arc::new(Mutex::new(0.0f64));
+        L1Node::distribute_fees(balances, total_fees, proposer, stakes, base_fee_quanta, tx_count, &burned);
+    }
+
+    fn near(a: f64, b: f64) -> bool {
+        (a - b).abs() < EPS
+    }
+
+    // ── apply_balance_tx_inner ────────────────────────────────────────
+
+    #[test]
+    fn transfer_debits_sender_and_credits_recipient() {
+        let mut b = HashMap::from([("alice".to_string(), 100 * Q)]);
+        apply(&mut b, &transfer_tx("alice", "bob", 30, 1.0, None));
+        assert_eq!(b["alice"], 69 * Q, "sender debited amount+fee (quanta)");
+        assert_eq!(b["bob"], 30 * Q, "recipient credited amount (quanta)");
+    }
+
+    #[test]
+    fn transfer_with_insufficient_balance_is_rejected() {
+        let mut b = HashMap::from([("alice".to_string(), 10 * Q)]);
+        apply(&mut b, &transfer_tx("alice", "bob", 30, 1.0, None));
+        assert_eq!(b["alice"], 10 * Q, "sender untouched on rejection");
+        assert!(!b.contains_key("bob"), "recipient not credited on rejection");
+    }
+
+    #[test]
+    fn transfer_result_is_map_order_independent() {
+        // Same logical state, different HashMap insertion order → identical result.
+        let mut b1 = HashMap::new();
+        b1.insert("alice".to_string(), 100 * Q);
+        b1.insert("zzz".to_string(), 5 * Q);
+        let mut b2 = HashMap::new();
+        b2.insert("zzz".to_string(), 5 * Q);
+        b2.insert("alice".to_string(), 100 * Q);
+
+        apply(&mut b1, &transfer_tx("alice", "bob", 30, 1.0, None));
+        apply(&mut b2, &transfer_tx("alice", "bob", 30, 1.0, None));
+
+        let s1: BTreeMap<_, _> = b1.into_iter().collect();
+        let s2: BTreeMap<_, _> = b2.into_iter().collect();
+        assert_eq!(s1, s2, "keyed mutation must not depend on map iteration order");
+    }
+
+    #[test]
+    fn burn_transfer_credits_burned_not_recipient() {
+        let mut b = HashMap::from([("alice".to_string(), 100 * Q)]);
+        let (_tb, burned) = apply(&mut b, &transfer_tx("alice", BURN_ADDRESS, 30, 1.0, None));
+        assert_eq!(b["alice"], 69 * Q, "sender still debited amount+fee (quanta)");
+        assert!(!b.contains_key(BURN_ADDRESS), "burn address is not credited a balance");
+        assert!(near(*burned.get("XRGE").unwrap_or(&0.0), 30.0), "burned XRGE tracked (display)");
+    }
+
+    // ── distribute_fees ───────────────────────────────────────────────
+
+    #[test]
+    fn fee_split_is_20_70_10() {
+        let mut b = HashMap::new();
+        let stakes = BTreeMap::from([("val1".to_string(), 100u128)]);
+        // base_fee 0 => no burn, no floor subsidy; whole 100 is the tip pool.
+        dist(&mut b, 100 * Q, "prop", &stakes, 0, 0);
+        assert_eq!(b["prop"], 20 * Q, "proposer 20%");
+        assert_eq!(b["val1"], 70 * Q, "validators 70%");
+        assert_eq!(b["__treasury__"], 10 * Q, "treasury 10%");
+        let total: u128 = b.values().sum();
+        assert_eq!(total, 100 * Q, "no value created or lost");
+    }
+
+    #[test]
+    fn validator_pool_is_stake_weighted() {
+        let mut b = HashMap::new();
+        let stakes = BTreeMap::from([("v1".to_string(), 100u128), ("v2".to_string(), 300u128)]);
+        dist(&mut b, 100 * Q, "prop", &stakes, 0, 0);
+        // validator pool = 70, split 25% / 75%
+        assert_eq!(b["v1"], 175 * Q / 10, "v1 = 25% of 70 (17.5 XRGE)");
+        assert_eq!(b["v2"], 525 * Q / 10, "v2 = 75% of 70 (52.5 XRGE)");
+    }
+
+    #[test]
+    fn empty_stake_gives_validator_pool_to_proposer() {
+        let mut b = HashMap::new();
+        let stakes: BTreeMap<String, u128> = BTreeMap::new();
+        dist(&mut b, 100 * Q, "prop", &stakes, 0, 0);
+        // proposer gets proposer_share (20) + validator_pool (70) = 90; treasury 10.
+        assert_eq!(b["prop"], 90 * Q, "proposer absorbs validator pool");
+        assert_eq!(b["__treasury__"], 10 * Q);
+    }
+
+    #[test]
+    fn tip_floor_is_subsidized_from_staking_reserve() {
+        let mut b = HashMap::from([("__staking_rewards__".to_string(), 1 * Q)]);
+        let stakes = BTreeMap::from([("v1".to_string(), 100u128)]);
+        // total_fees 0 => tip_pool 0 < MIN_TIP_FLOOR(0.1); subsidize 0.1 from reserve.
+        dist(&mut b, 0, "prop", &stakes, 0, 0);
+        assert_eq!(b["__staking_rewards__"], 9 * Q / 10, "reserve drained by 0.1 floor");
+        // the 0.1-XRGE (1e8 quanta) floor is then split 20/70/10
+        assert_eq!(b["prop"], 2 * Q / 100);
+        assert_eq!(b["v1"], 7 * Q / 100);
+        assert_eq!(b["__treasury__"], Q / 100);
+    }
+
+    #[test]
+    fn distribution_is_deterministic() {
+        let stakes = BTreeMap::from([
+            ("v1".to_string(), 111u128),
+            ("v2".to_string(), 333u128),
+            ("v3".to_string(), 555u128),
+        ]);
+        let mut a = HashMap::new();
+        let mut c = HashMap::new();
+        dist(&mut a, 123_456 * Q / 1000, "prop", &stakes, 5 * Q / 10, 7);
+        dist(&mut c, 123_456 * Q / 1000, "prop", &stakes, 5 * Q / 10, 7);
+        let sa: BTreeMap<_, _> = a.into_iter().collect();
+        let sc: BTreeMap<_, _> = c.into_iter().collect();
+        assert_eq!(sa, sc, "identical inputs must produce identical distribution");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 1 / T2 characterization tests for the rebuild AMM apply path
+// (`apply_amm_balance_effects`). These PIN the current f64 behaviour so the
+// upcoming consolidation (merging the live `apply_amm_tx_inner` and this
+// rebuild mirror into one applier) and the later f64->u128 flip can be proven
+// behaviour-preserving. Effects are asserted against the `amm` math module,
+// so these pin the apply/routing logic, not the math.
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod amm_replay_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    const Q: u128 = 1_000_000_000; // quanta per XRGE
+    static CTR: AtomicU64 = AtomicU64::new(0);
+
+    struct TmpDir(std::path::PathBuf);
+    impl TmpDir {
+        fn new() -> Self {
+            let mut p = std::env::temp_dir();
+            let n = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            p.push(format!("rvm-amm-{}-{}-{}", std::process::id(), n, CTR.fetch_add(1, Ordering::SeqCst)));
+            std::fs::create_dir_all(&p).unwrap();
+            TmpDir(p)
+        }
+    }
+    impl Drop for TmpDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A pool store seeded with one pool: QTOK/XRGE (sorted -> token_a=QTOK,
+    /// token_b=XRGE), reserves QTOK=200_000 / XRGE=100_000, LP supply 141_421.
+    fn seeded_store() -> (TmpDir, PoolStore) {
+        let dir = TmpDir::new();
+        let ps = PoolStore::new(dir.0.as_path()).unwrap();
+        let pool = LiquidityPool {
+            pool_id: "QTOK-XRGE".to_string(),
+            token_a: "QTOK".to_string(),
+            token_b: "XRGE".to_string(),
+            reserve_a: 200_000,
+            reserve_b: 100_000,
+            total_lp_supply: 141_421,
+            fee_rate: 0.003,
+            created_at: 0,
+            creator_pub_key: "creator".to_string(),
+        };
+        ps.save_pool(&pool).unwrap();
+        (dir, ps)
+    }
+
+    fn amm_tx(tx_type: &str, from: &str, fee: f64, payload: TxPayload) -> TxV1 {
+        TxV1 {
+            version: 1,
+            tx_type: tx_type.to_string(),
+            from_pub_key: from.to_string(),
+            nonce: 0,
+            payload,
+            fee,
+            sig: String::new(),
+            signed_payload: None,
+        }
+    }
+
+    #[test]
+    fn swap_xrge_for_token_routes_through_get_amount_out() {
+        let (_dir, ps) = seeded_store();
+        let mut bal = HashMap::from([("user".to_string(), 10_000 * Q)]);
+        let mut tok: HashMap<TokenBalanceKey, u128> = HashMap::new();
+        let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
+
+        let tx = amm_tx(
+            "swap",
+            "user",
+            0.1,
+            TxPayload {
+                token_a_symbol: Some("XRGE".to_string()), // token_in
+                token_b_symbol: Some("QTOK".to_string()), // token_out
+                amount_a: Some(1_000),
+                ..Default::default()
+            },
+        );
+        L1Node::apply_amm_balance_effects(&mut bal, &mut tok, &mut lp, &tx, &ps);
+
+        // XRGE debited: amount_in (1000) + fee (0.1)
+        assert_eq!(bal["user"], 89999 * Q / 10, "xrge quanta = 8999.9 XRGE");
+        // token_out credited exactly what the AMM math yields for these reserves
+        let expected = amm::get_amount_out(1_000, 100_000, 200_000).unwrap();
+        assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], expected as u128);
+        assert!(lp.is_empty());
+    }
+
+    #[test]
+    fn add_liquidity_mints_lp_per_amm_math() {
+        let (_dir, ps) = seeded_store();
+        // pool.token_a = QTOK, token_b = XRGE → amount_a is QTOK, amount_b is XRGE
+        let mut bal = HashMap::from([("user".to_string(), 50_000 * Q)]);
+        let mut tok: HashMap<TokenBalanceKey, u128> =
+            HashMap::from([(("user".to_string(), "QTOK".to_string()), 50_000u128)]);
+        let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
+
+        let tx = amm_tx(
+            "add_liquidity",
+            "user",
+            0.1,
+            TxPayload {
+                pool_id: Some("QTOK-XRGE".to_string()),
+                amount_a: Some(20_000), // QTOK
+                amount_b: Some(10_000), // XRGE
+                ..Default::default()
+            },
+        );
+        L1Node::apply_amm_balance_effects(&mut bal, &mut tok, &mut lp, &tx, &ps);
+
+        assert_eq!(bal["user"], 399999 * Q / 10, "xrge quanta = 39999.9 XRGE");
+        assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], 30_000u128);
+        let expected_lp = amm::calculate_lp_mint(20_000, 10_000, 200_000, 100_000, 141_421).unwrap();
+        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], expected_lp as u128);
+    }
+
+    #[test]
+    fn swap_is_skipped_when_xrge_cannot_cover_amount_plus_fee() {
+        let (_dir, ps) = seeded_store();
+        let mut bal = HashMap::from([("user".to_string(), 500 * Q)]); // < 1000 + fee
+        let mut tok: HashMap<TokenBalanceKey, u128> = HashMap::new();
+        let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
+
+        let tx = amm_tx(
+            "swap",
+            "user",
+            0.1,
+            TxPayload {
+                token_a_symbol: Some("XRGE".to_string()),
+                token_b_symbol: Some("QTOK".to_string()),
+                amount_a: Some(1_000),
+                ..Default::default()
+            },
+        );
+        L1Node::apply_amm_balance_effects(&mut bal, &mut tok, &mut lp, &tx, &ps);
+
+        // Rejected: nothing moved.
+        assert_eq!(bal["user"], 500 * Q);
+        assert!(tok.is_empty());
+        assert!(lp.is_empty());
+    }
+
+    #[test]
+    fn create_pool_debits_and_mints_initial_lp() {
+        let (_dir, ps) = seeded_store(); // pool QTOK-XRGE already exists
+        let mut bal = HashMap::from([("user".to_string(), 500_000 * Q)]);
+        let mut tok: HashMap<TokenBalanceKey, u128> =
+            HashMap::from([(("user".to_string(), "QTOK".to_string()), 500_000u128)]);
+        let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
+
+        let tx = amm_tx(
+            "create_pool",
+            "user",
+            0.1,
+            TxPayload {
+                token_a_symbol: Some("XRGE".to_string()),
+                token_b_symbol: Some("QTOK".to_string()),
+                amount_a: Some(100_000), // XRGE
+                amount_b: Some(200_000), // QTOK
+                ..Default::default()
+            },
+        );
+        L1Node::apply_amm_balance_effects(&mut bal, &mut tok, &mut lp, &tx, &ps);
+
+        assert_eq!(bal["user"], 3_999_999 * Q / 10);
+        assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], 300_000u128);
+        // initial LP = floor(sqrt(a*b)) - 1000
+        let expected_lp = ((100_000.0_f64 * 200_000.0).sqrt() as u64).saturating_sub(1000);
+        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], expected_lp as u128);
+    }
+
+    #[test]
+    fn remove_liquidity_burns_lp_and_returns_both_tokens() {
+        let (_dir, ps) = seeded_store();
+        let mut bal = HashMap::from([("user".to_string(), 10 * Q)]);
+        let mut tok: HashMap<TokenBalanceKey, u128> = HashMap::new();
+        let mut lp: HashMap<TokenBalanceKey, u128> =
+            HashMap::from([(("user".to_string(), "QTOK-XRGE".to_string()), 50_000u128)]);
+
+        let tx = amm_tx(
+            "remove_liquidity",
+            "user",
+            0.1,
+            TxPayload {
+                pool_id: Some("QTOK-XRGE".to_string()),
+                lp_amount: Some(10_000),
+                ..Default::default()
+            },
+        );
+        L1Node::apply_amm_balance_effects(&mut bal, &mut tok, &mut lp, &tx, &ps);
+
+        let (out_a, out_b) = amm::calculate_remove_liquidity(10_000, 200_000, 100_000, 141_421).unwrap();
+        // fee debited, LP burned
+        assert_eq!(bal.get("user").copied().unwrap_or(0), 10 * Q - Q / 10 + out_b as u128 * Q);
+        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], 40_000u128);
+        // token_a = QTOK returned to token_balances, token_b = XRGE returned to native
+        assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], out_a as u128);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 1 / T2 — L1Node test harness + live AMM apply characterization.
+//
+// Stands up a real L1Node against temp sled stores (the unlock for guarding
+// the consolidation, the f64->u128 flip, and golden replay tests). Then pins
+// the LIVE apply_amm_tx_inner — which, unlike the rebuild mirror, creates the
+// pool and mutates reserves — so the T2 merge can be proven behaviour-
+// preserving on both sides.
+// ─────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod live_amm_tests {
+    use super::*;
+    use quantum_vault_types::ChainConfig;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    const Q: u128 = 1_000_000_000; // quanta per XRGE
+    static CTR: AtomicU64 = AtomicU64::new(0);
+
+    struct TmpDir(std::path::PathBuf);
+    impl TmpDir {
+        fn new() -> Self {
+            let mut p = std::env::temp_dir();
+            let n = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            p.push(format!("rvm-node-{}-{}-{}", std::process::id(), n, CTR.fetch_add(1, Ordering::SeqCst)));
+            std::fs::create_dir_all(&p).unwrap();
+            TmpDir(p)
+        }
+    }
+    impl Drop for TmpDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Construct a real L1Node backed by a throwaway data dir.
+    fn test_node() -> (TmpDir, L1Node) {
+        let dir = TmpDir::new();
+        let node = L1Node::new(NodeOptions {
+            data_dir: dir.0.clone(),
+            chain: ChainConfig {
+                chain_id: "test".to_string(),
+                genesis_time: 0,
+                block_time_ms: 1000,
+            },
+            mine: false,
+            bridge_withdraw_store: None,
+        })
+        .expect("test node");
+        (dir, node)
+    }
+
+    fn amm_tx(tx_type: &str, from: &str, fee: f64, payload: TxPayload) -> TxV1 {
+        TxV1 {
+            version: 1,
+            tx_type: tx_type.to_string(),
+            from_pub_key: from.to_string(),
+            nonce: 0,
+            payload,
+            fee,
+            sig: String::new(),
+            signed_payload: None,
+        }
+    }
+
+    #[test]
+    fn node_constructs_against_temp_stores() {
+        let (_dir, node) = test_node();
+        // Fresh node: empty ledger, no pools.
+        assert_eq!(node.get_balance("nobody").unwrap(), 0.0);
+        assert!(node.pool_store.list_pools().unwrap().is_empty());
+    }
+
+    #[test]
+    fn live_create_pool_then_swap_updates_reserves_and_balances() {
+        let (_dir, node) = test_node();
+        let mut bal = HashMap::from([("user".to_string(), 1_000_000 * Q)]);
+        let mut tok: HashMap<TokenBalanceKey, u128> =
+            HashMap::from([(("user".to_string(), "QTOK".to_string()), 1_000_000u128)]);
+        let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
+
+        // create_pool: token_a=XRGE amount 100_000, token_b=QTOK amount 200_000
+        let create = amm_tx(
+            "create_pool",
+            "user",
+            0.1,
+            TxPayload {
+                token_a_symbol: Some("XRGE".to_string()),
+                token_b_symbol: Some("QTOK".to_string()),
+                amount_a: Some(100_000),
+                amount_b: Some(200_000),
+                ..Default::default()
+            },
+        );
+        node.apply_amm_tx_inner(&mut bal, &mut tok, &mut lp, &create, 0, 1).unwrap();
+
+        // Pool persisted (sorted QTOK-XRGE): reserve_a=QTOK=200_000, reserve_b=XRGE=100_000.
+        let pool = node.pool_store.get_pool("QTOK-XRGE").unwrap().unwrap();
+        assert_eq!(pool.reserve_a, 200_000);
+        assert_eq!(pool.reserve_b, 100_000);
+        // Creator LP == the pool's initial supply.
+        assert_eq!(lp[&("user".to_string(), "QTOK-XRGE".to_string())], pool.total_lp_supply as u128);
+        // Balances debited fee + provided liquidity.
+        assert_eq!(bal["user"], 8_999_999 * Q / 10, "xrge quanta = 899999.9 XRGE");
+        assert_eq!(tok[&("user".to_string(), "QTOK".to_string())], 800_000u128);
+
+        // Swap 1_000 XRGE -> QTOK.
+        let expected_out = amm::get_amount_out(1_000, 100_000, 200_000).unwrap();
+        let swap = amm_tx(
+            "swap",
+            "user",
+            0.1,
+            TxPayload {
+                token_a_symbol: Some("XRGE".to_string()),
+                token_b_symbol: Some("QTOK".to_string()),
+                amount_a: Some(1_000),
+                ..Default::default()
+            },
+        );
+        let qtok_before = tok[&("user".to_string(), "QTOK".to_string())];
+        node.apply_amm_tx_inner(&mut bal, &mut tok, &mut lp, &swap, 0, 2).unwrap();
+
+        // Live path mutates reserves: XRGE reserve grew by the input.
+        let pool2 = node.pool_store.get_pool("QTOK-XRGE").unwrap().unwrap();
+        assert_eq!(pool2.reserve_b, 101_000, "XRGE reserve after swap");
+        assert_eq!(pool2.reserve_a, 200_000 - expected_out, "QTOK reserve after swap");
+        // User received exactly the AMM output.
+        let qtok_after = tok[&("user".to_string(), "QTOK".to_string())];
+        assert_eq!(qtok_after - qtok_before, expected_out as u128);
+    }
+
+    // ── Invariant conservation net for the T3c XRGE scale flip ────────────
+    // These assert balances through the PUBLIC get_balance accessor, which
+    // returns DISPLAY XRGE. Because display units don't change when the internal
+    // ledger moves from whole-XRGE f64 to quanta u128, these expected values are
+    // IDENTICAL before and after the flip. They pass now (f64); they must still
+    // pass after (quanta) — a dropped ×10^9 anywhere makes get_balance wrong and
+    // fails one of these. This is the independent safety net for the scale change.
+
+    fn transfer_tx(from: &str, to: &str, amount: u64, fee: f64) -> TxV1 {
+        TxV1 {
+            version: 1,
+            tx_type: "transfer".to_string(),
+            from_pub_key: from.to_string(),
+            nonce: 0,
+            payload: TxPayload {
+                to_pub_key_hex: Some(to.to_string()),
+                amount: Some(amount),
+                ..Default::default()
+            },
+            fee,
+            sig: String::new(),
+            signed_payload: None,
+        }
+    }
+
+    fn faucet_tx(to: &str, amount: u64) -> TxV1 {
+        let mut tx = transfer_tx(to, to, amount, 0.0);
+        tx.payload.faucet = Some(true);
+        tx
+    }
+
+    /// Apply a tx to the node's live balance maps (drives apply_balance_tx_inner).
+    fn apply_tx(node: &L1Node, node_pub: &str, tx: &TxV1) {
+        let mut bal = node.balances.lock().unwrap();
+        let mut tok = node.token_balances.lock().unwrap();
+        let mut burned = node.burned_tokens.lock().unwrap();
+        L1Node::apply_balance_tx_inner(
+            &mut bal, &mut tok, &mut burned, tx,
+            Some(&node.validator_store), node_pub, &node.unbonding_queue, 1, &node.shielded_supply,
+        );
+    }
+
+    #[test]
+    fn golden_faucet_then_transfer_conserves_display_balances() {
+        let (_dir, node) = test_node();
+        apply_tx(&node, "_rebuild_", &faucet_tx("alice", 100)); // mint 100 XRGE
+        assert_eq!(node.get_balance("alice").unwrap(), 100.0);
+
+        apply_tx(&node, "", &transfer_tx("alice", "bob", 30, 1.0)); // 30 + 1 fee
+        assert_eq!(node.get_balance("alice").unwrap(), 69.0, "alice = 100 - 30 - 1");
+        assert_eq!(node.get_balance("bob").unwrap(), 30.0);
+    }
+
+    #[test]
+    fn golden_fractional_fee_is_exact_in_display() {
+        let (_dir, node) = test_node();
+        apply_tx(&node, "_rebuild_", &faucet_tx("alice", 100));
+        apply_tx(&node, "", &transfer_tx("alice", "bob", 30, 0.1)); // fractional fee
+        let a = node.get_balance("alice").unwrap();
+        assert!((a - 69.9).abs() < 1e-6, "alice = 100 - 30 - 0.1, got {}", a);
+        assert_eq!(node.get_balance("bob").unwrap(), 30.0);
+    }
+
+    #[test]
+    fn golden_insufficient_balance_is_rejected() {
+        let (_dir, node) = test_node();
+        apply_tx(&node, "_rebuild_", &faucet_tx("alice", 10));
+        apply_tx(&node, "", &transfer_tx("alice", "bob", 30, 1.0)); // can't afford
+        assert_eq!(node.get_balance("alice").unwrap(), 10.0, "unchanged on rejection");
+        assert_eq!(node.get_balance("bob").unwrap(), 0.0);
+    }
+
+    // ── T6 integer EIP-1559 base fee ──────────────────────────────────────
+    // The base fee is consensus state (it sets each block's burn). These pin the
+    // integer update math and assert the display value through get_base_fee, so a
+    // regression in the quanta<->display boundary would also show.
+
+    #[test]
+    fn base_fee_defaults_to_initial() {
+        let (_dir, node) = test_node();
+        assert_eq!(node.get_base_fee_quanta(), 100_000_000, "0.1 XRGE in quanta");
+        assert_eq!(node.get_base_fee(), 0.1, "display XRGE");
+    }
+
+    #[test]
+    fn base_fee_unchanged_at_target_fullness() {
+        let (_dir, node) = test_node();
+        // 10 txs == TARGET_TXS_PER_BLOCK → no change.
+        assert_eq!(node.calculate_next_base_fee(10), node.get_base_fee_quanta());
+    }
+
+    #[test]
+    fn base_fee_rises_above_target_by_eip1559_step() {
+        let (_dir, node) = test_node();
+        // current 0.1 (1e8 quanta), 20 txs → excess 10.
+        // delta = 1e8 * 10 / (10 * 8) = 12_500_000 quanta = 0.0125 XRGE.
+        let next = node.calculate_next_base_fee(20);
+        assert_eq!(next, 112_500_000, "0.1125 XRGE in quanta");
+        node.set_base_fee_quanta(next);
+        assert_eq!(node.get_base_fee(), 0.1125, "display matches");
+    }
+
+    #[test]
+    fn base_fee_falls_below_target_by_eip1559_step() {
+        let (_dir, node) = test_node();
+        // current 0.1, 0 txs → deficit 10. delta = 1e8 * 10 / 80 = 12_500_000.
+        let next = node.calculate_next_base_fee(0);
+        assert_eq!(next, 87_500_000, "0.0875 XRGE in quanta");
+    }
+
+    #[test]
+    fn base_fee_never_drops_below_floor() {
+        let (_dir, node) = test_node();
+        node.set_base_fee_quanta(BASE_FEE_FLOOR_QUANTA); // 0.001 XRGE
+        // Empty blocks would push it lower, but the floor clamps it.
+        let next = node.calculate_next_base_fee(0);
+        assert_eq!(next, BASE_FEE_FLOOR_QUANTA, "clamped at 0.001 XRGE floor");
+    }
+
+    #[test]
+    fn base_fee_survives_legacy_f64_string_in_fee_db() {
+        let (_dir, node) = test_node();
+        // Simulate a pre-T6 fee_db entry written as an f64 XRGE decimal string.
+        node.fee_db.insert(b"base_fee", b"0.1".as_ref()).unwrap();
+        assert_eq!(node.get_base_fee_quanta(), 100_000_000, "legacy 0.1 → quanta");
+    }
+
+    // ── T7 versioned balance snapshot ─────────────────────────────────────
+    // The snapshot must be self-describing so v2 (integer-quanta) code can never
+    // silently misread a v1 (f64 XRGE) snapshot as quanta.
+
+    #[test]
+    fn snapshot_roundtrips_at_current_version() {
+        let (_dir, node) = test_node();
+        node.balances.lock().unwrap().insert("alice".to_string(), 100 * Q);
+        node.save_balance_snapshot(42);
+        // Wipe in-memory state, then load it back from the snapshot.
+        node.balances.lock().unwrap().clear();
+        let h = node.load_balance_snapshot().expect("current-version snapshot loads");
+        assert_eq!(h, 42);
+        assert_eq!(node.get_balance("alice").unwrap(), 100.0, "quanta restored to display XRGE");
+    }
+
+    #[test]
+    fn snapshot_without_version_tag_is_rejected() {
+        let (_dir, node) = test_node();
+        // Simulate a pre-v2 snapshot: height + balances present, but NO version tag.
+        node.snapshot_db.insert(b"height", &7u64.to_be_bytes()).unwrap();
+        let bal = HashMap::from([("alice".to_string(), 100u128)]);
+        node.snapshot_db.insert(b"balances", serde_json::to_vec(&bal).unwrap()).unwrap();
+        node.snapshot_db.flush().unwrap();
+        assert!(node.load_balance_snapshot().is_err(),
+            "unversioned (pre-v2) snapshot must be rejected → forces safe rebuild");
+    }
+
+    #[test]
+    fn snapshot_with_wrong_version_is_rejected() {
+        let (_dir, node) = test_node();
+        node.snapshot_db.insert(b"version", &1u32.to_be_bytes()).unwrap();
+        node.snapshot_db.insert(b"height", &7u64.to_be_bytes()).unwrap();
+        node.snapshot_db.flush().unwrap();
+        assert!(node.load_balance_snapshot().is_err(),
+            "a different snapshot version must be rejected by v2 code");
+    }
+
+    // ── P2-3 state-root primitives ────────────────────────────────────────
+
+    #[test]
+    fn current_state_root_matches_direct_module_computation() {
+        let (_dir, node) = test_node();
+        node.balances.lock().unwrap().insert("alice".to_string(), 100 * Q);
+        node.balances.lock().unwrap().insert("bob".to_string(), 200 * Q);
+
+        let via_node = node.compute_current_state_root().unwrap();
+        let bal = node.balances.lock().unwrap().clone();
+        let tok = node.token_balances.lock().unwrap().clone();
+        let lp = node.lp_balances.lock().unwrap().clone();
+        let via_module = crate::state_root::compute_state_root(&bal, &tok, &lp);
+        assert_eq!(via_node, via_module, "node helper == module over the same maps");
+    }
+
+    #[test]
+    fn state_root_changes_when_a_balance_changes() {
+        let (_dir, node) = test_node();
+        apply_tx(&node, "_rebuild_", &faucet_tx("alice", 10));
+        let before = node.compute_current_state_root().unwrap();
+        apply_tx(&node, "_rebuild_", &faucet_tx("bob", 5));
+        let after = node.compute_current_state_root().unwrap();
+        assert_ne!(before, after, "crediting an account must change the root");
+    }
+
+    #[test]
+    fn snapshot_then_mutate_then_restore_recovers_exact_root() {
+        let (_dir, node) = test_node();
+        apply_tx(&node, "_rebuild_", &faucet_tx("alice", 10));
+        let root0 = node.compute_current_state_root().unwrap();
+        let snap = node.snapshot_balance_maps().unwrap();
+
+        // Mutate the ledger (as a bad block's apply would).
+        apply_tx(&node, "_rebuild_", &faucet_tx("mallory", 999));
+        assert_ne!(node.compute_current_state_root().unwrap(), root0, "state moved");
+
+        // Roll back and confirm the money ledger is bit-for-bit restored.
+        node.restore_balance_maps(snap).unwrap();
+        assert_eq!(node.compute_current_state_root().unwrap(), root0, "root restored exactly");
+        assert_eq!(node.get_balance("mallory").unwrap(), 0.0, "rolled-back credit is gone");
+        assert_eq!(node.get_balance("alice").unwrap(), 10.0, "kept balance intact");
+    }
+
+    // ── P2-4 producer stamps the post-state root ──────────────────────────
+
+    #[test]
+    fn mined_block_commits_the_post_state_root() {
+        let (_dir, node) = test_node();
+        // Faucet mints are only honored when issued by the node's own key, so
+        // build the tx from that key. Mark it pre-verified so mine_pending
+        // accepts it without a real signature.
+        let node_key = node.keys.lock().unwrap().public_key_hex.clone();
+        let mut tx = transfer_tx(&node_key, "alice", 10, 0.0);
+        tx.payload.faucet = Some(true);
+        node.mempool.lock().unwrap().insert("tx1".to_string(), tx);
+        node.verified_tx_ids.lock().unwrap().insert("tx1".to_string());
+
+        let block = node.mine_pending().unwrap().expect("a block is produced");
+
+        // The header commits to the ledger state AFTER applying the block, and it
+        // matches what the node holds — proving the root is the true post-state.
+        let root = block.header.state_root.clone().expect("root stamped (active in tests)");
+        assert_eq!(
+            root,
+            node.compute_current_state_root().unwrap(),
+            "header root == node's post-apply ledger root"
+        );
+        // Applied exactly once: alice funded with 10, not double-credited.
+        assert_eq!(node.get_balance("alice").unwrap(), 10.0, "faucet applied once");
+    }
+
+    // ── P2-5 import verifies the committed root ───────────────────────────
+
+    /// A signed transfer helper (real PQC signature, so it survives import's
+    /// tx-signature re-verification).
+    fn signed_transfer(from: &PQKeypair, to: &str, amount: u64) -> TxV1 {
+        let mut tx = transfer_tx(&from.public_key_hex, to, amount, 0.0);
+        tx.sig = pqc_sign(&from.secret_key_hex, &encode_tx_for_signing(&tx)).unwrap();
+        tx
+    }
+
+    #[test]
+    fn imported_block_with_matching_root_is_accepted() {
+        let (_da, a) = test_node();
+        let (_db, b) = test_node();
+        let user = pqc_keygen();
+        // Both nodes start from identical balances → applying the same block
+        // yields the same root.
+        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        b.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+
+        // Node A mines a real signed transfer; the header commits its post-state.
+        a.mempool.lock().unwrap().insert("t".to_string(), signed_transfer(&user, "bob", 40));
+        let block = a.mine_pending().unwrap().expect("A produces a block");
+        assert!(block.header.state_root.is_some(), "A committed a root");
+
+        // Node B imports it — matching root → accepted, transfer applied.
+        b.import_block(block).unwrap();
+        assert_eq!(b.get_balance("bob").unwrap(), 40.0, "transfer applied on B");
+        assert_eq!(b.get_balance(&user.public_key_hex).unwrap(), 60.0);
+        assert_eq!(
+            a.compute_current_state_root().unwrap(),
+            b.compute_current_state_root().unwrap(),
+            "A and B agree on the ledger root"
+        );
+    }
+
+    #[test]
+    fn imported_block_with_mismatched_root_is_rejected_and_rolled_back() {
+        let (_da, a) = test_node();
+        let (_db, b) = test_node();
+        let user = pqc_keygen();
+        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        // B diverges: same user balance, but an extra account A never had. B will
+        // apply A's transfer successfully, but its root won't match A's.
+        b.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        b.balances.lock().unwrap().insert("ghost".to_string(), 5 * Q);
+
+        a.mempool.lock().unwrap().insert("t".to_string(), signed_transfer(&user, "bob", 40));
+        let block = a.mine_pending().unwrap().expect("A produces a block");
+
+        let root_before = b.compute_current_state_root().unwrap();
+        let err = b.import_block(block).unwrap_err();
+        assert!(err.contains("state root mismatch"), "rejected for root divergence: {}", err);
+
+        // The bad block's effects are rolled back exactly — bob's credit is gone,
+        // the pre-apply balances are restored, and the root is unchanged.
+        assert_eq!(b.get_balance("bob").unwrap(), 0.0, "no partial state kept");
+        assert_eq!(b.get_balance(&user.public_key_hex).unwrap(), 100.0, "sender restored");
+        assert_eq!(b.get_balance("ghost").unwrap(), 5.0, "untouched account intact");
+        assert_eq!(b.compute_current_state_root().unwrap(), root_before, "rolled back exactly");
+    }
+
+    // ── P3-3 contract bytecode installs on import ─────────────────────────
+
+    /// A node with the WASM runtime + contract store wired up (test_node leaves
+    /// them None). Returns the extra TmpDir so the store outlives the node.
+    fn node_with_vm() -> (TmpDir, TmpDir, L1Node) {
+        let (dir, mut node) = test_node();
+        let cs_dir = TmpDir::new();
+        node.set_contract_store(std::sync::Arc::new(ContractStore::new(&cs_dir.0).unwrap()));
+        node.set_wasm_runtime(std::sync::Arc::new(WasmRuntime::new().unwrap()));
+        (dir, cs_dir, node)
+    }
+
+    #[test]
+    fn contract_bytecode_installs_on_mine_and_import() {
+        let (_da, _csa, mut a) = node_with_vm();
+        let (_db, _csb, b) = node_with_vm();
+        let user = pqc_keygen();
+        // Same starting balances on both, so post-apply state roots match.
+        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        b.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+
+        // A signed contract_deploy tx that CARRIES the bytecode (P3-3).
+        let wasm = wat::parse_str(
+            r#"(module (memory (export "memory") 1) (func (export "run")))"#,
+        )
+        .unwrap();
+        use base64::Engine as _;
+        let wasm_b64 = base64::engine::general_purpose::STANDARD.encode(&wasm);
+        let addr = "c0ffee00000000000000000000000000000000ab";
+        let mut tx = TxV1 {
+            version: 1,
+            tx_type: "contract_deploy".to_string(),
+            from_pub_key: user.public_key_hex.clone(),
+            nonce: 0,
+            payload: TxPayload {
+                contract_addr: Some(addr.to_string()),
+                contract_wasm: Some(wasm_b64),
+                to_pub_key_hex: Some(user.public_key_hex.clone()),
+                amount: Some(wasm.len() as u64),
+                ..Default::default()
+            },
+            fee: 1.0,
+            sig: String::new(),
+            signed_payload: None,
+        };
+        tx.sig = pqc_sign(&user.secret_key_hex, &encode_tx_for_signing(&tx)).unwrap();
+
+        a.mempool.lock().unwrap().insert("d".to_string(), tx);
+        let block = a.mine_pending().unwrap().expect("A mines the deploy");
+
+        // A installed the code while mining.
+        assert!(
+            a.contract_store.as_ref().unwrap().get_contract(addr).unwrap().is_some(),
+            "A holds the bytecode after mining"
+        );
+
+        // B installs it purely from the imported block's tx — nothing pre-shared.
+        b.import_block(block).unwrap();
+        let csb = b.contract_store.as_ref().unwrap();
+        assert!(csb.get_contract(addr).unwrap().is_some(), "B installed from the imported tx");
+        assert_eq!(csb.get_wasm(addr).unwrap().unwrap(), wasm, "B holds the exact bytecode");
+    }
+
+    // ── P3-4 the payoff: contracts move real XRGE ─────────────────────────
+
+    fn signed(mut tx: TxV1, kp: &PQKeypair) -> TxV1 {
+        tx.sig = pqc_sign(&kp.secret_key_hex, &encode_tx_for_signing(&tx)).unwrap();
+        tx
+    }
+
+    #[test]
+    fn contract_call_moves_real_xrge_and_conserves() {
+        let (_da, _csa, mut a) = node_with_vm();
+        let user = pqc_keygen();
+        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+
+        // A contract whose "pay" method transfers 1 XRGE (10^9 quanta) to "bob".
+        let wasm = wat::parse_str(
+            r#"(module
+                 (import "env" "host_transfer" (func $tr (param i32 i32 i64) (result i32)))
+                 (memory (export "memory") 1)
+                 (data (i32.const 0) "bob")
+                 (func (export "pay") (result i32)
+                   (call $tr (i32.const 0) (i32.const 3) (i64.const 1000000000))))"#,
+        )
+        .unwrap();
+        use base64::Engine as _;
+        let wasm_b64 = base64::engine::general_purpose::STANDARD.encode(&wasm);
+        let addr = "c0ffee00000000000000000000000000000000ab";
+
+        // Deploy (carries bytecode), mined into its own block first.
+        let deploy = signed(
+            TxV1 {
+                version: 1,
+                tx_type: "contract_deploy".to_string(),
+                from_pub_key: user.public_key_hex.clone(),
+                nonce: 0,
+                payload: TxPayload {
+                    contract_addr: Some(addr.to_string()),
+                    contract_wasm: Some(wasm_b64),
+                    to_pub_key_hex: Some(user.public_key_hex.clone()),
+                    amount: Some(wasm.len() as u64),
+                    ..Default::default()
+                },
+                fee: 1.0,
+                sig: String::new(),
+                signed_payload: None,
+            },
+            &user,
+        );
+        a.mempool.lock().unwrap().insert("deploy".to_string(), deploy);
+        a.mine_pending().unwrap().expect("deploy block");
+
+        // Fund the contract with 5 XRGE so it can pay out.
+        a.balances.lock().unwrap().insert(addr.to_string(), 5 * Q);
+
+        // Call "pay".
+        let call = signed(
+            TxV1 {
+                version: 1,
+                tx_type: "contract_call".to_string(),
+                from_pub_key: user.public_key_hex.clone(),
+                nonce: 1,
+                payload: TxPayload {
+                    contract_addr: Some(addr.to_string()),
+                    contract_method: Some("pay".to_string()),
+                    ..Default::default()
+                },
+                fee: 1.0,
+                sig: String::new(),
+                signed_payload: None,
+            },
+            &user,
+        );
+        a.mempool.lock().unwrap().insert("call".to_string(), call);
+        a.mine_pending().unwrap().expect("call block");
+
+        // The contract moved 1 real XRGE to bob — and conserved exactly.
+        assert_eq!(a.get_balance("bob").unwrap(), 1.0, "bob received 1 XRGE from the contract");
+        assert_eq!(a.get_balance(addr).unwrap(), 4.0, "contract balance dropped by exactly 1 XRGE");
+    }
+
+    // ── P3-6 end-to-end: royalty splitter across two nodes + overdraft ────
+
+    /// Deploy a contract (carrying its bytecode) on `n` by mining one block, and
+    /// return that block so it can be imported elsewhere. `n` must be mut.
+    fn deploy_via_block(n: &mut L1Node, user: &PQKeypair, addr: &str, wasm: &[u8], nonce: u64) -> BlockV1 {
+        use base64::Engine as _;
+        let wasm_b64 = base64::engine::general_purpose::STANDARD.encode(wasm);
+        let tx = signed(
+            TxV1 {
+                version: 1,
+                tx_type: "contract_deploy".to_string(),
+                from_pub_key: user.public_key_hex.clone(),
+                nonce,
+                payload: TxPayload {
+                    contract_addr: Some(addr.to_string()),
+                    contract_wasm: Some(wasm_b64),
+                    to_pub_key_hex: Some(user.public_key_hex.clone()),
+                    amount: Some(wasm.len() as u64),
+                    ..Default::default()
+                },
+                fee: 1.0,
+                sig: String::new(),
+                signed_payload: None,
+            },
+            user,
+        );
+        n.mempool.lock().unwrap().insert("deploy".to_string(), tx);
+        n.mine_pending().unwrap().expect("deploy block")
+    }
+
+    #[test]
+    fn royalty_splitter_fans_xrge_across_two_nodes() {
+        let (_da, _csa, mut a) = node_with_vm();
+        let (_db, _csb, b) = node_with_vm();
+        let user = pqc_keygen();
+        // Identical starting balances so post-apply roots match.
+        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        b.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+
+        // Splitter: on "split", send 1 XRGE each to alice, bob, carol.
+        let wasm = wat::parse_str(
+            r#"(module
+                 (import "env" "host_transfer" (func $tr (param i32 i32 i64) (result i32)))
+                 (memory (export "memory") 1)
+                 (data (i32.const 0) "alice")
+                 (data (i32.const 16) "bob")
+                 (data (i32.const 32) "carol")
+                 (func (export "split") (result i32)
+                   (drop (call $tr (i32.const 0)  (i32.const 5) (i64.const 1000000000)))
+                   (drop (call $tr (i32.const 16) (i32.const 3) (i64.const 1000000000)))
+                   (call $tr (i32.const 32) (i32.const 5) (i64.const 1000000000))))"#,
+        )
+        .unwrap();
+        let addr = "5911770000000000000000000000000000000abc";
+
+        // Deploy on A, import the deploy block on B — both hold the code and stay
+        // in lockstep (each deducts the same deploy fee).
+        let deploy_block = deploy_via_block(&mut a, &user, addr, &wasm, 0);
+        b.import_block(deploy_block).unwrap();
+
+        // Fund the contract with 10 XRGE on BOTH nodes (out-of-band, identical).
+        a.balances.lock().unwrap().insert(addr.to_string(), 10 * Q);
+        b.balances.lock().unwrap().insert(addr.to_string(), 10 * Q);
+
+        // A mines the split call; B imports it.
+        let call = signed(
+            TxV1 {
+                version: 1,
+                tx_type: "contract_call".to_string(),
+                from_pub_key: user.public_key_hex.clone(),
+                nonce: 1,
+                payload: TxPayload {
+                    contract_addr: Some(addr.to_string()),
+                    contract_method: Some("split".to_string()),
+                    ..Default::default()
+                },
+                fee: 1.0,
+                sig: String::new(),
+                signed_payload: None,
+            },
+            &user,
+        );
+        a.mempool.lock().unwrap().insert("call".to_string(), call);
+        let split_block = a.mine_pending().unwrap().expect("split block");
+        b.import_block(split_block).unwrap();
+
+        // Both nodes agree: 1 XRGE fanned to each of three wallets, contract down 3.
+        for n in [&a, &b] {
+            assert_eq!(n.get_balance("alice").unwrap(), 1.0);
+            assert_eq!(n.get_balance("bob").unwrap(), 1.0);
+            assert_eq!(n.get_balance("carol").unwrap(), 1.0);
+            assert_eq!(n.get_balance(addr).unwrap(), 7.0, "10 - 3 XRGE paid out");
+        }
+        assert_eq!(
+            a.compute_current_state_root().unwrap(),
+            b.compute_current_state_root().unwrap(),
+            "A and B agree on the ledger root after the split"
+        );
+    }
+
+    #[test]
+    fn contract_cannot_overspend_its_balance() {
+        let (_da, _csa, mut a) = node_with_vm();
+        let user = pqc_keygen();
+        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+
+        // "overspend": tries to send 5 XRGE to bob — but the contract holds only 1.
+        let wasm = wat::parse_str(
+            r#"(module
+                 (import "env" "host_transfer" (func $tr (param i32 i32 i64) (result i32)))
+                 (memory (export "memory") 1)
+                 (data (i32.const 0) "bob")
+                 (func (export "overspend") (result i32)
+                   (call $tr (i32.const 0) (i32.const 3) (i64.const 5000000000))))"#,
+        )
+        .unwrap();
+        let addr = "0bad0000000000000000000000000000000000ab";
+
+        let deploy_block = deploy_via_block(&mut a, &user, addr, &wasm, 0);
+        let _ = deploy_block;
+        a.balances.lock().unwrap().insert(addr.to_string(), 1 * Q); // only 1 XRGE
+
+        let call = signed(
+            TxV1 {
+                version: 1,
+                tx_type: "contract_call".to_string(),
+                from_pub_key: user.public_key_hex.clone(),
+                nonce: 1,
+                payload: TxPayload {
+                    contract_addr: Some(addr.to_string()),
+                    contract_method: Some("overspend".to_string()),
+                    ..Default::default()
+                },
+                fee: 1.0,
+                sig: String::new(),
+                signed_payload: None,
+            },
+            &user,
+        );
+        a.mempool.lock().unwrap().insert("call".to_string(), call);
+        a.mine_pending().unwrap().expect("call block");
+
+        // The over-transfer was refused at the VM host boundary: no XRGE moved.
+        assert_eq!(a.get_balance("bob").unwrap(), 0.0, "bob got nothing — overspend refused");
+        assert_eq!(a.get_balance(addr).unwrap(), 1.0, "contract balance intact");
+    }
 }

@@ -83,6 +83,44 @@ impl WasmRuntime {
         Ok(address)
     }
 
+    /// Install a contract's bytecode at an **explicit** address (block import).
+    ///
+    /// Unlike [`deploy_contract`], the address is taken from the on-chain tx, not
+    /// re-derived — the current deploy flow records the address in the tx while
+    /// the tx itself is signed by the node key, so re-derivation would not match.
+    /// Validates the WASM compiles and enforces the size bound; idempotent when
+    /// the contract is already present. This is what lets every importing node
+    /// hold the code and re-execute the contract identically (Phase 3, P3-3).
+    pub fn install_contract(
+        &self,
+        contract_store: &ContractStore,
+        address: &str,
+        deployer: &str,
+        wasm_bytes: &[u8],
+        block_height: u64,
+    ) -> Result<(), String> {
+        if wasm_bytes.is_empty() {
+            return Err("Empty WASM module".into());
+        }
+        if wasm_bytes.len() > MAX_WASM_SIZE {
+            return Err(format!("WASM too large: {} bytes (max {})", wasm_bytes.len(), MAX_WASM_SIZE));
+        }
+        Module::new(&self.engine, wasm_bytes).map_err(|e| format!("Invalid WASM: {}", e))?;
+        if contract_store.get_contract(address)?.is_some() {
+            return Ok(()); // already installed — idempotent
+        }
+        let code_hash = hex::encode(Sha256::digest(wasm_bytes));
+        let metadata = ContractMetadata {
+            address: address.to_string(),
+            deployer: deployer.to_string(),
+            code_hash,
+            created_at: block_height,
+            wasm_size: wasm_bytes.len(),
+        };
+        contract_store.deploy(address, &metadata, wasm_bytes)?;
+        Ok(())
+    }
+
     /// Execute a contract method (mutating — state changes committed on success).
     pub fn execute_contract(
         &self,
@@ -93,7 +131,7 @@ impl WasmRuntime {
         caller: &str,
         block_height: u64,
         block_time: u64,
-        balances: HashMap<String, u64>,
+        balances: HashMap<String, u128>,
         gas_limit: u64,
         tx_hash: &str,
     ) -> Result<ContractCallResult, String> {
@@ -113,7 +151,7 @@ impl WasmRuntime {
         caller: &str,
         block_height: u64,
         block_time: u64,
-        balances: HashMap<String, u64>,
+        balances: HashMap<String, u128>,
         gas_limit: u64,
         tx_hash: &str,
         call_depth: u32,
@@ -166,7 +204,7 @@ impl WasmRuntime {
                 if let Some(ref deltas) = result.balance_deltas {
                     for (addr, delta) in deltas {
                         let entry = current_balances.entry(addr.clone()).or_insert(0);
-                        *entry = (*entry as i128 + delta).max(0) as u64;
+                        *entry = (*entry as i128 + delta).max(0) as u128;
                     }
                 }
 
@@ -208,7 +246,7 @@ impl WasmRuntime {
                                 if let Some(ref deltas) = sub_result.balance_deltas {
                                     for (addr, delta) in deltas {
                                         let entry = current_balances.entry(addr.clone()).or_insert(0);
-                                        *entry = (*entry as i128 + delta).max(0) as u64;
+                                        *entry = (*entry as i128 + delta).max(0) as u128;
                                     }
                                 }
                             }
@@ -277,14 +315,17 @@ impl WasmRuntime {
         Ok(result)
     }
 
-    /// Query a contract (read-only — no state changes committed).
+    /// Query a contract (read-only — no state changes committed). Any storage
+    /// writes or balance deltas the run produces are returned in the result but
+    /// NEVER committed, so this is safe for RPC simulation/dry-run.
     pub fn query_contract(
         &self,
         contract_store: &ContractStore,
         contract_addr: &str,
         method: &str,
         args_json: &serde_json::Value,
-        balances: HashMap<String, u64>,
+        caller: &str,
+        balances: HashMap<String, u128>,
         block_height: u64,
         block_time: u64,
     ) -> Result<ContractCallResult, String> {
@@ -296,7 +337,7 @@ impl WasmRuntime {
         let storage_cache = contract_store.load_all_state(contract_addr)?;
 
         let env = HostEnv::new(
-            String::new(),
+            caller.to_string(),
             contract_addr.to_string(),
             block_height,
             block_time,

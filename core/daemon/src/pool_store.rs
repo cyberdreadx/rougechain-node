@@ -47,8 +47,11 @@ impl LiquidityPool {
         
         let pool_id = format!("{}-{}", token_a, token_b);
         
-        // Initial LP tokens = sqrt(reserve_a * reserve_b) - MINIMUM_LIQUIDITY
-        let initial_lp = ((reserve_a as f64 * reserve_b as f64).sqrt() as u64).saturating_sub(1000);
+        // Initial LP tokens = isqrt(reserve_a * reserve_b) - MINIMUM_LIQUIDITY.
+        // Integer isqrt (not f64 sqrt) so pool creation is bit-for-bit deterministic
+        // across replays and nodes. Product of two u64 fits in u128.
+        let initial_lp = (crate::units::isqrt(reserve_a as u128 * reserve_b as u128) as u64)
+            .saturating_sub(1000);
         
         Self {
             pool_id,

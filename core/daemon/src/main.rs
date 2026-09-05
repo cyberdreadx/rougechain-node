@@ -1,5 +1,8 @@
 mod amm;
 mod dashboard;
+#[allow(dead_code)] // consumed as the f64->u128 ledger flip lands (T3+)
+mod units;
+mod state_root;
 mod grpc;
 mod nft_store;
 mod pool_events;
@@ -1442,6 +1445,9 @@ struct StatsResponse {
     node_name: Option<String>,
     base_fee: f64,
     total_fees_burned: f64,
+    /// Canonical ledger state root (Phase 2). Same across honest nodes at the
+    /// same height — compare it across nodes to spot divergence.
+    state_root: String,
 }
 
 async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, StatusCode> {
@@ -1464,6 +1470,7 @@ async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>,
         node_name: state.node_name.clone(),
         base_fee: node.get_base_fee(),
         total_fees_burned: node.get_total_fees_burned(),
+        state_root: node.get_state_root().unwrap_or_default(),
     }))
 }
 
@@ -8915,7 +8922,7 @@ async fn contract_deploy(
         Ok(address) => {
             // Submit on-chain transaction so it appears in the tx feed
             let wasm_size = wasm_bytes.len();
-            if let Ok(tx) = state.node.submit_contract_deploy_tx(deployer, &address, wasm_size) {
+            if let Ok(tx) = state.node.submit_contract_deploy_tx(deployer, &address, wasm_base64, wasm_size) {
                 use quantum_vault_crypto::{bytes_to_hex, sha256};
                 use quantum_vault_types::encode_tx_v1;
                 let tx_id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
@@ -8969,28 +8976,31 @@ async fn contract_call(
         .unwrap_or_default()
         .as_secs();
 
-    let balances = std::collections::HashMap::new(); // TODO: load from node
+    // P3-5 dry-run isolation: simulate READ-ONLY against a snapshot of the real
+    // ledger (query_contract commits nothing). The authoritative execution — the
+    // one that commits storage and applies XRGE deltas — happens when the tx
+    // below is mined (P3-4). `gasLimit` is a preview knob only here.
+    let _ = gas_limit;
+    let balances = state.node.native_balances_quanta();
 
-    let tx_hash = format!("call-{}-{}", contract_addr, block_height);
-
-    match state.wasm_runtime.execute_contract(
+    match state.wasm_runtime.query_contract(
         &state.contract_store,
         contract_addr,
         method,
         &args,
         caller,
+        balances,
         block_height,
         block_time,
-        balances,
-        gas_limit,
-        &tx_hash,
     ) {
         Ok(result) => {
-            // Submit on-chain transaction so it appears in the tx feed
+            // Submit on-chain transaction so it appears in the tx feed and is
+            // re-executed deterministically (carrying the args, P3-5).
             if let Ok(tx) = state.node.submit_contract_call_tx(
                 caller,
                 contract_addr,
                 method,
+                &args,
                 result.gas_used,
                 result.success,
             ) {
