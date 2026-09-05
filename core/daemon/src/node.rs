@@ -62,6 +62,16 @@ const TARGET_TXS_PER_BLOCK: usize = 10;            // Target block fullness
 /// rebuild from chain history instead. Bump on every ledger-representation change.
 const SNAPSHOT_VERSION: u32 = 2;
 
+/// Block height at which the Phase 2 state-root commitment activates. Below this
+/// height, headers carry no root and none is verified — this covers all pre-fork
+/// history and today's mainnet. It is set to the agreed hard-fork height at T11;
+/// until then `u64::MAX` keeps the feature dormant on any real chain (headers are
+/// stamped with `None`, import checks nothing). Tests activate it from genesis.
+#[cfg(not(test))]
+const STATE_ROOT_ACTIVATION_HEIGHT: u64 = u64::MAX;
+#[cfg(test)]
+const STATE_ROOT_ACTIVATION_HEIGHT: u64 = 0;
+
 /// The official burn address - tokens sent here are permanently destroyed
 /// This is a deterministic address derived from "QUANTUM_VAULT_BURN_ADDRESS_V1"
 /// No private key can ever be derived for this address
@@ -2272,16 +2282,43 @@ impl L1Node {
             return Ok(None);
         }
         let tip = self.store.get_tip()?;
-        let header = BlockHeaderV1 {
+        let height = tip.height + 1;
+        let time = Utc::now().timestamp_millis() as u64;
+        let proposer_pub_key = self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone();
+        let tx_hash = compute_tx_hash(&txs);
+
+        // Phase 2: commit to the POST-state root, so the block header must be
+        // sealed AFTER applying the block. apply_balance_block reads only
+        // header.{height,time,proposer_pub_key} and txs — never sig/hash/state_root
+        // — so a preliminary header (unsigned, no root) is sufficient to apply.
+        let prelim_header = BlockHeaderV1 {
             version: 1,
             chain_id: self.opts.chain.chain_id.clone(),
-            height: tip.height + 1,
-            time: Utc::now().timestamp_millis() as u64,
+            height,
+            time,
             prev_hash: tip.hash.clone(),
-            tx_hash: compute_tx_hash(&txs),
-            proposer_pub_key: self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone(),
-            state_root: None, // set at/after the activation height (later P2 task)
+            tx_hash: tx_hash.clone(),
+            proposer_pub_key: proposer_pub_key.clone(),
+            state_root: None,
         };
+        let prelim_block = BlockV1 {
+            version: 1,
+            header: prelim_header.clone(),
+            txs: txs.clone(),
+            proposer_sig: String::new(),
+            hash: String::new(),
+        };
+        // Apply to state ONCE, here. (The old post-append apply_balance_block call
+        // is intentionally removed — applying twice would double-charge fees.)
+        self.apply_balance_block(&prelim_block)?;
+
+        // Stamp the post-state root, gated on the activation height.
+        let state_root = if height >= STATE_ROOT_ACTIVATION_HEIGHT {
+            Some(self.compute_current_state_root()?)
+        } else {
+            None
+        };
+        let header = BlockHeaderV1 { state_root, ..prelim_header };
         let header_bytes = encode_header_v1(&header);
         let proposer_sig = pqc_sign(&self.keys.lock().map_err(|_| "keys lock")?.secret_key_hex, &header_bytes)?;
         let hash = compute_block_hash(&header_bytes, &proposer_sig);
@@ -2305,7 +2342,6 @@ impl L1Node {
         }
 
         self.store.append_block(&block)?;
-        self.apply_balance_block(&block)?;
         self.apply_validator_block(&block)?;
         *self.finalized_height.lock().map_err(|_| "finality lock")? = block.header.height;
         // Note: finalized_height set here as proposer (single-validator mode).
@@ -6485,5 +6521,33 @@ mod live_amm_tests {
         assert_eq!(node.compute_current_state_root().unwrap(), root0, "root restored exactly");
         assert_eq!(node.get_balance("mallory").unwrap(), 0.0, "rolled-back credit is gone");
         assert_eq!(node.get_balance("alice").unwrap(), 10.0, "kept balance intact");
+    }
+
+    // ── P2-4 producer stamps the post-state root ──────────────────────────
+
+    #[test]
+    fn mined_block_commits_the_post_state_root() {
+        let (_dir, node) = test_node();
+        // Faucet mints are only honored when issued by the node's own key, so
+        // build the tx from that key. Mark it pre-verified so mine_pending
+        // accepts it without a real signature.
+        let node_key = node.keys.lock().unwrap().public_key_hex.clone();
+        let mut tx = transfer_tx(&node_key, "alice", 10, 0.0);
+        tx.payload.faucet = Some(true);
+        node.mempool.lock().unwrap().insert("tx1".to_string(), tx);
+        node.verified_tx_ids.lock().unwrap().insert("tx1".to_string());
+
+        let block = node.mine_pending().unwrap().expect("a block is produced");
+
+        // The header commits to the ledger state AFTER applying the block, and it
+        // matches what the node holds — proving the root is the true post-state.
+        let root = block.header.state_root.clone().expect("root stamped (active in tests)");
+        assert_eq!(
+            root,
+            node.compute_current_state_root().unwrap(),
+            "header root == node's post-apply ledger root"
+        );
+        // Applied exactly once: alice funded with 10, not double-credited.
+        assert_eq!(node.get_balance("alice").unwrap(), 10.0, "faucet applied once");
     }
 }
