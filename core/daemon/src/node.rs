@@ -72,6 +72,18 @@ const STATE_ROOT_ACTIVATION_HEIGHT: u64 = u64::MAX;
 #[cfg(test)]
 const STATE_ROOT_ACTIVATION_HEIGHT: u64 = 0;
 
+/// Block height at which contract XRGE custody (Phase 3) activates: contract
+/// `balance_deltas` are applied to the ledger, and calls a node can't execute
+/// deterministically fail closed. Below it, deltas are discarded exactly as
+/// before (mainnet unchanged). Set to the coordinated fork height at T11 —
+/// bundled with the state-root activation, since custody relies on the root as
+/// its divergence backstop. `u64::MAX` keeps it dormant until then; tests
+/// activate from genesis.
+#[cfg(not(test))]
+const CONTRACT_CUSTODY_ACTIVATION_HEIGHT: u64 = u64::MAX;
+#[cfg(test)]
+const CONTRACT_CUSTODY_ACTIVATION_HEIGHT: u64 = 0;
+
 /// The official burn address - tokens sent here are permanently destroyed
 /// This is a deterministic address derived from "QUANTUM_VAULT_BURN_ADDRESS_V1"
 /// No private key can ever be derived for this address
@@ -804,13 +816,24 @@ impl L1Node {
         // rejected and the ledger restored exactly (side-effect stores are rebuilt
         // from history on restart; the rejected block is never persisted).
         let verify_root = block.header.height >= STATE_ROOT_ACTIVATION_HEIGHT;
-        let pre_snapshot = if verify_root {
+        let custody_active = block.header.height >= CONTRACT_CUSTODY_ACTIVATION_HEIGHT;
+        // Snapshot when either feature is live, so we can roll the money ledger
+        // back exactly on a rejected block — whether it's rejected by a
+        // fail-closed apply error (e.g. a bad contract) or a root mismatch.
+        let pre_snapshot = if verify_root || custody_active {
             Some(self.snapshot_balance_maps()?)
         } else {
             None
         };
 
-        self.apply_balance_block(&block)?;
+        // Any apply error (P3-4 fail-closed contract rejection included) must not
+        // leave the ledger partially mutated.
+        if let Err(e) = self.apply_balance_block(&block) {
+            if let Some(snap) = pre_snapshot {
+                let _ = self.restore_balance_maps(snap);
+            }
+            return Err(e);
+        }
 
         if verify_root {
             let computed = self.compute_current_state_root()?;
@@ -3045,7 +3068,8 @@ impl L1Node {
                         *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                         actual_fees_collected += fee_to_quanta(tx.fee);
 
-                        // Re-execute the contract call if runtime is available
+                        // Re-execute the contract call if runtime is available.
+                        let custody_active = block.header.height >= CONTRACT_CUSTODY_ACTIVATION_HEIGHT;
                         if let (Some(ref rt), Some(ref cs)) = (&self.wasm_runtime, &self.contract_store) {
                             // Full quanta balances — no u64 truncation (P3-2). The VM
                             // ABI is quanta-native, so pass the ledger as-is.
@@ -3068,14 +3092,55 @@ impl L1Node {
                             ) {
                                 Ok(result) => {
                                     block_fuel_used += result.gas_used;
-                                    eprintln!("[node] Block import: contract_call {} method={} gas={} success={}", 
+                                    eprintln!("[node] contract_call {} method={} gas={} success={}",
                                         &contract_addr[..16.min(contract_addr.len())], method, result.gas_used, result.success);
+
+                                    // P3-4: apply the contract's XRGE moves to the ledger,
+                                    // gated on the custody activation height. A failed
+                                    // contract (revert / out-of-gas) carries no deltas.
+                                    if custody_active && result.success {
+                                        // v1 is SINGLE-HOP: result.balance_deltas holds only
+                                        // the top-level contract's own transfers; sub-call
+                                        // XRGE moves are not surfaced. If the call made cross-
+                                        // calls, deterministically apply nothing rather than
+                                        // silently move a partial set (documented v1 limit).
+                                        let did_cross_call = result.cross_call_results
+                                            .as_ref().map_or(false, |v| !v.is_empty());
+                                        if did_cross_call {
+                                            eprintln!("[node] contract_call {} used cross-calls; XRGE deltas NOT applied (single-hop v1)",
+                                                &contract_addr[..16.min(contract_addr.len())]);
+                                        } else if let Some(ref deltas) = result.balance_deltas {
+                                            // Conservation + overdraft enforced here; an Err
+                                            // means the VM emitted invalid deltas — a genuine
+                                            // invariant break, so fail closed (reject block).
+                                            crate::units::apply_balance_deltas(&mut balances, deltas)
+                                                .map_err(|e| format!(
+                                                    "contract {} balance deltas rejected: {}",
+                                                    contract_addr, e
+                                                ))?;
+                                        }
+                                    }
                                 }
                                 Err(e) => {
-                                    // Contract not found on this peer or execution error — log but don't reject block
-                                    eprintln!("[node] Block import: contract_call failed: {} (non-fatal)", e);
+                                    // Could not execute (e.g. bytecode missing). Pre-activation
+                                    // this is non-fatal; once custody is active it MUST fail
+                                    // closed — a node that can't run the contract must not be
+                                    // allowed to silently diverge from those that can.
+                                    if custody_active {
+                                        return Err(format!(
+                                            "contract_call execution failed under active custody: {}",
+                                            e
+                                        ));
+                                    }
+                                    eprintln!("[node] contract_call failed: {} (non-fatal pre-activation)", e);
                                 }
                             }
+                        } else if custody_active {
+                            // Custody is active but this node has no runtime/store — it cannot
+                            // validate the call, so it must not accept the block.
+                            return Err(
+                                "contract_call requires the WASM runtime under active custody".to_string(),
+                            );
                         }
                     }
                     _ => {}
@@ -6727,5 +6792,84 @@ mod live_amm_tests {
         let csb = b.contract_store.as_ref().unwrap();
         assert!(csb.get_contract(addr).unwrap().is_some(), "B installed from the imported tx");
         assert_eq!(csb.get_wasm(addr).unwrap().unwrap(), wasm, "B holds the exact bytecode");
+    }
+
+    // ── P3-4 the payoff: contracts move real XRGE ─────────────────────────
+
+    fn signed(mut tx: TxV1, kp: &PQKeypair) -> TxV1 {
+        tx.sig = pqc_sign(&kp.secret_key_hex, &encode_tx_for_signing(&tx)).unwrap();
+        tx
+    }
+
+    #[test]
+    fn contract_call_moves_real_xrge_and_conserves() {
+        let (_da, _csa, mut a) = node_with_vm();
+        let user = pqc_keygen();
+        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+
+        // A contract whose "pay" method transfers 1 XRGE (10^9 quanta) to "bob".
+        let wasm = wat::parse_str(
+            r#"(module
+                 (import "env" "host_transfer" (func $tr (param i32 i32 i64) (result i32)))
+                 (memory (export "memory") 1)
+                 (data (i32.const 0) "bob")
+                 (func (export "pay") (result i32)
+                   (call $tr (i32.const 0) (i32.const 3) (i64.const 1000000000))))"#,
+        )
+        .unwrap();
+        use base64::Engine as _;
+        let wasm_b64 = base64::engine::general_purpose::STANDARD.encode(&wasm);
+        let addr = "c0ffee00000000000000000000000000000000ab";
+
+        // Deploy (carries bytecode), mined into its own block first.
+        let deploy = signed(
+            TxV1 {
+                version: 1,
+                tx_type: "contract_deploy".to_string(),
+                from_pub_key: user.public_key_hex.clone(),
+                nonce: 0,
+                payload: TxPayload {
+                    contract_addr: Some(addr.to_string()),
+                    contract_wasm: Some(wasm_b64),
+                    to_pub_key_hex: Some(user.public_key_hex.clone()),
+                    amount: Some(wasm.len() as u64),
+                    ..Default::default()
+                },
+                fee: 1.0,
+                sig: String::new(),
+                signed_payload: None,
+            },
+            &user,
+        );
+        a.mempool.lock().unwrap().insert("deploy".to_string(), deploy);
+        a.mine_pending().unwrap().expect("deploy block");
+
+        // Fund the contract with 5 XRGE so it can pay out.
+        a.balances.lock().unwrap().insert(addr.to_string(), 5 * Q);
+
+        // Call "pay".
+        let call = signed(
+            TxV1 {
+                version: 1,
+                tx_type: "contract_call".to_string(),
+                from_pub_key: user.public_key_hex.clone(),
+                nonce: 1,
+                payload: TxPayload {
+                    contract_addr: Some(addr.to_string()),
+                    contract_method: Some("pay".to_string()),
+                    ..Default::default()
+                },
+                fee: 1.0,
+                sig: String::new(),
+                signed_payload: None,
+            },
+            &user,
+        );
+        a.mempool.lock().unwrap().insert("call".to_string(), call);
+        a.mine_pending().unwrap().expect("call block");
+
+        // The contract moved 1 real XRGE to bob — and conserved exactly.
+        assert_eq!(a.get_balance("bob").unwrap(), 1.0, "bob received 1 XRGE from the contract");
+        assert_eq!(a.get_balance(addr).unwrap(), 4.0, "contract balance dropped by exactly 1 XRGE");
     }
 }
