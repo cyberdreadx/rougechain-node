@@ -62,27 +62,31 @@ const TARGET_TXS_PER_BLOCK: usize = 10;            // Target block fullness
 /// rebuild from chain history instead. Bump on every ledger-representation change.
 const SNAPSHOT_VERSION: u32 = 2;
 
-/// Block height at which the Phase 2 state-root commitment activates. Below this
-/// height, headers carry no root and none is verified — this covers all pre-fork
-/// history and today's mainnet. It is set to the agreed hard-fork height at T11;
-/// until then `u64::MAX` keeps the feature dormant on any real chain (headers are
-/// stamped with `None`, import checks nothing). Tests activate it from genesis.
+/// ─────────────────────────────────────────────────────────────────────────
+/// THE V2 FORK SWITCH (T11).
+///
+/// RougeChain **v2** — integer quanta ledger (Phase 1), state-root commitment
+/// (Phase 2), and contract XRGE custody (Phase 3) — all activate together at
+/// this one block height. Everything above is dormant below it: headers carry
+/// no state root and none is verified, and contract `balance_deltas` are
+/// discarded exactly as on today's mainnet. So while this is `u64::MAX`, the
+/// live chain is byte-for-byte unchanged.
+///
+/// Scheduling the coordinated hard fork = change THIS ONE NUMBER to the agreed
+/// height, in a release that EVERY validator runs *before* that height is
+/// reached. Setting it wrong, or letting even one validator cross the height on
+/// an old binary, splits the network. Follow the T11 runbook — do not flip this
+/// casually. Tests activate from genesis (height 0).
 #[cfg(not(test))]
-const STATE_ROOT_ACTIVATION_HEIGHT: u64 = u64::MAX;
+const V2_FORK_HEIGHT: u64 = u64::MAX;
 #[cfg(test)]
-const STATE_ROOT_ACTIVATION_HEIGHT: u64 = 0;
+const V2_FORK_HEIGHT: u64 = 0;
 
-/// Block height at which contract XRGE custody (Phase 3) activates: contract
-/// `balance_deltas` are applied to the ledger, and calls a node can't execute
-/// deterministically fail closed. Below it, deltas are discarded exactly as
-/// before (mainnet unchanged). Set to the coordinated fork height at T11 —
-/// bundled with the state-root activation, since custody relies on the root as
-/// its divergence backstop. `u64::MAX` keeps it dormant until then; tests
-/// activate from genesis.
-#[cfg(not(test))]
-const CONTRACT_CUSTODY_ACTIVATION_HEIGHT: u64 = u64::MAX;
-#[cfg(test)]
-const CONTRACT_CUSTODY_ACTIVATION_HEIGHT: u64 = 0;
+/// Phase 2 (state root) and Phase 3 (contract custody) share the single v2 fork
+/// height — they are one coordinated upgrade, and custody relies on the state
+/// root as its divergence backstop, so they must never activate apart.
+const STATE_ROOT_ACTIVATION_HEIGHT: u64 = V2_FORK_HEIGHT;
+const CONTRACT_CUSTODY_ACTIVATION_HEIGHT: u64 = V2_FORK_HEIGHT;
 
 /// The official burn address - tokens sent here are permanently destroyed
 /// This is a deterministic address derived from "QUANTUM_VAULT_BURN_ADDRESS_V1"
