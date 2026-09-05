@@ -78,7 +78,7 @@ const SNAPSHOT_VERSION: u32 = 2;
 /// an old binary, splits the network. Follow the T11 runbook — do not flip this
 /// casually. Tests activate from genesis (height 0).
 #[cfg(not(test))]
-const V2_FORK_HEIGHT: u64 = u64::MAX;
+const V2_FORK_HEIGHT: u64 = 18;
 #[cfg(test)]
 const V2_FORK_HEIGHT: u64 = 0;
 
