@@ -3608,7 +3608,9 @@ impl L1Node {
 
                     let pool_id = LiquidityPool::make_pool_id(token_a, token_b);
                     if let Ok(Some(_pool)) = pool_store.get_pool(&pool_id) {
-                        let initial_lp = ((amount_a as f64 * amount_b as f64).sqrt() as u64).saturating_sub(1000);
+                        // isqrt (not f64 sqrt): must match LiquidityPool::new's live
+                        // computation exactly, or rebuild would diverge from live state.
+                        let initial_lp = (crate::units::isqrt(amount_a as u128 * amount_b as u128) as u64).saturating_sub(1000);
                         let lp_key = (tx.from_pub_key.clone(), pool_id);
                         *lp_balances.entry(lp_key).or_insert(0) += initial_lp as u128;
                     }

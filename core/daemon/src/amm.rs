@@ -71,8 +71,12 @@ pub fn calculate_lp_mint(
     total_supply: u64,
 ) -> Option<u64> {
     if total_supply == 0 {
-        // First liquidity provider
-        let lp = ((amount_a as f64 * amount_b as f64).sqrt() as u64).saturating_sub(MINIMUM_LIQUIDITY);
+        // First liquidity provider.
+        // Integer isqrt (not f64 sqrt) so LP minting is bit-for-bit deterministic
+        // across replays and nodes — an f64 rounding difference here would fork the
+        // chain. Product of two u64 fits in u128 (u64::MAX^2 < u128::MAX).
+        let lp = (crate::units::isqrt(amount_a as u128 * amount_b as u128) as u64)
+            .saturating_sub(MINIMUM_LIQUIDITY);
         if lp == 0 {
             return None;
         }
