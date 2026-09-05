@@ -8922,7 +8922,7 @@ async fn contract_deploy(
         Ok(address) => {
             // Submit on-chain transaction so it appears in the tx feed
             let wasm_size = wasm_bytes.len();
-            if let Ok(tx) = state.node.submit_contract_deploy_tx(deployer, &address, wasm_size) {
+            if let Ok(tx) = state.node.submit_contract_deploy_tx(deployer, &address, wasm_base64, wasm_size) {
                 use quantum_vault_crypto::{bytes_to_hex, sha256};
                 use quantum_vault_types::encode_tx_v1;
                 let tx_id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));

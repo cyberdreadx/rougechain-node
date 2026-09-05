@@ -83,6 +83,44 @@ impl WasmRuntime {
         Ok(address)
     }
 
+    /// Install a contract's bytecode at an **explicit** address (block import).
+    ///
+    /// Unlike [`deploy_contract`], the address is taken from the on-chain tx, not
+    /// re-derived — the current deploy flow records the address in the tx while
+    /// the tx itself is signed by the node key, so re-derivation would not match.
+    /// Validates the WASM compiles and enforces the size bound; idempotent when
+    /// the contract is already present. This is what lets every importing node
+    /// hold the code and re-execute the contract identically (Phase 3, P3-3).
+    pub fn install_contract(
+        &self,
+        contract_store: &ContractStore,
+        address: &str,
+        deployer: &str,
+        wasm_bytes: &[u8],
+        block_height: u64,
+    ) -> Result<(), String> {
+        if wasm_bytes.is_empty() {
+            return Err("Empty WASM module".into());
+        }
+        if wasm_bytes.len() > MAX_WASM_SIZE {
+            return Err(format!("WASM too large: {} bytes (max {})", wasm_bytes.len(), MAX_WASM_SIZE));
+        }
+        Module::new(&self.engine, wasm_bytes).map_err(|e| format!("Invalid WASM: {}", e))?;
+        if contract_store.get_contract(address)?.is_some() {
+            return Ok(()); // already installed — idempotent
+        }
+        let code_hash = hex::encode(Sha256::digest(wasm_bytes));
+        let metadata = ContractMetadata {
+            address: address.to_string(),
+            deployer: deployer.to_string(),
+            code_hash,
+            created_at: block_height,
+            wasm_size: wasm_bytes.len(),
+        };
+        contract_store.deploy(address, &metadata, wasm_bytes)?;
+        Ok(())
+    }
+
     /// Execute a contract method (mutating — state changes committed on success).
     pub fn execute_contract(
         &self,

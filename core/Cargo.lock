@@ -1824,6 +1824,7 @@ dependencies = [
  "tonic-reflection",
  "tower-http",
  "uuid",
+ "wat",
 ]
 
 [[package]]

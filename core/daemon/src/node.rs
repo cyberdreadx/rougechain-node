@@ -1911,6 +1911,7 @@ impl L1Node {
         &self,
         deployer: &str,
         contract_addr: &str,
+        wasm_base64: &str,
         wasm_size: usize,
     ) -> Result<TxV1, String> {
         let keys = self.keys.lock().map_err(|_| "keys lock")?.clone();
@@ -1921,6 +1922,9 @@ impl L1Node {
             nonce: self.get_next_nonce(&keys.public_key_hex),
             payload: TxPayload {
                 contract_addr: Some(contract_addr.to_string()),
+                // Carry the bytecode on-chain so every importing node can install
+                // it and re-execute the contract identically (P3-3).
+                contract_wasm: Some(wasm_base64.to_string()),
                 amount: Some(wasm_size as u64),
                 to_pub_key_hex: Some(deployer.to_string()),
                 ..Default::default()
@@ -2988,18 +2992,31 @@ impl L1Node {
                         *balances.entry(tx.from_pub_key.clone()).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                         actual_fees_collected += fee_to_quanta(tx.fee);
 
-                        // If we have the contract store, verify the deployment is recorded
-                        if let Some(ref cs) = self.contract_store {
+                        // Install the bytecode carried in the tx so THIS node holds
+                        // the code and can re-execute the contract identically (P3-3).
+                        // Without this, a peer missing the code would silently skip
+                        // its calls and diverge from the rest of the network.
+                        if let (Some(ref rt), Some(ref cs)) = (&self.wasm_runtime, &self.contract_store) {
                             match cs.get_contract(contract_addr) {
-                                Ok(Some(_)) => {
-                                    eprintln!("[node] Block import: contract_deploy {} already stored", &contract_addr[..16.min(contract_addr.len())]);
-                                }
+                                Ok(Some(_)) => {} // already installed — idempotent
                                 Ok(None) => {
-                                    eprintln!("[node] Block import: contract_deploy {} — bytecode not available on this peer (will fetch later)", &contract_addr[..16.min(contract_addr.len())]);
+                                    match tx.payload.contract_wasm.as_deref() {
+                                        Some(wasm_b64) => {
+                                            use base64::Engine as _;
+                                            match base64::engine::general_purpose::STANDARD.decode(wasm_b64) {
+                                                Ok(wasm_bytes) => {
+                                                    match rt.install_contract(cs, contract_addr, deployer, &wasm_bytes, block.header.height) {
+                                                        Ok(()) => eprintln!("[node] Block import: installed contract {} from tx bytecode", &contract_addr[..16.min(contract_addr.len())]),
+                                                        Err(e) => eprintln!("[node] Block import: contract install failed: {} (non-fatal pre-activation)", e),
+                                                    }
+                                                }
+                                                Err(e) => eprintln!("[node] Block import: contract_deploy bad base64: {} (non-fatal)", e),
+                                            }
+                                        }
+                                        None => eprintln!("[node] Block import: contract_deploy {} — no bytecode in tx (legacy)", &contract_addr[..16.min(contract_addr.len())]),
+                                    }
                                 }
-                                Err(e) => {
-                                    eprintln!("[node] Block import: contract_deploy check error: {}", e);
-                                }
+                                Err(e) => eprintln!("[node] Block import: contract_deploy check error: {}", e),
                             }
                         }
                         eprintln!("[node] Processed contract_deploy tx: deployer={}... addr={}", &deployer[..16.min(deployer.len())], &contract_addr[..16.min(contract_addr.len())]);
@@ -6647,5 +6664,68 @@ mod live_amm_tests {
         assert_eq!(b.get_balance(&user.public_key_hex).unwrap(), 100.0, "sender restored");
         assert_eq!(b.get_balance("ghost").unwrap(), 5.0, "untouched account intact");
         assert_eq!(b.compute_current_state_root().unwrap(), root_before, "rolled back exactly");
+    }
+
+    // ── P3-3 contract bytecode installs on import ─────────────────────────
+
+    /// A node with the WASM runtime + contract store wired up (test_node leaves
+    /// them None). Returns the extra TmpDir so the store outlives the node.
+    fn node_with_vm() -> (TmpDir, TmpDir, L1Node) {
+        let (dir, mut node) = test_node();
+        let cs_dir = TmpDir::new();
+        node.set_contract_store(std::sync::Arc::new(ContractStore::new(&cs_dir.0).unwrap()));
+        node.set_wasm_runtime(std::sync::Arc::new(WasmRuntime::new().unwrap()));
+        (dir, cs_dir, node)
+    }
+
+    #[test]
+    fn contract_bytecode_installs_on_mine_and_import() {
+        let (_da, _csa, mut a) = node_with_vm();
+        let (_db, _csb, b) = node_with_vm();
+        let user = pqc_keygen();
+        // Same starting balances on both, so post-apply state roots match.
+        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        b.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+
+        // A signed contract_deploy tx that CARRIES the bytecode (P3-3).
+        let wasm = wat::parse_str(
+            r#"(module (memory (export "memory") 1) (func (export "run")))"#,
+        )
+        .unwrap();
+        use base64::Engine as _;
+        let wasm_b64 = base64::engine::general_purpose::STANDARD.encode(&wasm);
+        let addr = "c0ffee00000000000000000000000000000000ab";
+        let mut tx = TxV1 {
+            version: 1,
+            tx_type: "contract_deploy".to_string(),
+            from_pub_key: user.public_key_hex.clone(),
+            nonce: 0,
+            payload: TxPayload {
+                contract_addr: Some(addr.to_string()),
+                contract_wasm: Some(wasm_b64),
+                to_pub_key_hex: Some(user.public_key_hex.clone()),
+                amount: Some(wasm.len() as u64),
+                ..Default::default()
+            },
+            fee: 1.0,
+            sig: String::new(),
+            signed_payload: None,
+        };
+        tx.sig = pqc_sign(&user.secret_key_hex, &encode_tx_for_signing(&tx)).unwrap();
+
+        a.mempool.lock().unwrap().insert("d".to_string(), tx);
+        let block = a.mine_pending().unwrap().expect("A mines the deploy");
+
+        // A installed the code while mining.
+        assert!(
+            a.contract_store.as_ref().unwrap().get_contract(addr).unwrap().is_some(),
+            "A holds the bytecode after mining"
+        );
+
+        // B installs it purely from the imported block's tx — nothing pre-shared.
+        b.import_block(block).unwrap();
+        let csb = b.contract_store.as_ref().unwrap();
+        assert!(csb.get_contract(addr).unwrap().is_some(), "B installed from the imported tx");
+        assert_eq!(csb.get_wasm(addr).unwrap().unwrap(), wasm, "B holds the exact bytecode");
     }
 }

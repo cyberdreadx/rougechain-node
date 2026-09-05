@@ -274,3 +274,24 @@ fn missing_method_fails_gracefully() {
     assert!(!res.success);
     assert!(res.error.unwrap_or_default().to_lowercase().contains("not found"));
 }
+
+#[test]
+fn install_contract_stores_bytecode_at_explicit_address() {
+    // P3-3: block import installs bytecode at the address carried in the tx,
+    // not a re-derived one, so every node can re-execute the contract.
+    let dir = TempDir::new();
+    let cs = ContractStore::new(dir.path()).unwrap();
+    let rt = WasmRuntime::new().unwrap();
+    let wasm = assemble(WAT_TRANSFER);
+    let addr = "c0ffee00000000000000000000000000000000ab";
+
+    rt.install_contract(&cs, addr, "alice", &wasm, 7).unwrap();
+    assert!(cs.get_contract(addr).unwrap().is_some(), "installed at the given address");
+    assert_eq!(cs.get_wasm(addr).unwrap().unwrap(), wasm, "exact bytecode stored");
+
+    // Idempotent: installing again is a no-op success.
+    rt.install_contract(&cs, addr, "alice", &wasm, 7).unwrap();
+
+    // Invalid WASM is rejected (won't compile).
+    assert!(rt.install_contract(&cs, "dead00", "alice", &[0, 1, 2, 3], 7).is_err());
+}
