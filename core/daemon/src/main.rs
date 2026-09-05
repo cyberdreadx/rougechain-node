@@ -2,6 +2,7 @@ mod amm;
 mod dashboard;
 #[allow(dead_code)] // consumed as the f64->u128 ledger flip lands (T3+)
 mod units;
+mod state_root;
 mod grpc;
 mod nft_store;
 mod pool_events;
