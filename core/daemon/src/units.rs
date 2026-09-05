@@ -14,6 +14,8 @@
 //! (= 1_000 quanta), the `0.001` base-fee floor (= 1_000_000 quanta), and the
 //! `0.1` base fee (= 10^8 quanta) — with vast `u128` headroom.
 
+use std::collections::HashMap;
+
 /// Decimal places in one XRGE.
 pub const XRGE_DECIMALS: u32 = 9;
 
@@ -95,6 +97,84 @@ pub fn isqrt(n: u128) -> u128 {
     x
 }
 
+/// Apply a set of contract-emitted balance deltas (signed **quanta**) to the
+/// native ledger, atomically, under the two custody invariants of Phase 3:
+///
+/// - **conservation** — the deltas must net to exactly zero. A contract can
+///   never mint or burn XRGE; it can only *move* it. This is the invariant that
+///   makes contract custody safe.
+/// - **no overdraft** — no account may end below zero. A contract can only move
+///   quanta it actually holds.
+///
+/// All-or-nothing: the full set is validated first, so on ANY violation
+/// `balances` is left completely unchanged and an `Err` is returned. Deltas for
+/// the same address are aggregated before the checks, so order within the slice
+/// is irrelevant. Arithmetic is overflow-safe throughout (no `u128`↔`i128` cast
+/// that could wrap on an astronomically large balance).
+///
+/// This is a pure function over the map — the correctness core for contract
+/// XRGE custody, deliberately wired into no consensus path here.
+#[allow(dead_code)] // wired into the block apply path in P3-4
+pub fn apply_balance_deltas(
+    balances: &mut HashMap<String, u128>,
+    deltas: &[(String, i128)],
+) -> Result<(), String> {
+    if deltas.is_empty() {
+        return Ok(());
+    }
+
+    // (1) Conservation: the deltas must net to exactly zero (checked sum).
+    let mut net: i128 = 0;
+    for (_, d) in deltas {
+        net = net
+            .checked_add(*d)
+            .ok_or("balance deltas overflow i128 while summing")?;
+    }
+    if net != 0 {
+        return Err(format!("balance deltas do not conserve (net = {net} quanta)"));
+    }
+
+    // (2) Aggregate per address, so multiple deltas touching one account are
+    //     validated and applied as a single net change.
+    let mut aggregated: HashMap<&str, i128> = HashMap::new();
+    for (addr, d) in deltas {
+        let slot = aggregated.entry(addr.as_str()).or_insert(0);
+        *slot = slot
+            .checked_add(*d)
+            .ok_or("per-address balance delta overflows i128")?;
+    }
+
+    // (3) Validate EVERYTHING before mutating anything (all-or-nothing). Compute
+    //     each account's resulting balance without an unchecked u128<->i128 cast.
+    for (addr, net_delta) in &aggregated {
+        let current = *balances.get(*addr).unwrap_or(&0);
+        if *net_delta < 0 {
+            let debit = net_delta.unsigned_abs(); // i128 -> u128 magnitude
+            if current < debit {
+                return Err(format!(
+                    "overdraft: {addr} holds {current} quanta, delta needs {debit}"
+                ));
+            }
+        } else if current.checked_add(*net_delta as u128).is_none() {
+            return Err(format!("balance overflow crediting {addr}"));
+        }
+    }
+
+    // (4) Apply — every change is now known-safe.
+    for (addr, net_delta) in aggregated {
+        if net_delta == 0 {
+            continue;
+        }
+        let entry = balances.entry(addr.to_string()).or_insert(0);
+        if net_delta < 0 {
+            *entry -= net_delta.unsigned_abs();
+        } else {
+            *entry += net_delta as u128;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,5 +242,97 @@ mod tests {
         assert_eq!(isqrt(big * big), big);
         assert_eq!(isqrt(big * big + 1), big);
         assert_eq!(isqrt(big * big - 1), big - 1);
+    }
+
+    // ── P3-1 contract balance-delta custody core ──────────────────────────
+
+    const Q: u128 = QUANTA_PER_XRGE;
+
+    fn bals(pairs: &[(&str, u128)]) -> HashMap<String, u128> {
+        pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    }
+
+    #[test]
+    fn conserving_transfer_applies() {
+        let mut b = bals(&[("contract", 100 * Q)]);
+        let deltas = vec![
+            ("contract".to_string(), -(40 * Q as i128)),
+            ("bob".to_string(), 40 * Q as i128),
+        ];
+        apply_balance_deltas(&mut b, &deltas).unwrap();
+        assert_eq!(b["contract"], 60 * Q);
+        assert_eq!(b["bob"], 40 * Q);
+    }
+
+    #[test]
+    fn non_conserving_deltas_are_rejected_and_leave_state_untouched() {
+        let mut b = bals(&[("contract", 100 * Q)]);
+        let before = b.clone();
+        // Nets to +10 quanta — a mint. Must be refused.
+        let deltas = vec![
+            ("contract".to_string(), -(40 * Q as i128)),
+            ("bob".to_string(), 40 * Q as i128 + 10),
+        ];
+        let err = apply_balance_deltas(&mut b, &deltas).unwrap_err();
+        assert!(err.contains("conserve"), "{err}");
+        assert_eq!(b, before, "all-or-nothing: nothing changed");
+    }
+
+    #[test]
+    fn overdraft_is_rejected_and_leaves_state_untouched() {
+        let mut b = bals(&[("contract", 30 * Q)]);
+        let before = b.clone();
+        // Conserves (net 0) but the contract can't cover the debit.
+        let deltas = vec![
+            ("contract".to_string(), -(40 * Q as i128)),
+            ("bob".to_string(), 40 * Q as i128),
+        ];
+        let err = apply_balance_deltas(&mut b, &deltas).unwrap_err();
+        assert!(err.contains("overdraft"), "{err}");
+        assert_eq!(b, before, "all-or-nothing: nothing changed");
+    }
+
+    #[test]
+    fn three_way_split_conserves_to_the_quantum() {
+        // The headline use case: split 1 XRGE three ways. 1e9 / 3 = 333_333_333
+        // each, 1 quanta remainder stays with the contract. Conserves exactly —
+        // this is why contracts must speak quanta, not whole XRGE.
+        let mut b = bals(&[("splitter", 1 * Q)]);
+        let third = 333_333_333i128;
+        let deltas = vec![
+            ("splitter".to_string(), -(3 * third)),
+            ("a".to_string(), third),
+            ("b".to_string(), third),
+            ("c".to_string(), third),
+        ];
+        apply_balance_deltas(&mut b, &deltas).unwrap();
+        assert_eq!(b["splitter"], 1, "1-quanta remainder retained");
+        assert_eq!(b["a"], 333_333_333);
+        assert_eq!(b["b"], 333_333_333);
+        assert_eq!(b["c"], 333_333_333);
+        let total: u128 = b.values().sum();
+        assert_eq!(total, Q, "not a single quantum created or destroyed");
+    }
+
+    #[test]
+    fn deltas_for_the_same_address_aggregate() {
+        let mut b = bals(&[("contract", 100 * Q)]);
+        // Two debits from the contract, one credit — nets to zero overall.
+        let deltas = vec![
+            ("contract".to_string(), -(40 * Q as i128)),
+            ("contract".to_string(), -(10 * Q as i128)),
+            ("bob".to_string(), 50 * Q as i128),
+        ];
+        apply_balance_deltas(&mut b, &deltas).unwrap();
+        assert_eq!(b["contract"], 50 * Q);
+        assert_eq!(b["bob"], 50 * Q);
+    }
+
+    #[test]
+    fn empty_deltas_are_a_noop() {
+        let mut b = bals(&[("alice", 5 * Q)]);
+        let before = b.clone();
+        apply_balance_deltas(&mut b, &[]).unwrap();
+        assert_eq!(b, before);
     }
 }
