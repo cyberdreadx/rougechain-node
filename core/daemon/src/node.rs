@@ -798,9 +798,36 @@ impl L1Node {
         }
         
         // Apply state BEFORE storing to disk (atomic: don't store blocks we can't apply)
+        //
+        // Phase 2: at/after the activation height, the block header commits to the
+        // post-state root. Snapshot the money maps first so a bad root can be
+        // rejected and the ledger restored exactly (side-effect stores are rebuilt
+        // from history on restart; the rejected block is never persisted).
+        let verify_root = block.header.height >= STATE_ROOT_ACTIVATION_HEIGHT;
+        let pre_snapshot = if verify_root {
+            Some(self.snapshot_balance_maps()?)
+        } else {
+            None
+        };
+
         self.apply_balance_block(&block)?;
+
+        if verify_root {
+            let computed = self.compute_current_state_root()?;
+            if block.header.state_root.as_deref() != Some(computed.as_str()) {
+                // Divergence (or a faulty/malicious proposer): roll back and reject.
+                if let Some(snap) = pre_snapshot {
+                    let _ = self.restore_balance_maps(snap);
+                }
+                return Err(format!(
+                    "state root mismatch at height {}: header={:?}, computed={}",
+                    block.header.height, block.header.state_root, computed
+                ));
+            }
+        }
+
         self.apply_validator_block(&block)?;
-        
+
         // Only persist after state was applied successfully
         self.store.append_block(&block)?;
         
@@ -6549,5 +6576,67 @@ mod live_amm_tests {
         );
         // Applied exactly once: alice funded with 10, not double-credited.
         assert_eq!(node.get_balance("alice").unwrap(), 10.0, "faucet applied once");
+    }
+
+    // ── P2-5 import verifies the committed root ───────────────────────────
+
+    /// A signed transfer helper (real PQC signature, so it survives import's
+    /// tx-signature re-verification).
+    fn signed_transfer(from: &PQKeypair, to: &str, amount: u64) -> TxV1 {
+        let mut tx = transfer_tx(&from.public_key_hex, to, amount, 0.0);
+        tx.sig = pqc_sign(&from.secret_key_hex, &encode_tx_for_signing(&tx)).unwrap();
+        tx
+    }
+
+    #[test]
+    fn imported_block_with_matching_root_is_accepted() {
+        let (_da, a) = test_node();
+        let (_db, b) = test_node();
+        let user = pqc_keygen();
+        // Both nodes start from identical balances → applying the same block
+        // yields the same root.
+        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        b.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+
+        // Node A mines a real signed transfer; the header commits its post-state.
+        a.mempool.lock().unwrap().insert("t".to_string(), signed_transfer(&user, "bob", 40));
+        let block = a.mine_pending().unwrap().expect("A produces a block");
+        assert!(block.header.state_root.is_some(), "A committed a root");
+
+        // Node B imports it — matching root → accepted, transfer applied.
+        b.import_block(block).unwrap();
+        assert_eq!(b.get_balance("bob").unwrap(), 40.0, "transfer applied on B");
+        assert_eq!(b.get_balance(&user.public_key_hex).unwrap(), 60.0);
+        assert_eq!(
+            a.compute_current_state_root().unwrap(),
+            b.compute_current_state_root().unwrap(),
+            "A and B agree on the ledger root"
+        );
+    }
+
+    #[test]
+    fn imported_block_with_mismatched_root_is_rejected_and_rolled_back() {
+        let (_da, a) = test_node();
+        let (_db, b) = test_node();
+        let user = pqc_keygen();
+        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        // B diverges: same user balance, but an extra account A never had. B will
+        // apply A's transfer successfully, but its root won't match A's.
+        b.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        b.balances.lock().unwrap().insert("ghost".to_string(), 5 * Q);
+
+        a.mempool.lock().unwrap().insert("t".to_string(), signed_transfer(&user, "bob", 40));
+        let block = a.mine_pending().unwrap().expect("A produces a block");
+
+        let root_before = b.compute_current_state_root().unwrap();
+        let err = b.import_block(block).unwrap_err();
+        assert!(err.contains("state root mismatch"), "rejected for root divergence: {}", err);
+
+        // The bad block's effects are rolled back exactly — bob's credit is gone,
+        // the pre-apply balances are restored, and the root is unchanged.
+        assert_eq!(b.get_balance("bob").unwrap(), 0.0, "no partial state kept");
+        assert_eq!(b.get_balance(&user.public_key_hex).unwrap(), 100.0, "sender restored");
+        assert_eq!(b.get_balance("ghost").unwrap(), 5.0, "untouched account intact");
+        assert_eq!(b.compute_current_state_root().unwrap(), root_before, "rolled back exactly");
     }
 }
