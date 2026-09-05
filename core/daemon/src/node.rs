@@ -54,6 +54,14 @@ const BASE_FEE_FLOOR_QUANTA: u128 = 1_000_000;     // 0.001 XRGE minimum
 const BASE_FEE_MAX_CHANGE_DENOM: u128 = 8;         // Max 12.5% change per block
 const TARGET_TXS_PER_BLOCK: usize = 10;            // Target block fullness
 
+/// Balance-snapshot format version. v2 = integer-quanta ledger (u128 balances,
+/// token/lp base units). A v1 (pre-integer, f64 XRGE) snapshot MUST NOT be
+/// loaded by v2 code: a whole-number f64 balance like `{"alice": 100}` parses as
+/// u128 `100` (= 0.0000001 XRGE) instead of `100 * 10^9` quanta — a silent
+/// corruption. Bumping this and rejecting any other version forces a safe full
+/// rebuild from chain history instead. Bump on every ledger-representation change.
+const SNAPSHOT_VERSION: u32 = 2;
+
 /// The official burn address - tokens sent here are permanently destroyed
 /// This is a deterministic address derived from "QUANTUM_VAULT_BURN_ADDRESS_V1"
 /// No private key can ever be derived for this address
@@ -352,6 +360,7 @@ impl L1Node {
             let lp_bytes = serde_json::to_vec(&lp_vec).map_err(|e| e.to_string())?;
             let burned_bytes = serde_json::to_vec(&*burned).map_err(|e| e.to_string())?;
 
+            self.snapshot_db.insert(b"version", &SNAPSHOT_VERSION.to_be_bytes()).map_err(|e| e.to_string())?;
             self.snapshot_db.insert(b"height", &height.to_be_bytes()).map_err(|e| e.to_string())?;
             self.snapshot_db.insert(b"balances", bal_bytes).map_err(|e| e.to_string())?;
             self.snapshot_db.insert(b"token_balances", tok_bytes).map_err(|e| e.to_string())?;
@@ -369,6 +378,21 @@ impl L1Node {
 
     /// Try to load a balance snapshot from sled. Returns Ok(height) if successful.
     fn load_balance_snapshot(&self) -> Result<u64, String> {
+        // Reject any snapshot not written in the current format. A missing tag is
+        // a pre-v2 (f64) snapshot; a different tag is a future format. Either way,
+        // erroring here makes init() fall back to a full rebuild from history —
+        // never a silent misread of f64 XRGE as integer quanta.
+        let version = self.snapshot_db.get(b"version")
+            .map_err(|e| e.to_string())?
+            .and_then(|v| v.as_ref().try_into().ok().map(u32::from_be_bytes))
+            .ok_or("snapshot has no version tag (pre-v2) — rebuilding")?;
+        if version != SNAPSHOT_VERSION {
+            return Err(format!(
+                "snapshot version {} != {} (integer-quanta) — rebuilding",
+                version, SNAPSHOT_VERSION
+            ));
+        }
+
         let height_bytes = self.snapshot_db.get(b"height")
             .map_err(|e| e.to_string())?
             .ok_or("no snapshot")?;
@@ -6317,5 +6341,43 @@ mod live_amm_tests {
         // Simulate a pre-T6 fee_db entry written as an f64 XRGE decimal string.
         node.fee_db.insert(b"base_fee", b"0.1".as_ref()).unwrap();
         assert_eq!(node.get_base_fee_quanta(), 100_000_000, "legacy 0.1 → quanta");
+    }
+
+    // ── T7 versioned balance snapshot ─────────────────────────────────────
+    // The snapshot must be self-describing so v2 (integer-quanta) code can never
+    // silently misread a v1 (f64 XRGE) snapshot as quanta.
+
+    #[test]
+    fn snapshot_roundtrips_at_current_version() {
+        let (_dir, node) = test_node();
+        node.balances.lock().unwrap().insert("alice".to_string(), 100 * Q);
+        node.save_balance_snapshot(42);
+        // Wipe in-memory state, then load it back from the snapshot.
+        node.balances.lock().unwrap().clear();
+        let h = node.load_balance_snapshot().expect("current-version snapshot loads");
+        assert_eq!(h, 42);
+        assert_eq!(node.get_balance("alice").unwrap(), 100.0, "quanta restored to display XRGE");
+    }
+
+    #[test]
+    fn snapshot_without_version_tag_is_rejected() {
+        let (_dir, node) = test_node();
+        // Simulate a pre-v2 snapshot: height + balances present, but NO version tag.
+        node.snapshot_db.insert(b"height", &7u64.to_be_bytes()).unwrap();
+        let bal = HashMap::from([("alice".to_string(), 100u128)]);
+        node.snapshot_db.insert(b"balances", serde_json::to_vec(&bal).unwrap()).unwrap();
+        node.snapshot_db.flush().unwrap();
+        assert!(node.load_balance_snapshot().is_err(),
+            "unversioned (pre-v2) snapshot must be rejected → forces safe rebuild");
+    }
+
+    #[test]
+    fn snapshot_with_wrong_version_is_rejected() {
+        let (_dir, node) = test_node();
+        node.snapshot_db.insert(b"version", &1u32.to_be_bytes()).unwrap();
+        node.snapshot_db.insert(b"height", &7u64.to_be_bytes()).unwrap();
+        node.snapshot_db.flush().unwrap();
+        assert!(node.load_balance_snapshot().is_err(),
+            "a different snapshot version must be rejected by v2 code");
     }
 }
