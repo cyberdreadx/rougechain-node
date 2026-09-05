@@ -3030,11 +3030,13 @@ impl L1Node {
 
                         // Re-execute the contract call if runtime is available
                         if let (Some(ref rt), Some(ref cs)) = (&self.wasm_runtime, &self.contract_store) {
-                            let call_balances: HashMap<String, u64> = balances.iter()
-                                .map(|(k, v)| (k.clone(), (*v as u64)))
-                                .collect();
+                            // Full quanta balances — no u64 truncation (P3-2). The VM
+                            // ABI is quanta-native, so pass the ledger as-is.
+                            let call_balances: HashMap<String, u128> = balances.clone();
                             let tx_hash_str = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
-                            let args = serde_json::Value::Object(serde_json::Map::new());
+                            // Real call args from the tx payload (P3-2) — not an empty map.
+                            let args = tx.payload.contract_args.clone()
+                                .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
                             match rt.execute_contract(
                                 cs,
                                 contract_addr,

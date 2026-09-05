@@ -21,7 +21,10 @@ pub struct HostEnv {
     pub contract_addr: String,
     pub block_height: u64,
     pub block_time: u64,
-    pub balances: HashMap<String, u64>,
+    /// Balances in **quanta** (1 XRGE = 10^9 quanta). Contracts do integer math
+    /// in quanta; the i64 host ABI carries quanta (≈9.2e18 quanta ≈ 9.2B XRGE of
+    /// headroom per value). Deltas below are already signed quanta.
+    pub balances: HashMap<String, u128>,
     pub balance_deltas: Vec<(String, i128)>,
     pub storage_writes: HashMap<Vec<u8>, Vec<u8>>,
     pub storage_deletes: Vec<Vec<u8>>,
@@ -43,7 +46,7 @@ impl HostEnv {
         contract_addr: String,
         block_height: u64,
         block_time: u64,
-        balances: HashMap<String, u64>,
+        balances: HashMap<String, u128>,
         storage_cache: HashMap<Vec<u8>, Vec<u8>>,
     ) -> Self {
         Self {
@@ -137,7 +140,9 @@ pub fn register_host_functions(linker: &mut Linker<HostEnv>) -> Result<(), Strin
         |caller: Caller<'_, HostEnv>, addr_ptr: u32, addr_len: u32| -> i64 {
             let mem = get_memory(&caller);
             let addr = read_string(&caller, &mem, addr_ptr, addr_len);
-            *caller.data().balances.get(&addr).unwrap_or(&0) as i64
+            // Quanta as i64; saturate rather than wrap on an implausibly large balance.
+            let bal = *caller.data().balances.get(&addr).unwrap_or(&0);
+            bal.min(i64::MAX as u128) as i64
         }
     ).map_err(|e| e.to_string())?;
 
@@ -147,17 +152,21 @@ pub fn register_host_functions(linker: &mut Linker<HostEnv>) -> Result<(), Strin
         |mut caller: Caller<'_, HostEnv>, to_ptr: u32, to_len: u32, amount: i64| -> i32 {
             let mem = get_memory(&caller);
             let to_addr = read_string(&caller, &mem, to_ptr, to_len);
-            let amount_u = amount as u64;
+            // `amount` is quanta across the i64 boundary; a negative amount is invalid.
+            if amount < 0 {
+                return 1;
+            }
+            let amount_q = amount as u128;
             let contract_addr = caller.data().contract_addr.clone();
             let contract_bal = *caller.data().balances.get(&contract_addr).unwrap_or(&0);
-            if contract_bal < amount_u {
+            if contract_bal < amount_q {
                 return 1;
             }
             let env = caller.data_mut();
-            env.balance_deltas.push((contract_addr.clone(), -(amount_u as i128)));
-            env.balance_deltas.push((to_addr.clone(), amount_u as i128));
-            *env.balances.entry(contract_addr).or_insert(0) -= amount_u;
-            *env.balances.entry(to_addr).or_insert(0) += amount_u;
+            env.balance_deltas.push((contract_addr.clone(), -(amount_q as i128)));
+            env.balance_deltas.push((to_addr.clone(), amount_q as i128));
+            *env.balances.entry(contract_addr).or_insert(0) -= amount_q;
+            *env.balances.entry(to_addr).or_insert(0) += amount_q;
             0
         }
     ).map_err(|e| e.to_string())?;

@@ -93,7 +93,7 @@ impl WasmRuntime {
         caller: &str,
         block_height: u64,
         block_time: u64,
-        balances: HashMap<String, u64>,
+        balances: HashMap<String, u128>,
         gas_limit: u64,
         tx_hash: &str,
     ) -> Result<ContractCallResult, String> {
@@ -113,7 +113,7 @@ impl WasmRuntime {
         caller: &str,
         block_height: u64,
         block_time: u64,
-        balances: HashMap<String, u64>,
+        balances: HashMap<String, u128>,
         gas_limit: u64,
         tx_hash: &str,
         call_depth: u32,
@@ -166,7 +166,7 @@ impl WasmRuntime {
                 if let Some(ref deltas) = result.balance_deltas {
                     for (addr, delta) in deltas {
                         let entry = current_balances.entry(addr.clone()).or_insert(0);
-                        *entry = (*entry as i128 + delta).max(0) as u64;
+                        *entry = (*entry as i128 + delta).max(0) as u128;
                     }
                 }
 
@@ -208,7 +208,7 @@ impl WasmRuntime {
                                 if let Some(ref deltas) = sub_result.balance_deltas {
                                     for (addr, delta) in deltas {
                                         let entry = current_balances.entry(addr.clone()).or_insert(0);
-                                        *entry = (*entry as i128 + delta).max(0) as u64;
+                                        *entry = (*entry as i128 + delta).max(0) as u128;
                                     }
                                 }
                             }
@@ -284,7 +284,7 @@ impl WasmRuntime {
         contract_addr: &str,
         method: &str,
         args_json: &serde_json::Value,
-        balances: HashMap<String, u64>,
+        balances: HashMap<String, u128>,
         block_height: u64,
         block_time: u64,
     ) -> Result<ContractCallResult, String> {

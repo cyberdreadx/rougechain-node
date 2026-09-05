@@ -96,7 +96,7 @@ fn run(
     addr: &str,
     method: &str,
     caller: &str,
-    balances: HashMap<String, u64>,
+    balances: HashMap<String, u128>,
     gas_limit: u64,
 ) -> quantum_vault_vm::ContractCallResult {
     rt.execute_contract(
@@ -176,7 +176,7 @@ fn transfer_emits_conserved_ordered_deltas() {
     let addr = deploy(&rt, &cs, WAT_TRANSFER, "alice", 0);
 
     let mut balances = HashMap::new();
-    balances.insert(addr.clone(), 500u64); // the contract custodies 500
+    balances.insert(addr.clone(), 500u128); // the contract custodies 500
 
     let res = run(&rt, &cs, &addr, "pay", "alice", balances, 10_000_000);
 
@@ -195,7 +195,7 @@ fn transfer_emits_conserved_ordered_deltas() {
     let addr2 = deploy(&rt2, &cs2, WAT_TRANSFER, "alice", 0);
     assert_eq!(addr2, addr, "address derivation must be deterministic");
     let mut b2 = HashMap::new();
-    b2.insert(addr2.clone(), 500u64);
+    b2.insert(addr2.clone(), 500u128);
     let res2 = run(&rt2, &cs2, &addr2, "pay", "alice", b2, 10_000_000);
     assert_eq!(res2.balance_deltas, res.balance_deltas);
 }
@@ -208,7 +208,7 @@ fn transfer_with_insufficient_balance_produces_no_deltas() {
     let addr = deploy(&rt, &cs, WAT_TRANSFER, "alice", 0);
 
     let mut balances = HashMap::new();
-    balances.insert(addr.clone(), 50u64); // less than the 100 it tries to send
+    balances.insert(addr.clone(), 50u128); // less than the 100 it tries to send
 
     let res = run(&rt, &cs, &addr, "pay", "alice", balances, 10_000_000);
 
