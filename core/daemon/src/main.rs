@@ -1445,6 +1445,9 @@ struct StatsResponse {
     node_name: Option<String>,
     base_fee: f64,
     total_fees_burned: f64,
+    /// Canonical ledger state root (Phase 2). Same across honest nodes at the
+    /// same height — compare it across nodes to spot divergence.
+    state_root: String,
 }
 
 async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, StatusCode> {
@@ -1467,6 +1470,7 @@ async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>,
         node_name: state.node_name.clone(),
         base_fee: node.get_base_fee(),
         total_fees_burned: node.get_total_fees_burned(),
+        state_root: node.get_state_root().unwrap_or_default(),
     }))
 }
 

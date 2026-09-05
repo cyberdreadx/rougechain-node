@@ -2605,6 +2605,13 @@ impl L1Node {
         ))
     }
 
+    /// Public accessor for the current ledger state root (display/debugging).
+    /// Lets an operator compare nodes at the same height to spot divergence; it
+    /// is the same value the block header commits at/after activation.
+    pub fn get_state_root(&self) -> Result<String, String> {
+        self.compute_current_state_root()
+    }
+
     /// Clone the three in-memory balance maps. Used by import (P2-5) to take a
     /// pre-apply snapshot so a block whose state root doesn't match can be
     /// rejected and the money ledger restored exactly, without a full
