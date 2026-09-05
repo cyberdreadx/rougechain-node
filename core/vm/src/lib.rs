@@ -315,13 +315,16 @@ impl WasmRuntime {
         Ok(result)
     }
 
-    /// Query a contract (read-only — no state changes committed).
+    /// Query a contract (read-only — no state changes committed). Any storage
+    /// writes or balance deltas the run produces are returned in the result but
+    /// NEVER committed, so this is safe for RPC simulation/dry-run.
     pub fn query_contract(
         &self,
         contract_store: &ContractStore,
         contract_addr: &str,
         method: &str,
         args_json: &serde_json::Value,
+        caller: &str,
         balances: HashMap<String, u128>,
         block_height: u64,
         block_time: u64,
@@ -334,7 +337,7 @@ impl WasmRuntime {
         let storage_cache = contract_store.load_all_state(contract_addr)?;
 
         let env = HostEnv::new(
-            String::new(),
+            caller.to_string(),
             contract_addr.to_string(),
             block_height,
             block_time,

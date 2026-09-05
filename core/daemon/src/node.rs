@@ -1970,6 +1970,7 @@ impl L1Node {
         caller: &str,
         contract_addr: &str,
         method: &str,
+        args: &serde_json::Value,
         gas_used: u64,
         success: bool,
     ) -> Result<TxV1, String> {
@@ -1982,6 +1983,9 @@ impl L1Node {
             payload: TxPayload {
                 contract_addr: Some(contract_addr.to_string()),
                 contract_method: Some(method.to_string()),
+                // Carry the call args so the on-chain re-execution (which is what
+                // actually applies balance deltas, P3-4) matches this call. (P3-5)
+                contract_args: if args.is_null() { None } else { Some(args.clone()) },
                 contract_gas_limit: Some(gas_used),
                 to_pub_key_hex: if caller.is_empty() { None } else { Some(caller.to_string()) },
                 reason: if success { None } else { Some("failed".to_string()) },
@@ -2630,6 +2634,13 @@ impl L1Node {
             &token_balances,
             &lp_balances,
         ))
+    }
+
+    /// Snapshot of the native XRGE ledger in quanta, for read-only contract
+    /// simulation (RPC dry-run) — so `host_get_balance` sees real balances with
+    /// no risk of committing state. (P3-5)
+    pub fn native_balances_quanta(&self) -> HashMap<String, u128> {
+        self.balances.lock().map(|b| b.clone()).unwrap_or_default()
     }
 
     /// Public accessor for the current ledger state root (display/debugging).

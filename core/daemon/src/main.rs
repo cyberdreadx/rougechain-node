@@ -8976,28 +8976,31 @@ async fn contract_call(
         .unwrap_or_default()
         .as_secs();
 
-    let balances = std::collections::HashMap::new(); // TODO: load from node
+    // P3-5 dry-run isolation: simulate READ-ONLY against a snapshot of the real
+    // ledger (query_contract commits nothing). The authoritative execution — the
+    // one that commits storage and applies XRGE deltas — happens when the tx
+    // below is mined (P3-4). `gasLimit` is a preview knob only here.
+    let _ = gas_limit;
+    let balances = state.node.native_balances_quanta();
 
-    let tx_hash = format!("call-{}-{}", contract_addr, block_height);
-
-    match state.wasm_runtime.execute_contract(
+    match state.wasm_runtime.query_contract(
         &state.contract_store,
         contract_addr,
         method,
         &args,
         caller,
+        balances,
         block_height,
         block_time,
-        balances,
-        gas_limit,
-        &tx_hash,
     ) {
         Ok(result) => {
-            // Submit on-chain transaction so it appears in the tx feed
+            // Submit on-chain transaction so it appears in the tx feed and is
+            // re-executed deterministically (carrying the args, P3-5).
             if let Ok(tx) = state.node.submit_contract_call_tx(
                 caller,
                 contract_addr,
                 method,
+                &args,
                 result.gas_used,
                 result.success,
             ) {
