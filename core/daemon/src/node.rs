@@ -2521,6 +2521,67 @@ impl L1Node {
         }
     }
 
+    /// Canonical state root over the CURRENT in-memory balance ledger
+    /// (native + token + LP), via the `state_root` module. Pure read.
+    ///
+    /// This is the primitive Phase 2 is built on: the producer stamps it into a
+    /// block header (P2-4) and importers recompute it after applying a block to
+    /// check it against the proposer's (P2-5). Callers must NOT already hold the
+    /// balance/token/lp locks — this takes them in the canonical order
+    /// (balances → token → lp) matching `apply_balance_block`, so there is no
+    /// deadlock as long as no caller holds a later lock first.
+    #[allow(dead_code)] // wired into production/import in P2-4/P2-5
+    fn compute_current_state_root(&self) -> Result<String, String> {
+        let balances = self.balances.lock().map_err(|_| "balance lock")?;
+        let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        let lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+        Ok(crate::state_root::compute_state_root(
+            &balances,
+            &token_balances,
+            &lp_balances,
+        ))
+    }
+
+    /// Clone the three in-memory balance maps. Used by import (P2-5) to take a
+    /// pre-apply snapshot so a block whose state root doesn't match can be
+    /// rejected and the money ledger restored exactly, without a full
+    /// speculative apply of the side-effect stores. Callers must not hold the
+    /// locks; taken in canonical order.
+    #[allow(dead_code)] // used by import verification in P2-5
+    fn snapshot_balance_maps(
+        &self,
+    ) -> Result<
+        (
+            HashMap<String, u128>,
+            HashMap<TokenBalanceKey, u128>,
+            HashMap<TokenBalanceKey, u128>,
+        ),
+        String,
+    > {
+        let balances = self.balances.lock().map_err(|_| "balance lock")?;
+        let token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
+        let lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+        Ok((balances.clone(), token_balances.clone(), lp_balances.clone()))
+    }
+
+    /// Restore the three in-memory balance maps from a snapshot (rollback).
+    /// Pairs with [`snapshot_balance_maps`]; taken in canonical order.
+    #[allow(dead_code)] // used by import verification in P2-5
+    fn restore_balance_maps(
+        &self,
+        snap: (
+            HashMap<String, u128>,
+            HashMap<TokenBalanceKey, u128>,
+            HashMap<TokenBalanceKey, u128>,
+        ),
+    ) -> Result<(), String> {
+        let (b, t, l) = snap;
+        *self.balances.lock().map_err(|_| "balance lock")? = b;
+        *self.token_balances.lock().map_err(|_| "token balance lock")? = t;
+        *self.lp_balances.lock().map_err(|_| "lp balance lock")? = l;
+        Ok(())
+    }
+
     fn apply_balance_block(&self, block: &BlockV1) -> Result<(), String> {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
         let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
@@ -6380,5 +6441,49 @@ mod live_amm_tests {
         node.snapshot_db.flush().unwrap();
         assert!(node.load_balance_snapshot().is_err(),
             "a different snapshot version must be rejected by v2 code");
+    }
+
+    // ── P2-3 state-root primitives ────────────────────────────────────────
+
+    #[test]
+    fn current_state_root_matches_direct_module_computation() {
+        let (_dir, node) = test_node();
+        node.balances.lock().unwrap().insert("alice".to_string(), 100 * Q);
+        node.balances.lock().unwrap().insert("bob".to_string(), 200 * Q);
+
+        let via_node = node.compute_current_state_root().unwrap();
+        let bal = node.balances.lock().unwrap().clone();
+        let tok = node.token_balances.lock().unwrap().clone();
+        let lp = node.lp_balances.lock().unwrap().clone();
+        let via_module = crate::state_root::compute_state_root(&bal, &tok, &lp);
+        assert_eq!(via_node, via_module, "node helper == module over the same maps");
+    }
+
+    #[test]
+    fn state_root_changes_when_a_balance_changes() {
+        let (_dir, node) = test_node();
+        apply_tx(&node, "_rebuild_", &faucet_tx("alice", 10));
+        let before = node.compute_current_state_root().unwrap();
+        apply_tx(&node, "_rebuild_", &faucet_tx("bob", 5));
+        let after = node.compute_current_state_root().unwrap();
+        assert_ne!(before, after, "crediting an account must change the root");
+    }
+
+    #[test]
+    fn snapshot_then_mutate_then_restore_recovers_exact_root() {
+        let (_dir, node) = test_node();
+        apply_tx(&node, "_rebuild_", &faucet_tx("alice", 10));
+        let root0 = node.compute_current_state_root().unwrap();
+        let snap = node.snapshot_balance_maps().unwrap();
+
+        // Mutate the ledger (as a bad block's apply would).
+        apply_tx(&node, "_rebuild_", &faucet_tx("mallory", 999));
+        assert_ne!(node.compute_current_state_root().unwrap(), root0, "state moved");
+
+        // Roll back and confirm the money ledger is bit-for-bit restored.
+        node.restore_balance_maps(snap).unwrap();
+        assert_eq!(node.compute_current_state_root().unwrap(), root0, "root restored exactly");
+        assert_eq!(node.get_balance("mallory").unwrap(), 0.0, "rolled-back credit is gone");
+        assert_eq!(node.get_balance("alice").unwrap(), 10.0, "kept balance intact");
     }
 }
