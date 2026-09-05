@@ -46,11 +46,13 @@ const UNBONDING_BLOCKS: u64 = 500;             // ~8 hours at 1 block/min
 const MISSED_BLOCK_SLASH_THRESHOLD: u64 = 50;  // Auto-slash after 50 missed blocks
 const MAX_MEMPOOL: usize = 2000;
 
-// EIP-1559 dynamic fee constants
-const BASE_FEE_INITIAL: f64 = 0.1;           // Initial base fee (XRGE)
-const BASE_FEE_MAX_CHANGE_DENOM: f64 = 8.0;  // Max 12.5% change per block
-const TARGET_TXS_PER_BLOCK: usize = 10;      // Target block fullness
-const BASE_FEE_FLOOR: f64 = 0.001;           // Minimum base fee
+// EIP-1559 dynamic fee constants. The base fee is consensus state — it sets each
+// block's burn — so it is stored and updated in integer **quanta**. The old f64
+// arithmetic and decimal-string storage were a replay-fork hazard (T6).
+const BASE_FEE_INITIAL_QUANTA: u128 = 100_000_000; // 0.1 XRGE
+const BASE_FEE_FLOOR_QUANTA: u128 = 1_000_000;     // 0.001 XRGE minimum
+const BASE_FEE_MAX_CHANGE_DENOM: u128 = 8;         // Max 12.5% change per block
+const TARGET_TXS_PER_BLOCK: usize = 10;            // Target block fullness
 
 /// The official burn address - tokens sent here are permanently destroyed
 /// This is a deterministic address derived from "QUANTUM_VAULT_BURN_ADDRESS_V1"
@@ -641,7 +643,7 @@ impl L1Node {
             let total_fees: u128 = block.txs.iter().map(|tx| fee_to_quanta(tx.fee)).sum();
             if total_fees > 0 {
                 let stakes = self.get_validator_stakes_at_height(block.header.height)?;
-                let base_fee = self.get_base_fee();
+                let base_fee = self.get_base_fee_quanta();
                 Self::distribute_fees(
                     &mut balances,
                     total_fees,
@@ -654,7 +656,7 @@ impl L1Node {
             }
             // Update base fee for next block
             let next_base_fee = self.calculate_next_base_fee(block.txs.len());
-            self.set_base_fee(next_base_fee);
+            self.set_base_fee_quanta(next_base_fee);
         }
         
         let final_height = blocks.last().map(|b| b.header.height).unwrap_or(0);
@@ -2435,17 +2437,27 @@ impl L1Node {
     const VALIDATOR_FEE_SHARE: f64 = 0.70;  // 70% split among validators by stake
     const TREASURY_FEE_SHARE: f64 = 0.10;  // 10% to community treasury
 
-    /// Get the current base fee
-    pub fn get_base_fee(&self) -> f64 {
+    /// Current base fee in **quanta** — the consensus source of truth.
+    ///
+    /// New format is an integer-quanta decimal string; a legacy f64-XRGE string
+    /// (pre-T6 fee_db) is still read and converted, so an existing node upgrades
+    /// cleanly. Missing → [`BASE_FEE_INITIAL_QUANTA`].
+    fn get_base_fee_quanta(&self) -> u128 {
         self.fee_db.get(b"base_fee").ok().flatten()
             .and_then(|v| String::from_utf8(v.to_vec()).ok())
-            .and_then(|s| s.parse::<f64>().ok())
-            .unwrap_or(BASE_FEE_INITIAL)
+            .and_then(|s| s.parse::<u128>().ok().or_else(|| s.parse::<f64>().ok().map(fee_to_quanta)))
+            .unwrap_or(BASE_FEE_INITIAL_QUANTA)
     }
 
-    /// Persist base fee
-    fn set_base_fee(&self, fee: f64) {
-        let _ = self.fee_db.insert(b"base_fee", fee.to_string().as_bytes());
+    /// Get the current base fee as **display XRGE**. Serialization boundary only
+    /// (metrics/RPC/header) — never fed back into consensus.
+    pub fn get_base_fee(&self) -> f64 {
+        quanta_to_display(self.get_base_fee_quanta())
+    }
+
+    /// Persist the base fee (quanta), stored as an integer decimal string.
+    fn set_base_fee_quanta(&self, quanta: u128) {
+        let _ = self.fee_db.insert(b"base_fee", quanta.to_string().as_bytes());
         let _ = self.fee_db.flush();
     }
 
@@ -2461,22 +2473,27 @@ impl L1Node {
         let _ = self.fee_db.flush();
     }
 
-    /// Calculate next base fee based on block fullness (EIP-1559)
-    fn calculate_next_base_fee(&self, tx_count: usize) -> f64 {
-        let current = self.get_base_fee();
+    /// Calculate the next base fee (quanta) from block fullness (EIP-1559).
+    /// All integer: `delta = current * |txs - target| / (target * denom)` via
+    /// `mul_div`, floored at [`BASE_FEE_FLOOR_QUANTA`]. Deterministic across
+    /// nodes and replays — no f64.
+    fn calculate_next_base_fee(&self, tx_count: usize) -> u128 {
+        let current = self.get_base_fee_quanta();
         if tx_count == TARGET_TXS_PER_BLOCK {
             return current; // At target, no change
         }
-        let delta = if tx_count > TARGET_TXS_PER_BLOCK {
-            // Above target → increase
-            let excess = tx_count - TARGET_TXS_PER_BLOCK;
-            current * (excess as f64) / (TARGET_TXS_PER_BLOCK as f64) / BASE_FEE_MAX_CHANGE_DENOM
+        let divisor = (TARGET_TXS_PER_BLOCK as u128) * BASE_FEE_MAX_CHANGE_DENOM;
+        if tx_count > TARGET_TXS_PER_BLOCK {
+            // Above target → increase by 1/8 per (excess/target) of the block.
+            let excess = (tx_count - TARGET_TXS_PER_BLOCK) as u128;
+            let delta = mul_div(current, excess, divisor);
+            current.saturating_add(delta).max(BASE_FEE_FLOOR_QUANTA)
         } else {
-            // Below target → decrease
-            let deficit = TARGET_TXS_PER_BLOCK - tx_count;
-            -(current * (deficit as f64) / (TARGET_TXS_PER_BLOCK as f64) / BASE_FEE_MAX_CHANGE_DENOM)
-        };
-        (current + delta).max(BASE_FEE_FLOOR)
+            // Below target → decrease, never below the floor.
+            let deficit = (TARGET_TXS_PER_BLOCK - tx_count) as u128;
+            let delta = mul_div(current, deficit, divisor);
+            current.saturating_sub(delta).max(BASE_FEE_FLOOR_QUANTA)
+        }
     }
 
     fn apply_balance_block(&self, block: &BlockV1) -> Result<(), String> {
@@ -2922,7 +2939,7 @@ impl L1Node {
         
         // Distribute only actually collected fees
         if actual_fees_collected > 0 {
-            let base_fee = self.get_base_fee();
+            let base_fee = self.get_base_fee_quanta();
             Self::distribute_fees(
                 &mut balances,
                 actual_fees_collected,
@@ -2936,7 +2953,7 @@ impl L1Node {
 
         // EIP-1559: recalculate base fee for next block
         let next_base_fee = self.calculate_next_base_fee(block.txs.len());
-        self.set_base_fee(next_base_fee);
+        self.set_base_fee_quanta(next_base_fee);
         self.persist_fees_burned();
         
         Ok(())
@@ -3474,7 +3491,7 @@ impl L1Node {
             
             if actual_fees_collected > 0 {
                 let stakes = self.get_validator_stakes_at_height(block.header.height)?;
-                let base_fee = self.get_base_fee();
+                let base_fee = self.get_base_fee_quanta();
                 Self::distribute_fees(
                     &mut balances,
                     actual_fees_collected,
@@ -4289,11 +4306,11 @@ impl L1Node {
         total_fees: u128,                     // quanta collected this block
         proposer_pub_key: &str,
         validator_stakes: &BTreeMap<String, u128>,
-        base_fee_per_tx: f64,                 // display XRGE per tx
+        base_fee_per_tx_quanta: u128,         // base fee per tx, in quanta
         tx_count: usize,
         total_fees_burned: &Arc<Mutex<f64>>,  // display-XRGE accumulator
     ) {
-        let total_base_fees = fee_to_quanta(base_fee_per_tx * tx_count as f64);
+        let total_base_fees = base_fee_per_tx_quanta.saturating_mul(tx_count as u128);
         let burned = mul_div(total_base_fees, 1, 2).min(total_fees); // BASE_FEE_BURN_RATIO = 0.5
         let mut tip_pool = total_fees - burned;
 
@@ -5713,11 +5730,11 @@ mod ledger_tests {
         total_fees: u128,
         proposer: &str,
         stakes: &BTreeMap<String, u128>,
-        base_fee: f64,
+        base_fee_quanta: u128,
         tx_count: usize,
     ) {
         let burned = Arc::new(Mutex::new(0.0f64));
-        L1Node::distribute_fees(balances, total_fees, proposer, stakes, base_fee, tx_count, &burned);
+        L1Node::distribute_fees(balances, total_fees, proposer, stakes, base_fee_quanta, tx_count, &burned);
     }
 
     fn near(a: f64, b: f64) -> bool {
@@ -5776,7 +5793,7 @@ mod ledger_tests {
         let mut b = HashMap::new();
         let stakes = BTreeMap::from([("val1".to_string(), 100u128)]);
         // base_fee 0 => no burn, no floor subsidy; whole 100 is the tip pool.
-        dist(&mut b, 100 * Q, "prop", &stakes, 0.0, 0);
+        dist(&mut b, 100 * Q, "prop", &stakes, 0, 0);
         assert_eq!(b["prop"], 20 * Q, "proposer 20%");
         assert_eq!(b["val1"], 70 * Q, "validators 70%");
         assert_eq!(b["__treasury__"], 10 * Q, "treasury 10%");
@@ -5788,7 +5805,7 @@ mod ledger_tests {
     fn validator_pool_is_stake_weighted() {
         let mut b = HashMap::new();
         let stakes = BTreeMap::from([("v1".to_string(), 100u128), ("v2".to_string(), 300u128)]);
-        dist(&mut b, 100 * Q, "prop", &stakes, 0.0, 0);
+        dist(&mut b, 100 * Q, "prop", &stakes, 0, 0);
         // validator pool = 70, split 25% / 75%
         assert_eq!(b["v1"], 175 * Q / 10, "v1 = 25% of 70 (17.5 XRGE)");
         assert_eq!(b["v2"], 525 * Q / 10, "v2 = 75% of 70 (52.5 XRGE)");
@@ -5798,7 +5815,7 @@ mod ledger_tests {
     fn empty_stake_gives_validator_pool_to_proposer() {
         let mut b = HashMap::new();
         let stakes: BTreeMap<String, u128> = BTreeMap::new();
-        dist(&mut b, 100 * Q, "prop", &stakes, 0.0, 0);
+        dist(&mut b, 100 * Q, "prop", &stakes, 0, 0);
         // proposer gets proposer_share (20) + validator_pool (70) = 90; treasury 10.
         assert_eq!(b["prop"], 90 * Q, "proposer absorbs validator pool");
         assert_eq!(b["__treasury__"], 10 * Q);
@@ -5809,7 +5826,7 @@ mod ledger_tests {
         let mut b = HashMap::from([("__staking_rewards__".to_string(), 1 * Q)]);
         let stakes = BTreeMap::from([("v1".to_string(), 100u128)]);
         // total_fees 0 => tip_pool 0 < MIN_TIP_FLOOR(0.1); subsidize 0.1 from reserve.
-        dist(&mut b, 0, "prop", &stakes, 0.0, 0);
+        dist(&mut b, 0, "prop", &stakes, 0, 0);
         assert_eq!(b["__staking_rewards__"], 9 * Q / 10, "reserve drained by 0.1 floor");
         // the 0.1-XRGE (1e8 quanta) floor is then split 20/70/10
         assert_eq!(b["prop"], 2 * Q / 100);
@@ -5826,8 +5843,8 @@ mod ledger_tests {
         ]);
         let mut a = HashMap::new();
         let mut c = HashMap::new();
-        dist(&mut a, 123_456 * Q / 1000, "prop", &stakes, 0.5, 7);
-        dist(&mut c, 123_456 * Q / 1000, "prop", &stakes, 0.5, 7);
+        dist(&mut a, 123_456 * Q / 1000, "prop", &stakes, 5 * Q / 10, 7);
+        dist(&mut c, 123_456 * Q / 1000, "prop", &stakes, 5 * Q / 10, 7);
         let sa: BTreeMap<_, _> = a.into_iter().collect();
         let sc: BTreeMap<_, _> = c.into_iter().collect();
         assert_eq!(sa, sc, "identical inputs must produce identical distribution");
@@ -6245,5 +6262,60 @@ mod live_amm_tests {
         apply_tx(&node, "", &transfer_tx("alice", "bob", 30, 1.0)); // can't afford
         assert_eq!(node.get_balance("alice").unwrap(), 10.0, "unchanged on rejection");
         assert_eq!(node.get_balance("bob").unwrap(), 0.0);
+    }
+
+    // ── T6 integer EIP-1559 base fee ──────────────────────────────────────
+    // The base fee is consensus state (it sets each block's burn). These pin the
+    // integer update math and assert the display value through get_base_fee, so a
+    // regression in the quanta<->display boundary would also show.
+
+    #[test]
+    fn base_fee_defaults_to_initial() {
+        let (_dir, node) = test_node();
+        assert_eq!(node.get_base_fee_quanta(), 100_000_000, "0.1 XRGE in quanta");
+        assert_eq!(node.get_base_fee(), 0.1, "display XRGE");
+    }
+
+    #[test]
+    fn base_fee_unchanged_at_target_fullness() {
+        let (_dir, node) = test_node();
+        // 10 txs == TARGET_TXS_PER_BLOCK → no change.
+        assert_eq!(node.calculate_next_base_fee(10), node.get_base_fee_quanta());
+    }
+
+    #[test]
+    fn base_fee_rises_above_target_by_eip1559_step() {
+        let (_dir, node) = test_node();
+        // current 0.1 (1e8 quanta), 20 txs → excess 10.
+        // delta = 1e8 * 10 / (10 * 8) = 12_500_000 quanta = 0.0125 XRGE.
+        let next = node.calculate_next_base_fee(20);
+        assert_eq!(next, 112_500_000, "0.1125 XRGE in quanta");
+        node.set_base_fee_quanta(next);
+        assert_eq!(node.get_base_fee(), 0.1125, "display matches");
+    }
+
+    #[test]
+    fn base_fee_falls_below_target_by_eip1559_step() {
+        let (_dir, node) = test_node();
+        // current 0.1, 0 txs → deficit 10. delta = 1e8 * 10 / 80 = 12_500_000.
+        let next = node.calculate_next_base_fee(0);
+        assert_eq!(next, 87_500_000, "0.0875 XRGE in quanta");
+    }
+
+    #[test]
+    fn base_fee_never_drops_below_floor() {
+        let (_dir, node) = test_node();
+        node.set_base_fee_quanta(BASE_FEE_FLOOR_QUANTA); // 0.001 XRGE
+        // Empty blocks would push it lower, but the floor clamps it.
+        let next = node.calculate_next_base_fee(0);
+        assert_eq!(next, BASE_FEE_FLOOR_QUANTA, "clamped at 0.001 XRGE floor");
+    }
+
+    #[test]
+    fn base_fee_survives_legacy_f64_string_in_fee_db() {
+        let (_dir, node) = test_node();
+        // Simulate a pre-T6 fee_db entry written as an f64 XRGE decimal string.
+        node.fee_db.insert(b"base_fee", b"0.1".as_ref()).unwrap();
+        assert_eq!(node.get_base_fee_quanta(), 100_000_000, "legacy 0.1 → quanta");
     }
 }
