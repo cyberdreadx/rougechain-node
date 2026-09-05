@@ -6883,4 +6883,151 @@ mod live_amm_tests {
         assert_eq!(a.get_balance("bob").unwrap(), 1.0, "bob received 1 XRGE from the contract");
         assert_eq!(a.get_balance(addr).unwrap(), 4.0, "contract balance dropped by exactly 1 XRGE");
     }
+
+    // ── P3-6 end-to-end: royalty splitter across two nodes + overdraft ────
+
+    /// Deploy a contract (carrying its bytecode) on `n` by mining one block, and
+    /// return that block so it can be imported elsewhere. `n` must be mut.
+    fn deploy_via_block(n: &mut L1Node, user: &PQKeypair, addr: &str, wasm: &[u8], nonce: u64) -> BlockV1 {
+        use base64::Engine as _;
+        let wasm_b64 = base64::engine::general_purpose::STANDARD.encode(wasm);
+        let tx = signed(
+            TxV1 {
+                version: 1,
+                tx_type: "contract_deploy".to_string(),
+                from_pub_key: user.public_key_hex.clone(),
+                nonce,
+                payload: TxPayload {
+                    contract_addr: Some(addr.to_string()),
+                    contract_wasm: Some(wasm_b64),
+                    to_pub_key_hex: Some(user.public_key_hex.clone()),
+                    amount: Some(wasm.len() as u64),
+                    ..Default::default()
+                },
+                fee: 1.0,
+                sig: String::new(),
+                signed_payload: None,
+            },
+            user,
+        );
+        n.mempool.lock().unwrap().insert("deploy".to_string(), tx);
+        n.mine_pending().unwrap().expect("deploy block")
+    }
+
+    #[test]
+    fn royalty_splitter_fans_xrge_across_two_nodes() {
+        let (_da, _csa, mut a) = node_with_vm();
+        let (_db, _csb, b) = node_with_vm();
+        let user = pqc_keygen();
+        // Identical starting balances so post-apply roots match.
+        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        b.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+
+        // Splitter: on "split", send 1 XRGE each to alice, bob, carol.
+        let wasm = wat::parse_str(
+            r#"(module
+                 (import "env" "host_transfer" (func $tr (param i32 i32 i64) (result i32)))
+                 (memory (export "memory") 1)
+                 (data (i32.const 0) "alice")
+                 (data (i32.const 16) "bob")
+                 (data (i32.const 32) "carol")
+                 (func (export "split") (result i32)
+                   (drop (call $tr (i32.const 0)  (i32.const 5) (i64.const 1000000000)))
+                   (drop (call $tr (i32.const 16) (i32.const 3) (i64.const 1000000000)))
+                   (call $tr (i32.const 32) (i32.const 5) (i64.const 1000000000))))"#,
+        )
+        .unwrap();
+        let addr = "5911770000000000000000000000000000000abc";
+
+        // Deploy on A, import the deploy block on B — both hold the code and stay
+        // in lockstep (each deducts the same deploy fee).
+        let deploy_block = deploy_via_block(&mut a, &user, addr, &wasm, 0);
+        b.import_block(deploy_block).unwrap();
+
+        // Fund the contract with 10 XRGE on BOTH nodes (out-of-band, identical).
+        a.balances.lock().unwrap().insert(addr.to_string(), 10 * Q);
+        b.balances.lock().unwrap().insert(addr.to_string(), 10 * Q);
+
+        // A mines the split call; B imports it.
+        let call = signed(
+            TxV1 {
+                version: 1,
+                tx_type: "contract_call".to_string(),
+                from_pub_key: user.public_key_hex.clone(),
+                nonce: 1,
+                payload: TxPayload {
+                    contract_addr: Some(addr.to_string()),
+                    contract_method: Some("split".to_string()),
+                    ..Default::default()
+                },
+                fee: 1.0,
+                sig: String::new(),
+                signed_payload: None,
+            },
+            &user,
+        );
+        a.mempool.lock().unwrap().insert("call".to_string(), call);
+        let split_block = a.mine_pending().unwrap().expect("split block");
+        b.import_block(split_block).unwrap();
+
+        // Both nodes agree: 1 XRGE fanned to each of three wallets, contract down 3.
+        for n in [&a, &b] {
+            assert_eq!(n.get_balance("alice").unwrap(), 1.0);
+            assert_eq!(n.get_balance("bob").unwrap(), 1.0);
+            assert_eq!(n.get_balance("carol").unwrap(), 1.0);
+            assert_eq!(n.get_balance(addr).unwrap(), 7.0, "10 - 3 XRGE paid out");
+        }
+        assert_eq!(
+            a.compute_current_state_root().unwrap(),
+            b.compute_current_state_root().unwrap(),
+            "A and B agree on the ledger root after the split"
+        );
+    }
+
+    #[test]
+    fn contract_cannot_overspend_its_balance() {
+        let (_da, _csa, mut a) = node_with_vm();
+        let user = pqc_keygen();
+        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+
+        // "overspend": tries to send 5 XRGE to bob — but the contract holds only 1.
+        let wasm = wat::parse_str(
+            r#"(module
+                 (import "env" "host_transfer" (func $tr (param i32 i32 i64) (result i32)))
+                 (memory (export "memory") 1)
+                 (data (i32.const 0) "bob")
+                 (func (export "overspend") (result i32)
+                   (call $tr (i32.const 0) (i32.const 3) (i64.const 5000000000))))"#,
+        )
+        .unwrap();
+        let addr = "0bad0000000000000000000000000000000000ab";
+
+        let deploy_block = deploy_via_block(&mut a, &user, addr, &wasm, 0);
+        let _ = deploy_block;
+        a.balances.lock().unwrap().insert(addr.to_string(), 1 * Q); // only 1 XRGE
+
+        let call = signed(
+            TxV1 {
+                version: 1,
+                tx_type: "contract_call".to_string(),
+                from_pub_key: user.public_key_hex.clone(),
+                nonce: 1,
+                payload: TxPayload {
+                    contract_addr: Some(addr.to_string()),
+                    contract_method: Some("overspend".to_string()),
+                    ..Default::default()
+                },
+                fee: 1.0,
+                sig: String::new(),
+                signed_payload: None,
+            },
+            &user,
+        );
+        a.mempool.lock().unwrap().insert("call".to_string(), call);
+        a.mine_pending().unwrap().expect("call block");
+
+        // The over-transfer was refused at the VM host boundary: no XRGE moved.
+        assert_eq!(a.get_balance("bob").unwrap(), 0.0, "bob got nothing — overspend refused");
+        assert_eq!(a.get_balance(addr).unwrap(), 1.0, "contract balance intact");
+    }
 }
