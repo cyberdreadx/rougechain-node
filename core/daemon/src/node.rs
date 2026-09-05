@@ -2280,6 +2280,7 @@ impl L1Node {
             prev_hash: tip.hash.clone(),
             tx_hash: compute_tx_hash(&txs),
             proposer_pub_key: self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone(),
+            state_root: None, // set at/after the activation height (later P2 task)
         };
         let header_bytes = encode_header_v1(&header);
         let proposer_sig = pqc_sign(&self.keys.lock().map_err(|_| "keys lock")?.secret_key_hex, &header_bytes)?;

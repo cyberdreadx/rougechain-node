@@ -199,6 +199,16 @@ pub struct BlockHeaderV1 {
     pub prev_hash: String,
     pub tx_hash: String,
     pub proposer_pub_key: String,
+    /// Phase 2 state-root commitment (hex SHA-256 of the balance ledger).
+    ///
+    /// `None` on every header before the state-root fork. `skip_serializing_if`
+    /// omits the field entirely when `None`, so a pre-fork header serializes to
+    /// the EXACT bytes it did before this field existed — its signature and
+    /// block hash are unchanged, and replaying history does not fork. `default`
+    /// lets old stored/received headers (which lack the field) deserialize to
+    /// `None`. Populated and verified only at/after the activation height.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_root: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,4 +341,58 @@ pub struct TxReceipt {
     pub fee_paid: f64,
     pub logs: Vec<TxLog>,
     pub timestamp: u64,             // Block timestamp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_header() -> BlockHeaderV1 {
+        BlockHeaderV1 {
+            version: 1,
+            chain_id: "rougechain-mainnet-1".to_string(),
+            height: 42,
+            time: 1_700_000_000_000,
+            prev_hash: "abc123".to_string(),
+            tx_hash: "def456".to_string(),
+            proposer_pub_key: "prop789".to_string(),
+            state_root: None,
+        }
+    }
+
+    /// The critical backward-compat proof: a header whose `state_root` is `None`
+    /// must serialize to EXACTLY the bytes it did before the field existed —
+    /// otherwise every historical header's hash/signature would change and
+    /// replaying the chain would fork.
+    #[test]
+    fn none_state_root_serializes_without_the_field() {
+        let bytes = encode_header_v1(&sample_header());
+        let json = String::from_utf8(bytes).unwrap();
+        assert!(!json.contains("state_root"), "None field must be omitted entirely");
+        // This is the exact pre-field serialization (fields in declaration order).
+        let expected = r#"{"version":1,"chain_id":"rougechain-mainnet-1","height":42,"time":1700000000000,"prev_hash":"abc123","tx_hash":"def456","proposer_pub_key":"prop789"}"#;
+        assert_eq!(json, expected, "byte-identical to a pre-state-root header");
+    }
+
+    /// An old stored/received header (no `state_root` key) must deserialize
+    /// cleanly to `None`.
+    #[test]
+    fn legacy_header_without_field_deserializes_to_none() {
+        let legacy = r#"{"version":1,"chain_id":"rougechain-mainnet-1","height":42,"time":1700000000000,"prev_hash":"abc123","tx_hash":"def456","proposer_pub_key":"prop789"}"#;
+        let header: BlockHeaderV1 = serde_json::from_str(legacy).unwrap();
+        assert_eq!(header.state_root, None);
+        // ...and re-encoding it round-trips to the same bytes.
+        assert_eq!(String::from_utf8(encode_header_v1(&header)).unwrap(), legacy);
+    }
+
+    /// A post-fork header carries the field and it survives a round-trip.
+    #[test]
+    fn some_state_root_is_serialized_and_roundtrips() {
+        let mut h = sample_header();
+        h.state_root = Some("deadbeef".to_string());
+        let json = String::from_utf8(encode_header_v1(&h)).unwrap();
+        assert!(json.contains(r#""state_root":"deadbeef""#), "populated field is emitted");
+        let back: BlockHeaderV1 = serde_json::from_slice(&encode_header_v1(&h)).unwrap();
+        assert_eq!(back.state_root, Some("deadbeef".to_string()));
+    }
 }

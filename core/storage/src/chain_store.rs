@@ -272,6 +272,7 @@ impl ChainStore {
             prev_hash: "0".to_string(),
             tx_hash: compute_tx_hash(&[]),
             proposer_pub_key: "genesis".to_string(),
+            state_root: None, // genesis predates the state-root fork
         };
         let header_bytes = serde_json::to_vec(&header).unwrap_or_default();
         let proposer_sig = hex::encode(sha256(&header_bytes));
