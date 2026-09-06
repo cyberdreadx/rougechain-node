@@ -1,0 +1,17 @@
+[package]
+name = "rougechain-royalty-splitter"
+version = "0.1.0"
+edition = "2021"
+
+# A RougeChain v2 WASM contract that custodies XRGE royalties and fans them to
+# a fixed set of collaborators by weighted share. Recipients/shares are baked in
+# at build time (the VM has no call-args ABI), so qRougee generates one splitter
+# per collection by substituting the RECIPIENTS/SHARES constants and rebuilding.
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
