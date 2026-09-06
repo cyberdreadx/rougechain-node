@@ -3500,7 +3500,7 @@ async fn faucet(
 
     let now = chrono::Utc::now().timestamp();
     {
-        let mut cooldowns = state.faucet_cooldowns.lock().await;
+        let cooldowns = state.faucet_cooldowns.lock().await;
         // Check in-memory cooldown first, then fall back to persisted cooldown in sled
         let last_used = cooldowns.get(&body.recipient_public_key).copied()
             .or_else(|| node.store_ref().get_faucet_cooldown(&body.recipient_public_key));
@@ -3521,13 +3521,21 @@ async fn faucet(
                 }));
             }
         }
-        cooldowns.insert(body.recipient_public_key.clone(), now);
-        // SECURITY: Persist cooldown to sled so it survives node restarts
-        node.store_ref().set_faucet_cooldown(&body.recipient_public_key, now);
+        // NOTE: the cooldown is recorded only AFTER a successful mint (below), so a
+        // failed faucet request (e.g. transient nonce contention with the miner)
+        // never locks the recipient out for 24h. Concurrent double-mint in the tiny
+        // window before that is still blocked by the pending-faucet-tx check above.
     }
 
     match node.submit_faucet_tx(&body.recipient_public_key, amount) {
         Ok(tx) => {
+            // Mint succeeded — now start the recipient's cooldown.
+            {
+                let mut cooldowns = state.faucet_cooldowns.lock().await;
+                cooldowns.insert(body.recipient_public_key.clone(), now);
+                // SECURITY: Persist cooldown to sled so it survives node restarts
+                node.store_ref().set_faucet_cooldown(&body.recipient_public_key, now);
+            }
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
             Ok(Json(TxResponse { success: true, tx_id: Some(id), tx: Some(tx), error: None }))
         }

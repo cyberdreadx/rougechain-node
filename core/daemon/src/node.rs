@@ -1760,31 +1760,66 @@ impl L1Node {
         Ok((tx, token_address))
     }
 
+    /// Next usable nonce for `pubkey`, accounting for txs already sitting in the
+    /// mempool but not yet mined. `get_next_nonce` only reads the COMMITTED nonce,
+    /// so two back-to-back node-signed txs — or one that races the auto-miner
+    /// bumping the committed nonce between assign and accept — collide on the same
+    /// value. This returns max(committed, highest-pending-for-key) + 1.
+    fn next_nonce_pending(&self, pubkey: &str) -> u64 {
+        let committed = self.get_account_nonce(pubkey);
+        let pending_max = self.mempool.lock().ok().and_then(|m| {
+            m.values()
+                .filter(|t| t.from_pub_key == pubkey)
+                .map(|t| t.nonce)
+                .max()
+        });
+        match pending_max {
+            Some(p) => committed.max(p) + 1,
+            None => committed + 1,
+        }
+    }
+
     pub fn submit_faucet_tx(
         &self,
         recipient_public_key: &str,
         amount: u64,
     ) -> Result<TxV1, String> {
         let keys = self.keys.lock().map_err(|_| "keys lock")?.clone();
-        let mut tx = TxV1 {
-            version: 1,
-            tx_type: "transfer".to_string(),
-            from_pub_key: keys.public_key_hex.clone(),
-            nonce: self.get_next_nonce(&keys.public_key_hex),
-            payload: TxPayload {
-                to_pub_key_hex: Some(recipient_public_key.to_string()),
-                amount: Some(amount),
-                faucet: Some(true),
-                ..Default::default()
-            },
-            fee: 0.0,
-            sig: String::new(),
-            signed_payload: None,
-        };
-        let bytes = encode_tx_for_signing(&tx);
-        tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
-        self.accept_tx(tx.clone())?;
-        Ok(tx)
+        // The faucet signs with the NODE key, whose committed nonce also advances
+        // as the auto-miner seals blocks. A pending-aware nonce plus a short retry
+        // make the assignment robust against that race instead of failing with
+        // "Invalid nonce" and (worse) burning the recipient's cooldown.
+        let mut last_err = String::from("faucet: nonce assignment failed");
+        for _ in 0..8 {
+            let mut tx = TxV1 {
+                version: 1,
+                tx_type: "transfer".to_string(),
+                from_pub_key: keys.public_key_hex.clone(),
+                nonce: self.next_nonce_pending(&keys.public_key_hex),
+                payload: TxPayload {
+                    to_pub_key_hex: Some(recipient_public_key.to_string()),
+                    amount: Some(amount),
+                    faucet: Some(true),
+                    ..Default::default()
+                },
+                fee: 0.0,
+                sig: String::new(),
+                signed_payload: None,
+            };
+            let bytes = encode_tx_for_signing(&tx);
+            tx.sig = pqc_sign(&keys.secret_key_hex, &bytes)?;
+            match self.accept_tx(tx.clone()) {
+                Ok(()) => return Ok(tx),
+                // Lost the race (miner advanced the committed nonce, or a
+                // concurrent node-signed tx took this slot). Recompute + retry.
+                Err(e) if e.contains("Invalid nonce") => {
+                    last_err = e;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last_err)
     }
 
     /// Submit a bridge_withdraw tx (user-signed): burn qETH and record withdrawal for operator to release ETH.
