@@ -1645,7 +1645,12 @@ async fn update_token_metadata(
     Json(body): Json<UpdateTokenMetadataRequest>,
 ) -> Json<serde_json::Value> {
     let node = &state.node;
-    
+
+    // Image guard rail: keep large images off consensus history (URL, not inline bytes).
+    if let Err(e) = validate_token_image(&body.image) {
+        return Json(serde_json::json!({ "success": false, "error": e }));
+    }
+
     // Verify the caller is the token creator
     match node.is_token_creator(&body.token_symbol, &body.from_public_key) {
         Ok(true) => {
@@ -3360,6 +3365,39 @@ struct CreateTokenResponse {
     error: Option<String>,
 }
 
+// ── Token image guard rail ──────────────────────────────────────────────
+// The token `image` field is stored in the create_token tx (so it lives in
+// block history and is replayed on every rebuild). Like every other chain,
+// the intended use is a SHORT pointer — an IPFS/HTTPS URL — with the bytes
+// hosted off-chain. A `data:` URI inlines the actual bytes into consensus
+// history, so allow it only for small assets (icons/SVG), never megabytes.
+const MAX_TOKEN_IMAGE_URL_BYTES: usize = 2048;
+const MAX_TOKEN_IMAGE_DATA_URI_BYTES: usize = 32 * 1024;
+
+/// Reject an oversized token image so nobody accidentally inlines a large
+/// image into consensus history. URLs get a small cap; inline `data:` URIs a
+/// larger (but still bounded) one. `None` and empty are always fine.
+fn validate_token_image(image: &Option<String>) -> Result<(), String> {
+    if let Some(img) = image {
+        if img.is_empty() {
+            return Ok(());
+        }
+        let len = img.len();
+        let (cap, kind) = if img.trim_start().starts_with("data:") {
+            (MAX_TOKEN_IMAGE_DATA_URI_BYTES, "inline data-URI image")
+        } else {
+            (MAX_TOKEN_IMAGE_URL_BYTES, "image URL")
+        };
+        if len > cap {
+            return Err(format!(
+                "token {} too large: {} bytes (max {}). Host the image off-chain and pass an IPFS/HTTPS URL instead of inlining it.",
+                kind, len, cap
+            ));
+        }
+    }
+    Ok(())
+}
+
 async fn create_token(
     State(state): State<AppState>,
     Json(body): Json<CreateTokenRequest>,
@@ -3500,7 +3538,7 @@ async fn faucet(
 
     let now = chrono::Utc::now().timestamp();
     {
-        let mut cooldowns = state.faucet_cooldowns.lock().await;
+        let cooldowns = state.faucet_cooldowns.lock().await;
         // Check in-memory cooldown first, then fall back to persisted cooldown in sled
         let last_used = cooldowns.get(&body.recipient_public_key).copied()
             .or_else(|| node.store_ref().get_faucet_cooldown(&body.recipient_public_key));
@@ -3521,13 +3559,21 @@ async fn faucet(
                 }));
             }
         }
-        cooldowns.insert(body.recipient_public_key.clone(), now);
-        // SECURITY: Persist cooldown to sled so it survives node restarts
-        node.store_ref().set_faucet_cooldown(&body.recipient_public_key, now);
+        // NOTE: the cooldown is recorded only AFTER a successful mint (below), so a
+        // failed faucet request (e.g. transient nonce contention with the miner)
+        // never locks the recipient out for 24h. Concurrent double-mint in the tiny
+        // window before that is still blocked by the pending-faucet-tx check above.
     }
 
     match node.submit_faucet_tx(&body.recipient_public_key, amount) {
         Ok(tx) => {
+            // Mint succeeded — now start the recipient's cooldown.
+            {
+                let mut cooldowns = state.faucet_cooldowns.lock().await;
+                cooldowns.insert(body.recipient_public_key.clone(), now);
+                // SECURITY: Persist cooldown to sled so it survives node restarts
+                node.store_ref().set_faucet_cooldown(&body.recipient_public_key, now);
+            }
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
             Ok(Json(TxResponse { success: true, tx_id: Some(id), tx: Some(tx), error: None }))
         }
@@ -5279,6 +5325,11 @@ async fn v2_create_token(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "token_name must be 1-64 characters"}))));
     }
 
+    // Image guard rail: keep large images off consensus history (URL, not inline bytes).
+    if let Err(e) = validate_token_image(&token_image) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))));
+    }
+
     // Duplicate symbol check
     let sym_upper = sym_trimmed.to_uppercase();
     if let Ok(Some(_)) = node.get_token_metadata(&sym_upper) {
@@ -5363,6 +5414,11 @@ async fn v2_update_token_metadata(
     let website = payload.get("website").and_then(|v| v.as_str()).map(|s| s.to_string());
     let twitter = payload.get("twitter").and_then(|v| v.as_str()).map(|s| s.to_string());
     let discord = payload.get("discord").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    // Image guard rail: keep large images off consensus history (URL, not inline bytes).
+    if let Err(e) = validate_token_image(&image) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))));
+    }
 
     match node.update_token_metadata(token_symbol, &body.public_key, image, description, website, twitter, discord) {
         Ok(()) => Ok(Json(serde_json::json!({
@@ -9541,4 +9597,35 @@ async fn social_following_feed_signed(
     let offset: usize = p.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let posts = state.node.social_get_following_feed(&authed_key, limit, offset).map_err(|e| signed_internal(&e))?;
     Ok(Json(serde_json::json!({ "success": true, "posts": posts })))
+}
+
+#[cfg(test)]
+mod image_guard_tests {
+    use super::{validate_token_image, MAX_TOKEN_IMAGE_DATA_URI_BYTES, MAX_TOKEN_IMAGE_URL_BYTES};
+
+    #[test]
+    fn none_and_empty_are_ok() {
+        assert!(validate_token_image(&None).is_ok());
+        assert!(validate_token_image(&Some(String::new())).is_ok());
+    }
+
+    #[test]
+    fn normal_urls_pass() {
+        assert!(validate_token_image(&Some("ipfs://bafybeigdyrexampleexampleexamplecid".into())).is_ok());
+        assert!(validate_token_image(&Some("https://cdn.rougee.app/tokens/xrge.png".into())).is_ok());
+    }
+
+    #[test]
+    fn oversized_url_rejected() {
+        let big = format!("https://x.example/{}", "a".repeat(MAX_TOKEN_IMAGE_URL_BYTES));
+        assert!(validate_token_image(&Some(big)).is_err());
+    }
+
+    #[test]
+    fn small_data_uri_ok_but_large_rejected() {
+        let small = format!("data:image/svg+xml;base64,{}", "A".repeat(1000));
+        assert!(validate_token_image(&Some(small)).is_ok());
+        let huge = format!("data:image/png;base64,{}", "A".repeat(MAX_TOKEN_IMAGE_DATA_URI_BYTES));
+        assert!(validate_token_image(&Some(huge)).is_err());
+    }
 }
