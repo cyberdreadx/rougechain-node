@@ -295,3 +295,45 @@ fn install_contract_stores_bytecode_at_explicit_address() {
     // Invalid WASM is rejected (won't compile).
     assert!(rt.install_contract(&cs, "dead00", "alice", &[0, 1, 2, 3], 7).is_err());
 }
+
+#[test]
+fn royalty_splitter_distributes_by_weight() {
+    // Runs the REAL compiled royalty-splitter contract (contracts/royalty_splitter)
+    // through the VM: fund the contract, call `split`, verify the proportional
+    // 50/30/20 payout in quanta and exact conservation. Soft-skips if the wasm
+    // hasn't been built (cargo build --release --target wasm32-unknown-unknown
+    // in contracts/royalty_splitter).
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../contracts/royalty_splitter/target/wasm32-unknown-unknown/release/rougechain_royalty_splitter.wasm"
+    );
+    let wasm = match std::fs::read(path) {
+        Ok(w) => w,
+        Err(_) => { eprintln!("skip: splitter wasm not built"); return; }
+    };
+
+    let dir = TempDir::new();
+    let cs = ContractStore::new(dir.path()).unwrap();
+    let rt = WasmRuntime::new().unwrap();
+    let addr = rt.deploy_contract(&cs, "qrougee-deployer", 0, &wasm, 1).unwrap();
+
+    // Fund the contract with 100 XRGE (in quanta).
+    const Q: u128 = 1_000_000_000;
+    let mut balances = std::collections::HashMap::new();
+    balances.insert(addr.clone(), 100 * Q);
+
+    let res = rt
+        .execute_contract(&cs, &addr, "split", &serde_json::json!({}), "anyone", 1, 1, balances, 10_000_000, "tx")
+        .expect("execute split");
+    assert!(res.success, "split failed: {:?}", res.error);
+
+    let deltas = res.balance_deltas.expect("deltas on success");
+    let credited = |a: &str| -> i128 { deltas.iter().filter(|(x, _)| x == a).map(|(_, d)| *d).sum() };
+    assert_eq!(credited("1111111111111111111111111111111111111111"), (50 * Q) as i128, "50%");
+    assert_eq!(credited("2222222222222222222222222222222222222222"), (30 * Q) as i128, "30%");
+    assert_eq!(credited("3333333333333333333333333333333333333333"), (20 * Q) as i128, "20%");
+    // The contract was debited the full 100 XRGE; nothing minted or burned.
+    assert_eq!(credited(&addr), -((100 * Q) as i128), "contract debited in full");
+    let net: i128 = deltas.iter().map(|(_, d)| *d).sum();
+    assert_eq!(net, 0, "conserved to the quantum");
+}
