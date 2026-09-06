@@ -2340,6 +2340,9 @@ async fn get_block_by_height(
                     "time": block.header.time,
                     "proposer": block.header.proposer_pub_key,
                     "txHash": block.header.tx_hash,
+                    // Phase 2 state-root commitment: null before the v2 fork
+                    // height, the canonical ledger root at/after it.
+                    "stateRoot": block.header.state_root,
                     "txCount": tx_count,
                     "totalFees": total_fees,
                     "transactions": txs,
