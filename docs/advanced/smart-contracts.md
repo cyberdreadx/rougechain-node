@@ -2,6 +2,12 @@
 
 RougeChain includes a built-in WASM smart contract engine powered by `wasmi` — the same pure-Rust WASM interpreter used by Parity/Substrate.
 
+> **v2 update:** contracts can now custody and move XRGE. `host_transfer` /
+> `host_get_balance` operate in **quanta** (`1 XRGE = 10^9 quanta`), transfers
+> are **single-hop** (a contract moves only its own balance), and moves are
+> enforced conserving and overdraft-free. See
+> [Contract XRGE Custody](contract-xrge-custody.md) for the rules and examples.
+
 ## Overview
 
 Contracts are written in Rust (or any language that compiles to WASM), compiled to `.wasm`, and deployed on-chain. Execution is fuel-metered in a sandbox with host functions for chain interaction.
