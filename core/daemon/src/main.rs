@@ -5415,6 +5415,11 @@ async fn v2_update_token_metadata(
     let twitter = payload.get("twitter").and_then(|v| v.as_str()).map(|s| s.to_string());
     let discord = payload.get("discord").and_then(|v| v.as_str()).map(|s| s.to_string());
 
+    // Image guard rail: keep large images off consensus history (URL, not inline bytes).
+    if let Err(e) = validate_token_image(&image) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))));
+    }
+
     match node.update_token_metadata(token_symbol, &body.public_key, image, description, website, twitter, discord) {
         Ok(()) => Ok(Json(serde_json::json!({
             "success": true,
