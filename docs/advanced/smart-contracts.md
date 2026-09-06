@@ -197,7 +197,8 @@ Contracts can call other contracts using host functions. Calls are queued during
 ### Behavior
 
 - **Max depth**: 8 nested calls (prevents infinite recursion)
-- **State merging**: storage writes, events, and balance deltas from sub-calls are merged atomically
+- **State merging**: storage writes and events from sub-calls are merged atomically
+- **XRGE moves are single-hop (v2)**: a contract moves only *its own* balance — `host_transfer` calls made by a *sub*-contract are **not** applied on-chain. See [Contract XRGE Custody](contract-xrge-custody.md)
 - **Gas**: sub-calls consume gas from the parent's remaining budget
 - **Failure**: if a sub-call fails, it returns `-2` from `host_get_call_result`; the parent can handle it gracefully
 
