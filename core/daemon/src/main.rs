@@ -1645,7 +1645,12 @@ async fn update_token_metadata(
     Json(body): Json<UpdateTokenMetadataRequest>,
 ) -> Json<serde_json::Value> {
     let node = &state.node;
-    
+
+    // Image guard rail: keep large images off consensus history (URL, not inline bytes).
+    if let Err(e) = validate_token_image(&body.image) {
+        return Json(serde_json::json!({ "success": false, "error": e }));
+    }
+
     // Verify the caller is the token creator
     match node.is_token_creator(&body.token_symbol, &body.from_public_key) {
         Ok(true) => {
@@ -3358,6 +3363,39 @@ struct CreateTokenResponse {
     tx_id: Option<String>,
     token_address: Option<String>,
     error: Option<String>,
+}
+
+// ── Token image guard rail ──────────────────────────────────────────────
+// The token `image` field is stored in the create_token tx (so it lives in
+// block history and is replayed on every rebuild). Like every other chain,
+// the intended use is a SHORT pointer — an IPFS/HTTPS URL — with the bytes
+// hosted off-chain. A `data:` URI inlines the actual bytes into consensus
+// history, so allow it only for small assets (icons/SVG), never megabytes.
+const MAX_TOKEN_IMAGE_URL_BYTES: usize = 2048;
+const MAX_TOKEN_IMAGE_DATA_URI_BYTES: usize = 32 * 1024;
+
+/// Reject an oversized token image so nobody accidentally inlines a large
+/// image into consensus history. URLs get a small cap; inline `data:` URIs a
+/// larger (but still bounded) one. `None` and empty are always fine.
+fn validate_token_image(image: &Option<String>) -> Result<(), String> {
+    if let Some(img) = image {
+        if img.is_empty() {
+            return Ok(());
+        }
+        let len = img.len();
+        let (cap, kind) = if img.trim_start().starts_with("data:") {
+            (MAX_TOKEN_IMAGE_DATA_URI_BYTES, "inline data-URI image")
+        } else {
+            (MAX_TOKEN_IMAGE_URL_BYTES, "image URL")
+        };
+        if len > cap {
+            return Err(format!(
+                "token {} too large: {} bytes (max {}). Host the image off-chain and pass an IPFS/HTTPS URL instead of inlining it.",
+                kind, len, cap
+            ));
+        }
+    }
+    Ok(())
 }
 
 async fn create_token(
@@ -5285,6 +5323,11 @@ async fn v2_create_token(
     let name_trimmed = token_name.trim();
     if name_trimmed.is_empty() || name_trimmed.chars().count() > 64 {
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "token_name must be 1-64 characters"}))));
+    }
+
+    // Image guard rail: keep large images off consensus history (URL, not inline bytes).
+    if let Err(e) = validate_token_image(&token_image) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))));
     }
 
     // Duplicate symbol check
@@ -9549,4 +9592,35 @@ async fn social_following_feed_signed(
     let offset: usize = p.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let posts = state.node.social_get_following_feed(&authed_key, limit, offset).map_err(|e| signed_internal(&e))?;
     Ok(Json(serde_json::json!({ "success": true, "posts": posts })))
+}
+
+#[cfg(test)]
+mod image_guard_tests {
+    use super::{validate_token_image, MAX_TOKEN_IMAGE_DATA_URI_BYTES, MAX_TOKEN_IMAGE_URL_BYTES};
+
+    #[test]
+    fn none_and_empty_are_ok() {
+        assert!(validate_token_image(&None).is_ok());
+        assert!(validate_token_image(&Some(String::new())).is_ok());
+    }
+
+    #[test]
+    fn normal_urls_pass() {
+        assert!(validate_token_image(&Some("ipfs://bafybeigdyrexampleexampleexamplecid".into())).is_ok());
+        assert!(validate_token_image(&Some("https://cdn.rougee.app/tokens/xrge.png".into())).is_ok());
+    }
+
+    #[test]
+    fn oversized_url_rejected() {
+        let big = format!("https://x.example/{}", "a".repeat(MAX_TOKEN_IMAGE_URL_BYTES));
+        assert!(validate_token_image(&Some(big)).is_err());
+    }
+
+    #[test]
+    fn small_data_uri_ok_but_large_rejected() {
+        let small = format!("data:image/svg+xml;base64,{}", "A".repeat(1000));
+        assert!(validate_token_image(&Some(small)).is_ok());
+        let huge = format!("data:image/png;base64,{}", "A".repeat(MAX_TOKEN_IMAGE_DATA_URI_BYTES));
+        assert!(validate_token_image(&Some(huge)).is_err());
+    }
 }
