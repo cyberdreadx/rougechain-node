@@ -428,10 +428,13 @@ export function clearLocalWallet(): void {
 export async function getOrCreateLocalMessengerWallet(displayName?: string): Promise<WalletWithPrivateKeys> {
   const existing = loadLocalWallet();
   if (existing?.signingPrivateKey) {
-    try { await registerWalletOnNode(existing); } catch { /* idempotent + non-fatal */ }
+    // Register NON-discoverable: a device-local key must not claim a globally
+    // unique display name — the node rejects a duplicate name as "already taken"
+    // (that check only applies to discoverable wallets). Reached by address, not name.
+    try { await registerWalletOnNode(existing, false); } catch { /* idempotent + non-fatal */ }
     return existing;
   }
-  return createWallet(displayName || "RougeChain user");
+  return createWallet(displayName || "RougeChain user", false);
 }
 
 /**
@@ -695,7 +698,7 @@ export function generateEncryptionKeypair(): { publicKey: string; privateKey: st
 }
 
 // Create a new wallet with ML-DSA-65 + ML-KEM-768 keypairs
-export async function createWallet(displayName: string): Promise<WalletWithPrivateKeys> {
+export async function createWallet(displayName: string, discoverable?: boolean): Promise<WalletWithPrivateKeys> {
   // Let the libraries generate their own secure random seeds
   const signingKeypair = ml_dsa65.keygen();
   const encryptionKeypair = ml_kem768.keygen();
@@ -712,7 +715,7 @@ export async function createWallet(displayName: string): Promise<WalletWithPriva
   // Save locally
   saveWalletLocally(wallet);
   try {
-    await registerWalletOnNode(wallet);
+    await registerWalletOnNode(wallet, discoverable);
   } catch (error) {
     console.warn("Failed to register wallet with node:", error);
   }
