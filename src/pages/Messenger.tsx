@@ -253,7 +253,13 @@ const Messenger = () => {
   };
 
   const handleConversationCreated = (conversation: Conversation) => {
-    setConversations(prev => [...prev, conversation]);
+    // Don't append a conversation that's already in the list — the Note-to-Self
+    // dedup (and any re-selection) passes back an EXISTING conversation, and
+    // blindly appending it produced a temporary duplicate sidebar entry until
+    // the next refresh reloaded the server's single copy.
+    setConversations(prev =>
+      prev.some(c => c.id === conversation.id) ? prev : [...prev, conversation]
+    );
     setSelectedConversation(conversation);
     setShowContactPicker(false);
   };
