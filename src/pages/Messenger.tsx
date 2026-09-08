@@ -13,7 +13,7 @@ import PrivacySettings from "@/components/messenger/PrivacySettings";
 import SwapWidget from "@/components/messenger/SwapWidget";
 import WalletBackup from "@/components/wallet/WalletBackup";
 import type { Conversation, Wallet, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
-import { getConversations, getWallets, saveWalletLocally, registerWalletOnNode, getBlockedWalletIds, getPrivacySettings } from "@/lib/pqc-messenger";
+import { getConversations, getWallets, saveWalletLocally, registerWalletOnNode, getBlockedWalletIds, getPrivacySettings, resolveMessagingWallet } from "@/lib/pqc-messenger";
 import {
   UnifiedWallet,
   VaultSettings,
@@ -216,11 +216,20 @@ const Messenger = () => {
     }
   };
 
-  // Convert wallet to messenger format for components
-  const messengerWallet = useMemo(() =>
-    wallet ? toMessengerWallet(wallet) as WalletWithPrivateKeys : null,
-    [wallet]
-  );
+  // Resolve the wallet to sign with. Seed/imported wallets sign as themselves;
+  // an extension wallet (no local signing key) falls back to a device-local
+  // messenger key so messaging works without the extension holding the key.
+  const [messengerWallet, setMessengerWallet] = useState<WalletWithPrivateKeys | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!wallet) { setMessengerWallet(null); return; }
+    const base = toMessengerWallet(wallet) as WalletWithPrivateKeys;
+    if (base.signingPrivateKey) { setMessengerWallet(base); return; }
+    resolveMessagingWallet(base)
+      .then((w) => { if (!cancelled) setMessengerWallet(w); })
+      .catch((e) => console.error("messenger wallet resolve failed:", e));
+    return () => { cancelled = true; };
+  }, [wallet]);
 
   const handleWalletCreated = (newWallet: WalletWithPrivateKeys) => {
     const unified = fromMessengerWallet(newWallet);

@@ -418,6 +418,38 @@ export function clearLocalWallet(): void {
   localStorage.removeItem(WALLET_STORAGE_KEY);
 }
 
+/**
+ * Get or create a device-local messenger keypair. Used when the connected wallet
+ * has no LOCAL signing key — a browser-extension / dApp-browser wallet keeps its
+ * key in the extension and never exposes it to the page, so in-page signing
+ * (buildSignedRequest) gets an empty key. Persisted in localStorage so the
+ * messaging identity is stable on this device, and (re)registered with the node.
+ */
+export async function getOrCreateLocalMessengerWallet(displayName?: string): Promise<WalletWithPrivateKeys> {
+  const existing = loadLocalWallet();
+  if (existing?.signingPrivateKey) {
+    try { await registerWalletOnNode(existing); } catch { /* idempotent + non-fatal */ }
+    return existing;
+  }
+  return createWallet(displayName || "RougeChain user");
+}
+
+/**
+ * Resolve the wallet to SIGN messenger/mail requests with. A wallet that carries
+ * its own signing key (seed / imported) signs as itself. A wallet with no local
+ * key (extension) falls back to a device-local messenger key so messaging and
+ * mail work without the extension holding the key.
+ * NOTE: for extension wallets this messaging identity is distinct from the
+ * on-chain wallet address (SPA-only limitation; extension session-signing would
+ * unify them).
+ */
+export async function resolveMessagingWallet(mainWallet: WalletWithPrivateKeys): Promise<WalletWithPrivateKeys> {
+  if (mainWallet.signingPrivateKey && mainWallet.signingPrivateKey.length > 0) {
+    return mainWallet;
+  }
+  return getOrCreateLocalMessengerWallet(mainWallet.displayName);
+}
+
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
