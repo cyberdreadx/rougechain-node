@@ -13,6 +13,7 @@ import { isRougeAddress, pubkeyToAddress, formatAddress } from "@/lib/address";
 interface ContactPickerProps {
   contacts: Wallet[];
   wallet: WalletWithPrivateKeys;
+  conversations?: Conversation[];
   onClose: () => void;
   onConversationCreated: (conversation: Conversation) => void;
 }
@@ -41,7 +42,7 @@ const parseAddress = (input: string): { valid: boolean; publicKey: string; error
   return { valid: true, publicKey: rawKey };
 };
 
-const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: ContactPickerProps) => {
+const ContactPicker = ({ contacts, wallet, conversations = [], onClose, onConversationCreated }: ContactPickerProps) => {
   const [isCreating, setIsCreating] = useState<string | null>(null);
   const [isCreatingBot, setIsCreatingBot] = useState(false);
   const [isCreatingNoteToSelf, setIsCreatingNoteToSelf] = useState(false);
@@ -168,6 +169,20 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
   const handleNoteToSelf = async () => {
     setIsCreatingNoteToSelf(true);
     try {
+      // Dedup: Note to Self is a single conversation. If one already exists,
+      // reuse it instead of creating another (this caused duplicate "Note to
+      // Self" entries in the sidebar).
+      const myKeys = [wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean);
+      const existingSelf = conversations.find((c) =>
+        !c.isGroup && c.name !== "Quantum Bot" &&
+        (c.name === "Note to Self" ||
+          ((c.participantIds?.length ?? 0) > 0 &&
+            (c.participantIds ?? []).every((id) => myKeys.includes(id))))
+      );
+      if (existingSelf) {
+        onConversationCreated(existingSelf);
+        return;
+      }
       const conversation = await createConversation(wallet, wallet.id);
       conversation.participants = [
         {

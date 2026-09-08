@@ -612,6 +612,7 @@ const Messenger = () => {
           <ContactPicker
             contacts={contacts}
             wallet={messengerWallet}
+            conversations={conversations}
             onClose={() => setShowContactPicker(false)}
             onConversationCreated={handleConversationCreated}
           />
