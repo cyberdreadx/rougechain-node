@@ -567,7 +567,7 @@ const Messenger = () => {
           <ConversationList
             conversations={conversations}
             selectedId={selectedConversation?.id}
-            wallet={wallet}
+            wallet={messengerWallet ?? wallet}
             currentWalletId={messengerWallet?.id ?? wallet.id}
             currentWalletKeys={[messengerWallet?.signingPublicKey ?? wallet.signingPublicKey, messengerWallet?.encryptionPublicKey ?? wallet.encryptionPublicKey]}
             currentWalletName={messengerWallet?.displayName ?? wallet.displayName}
