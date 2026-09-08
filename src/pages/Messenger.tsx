@@ -123,26 +123,30 @@ const Messenger = () => {
   }, []);
 
   const loadConversations = async () => {
-    if (!wallet) return;
+    // Load under the RESOLVED messaging identity (messengerWallet), NOT the raw
+    // wallet. For extension wallets those differ, and conversations are stored
+    // under the device-local messenger key — querying with `wallet` returned
+    // nothing (empty sidebar on refresh) and signed with an empty key.
+    if (!messengerWallet) return;
     try {
-      const convs = await getConversations(wallet.id, toMessengerWallet(wallet) as Parameters<typeof getConversations>[1]);
+      const convs = await getConversations(messengerWallet.id, messengerWallet);
       const blocked = new Set(getBlockedWalletIds());
-      const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
+      const myIds = new Set([messengerWallet.id, messengerWallet.signingPublicKey, messengerWallet.encryptionPublicKey].filter(Boolean));
       const myWalletData = {
-        id: wallet.id,
-        displayName: wallet.displayName,
-        signingPublicKey: wallet.signingPublicKey,
-        encryptionPublicKey: wallet.encryptionPublicKey,
+        id: messengerWallet.id,
+        displayName: messengerWallet.displayName,
+        signingPublicKey: messengerWallet.signingPublicKey,
+        encryptionPublicKey: messengerWallet.encryptionPublicKey,
       };
       const filtered: Conversation[] = [];
       for (const conv of convs) {
         if (conv.participants) {
           conv.participants = conv.participants.map(p => {
             if (
-              p.id === wallet.id ||
-              p.signingPublicKey === wallet.signingPublicKey ||
-              p.encryptionPublicKey === wallet.encryptionPublicKey ||
-              p.displayName === wallet.displayName
+              p.id === messengerWallet.id ||
+              p.signingPublicKey === messengerWallet.signingPublicKey ||
+              p.encryptionPublicKey === messengerWallet.encryptionPublicKey ||
+              p.displayName === messengerWallet.displayName
             ) {
               return myWalletData;
             }
@@ -192,10 +196,10 @@ const Messenger = () => {
       allWalletsRef.current = wallets;
       const blocked = new Set(getBlockedWalletIds());
       const filtered = wallets.filter(w =>
-        w.id !== wallet?.id &&
-        w.id !== wallet?.signingPublicKey &&
-        w.signingPublicKey !== wallet?.signingPublicKey &&
-        w.encryptionPublicKey !== wallet?.encryptionPublicKey &&
+        w.id !== messengerWallet?.id &&
+        w.id !== messengerWallet?.signingPublicKey &&
+        w.signingPublicKey !== messengerWallet?.signingPublicKey &&
+        w.encryptionPublicKey !== messengerWallet?.encryptionPublicKey &&
         !blocked.has(w.id) && !blocked.has(w.signingPublicKey) && !blocked.has(w.encryptionPublicKey)
       );
 
@@ -230,6 +234,14 @@ const Messenger = () => {
       .catch((e) => console.error("messenger wallet resolve failed:", e));
     return () => { cancelled = true; };
   }, [wallet]);
+
+  // Load conversations/contacts as soon as the messaging identity resolves
+  // (the [wallet] effect's poll also refreshes them, but this loads immediately).
+  useEffect(() => {
+    if (!messengerWallet) return;
+    loadConversations();
+    loadContacts();
+  }, [messengerWallet]);
 
   const handleWalletCreated = (newWallet: WalletWithPrivateKeys) => {
     const unified = fromMessengerWallet(newWallet);
