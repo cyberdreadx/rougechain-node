@@ -502,11 +502,15 @@ export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKey
     priv,
     sigPub,
   );
-  await fetch(`${apiBase}/v2/messenger/wallets/register`, {
+  const res = await fetch(`${apiBase}/v2/messenger/wallets/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
     body: JSON.stringify(signed),
   });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to register wallet: ${res.status} ${text}`);
+  }
 }
 
 async function kemEncryptPlaintext(
@@ -810,22 +814,38 @@ export async function createConversation(
   };
   if (name) payload.name = name;
 
-  const signed = buildSignedRequest(
-    payload,
-    senderWallet.signingPrivateKey,
-    senderWallet.signingPublicKey,
-  );
-  const response = await fetch(`${apiBase}/v2/messenger/conversations`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
-    body: JSON.stringify(signed),
-  });
+  // Fresh nonce/timestamp per attempt (buildSignedRequest regenerates them),
+  // so the retry below isn't rejected as a replay.
+  const send = () =>
+    fetch(`${apiBase}/v2/messenger/conversations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
+      body: JSON.stringify(
+        buildSignedRequest(payload, senderWallet.signingPrivateKey, senderWallet.signingPublicKey),
+      ),
+    });
+
+  let response = await send();
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
-    throw new Error(`Failed to create conversation: ${response.status} ${errorText}`);
+    // Self-heal: the node rejects conversations from wallets it hasn't seen.
+    // If we're simply not registered yet (e.g. discoverable was off at load),
+    // register and retry once instead of failing silently.
+    if (/not registered/i.test(errorText)) {
+      await registerWalletOnNode(senderWallet);
+      response = await send();
+      if (!response.ok) {
+        const retryText = await response.text().catch(() => "");
+        throw new Error(`Failed to create conversation: ${response.status} ${retryText}`);
+      }
+    } else {
+      throw new Error(`Failed to create conversation: ${response.status} ${errorText}`);
+    }
   }
   const data = await response.json().catch(() => null);
-  return data?.conversation as Conversation;
+  const conversation = data?.conversation as Conversation | undefined;
+  if (!conversation) throw new Error("Conversation response was empty");
+  return conversation;
 }
 
 export async function deleteMessage(wallet: WalletWithPrivateKeys, messageId: string, conversationId: string): Promise<void> {

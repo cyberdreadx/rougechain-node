@@ -87,15 +87,19 @@ const Messenger = () => {
   // Load conversations when wallet is available and ensure wallet is registered
   useEffect(() => {
     if (wallet) {
-      // Only auto-register if user has opted into being discoverable
-      const privacySettings = getPrivacySettings();
-      if (wallet.encryptionPublicKey && privacySettings.discoverable) {
+      // Register the wallet with the node so it can send/receive messages.
+      // Registration is REQUIRED for messaging; the `discoverable` flag (read
+      // from privacy settings inside registerWalletOnNode) only controls
+      // searchability. Previously this was gated on `discoverable`, so a
+      // non-discoverable user was never registered and EVERY conversation
+      // create failed silently with "Wallet not registered".
+      if (wallet.encryptionPublicKey) {
         registerWalletOnNode({
           id: wallet.id,
           displayName: wallet.displayName,
           signingPublicKey: wallet.signingPublicKey,
           encryptionPublicKey: wallet.encryptionPublicKey,
-        }).catch(() => {});
+        }).catch((e) => console.warn("wallet auto-registration failed:", e));
       }
       requestNotificationPermission().catch(() => {});
       loadConversations();
