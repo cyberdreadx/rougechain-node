@@ -743,10 +743,13 @@ const MailPage = () => {
   }, [wallet]);
 
   useEffect(() => {
-    if (wallet) {
-      reverseLookup(wallet.id).then(name => setMyName(name)).catch(() => {});
+    // Look up the name under the resolved mail identity (messengerWallet), which
+    // for extension wallets is the device-local key, not the raw wallet.
+    const id = messengerWallet?.id ?? wallet?.id;
+    if (id) {
+      reverseLookup(id).then(name => setMyName(name)).catch(() => {});
     }
-  }, [wallet?.id]);
+  }, [messengerWallet?.id, wallet?.id]);
 
   const loadFolder = async () => {
     if (!messengerWallet) return;
