@@ -428,10 +428,11 @@ export function clearLocalWallet(): void {
 export async function getOrCreateLocalMessengerWallet(displayName?: string): Promise<WalletWithPrivateKeys> {
   const existing = loadLocalWallet();
   if (existing?.signingPrivateKey) {
-    // Register NON-discoverable: a device-local key must not claim a globally
-    // unique display name — the node rejects a duplicate name as "already taken"
-    // (that check only applies to discoverable wallets). Reached by address, not name.
-    try { await registerWalletOnNode(existing, false); } catch { /* idempotent + non-fatal */ }
+    // Re-register NON-discoverable in the BACKGROUND (idempotent) — don't await,
+    // so the wallet resolves instantly and the sidebar loads immediately instead
+    // of only after a manual refresh. Non-discoverable because a device-local key
+    // must not claim a globally-unique display name ("already taken").
+    registerWalletOnNode(existing, false).catch(() => { /* idempotent + non-fatal */ });
     return existing;
   }
   return createWallet(displayName || "RougeChain user", false);
