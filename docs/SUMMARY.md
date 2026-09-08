@@ -31,6 +31,7 @@
 
 - [Overview](staking/README.md)
 - [Becoming a Validator](staking/becoming-validator.md)
+- [Adding a Validator to a Live Chain](staking/adding-a-validator.md)
 - [Staking Rewards](staking/rewards.md)
 
 # Bridge
