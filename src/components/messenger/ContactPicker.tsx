@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, User, MessageSquare, Loader2, Bot, Sparkles, UserPlus, CheckCircle2, AlertCircle, QrCode, StickyNote } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -126,6 +127,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
       ];
       onConversationCreated(conversation);
     } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to start conversation");
       console.error("Failed to create conversation:", error);
     } finally {
       setIsCreating(null);
@@ -156,6 +158,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
       ];
       onConversationCreated(conversation);
     } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to start demo");
       console.error("Failed to create demo mode:", error);
     } finally {
       setIsCreatingBot(false);
@@ -177,6 +180,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
       conversation.name = "Note to Self";
       onConversationCreated(conversation);
     } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to create Note to Self");
       console.error("Failed to create note to self:", error);
     } finally {
       setIsCreatingNoteToSelf(false);
