@@ -1,0 +1,60 @@
+name: Release
+
+# Publishes a prebuilt Linux x86_64 binary (daemon + CLI) as a GitHub Release,
+# so operators' install-validator.sh can download instead of building from source.
+# Trigger by pushing a version tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`)
+# or run manually from the Actions tab with a tag input.
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: true
+
+permissions:
+  contents: write   # create the release + upload assets
+
+jobs:
+  build-release:
+    name: build + publish (linux x86_64)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler libssl-dev pkg-config
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - name: Build daemon + CLI (release)
+        run: |
+          cargo build --release -p quantum-vault-daemon
+          cargo build --release -p quantum-vault-cli
+
+      - name: Package + checksum
+        run: |
+          cd target/release
+          tar czf quantum-vault-linux-x86_64.tar.gz quantum-vault-daemon rougechain
+          sha256sum quantum-vault-linux-x86_64.tar.gz > quantum-vault-linux-x86_64.tar.gz.sha256
+          ls -la quantum-vault-linux-x86_64.tar.gz*
+
+      - name: Create release + upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: |
+            core/target/release/quantum-vault-linux-x86_64.tar.gz
+            core/target/release/quantum-vault-linux-x86_64.tar.gz.sha256
