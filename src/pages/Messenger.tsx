@@ -13,7 +13,7 @@ import PrivacySettings from "@/components/messenger/PrivacySettings";
 import SwapWidget from "@/components/messenger/SwapWidget";
 import WalletBackup from "@/components/wallet/WalletBackup";
 import type { Conversation, Wallet, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
-import { getConversations, getWallets, saveWalletLocally, registerWalletOnNode, getBlockedWalletIds, getPrivacySettings } from "@/lib/pqc-messenger";
+import { getConversations, getWallets, saveWalletLocally, registerWalletOnNode, getBlockedWalletIds, getPrivacySettings, resolveMessagingWallet } from "@/lib/pqc-messenger";
 import {
   UnifiedWallet,
   VaultSettings,
@@ -87,15 +87,19 @@ const Messenger = () => {
   // Load conversations when wallet is available and ensure wallet is registered
   useEffect(() => {
     if (wallet) {
-      // Only auto-register if user has opted into being discoverable
-      const privacySettings = getPrivacySettings();
-      if (wallet.encryptionPublicKey && privacySettings.discoverable) {
+      // Register the wallet with the node so it can send/receive messages.
+      // Registration is REQUIRED for messaging; the `discoverable` flag (read
+      // from privacy settings inside registerWalletOnNode) only controls
+      // searchability. Previously this was gated on `discoverable`, so a
+      // non-discoverable user was never registered and EVERY conversation
+      // create failed silently with "Wallet not registered".
+      if (wallet.encryptionPublicKey) {
         registerWalletOnNode({
           id: wallet.id,
           displayName: wallet.displayName,
           signingPublicKey: wallet.signingPublicKey,
           encryptionPublicKey: wallet.encryptionPublicKey,
-        }).catch(() => {});
+        }).catch((e) => console.warn("wallet auto-registration failed:", e));
       }
       requestNotificationPermission().catch(() => {});
       loadConversations();
@@ -119,26 +123,30 @@ const Messenger = () => {
   }, []);
 
   const loadConversations = async () => {
-    if (!wallet) return;
+    // Load under the RESOLVED messaging identity (messengerWallet), NOT the raw
+    // wallet. For extension wallets those differ, and conversations are stored
+    // under the device-local messenger key — querying with `wallet` returned
+    // nothing (empty sidebar on refresh) and signed with an empty key.
+    if (!messengerWallet) return;
     try {
-      const convs = await getConversations(wallet.id, toMessengerWallet(wallet) as Parameters<typeof getConversations>[1]);
+      const convs = await getConversations(messengerWallet.id, messengerWallet);
       const blocked = new Set(getBlockedWalletIds());
-      const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
+      const myIds = new Set([messengerWallet.id, messengerWallet.signingPublicKey, messengerWallet.encryptionPublicKey].filter(Boolean));
       const myWalletData = {
-        id: wallet.id,
-        displayName: wallet.displayName,
-        signingPublicKey: wallet.signingPublicKey,
-        encryptionPublicKey: wallet.encryptionPublicKey,
+        id: messengerWallet.id,
+        displayName: messengerWallet.displayName,
+        signingPublicKey: messengerWallet.signingPublicKey,
+        encryptionPublicKey: messengerWallet.encryptionPublicKey,
       };
       const filtered: Conversation[] = [];
       for (const conv of convs) {
         if (conv.participants) {
           conv.participants = conv.participants.map(p => {
             if (
-              p.id === wallet.id ||
-              p.signingPublicKey === wallet.signingPublicKey ||
-              p.encryptionPublicKey === wallet.encryptionPublicKey ||
-              p.displayName === wallet.displayName
+              p.id === messengerWallet.id ||
+              p.signingPublicKey === messengerWallet.signingPublicKey ||
+              p.encryptionPublicKey === messengerWallet.encryptionPublicKey ||
+              p.displayName === messengerWallet.displayName
             ) {
               return myWalletData;
             }
@@ -188,10 +196,10 @@ const Messenger = () => {
       allWalletsRef.current = wallets;
       const blocked = new Set(getBlockedWalletIds());
       const filtered = wallets.filter(w =>
-        w.id !== wallet?.id &&
-        w.id !== wallet?.signingPublicKey &&
-        w.signingPublicKey !== wallet?.signingPublicKey &&
-        w.encryptionPublicKey !== wallet?.encryptionPublicKey &&
+        w.id !== messengerWallet?.id &&
+        w.id !== messengerWallet?.signingPublicKey &&
+        w.signingPublicKey !== messengerWallet?.signingPublicKey &&
+        w.encryptionPublicKey !== messengerWallet?.encryptionPublicKey &&
         !blocked.has(w.id) && !blocked.has(w.signingPublicKey) && !blocked.has(w.encryptionPublicKey)
       );
 
@@ -212,11 +220,28 @@ const Messenger = () => {
     }
   };
 
-  // Convert wallet to messenger format for components
-  const messengerWallet = useMemo(() =>
-    wallet ? toMessengerWallet(wallet) as WalletWithPrivateKeys : null,
-    [wallet]
-  );
+  // Resolve the wallet to sign with. Seed/imported wallets sign as themselves;
+  // an extension wallet (no local signing key) falls back to a device-local
+  // messenger key so messaging works without the extension holding the key.
+  const [messengerWallet, setMessengerWallet] = useState<WalletWithPrivateKeys | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!wallet) { setMessengerWallet(null); return; }
+    const base = toMessengerWallet(wallet) as WalletWithPrivateKeys;
+    if (base.signingPrivateKey) { setMessengerWallet(base); return; }
+    resolveMessagingWallet(base)
+      .then((w) => { if (!cancelled) setMessengerWallet(w); })
+      .catch((e) => console.error("messenger wallet resolve failed:", e));
+    return () => { cancelled = true; };
+  }, [wallet]);
+
+  // Load conversations/contacts as soon as the messaging identity resolves
+  // (the [wallet] effect's poll also refreshes them, but this loads immediately).
+  useEffect(() => {
+    if (!messengerWallet) return;
+    loadConversations();
+    loadContacts();
+  }, [messengerWallet]);
 
   const handleWalletCreated = (newWallet: WalletWithPrivateKeys) => {
     const unified = fromMessengerWallet(newWallet);
@@ -228,7 +253,13 @@ const Messenger = () => {
   };
 
   const handleConversationCreated = (conversation: Conversation) => {
-    setConversations(prev => [...prev, conversation]);
+    // Don't append a conversation that's already in the list — the Note-to-Self
+    // dedup (and any re-selection) passes back an EXISTING conversation, and
+    // blindly appending it produced a temporary duplicate sidebar entry until
+    // the next refresh reloaded the server's single copy.
+    setConversations(prev =>
+      prev.some(c => c.id === conversation.id) ? prev : [...prev, conversation]
+    );
     setSelectedConversation(conversation);
     setShowContactPicker(false);
   };
@@ -542,10 +573,10 @@ const Messenger = () => {
           <ConversationList
             conversations={conversations}
             selectedId={selectedConversation?.id}
-            wallet={wallet}
-            currentWalletId={wallet.id}
-            currentWalletKeys={[wallet.signingPublicKey, wallet.encryptionPublicKey]}
-            currentWalletName={wallet.displayName}
+            wallet={messengerWallet ?? wallet}
+            currentWalletId={messengerWallet?.id ?? wallet.id}
+            currentWalletKeys={[messengerWallet?.signingPublicKey ?? wallet.signingPublicKey, messengerWallet?.encryptionPublicKey ?? wallet.encryptionPublicKey]}
+            currentWalletName={messengerWallet?.displayName ?? wallet.displayName}
             onSelect={setSelectedConversation}
             onDelete={(id) => {
               setConversations(prev => prev.filter(c => c.id !== id));
@@ -587,6 +618,7 @@ const Messenger = () => {
           <ContactPicker
             contacts={contacts}
             wallet={messengerWallet}
+            conversations={conversations}
             onClose={() => setShowContactPicker(false)}
             onConversationCreated={handleConversationCreated}
           />

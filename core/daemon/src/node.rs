@@ -88,6 +88,36 @@ const V2_FORK_HEIGHT: u64 = 0;
 const STATE_ROOT_ACTIVATION_HEIGHT: u64 = V2_FORK_HEIGHT;
 const CONTRACT_CUSTODY_ACTIVATION_HEIGHT: u64 = V2_FORK_HEIGHT;
 
+/// Height after which a P2P-imported block's proposer MUST be a staked validator
+/// (`stake > 0`) in the on-chain validator set, or the block is rejected on
+/// `import_block`. Blocks at or below this height skip *only that* check — a
+/// bootstrap grace window so a fresh joiner can replay genesis and the earliest
+/// blocks before any staking transactions have populated its validator set.
+/// Below the window a block is still fully validated (proposer signature, block
+/// hash, `prev_hash`, every transaction signature, and — past the v2 fork height
+/// — the committed state root and contract-custody apply); only proposer
+/// authorization is deferred. The gate is additionally short-circuited by
+/// `!validators.is_empty()`, so if the locally-derived set is empty it is
+/// bypassed at any height (a defensive don't-brick fallback); it is meaningfully
+/// enforced only once the set is non-empty and height exceeds this constant.
+///
+/// This is NOT a "chain becomes unjoinable at height N" cliff: as long as the
+/// nodes producing blocks are staked validators (genesis `initial_validators`,
+/// or added later via a `stake` tx), every syncing node rebuilds that same set
+/// from history and accepts their blocks at any height. The operational rule it
+/// enforces is STAKE-BEFORE-PROPOSE: a new validator must have an on-chain
+/// `stake` tx applied (>= genesis `min_stake`) and be in the set *before* it
+/// proposes blocks that peers will sync past this height, or those blocks are
+/// rejected as coming from an unknown proposer. That is standard proof-of-stake
+/// onboarding, not a wall — see `docs/staking/adding-a-validator.md`.
+///
+/// Its value is protocol consensus on the sync path: changing it alters which
+/// blocks a syncing node accepts, so treat a change like a coordinated fork
+/// (every node on the new value before any chain crosses it), not a casual edit.
+/// Kept as a plain `const` (no `#[cfg(test)]` variant) so tests exercise the
+/// same grace window as mainnet.
+const PROPOSER_AUTH_ACTIVATION_HEIGHT: u64 = 100;
+
 /// The official burn address - tokens sent here are permanently destroyed
 /// This is a deterministic address derived from "QUANTUM_VAULT_BURN_ADDRESS_V1"
 /// No private key can ever be derived for this address
@@ -761,9 +791,16 @@ impl L1Node {
             if block.hash != expected_hash {
                 return Err("Block hash mismatch".to_string());
             }
-            // SECURITY: Reject blocks from unknown proposers after initial sync period
+            // SECURITY: past the bootstrap grace window, an imported block's
+            // proposer must be a staked validator in our set. Below the window
+            // (genesis + earliest blocks) we defer *only* this proposer-auth
+            // check — the block is still otherwise fully validated (sigs, hash,
+            // state root, custody) below — so a fresh joiner can replay history
+            // before staking txs populate the set. Also bypassed while our set is
+            // empty. Requires the STAKE-BEFORE-PROPOSE rule for new validators —
+            // see the PROPOSER_AUTH_ACTIVATION_HEIGHT doc comment.
             let validators = self.list_validators().unwrap_or_default();
-            if !validators.is_empty() && block.header.height > 100 {
+            if !validators.is_empty() && block.header.height > PROPOSER_AUTH_ACTIVATION_HEIGHT {
                 let is_valid_proposer = validators.iter().any(|(pk, vs)| {
                     pk == &block.header.proposer_pub_key && vs.stake > 0
                 });

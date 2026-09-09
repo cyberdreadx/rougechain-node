@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import WalletSetup from "@/components/messenger/WalletSetup";
 import type { WalletWithPrivateKeys } from "@/lib/pqc-messenger";
-import { registerWalletOnNode } from "@/lib/pqc-messenger";
+import { registerWalletOnNode, resolveMessagingWallet } from "@/lib/pqc-messenger";
 import {
   getInbox, getSent, getTrash,
   sendMail, moveMail, deleteMail, markMailRead,
@@ -727,16 +727,29 @@ const MailPage = () => {
     }
   }, []);
 
-  const messengerWallet = useMemo(() =>
-    wallet ? toMessengerWallet(wallet) as WalletWithPrivateKeys : null,
-    [wallet]
-  );
+  // Resolve the wallet to sign with. Seed/imported wallets sign as themselves;
+  // an extension wallet (no local signing key) falls back to a device-local
+  // messenger key so mail works without the extension holding the key.
+  const [messengerWallet, setMessengerWallet] = useState<WalletWithPrivateKeys | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!wallet) { setMessengerWallet(null); return; }
+    const base = toMessengerWallet(wallet) as WalletWithPrivateKeys;
+    if (base.signingPrivateKey) { setMessengerWallet(base); return; }
+    resolveMessagingWallet(base)
+      .then((w) => { if (!cancelled) setMessengerWallet(w); })
+      .catch((e) => console.error("mail wallet resolve failed:", e));
+    return () => { cancelled = true; };
+  }, [wallet]);
 
   useEffect(() => {
-    if (wallet) {
-      reverseLookup(wallet.id).then(name => setMyName(name)).catch(() => {});
+    // Look up the name under the resolved mail identity (messengerWallet), which
+    // for extension wallets is the device-local key, not the raw wallet.
+    const id = messengerWallet?.id ?? wallet?.id;
+    if (id) {
+      reverseLookup(id).then(name => setMyName(name)).catch(() => {});
     }
-  }, [wallet?.id]);
+  }, [messengerWallet?.id, wallet?.id]);
 
   const loadFolder = async () => {
     if (!messengerWallet) return;

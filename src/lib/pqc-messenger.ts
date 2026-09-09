@@ -418,6 +418,42 @@ export function clearLocalWallet(): void {
   localStorage.removeItem(WALLET_STORAGE_KEY);
 }
 
+/**
+ * Get or create a device-local messenger keypair. Used when the connected wallet
+ * has no LOCAL signing key — a browser-extension / dApp-browser wallet keeps its
+ * key in the extension and never exposes it to the page, so in-page signing
+ * (buildSignedRequest) gets an empty key. Persisted in localStorage so the
+ * messaging identity is stable on this device, and (re)registered with the node.
+ */
+export async function getOrCreateLocalMessengerWallet(displayName?: string): Promise<WalletWithPrivateKeys> {
+  const existing = loadLocalWallet();
+  if (existing?.signingPrivateKey) {
+    // Re-register NON-discoverable in the BACKGROUND (idempotent) — don't await,
+    // so the wallet resolves instantly and the sidebar loads immediately instead
+    // of only after a manual refresh. Non-discoverable because a device-local key
+    // must not claim a globally-unique display name ("already taken").
+    registerWalletOnNode(existing, false).catch(() => { /* idempotent + non-fatal */ });
+    return existing;
+  }
+  return createWallet(displayName || "RougeChain user", false);
+}
+
+/**
+ * Resolve the wallet to SIGN messenger/mail requests with. A wallet that carries
+ * its own signing key (seed / imported) signs as itself. A wallet with no local
+ * key (extension) falls back to a device-local messenger key so messaging and
+ * mail work without the extension holding the key.
+ * NOTE: for extension wallets this messaging identity is distinct from the
+ * on-chain wallet address (SPA-only limitation; extension session-signing would
+ * unify them).
+ */
+export async function resolveMessagingWallet(mainWallet: WalletWithPrivateKeys): Promise<WalletWithPrivateKeys> {
+  if (mainWallet.signingPrivateKey && mainWallet.signingPrivateKey.length > 0) {
+    return mainWallet;
+  }
+  return getOrCreateLocalMessengerWallet(mainWallet.displayName);
+}
+
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
@@ -502,11 +538,15 @@ export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKey
     priv,
     sigPub,
   );
-  await fetch(`${apiBase}/v2/messenger/wallets/register`, {
+  const res = await fetch(`${apiBase}/v2/messenger/wallets/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
     body: JSON.stringify(signed),
   });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to register wallet: ${res.status} ${text}`);
+  }
 }
 
 async function kemEncryptPlaintext(
@@ -659,7 +699,7 @@ export function generateEncryptionKeypair(): { publicKey: string; privateKey: st
 }
 
 // Create a new wallet with ML-DSA-65 + ML-KEM-768 keypairs
-export async function createWallet(displayName: string): Promise<WalletWithPrivateKeys> {
+export async function createWallet(displayName: string, discoverable?: boolean): Promise<WalletWithPrivateKeys> {
   // Let the libraries generate their own secure random seeds
   const signingKeypair = ml_dsa65.keygen();
   const encryptionKeypair = ml_kem768.keygen();
@@ -676,7 +716,7 @@ export async function createWallet(displayName: string): Promise<WalletWithPriva
   // Save locally
   saveWalletLocally(wallet);
   try {
-    await registerWalletOnNode(wallet);
+    await registerWalletOnNode(wallet, discoverable);
   } catch (error) {
     console.warn("Failed to register wallet with node:", error);
   }
@@ -810,22 +850,38 @@ export async function createConversation(
   };
   if (name) payload.name = name;
 
-  const signed = buildSignedRequest(
-    payload,
-    senderWallet.signingPrivateKey,
-    senderWallet.signingPublicKey,
-  );
-  const response = await fetch(`${apiBase}/v2/messenger/conversations`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
-    body: JSON.stringify(signed),
-  });
+  // Fresh nonce/timestamp per attempt (buildSignedRequest regenerates them),
+  // so the retry below isn't rejected as a replay.
+  const send = () =>
+    fetch(`${apiBase}/v2/messenger/conversations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
+      body: JSON.stringify(
+        buildSignedRequest(payload, senderWallet.signingPrivateKey, senderWallet.signingPublicKey),
+      ),
+    });
+
+  let response = await send();
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
-    throw new Error(`Failed to create conversation: ${response.status} ${errorText}`);
+    // Self-heal: the node rejects conversations from wallets it hasn't seen.
+    // If we're simply not registered yet (e.g. discoverable was off at load),
+    // register and retry once instead of failing silently.
+    if (/not registered/i.test(errorText)) {
+      await registerWalletOnNode(senderWallet);
+      response = await send();
+      if (!response.ok) {
+        const retryText = await response.text().catch(() => "");
+        throw new Error(`Failed to create conversation: ${response.status} ${retryText}`);
+      }
+    } else {
+      throw new Error(`Failed to create conversation: ${response.status} ${errorText}`);
+    }
   }
   const data = await response.json().catch(() => null);
-  return data?.conversation as Conversation;
+  const conversation = data?.conversation as Conversation | undefined;
+  if (!conversation) throw new Error("Conversation response was empty");
+  return conversation;
 }
 
 export async function deleteMessage(wallet: WalletWithPrivateKeys, messageId: string, conversationId: string): Promise<void> {

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, User, MessageSquare, Loader2, Bot, Sparkles, UserPlus, CheckCircle2, AlertCircle, QrCode, StickyNote } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import { isRougeAddress, pubkeyToAddress, formatAddress } from "@/lib/address";
 interface ContactPickerProps {
   contacts: Wallet[];
   wallet: WalletWithPrivateKeys;
+  conversations?: Conversation[];
   onClose: () => void;
   onConversationCreated: (conversation: Conversation) => void;
 }
@@ -40,7 +42,7 @@ const parseAddress = (input: string): { valid: boolean; publicKey: string; error
   return { valid: true, publicKey: rawKey };
 };
 
-const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: ContactPickerProps) => {
+const ContactPicker = ({ contacts, wallet, conversations = [], onClose, onConversationCreated }: ContactPickerProps) => {
   const [isCreating, setIsCreating] = useState<string | null>(null);
   const [isCreatingBot, setIsCreatingBot] = useState(false);
   const [isCreatingNoteToSelf, setIsCreatingNoteToSelf] = useState(false);
@@ -126,6 +128,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
       ];
       onConversationCreated(conversation);
     } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to start conversation");
       console.error("Failed to create conversation:", error);
     } finally {
       setIsCreating(null);
@@ -156,6 +159,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
       ];
       onConversationCreated(conversation);
     } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to start demo");
       console.error("Failed to create demo mode:", error);
     } finally {
       setIsCreatingBot(false);
@@ -165,6 +169,20 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
   const handleNoteToSelf = async () => {
     setIsCreatingNoteToSelf(true);
     try {
+      // Dedup: Note to Self is a single conversation. If one already exists,
+      // reuse it instead of creating another (this caused duplicate "Note to
+      // Self" entries in the sidebar).
+      const myKeys = [wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean);
+      const existingSelf = conversations.find((c) =>
+        !c.isGroup && c.name !== "Quantum Bot" &&
+        (c.name === "Note to Self" ||
+          ((c.participantIds?.length ?? 0) > 0 &&
+            (c.participantIds ?? []).every((id) => myKeys.includes(id))))
+      );
+      if (existingSelf) {
+        onConversationCreated(existingSelf);
+        return;
+      }
       const conversation = await createConversation(wallet, wallet.id);
       conversation.participants = [
         {
@@ -177,6 +195,7 @@ const ContactPicker = ({ contacts, wallet, onClose, onConversationCreated }: Con
       conversation.name = "Note to Self";
       onConversationCreated(conversation);
     } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to create Note to Self");
       console.error("Failed to create note to self:", error);
     } finally {
       setIsCreatingNoteToSelf(false);

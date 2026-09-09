@@ -393,7 +393,7 @@ async fn main() -> Result<(), String> {
     let grpc_node = GrpcNode::new(node.clone());
     let reflection = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(grpc::FILE_DESCRIPTOR_SET)
-        .build()
+        .build_v1()
         .map_err(|e| e.to_string())?;
     eprintln!("[core-daemon] gRPC reflection ready");
 
