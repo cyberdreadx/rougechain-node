@@ -206,13 +206,13 @@ const BrandIntro = () => (
 
 /* ─────────────────────────  Ecosystem grid (grouped, featured-first)  ───────────────────────── */
 
-type Item = { icon: typeof Wallet; title: string; desc: string; link: string; external?: boolean; color: string; bg: string; badge?: string };
+type Item = { icon: typeof Wallet; title: string; desc: string; link: string; external?: boolean; sameTab?: boolean; color: string; bg: string; badge?: string };
 
 const GROUPS: { name: string; icon: typeof Wallet; items: Item[] }[] = [
   {
     name: "Use", icon: Wallet, items: [
       { icon: Wallet, title: "Web Wallet", desc: "Post-quantum wallet in the browser", link: "/wallet", color: "text-primary", bg: "bg-primary/10" },
-      { icon: Smartphone, title: "Qwalla", desc: "Mobile wallet (iOS beta)", link: QWALLA_SITE, external: true, color: "text-success", bg: "bg-success/10" },
+      { icon: Smartphone, title: "Qwalla", desc: "Mobile wallet (iOS beta)", link: QWALLA_SITE, external: true, sameTab: true, color: "text-success", bg: "bg-success/10" },
       { icon: MessageSquareLock, title: "Messenger", desc: "End-to-end encrypted chat", link: "/messenger", color: "text-success", bg: "bg-success/10" },
       { icon: MailIcon, title: "Mail", desc: "On-chain encrypted mail", link: "/mail", color: "text-accent", bg: "bg-accent/10" },
     ],
@@ -266,9 +266,13 @@ const Card = ({ f }: { f: Item }) => {
       <p className="text-xs text-muted-foreground leading-tight">{f.desc}</p>
     </div>
   );
-  return f.external
-    ? <a href={f.link} target="_blank" rel="noopener noreferrer" className="block h-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-xl">{inner}</a>
-    : <Link to={f.link} className="block h-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-xl">{inner}</Link>;
+  const cls = "block h-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-xl";
+  if (!f.external) return <Link to={f.link} className={cls}>{inner}</Link>;
+  // sameTab links navigate the current window straight to the destination (more
+  // reliable than target="_blank" inside in-app browsers/webviews).
+  return f.sameTab
+    ? <a href={f.link} className={cls}>{inner}</a>
+    : <a href={f.link} target="_blank" rel="noopener noreferrer" className={cls}>{inner}</a>;
 };
 
 const EcosystemGrid = () => {
