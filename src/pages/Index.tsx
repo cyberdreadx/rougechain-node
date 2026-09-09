@@ -14,6 +14,7 @@ import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { useXRGEPrice } from "@/hooks/use-xrge-price";
 import { formatUsd } from "@/lib/price-service";
 import xrgeLogo from "@/assets/xrge-logo.webp";
+import qwallaApp from "@/assets/qwalla-app.jpg";
 import ss1 from "@/assets/screenshot_1_wallet.png";
 import ss2 from "@/assets/screenshot_2_chat.png";
 import ss3 from "@/assets/screenshot_3_mail.png";
@@ -355,15 +356,15 @@ const QwallaCard = () => (
           <p className="text-[11px] text-muted-foreground mt-3">iOS release is a <strong className="text-foreground">TestFlight beta</strong> — expect rough edges and back up your recovery phrase.</p>
         </div>
 
-        {/* Product screenshot slot — drop a sanitized shot at src/assets/qwalla-app.png and swap this block for <img src={qwallaApp} …> */}
+        {/* Qwalla app screenshot (demo wallet) */}
         <div className="mx-auto w-full max-w-[220px]">
           <div className="relative rounded-[2rem] border border-border bg-background/60 p-2 shadow-xl">
-            <div className="rounded-[1.6rem] overflow-hidden bg-gradient-to-b from-card to-background aspect-[9/19] flex flex-col items-center justify-center gap-3 text-center px-4">
-              <div className="text-4xl" aria-hidden>🐨</div>
-              <p className="text-sm font-bold text-foreground">QWALLA</p>
-              <p className="text-[11px] text-muted-foreground">Wallet · Chats · Mail · Browser</p>
-              <span className="mt-2 text-[10px] uppercase tracking-wider text-muted-foreground/70">Product screenshot</span>
-            </div>
+            <img
+              src={qwallaApp}
+              alt="Qwalla mobile wallet — balance, quick actions and encrypted apps"
+              className="rounded-[1.6rem] w-full object-cover object-top aspect-[9/19]"
+              loading="lazy"
+            />
           </div>
         </div>
       </div>
