@@ -2,6 +2,22 @@
 
 Validators propose blocks and earn fees on RougeChain. This guide targets **mainnet** (`rougechain-mainnet-1`, real value, no faucet). To practice first, see [Testing on testnet](#testing-on-testnet-first) at the end.
 
+## Quick install (one command)
+
+On a fresh Linux server (a ~$5/mo VPS is plenty), this installs dependencies, builds the node, sets up a `systemd` service, and starts syncing:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/scripts/install-validator.sh | bash
+```
+
+To be reachable by peers (so your blocks propagate), pass a public URL and open the P2P port:
+
+```bash
+PUBLIC_URL=https://node.example.com bash <(curl -sSL https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/scripts/install-validator.sh)
+```
+
+When it finishes it prints your validator address and the exact fund → stake → verify steps. You still need to **fund and stake ≥ 10,000 XRGE** (step 3 below); the node produces blocks automatically once you're staked and in the active set. Re-run the command any time to upgrade. The rest of this page is the manual walkthrough if you'd rather do each step yourself.
+
 ## The one thing you must understand
 
 Your validator identity is a **single ML-DSA-65 keypair** that does two jobs:

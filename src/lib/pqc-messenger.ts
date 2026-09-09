@@ -419,6 +419,53 @@ export function clearLocalWallet(): void {
 }
 
 /**
+ * Serialize a messaging identity (its ML-DSA + ML-KEM keypair) to a portable
+ * JSON string, so an extension user can carry their device-local messaging
+ * identity to another device/browser. CONTAINS PRIVATE KEYS — treat like a
+ * wallet backup.
+ */
+export function exportMessengerIdentity(wallet: WalletWithPrivateKeys): string {
+  return JSON.stringify({
+    kind: "rougechain-messenger-identity",
+    version: 1,
+    id: wallet.id,
+    displayName: wallet.displayName,
+    signingPublicKey: wallet.signingPublicKey,
+    signingPrivateKey: wallet.signingPrivateKey,
+    encryptionPublicKey: wallet.encryptionPublicKey,
+    encryptionPrivateKey: wallet.encryptionPrivateKey,
+  }, null, 2);
+}
+
+/**
+ * Import a messaging identity produced by exportMessengerIdentity, persist it as
+ * the device-local messenger key, and (re)register it non-discoverable. Returns
+ * the imported wallet so the caller can switch to it.
+ */
+export async function importMessengerIdentity(json: string): Promise<WalletWithPrivateKeys> {
+  let parsed: Partial<WalletWithPrivateKeys> & { kind?: string };
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    throw new Error("Not valid JSON — pick a RougeChain messaging-identity export file.");
+  }
+  if (!parsed.signingPrivateKey || !parsed.signingPublicKey || !parsed.encryptionPublicKey) {
+    throw new Error("Missing keys — this isn't a RougeChain messaging-identity export.");
+  }
+  const wallet: WalletWithPrivateKeys = {
+    id: parsed.id || crypto.randomUUID(),
+    displayName: parsed.displayName || "Imported identity",
+    signingPublicKey: parsed.signingPublicKey,
+    signingPrivateKey: parsed.signingPrivateKey,
+    encryptionPublicKey: parsed.encryptionPublicKey,
+    encryptionPrivateKey: parsed.encryptionPrivateKey || "",
+  };
+  saveWalletLocally(wallet);
+  try { await registerWalletOnNode(wallet, false); } catch { /* idempotent + non-fatal */ }
+  return wallet;
+}
+
+/**
  * Get or create a device-local messenger keypair. Used when the connected wallet
  * has no LOCAL signing key — a browser-extension / dApp-browser wallet keeps its
  * key in the extension and never exposes it to the page, so in-page signing
