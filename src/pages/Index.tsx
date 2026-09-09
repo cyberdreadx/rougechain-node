@@ -343,14 +343,17 @@ const QwallaCard = () => (
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <a href={QWALLA_TESTFLIGHT} target="_blank" rel="noopener noreferrer">
+            <a href={QWALLA_SITE} target="_blank" rel="noopener noreferrer">
               <Button className="gap-2 bg-success hover:bg-success/90 text-background font-semibold">
-                <Smartphone className="w-4 h-4" /> Join iOS beta
-                <span className="text-[10px] font-mono opacity-80">TestFlight</span>
+                <Smartphone className="w-4 h-4" /> Visit qwalla.io
+                <ExternalLink className="w-4 h-4 opacity-70" />
               </Button>
             </a>
-            <a href={QWALLA_SITE} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:text-primary/80 flex items-center gap-1">
-              qwalla.io <ExternalLink className="w-3.5 h-3.5" />
+            <a href={QWALLA_TESTFLIGHT} target="_blank" rel="noopener noreferrer">
+              <Button variant="outline" className="gap-2 border-success/50 text-success hover:bg-success/10">
+                <Smartphone className="w-4 h-4" /> iOS beta
+                <span className="text-[10px] font-mono opacity-80">TestFlight</span>
+              </Button>
             </a>
           </div>
           <p className="text-[11px] text-muted-foreground mt-3">iOS release is a <strong className="text-foreground">TestFlight beta</strong> — expect rough edges and back up your recovery phrase.</p>
