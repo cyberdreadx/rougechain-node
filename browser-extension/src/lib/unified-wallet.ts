@@ -76,13 +76,13 @@ function ensureCorrectKeys(wallet: UnifiedWallet): UnifiedWallet {
 }
 
 // PBKDF2 key derivation
-async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+async function deriveKey(password: string, salt: Uint8Array, iterations = 600_000): Promise<CryptoKey> {
     const encoder = new TextEncoder();
     const keyMaterial = await crypto.subtle.importKey(
         "raw", encoder.encode(password), "PBKDF2", false, ["deriveKey"]
     );
     return crypto.subtle.deriveKey(
-        { name: "PBKDF2", salt: salt.buffer as ArrayBuffer, iterations: 600_000, hash: "SHA-256" },
+        { name: "PBKDF2", salt: salt.buffer as ArrayBuffer, iterations, hash: "SHA-256" },
         keyMaterial,
         { name: "AES-GCM", length: 256 },
         false,
@@ -114,15 +114,32 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 export async function decryptWallet(encryptedData: string, password: string): Promise<UnifiedWallet> {
-    const { salt, iv, data } = JSON.parse(encryptedData);
-    const key = await deriveKey(password, hexToBytes(salt));
-    const decrypted = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: hexToBytes(iv).buffer as ArrayBuffer },
-        key,
-        hexToBytes(data).buffer as ArrayBuffer
-    );
-    const decoder = new TextDecoder();
-    return JSON.parse(decoder.decode(decrypted));
+    // Accept BOTH backup formats so a backup made on rougechain.io imports here
+    // (and vice-versa):
+    //   - extension format:  JSON { salt, iv, data } (hex fields)
+    //   - site .pqcbackup:    base64( salt(16) | iv(12) | ciphertext )
+    let salt: Uint8Array, iv: Uint8Array, cipher: Uint8Array;
+    const trimmed = encryptedData.trim();
+    if (trimmed.startsWith("{")) {
+        const parsed = JSON.parse(trimmed);
+        salt = hexToBytes(parsed.salt); iv = hexToBytes(parsed.iv); cipher = hexToBytes(parsed.data);
+    } else {
+        const combined = Uint8Array.from(atob(trimmed), c => c.charCodeAt(0));
+        salt = combined.slice(0, 16); iv = combined.slice(16, 28); cipher = combined.slice(28);
+    }
+    // Try current (600k) then legacy (100k) PBKDF2 iteration counts.
+    for (const iterations of [600_000, 100_000]) {
+        try {
+            const key = await deriveKey(password, salt, iterations);
+            const decrypted = await crypto.subtle.decrypt(
+                { name: "AES-GCM", iv: iv.buffer as ArrayBuffer },
+                key,
+                cipher.buffer as ArrayBuffer
+            );
+            return JSON.parse(new TextDecoder().decode(decrypted)) as UnifiedWallet;
+        } catch { /* wrong iteration count — try the next */ }
+    }
+    throw new Error("Decryption failed — wrong password or unsupported backup file");
 }
 
 export function getVaultSettings(): VaultSettings {
