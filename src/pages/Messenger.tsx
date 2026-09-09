@@ -13,7 +13,7 @@ import PrivacySettings from "@/components/messenger/PrivacySettings";
 import SwapWidget from "@/components/messenger/SwapWidget";
 import WalletBackup from "@/components/wallet/WalletBackup";
 import type { Conversation, Wallet, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
-import { getConversations, getWallets, saveWalletLocally, registerWalletOnNode, getBlockedWalletIds, getPrivacySettings, resolveMessagingWallet } from "@/lib/pqc-messenger";
+import { getConversations, getWallets, saveWalletLocally, registerWalletOnNode, getBlockedWalletIds, getPrivacySettings, resolveMessagingWallet, exportMessengerIdentity, importMessengerIdentity } from "@/lib/pqc-messenger";
 import {
   UnifiedWallet,
   VaultSettings,
@@ -58,6 +58,7 @@ const Messenger = () => {
   const [notifEnabled, setNotifEnabled] = useState(() => loadNotificationSettings().enabled);
   const activitySnapshotRef = useRef<Map<string, string>>(new Map());
   const allWalletsRef = useRef<Wallet[]>([]);
+  const importIdentityRef = useRef<HTMLInputElement>(null);
   const { display: walletRougeAddr } = useRougeAddress(wallet?.signingPublicKey);
 
   // Load wallet from localStorage on mount — retry for extension auto-connect
@@ -262,6 +263,33 @@ const Messenger = () => {
     );
     setSelectedConversation(conversation);
     setShowContactPicker(false);
+  };
+
+  // Export/import the messaging identity — lets extension users (whose messaging
+  // identity is a device-local key) carry it between devices/browsers.
+  const handleExportIdentity = () => {
+    if (!messengerWallet) { toast.error("No messaging identity to export yet"); return; }
+    const json = exportMessengerIdentity(messengerWallet);
+    const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `rougechain-messaging-identity-${(messengerWallet.displayName || "identity").replace(/[^a-z0-9]/gi, "_")}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    toast.success("Messaging identity exported", { description: "Keep this file safe — it holds your private keys." });
+  };
+
+  const handleImportIdentityFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const imported = await importMessengerIdentity(await file.text());
+      setMessengerWallet(imported);
+      toast.success("Messaging identity imported", { description: `Now messaging as "${imported.displayName}".` });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Import failed");
+    }
   };
 
   const handleWalletImport = (importedWallet: UnifiedWallet) => {
@@ -518,11 +546,24 @@ const Messenger = () => {
               <DropdownMenuItem onClick={() => setShowWalletBackup(true)}>
                 <Download className="w-4 h-4 mr-2" /> Backup wallet
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleExportIdentity}>
+                <Key className="w-4 h-4 mr-2" /> Export messaging ID
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => importIdentityRef.current?.click()}>
+                <KeyRound className="w-4 h-4 mr-2" /> Import messaging ID
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowPrivacySettings(true)}>
                 <Settings className="w-4 h-4 mr-2" /> Privacy settings
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <input
+            ref={importIdentityRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={handleImportIdentityFile}
+          />
           {/* Notifications — kept visible on all sizes */}
           <Button
             variant="ghost"
