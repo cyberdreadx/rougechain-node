@@ -54,8 +54,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === "auto-lock") {
         // The decrypted wallet lives in chrome.storage.session (memory-only) once unlocked;
         // clear both areas so auto-lock works regardless of which one holds it.
-        chrome.storage.local.remove("pqc-unified-wallet");
-        try { chrome.storage.session?.remove("pqc-unified-wallet"); } catch { /* no session area */ }
+        chrome.storage.local.remove(["pqc-unified-wallet", "pqc-unified-vault"]);
+        try { chrome.storage.session?.remove(["pqc-unified-wallet", "pqc-unified-vault"]); } catch { /* no session area */ }
     }
     if (alarm.name === "messenger-poll") {
         pollForNewMessages();

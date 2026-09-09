@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Loader2, Plus, Upload, KeyRound, Copy, Check, AlertTriangle, ArrowLeft } from "lucide-react";
 import { generateEncryptionKeypair, registerWalletOnNode } from "../../lib/pqc-messenger";
-import { persistNewWallet, type UnifiedWallet } from "../../lib/unified-wallet";
+import { persistNewWallet, decryptWallet, type UnifiedWallet } from "../../lib/unified-wallet";
 import { generateMnemonic, keypairFromMnemonic, validateMnemonic } from "../../lib/mnemonic";
 import SetPasswordScreen from "./SetPasswordScreen";
 
@@ -9,7 +9,7 @@ interface Props {
     onCreated: (wallet: UnifiedWallet) => void;
 }
 
-type Screen = "home" | "show-seed" | "import-seed" | "set-password";
+type Screen = "home" | "show-seed" | "import-seed" | "set-password" | "import-password";
 
 export default function CreateWalletScreen({ onCreated }: Props) {
     const [name, setName] = useState("");
@@ -25,6 +25,10 @@ export default function CreateWalletScreen({ onCreated }: Props) {
     const [importName, setImportName] = useState("");
     const [importError, setImportError] = useState("");
     const [isRecovering, setIsRecovering] = useState(false);
+
+    // Encrypted-backup-file import state (a .pqcbackup needs a password to decrypt)
+    const [encryptedImport, setEncryptedImport] = useState("");
+    const [importPassword, setImportPassword] = useState("");
 
     const handleCreate = async () => {
         if (!name.trim() || isCreating) return;
@@ -128,21 +132,41 @@ export default function CreateWalletScreen({ onCreated }: Props) {
 
     const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
+        e.target.value = "";
         if (!file) return;
-
+        const text = (await file.text()).trim();
+        // A plaintext wallet export is JSON with the private key present.
         try {
-            const text = await file.text();
-            const wallet = JSON.parse(text) as UnifiedWallet;
-            if (!wallet.signingPublicKey || !wallet.signingPrivateKey) {
-                alert("Invalid wallet file");
+            const maybe = JSON.parse(text);
+            if (maybe && maybe.signingPublicKey && maybe.signingPrivateKey) {
+                setPendingWallet(maybe as UnifiedWallet);
+                setScreen("set-password");
                 return;
             }
-            // Require a password before storing — go to the set-password step.
+        } catch { /* not plaintext JSON — treat as an encrypted backup below */ }
+        // Otherwise it's an encrypted backup (.pqcbackup blob, or {salt,iv,data}
+        // from either the site or the extension). Ask for its password to decrypt.
+        setEncryptedImport(text);
+        setImportPassword("");
+        setImportError("");
+        setScreen("import-password");
+    };
+
+    const handleDecryptImport = async () => {
+        if (!importPassword) { setImportError("Enter the backup password"); return; }
+        setIsRecovering(true);
+        setImportError("");
+        try {
+            const wallet = await decryptWallet(encryptedImport, importPassword);
+            if (!wallet.signingPublicKey || !wallet.signingPrivateKey) throw new Error("no keys");
             setPendingWallet(wallet);
+            setImportPassword("");
+            setEncryptedImport("");
             setScreen("set-password");
         } catch {
-            alert("Failed to import wallet");
+            setImportError("Wrong password or unsupported backup file");
         }
+        setIsRecovering(false);
     };
 
     // Set-password screen (mandatory encryption before the wallet is stored)
@@ -155,6 +179,42 @@ export default function CreateWalletScreen({ onCreated }: Props) {
                 onSubmit={finalizeWallet}
                 onBack={() => setScreen("home")}
             />
+        );
+    }
+
+    // Enter password to decrypt an imported backup file (.pqcbackup / {salt,iv,data})
+    if (screen === "import-password") {
+        return (
+            <div className="p-4 space-y-4">
+                <button
+                    onClick={() => { setScreen("home"); setEncryptedImport(""); setImportError(""); }}
+                    className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+                >
+                    <ArrowLeft className="w-4 h-4" /> Back
+                </button>
+                <div className="text-center space-y-1">
+                    <KeyRound className="w-8 h-8 mx-auto text-primary" />
+                    <h2 className="text-lg font-semibold">Unlock backup file</h2>
+                    <p className="text-xs text-muted-foreground">Enter the password you set when you created this backup.</p>
+                </div>
+                <input
+                    type="password"
+                    autoFocus
+                    value={importPassword}
+                    onChange={(e) => setImportPassword(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleDecryptImport(); }}
+                    placeholder="Backup password"
+                    className="w-full rounded-lg bg-muted px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary"
+                />
+                {importError && <p className="text-xs text-destructive">{importError}</p>}
+                <button
+                    onClick={handleDecryptImport}
+                    disabled={isRecovering || !importPassword}
+                    className="w-full rounded-lg bg-primary py-2 text-sm font-medium text-primary-foreground disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                    {isRecovering ? <><Loader2 className="w-4 h-4 animate-spin" /> Decrypting…</> : "Import wallet"}
+                </button>
+            </div>
         );
     }
 
