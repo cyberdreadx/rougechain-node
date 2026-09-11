@@ -28,7 +28,7 @@ quantum-vault-vm = { path = "../vm" }
 sled = "0.34"
 eth-ecdsa-verifier = "0.1"
 rayon = "1.10"
-sha2 = "0.10"
+sha2 = "0.11"
 base64 = "0.21"
 
 [build-dependencies]
