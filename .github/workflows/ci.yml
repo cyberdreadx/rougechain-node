@@ -19,7 +19,7 @@ jobs:
       run:
         working-directory: core
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # daemon/build.rs uses tonic-build (gRPC) → needs protoc; reqwest (native-tls) → needs openssl.
       - name: Install system deps
