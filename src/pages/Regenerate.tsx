@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import {
@@ -8,7 +8,8 @@ import {
 import { Button } from "@/components/ui/button";
 import ProjectCard from "@/components/regenerate/ProjectCard";
 import {
-  REGEN_CATEGORIES, getTreasuryStats, getProjects, hasFundedProjects, type RegenCategoryKey,
+  REGEN_CATEGORIES, getTreasuryStats, getProjects, hasFundedProjects,
+  type RegenCategoryKey, type TreasuryStats,
 } from "@/lib/regenerate";
 
 const PROPOSE_URL = "https://discord.gg/wZKsHfhXxm";
@@ -66,7 +67,14 @@ export default function Regenerate() {
     "RougeChain Regenerate is a transparent regeneration treasury funding measurable local projects — ecology, infrastructure, open technology, and community — starting in Tulum, Mexico.",
   );
 
-  const treasury = getTreasuryStats();
+  const [treasury, setTreasury] = useState<TreasuryStats>({
+    balanceXrge: null, projectsFunded: null, totalDeployedXrge: null, activeTerritories: null,
+  });
+  useEffect(() => {
+    let active = true;
+    getTreasuryStats().then((t) => { if (active) setTreasury(t); });
+    return () => { active = false; };
+  }, []);
   const projects = getProjects();
   const anyFunded = hasFundedProjects(projects);
 

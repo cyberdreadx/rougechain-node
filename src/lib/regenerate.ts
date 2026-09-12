@@ -12,6 +12,16 @@
  * funding tx or evidence link until those actually exist.
  */
 
+import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
+
+/**
+ * The regeneration treasury's on-chain address. Set this to the rouge1 address
+ * (or public-key hex) that holds the Regenerate treasury and the dashboard's
+ * "Treasury Balance" tile goes live automatically. Left empty → the tile stays
+ * "Coming Soon" (no fabricated numbers).
+ */
+export const REGEN_TREASURY_ADDRESS = "";
+
 export type RegenCategoryKey = "ecology" | "infrastructure" | "technology" | "art";
 
 export type RegenStatus = "proposed" | "reviewing" | "funded" | "in_progress" | "completed";
@@ -58,18 +68,38 @@ export interface TreasuryStats {
   activeTerritories: number | null;
 }
 
+const EMPTY_TREASURY: TreasuryStats = {
+  balanceXrge: null,
+  projectsFunded: null,
+  totalDeployedXrge: null,
+  activeTerritories: null,
+};
+
 /**
- * Treasury figures. Returns `null` for every field today so the UI shows
- * "Coming Soon" rather than a fabricated number. Replace with a fetch against
- * the regeneration treasury address / contract when it exists.
+ * Treasury figures.
+ *
+ * - `balanceXrge` is read LIVE from the chain when `REGEN_TREASURY_ADDRESS` is set
+ *   (via the core API `/balance/<addr>`); otherwise it stays `null` → "Coming Soon".
+ * - The remaining fields (projects funded, total deployed, active territories) need
+ *   an indexer/contract that doesn't exist yet, so they stay `null` — never faked.
+ *   Populate them here once that data source is available.
  */
-export function getTreasuryStats(): TreasuryStats {
-  return {
-    balanceXrge: null,
-    projectsFunded: null,
-    totalDeployedXrge: null,
-    activeTerritories: null,
-  };
+export async function getTreasuryStats(): Promise<TreasuryStats> {
+  if (!REGEN_TREASURY_ADDRESS) return EMPTY_TREASURY;
+  try {
+    const base = getCoreApiBaseUrl();
+    if (!base) return EMPTY_TREASURY;
+    const res = await fetch(`${base}/balance/${REGEN_TREASURY_ADDRESS}`, {
+      headers: getCoreApiHeaders(),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return EMPTY_TREASURY;
+    const data = await res.json();
+    const bal = typeof data?.balance === "number" ? data.balance : null;
+    return { ...EMPTY_TREASURY, balanceXrge: bal };
+  } catch {
+    return EMPTY_TREASURY;
+  }
 }
 
 /**
