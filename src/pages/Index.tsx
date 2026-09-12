@@ -679,6 +679,45 @@ const Index = () => {
         {/* 3 · Ecosystem (featured-first, grouped) */}
         <EcosystemGrid />
 
+        {/* Regenerate — a core pillar, not a footnote */}
+        <motion.section
+          initial={{ opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-80px" }}
+          className="mb-16"
+        >
+          <div className="relative overflow-hidden rounded-3xl border border-success/25 bg-gradient-to-br from-success/10 via-card to-accent/8 p-8 sm:p-10">
+            <div
+              className="pointer-events-none absolute inset-0 opacity-[0.08]"
+              style={{ backgroundImage: "linear-gradient(hsl(var(--success)/0.5) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--success)/0.5) 1px, transparent 1px)", backgroundSize: "40px 40px" }}
+              aria-hidden="true"
+            />
+            <div className="relative">
+              <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-[0.2em] text-success">
+                <Sprout className="w-4 h-4" /> RougeChain Regenerate
+              </div>
+              <h2 className="mt-4 text-2xl md:text-3xl font-bold text-foreground text-balance max-w-2xl">
+                Technology should improve the territory it touches.
+              </h2>
+              <p className="mt-3 max-w-xl text-muted-foreground">
+                A regeneration program &amp; treasury on RougeChain — funding transparent, measurable local projects. First territory: Tulum.
+              </p>
+              <div className="mt-6 flex flex-wrap items-center gap-3">
+                <Link to="/regenerate">
+                  <Button className="gap-2 bg-success hover:bg-success/90 text-background font-semibold">
+                    <Sprout className="w-4 h-4" /> Explore Regenerate
+                  </Button>
+                </Link>
+                <a href="https://discord.gg/wZKsHfhXxm" target="_blank" rel="noopener noreferrer">
+                  <Button variant="outline" className="gap-2 border-success/50 text-success hover:bg-success/10">
+                    Propose a Project
+                  </Button>
+                </a>
+              </div>
+            </div>
+          </div>
+        </motion.section>
+
         {/* Product visuals */}
         <QwallaCard />
         <ExtensionBanner />
@@ -692,31 +731,6 @@ const Index = () => {
         {/* 6 · Security + network status */}
         <SecuritySection />
         <NetworkStatus />
-
-        {/* Regenerate teaser */}
-        <motion.section
-          initial={{ opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-80px" }}
-          className="mb-16"
-        >
-          <div className="rounded-2xl border border-success/25 bg-gradient-to-br from-success/10 via-card to-accent/8 p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center gap-5">
-            <div className="w-11 h-11 rounded-xl bg-success/15 border border-success/25 flex items-center justify-center shrink-0">
-              <Sprout className="w-5 h-5 text-success" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-bold text-foreground">Building more than blockchains</h2>
-              <p className="text-sm text-muted-foreground mt-1 max-w-xl">
-                RougeChain Regenerate connects transparent digital infrastructure with measurable local impact.
-              </p>
-            </div>
-            <Link to="/regenerate" className="shrink-0">
-              <Button variant="outline" className="gap-2 border-success/50 text-success hover:bg-success/10">
-                <Sprout className="w-4 h-4" /> Explore Regenerate
-              </Button>
-            </Link>
-          </div>
-        </motion.section>
 
         {/* 7 · Community / resources */}
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center">
