@@ -130,6 +130,10 @@ export default function Regenerate() {
               Global problems are real, but change becomes tangible at the local level. RougeChain Regenerate begins with
               communities, ecosystems, and infrastructure we can actually see, measure, and improve.
             </p>
+            <p className="mx-auto mt-6 max-w-2xl text-sm text-muted-foreground/85 leading-relaxed">
+              A <span className="text-success font-medium">solarpunk</span> stance: technology, architecture, art and
+              community building a future worth living in — not just one that survives.
+            </p>
           </div>
         </motion.section>
 
