@@ -23,6 +23,7 @@ import {
   FileCode,
   ChevronDown,
   Bot,
+  Sprout,
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY } from "@/lib/network";
@@ -47,6 +48,7 @@ const navGroups: NavGroup[] = [
     title: "",
     items: [
       { to: "/", label: "Home", icon: Home },
+      { to: "/regenerate", label: "Regenerate", icon: Sprout },
     ],
   },
   {

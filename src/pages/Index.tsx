@@ -5,7 +5,7 @@ import {
   TrendingUp, ArrowDownUp, Droplets, Coins, Image as ImageIcon,
   Cable, Mail as MailIcon, Server, Github, Chrome, ChevronLeft, ChevronRight,
   Bot, Code, Smartphone, BookOpen, Terminal, FileCode, ArrowRight,
-  Boxes, Wrench, Compass, AlertTriangle,
+  Boxes, Wrench, Compass, AlertTriangle, Sprout,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState, useCallback, useRef } from "react";
@@ -692,6 +692,31 @@ const Index = () => {
         {/* 6 · Security + network status */}
         <SecuritySection />
         <NetworkStatus />
+
+        {/* Regenerate teaser */}
+        <motion.section
+          initial={{ opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-80px" }}
+          className="mb-16"
+        >
+          <div className="rounded-2xl border border-success/25 bg-gradient-to-br from-success/10 via-card to-accent/8 p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center gap-5">
+            <div className="w-11 h-11 rounded-xl bg-success/15 border border-success/25 flex items-center justify-center shrink-0">
+              <Sprout className="w-5 h-5 text-success" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg font-bold text-foreground">Building more than blockchains</h2>
+              <p className="text-sm text-muted-foreground mt-1 max-w-xl">
+                RougeChain Regenerate connects transparent digital infrastructure with measurable local impact.
+              </p>
+            </div>
+            <Link to="/regenerate" className="shrink-0">
+              <Button variant="outline" className="gap-2 border-success/50 text-success hover:bg-success/10">
+                <Sprout className="w-4 h-4" /> Explore Regenerate
+              </Button>
+            </Link>
+          </div>
+        </motion.section>
 
         {/* 7 · Community / resources */}
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center">
