@@ -63,7 +63,10 @@ const TARGET_TXS_PER_BLOCK: usize = 10;            // Target block fullness
 /// v3: balances are now keyed by canonical rouge1 address (canon_addr) — a v2
 /// snapshot may hold split pubkey-hex/bech32 buckets, so it is rejected and the
 /// ledger is rebuilt from history under the canonical keying.
-const SNAPSHOT_VERSION: u32 = 3;
+/// v4: an intermediate build wrote v3 snapshots while still crediting transfers
+/// under raw pubkey-hex keys, so a v3 snapshot can still hold non-canonical
+/// buckets. Reject it and rebuild once more under full canon_addr keying.
+const SNAPSHOT_VERSION: u32 = 4;
 
 /// ─────────────────────────────────────────────────────────────────────────
 /// THE V2 FORK SWITCH (T11).
