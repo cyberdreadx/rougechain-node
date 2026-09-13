@@ -361,8 +361,10 @@ fn submit_tx(rpc: &str, dir: &PathBuf, node_keys: &Option<PathBuf>, tx_type: &st
     let sig = quantum_vault_crypto::pqc_sign(&key.secret_key_hex, canonical.as_bytes())
         .map_err(|e| format!("Sign error: {}", e))?;
 
-    // Submit
-    tx_payload.insert("signed_payload".to_string(), Value::String(canonical));
+    // Submit. `signed_payload` is a TOP-LEVEL TxV1 field — the node verifies
+    // pqc_verify(from_pub_key, signed_payload, sig) in add_tx_to_mempool. Post the
+    // signed TxV1 to the broadcast endpoint: the v1 /api/tx/submit is 410 Gone and
+    // /api/tx/v2/submit does not exist.
     let tx = serde_json::json!({
         "version": 1,
         "tx_type": tx_type,
@@ -371,10 +373,11 @@ fn submit_tx(rpc: &str, dir: &PathBuf, node_keys: &Option<PathBuf>, tx_type: &st
         "payload": tx_payload,
         "fee": fee,
         "sig": sig,
+        "signed_payload": canonical,
     });
 
-    let result = api_post(rpc, "/api/tx/v2/submit", tx)?;
-    if result.get("error").is_some() {
+    let result = api_post(rpc, "/api/tx/broadcast", tx)?;
+    if result.get("error").map(|e| !e.is_null()).unwrap_or(false) {
         eprintln!("❌ {}", serde_json::to_string_pretty(&result).unwrap());
     } else {
         println!("✅ Transaction submitted");
@@ -483,9 +486,13 @@ fn main() {
                 Some(k) => {
                     println!("PubKey:  {}...{}", &k.public_key_hex[..16], &k.public_key_hex[k.public_key_hex.len()-16..]);
                     println!("Label:   {}", k.label.as_deref().unwrap_or("(none)"));
-                    let hash_bytes = quantum_vault_crypto::sha256(k.public_key_hex.as_bytes());
-                    let hash = hex::encode(&hash_bytes);
-                    println!("Address: rouge1{}", &hash[..40]);
+                    // Canonical rouge1 address = bech32m(sha256(pubkey bytes)) — must match
+                    // the daemon's pub_key_to_address exactly, or funds sent to the shown
+                    // address land under a key the node never credits.
+                    match quantum_vault_crypto::pub_key_to_address(&k.public_key_hex) {
+                        Ok(addr) => println!("Address: {}", addr),
+                        Err(e) => println!("Address: (derivation error: {})", e),
+                    }
                 }
                 None => println!("No keys found. Run: rougechain key-gen"),
             }
