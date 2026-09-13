@@ -151,6 +151,12 @@ pub struct NodeOptions {
     pub mine: bool,
     /// Optional store for pending bridge withdrawals (qETH → ETH)
     pub bridge_withdraw_store: Option<std::sync::Arc<BridgeWithdrawStore>>,
+    /// Public keys of the genesis (founding) validators. These are the only
+    /// keys trusted to authorize node-cosigned bridge_withdraw txs during block
+    /// import (see the import_block verification note). Anchored to the genesis
+    /// set — not the live validator set — so validators that join later can
+    /// never gain bridge-authority power. Empty disables the authority path.
+    pub bridge_authority_keys: Vec<String>,
 }
 
 /// Key for token balances: (public_key, token_symbol)
@@ -835,6 +841,10 @@ impl L1Node {
             }
         }
 
+        // Genesis-anchored bridge authority keys (see NodeOptions). Only these
+        // may authorize a node-cosigned bridge_withdraw during import.
+        let authority_keys = &self.opts.bridge_authority_keys;
+
         // Verify all transaction signatures in parallel
         {
             use rayon::prelude::*;
@@ -861,6 +871,20 @@ impl L1Node {
                     let bytes_legacy = encode_tx_v1(&legacy);
                     if pqc_verify(&tx.from_pub_key, &bytes_legacy, &tx.sig).ok() == Some(true) {
                         return false; // valid
+                    }
+                    // Authority-cosigned bridge withdrawal: the tx carries the
+                    // *user's* from_pub_key but is signed by a genesis validator
+                    // (the bridge operator) — see submit_bridge_withdraw_tx_signed,
+                    // where the producing node skips this re-check via an in-memory
+                    // set that never reaches peers. Accept only if the sig verifies
+                    // against a genesis-authority key — never the live validator
+                    // set — so a validator that joins later cannot forge a
+                    // withdrawal against another account's balance.
+                    if tx.tx_type == "bridge_withdraw" && !authority_keys.is_empty() {
+                        let b = encode_tx_for_signing(tx);
+                        if authority_keys.iter().any(|k| pqc_verify(k, &b, &tx.sig).ok() == Some(true)) {
+                            return false; // valid: authority-cosigned withdrawal
+                        }
                     }
                     eprintln!("[peer] Rejecting tx: all signature verification methods failed for {}", &tx.from_pub_key[..16.min(tx.from_pub_key.len())]);
                     true
@@ -6476,6 +6500,7 @@ mod live_amm_tests {
             },
             mine: false,
             bridge_withdraw_store: None,
+            bridge_authority_keys: Vec::new(),
         })
         .expect("test node");
         (dir, node)

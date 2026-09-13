@@ -351,6 +351,12 @@ async fn main() -> Result<(), String> {
         chain,
         mine: args.mine,
         bridge_withdraw_store: Some(bridge_withdraw_store.clone()),
+        // Bridge authority = the genesis founding validators only. A validator
+        // that stakes in later cannot authorize withdrawals.
+        bridge_authority_keys: genesis_config
+            .as_ref()
+            .map(|gc| gc.initial_validators.iter().map(|v| v.pub_key.clone()).collect())
+            .unwrap_or_default(),
     })?;
     // Inject WASM runtime/store so apply_balance_block can re-execute contract txs
     node.set_wasm_runtime(wasm_runtime.clone());
