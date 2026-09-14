@@ -28,7 +28,7 @@ const DEXSCREENER = `https://dexscreener.com/base/${XRGE_BASE_ADDRESS}`;
 const DOCS = "https://docs.rougechain.io";
 const GITHUB = "https://github.com/cyberdreadx/rougechain-node";
 const QWALLA_SITE = "https://qwalla.io";
-const QWALLA_TESTFLIGHT = "https://testflight.apple.com/join/6NKpJXmq";
+const QWALLA_APPSTORE = "https://apps.apple.com/us/app/qwalla/id6794071016";
 
 const scrollTo = (id: string) => () => {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -212,7 +212,7 @@ const GROUPS: { name: string; icon: typeof Wallet; items: Item[] }[] = [
   {
     name: "Use", icon: Wallet, items: [
       { icon: Wallet, title: "Web Wallet", desc: "Post-quantum wallet in the browser", link: "/wallet", color: "text-primary", bg: "bg-primary/10" },
-      { icon: Smartphone, title: "Qwalla", desc: "Mobile wallet (iOS beta)", link: QWALLA_SITE, external: true, sameTab: true, color: "text-success", bg: "bg-success/10" },
+      { icon: Smartphone, title: "Qwalla", desc: "Mobile wallet — now on iOS", link: QWALLA_SITE, external: true, sameTab: true, color: "text-success", bg: "bg-success/10" },
       { icon: MessageSquareLock, title: "Messenger", desc: "End-to-end encrypted chat", link: "/messenger", color: "text-success", bg: "bg-success/10" },
       { icon: MailIcon, title: "Mail", desc: "On-chain encrypted mail", link: "/mail", color: "text-accent", bg: "bg-accent/10" },
     ],
@@ -353,14 +353,14 @@ const QwallaCard = () => (
                 <ExternalLink className="w-4 h-4 opacity-70" />
               </Button>
             </a>
-            <a href={QWALLA_TESTFLIGHT} target="_blank" rel="noopener noreferrer">
+            <a href={QWALLA_APPSTORE} target="_blank" rel="noopener noreferrer">
               <Button variant="outline" className="gap-2 border-success/50 text-success hover:bg-success/10">
-                <Smartphone className="w-4 h-4" /> iOS beta
-                <span className="text-[10px] font-mono opacity-80">TestFlight</span>
+                <Smartphone className="w-4 h-4" /> Download on the App Store
+                <ExternalLink className="w-4 h-4 opacity-70" />
               </Button>
             </a>
           </div>
-          <p className="text-[11px] text-muted-foreground mt-3">iOS release is a <strong className="text-foreground">TestFlight beta</strong> — expect rough edges and back up your recovery phrase.</p>
+          <p className="text-[11px] text-muted-foreground mt-3">Now <strong className="text-foreground">live on the App Store</strong> — always back up your recovery phrase.</p>
         </div>
 
         {/* Qwalla app screenshot (demo wallet) */}
