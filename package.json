@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "relayer": "tsx scripts/bridge-relayer.ts",
-    "relayer:btc": "tsx scripts/btc-bridge-relayer.ts"
+    "relayer:btc": "tsx scripts/btc-bridge-relayer.ts",
+    "btc:genkey": "tsx scripts/btc-gen-custody-key.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
