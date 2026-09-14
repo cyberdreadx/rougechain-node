@@ -25,7 +25,7 @@ import ss5 from "@/assets/screenshot_5_create.png";
 const XRGE_BASE_ADDRESS = "0x147120faEC9277ec02d957584CFCD92B56A24317";
 const AERODROME_BUY = `https://aerodrome.finance/swap?from=0x833589fcd6edb6e08f4c7c32d4f71b54bda02913&to=${XRGE_BASE_ADDRESS}&chain0=8453&chain1=8453`;
 const DEXSCREENER = `https://dexscreener.com/base/${XRGE_BASE_ADDRESS}`;
-// GeckoTerminal pool (WETH/XRGE on Base) — more reliable chart embed than DexScreener.
+// GeckoTerminal pool (XRGE/USDC on Base) — more reliable chart embed than DexScreener.
 const GECKOTERMINAL_POOL = "https://www.geckoterminal.com/base/pools/0x059e10d26c64a63d04e1814f46305210eddc447d";
 const DOCS = "https://docs.rougechain.io";
 const GITHUB = "https://github.com/cyberdreadx/rougechain-node";
