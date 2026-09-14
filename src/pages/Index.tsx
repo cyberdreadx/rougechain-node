@@ -12,6 +12,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/network";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { useXRGEPrice } from "@/hooks/use-xrge-price";
+import { EmailCaptureBanner, EmailCapturePopup } from "@/components/EmailCapture";
 import { formatUsd } from "@/lib/price-service";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import qwallaApp from "@/assets/qwalla-app.jpg";
@@ -760,6 +761,10 @@ const Index = () => {
             </div>
           </div>
         </motion.div>
+
+        {/* Own the audience — email capture (Netlify Forms) */}
+        <EmailCaptureBanner />
+        <EmailCapturePopup />
       </main>
     </div>
   );

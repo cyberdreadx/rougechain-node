@@ -89,6 +89,11 @@
   </head>
 
   <body>
+    <!-- Netlify Forms detection (build-time): the React UI posts to this form name. -->
+    <form name="email-signup" data-netlify="true" netlify-honeypot="bot-field" hidden>
+      <input type="email" name="email" />
+      <input type="text" name="bot-field" />
+    </form>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
