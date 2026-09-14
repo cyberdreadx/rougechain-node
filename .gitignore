@@ -35,6 +35,11 @@ bridge-relayer.env
 # Any backup/timestamped variant of a secret env must never be committed
 bridge-relayer.env.*
 !bridge-relayer.env.example
+# BTC bridge relayer env (holds the custody WIF) + its runtime state
+btc-bridge-relayer.env
+btc-bridge-relayer.env.*
+!btc-bridge-relayer.env.example
+.btc-relayer-state.json
 *.env.bak*
 
 # Bridge relayer runtime state (local, regenerated)
