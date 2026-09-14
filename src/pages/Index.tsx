@@ -25,6 +25,8 @@ import ss5 from "@/assets/screenshot_5_create.png";
 const XRGE_BASE_ADDRESS = "0x147120faEC9277ec02d957584CFCD92B56A24317";
 const AERODROME_BUY = `https://aerodrome.finance/swap?from=0x833589fcd6edb6e08f4c7c32d4f71b54bda02913&to=${XRGE_BASE_ADDRESS}&chain0=8453&chain1=8453`;
 const DEXSCREENER = `https://dexscreener.com/base/${XRGE_BASE_ADDRESS}`;
+// GeckoTerminal pool (WETH/XRGE on Base) — more reliable chart embed than DexScreener.
+const GECKOTERMINAL_POOL = "https://www.geckoterminal.com/base/pools/0x059e10d26c64a63d04e1814f46305210eddc447d";
 const DOCS = "https://docs.rougechain.io";
 const GITHUB = "https://github.com/cyberdreadx/rougechain-node";
 const QWALLA_SITE = "https://qwalla.io";
@@ -462,9 +464,14 @@ const XrgeSection = () => {
             <TrendingUp className="w-4 h-4 text-primary" />
             <h3 className="text-sm font-semibold text-foreground">XRGE price <span className="text-muted-foreground font-normal">· on Base</span></h3>
           </div>
-          <a href={DEXSCREENER} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:text-primary/80 flex items-center gap-1">
-            DexScreener <ExternalLink className="w-3 h-3" />
-          </a>
+          <div className="flex items-center gap-3">
+            <a href={GECKOTERMINAL_POOL} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:text-primary/80 flex items-center gap-1">
+              GeckoTerminal <ExternalLink className="w-3 h-3" />
+            </a>
+            <a href={DEXSCREENER} target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+              DexScreener <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
         </div>
         {priceUsd !== null && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4">
@@ -476,7 +483,7 @@ const XrgeSection = () => {
           </div>
         )}
         <iframe
-          src={`${DEXSCREENER}?embed=1&theme=dark&trades=0&info=0`}
+          src={`${GECKOTERMINAL_POOL}?embed=1&info=0&swaps=0&light_chart=0`}
           title="XRGE Price Chart (Base)"
           className="w-full h-[360px] border-0"
           allow="clipboard-write"
