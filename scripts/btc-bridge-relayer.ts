@@ -112,6 +112,7 @@ async function esploraText(path: string): Promise<string> {
 type Utxo = { txid: string; vout: number; value: number; status: { confirmed: boolean; block_height?: number } };
 type EsTx = {
   txid: string;
+  vin?: { prevout?: { scriptpubkey_address?: string } }[];
   vout: { scriptpubkey_address?: string; value: number }[];
   status: { confirmed: boolean; block_height?: number };
 };
@@ -148,6 +149,13 @@ async function findExistingPayout(dest: string, sats: bigint, knownTxids: Set<st
     const txs = await esploraJson<EsTx[]>(`/address/${CUSTODY_ADDRESS}/txs`);
     for (const tx of txs) {
       if (knownTxids.has(tx.txid)) continue;
+      // Only a real payout SPENDS custody (custody appears as an input). A deposit has custody
+      // as an OUTPUT and its change can land on any address — never adopt those, or a deposit
+      // whose change happens to pay `dest` would be mistaken for the payout.
+      const custodySpent = (tx.vin || []).some(
+        (v) => v.prevout?.scriptpubkey_address === CUSTODY_ADDRESS
+      );
+      if (!custodySpent) continue;
       const paid = tx.vout
         .filter((v) => v.scriptpubkey_address === dest)
         .reduce((a, v) => a + BigInt(v.value), 0n);

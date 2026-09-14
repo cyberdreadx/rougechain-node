@@ -66,3 +66,9 @@ tweets.md
 
 # Claude Code settings
 .claude/
+
+# Testnet deposit helper throwaway key
+.btc-deposit-key.*
+
+# Withdrawal-test throwaway rouge wallet
+.btc-wd-wallet.*

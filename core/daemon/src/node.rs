@@ -1977,8 +1977,12 @@ impl L1Node {
         if xrge_balance < tx_fee {
             return Err(format!("Insufficient XRGE for fee: need {} XRGE", tx_fee));
         }
-        let token_upper = token_symbol.to_uppercase();
-        if token_upper == "XRGE" {
+        // Use the token symbol as provided (natural case, e.g. "qBTC"/"qETH"/"qUSDC"/"XRGE") so
+        // balance lookups match what the mint stored — token_balances is keyed by the exact
+        // symbol string, so uppercasing here would miss the balance. Special-case comparisons
+        // are done case-insensitively.
+        let token_sym = token_symbol.trim().to_string();
+        if token_sym.eq_ignore_ascii_case("XRGE") {
             if xrge_balance - tx_fee < amount_units as f64 {
                 return Err(format!(
                     "Insufficient XRGE: have {}, need {}",
@@ -1986,18 +1990,18 @@ impl L1Node {
                 ));
             }
         } else {
-            let token_balance = self.get_token_balance(from_public_key, &token_upper)?;
+            let token_balance = self.get_token_balance(from_public_key, &token_sym)?;
             if token_balance < amount_units as f64 {
                 return Err(format!(
                     "Insufficient {}: have {}, need {}",
-                    token_upper, token_balance, amount_units
+                    token_sym, token_balance, amount_units
                 ));
             }
         }
         // Destination address. qBTC withdrawals carry a Bitcoin address (case-sensitive, not an
         // EVM hex address), so validate them on the BTC side and keep the original casing. All
         // other tokens (qETH/qUSDC/XRGE) pay out on Base and require a 20-byte EVM address.
-        let evm = if token_upper == "QBTC" {
+        let evm = if token_sym.eq_ignore_ascii_case("qBTC") {
             let dest = evm_address.trim().to_string();
             let network = crate::bridge_btc::btc_network();
             crate::bridge_btc::validate_btc_address(&dest, &network)?;
@@ -2018,7 +2022,7 @@ impl L1Node {
             nonce: self.get_next_nonce(from_public_key),
             payload: TxPayload {
                 amount: Some(amount_units),
-                token_symbol: Some(token_upper),
+                token_symbol: Some(token_sym),
                 evm_address: Some(evm),
                 ..Default::default()
             },
@@ -4951,29 +4955,32 @@ impl L1Node {
                     tx.payload.amount,
                 ) {
                     if amount > 0 {
-                        let token_upper = token_symbol.to_uppercase();
+                        // Use the symbol as stored by the mint (natural case) — token_balances is
+                        // keyed by the exact symbol, so uppercasing would debit a phantom key and
+                        // never touch the real balance. XRGE is matched case-insensitively.
+                        let token_sym = token_symbol.trim().to_string();
                         let xrge_bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
                         if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                             eprintln!("[node] Rejecting bridge_withdraw: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
                             return;
                         }
-                        if token_upper == "XRGE" {
+                        if token_sym.eq_ignore_ascii_case("XRGE") {
                             if xrge_bal.saturating_sub(fee_to_quanta(tx.fee)) < xrge_f64_to_quanta(amount as f64) {
                                 eprintln!("[node] Rejecting bridge_withdraw: insufficient XRGE ({:.4} < {})", quanta_to_display(xrge_bal.saturating_sub(fee_to_quanta(tx.fee))), amount);
                                 return;
                             }
                             *balances.entry(canon_addr(&tx.from_pub_key)).or_insert(0) -= xrge_f64_to_quanta(tx.fee + amount as f64);
                         } else {
-                            let sender_key = (canon_addr(&tx.from_pub_key), token_upper.clone());
+                            let sender_key = (canon_addr(&tx.from_pub_key), token_sym.clone());
                             let token_bal = *token_balances.get(&sender_key).unwrap_or(&0);
                             if token_bal < amount as u128 {
-                                eprintln!("[node] Rejecting bridge_withdraw: insufficient {} ({:.4} < {})", token_upper, token_bal, amount);
+                                eprintln!("[node] Rejecting bridge_withdraw: insufficient {} ({:.4} < {})", token_sym, token_bal, amount);
                                 return;
                             }
                             *balances.entry(canon_addr(&tx.from_pub_key)).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                             *token_balances.entry(sender_key).or_insert(0) -= amount as u128;
                         }
-                        *burned_tokens.entry(token_upper).or_insert(0.0) += amount as f64;
+                        *burned_tokens.entry(token_sym).or_insert(0.0) += amount as f64;
                     }
                 }
             }

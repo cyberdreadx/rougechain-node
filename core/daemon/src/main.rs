@@ -7466,11 +7466,30 @@ async fn bridge_withdraw(
     State(state): State<AppState>,
     Json(body): Json<BridgeWithdrawRequest>,
 ) -> Result<Json<BridgeWithdrawResponse>, (StatusCode, Json<BridgeWithdrawResponse>)> {
-    if state.bridge_custody_address.is_none() || state.bridge_custody_address.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+    // Which token is being withdrawn. qBTC withdrawals are gated on the BTC bridge being
+    // configured (QV_BRIDGE_BTC_CUSTODY); every other token on the EVM (Base) custody address.
+    // This lets a node offer BTC bridging without the EVM bridge enabled, and vice versa —
+    // previously a qBTC withdrawal was wrongly rejected whenever the EVM custody was unset.
+    let token_symbol = body.payload.as_ref()
+        .and_then(|p| p.get("tokenSymbol"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("qETH")
+        .to_string();
+    let is_qbtc = token_symbol.eq_ignore_ascii_case("qBTC");
+    let bridge_ready = if is_qbtc {
+        bridge_btc::btc_custody_address().is_some()
+    } else {
+        state.bridge_custody_address.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
+    };
+    if !bridge_ready {
         return Ok(Json(BridgeWithdrawResponse {
             success: false,
             tx_id: None,
-            error: Some("Bridge is not enabled (QV_BRIDGE_CUSTODY_ADDRESS not set)".to_string()),
+            error: Some(if is_qbtc {
+                "BTC bridge is not enabled (QV_BRIDGE_BTC_CUSTODY not set)".to_string()
+            } else {
+                "Bridge is not enabled (QV_BRIDGE_CUSTODY_ADDRESS not set)".to_string()
+            }),
         }));
     }
     if body.amount_units == 0 {
@@ -7483,12 +7502,6 @@ async fn bridge_withdraw(
     if let Err(e) = check_withdraw_guardrails(body.amount_units) {
         return Ok(Json(BridgeWithdrawResponse { success: false, tx_id: None, error: Some(e) }));
     }
-
-    let token_symbol = body.payload.as_ref()
-        .and_then(|p| p.get("tokenSymbol"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("qETH")
-        .to_string();
 
     // Prefer signed payload (client-side signing) over raw private key
     let tx_result = if let (Some(signature), Some(payload)) = (&body.signature, &body.payload) {
