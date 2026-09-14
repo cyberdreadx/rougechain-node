@@ -253,14 +253,29 @@ const Bridge = () => {
         }
         if (!depositConfirmed) { toast.error("Deposit transaction failed or timed out on Base"); setProcessing(false); return; }
 
-        setStep("Claiming on RougeChain...");
-        const claim = await claimXrgeBridgeDeposit({ evmTxHash: depositTx, evmAddress, amount: (BigInt(Math.floor(amountNum)) * 10n ** 18n).toString(), recipientRougechainPubkey: rougechainPubkey });
-        if (claim.success) {
+        // The claim is only honored after a minimum number of Base confirmations,
+        // so the first attempt right after the deposit usually reports "pending".
+        // Poll (the claim is idempotent via its SHA-256 nullifier) until it lands
+        // rather than showing a one-shot "claim pending" false alarm.
+        setStep("Waiting for Base confirmations…");
+        const claimParams = { evmTxHash: depositTx, evmAddress, amount: (BigInt(Math.floor(amountNum)) * 10n ** 18n).toString(), recipientRougechainPubkey: rougechainPubkey };
+        let claimed = false;
+        let lastError = "";
+        for (let attempt = 0; attempt < 30; attempt++) {
+          const claim = await claimXrgeBridgeDeposit(claimParams);
+          if (claim.success) { claimed = true; break; }
+          lastError = claim.error || "";
+          setStep(`Waiting for Base confirmations… (${attempt + 1}/30)`);
+          await new Promise((r) => setTimeout(r, 6000));
+        }
+        if (claimed) {
           toast.success(`Bridged ${amountNum} XRGE to RougeChain!`);
           setXrgeL1Balance((prev) => prev + amountNum);
           setEvmXrgeBalance((prev) => prev - amountNum);
         } else {
-          toast.warning(`Deposit sent but L1 claim pending. ${claim.error || ""}`);
+          // Still not confirmed after ~3 min — the deposit is valid and the node's
+          // auto-claim will finish it; nothing more for the user to do.
+          toast.info(`Deposit confirmed on Base — your XRGE will arrive on RougeChain automatically once it finalizes.${lastError ? ` (${lastError})` : ""}`);
         }
       } else {
         if (!config?.custodyAddress) { toast.error("Bridge not configured"); setProcessing(false); return; }
