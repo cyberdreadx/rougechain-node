@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "relayer": "tsx scripts/bridge-relayer.ts"
+    "relayer": "tsx scripts/bridge-relayer.ts",
+    "relayer:btc": "tsx scripts/btc-bridge-relayer.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -47,6 +48,7 @@
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
     "@scure/bip39": "^2.2.0",
+    "@scure/btc-signer": "^1.8.1",
     "@supabase/supabase-js": "^2.97.0",
     "@tanstack/react-query": "^5.83.0",
     "class-variance-authority": "^0.7.1",

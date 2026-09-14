@@ -14,6 +14,7 @@ mod rollup;
 mod websocket;
 mod jsonrpc;
 mod indexer;
+mod bridge_btc;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -832,6 +833,9 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/bridge/withdrawals/:tx_id", delete(bridge_withdrawal_fulfill))
         .route("/api/bridge/withdrawals/:tx_id/failure", post(bridge_withdrawal_report_failure))
         .route("/api/bridge/withdrawals/:tx_id/refund", post(bridge_withdrawal_refund))
+        .route("/api/bridge/btc/claim", post(bridge_btc_claim))
+        .route("/api/bridge/btc/withdrawals", get(bridge_btc_withdrawals))
+        .route("/api/bridge/btc/withdrawals/:tx_id", delete(bridge_btc_withdrawal_fulfill))
         // XRGE bridge endpoints
         .route("/api/bridge/xrge/config", get(xrge_bridge_config))
         .route("/api/bridge/xrge/claim", post(xrge_bridge_claim))
@@ -6716,6 +6720,13 @@ struct BridgeConfigResponse {
     /// clients must treat that as "unknown network" and refuse to bridge.
     chain_id: Option<u64>,
     supported_tokens: Vec<String>,
+    /// Bitcoin custody address to send BTC deposits to (with an OP_RETURN recipient).
+    /// None when the BTC bridge is not configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    btc_custody_address: Option<String>,
+    /// Bitcoin network the BTC bridge is on ("mainnet"/"testnet"). None when not configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    btc_network: Option<String>,
 }
 
 /// The Base chain the bridge is configured to talk to. Fail-safe by design:
@@ -6912,11 +6923,25 @@ async fn bridge_config(State(state): State<AppState>) -> Json<BridgeConfigRespon
     // if a custody address is present.
     let enabled = custody_ok && chain_id.is_some();
     let custody_address = if enabled { state.bridge_custody_address.clone() } else { None };
+
+    // The BTC bridge is independent of the Base (EVM) bridge: it only needs a Bitcoin custody
+    // address configured. Advertise "BTC" and the custody address only when that is set.
+    let btc_custody_address = bridge_btc::btc_custody_address();
+    let mut supported_tokens = vec!["ETH".to_string(), "USDC".to_string()];
+    let btc_network = if btc_custody_address.is_some() {
+        supported_tokens.push("BTC".to_string());
+        Some(bridge_btc::btc_network())
+    } else {
+        None
+    };
+
     Json(BridgeConfigResponse {
         enabled,
         custody_address,
         chain_id,
-        supported_tokens: vec!["ETH".to_string(), "USDC".to_string()],
+        supported_tokens,
+        btc_custody_address,
+        btc_network,
     })
 }
 
@@ -7562,9 +7587,10 @@ async fn bridge_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdra
     Json(BridgeWithdrawalsResponse {
         withdrawals: list
             .into_iter()
-            // The ETH relayer must not pick up XRGE withdrawals — those are served
-            // by /api/bridge/xrge/withdrawals and released via the XRGE vault.
-            .filter(|w| !is_xrge_withdrawal(w))
+            // The ETH relayer must not pick up XRGE or qBTC withdrawals — those are served by
+            // /api/bridge/xrge/withdrawals and /api/bridge/btc/withdrawals and paid on their
+            // own chains. Paying a Bitcoin withdrawal as native ETH would be catastrophic.
+            .filter(|w| !is_xrge_withdrawal(w) && !is_btc_withdrawal(w))
             .map(|w| BridgeWithdrawalItem {
                 tx_id: w.tx_id,
                 evm_address: w.evm_address,
@@ -7724,6 +7750,224 @@ async fn bridge_withdrawal_fulfill(
         return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout not verified: {}", e)) });
     }
     match state.bridge_withdraw_store.mark_fulfilled(&tx_id, &payout_hash) {
+        Ok(true) => Json(BridgeFulfillResponse { success: true, error: None }),
+        Ok(false) => Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found or already fulfilled".to_string()) }),
+        Err(e) => Json(BridgeFulfillResponse { success: false, error: Some(e) }),
+    }
+}
+
+// ============================================
+// BTC Bridge endpoints (Bitcoin <-> RougeChain L1)
+// ============================================
+//
+// BTC → qBTC: user sends BTC to the custody address with an OP_RETURN carrying their
+// RougeChain recipient; the daemon cross-checks two Esplora providers and mints qBTC (8-dec,
+// 1 unit = 1 satoshi). qBTC → BTC: user burns qBTC via /api/bridge/withdraw (tokenSymbol
+// "qBTC", evmAddress = BTC destination); an external capped BTC relayer pays it out and the
+// daemon verifies that Bitcoin payout before marking it fulfilled. The daemon holds no BTC key.
+
+/// True for a qBTC withdrawal, so the ETH relayer's list excludes it and the BTC relayer's
+/// list includes only it.
+fn is_btc_withdrawal(w: &PendingWithdrawal) -> bool {
+    w.token_symbol.eq_ignore_ascii_case("qBTC") || w.tx_id.starts_with("btc:")
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BtcBridgeClaimRequest {
+    btc_txid: String,
+    /// Optional expected recipient. When present it must equal the on-chain OP_RETURN
+    /// recipient, guarding against a UI that submits the wrong deposit.
+    recipient_rougechain_pubkey: Option<String>,
+}
+
+/// POST /api/bridge/btc/claim — verify a BTC deposit and mint qBTC to the OP_RETURN recipient.
+/// Idempotent: dedupe key is `btc:{txid}`. Permissionless — anyone may submit the txid; the
+/// mint always credits the recipient baked into the deposit's OP_RETURN, so this cannot be
+/// used to redirect someone else's funds.
+async fn bridge_btc_claim(
+    State(state): State<AppState>,
+    Json(body): Json<BtcBridgeClaimRequest>,
+) -> Json<BridgeClaimResponse> {
+    let custody = match bridge_btc::btc_custody_address() {
+        Some(c) => c,
+        None => {
+            return Json(BridgeClaimResponse {
+                success: false,
+                tx_id: None,
+                error: Some("BTC bridge is not enabled (QV_BRIDGE_BTC_CUSTODY not set)".to_string()),
+            })
+        }
+    };
+    let txid = body.btc_txid.trim().trim_start_matches("0x").to_lowercase();
+    let claim_key = format!("btc:{}", txid);
+
+    // Early dedupe — treat an already-claimed deposit as success so the frontend poll stops.
+    if state.bridge_claim_store.contains(&claim_key).await {
+        return Json(BridgeClaimResponse {
+            success: true,
+            tx_id: None,
+            error: Some("Deposit already claimed".to_string()),
+        });
+    }
+
+    let dep = match bridge_btc::verify_btc_deposit(&txid, &custody).await {
+        Ok(d) => d,
+        Err(e) => return Json(BridgeClaimResponse { success: false, tx_id: None, error: Some(e) }),
+    };
+
+    let recipient = normalize_recipient(&dep.recipient);
+    if recipient.is_empty() {
+        return Json(BridgeClaimResponse {
+            success: false,
+            tx_id: None,
+            error: Some("deposit OP_RETURN did not decode to a RougeChain recipient".to_string()),
+        });
+    }
+    if let Some(expected) = body.recipient_rougechain_pubkey.as_ref() {
+        let expected = normalize_recipient(expected);
+        if !expected.is_empty() && expected != recipient {
+            return Json(BridgeClaimResponse {
+                success: false,
+                tx_id: None,
+                error: Some("expected recipient does not match the deposit's OP_RETURN".to_string()),
+            });
+        }
+    }
+
+    // Atomically reserve the deposit before minting (persisted before the mint, fail-closed).
+    match state.bridge_claim_store.insert_if_absent(claim_key.clone()).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return Json(BridgeClaimResponse {
+                success: true,
+                tx_id: None,
+                error: Some("Deposit already claimed".to_string()),
+            })
+        }
+        Err(e) => {
+            return Json(BridgeClaimResponse {
+                success: false,
+                tx_id: None,
+                error: Some(format!("Failed to persist claim: {}", e)),
+            })
+        }
+    }
+
+    use quantum_vault_crypto::{bytes_to_hex, sha256};
+    use quantum_vault_types::encode_tx_v1;
+    match state.node.submit_bridge_mint_tx(&recipient, dep.sats, bridge_btc::QBTC_SYMBOL) {
+        Ok(tx) => {
+            let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
+            Json(BridgeClaimResponse { success: true, tx_id: Some(id), error: None })
+        }
+        Err(e) => {
+            let _ = state.bridge_claim_store.remove(&claim_key).await;
+            Json(BridgeClaimResponse { success: false, tx_id: None, error: Some(format!("mint failed: {}", e)) })
+        }
+    }
+}
+
+/// GET /api/bridge/btc/withdrawals — pending qBTC withdrawals for the BTC relayer to pay out.
+async fn bridge_btc_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdrawalsResponse> {
+    let list = state.bridge_withdraw_store.list_pending().unwrap_or_default();
+    Json(BridgeWithdrawalsResponse {
+        withdrawals: list
+            .into_iter()
+            .filter(is_btc_withdrawal)
+            .map(|w| BridgeWithdrawalItem {
+                tx_id: w.tx_id,
+                evm_address: w.evm_address,
+                amount_units: w.amount_units,
+                created_at: w.created_at,
+                owner_pubkey: w.owner_pubkey,
+                token_symbol: w.token_symbol,
+                status: w.status,
+                attempts: w.attempts,
+                last_error: w.last_error,
+            })
+            .collect(),
+    })
+}
+
+/// Extract the Bitcoin payout txid from a relayer fulfill body: top-level `{ "btcTxid": "…" }`
+/// (relayer-secret path) or inside a signed request's `payload`.
+fn btc_payout_txid_from_body(body: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    v.get("btcTxid")
+        .or_else(|| v.get("payout_tx_hash"))
+        .or_else(|| v.get("payload").and_then(|p| p.get("btcTxid")))
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// DELETE /api/bridge/btc/withdrawals/:tx_id — mark a qBTC withdrawal fulfilled, but only after
+/// verifying the Bitcoin payout on-chain (custody-funded, paid the recipient ≥ the owed sats,
+/// with enough confirmations). Auth mirrors the ETH path: relayer secret or node-signed body.
+async fn bridge_btc_withdrawal_fulfill(
+    State(state): State<AppState>,
+    Path(tx_id): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> Json<BridgeFulfillResponse> {
+    let relayer_auth = if let Some(ref secret) = state.bridge_relayer_secret {
+        headers
+            .get("x-bridge-relayer-secret")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| constant_time_eq(v, secret.as_str()))
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    if !relayer_auth {
+        match serde_json::from_str::<SignedTransactionRequest>(&body) {
+            Ok(signed_body) => {
+                if signed_body.public_key != state.node.get_node_public_key() {
+                    return Json(BridgeFulfillResponse {
+                        success: false,
+                        error: Some("unauthorized: only the node operator can fulfill withdrawals".to_string()),
+                    });
+                }
+                if let Err(e) = verify_signed_tx(&signed_body).await {
+                    return Json(BridgeFulfillResponse {
+                        success: false,
+                        error: Some(format!("signature verification failed: {}", e)),
+                    });
+                }
+            }
+            Err(_) => {
+                return Json(BridgeFulfillResponse {
+                    success: false,
+                    error: Some("unauthorized: provide x-bridge-relayer-secret header or signed body".to_string()),
+                });
+            }
+        }
+    }
+
+    let payout_txid = match btc_payout_txid_from_body(&body) {
+        Some(h) => h,
+        None => return Json(BridgeFulfillResponse { success: false, error: Some("missing btcTxid (Bitcoin payout txid) in body".to_string()) }),
+    };
+    let record = match state.bridge_withdraw_store.get(&tx_id) {
+        Ok(Some(w)) => w,
+        Ok(None) => return Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found".to_string()) }),
+        Err(e) => return Json(BridgeFulfillResponse { success: false, error: Some(e) }),
+    };
+    if !is_btc_withdrawal(&record) {
+        return Json(BridgeFulfillResponse { success: false, error: Some("not a qBTC withdrawal".to_string()) });
+    }
+    let custody = match bridge_btc::btc_custody_address() {
+        Some(c) => c,
+        None => return Json(BridgeFulfillResponse { success: false, error: Some("BTC bridge custody not configured".to_string()) }),
+    };
+    // qBTC: 1 unit == 1 satoshi, so the owed sats equal the burned unit count.
+    let min_sats = record.amount_units;
+    if let Err(e) = bridge_btc::verify_btc_payout(&payout_txid, &custody, &record.evm_address, min_sats).await {
+        return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout not verified: {}", e)) });
+    }
+    match state.bridge_withdraw_store.mark_fulfilled(&tx_id, &payout_txid) {
         Ok(true) => Json(BridgeFulfillResponse { success: true, error: None }),
         Ok(false) => Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found or already fulfilled".to_string()) }),
         Err(e) => Json(BridgeFulfillResponse { success: false, error: Some(e) }),

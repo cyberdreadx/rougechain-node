@@ -61,6 +61,11 @@ const SIX_DECIMAL_TOKENS = new Set(["qETH", "qUSDC"]);
 
 export function formatTokenAmount(amount: number, symbol?: string): string {
   if (symbol === "qETH") return formatQethForDisplay(amount);
+  if (symbol === "qBTC") {
+    // qBTC is 8 decimals: 1 unit = 1 satoshi. Do NOT reuse the 6-dec divisor.
+    const human = amount / 1e8;
+    return human > 0 ? parseFloat(human.toFixed(8)).toString() : "0";
+  }
   if (symbol === "qUSDC") {
     const human = amount / 1_000_000;
     return human >= 1

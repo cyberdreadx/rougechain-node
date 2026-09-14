@@ -1994,11 +1994,22 @@ impl L1Node {
                 ));
             }
         }
-        let evm = evm_address.trim().to_lowercase();
-        let evm = if evm.starts_with("0x") { evm } else { format!("0x{}", evm) };
-        if evm.len() != 42 || !evm[2..].chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err("Invalid EVM address".to_string());
-        }
+        // Destination address. qBTC withdrawals carry a Bitcoin address (case-sensitive, not an
+        // EVM hex address), so validate them on the BTC side and keep the original casing. All
+        // other tokens (qETH/qUSDC/XRGE) pay out on Base and require a 20-byte EVM address.
+        let evm = if token_upper == "QBTC" {
+            let dest = evm_address.trim().to_string();
+            let network = crate::bridge_btc::btc_network();
+            crate::bridge_btc::validate_btc_address(&dest, &network)?;
+            dest
+        } else {
+            let evm = evm_address.trim().to_lowercase();
+            let evm = if evm.starts_with("0x") { evm } else { format!("0x{}", evm) };
+            if evm.len() != 42 || !evm[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err("Invalid EVM address".to_string());
+            }
+            evm
+        };
         let keys = self.keys.lock().map_err(|_| "keys lock")?.clone();
         let mut tx = TxV1 {
             version: 1,

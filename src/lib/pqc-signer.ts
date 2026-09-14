@@ -667,7 +667,10 @@ export function createSignedBridgeWithdraw(
   amountUnits: number,
   evmAddress: string,
   tokenSymbol: string = "qETH",
-  fee: number = 0.1
+  fee: number = 0.1,
+  // qBTC withdrawals carry a Bitcoin address in evmAddress — it must be signed
+  // verbatim, not 0x-prefixed. Set false to skip EVM normalization.
+  normalizeEvm: boolean = true
 ): SignedTransaction {
   const payload: TransactionPayload = {
     type: "bridge_withdraw",
@@ -675,7 +678,7 @@ export function createSignedBridgeWithdraw(
     amount: amountUnits,
     fee,
     tokenSymbol,
-    evmAddress: evmAddress.startsWith("0x") ? evmAddress : `0x${evmAddress}`,
+    evmAddress: normalizeEvm && !evmAddress.startsWith("0x") ? `0x${evmAddress}` : evmAddress,
     timestamp: Date.now(),
     nonce: generateNonce(),
   };
