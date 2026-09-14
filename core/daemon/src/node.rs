@@ -6842,8 +6842,8 @@ mod live_amm_tests {
         let user = pqc_keygen();
         // Both nodes start from identical balances → applying the same block
         // yields the same root.
-        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
-        b.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        a.balances.lock().unwrap().insert(canon_addr(&user.public_key_hex), 100 * Q);
+        b.balances.lock().unwrap().insert(canon_addr(&user.public_key_hex), 100 * Q);
 
         // Node A mines a real signed transfer; the header commits its post-state.
         a.mempool.lock().unwrap().insert("t".to_string(), signed_transfer(&user, "bob", 40));
@@ -6866,10 +6866,10 @@ mod live_amm_tests {
         let (_da, a) = test_node();
         let (_db, b) = test_node();
         let user = pqc_keygen();
-        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        a.balances.lock().unwrap().insert(canon_addr(&user.public_key_hex), 100 * Q);
         // B diverges: same user balance, but an extra account A never had. B will
         // apply A's transfer successfully, but its root won't match A's.
-        b.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        b.balances.lock().unwrap().insert(canon_addr(&user.public_key_hex), 100 * Q);
         b.balances.lock().unwrap().insert("ghost".to_string(), 5 * Q);
 
         a.mempool.lock().unwrap().insert("t".to_string(), signed_transfer(&user, "bob", 40));
@@ -6905,8 +6905,8 @@ mod live_amm_tests {
         let (_db, _csb, b) = node_with_vm();
         let user = pqc_keygen();
         // Same starting balances on both, so post-apply state roots match.
-        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
-        b.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        a.balances.lock().unwrap().insert(canon_addr(&user.public_key_hex), 100 * Q);
+        b.balances.lock().unwrap().insert(canon_addr(&user.public_key_hex), 100 * Q);
 
         // A signed contract_deploy tx that CARRIES the bytecode (P3-3).
         let wasm = wat::parse_str(
@@ -6961,7 +6961,7 @@ mod live_amm_tests {
     fn contract_call_moves_real_xrge_and_conserves() {
         let (_da, _csa, mut a) = node_with_vm();
         let user = pqc_keygen();
-        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        a.balances.lock().unwrap().insert(canon_addr(&user.public_key_hex), 100 * Q);
 
         // A contract whose "pay" method transfers 1 XRGE (10^9 quanta) to "bob".
         let wasm = wat::parse_str(
@@ -7065,8 +7065,8 @@ mod live_amm_tests {
         let (_db, _csb, b) = node_with_vm();
         let user = pqc_keygen();
         // Identical starting balances so post-apply roots match.
-        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
-        b.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        a.balances.lock().unwrap().insert(canon_addr(&user.public_key_hex), 100 * Q);
+        b.balances.lock().unwrap().insert(canon_addr(&user.public_key_hex), 100 * Q);
 
         // Splitter: on "split", send 1 XRGE each to alice, bob, carol.
         let wasm = wat::parse_str(
@@ -7133,7 +7133,7 @@ mod live_amm_tests {
     fn contract_cannot_overspend_its_balance() {
         let (_da, _csa, mut a) = node_with_vm();
         let user = pqc_keygen();
-        a.balances.lock().unwrap().insert(user.public_key_hex.clone(), 100 * Q);
+        a.balances.lock().unwrap().insert(canon_addr(&user.public_key_hex), 100 * Q);
 
         // "overspend": tries to send 5 XRGE to bob — but the contract holds only 1.
         let wasm = wat::parse_str(
