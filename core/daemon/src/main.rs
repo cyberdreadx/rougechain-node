@@ -6749,6 +6749,23 @@ struct Erc20Deposit {
     block: u64,
 }
 
+/// Configured USDC token address on Base for bridge deposits. From `QV_BRIDGE_USDC_ADDRESS`,
+/// else a per-chain default keyed on `QV_BRIDGE_CHAIN_ID` (8453 Base mainnet, 84532 Sepolia).
+/// Returns None when USDC bridging is not configured, which disables the USDC claim path.
+fn bridge_usdc_address() -> Option<String> {
+    if let Ok(a) = std::env::var("QV_BRIDGE_USDC_ADDRESS") {
+        let a = a.trim().to_string();
+        if !a.is_empty() {
+            return Some(a);
+        }
+    }
+    match std::env::var("QV_BRIDGE_CHAIN_ID").ok()?.trim().parse::<u64>().ok()? {
+        8453 => Some("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913".to_string()),
+        84532 => Some("0x036cbd53842c5426634e7929541ec2318f3dcf7e".to_string()),
+        _ => None,
+    }
+}
+
 /// Find an ERC-20 `Transfer(from → to_addr)` log emitted by `token_addr` in the given tx
 /// receipt and return the amount + sender + block. This binds the credited amount to the
 /// ACTUAL on-chain transfer into the bridge, instead of trusting a caller-supplied amount
@@ -7032,22 +7049,6 @@ async fn bridge_claim(
     let tx_value = tx.get("value").and_then(|v| v.as_str()).unwrap_or("0x0");
     let value_wei = u128::from_str_radix(tx_value.trim_start_matches("0x"), 16).unwrap_or(0);
 
-    // SECURITY: only accept ETH sent DIRECTLY to the custody address. The previous
-    // ERC-4337/EntryPoint branch inferred the amount from a custody balance delta but then
-    // SKIPPED the sender + claim-signature checks, so anyone could reference someone else's
-    // deposit tx and mint qETH to an attacker-chosen recipient (deposit theft). Smart-wallet
-    // deposits are intentionally unsupported until they can be bound to a verified depositor
-    // (e.g. via the userOp sender or EIP-1271), and are not a rushed security fix.
-    if tx_to != custody {
-        return Ok(Json(BridgeClaimResponse {
-            success: false,
-            tx_id: None,
-            error: Some(format!(
-                "Transaction recipient mismatch: ETH must be sent directly to the custody address {} (got {}). Smart-wallet/EntryPoint deposits are not currently supported.",
-                custody, tx_to
-            )),
-        }));
-    }
     // Verify the deposit sender matches the claimant.
     if tx_from != evm_from {
         return Ok(Json(BridgeClaimResponse {
@@ -7071,13 +7072,6 @@ async fn bridge_claim(
             success: false,
             tx_id: None,
             error: Some("Invalid signature - sign the claim message with the wallet that sent the ETH".to_string()),
-        }));
-    }
-    if value_wei == 0 {
-        return Ok(Json(BridgeClaimResponse {
-            success: false,
-            tx_id: None,
-            error: Some("Transaction has zero value".to_string()),
         }));
     }
     let block_hex = tx.get("blockNumber").and_then(|v| v.as_str()).unwrap_or("");
@@ -7107,25 +7101,66 @@ async fn bridge_claim(
             }
         }
     }
-    // SECURITY: only ETH sent directly to custody is supported right now. USDC (and any
-    // other ERC-20) bridging is disabled until it verifies the Transfer log emitter and
-    // recipient against a configured token address — the previous path trusted the first
-    // Transfer log in the receipt, which any token contract can forge.
+    // Per-token verification: prove the deposit actually reached custody and derive the
+    // credited amount from the chain (never a caller-supplied value), then pick the mint.
     let bridge_token = body.token.as_deref().unwrap_or("ETH").to_uppercase();
-    if bridge_token != "ETH" {
+    let (amount_units, mint_symbol): (u64, &str) = if bridge_token == "ETH" {
+        // Native ETH must be sent DIRECTLY to custody. Smart-wallet/EntryPoint deposits stay
+        // unsupported until they can be bound to a verified depositor (deposit-theft guard).
+        if tx_to != custody {
+            return Ok(Json(BridgeClaimResponse {
+                success: false, tx_id: None,
+                error: Some(format!(
+                    "Transaction recipient mismatch: ETH must be sent directly to the custody address {} (got {}). Smart-wallet/EntryPoint deposits are not currently supported.",
+                    custody, tx_to
+                )),
+            }));
+        }
+        if value_wei == 0 {
+            return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some("Transaction has zero value".to_string()) }));
+        }
+        let units = (value_wei / 1_000_000_000_000) as u64; // 18-dec ETH -> 6-dec qETH
+        if units == 0 {
+            return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some("Amount too small (min 0.000001 ETH)".to_string()) }));
+        }
+        (units, "qETH")
+    } else if bridge_token == "USDC" {
+        // ERC-20 deposit: the tx `to` is the USDC contract. Verify it against the CONFIGURED
+        // USDC address and read the amount from the on-chain Transfer(-> custody) log emitted
+        // by that token — never a caller-supplied amount or an arbitrary Transfer log.
+        let usdc_addr = match bridge_usdc_address() {
+            Some(a) => a.to_lowercase(),
+            None => return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some("USDC bridging is not configured on this node".to_string()) })),
+        };
+        if tx_to != usdc_addr {
+            return Ok(Json(BridgeClaimResponse {
+                success: false, tx_id: None,
+                error: Some(format!("USDC must be transferred via the USDC token contract {} (got {})", usdc_addr, tx_to)),
+            }));
+        }
+        let dep = match parse_erc20_transfer_to(&client, &rpc_url, &tx_hash_hex, &usdc_addr, &custody).await {
+            Ok(d) => d,
+            Err(e) => return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some(format!("Could not verify USDC transfer to custody: {}", e)) })),
+        };
+        // Bind the credited amount to the depositor: the Transfer sender must be the claimant.
+        if dep.from.to_lowercase() != evm_from {
+            return Ok(Json(BridgeClaimResponse {
+                success: false, tx_id: None,
+                error: Some(format!("USDC transfer sender mismatch: expected {}, got {}", evm_from, dep.from)),
+            }));
+        }
+        // USDC and qUSDC are both 6-decimal -> 1:1 units.
+        let units = u64::try_from(dep.amount).unwrap_or(u64::MAX);
+        if units == 0 {
+            return Ok(Json(BridgeClaimResponse { success: false, tx_id: None, error: Some("USDC amount too small".to_string()) }));
+        }
+        (units, "qUSDC")
+    } else {
         return Ok(Json(BridgeClaimResponse {
             success: false, tx_id: None,
-            error: Some(format!("Only ETH bridging is currently supported ({} is temporarily unavailable during the security upgrade)", bridge_token)),
+            error: Some(format!("Unsupported bridge token: {}", bridge_token)),
         }));
-    }
-    let amount_units = (value_wei / 1_000_000_000_000) as u64;
-    if amount_units == 0 {
-        return Ok(Json(BridgeClaimResponse {
-            success: false, tx_id: None,
-            error: Some("Amount too small (min 0.000001 ETH)".to_string()),
-        }));
-    }
-    let mint_symbol = "qETH";
+    };
 
     // SECURITY: atomically reserve the tx hash right before minting. `insert_if_absent`
     // returns false if another concurrent claim already reserved it, which prevents the
