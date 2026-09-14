@@ -61,6 +61,9 @@ const Bridge = () => {
   const [evmTarget, setEvmTarget] = useState("");
   const [processing, setProcessing] = useState(false);
   const [step, setStep] = useState("");
+  const [claimTxHash, setClaimTxHash] = useState("");
+  const [claimToken, setClaimToken] = useState<"ETH" | "USDC">("USDC");
+  const [claimBusy, setClaimBusy] = useState(false);
 
   const [qethBalance, setQethBalance] = useState(0);
   const [qusdcBalance, setQusdcBalance] = useState(0);
@@ -203,6 +206,63 @@ const Bridge = () => {
 
   // ── Deposit: Base → RougeChain ────────────────────────────────
 
+  // Poll a bridge claim until Base confirmations are met (~6): the deposit is on
+  // Base immediately but the node only honors the claim after confirmations, so a
+  // single early claim would leave funds stuck. The signature (over tx hash +
+  // recipient) is stable, so it is reused across retries.
+  const pollBridgeClaim = async (
+    txHash: string,
+    evmSignature: string,
+    recipient: string,
+    token: "ETH" | "USDC",
+    onProgress?: (attempt: number) => void,
+  ): Promise<{ success: boolean; error?: string }> => {
+    let last = "";
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const claim = await claimBridgeDeposit({ evmTxHash: txHash, evmAddress, evmSignature, recipientRougechainPubkey: recipient, token });
+      if (claim.success) return { success: true };
+      last = claim.error || "";
+      onProgress?.(attempt + 1);
+      await new Promise((r) => setTimeout(r, 6000));
+    }
+    return { success: false, error: last || "timed out waiting for Base confirmations" };
+  };
+
+  // Recover a deposit already sent to custody (e.g. a claim that ran too early).
+  const handleClaimExisting = async () => {
+    const tx = claimTxHash.trim();
+    if (!/^0x[0-9a-fA-F]{64}$/.test(tx)) { toast.error("Enter a valid Base transaction hash (0x + 64 hex)"); return; }
+    if (!evmAddress) { toast.error("Connect the Base wallet that sent the deposit"); return; }
+    if (!rougechainPubkey) { toast.error("Connect your RougeChain wallet to receive the funds"); return; }
+    if (!evmProvider) { toast.error("No Base wallet provider available"); return; }
+    setClaimBusy(true);
+    try {
+      const recipient = rougechainPubkey;
+      const claimMsg = `RougeChain bridge claim\nTx: ${tx}\nRecipient: ${recipient}`;
+      const msgHex = "0x" + Array.from(new TextEncoder().encode(claimMsg)).map((b) => b.toString(16).padStart(2, "0")).join("");
+      let sig = "";
+      try {
+        sig = await evmProvider.request({ method: "personal_sign", params: [msgHex, evmAddress] }) as string;
+      } catch {
+        toast.error("Signature rejected — sign with the Base wallet that sent the deposit");
+        setClaimBusy(false);
+        return;
+      }
+      const claim = await pollBridgeClaim(tx, sig, recipient, claimToken);
+      if (claim.success) {
+        toast.success(`Claimed! ${claimToken === "USDC" ? "qUSDC" : "qETH"} minted to your RougeChain wallet.`);
+        setClaimTxHash("");
+        setTimeout(() => { refreshBalances(); refreshEvmBalances(); }, 3000);
+      } else {
+        toast.error(claim.error || "Claim failed");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Claim failed");
+    } finally {
+      setClaimBusy(false);
+    }
+  };
+
   const handleDeposit = async () => {
     if (!bridgeSafe) { toast.error("Network not confirmed — bridge disabled to protect your funds"); return; }
     if (!evmAddress) { toast.error("Connect your Base wallet first"); return; }
@@ -300,14 +360,14 @@ const Bridge = () => {
             // Smart contract wallets (Base wallet) may not support personal_sign — backend handles this
           }
 
-          setStep("Claiming qETH...");
-          const claim = await claimBridgeDeposit({ evmTxHash: txHash as string, evmAddress, evmSignature: sig, recipientRougechainPubkey: recipient, token: "ETH" });
+          setStep("Waiting for Base confirmations…");
+          const claim = await pollBridgeClaim(txHash as string, sig, recipient, "ETH", (a) => setStep(`Waiting for Base confirmations… (${a}/30)`));
           if (claim.success) {
-            toast.success(`Claimed ${amountNum} ETH as qETH!`);
+            toast.success(`Bridged ${amountNum} ETH → qETH!`);
             setQethBalance((prev) => prev + humanToQeth(amountNum));
             setEvmEthBalance((prev) => prev - amountNum);
           } else {
-            toast.error(claim.error || "Claim failed");
+            toast.info(`Deposit sent — qETH arrives once it confirms. If it doesn't, use "Claim an existing deposit" with tx ${(txHash as string).slice(0, 12)}… (${claim.error || ""})`);
           }
         } else {
           setStep("Sending USDC to bridge...");
@@ -328,14 +388,14 @@ const Bridge = () => {
             // Smart contract wallets may not support personal_sign
           }
 
-          setStep("Claiming qUSDC...");
-          const claim = await claimBridgeDeposit({ evmTxHash: txHash as string, evmAddress, evmSignature: sig, recipientRougechainPubkey: recipient, token: "USDC" });
+          setStep("Waiting for Base confirmations…");
+          const claim = await pollBridgeClaim(txHash as string, sig, recipient, "USDC", (a) => setStep(`Waiting for Base confirmations… (${a}/30)`));
           if (claim.success) {
-            toast.success(`Claimed ${amountNum} USDC as qUSDC!`);
+            toast.success(`Bridged ${amountNum} USDC → qUSDC!`);
             setQusdcBalance((prev) => prev + Math.round(amountNum * 1e6));
             setEvmUsdcBalance((prev) => prev - amountNum);
           } else {
-            toast.error(claim.error || "Claim failed");
+            toast.info(`Deposit sent — qUSDC arrives once it confirms. If it doesn't, use "Claim an existing deposit" with tx ${(txHash as string).slice(0, 12)}… (${claim.error || ""})`);
           }
         }
       }
@@ -712,6 +772,38 @@ const Bridge = () => {
                 }
               </p>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Claim an existing deposit already sent to custody */}
+        <Card className="border-border">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <ArrowDownToLine className="w-4 h-4 text-primary" />
+              <h3 className="text-sm font-semibold text-foreground">Claim an existing deposit</h3>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Sent ETH or USDC to the bridge but it didn't arrive? Paste the Base transaction hash to claim it — mints to your connected RougeChain wallet. Waits for confirmations automatically.
+            </p>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Base transaction hash</Label>
+              <Input value={claimTxHash} onChange={(e) => setClaimTxHash(e.target.value)} placeholder="0x…" className="font-mono text-xs" />
+            </div>
+            <div className="flex items-center gap-2">
+              {(["USDC", "ETH"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setClaimToken(t)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${claimToken === t ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground"}`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            <Button onClick={handleClaimExisting} disabled={claimBusy || !claimTxHash} className="w-full gap-2">
+              {claimBusy ? (<><Loader2 className="w-4 h-4 animate-spin" /> Claiming…</>) : (<>Claim deposit</>)}
+            </Button>
           </CardContent>
         </Card>
 
