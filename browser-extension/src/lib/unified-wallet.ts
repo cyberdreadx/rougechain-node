@@ -122,6 +122,28 @@ export async function encryptWallet(wallet: UnifiedWallet, password: string): Pr
     return JSON.stringify(result);
 }
 
+/**
+ * Export a wallet as the portable, ENCRYPTED `.pqcbackup` envelope used by rougechain.io:
+ * base64( salt(16) | iv(12) | ciphertext ), PBKDF2-600k + AES-256-GCM. This is what
+ * `decryptWallet` reads back (the `else` branch), and it round-trips to the website and
+ * Qwalla — unlike the internal { salt, iv, data } at-rest blob. Use this for user-facing
+ * backup export; never write the plaintext wallet (mnemonic + private keys) to a file.
+ */
+export async function exportWalletBackup(wallet: UnifiedWallet, password: string): Promise<string> {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await deriveKey(password, salt);
+    const data = new TextEncoder().encode(JSON.stringify(wallet));
+    const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data));
+    const combined = new Uint8Array(salt.length + iv.length + encrypted.length);
+    combined.set(salt, 0);
+    combined.set(iv, salt.length);
+    combined.set(encrypted, salt.length + iv.length);
+    let bin = "";
+    for (let i = 0; i < combined.length; i++) bin += String.fromCharCode(combined[i]);
+    return btoa(bin);
+}
+
 function hexToBytes(hex: string): Uint8Array {
     const bytes = new Uint8Array(hex.length / 2);
     for (let i = 0; i < bytes.length; i++) {
