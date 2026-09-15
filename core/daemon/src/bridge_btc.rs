@@ -73,10 +73,21 @@ struct EsploraStatus {
 #[derive(Deserialize)]
 struct EsploraTx {
     #[serde(default)]
+    txid: String,
+    #[serde(default)]
     vin: Vec<EsploraVin>,
     #[serde(default)]
     vout: Vec<EsploraVout>,
     status: EsploraStatus,
+}
+
+/// A deposit output paying a watched HD deposit address.
+#[derive(Debug, Clone)]
+pub struct AddressDeposit {
+    pub txid: String,
+    pub vout: u32,
+    pub sats: u64,
+    pub confirmations: u64,
 }
 
 // ── Configuration ──
@@ -179,6 +190,98 @@ async fn fetch_tip(client: &reqwest::Client, base: &str) -> Result<u64, String> 
     text.trim()
         .parse::<u64>()
         .map_err(|e| format!("bad tip height from {}: {}", base, e))
+}
+
+async fn fetch_address_txs(
+    client: &reqwest::Client,
+    base: &str,
+    address: &str,
+) -> Result<Vec<EsploraTx>, String> {
+    let url = format!("{}/address/{}/txs", base, address);
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("esplora {} unreachable: {}", base, e))?;
+    if !resp.status().is_success() {
+        return Err(format!("esplora {} returned HTTP {}", base, resp.status()));
+    }
+    resp.json::<Vec<EsploraTx>>()
+        .await
+        .map_err(|e| format!("bad address-txs JSON from {}: {}", base, e))
+}
+
+/// Collect the confirmed deposit outputs paying `address` from one provider's tx list.
+fn address_deposits_from(txs: &[EsploraTx], address: &str, tip: u64) -> Vec<AddressDeposit> {
+    let mut out = Vec::new();
+    for tx in txs {
+        if !tx.status.confirmed {
+            continue;
+        }
+        let bh = match tx.status.block_height {
+            Some(b) => b,
+            None => continue,
+        };
+        let confirmations = tip.saturating_sub(bh).saturating_add(1);
+        for (i, v) in tx.vout.iter().enumerate() {
+            if v.scriptpubkey_address.as_deref() == Some(address) && v.value > 0 {
+                out.push(AddressDeposit {
+                    txid: tx.txid.clone(),
+                    vout: i as u32,
+                    sats: v.value,
+                    confirmations,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Scan a watched HD deposit address for confirmed deposits, cross-checked across two providers.
+/// A deposit is returned only if BOTH providers report the same (txid, vout, value) AND it meets
+/// the confirmation depth. Fails closed if the second provider is unreachable (unless
+/// QV_BTC_ALLOW_SINGLE_PROVIDER=true) — the watcher simply retries next cycle, so a provider
+/// outage delays credit but never mints on a single unverified source.
+pub async fn scan_btc_address_deposits(address: &str) -> Result<Vec<AddressDeposit>, String> {
+    let min_conf = btc_min_confirmations();
+    let bases = esplora_bases();
+    let client = http_client();
+
+    let tip1 = fetch_tip(&client, &bases[0]).await?;
+    let txs1 = fetch_address_txs(&client, &bases[0], address).await?;
+    let primary = address_deposits_from(&txs1, address, tip1);
+    if primary.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Set of (txid, vout, value) the secondary provider also confirms.
+    let agreed: std::collections::HashSet<(String, u32, u64)> = if let Some(sec) = bases.get(1) {
+        match async {
+            let tip2 = fetch_tip(&client, sec).await?;
+            let txs2 = fetch_address_txs(&client, sec, address).await?;
+            Ok::<_, String>(address_deposits_from(&txs2, address, tip2))
+        }
+        .await
+        {
+            Ok(sec_deps) => sec_deps.into_iter().map(|d| (d.txid, d.vout, d.sats)).collect(),
+            Err(_) => {
+                if allow_single_provider() {
+                    primary.iter().map(|d| (d.txid.clone(), d.vout, d.sats)).collect()
+                } else {
+                    return Err("second Esplora provider unavailable for address scan".to_string());
+                }
+            }
+        }
+    } else {
+        primary.iter().map(|d| (d.txid.clone(), d.vout, d.sats)).collect()
+    };
+
+    Ok(primary
+        .into_iter()
+        .filter(|d| {
+            d.confirmations >= min_conf && agreed.contains(&(d.txid.clone(), d.vout, d.sats))
+        })
+        .collect())
 }
 
 // ── Script parsing ──

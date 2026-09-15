@@ -318,6 +318,42 @@ export async function claimBtcBridgeDeposit(params: BtcBridgeClaimParams): Promi
   };
 }
 
+export interface BtcDepositAddressResult {
+  success: boolean;
+  /** A unique bc1… Bitcoin address bound to the recipient (stable across calls). */
+  address?: string;
+  error?: string;
+}
+
+/**
+ * Request a unique Bitcoin deposit address bound to the recipient's rouge1…
+ * address. The daemon returns the same address for the same recipient, so BTC
+ * sent to it from ANY wallet (no OP_RETURN needed) is credited as qBTC once it
+ * confirms. If the daemon's address pool is still warming up it returns
+ * success:false with a "pool" error — callers should retry shortly.
+ */
+export async function getBtcDepositAddress(recipient: string): Promise<BtcDepositAddressResult> {
+  const baseUrl = getCoreApiBaseUrl();
+  if (!baseUrl) {
+    return { success: false, error: "No API configured" };
+  }
+  try {
+    const res = await fetch(`${baseUrl}/bridge/btc/deposit-address`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
+      body: JSON.stringify({ recipient }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return {
+      success: data.success === true,
+      address: typeof data.address === "string" ? data.address : undefined,
+      error: data.error,
+    };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "Failed to fetch deposit address" };
+  }
+}
+
 /** mempool.space tx link for a BTC payout/deposit txid (testnet-aware). */
 export function getMempoolTxUrl(txid: string, network?: "mainnet" | "testnet"): string {
   const base = network === "testnet"

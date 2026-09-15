@@ -38,6 +38,7 @@ use tower_http::cors::{Any, AllowOrigin, CorsLayer};
 
 use crate::websocket::WsBroadcaster;
 
+use quantum_vault_storage::bridge_btc_deposit_store::{BtcDepositStore, PoolEntry};
 use quantum_vault_storage::bridge_claim_store::BridgeClaimStore;
 use quantum_vault_storage::bridge_withdraw_store::{BridgeWithdrawStore, PendingWithdrawal, WithdrawalStatus};
 
@@ -187,6 +188,9 @@ struct AppState {
     base_sepolia_rpc: String,
     bridge_claim_store: Arc<BridgeClaimStore>,
     bridge_withdraw_store: std::sync::Arc<BridgeWithdrawStore>,
+    /// Watch-only registry of HD deposit addresses (pool + per-recipient assignments). The daemon
+    /// holds no Bitcoin key; the relayer derives these from its seed and registers them here.
+    btc_deposit_store: Arc<BtcDepositStore>,
     bridge_relayer_secret: Option<String>,
     xrge_bridge_vault: Option<String>,
     xrge_bridge_token: String,
@@ -428,6 +432,9 @@ async fn main() -> Result<(), String> {
     let bridge_claim_store = Arc::new(
         BridgeClaimStore::new(&data_dir_clone).map_err(|e| format!("bridge store: {}", e))?
     );
+    let btc_deposit_store = Arc::new(
+        BtcDepositStore::new(&data_dir_clone).map_err(|e| format!("btc deposit store: {}", e))?
+    );
     let app_state = AppState {
         node: node.clone(),
         auth,
@@ -444,6 +451,7 @@ async fn main() -> Result<(), String> {
         base_sepolia_rpc: args.base_sepolia_rpc.clone(),
         bridge_claim_store,
         bridge_withdraw_store,
+        btc_deposit_store,
         bridge_relayer_secret: std::env::var("BRIDGE_RELAYER_SECRET").ok().filter(|s| !s.is_empty()),
         admin_key: std::env::var("QV_ADMIN_KEY").ok().filter(|s| !s.is_empty()),
         xrge_bridge_vault: std::env::var("XRGE_BRIDGE_VAULT").ok().filter(|s| !s.is_empty()),
@@ -465,7 +473,57 @@ async fn main() -> Result<(), String> {
         replay_nonces: Arc::new(RwLock::new(HashMap::new())),
         groq_api_key: args.groq_api_key.clone(),
     };
-    
+
+    // BTC HD deposit watcher: poll each assigned deposit address, two-provider-verify incoming
+    // deposits, and mint qBTC to the bound recipient (dedupe per txid:vout). The daemon holds no
+    // Bitcoin key here — it only watches; the relayer sweeps the funds afterward.
+    {
+        let watch_node = app_state.node.clone();
+        let watch_deposits = app_state.btc_deposit_store.clone();
+        let watch_claims = app_state.bridge_claim_store.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                if bridge_btc::btc_custody_address().is_none() {
+                    continue; // BTC bridge not enabled
+                }
+                let assignments = match watch_deposits.list_assignments() {
+                    Ok(a) => a,
+                    Err(_) => continue,
+                };
+                for a in assignments {
+                    let deposits = match bridge_btc::scan_btc_address_deposits(&a.address).await {
+                        Ok(d) => d,
+                        Err(_) => continue, // provider hiccup — retry next cycle
+                    };
+                    for d in deposits {
+                        let key = format!("btcaddr:{}:{}", d.txid, d.vout);
+                        match watch_claims.insert_if_absent(key.clone()).await {
+                            Ok(true) => match watch_node.submit_bridge_mint_tx(
+                                &a.recipient,
+                                d.sats,
+                                bridge_btc::QBTC_SYMBOL,
+                            ) {
+                                Ok(_) => eprintln!(
+                                    "[btc-watch] minted {} qBTC to {} (deposit {}:{})",
+                                    d.sats, a.recipient, d.txid, d.vout
+                                ),
+                                Err(e) => {
+                                    eprintln!("[btc-watch] mint failed for {}: {} — rolling back", a.recipient, e);
+                                    let _ = watch_claims.remove(&key).await;
+                                }
+                            },
+                            Ok(false) => {} // already credited
+                            Err(e) => eprintln!("[btc-watch] dedupe persist error: {}", e),
+                        }
+                    }
+                    // Be polite to public Esplora between addresses.
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+            }
+        });
+    }
+
     // Backfill indexer on startup
     {
         let idx = app_state.indexer.clone();
@@ -836,6 +894,9 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/bridge/btc/claim", post(bridge_btc_claim))
         .route("/api/bridge/btc/withdrawals", get(bridge_btc_withdrawals))
         .route("/api/bridge/btc/withdrawals/:tx_id", delete(bridge_btc_withdrawal_fulfill))
+        .route("/api/bridge/btc/deposit-address", post(bridge_btc_deposit_address))
+        .route("/api/bridge/btc/deposit-pool", post(bridge_btc_deposit_pool))
+        .route("/api/bridge/btc/deposit-addresses", get(bridge_btc_deposit_addresses))
         // XRGE bridge endpoints
         .route("/api/bridge/xrge/config", get(xrge_bridge_config))
         .route("/api/bridge/xrge/claim", post(xrge_bridge_claim))
@@ -7984,6 +8045,134 @@ async fn bridge_btc_withdrawal_fulfill(
         Ok(true) => Json(BridgeFulfillResponse { success: true, error: None }),
         Ok(false) => Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found or already fulfilled".to_string()) }),
         Err(e) => Json(BridgeFulfillResponse { success: false, error: Some(e) }),
+    }
+}
+
+// ── HD deposit addresses: "send from any wallet, no OP_RETURN" ──
+//
+// The relayer derives a pool of receive addresses from its HD seed and registers them via
+// /deposit-pool (relayer-secret gated). A user calls /deposit-address to get their own unique
+// address bound to their RougeChain recipient; they send BTC from ANY wallet (no OP_RETURN); the
+// deposit watcher (spawned in main) two-provider-verifies the deposit and mints qBTC. The daemon
+// holds no Bitcoin key — it only assigns + watches; the relayer sweeps the funds into custody.
+
+fn relayer_authorized(state: &AppState, headers: &axum::http::HeaderMap) -> bool {
+    match &state.bridge_relayer_secret {
+        Some(secret) => headers
+            .get("x-bridge-relayer-secret")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| constant_time_eq(v, secret.as_str()))
+            .unwrap_or(false),
+        None => false,
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BtcDepositAddressRequest {
+    recipient: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BtcDepositAddressResponse {
+    success: bool,
+    address: Option<String>,
+    error: Option<String>,
+}
+
+/// POST /api/bridge/btc/deposit-address — hand the caller a unique BTC deposit address bound to
+/// their RougeChain recipient (stable per recipient). Public: the address credits the recipient
+/// the caller names, so it can never redirect anyone else's funds.
+async fn bridge_btc_deposit_address(
+    State(state): State<AppState>,
+    Json(body): Json<BtcDepositAddressRequest>,
+) -> Json<BtcDepositAddressResponse> {
+    if bridge_btc::btc_custody_address().is_none() {
+        return Json(BtcDepositAddressResponse {
+            success: false,
+            address: None,
+            error: Some("BTC bridge is not enabled".to_string()),
+        });
+    }
+    let recipient = normalize_recipient(&body.recipient);
+    if recipient.is_empty() {
+        return Json(BtcDepositAddressResponse {
+            success: false,
+            address: None,
+            error: Some("recipient (RougeChain address) is required".to_string()),
+        });
+    }
+    match state.btc_deposit_store.assign(&recipient) {
+        Ok(Some(addr)) => Json(BtcDepositAddressResponse { success: true, address: Some(addr), error: None }),
+        Ok(None) => Json(BtcDepositAddressResponse {
+            success: false,
+            address: None,
+            error: Some("No deposit address available yet — the relayer is topping up the pool, try again shortly.".to_string()),
+        }),
+        Err(e) => Json(BtcDepositAddressResponse { success: false, address: None, error: Some(e) }),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BtcDepositPoolRequest {
+    addresses: Vec<PoolEntryReq>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PoolEntryReq {
+    index: u32,
+    address: String,
+}
+
+/// POST /api/bridge/btc/deposit-pool — relayer registers freshly-derived pool addresses.
+/// Relayer-secret gated. Addresses are validated for the configured network before storing.
+async fn bridge_btc_deposit_pool(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<BtcDepositPoolRequest>,
+) -> Json<serde_json::Value> {
+    if !relayer_authorized(&state, &headers) {
+        return Json(serde_json::json!({"success": false, "error": "unauthorized"}));
+    }
+    let network = bridge_btc::btc_network();
+    let entries: Vec<PoolEntry> = body
+        .addresses
+        .into_iter()
+        .filter(|e| bridge_btc::validate_btc_address(&e.address, &network).is_ok())
+        .map(|e| PoolEntry { index: e.index, address: e.address })
+        .collect();
+    match state.btc_deposit_store.add_to_pool(entries) {
+        Ok(added) => Json(serde_json::json!({
+            "success": true, "added": added, "poolRemaining": state.btc_deposit_store.pool_remaining()
+        })),
+        Err(e) => Json(serde_json::json!({"success": false, "error": e})),
+    }
+}
+
+/// GET /api/bridge/btc/deposit-addresses — assigned (address, index, recipient) list for the
+/// relayer to sweep. Relayer-secret gated (exposes the address↔recipient map).
+async fn bridge_btc_deposit_addresses(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> Json<serde_json::Value> {
+    if !relayer_authorized(&state, &headers) {
+        return Json(serde_json::json!({"success": false, "error": "unauthorized"}));
+    }
+    match state.btc_deposit_store.list_assignments() {
+        Ok(list) => {
+            let items: Vec<serde_json::Value> = list
+                .into_iter()
+                .map(|a| serde_json::json!({"address": a.address, "index": a.index, "recipient": a.recipient}))
+                .collect();
+            Json(serde_json::json!({
+                "success": true, "addresses": items,
+                "poolRemaining": state.btc_deposit_store.pool_remaining(),
+                "maxIndex": state.btc_deposit_store.max_index()
+            }))
+        }
+        Err(e) => Json(serde_json::json!({"success": false, "error": e})),
     }
 }
 

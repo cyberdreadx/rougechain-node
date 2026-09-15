@@ -39,6 +39,8 @@
  */
 
 import * as btc from "@scure/btc-signer";
+import { HDKey } from "@scure/bip32";
+import { mnemonicToSeedSync } from "@scure/bip39";
 import { readFileSync, writeFileSync, existsSync, renameSync } from "fs";
 import { join } from "path";
 
@@ -77,6 +79,27 @@ const PRIV = btc.WIF(NETWORK).decode(CUSTODY_WIF);
 const CUSTODY_ADDRESS = btc.getAddress("wpkh", PRIV, NETWORK)!;
 // scriptPubKey for the custody address, needed as each input's witnessUtxo when signing.
 const CUSTODY_SCRIPT = btc.OutScript.encode(btc.Address(NETWORK).decode(CUSTODY_ADDRESS));
+
+// ── HD deposit wallet (per-user "send from any wallet" addresses) ──
+// When BRIDGE_BTC_HD_MNEMONIC is set, the relayer derives BIP84 receive addresses, keeps the
+// daemon's deposit pool topped up, and sweeps deposits into custody. The DAEMON never sees the
+// seed — it only gets the derived addresses.
+const HD_MNEMONIC = (process.env.BRIDGE_BTC_HD_MNEMONIC || "").trim();
+const HD_ENABLED = HD_MNEMONIC.split(/\s+/).filter(Boolean).length >= 12;
+const HD_COIN = IS_TESTNET ? 1 : 0;
+const POOL_TARGET = parseInt(process.env.DEPOSIT_POOL_TARGET || "20", 10);
+const SWEEP_MIN_SATS = BigInt(process.env.SWEEP_MIN_SATS || "2000");
+const HD_ACCOUNT: HDKey | null = HD_ENABLED
+  ? HDKey.fromMasterSeed(mnemonicToSeedSync(HD_MNEMONIC)).derive(`m/84'/${HD_COIN}'/0'`)
+  : null;
+
+/** Derive the receive address + spending key + script for deposit index i. */
+function hdAddress(index: number): { address: string; priv: Uint8Array; script: Uint8Array } {
+  const child = HD_ACCOUNT!.derive(`m/0/${index}`);
+  const address = btc.getAddress("wpkh", child.privateKey!, NETWORK)!;
+  const script = btc.OutScript.encode(btc.Address(NETWORK).decode(address));
+  return { address, priv: child.privateKey!, script };
+}
 
 // ── Idempotency state ──
 type StateEntry = { btcTxid?: string; broadcasting?: boolean; attempts: number; dest: string; sats: string };
@@ -303,6 +326,87 @@ async function processOne(w: { txId: string; evmAddress: string; amountUnits: nu
   }
 }
 
+// ── HD deposit pool + sweep ──
+type DepositAddr = { address: string; index: number; recipient: string };
+
+async function fetchDepositAddresses(): Promise<{ addresses: DepositAddr[]; poolRemaining: number; maxIndex: number }> {
+  const r = await fetch(`${CORE_API_URL}/api/bridge/btc/deposit-addresses`, {
+    headers: { "x-bridge-relayer-secret": RELAYER_SECRET },
+  });
+  const d = (await r.json()) as any;
+  if (!d.success) throw new Error(d.error || "deposit-addresses fetch failed");
+  return { addresses: d.addresses || [], poolRemaining: d.poolRemaining ?? 0, maxIndex: d.maxIndex ?? -1 };
+}
+
+/** Keep the daemon's deposit-address pool topped up. Registers derived addresses only — no BTC
+ *  moves — so this runs even in dry-run. */
+async function topUpPool() {
+  if (!HD_ENABLED) return;
+  try {
+    const { poolRemaining, maxIndex } = await fetchDepositAddresses();
+    const need = POOL_TARGET - poolRemaining;
+    if (need <= 0) return;
+    const start = (maxIndex ?? -1) + 1;
+    const addresses = Array.from({ length: need }, (_, k) => {
+      const index = start + k;
+      return { index, address: hdAddress(index).address };
+    });
+    const res = await fetch(`${CORE_API_URL}/api/bridge/btc/deposit-pool`, {
+      method: "POST",
+      headers: { "x-bridge-relayer-secret": RELAYER_SECRET, "Content-Type": "application/json" },
+      body: JSON.stringify({ addresses }),
+    });
+    const rd = (await res.json()) as any;
+    if (rd.success) console.log(`[pool] +${rd.added} deposit address(es) (pool now ${rd.poolRemaining})`);
+    else console.error(`[pool] top-up refused: ${rd.error}`);
+  } catch (e) {
+    console.error("[pool] top-up error:", (e as Error).message);
+  }
+}
+
+/** Sweep confirmed deposits from each assigned address into the custody pool. Broadcasts real
+ *  txs, so only runs when LIVE. The daemon mints from the deposit's tx history independently, so
+ *  sweeping before or after the mint is safe. */
+async function sweepDeposits() {
+  if (!HD_ENABLED || !LIVE) return;
+  let addrs: DepositAddr[];
+  try {
+    addrs = (await fetchDepositAddresses()).addresses;
+  } catch {
+    return;
+  }
+  for (const a of addrs) {
+    try {
+      const utxos = (await getUtxos(a.address)).filter((u) => u.status.confirmed);
+      const bal = utxos.reduce((s, u) => s + BigInt(u.value), 0n);
+      if (bal < SWEEP_MIN_SATS) continue;
+      const feeRate = await getFeeRate();
+      const fee = BigInt(Math.ceil((utxos.length * 68 + 31 + 11) * feeRate));
+      if (bal <= fee + DUST) continue;
+      const { priv, script } = hdAddress(a.index);
+      const tx = new btc.Transaction();
+      for (const u of utxos) {
+        tx.addInput({ txid: u.txid, index: u.vout, witnessUtxo: { script, amount: BigInt(u.value) } });
+      }
+      tx.addOutputAddress(CUSTODY_ADDRESS, bal - fee, NETWORK);
+      tx.sign(priv);
+      tx.finalize();
+      const b = await fetch(`${ESPLORA}/tx`, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain", "User-Agent": "RougeChain-btc-relayer/1.0" },
+        body: tx.hex,
+      });
+      const txid = (await b.text()).trim();
+      if (/^[0-9a-f]{64}$/.test(txid)) console.log(`[sweep] ${a.address} → custody: ${bal - fee} sats (${txid})`);
+      else console.error(`[sweep] ${a.address} broadcast rejected: ${txid}`);
+    } catch (e) {
+      console.error(`[sweep] ${a.address} error:`, (e as Error).message);
+    }
+  }
+}
+
+let lastHdRun = 0;
+
 async function loop() {
   const pending = await fetchPending();
   if (pending.length > 0) console.log(`[cycle] ${pending.length} pending qBTC withdrawal(s)`);
@@ -312,6 +416,12 @@ async function loop() {
     } catch (e) {
       console.error(`[cycle] ${w.txId} error:`, (e as Error).message);
     }
+  }
+  // HD pool top-up + sweep on a slower (~2 min) cadence to stay gentle on Esplora.
+  if (HD_ENABLED && Date.now() - lastHdRun > 120_000) {
+    lastHdRun = Date.now();
+    await topUpPool();
+    await sweepDeposits();
   }
 }
 
@@ -323,10 +433,17 @@ async function main() {
   console.log(`  Esplora:   ${ESPLORA}`);
   console.log(`  Daemon:    ${CORE_API_URL}`);
   console.log(`  Min confs: ${MIN_CONFIRMATIONS}   Cap: ${MAX_SATS === 0n ? "none" : MAX_SATS + " sats"}`);
+  console.log(`  HD deposits: ${HD_ENABLED ? `on (pool target ${POOL_TARGET})` : "off (set BRIDGE_BTC_HD_MNEMONIC)"}`);
   console.log(`  Mode:      ${LIVE ? "LIVE (broadcasting)" : "DRY-RUN (no broadcast)"}`);
   console.log("═".repeat(60));
   console.log(`\n⚠  Set QV_BRIDGE_BTC_CUSTODY=${CUSTODY_ADDRESS} on the daemon so it watches this exact address.\n`);
   if (!LIVE) console.log("ℹ  DRY-RUN: no Bitcoin will move. Verify on testnet, then set BTC_RELAYER_LIVE=true.\n");
+
+  // Prime the deposit pool immediately so the daemon can hand out addresses right away.
+  if (HD_ENABLED) {
+    await topUpPool();
+    lastHdRun = Date.now();
+  }
 
   let running = true;
   const stop = () => {

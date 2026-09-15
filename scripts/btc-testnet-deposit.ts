@@ -21,16 +21,18 @@ import * as btc from "@scure/btc-signer";
 import { readFileSync, writeFileSync, existsSync, chmodSync } from "fs";
 
 const NET_NAME = (process.env.QV_BRIDGE_BTC_NETWORK || "testnet").toLowerCase();
-if (NET_NAME !== "testnet") {
-  console.error("This helper is TESTNET-ONLY. Set QV_BRIDGE_BTC_NETWORK=testnet.");
+const IS_MAINNET = NET_NAME === "mainnet";
+if (IS_MAINNET && process.env.ALLOW_MAINNET !== "true") {
+  console.error("Refusing to run on mainnet without ALLOW_MAINNET=true — this moves REAL BTC.");
   process.exit(1);
 }
-const NETWORK = btc.TEST_NETWORK;
-const ESPLORA = (process.env.QV_BTC_ESPLORA_PRIMARY || "https://mempool.space/testnet/api").replace(/\/$/, "");
+const NETWORK = IS_MAINNET ? btc.NETWORK : btc.TEST_NETWORK;
+const ESPLORA = (process.env.QV_BTC_ESPLORA_PRIMARY
+  || (IS_MAINNET ? "https://mempool.space/api" : "https://mempool.space/testnet/api")).replace(/\/$/, "");
 const CUSTODY = process.env.CUSTODY || "";
 const RECIPIENT = process.env.RECIPIENT || "";
 const AMOUNT_SATS = BigInt(process.env.AMOUNT_SATS || "1000");
-const KEY_FILE = process.env.DEPOSIT_KEY_FILE || ".btc-deposit-key.testnet";
+const KEY_FILE = process.env.DEPOSIT_KEY_FILE || (IS_MAINNET ? ".btc-deposit-key.mainnet" : ".btc-deposit-key.testnet");
 const DUST = 546n;
 
 // Load or create the throwaway sender key.
@@ -114,9 +116,9 @@ async function main() {
   const body = (await r.text()).trim();
   if (!r.ok || !/^[0-9a-f]{64}$/.test(body)) throw new Error(`broadcast rejected: ${body}`);
   console.log(`\n✅ Broadcast! txid: ${body}`);
-  console.log(`   https://mempool.space/testnet/tx/${body}`);
+  console.log(`   ${IS_MAINNET ? "https://mempool.space" : "https://mempool.space/testnet"}/tx/${body}`);
   console.log(`\nOnce it has 1 confirmation, claim with:`);
-  console.log(`   curl -s -X POST http://localhost:5101/api/bridge/btc/claim -H 'content-type: application/json' -d '{"btcTxid":"${body}"}'`);
+  console.log(`   curl -s -X POST http://localhost:${IS_MAINNET ? "5100" : "5101"}/api/bridge/btc/claim -H 'content-type: application/json' -d '{"btcTxid":"${body}"}'`);
 }
 
 main().catch((e) => { console.error("ERROR:", e.message || e); process.exit(1); });

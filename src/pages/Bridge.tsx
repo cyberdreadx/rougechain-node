@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { ArrowDownToLine, ArrowUpFromLine, Loader2, Wallet, ArrowRightLeft, Coins, ArrowDown, Copy, Check, Bitcoin, ExternalLink } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, Loader2, Wallet, ArrowRightLeft, Coins, ArrowDown, Copy, Check, Bitcoin, ExternalLink, ChevronDown } from "lucide-react";
 import { toDataURL } from "qrcode";
 import { pubkeyToAddress } from "@/lib/address";
 import { DeloreanLoader } from "@/components/ui/delorean-loader";
@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from "sonner";
 import { getBaseChainConfig, getUsdcAddress, isKnownBaseChain, expectedBaseChainId, BASE_MAINNET_CHAIN_ID } from "@/lib/bridge";
 import { getActiveNetwork } from "@/lib/network";
@@ -15,6 +17,7 @@ import {
   getBridgeConfig,
   claimBridgeDeposit,
   claimBtcBridgeDeposit,
+  getBtcDepositAddress,
   getMempoolTxUrl,
   bridgeWithdraw,
   type BridgeConfig,
@@ -31,7 +34,7 @@ import { createSignedBridgeWithdraw, type TransactionPayload, generateNonce } fr
 import { signViaExtension, getRougeChainProvider } from "@/lib/extension-bridge";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { getWalletBalance } from "@/lib/pqc-wallet";
-import { qethToHuman, humanToQeth, formatQethForDisplay } from "@/hooks/use-eth-price";
+import { qethToHuman, humanToQeth, formatQethForDisplay, formatTokenAmount } from "@/hooks/use-eth-price";
 
 type BridgeDirection = "deposit" | "withdraw";
 type BridgeAsset = "ETH" | "USDC" | "XRGE" | "BTC";
@@ -80,7 +83,16 @@ const Bridge = () => {
   const [btcClaimBusy, setBtcClaimBusy] = useState(false);
   const [rougeAddress, setRougeAddress] = useState(""); // rouge1… address for OP_RETURN
   const [btcCustodyQr, setBtcCustodyQr] = useState<string | null>(null);
-  const [copied, setCopied] = useState<"custody" | "recipient" | null>(null);
+  const [copied, setCopied] = useState<"custody" | "recipient" | "deposit" | null>(null);
+
+  // BTC "send from any wallet" deposit: a unique bc1… address bound to the user.
+  const [btcDepositAddress, setBtcDepositAddress] = useState<string | null>(null);
+  const [btcDepositQr, setBtcDepositQr] = useState<string | null>(null);
+  const [btcAddrLoading, setBtcAddrLoading] = useState(false);
+  const [btcAddrError, setBtcAddrError] = useState<string | null>(null);
+  const [btcAdvancedOpen, setBtcAdvancedOpen] = useState(false);
+  const [btcDepositReceived, setBtcDepositReceived] = useState<number | null>(null); // raw sats credited while panel open
+  const btcBaselineRef = useRef<number | null>(null); // qBTC balance when the panel opened
 
   const [evmEthBalance, setEvmEthBalance] = useState(0);
   const [evmUsdcBalance, setEvmUsdcBalance] = useState(0);
@@ -165,12 +177,77 @@ const Bridge = () => {
     return () => { cancelled = true; };
   }, [config?.btcCustodyAddress]);
 
-  const copyText = (value: string, which: "custody" | "recipient", label: string) => {
+  const copyText = (value: string, which: "custody" | "recipient" | "deposit", label: string) => {
     navigator.clipboard.writeText(value);
     setCopied(which);
     toast.success(`${label} copied`);
     setTimeout(() => setCopied((c) => (c === which ? null : c)), 2000);
   };
+
+  // Fetch (or re-fetch) the user's unique bc1… BTC deposit address. Bound to the
+  // connected wallet's rouge1… address; the daemon returns the same address each
+  // call. A "pool" error means the address pool is still warming up — retry.
+  const loadBtcDepositAddress = async () => {
+    if (!rougeAddress) return;
+    setBtcAddrLoading(true);
+    setBtcAddrError(null);
+    try {
+      const res = await getBtcDepositAddress(rougeAddress);
+      if (res.success && res.address) {
+        setBtcDepositAddress(res.address);
+      } else {
+        setBtcDepositAddress(null);
+        const err = res.error || "";
+        setBtcAddrError(/pool/i.test(err)
+          ? "Setting up your deposit address, try again in a moment."
+          : (err || "Couldn't fetch a deposit address. Try again."));
+      }
+    } catch (e) {
+      setBtcDepositAddress(null);
+      setBtcAddrError(e instanceof Error ? e.message : "Couldn't fetch a deposit address. Try again.");
+    } finally {
+      setBtcAddrLoading(false);
+    }
+  };
+
+  // Auto-fetch the deposit address once the user is on BTC + Deposit with a
+  // connected RougeChain wallet.
+  useEffect(() => {
+    if (direction === "deposit" && asset === "BTC" && rougeAddress && !btcDepositAddress && !btcAddrLoading) {
+      loadBtcDepositAddress();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [direction, asset, rougeAddress]);
+
+  // Render a QR of the bitcoin: URI for the deposit address so users can scan it.
+  useEffect(() => {
+    if (!btcDepositAddress) { setBtcDepositQr(null); return; }
+    let cancelled = false;
+    toDataURL(`bitcoin:${btcDepositAddress}`, { width: 200, margin: 2, errorCorrectionLevel: "M" })
+      .then((url) => { if (!cancelled) setBtcDepositQr(url); })
+      .catch(() => { if (!cancelled) setBtcDepositQr(null); });
+    return () => { cancelled = true; };
+  }, [btcDepositAddress]);
+
+  // While the BTC deposit panel is open, snapshot the qBTC balance as a baseline
+  // and poll for an increase every ~20s. When it grows, the deposit landed.
+  useEffect(() => {
+    if (!(direction === "deposit" && asset === "BTC")) return;
+    btcBaselineRef.current = qbtcBalance;
+    setBtcDepositReceived(null);
+    const timer = setInterval(() => { refreshBalances(); }, 20000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [direction, asset]);
+
+  // Detect the credited qBTC once the balance rises above the panel-open baseline.
+  useEffect(() => {
+    if (!(direction === "deposit" && asset === "BTC")) return;
+    const baseline = btcBaselineRef.current;
+    if (baseline !== null && qbtcBalance > baseline) {
+      setBtcDepositReceived(qbtcBalance - baseline);
+    }
+  }, [qbtcBalance, direction, asset]);
 
   const refreshEvmBalances = async () => {
     if (!evmAddress || typeof evmProvider === "undefined") return;
@@ -244,6 +321,15 @@ const Bridge = () => {
     if (asset === "USDC") return (qusdcBalance / 1e6).toFixed(2) + " qUSDC";
     if (asset === "BTC") return (qbtcBalance / 1e8).toFixed(8) + " qBTC";
     return xrgeL1Balance.toLocaleString() + " XRGE";
+  };
+
+  // Readable L1 balance for an asset, using the shared display helpers (no new
+  // decimal logic): qBTC/qETH/qUSDC via formatTokenAmount, XRGE as-is.
+  const assetL1Balance = (id: BridgeAsset): string => {
+    if (id === "ETH") return formatTokenAmount(qethBalance, "qETH");
+    if (id === "USDC") return formatTokenAmount(qusdcBalance, "qUSDC");
+    if (id === "BTC") return formatTokenAmount(qbtcBalance, "qBTC");
+    return xrgeL1Balance.toLocaleString();
   };
 
   const currentAsset = ASSETS.find(a => a.id === asset)!;
@@ -727,130 +813,177 @@ const Bridge = () => {
 
             <div className="p-5 space-y-5">
 
-              {/* Asset selector */}
-              <div className="flex gap-2">
-                {visibleAssets.map(a => {
-                  let balLabel: string;
-                  if (direction === "deposit") {
-                    // BTC lives on the Bitcoin network — no injected balance to read.
-                    if (a.id === "BTC") {
-                      balLabel = "manual";
-                    } else {
-                      const evmBal = a.id === "ETH" ? evmEthBalance
-                        : a.id === "USDC" ? evmUsdcBalance
-                        : evmXrgeBalance;
-                      balLabel = evmAddress
-                        ? evmBal.toLocaleString(undefined, { maximumFractionDigits: a.id === "USDC" ? 2 : 6 }) + " " + a.label
-                        : "—";
-                    }
-                  } else {
-                    balLabel = a.id === "ETH" ? formatQethForDisplay(qethBalance) + " qETH"
-                      : a.id === "USDC" ? (qusdcBalance / 1e6).toFixed(2) + " qUSDC"
-                      : a.id === "BTC" ? (qbtcBalance / 1e8).toFixed(8) + " qBTC"
-                      : xrgeL1Balance.toLocaleString() + " XRGE";
-                  }
-                  return (
-                    <button
-                      key={a.id}
-                      onClick={() => setAsset(a.id)}
-                      className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 rounded-lg text-sm font-medium transition-all ${asset === a.id ? "bg-primary text-primary-foreground shadow-sm" : "bg-muted/50 text-muted-foreground hover:bg-muted"}`}
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <span>{a.icon}</span>
-                        {a.label}
-                      </div>
-                      <span className={`text-xs font-normal truncate max-w-full px-1 ${asset === a.id ? "text-primary-foreground/70" : "text-muted-foreground/60"}`}>
-                        {balLabel}
-                      </span>
-                    </button>
-                  );
-                })}
+              {/* Asset selector — dropdown showing each asset's readable L1 balance */}
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Asset</Label>
+                <Select value={asset} onValueChange={(v) => setAsset(v as BridgeAsset)}>
+                  <SelectTrigger className="w-full h-12">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {visibleAssets.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        <span className="flex items-center gap-2">
+                          <span className="w-4 text-center">{a.icon}</span>
+                          <span className="font-medium">{a.l1Label}</span>
+                          <span className="text-muted-foreground">— {assetL1Balance(a.id)}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
-              {/* ── BTC deposit is manual (no wallet send): OP_RETURN + txid ── */}
+              {/* ── BTC deposit: send from any wallet (no OP_RETURN) ── */}
               {direction === "deposit" && asset === "BTC" && (
                 <div className="space-y-4">
-                  {/* Step 1: send BTC to custody */}
-                  <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/15 text-primary text-xs font-semibold">1</span>
-                      <span className="text-sm font-medium text-foreground">Send BTC to the custody address</span>
+                  {!rougechainPubkey ? (
+                    <div className="rounded-xl bg-muted/30 border border-border/50 p-4 text-sm text-muted-foreground text-center">
+                      Connect your RougeChain wallet to get your Bitcoin deposit address.
                     </div>
-                    {btcCustodyQr && (
-                      <div className="flex justify-center">
-                        <img src={btcCustodyQr} alt="Bitcoin custody address QR" className="w-40 h-40 rounded-lg bg-white p-2" />
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2 rounded-lg bg-background border border-border px-3 py-2">
-                      <code className="text-xs font-mono break-all flex-1 text-foreground">{config?.btcCustodyAddress ?? "—"}</code>
-                      <button
-                        type="button"
-                        onClick={() => config?.btcCustodyAddress && copyText(config.btcCustodyAddress, "custody", "Custody address")}
-                        className="shrink-0 p-1 rounded hover:bg-muted"
-                        title="Copy custody address"
-                      >
-                        {copied === "custody" ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-muted-foreground" />}
-                      </button>
+                  ) : btcDepositReceived !== null ? (
+                    <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-4 space-y-2 text-center">
+                      <Check className="w-8 h-8 mx-auto text-emerald-500" />
+                      <p className="text-sm font-medium text-foreground">
+                        Received — {formatTokenAmount(btcDepositReceived, "qBTC")} qBTC credited
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Your qBTC is now in your RougeChain wallet.
+                      </p>
                     </div>
-                    {config?.btcNetwork === "testnet" && (
-                      <p className="text-xs text-amber-500">Testnet — send testnet BTC only.</p>
-                    )}
-                  </div>
-
-                  {/* Step 2: OP_RETURN binding */}
-                  <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/15 text-primary text-xs font-semibold">2</span>
-                      <span className="text-sm font-medium text-foreground">Add an OP_RETURN with your RougeChain address</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      In the same transaction, paste this into your wallet's OP_RETURN / memo / data field. It binds the deposit to your wallet — without it the funds can't be credited.
-                    </p>
-                    <div className="flex items-center gap-2 rounded-lg bg-background border border-border px-3 py-2">
-                      <code className="text-xs font-mono break-all flex-1 text-foreground">{rougeAddress || "Connect your RougeChain wallet…"}</code>
-                      <button
-                        type="button"
-                        onClick={() => rougeAddress && copyText(rougeAddress, "recipient", "RougeChain address")}
-                        disabled={!rougeAddress}
-                        className="shrink-0 p-1 rounded hover:bg-muted disabled:opacity-40"
-                        title="Copy RougeChain address"
-                      >
-                        {copied === "recipient" ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-muted-foreground" />}
-                      </button>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      OP_RETURN is supported by wallets like Sparrow, Electrum, BlueWallet (advanced) and bitcoinjs. Custodial apps (Coinbase, Cash App) usually can't attach one — use an OP_RETURN-capable wallet for this deposit.
-                    </p>
-                  </div>
-
-                  {/* Step 3: claim by txid */}
-                  <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/15 text-primary text-xs font-semibold">3</span>
-                      <span className="text-sm font-medium text-foreground">Paste the Bitcoin txid to claim qBTC</span>
-                    </div>
-                    <Input
-                      placeholder="Bitcoin transaction id (64 hex characters)"
-                      value={btcTxid}
-                      onChange={(e) => setBtcTxid(e.target.value)}
-                      className="font-mono text-xs"
-                    />
-                    {btcClaimBusy && <DeloreanLoader text={step || "Waiting for Bitcoin confirmations…"} />}
-                    <Button
-                      onClick={handleBtcClaim}
-                      disabled={btcClaimBusy || !btcTxid.trim() || !rougechainPubkey}
-                      className="w-full h-12 text-base gap-2"
-                    >
-                      {btcClaimBusy ? (
-                        <><Loader2 className="w-4 h-4 animate-spin" /> {step || "Claiming…"}</>
-                      ) : (
-                        <><Bitcoin className="w-4 h-4" /> Claim qBTC</>
+                  ) : (
+                    <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-3">
+                      <span className="text-sm font-medium text-foreground">Your Bitcoin deposit address</span>
+                      {btcAddrLoading && <DeloreanLoader text="Fetching your deposit address…" />}
+                      {!btcAddrLoading && btcAddrError && (
+                        <div className="space-y-2">
+                          <p className="text-xs text-amber-500">{btcAddrError}</p>
+                          <Button variant="outline" size="sm" onClick={loadBtcDepositAddress}>
+                            Try again
+                          </Button>
+                        </div>
                       )}
-                    </Button>
-                    <p className="text-xs text-muted-foreground text-center">
-                      Verification waits for Bitcoin confirmations, so this can take a while. Claiming is idempotent — safe to re-paste the same txid later.
-                    </p>
-                  </div>
+                      {!btcAddrLoading && btcDepositAddress && (<>
+                        {btcDepositQr && (
+                          <div className="flex justify-center">
+                            <img src={btcDepositQr} alt="Bitcoin deposit address QR" className="w-40 h-40 rounded-lg bg-white p-2" />
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2 rounded-lg bg-background border border-border px-3 py-2">
+                          <code className="text-xs font-mono break-all flex-1 text-foreground">{btcDepositAddress}</code>
+                          <button
+                            type="button"
+                            onClick={() => copyText(btcDepositAddress, "deposit", "Deposit address")}
+                            className="shrink-0 p-1 rounded hover:bg-muted"
+                            title="Copy deposit address"
+                          >
+                            {copied === "deposit" ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-muted-foreground" />}
+                          </button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Send BTC from any wallet — any amount, no memo or tag needed. Your qBTC will appear automatically once the deposit confirms (~30–60 min on Bitcoin).
+                        </p>
+                        {config?.btcNetwork === "testnet" && (
+                          <p className="text-xs text-amber-500">Testnet — send testnet BTC only.</p>
+                        )}
+                      </>)}
+                    </div>
+                  )}
+
+                  {/* Advanced: legacy OP_RETURN deposit + manual claim by txid */}
+                  <Collapsible open={btcAdvancedOpen} onOpenChange={setBtcAdvancedOpen}>
+                    <CollapsibleTrigger className="flex items-center justify-between w-full text-xs text-muted-foreground hover:text-foreground transition-colors py-1">
+                      <span>Advanced: deposit with OP_RETURN</span>
+                      <ChevronDown className={`w-4 h-4 transition-transform ${btcAdvancedOpen ? "rotate-180" : ""}`} />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="space-y-4 pt-3">
+                      <p className="text-xs text-muted-foreground">
+                        For power users, or to recover a manual deposit already sent with an OP_RETURN binding.
+                      </p>
+
+                      {/* Step 1: send BTC to custody */}
+                      <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/15 text-primary text-xs font-semibold">1</span>
+                          <span className="text-sm font-medium text-foreground">Send BTC to the custody address</span>
+                        </div>
+                        {btcCustodyQr && (
+                          <div className="flex justify-center">
+                            <img src={btcCustodyQr} alt="Bitcoin custody address QR" className="w-40 h-40 rounded-lg bg-white p-2" />
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2 rounded-lg bg-background border border-border px-3 py-2">
+                          <code className="text-xs font-mono break-all flex-1 text-foreground">{config?.btcCustodyAddress ?? "—"}</code>
+                          <button
+                            type="button"
+                            onClick={() => config?.btcCustodyAddress && copyText(config.btcCustodyAddress, "custody", "Custody address")}
+                            className="shrink-0 p-1 rounded hover:bg-muted"
+                            title="Copy custody address"
+                          >
+                            {copied === "custody" ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-muted-foreground" />}
+                          </button>
+                        </div>
+                        {config?.btcNetwork === "testnet" && (
+                          <p className="text-xs text-amber-500">Testnet — send testnet BTC only.</p>
+                        )}
+                      </div>
+
+                      {/* Step 2: OP_RETURN binding */}
+                      <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/15 text-primary text-xs font-semibold">2</span>
+                          <span className="text-sm font-medium text-foreground">Add an OP_RETURN with your RougeChain address</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          In the same transaction, paste this into your wallet's OP_RETURN / memo / data field. It binds the deposit to your wallet — without it the funds can't be credited.
+                        </p>
+                        <div className="flex items-center gap-2 rounded-lg bg-background border border-border px-3 py-2">
+                          <code className="text-xs font-mono break-all flex-1 text-foreground">{rougeAddress || "Connect your RougeChain wallet…"}</code>
+                          <button
+                            type="button"
+                            onClick={() => rougeAddress && copyText(rougeAddress, "recipient", "RougeChain address")}
+                            disabled={!rougeAddress}
+                            className="shrink-0 p-1 rounded hover:bg-muted disabled:opacity-40"
+                            title="Copy RougeChain address"
+                          >
+                            {copied === "recipient" ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-muted-foreground" />}
+                          </button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          OP_RETURN is supported by wallets like Sparrow, Electrum, BlueWallet (advanced) and bitcoinjs. Custodial apps (Coinbase, Cash App) usually can't attach one — use an OP_RETURN-capable wallet for this deposit.
+                        </p>
+                      </div>
+
+                      {/* Step 3: claim by txid */}
+                      <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/15 text-primary text-xs font-semibold">3</span>
+                          <span className="text-sm font-medium text-foreground">Paste the Bitcoin txid to claim qBTC</span>
+                        </div>
+                        <Input
+                          placeholder="Bitcoin transaction id (64 hex characters)"
+                          value={btcTxid}
+                          onChange={(e) => setBtcTxid(e.target.value)}
+                          className="font-mono text-xs"
+                        />
+                        {btcClaimBusy && <DeloreanLoader text={step || "Waiting for Bitcoin confirmations…"} />}
+                        <Button
+                          onClick={handleBtcClaim}
+                          disabled={btcClaimBusy || !btcTxid.trim() || !rougechainPubkey}
+                          className="w-full h-12 text-base gap-2"
+                        >
+                          {btcClaimBusy ? (
+                            <><Loader2 className="w-4 h-4 animate-spin" /> {step || "Claiming…"}</>
+                          ) : (
+                            <><Bitcoin className="w-4 h-4" /> Claim qBTC</>
+                          )}
+                        </Button>
+                        <p className="text-xs text-muted-foreground text-center">
+                          Verification waits for Bitcoin confirmations, so this can take a while. Claiming is idempotent — safe to re-paste the same txid later.
+                        </p>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
                 </div>
               )}
 
