@@ -17,6 +17,7 @@ import { secureSwap } from "@/lib/secure-api";
 import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
 import { useXRGEPrice } from "@/hooks/use-xrge-price";
 import { formatUsd } from "@/lib/price-service";
+import { formatTokenAmount, humanToRaw, rawToHuman } from "@/hooks/use-eth-price";
 import { TokenIcon } from "@/components/ui/token-icon";
 import { useTokenMetadata } from "@/hooks/use-token-metadata";
 
@@ -133,7 +134,7 @@ const SwapWidget = ({ walletPublicKey, walletPrivateKey, onClose }: SwapWidgetPr
         body: JSON.stringify({
           token_in: tokenIn,
           token_out: tokenOut,
-          amount_in: Math.floor(amount),
+          amount_in: humanToRaw(amount, tokenIn),
         }),
       });
 
@@ -177,12 +178,12 @@ const SwapWidget = ({ walletPublicKey, walletPrivateKey, onClose }: SwapWidgetPr
         walletPrivateKey,
         tokenIn,
         tokenOut,
-        Math.floor(amount),
+        humanToRaw(amount, tokenIn),
         minOut
       );
 
       if (result.success) {
-        toast.success(`Swapped ${amount} ${tokenIn} → ~${quote.amount_out.toFixed(4)} ${tokenOut}`, {
+        toast.success(`Swapped ${amount} ${tokenIn} → ~${formatTokenAmount(quote.amount_out, tokenOut)} ${tokenOut}`, {
           description: "Signed securely on your device",
         });
         setAmountIn("");
@@ -206,7 +207,7 @@ const SwapWidget = ({ walletPublicKey, walletPrivateKey, onClose }: SwapWidgetPr
   };
 
   const tokenInData = tokens.find(t => t.symbol === tokenIn);
-  const insufficientBalance = tokenInData && parseFloat(amountIn || "0") > tokenInData.balance;
+  const insufficientBalance = tokenInData && parseFloat(amountIn || "0") > rawToHuman(tokenInData.balance, tokenIn);
 
   // Show cyberpunk loader when swapping
   if (loading) {
@@ -257,7 +258,7 @@ const SwapWidget = ({ walletPublicKey, walletPrivateKey, onClose }: SwapWidgetPr
               <Label>From</Label>
               {tokenInData && (
                 <span className="text-muted-foreground text-xs">
-                  Balance: {tokenInData.balance.toFixed(2)}
+                  Balance: {formatTokenAmount(tokenInData.balance, tokenIn)}
                 </span>
               )}
             </div>
@@ -314,7 +315,7 @@ const SwapWidget = ({ walletPublicKey, walletPrivateKey, onClose }: SwapWidgetPr
                 {quoteLoading ? (
                   <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
                 ) : quote ? (
-                  <span className="font-mono">{quote.amount_out.toFixed(4)}</span>
+                  <span className="font-mono">{formatTokenAmount(quote.amount_out, tokenOut)}</span>
                 ) : (
                   <span className="text-muted-foreground">0.00</span>
                 )}
