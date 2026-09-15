@@ -1628,12 +1628,25 @@ struct TokenMetadataResponse {
     mintable: bool,
     max_supply: Option<u64>,
     total_minted: u64,
+    /// Canonical token decimals (source of truth for display/amount conversion).
+    decimals: u8,
 }
 
 #[derive(Serialize)]
 struct AllTokensResponse {
     success: bool,
     tokens: Vec<TokenMetadataResponse>,
+}
+
+/// Canonical decimals for a token symbol — the single source of truth the chain exposes so
+/// clients stop hardcoding. Bridge tokens are fixed at the protocol level; user tokens are raw
+/// integers (0) until on-chain decimals are added to token metadata.
+fn token_decimals(symbol: &str) -> u8 {
+    match symbol.to_uppercase().as_str() {
+        "QBTC" => 8, // 1 unit = 1 satoshi
+        "QUSDC" | "QETH" => 6,
+        _ => 0, // XRGE + user-created tokens
+    }
 }
 
 async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensResponse>, StatusCode> {
@@ -1644,6 +1657,7 @@ async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensR
                 .into_iter()
                 .map(|t| TokenMetadataResponse {
                     success: true,
+                    decimals: token_decimals(&t.symbol),
                     symbol: t.symbol,
                     name: t.name,
                     creator: t.creator,
@@ -1677,6 +1691,7 @@ async fn get_token_metadata(
     match node.get_token_metadata(&symbol) {
         Ok(Some(meta)) => Ok(Json(serde_json::json!({
             "success": true,
+            "decimals": token_decimals(&meta.symbol),
             "symbol": meta.symbol,
             "name": meta.name,
             "creator": meta.creator,

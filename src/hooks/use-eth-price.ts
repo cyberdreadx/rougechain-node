@@ -60,12 +60,26 @@ export function formatQethForDisplay(units: number): string {
 const SIX_DECIMAL_TOKENS = new Set(["qETH", "qUSDC"]);
 
 /**
- * Decimals for RougeChain L1 bridge tokens — must match the divisors in formatTokenAmount.
- * qBTC = 8 (1 unit = 1 satoshi), qUSDC/qETH = 6, XRGE + user tokens = raw (0).
+ * Canonical token decimals. Prefers the daemon's authoritative value (populated into the cache
+ * from /api/tokens) so new/user tokens work automatically; falls back to the protocol-fixed
+ * bridge-token convention (qBTC=8, qUSDC/qETH=6), which never changes. XRGE + unknown = raw (0).
  */
+const tokenDecimalsCache: Record<string, number> = {};
+
+/** Populate the decimals cache from the daemon's /api/tokens (each token's `decimals`). */
+export function setTokenDecimalsCache(entries: Record<string, number | undefined | null>): void {
+  for (const [sym, dec] of Object.entries(entries)) {
+    if (typeof dec === "number" && Number.isFinite(dec) && dec >= 0 && dec <= 18) {
+      tokenDecimalsCache[sym.toUpperCase()] = dec;
+    }
+  }
+}
+
 export function l1TokenDecimals(symbol?: string): number {
-  if (symbol === "qBTC") return 8;
-  if (symbol === "qUSDC" || symbol === "qETH") return 6;
+  const key = (symbol || "").toUpperCase();
+  if (key in tokenDecimalsCache) return tokenDecimalsCache[key];
+  if (key === "QBTC") return 8;
+  if (key === "QUSDC" || key === "QETH") return 6;
   return 0;
 }
 
@@ -84,8 +98,12 @@ export function formatTokenAmount(amount: number, symbol?: string): string {
       ? parseFloat(human.toFixed(6)).toString()
       : "0.00";
   }
-  if (amount >= 1) return amount.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 0 });
-  if (amount > 0) return parseFloat(amount.toFixed(6)).toString();
+  // Unknown / user tokens (and XRGE at 0 decimals): apply the authoritative decimals so a new
+  // token with, say, 8 decimals isn't shown as a giant raw integer.
+  const dec = l1TokenDecimals(symbol);
+  const human = dec > 0 ? amount / 10 ** dec : amount;
+  if (human >= 1) return human.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 0 });
+  if (human > 0) return parseFloat(human.toFixed(Math.min(Math.max(dec, 6), 8))).toString();
   return "0";
 }
 
