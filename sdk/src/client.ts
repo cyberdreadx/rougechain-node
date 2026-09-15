@@ -1162,6 +1162,27 @@ class MessengerClient {
     return this.rc.submitTx("/v2/messenger/conversations", signed);
   }
 
+  /** Rename a group conversation (or clear its name by passing ""). Any participant may rename. */
+  async updateConversation(wallet: WalletKeys, conversationId: string, opts: { name?: string } = {}): Promise<ApiResponse> {
+    const signed = signRequest(wallet, {
+      conversationId,
+      name: opts.name,
+    });
+    return this.rc.submitTx("/v2/messenger/conversations/update", signed);
+  }
+
+  /**
+   * Add participants to an existing conversation. Any participant may add. Future messages
+   * encrypt to the new members automatically; they don't receive prior history.
+   */
+  async addParticipants(wallet: WalletKeys, conversationId: string, participantIds: string[]): Promise<ApiResponse> {
+    const signed = signRequest(wallet, {
+      conversationId,
+      participantIds,
+    });
+    return this.rc.submitTx("/v2/messenger/conversations/participants", signed);
+  }
+
   async getMessages(wallet: WalletKeys, conversationId: string): Promise<MessengerMessage[]> {
     const signed = signRequest(wallet, { conversationId });
     try {
