@@ -5820,6 +5820,14 @@ impl L1Node {
             .unwrap_or_default()
     }
 
+    pub fn rename_conversation(&self, conversation_id: &str, name: Option<String>) -> Result<Option<Conversation>, String> {
+        self.messenger_store.rename_conversation(conversation_id, name)
+    }
+
+    pub fn add_conversation_participants(&self, conversation_id: &str, new_ids: &[String]) -> Result<Option<Conversation>, String> {
+        self.messenger_store.add_participants(conversation_id, new_ids)
+    }
+
     pub fn mark_message_read(&self, message_id: &str) -> Result<MessengerMessage, String> {
         self.messenger_store.mark_message_read(message_id)
     }

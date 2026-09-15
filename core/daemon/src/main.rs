@@ -846,6 +846,8 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/messenger/wallets/register", post(register_messenger_wallet_signed))
         .route("/api/v2/messenger/conversations/list", post(get_conversations_signed))
         .route("/api/v2/messenger/conversations", post(create_conversation_signed))
+        .route("/api/v2/messenger/conversations/update", post(update_conversation_signed))
+        .route("/api/v2/messenger/conversations/participants", post(add_conversation_participants_signed))
         .route("/api/v2/messenger/conversations/delete", post(delete_conversation_signed))
         .route("/api/v2/messenger/messages/list", post(get_messages_signed))
         .route("/api/v2/messenger/messages", post(send_message_signed))
@@ -5077,6 +5079,106 @@ async fn create_conversation_signed(
     let conversation = state.node.create_conversation(&wallet.id, participant_ids, name, is_group)
         .map_err(|e| signed_internal(&e))?;
     Ok(Json(serde_json::json!({ "success": true, "conversation": conversation })))
+}
+
+/// Rename (or clear the name of) a conversation. Any existing participant may rename.
+async fn update_conversation_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let conversation_id = p.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    if conversation_id.is_empty() {
+        return Err(signed_bad("conversationId is required"));
+    }
+    if !is_conversation_participant(&state.node, &conversation_id, &authed_key) {
+        return Err(signed_err("Not a participant in this conversation"));
+    }
+
+    // `name` present (non-empty) sets it; absent or empty/whitespace clears it.
+    let name: Option<String> = match p.get("name").and_then(|v| v.as_str()) {
+        Some(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else if t.chars().count() > 100 {
+                return Err(signed_bad("Name too long (max 100 characters)"));
+            } else {
+                Some(t.to_string())
+            }
+        }
+        None => None,
+    };
+
+    let conv = state.node.rename_conversation(&conversation_id, name)
+        .map_err(|e| signed_internal(&e))?
+        .ok_or_else(|| signed_bad("Conversation not found"))?;
+
+    // Notify the other participants of the change.
+    let recipients: Vec<String> = state.node.get_conversation_participants(&conversation_id)
+        .into_iter().filter(|pk| pk != &authed_key).collect();
+    let label = conv.name.clone().unwrap_or_else(|| "the group".to_string());
+    state.push.notify_to(
+        recipients,
+        "Group updated",
+        &format!("Renamed to {}", label),
+        serde_json::json!({ "type": "conversation_update", "conversationId": conversation_id }),
+    );
+
+    Ok(Json(serde_json::json!({ "success": true, "conversation": conv })))
+}
+
+/// Add one or more participants to a conversation. Any existing participant may add. Future
+/// messages automatically encrypt to new members (per-recipient wrapped CEK); they don't get
+/// prior history — correct E2E behavior.
+async fn add_conversation_participants_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let conversation_id = p.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    if conversation_id.is_empty() {
+        return Err(signed_bad("conversationId is required"));
+    }
+    if !is_conversation_participant(&state.node, &conversation_id, &authed_key) {
+        return Err(signed_err("Not a participant in this conversation"));
+    }
+
+    let new_ids: Vec<String> = p.get("participantIds")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+    if new_ids.is_empty() {
+        return Err(signed_bad("participantIds is required"));
+    }
+
+    // Enforce the 50-participant cap on the resulting union.
+    let current = state.node.get_conversation_participants(&conversation_id);
+    let mut union: std::collections::HashSet<&str> = current.iter().map(|s| s.as_str()).collect();
+    for id in &new_ids { union.insert(id.as_str()); }
+    if union.len() > 50 {
+        return Err(signed_bad("Maximum 50 participants"));
+    }
+
+    let conv = state.node.add_conversation_participants(&conversation_id, &new_ids)
+        .map_err(|e| signed_internal(&e))?
+        .ok_or_else(|| signed_bad("Conversation not found"))?;
+
+    // Notify only the members that were actually newly added.
+    let added: Vec<String> = new_ids.into_iter().filter(|id| !current.iter().any(|c| c == id)).collect();
+    let label = conv.name.clone().unwrap_or_else(|| "a group chat".to_string());
+    state.push.notify_to(
+        added,
+        "Added to group",
+        &format!("You were added to {}", label),
+        serde_json::json!({ "type": "conversation_participant", "conversationId": conversation_id }),
+    );
+
+    Ok(Json(serde_json::json!({ "success": true, "conversation": conv })))
 }
 
 async fn get_messages_signed(
