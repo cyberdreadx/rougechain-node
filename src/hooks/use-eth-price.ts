@@ -59,6 +59,16 @@ export function formatQethForDisplay(units: number): string {
 /** Tokens that use 6 decimal places (1 human unit = 1,000,000 raw units) */
 const SIX_DECIMAL_TOKENS = new Set(["qETH", "qUSDC"]);
 
+/**
+ * Decimals for RougeChain L1 bridge tokens — must match the divisors in formatTokenAmount.
+ * qBTC = 8 (1 unit = 1 satoshi), qUSDC/qETH = 6, XRGE + user tokens = raw (0).
+ */
+export function l1TokenDecimals(symbol?: string): number {
+  if (symbol === "qBTC") return 8;
+  if (symbol === "qUSDC" || symbol === "qETH") return 6;
+  return 0;
+}
+
 export function formatTokenAmount(amount: number, symbol?: string): string {
   if (symbol === "qETH") return formatQethForDisplay(amount);
   if (symbol === "qBTC") {
@@ -89,13 +99,13 @@ export function isSixDecimalToken(symbol?: string): boolean {
 }
 
 export function rawToHuman(amount: number, symbol?: string): number {
-  if (isSixDecimalToken(symbol)) return amount / 1_000_000;
-  return amount;
+  const d = l1TokenDecimals(symbol);
+  return d > 0 ? amount / 10 ** d : amount;
 }
 
 export function humanToRaw(amount: number, symbol?: string): number {
-  if (isSixDecimalToken(symbol)) return Math.round(amount * 1_000_000);
-  return amount;
+  const d = l1TokenDecimals(symbol);
+  return d > 0 ? Math.round(amount * 10 ** d) : amount;
 }
 
 export function useETHPrice(pollInterval: number = 60_000) {

@@ -29,7 +29,7 @@ import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { secureCreatePool, secureAddLiquidity, secureRemoveLiquidity } from "@/lib/secure-api";
 import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
 import SwapWidget from "@/components/messenger/SwapWidget";
-import { formatTokenAmount } from "@/hooks/use-eth-price";
+import { formatTokenAmount, humanToRaw } from "@/hooks/use-eth-price";
 import { useTokenMetadata } from "@/hooks/use-token-metadata";
 
 interface Pool {
@@ -197,8 +197,8 @@ const Pools = () => {
         wallet.privateKey,
         newTokenA,
         newTokenB,
-        Math.floor(parseFloat(newAmountA)),
-        Math.floor(parseFloat(newAmountB))
+        humanToRaw(parseFloat(newAmountA), newTokenA),
+        humanToRaw(parseFloat(newAmountB), newTokenB)
       );
       
       if (result.success) {
@@ -234,8 +234,8 @@ const Pools = () => {
         wallet.publicKey,
         wallet.privateKey,
         selectedPool.pool_id,
-        Math.floor(parseFloat(addAmountA)),
-        Math.floor(parseFloat(addAmountB))
+        humanToRaw(parseFloat(addAmountA), selectedPool.token_a),
+        humanToRaw(parseFloat(addAmountB), selectedPool.token_b)
       );
       
       if (result.success) {
