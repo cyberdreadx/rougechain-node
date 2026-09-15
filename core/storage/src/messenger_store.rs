@@ -339,6 +339,15 @@ impl MessengerStore {
         Ok(conv)
     }
 
+    /// Fetch a single conversation by id (for e.g. resolving push-notification recipients).
+    pub fn get_conversation(&self, conversation_id: &str) -> Result<Option<Conversation>, String> {
+        let tree = self.conversations_tree()?;
+        match tree.get(conversation_id.as_bytes()).map_err(|e| e.to_string())? {
+            Some(v) => Ok(Some(serde_json::from_slice(&v).map_err(|e| e.to_string())?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn delete_conversation(&self, conversation_id: &str) -> Result<(), String> {
         let conv_tree = self.conversations_tree()?;
         let part_idx = self.participant_index_tree()?;

@@ -5809,6 +5809,17 @@ impl L1Node {
         self.messenger_store.add_message(message)
     }
 
+    /// Participant signing pubkeys for a conversation (used to target push notifications).
+    /// Returns empty on any error or unknown conversation.
+    pub fn get_conversation_participants(&self, conversation_id: &str) -> Vec<String> {
+        self.messenger_store
+            .get_conversation(conversation_id)
+            .ok()
+            .flatten()
+            .map(|c| c.participant_ids)
+            .unwrap_or_default()
+    }
+
     pub fn mark_message_read(&self, message_id: &str) -> Result<MessengerMessage, String> {
         self.messenger_store.mark_message_read(message_id)
     }

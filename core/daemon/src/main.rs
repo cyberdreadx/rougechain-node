@@ -15,6 +15,7 @@ mod websocket;
 mod jsonrpc;
 mod indexer;
 mod bridge_btc;
+mod push;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -216,6 +217,8 @@ struct AppState {
     replay_nonces: Arc<RwLock<HashMap<String, i64>>>,
     /// Groq API key for Quantum Bot proxy
     groq_api_key: Option<String>,
+    /// Fire-and-forget Expo push dispatcher (transfer / message / mail notifications)
+    push: push::PushDispatcher,
 }
 
 #[derive(Clone)]
@@ -435,6 +438,24 @@ async fn main() -> Result<(), String> {
     let btc_deposit_store = Arc::new(
         BtcDepositStore::new(&data_dir_clone).map_err(|e| format!("btc deposit store: {}", e))?
     );
+    // Expo push dispatcher — enabled by default; QV_PUSH_ENABLED=0/false turns it off. When
+    // enabled it spawns one background task that POSTs to Expo; call sites only enqueue.
+    let push_dispatcher = {
+        let enabled = std::env::var("QV_PUSH_ENABLED")
+            .map(|v| {
+                let v = v.trim().to_lowercase();
+                v != "0" && v != "false" && v != "off" && v != "no"
+            })
+            .unwrap_or(true);
+        if enabled {
+            eprintln!("[push] Expo push dispatcher enabled");
+            push::spawn(node.clone())
+        } else {
+            eprintln!("[push] Expo push dispatcher disabled (QV_PUSH_ENABLED)");
+            push::PushDispatcher::disabled()
+        }
+    };
+
     let app_state = AppState {
         node: node.clone(),
         auth,
@@ -472,6 +493,7 @@ async fn main() -> Result<(), String> {
         mine_notify: node.mine_notify(),
         replay_nonces: Arc::new(RwLock::new(HashMap::new())),
         groq_api_key: args.groq_api_key.clone(),
+        push: push_dispatcher,
     };
 
     // BTC HD deposit watcher: poll each assigned deposit address, two-provider-verify incoming
@@ -606,6 +628,7 @@ async fn main() -> Result<(), String> {
         let ws_bc = ws_broadcaster.clone();
         let idx_bc = app_state.indexer.clone();
         let ob_bc = app_state.order_book.clone();
+        let push_bc = app_state.push.clone();
         let mine_wake = node.mine_notify();
         let mine_interval = args.block_time_ms;
         tokio::spawn(async move {
@@ -661,6 +684,29 @@ async fn main() -> Result<(), String> {
                                         Ok(_) => eprintln!("[orders] Cancelled order {}", order_id),
                                         Err(e) => eprintln!("[orders] Cancel failed for {}: {}", order_id, e),
                                     }
+                                }
+                            }
+                            "transfer" => {
+                                // Notify the recipient that funds arrived. Recipient pubkey is the
+                                // same key their push token is registered under.
+                                if let Some(to) = tx.payload.to_pub_key_hex.as_deref() {
+                                    let amount = tx.payload.amount.unwrap_or(0);
+                                    let sym = tx.payload.token_symbol.as_deref().unwrap_or("XRGE");
+                                    let dec = token_decimals(sym) as i32;
+                                    let human = if dec > 0 {
+                                        let v = amount as f64 / 10f64.powi(dec);
+                                        // Trim trailing zeros for a clean "0.001" rather than "0.00100000".
+                                        format!("{}", v)
+                                    } else {
+                                        amount.to_string()
+                                    };
+                                    let body = format!("You received {} {}", human, sym);
+                                    push_bc.notify_to(
+                                        vec![to.to_string()],
+                                        "Received",
+                                        &body,
+                                        serde_json::json!({ "type": "transfer", "symbol": sym, "amount": amount }),
+                                    );
                                 }
                             }
                             _ => {}
@@ -4131,6 +4177,9 @@ async fn send_messenger_message(
         spoiler: body.get("spoiler").and_then(|v| v.as_bool()).unwrap_or(false),
     };
     let message = node.send_message(message).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let recipients: Vec<String> = state.node.get_conversation_participants(&message.conversation_id)
+        .into_iter().filter(|p| *p != message.sender_wallet_id).collect();
+    state.push.notify_to(recipients, "New message", "You received a new encrypted message", serde_json::json!({ "type": "message", "conversationId": message.conversation_id }));
     Ok(Json(serde_json::json!({ "success": true, "message": message })))
 }
 
@@ -4276,6 +4325,8 @@ async fn send_mail(
         attachment_encrypted: body.get("attachmentEncrypted").and_then(|v| v.as_str()).map(|s| s.to_string()),
     };
     let msg = state.node.send_mail(msg).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let recipients: Vec<String> = msg.to_wallet_ids.iter().filter(|w| **w != msg.from_wallet_id).cloned().collect();
+    state.push.notify_to(recipients, "New mail", "You received a new encrypted message", serde_json::json!({ "type": "mail", "id": msg.id }));
     Ok(Json(serde_json::json!({ "success": true, "message": msg })))
 }
 
@@ -4720,6 +4771,8 @@ async fn send_mail_signed(
         attachment_encrypted: p.get("attachmentEncrypted").and_then(|v| v.as_str()).map(|s| s.to_string()),
     };
     let msg = state.node.send_mail(msg).map_err(|e| signed_internal(&e))?;
+    let recipients: Vec<String> = msg.to_wallet_ids.iter().filter(|w| **w != msg.from_wallet_id).cloned().collect();
+    state.push.notify_to(recipients, "New mail", "You received a new encrypted message", serde_json::json!({ "type": "mail", "id": msg.id }));
     Ok(Json(serde_json::json!({ "success": true, "message": msg })))
 }
 
@@ -5015,6 +5068,10 @@ async fn send_message_signed(
         spoiler: p.get("spoiler").and_then(|v| v.as_bool()).unwrap_or(false),
     };
     let message = state.node.send_message(message).map_err(|e| signed_internal(&e))?;
+    // Notify every other participant (recipient pubkeys == push-store keys). authed_key is the sender.
+    let recipients: Vec<String> = state.node.get_conversation_participants(&message.conversation_id)
+        .into_iter().filter(|p| p != &authed_key).collect();
+    state.push.notify_to(recipients, "New message", "You received a new encrypted message", serde_json::json!({ "type": "message", "conversationId": message.conversation_id }));
     Ok(Json(serde_json::json!({ "success": true, "message": message })))
 }
 
