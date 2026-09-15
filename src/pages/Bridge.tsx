@@ -332,6 +332,16 @@ const Bridge = () => {
     return xrgeL1Balance.toLocaleString();
   };
 
+  // On deposit you're sending the SOURCE asset (ETH/USDC/XRGE on Base, BTC from any wallet),
+  // so show that balance — not the qToken you'll receive. BTC is sent from an external wallet
+  // the page can't read, so it shows no balance.
+  const assetSourceBalance = (id: BridgeAsset): string => {
+    if (id === "BTC" || !evmAddress) return "";
+    if (id === "ETH") return evmEthBalance.toFixed(4);
+    if (id === "USDC") return evmUsdcBalance.toFixed(2);
+    return evmXrgeBalance.toLocaleString();
+  };
+
   const currentAsset = ASSETS.find(a => a.id === asset)!;
 
   // Only offer BTC when the daemon actually configured the BTC bridge.
@@ -825,8 +835,11 @@ const Bridge = () => {
                       <SelectItem key={a.id} value={a.id}>
                         <span className="flex items-center gap-2">
                           <span className="w-4 text-center">{a.icon}</span>
-                          <span className="font-medium">{a.l1Label}</span>
-                          <span className="text-muted-foreground">— {assetL1Balance(a.id)}</span>
+                          <span className="font-medium">{direction === "deposit" ? a.label : a.l1Label}</span>
+                          {(() => {
+                            const bal = direction === "deposit" ? assetSourceBalance(a.id) : assetL1Balance(a.id);
+                            return bal ? <span className="text-muted-foreground">— {bal}</span> : null;
+                          })()}
                         </span>
                       </SelectItem>
                     ))}
