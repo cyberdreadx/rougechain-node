@@ -9,7 +9,7 @@ import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import SwapWidget from "@/components/messenger/SwapWidget";
-import { formatTokenAmount } from "@/hooks/use-eth-price";
+import { formatTokenAmount, l1TokenDecimals } from "@/hooks/use-eth-price";
 import { TokenIcon } from "@/components/ui/token-icon";
 import { useTokenMetadata } from "@/hooks/use-token-metadata";
 
@@ -173,10 +173,27 @@ const PoolDetail = () => {
     return () => clearInterval(interval);
   }, [fetchData]);
 
+  // The node reports prices as a RAW reserve ratio. Convert to a human price by the tokens'
+  // decimals gap, or a mixed-decimal pair (e.g. XRGE 0-dec / qUSDC 6-dec) shows a value 1e6 off.
+  const decA = l1TokenDecimals(pool?.token_a);
+  const decB = l1TokenDecimals(pool?.token_b);
+  const humanizePrice = (raw: number, isAinB: boolean) =>
+    raw * 10 ** (isAinB ? decA - decB : decB - decA);
+
+  // Prices span from big (XRGE per qUSDC ~ 546k) to tiny (qUSDC per XRGE ~ 0.0000018),
+  // so pick precision by magnitude instead of a fixed 6 dp that would round tiny to "0.000002".
+  const fmtPrice = (v: number) => {
+    if (!isFinite(v) || v === 0) return "0";
+    const abs = Math.abs(v);
+    if (abs >= 1) return v.toLocaleString(undefined, { maximumFractionDigits: 4 });
+    if (abs >= 0.001) return v.toFixed(6);
+    return v.toPrecision(4);
+  };
+
   const chartData = prices.map(p => ({
     time: formatTimeShort(p.timestamp),
     timestamp: p.timestamp,
-    price: chartToken === "a" ? p.price_a_in_b : p.price_b_in_a,
+    price: humanizePrice(chartToken === "a" ? p.price_a_in_b : p.price_b_in_a, chartToken === "a"),
     reserve_a: p.reserve_a,
     reserve_b: p.reserve_b,
   }));
@@ -184,7 +201,7 @@ const PoolDetail = () => {
   const currentPrice = chartData.length > 0
     ? chartData[chartData.length - 1].price
     : pool
-      ? (chartToken === "a" ? pool.reserve_b / pool.reserve_a : pool.reserve_a / pool.reserve_b)
+      ? humanizePrice(chartToken === "a" ? pool.reserve_b / pool.reserve_a : pool.reserve_a / pool.reserve_b, chartToken === "a")
       : 0;
 
   const priceChange = chartData.length > 1
@@ -308,7 +325,7 @@ const PoolDetail = () => {
               </div>
             </div>
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mt-2">
-              <span className="text-3xl font-bold font-mono">{currentPrice.toFixed(6)}</span>
+              <span className="text-3xl font-bold font-mono">{fmtPrice(currentPrice)}</span>
               <span className="text-sm text-muted-foreground">
                 {chartToken === "a" ? pool.token_b : pool.token_a} per {chartToken === "a" ? pool.token_a : pool.token_b}
               </span>
@@ -332,7 +349,7 @@ const PoolDetail = () => {
                   <YAxis
                     stroke="hsl(var(--muted-foreground))"
                     tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-                    tickFormatter={(v) => v.toFixed(4)}
+                    tickFormatter={(v) => fmtPrice(v)}
                   />
                   <Tooltip
                     contentStyle={{
