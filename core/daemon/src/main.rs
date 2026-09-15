@@ -1695,6 +1695,25 @@ fn token_decimals(symbol: &str) -> u8 {
     }
 }
 
+/// The chain's built-in tokens: native XRGE + the bridge assets. These have no on-chain metadata
+/// row (they exist implicitly as balances), so the token APIs synthesize them here — otherwise the
+/// directory could only ever show user-created tokens (of which there are none) and clients are
+/// forced to hardcode. Registry (user-created) metadata always takes precedence over these.
+struct CanonicalToken {
+    symbol: &'static str,
+    name: &'static str,
+    description: &'static str,
+}
+
+fn canonical_tokens() -> &'static [CanonicalToken] {
+    &[
+        CanonicalToken { symbol: "XRGE", name: "XRGE", description: "Native token of RougeChain — the quantum-resistant (ML-DSA-65) L1." },
+        CanonicalToken { symbol: "qBTC", name: "qBTC", description: "Quantum-wrapped Bitcoin — bridged 1:1 via the RougeChain BTC bridge. 8 decimals (1 unit = 1 satoshi)." },
+        CanonicalToken { symbol: "qETH", name: "qETH", description: "Quantum-wrapped Ethereum — bridged via the RougeChain EVM bridge. 6 decimals." },
+        CanonicalToken { symbol: "qUSDC", name: "qUSDC", description: "Quantum-wrapped USDC — bridged via the RougeChain EVM bridge. 6 decimals." },
+    ]
+}
+
 async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensResponse>, StatusCode> {
     let node = &state.node;
     match node.get_all_token_metadata() {
@@ -1720,9 +1739,36 @@ async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensR
                     total_minted: t.total_minted,
                 })
                 .collect();
+            // Prepend the built-in native + bridge tokens that aren't already registered as
+            // user metadata, so the directory always shows the full set with correct decimals.
+            let existing: std::collections::HashSet<String> =
+                token_list.iter().map(|t| t.symbol.to_uppercase()).collect();
+            let mut merged: Vec<TokenMetadataResponse> = canonical_tokens()
+                .iter()
+                .filter(|c| !existing.contains(&c.symbol.to_uppercase()))
+                .map(|c| TokenMetadataResponse {
+                    success: true,
+                    decimals: token_decimals(c.symbol),
+                    symbol: c.symbol.to_string(),
+                    name: c.name.to_string(),
+                    creator: String::new(),
+                    image: None,
+                    description: Some(c.description.to_string()),
+                    website: None,
+                    twitter: None,
+                    discord: None,
+                    created_at: 0,
+                    updated_at: 0,
+                    frozen: false,
+                    mintable: false,
+                    max_supply: None,
+                    total_minted: 0,
+                })
+                .collect();
+            merged.extend(token_list);
             Ok(Json(AllTokensResponse {
                 success: true,
-                tokens: token_list,
+                tokens: merged,
             }))
         }
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
@@ -1749,10 +1795,31 @@ async fn get_token_metadata(
             "created_at": meta.created_at,
             "updated_at": meta.updated_at,
         }))),
-        Ok(None) => Ok(Json(serde_json::json!({
-            "success": false,
-            "error": format!("Token {} not found", symbol),
-        }))),
+        Ok(None) => {
+            // Fall back to a built-in token (native/bridge) so /token/qBTC etc. resolve even
+            // without an on-chain metadata row.
+            if let Some(c) = canonical_tokens().iter().find(|c| c.symbol.eq_ignore_ascii_case(&symbol)) {
+                Ok(Json(serde_json::json!({
+                    "success": true,
+                    "decimals": token_decimals(c.symbol),
+                    "symbol": c.symbol,
+                    "name": c.name,
+                    "creator": "",
+                    "image": serde_json::Value::Null,
+                    "description": c.description,
+                    "website": serde_json::Value::Null,
+                    "twitter": serde_json::Value::Null,
+                    "discord": serde_json::Value::Null,
+                    "created_at": 0,
+                    "updated_at": 0,
+                })))
+            } else {
+                Ok(Json(serde_json::json!({
+                    "success": false,
+                    "error": format!("Token {} not found", symbol),
+                })))
+            }
+        }
         Err(e) => Ok(Json(serde_json::json!({
             "success": false,
             "error": e,
