@@ -13,6 +13,10 @@ pub struct MessengerWallet {
     pub created_at: String,
     #[serde(default = "default_discoverable")]
     pub discoverable: bool,
+    /// Optional avatar shared via the directory (base64 data URI) so peers can render it.
+    /// Absent for wallets registered before this field existed.
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 fn default_discoverable() -> bool {

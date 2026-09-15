@@ -4157,6 +4157,7 @@ async fn register_messenger_wallet(
         encryption_public_key: encryption_key,
         created_at: chrono::Utc::now().to_rfc3339(),
         discoverable: body.get("discoverable").and_then(|v| v.as_bool()).unwrap_or(true),
+        avatar_url: body.get("avatarUrl").and_then(|v| v.as_str()).filter(|s| !s.is_empty() && s.len() <= MESSENGER_AVATAR_MAX_BYTES).map(|s| s.to_string()),
     };
     let wallet = node.register_wallet(wallet).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -4955,6 +4956,10 @@ async fn delete_mail_signed(
 // Secured messenger handlers (require signed requests)
 // ============================================
 
+/// Max size of a directory-shared avatar (base64 data URI). Peers pull the whole directory, so
+/// keep it modest; tighten here if directory payloads grow.
+const MESSENGER_AVATAR_MAX_BYTES: usize = 256 * 1024;
+
 async fn register_messenger_wallet_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
@@ -5014,6 +5019,17 @@ async fn register_messenger_wallet_signed(
         }
     }
 
+    // Optional directory-shared avatar (base64 data URI) so peers can render it. Kept small —
+    // peers fetch the whole directory, so cap the size (one-line change to tighten further).
+    let avatar_url = match p.get("avatarUrl").and_then(|v| v.as_str()) {
+        Some(a) if !a.is_empty() => {
+            if a.len() > MESSENGER_AVATAR_MAX_BYTES {
+                return Err(signed_bad("Avatar too large (max 256 KB)"));
+            }
+            Some(a.to_string())
+        }
+        _ => None,
+    };
     let wallet = quantum_vault_storage::messenger_store::MessengerWallet {
         id: id.clone(),
         display_name,
@@ -5021,6 +5037,7 @@ async fn register_messenger_wallet_signed(
         encryption_public_key: encryption_key,
         created_at: chrono::Utc::now().to_rfc3339(),
         discoverable: p.get("discoverable").and_then(|v| v.as_bool()).unwrap_or(true),
+        avatar_url,
     };
     let wallet = state.node.register_wallet(wallet).map_err(|e| signed_internal(&e))?;
 
