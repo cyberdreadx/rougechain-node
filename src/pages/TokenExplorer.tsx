@@ -29,7 +29,8 @@ import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { claimTokenMetadata } from "@/lib/secure-api";
 import UpdateTokenMetadataDialog from "@/components/wallet/UpdateTokenMetadataDialog";
 import { TokenIcon } from "@/components/ui/token-icon";
-import { formatTokenAmount } from "@/hooks/use-eth-price";
+import { formatTokenAmount, l1TokenDecimals } from "@/hooks/use-eth-price";
+import { CandleChart } from "@/components/CandleChart";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
 
 // Discord logo component
@@ -107,6 +108,7 @@ const TokenExplorer = () => {
   const [circulatingSupply, setCirculatingSupply] = useState<number>(0);
   const [pool, setPool] = useState<PoolInfo | null>(null);
   const [priceHistory, setPriceHistory] = useState<PriceSnapshot[]>([]);
+  const [chartType, setChartType] = useState<"line" | "candles">("line");
   const [transactionCount, setTransactionCount] = useState<number>(0);
   const [transactionList, setTransactionList] = useState<TokenTransaction[]>([]);
   const [showEditMetadata, setShowEditMetadata] = useState(false);
@@ -120,7 +122,10 @@ const TokenExplorer = () => {
   // Check if current user is the token creator
   const wallet = loadUnifiedWallet();
   const isCreator = wallet && metadata?.creator === wallet.signingPublicKey;
-  const hasNoMetadata = !metadata?.creator;
+  // Native + bridge tokens have no creator and can't be claimed (the daemon rejects it), so
+  // don't offer a misleading "Claim Ownership" button on them.
+  const isReserved = ["XRGE", "QBTC", "QETH", "QUSDC", "ETH", "USDC"].includes(symbol.toUpperCase());
+  const hasNoMetadata = !metadata?.creator && !isReserved;
 
   const handleClaimOwnership = async () => {
     if (!wallet || !symbol) return;
@@ -192,10 +197,13 @@ const TokenExplorer = () => {
       if (poolsRes.ok) {
         const poolsData = await poolsRes.json();
         const pools = poolsData.pools || [];
-        const tokenPool = pools.find((p: PoolInfo) =>
-          (p.token_a === symbol && p.token_b === "XRGE") ||
-          (p.token_b === symbol && p.token_a === "XRGE")
-        );
+        // Prefer the token/XRGE pool; fall back to ANY pool containing this token — otherwise
+        // the XRGE page itself (which would look for an XRGE/XRGE pool) always shows "No pool".
+        const tokenPool =
+          pools.find((p: PoolInfo) =>
+            (p.token_a === symbol && p.token_b === "XRGE") ||
+            (p.token_b === symbol && p.token_a === "XRGE")
+          ) || pools.find((p: PoolInfo) => p.token_a === symbol || p.token_b === symbol);
         if (tokenPool) {
           setPool(tokenPool);
 
@@ -255,6 +263,28 @@ const TokenExplorer = () => {
           Not enough data for chart
         </div>
       );
+    }
+
+    // Magnitude-adaptive price formatter (shared shape with the pool chart).
+    const fmtPrice = (v: number) => {
+      if (!isFinite(v) || v === 0) return "0";
+      const abs = Math.abs(v);
+      if (abs >= 1) return v.toLocaleString(undefined, { maximumFractionDigits: 4 });
+      if (abs >= 0.001) return v.toFixed(6);
+      return v.toPrecision(4);
+    };
+
+    if (chartType === "candles") {
+      // Convert the raw reserve ratio to a human price by the tokens' decimals gap.
+      const decA = l1TokenDecimals(pool?.token_a);
+      const decB = l1TokenDecimals(pool?.token_b);
+      const isA = pool?.token_a === symbol;
+      const pts = priceHistory.map((p) => {
+        const raw = isA ? p.price_a_in_b : p.price_b_in_a;
+        const ts = p.timestamp < 1e12 ? p.timestamp * 1000 : p.timestamp;
+        return { timestamp: ts, price: raw * 10 ** (isA ? decA - decB : decB - decA) };
+      });
+      return <CandleChart points={pts} fmtPrice={fmtPrice} height={176} />;
     }
 
     const isTokenA = pool?.token_a === symbol;
@@ -550,10 +580,16 @@ const TokenExplorer = () => {
         {pool && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm flex items-center gap-2">
-                <BarChart3 className="w-4 h-4" />
-                Price Chart (XRGE pair)
-              </CardTitle>
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4" />
+                  Price Chart (XRGE pair)
+                </CardTitle>
+                <div className="flex items-center gap-1">
+                  <Button variant={chartType === "line" ? "default" : "outline"} size="sm" onClick={() => setChartType("line")}>Line</Button>
+                  <Button variant={chartType === "candles" ? "default" : "outline"} size="sm" onClick={() => setChartType("candles")}>Candles</Button>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
               {renderChart()}
