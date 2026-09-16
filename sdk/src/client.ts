@@ -1129,6 +1129,8 @@ class MessengerClient {
     signingPublicKey: string;
     encryptionPublicKey: string;
     discoverable?: boolean;
+    /** Optional base64 data-URI avatar shared via the directory so peers can render it. */
+    avatarUrl?: string;
   }): Promise<ApiResponse> {
     const signed = signRequest(wallet, {
       id: opts.id,
@@ -1136,6 +1138,7 @@ class MessengerClient {
       signingPublicKey: opts.signingPublicKey,
       encryptionPublicKey: opts.encryptionPublicKey,
       discoverable: opts.discoverable ?? true,
+      ...(opts.avatarUrl ? { avatarUrl: opts.avatarUrl } : {}),
     });
     return this.rc.submitTx("/v2/messenger/wallets/register", signed);
   }
