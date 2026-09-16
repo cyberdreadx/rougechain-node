@@ -25,6 +25,17 @@ import { ethers, network } from "hardhat";
 // A placeholder "token" for the vault constructor — irrelevant to ownership mechanics.
 const DUMMY_TOKEN = "0x000000000000000000000000000000000000dEaD";
 
+// Public Base Sepolia RPCs are load-balanced and can briefly return empty ("0x") for a read
+// right after the state changes (the node you hit hasn't caught up). Retry reads a few times.
+async function readRetry<T>(fn: () => Promise<T>, label: string, tries = 8): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < tries; i++) {
+    try { return await fn(); }
+    catch (e) { last = e; await new Promise((r) => setTimeout(r, 2000)); }
+  }
+  throw new Error(`${label} failed after ${tries} retries: ${(last as Error)?.message ?? last}`);
+}
+
 async function main() {
   const net = await ethers.provider.getNetwork();
   const chainId = Number(net.chainId);
@@ -51,7 +62,10 @@ async function main() {
   await vault.waitForDeployment();
   const vaultAddr = await vault.getAddress();
   console.log("      vault:", vaultAddr);
-  console.log("      owner():", await vault.owner());
+  // Wait for a couple confirmations so the public RPC nodes have the contract code, then read.
+  const depTx = vault.deploymentTransaction();
+  if (depTx) await depTx.wait(2);
+  console.log("      owner():", await readRetry(() => vault.owner(), "owner()"));
 
   // Step 2 — generate the NEW key (on mainnet you'd generate this offline + fund it).
   const newOwner = ethers.Wallet.createRandom().connect(ethers.provider);
@@ -61,8 +75,8 @@ async function main() {
   console.log("\n[3/5] transferOwnership(newOwner) — signed by the old key…");
   const tx = await vault.connect(oldOwner).transferOwnership(newOwner.address);
   console.log("      tx:", tx.hash, "→ waiting…");
-  await tx.wait();
-  const ownerNow = await vault.owner();
+  await tx.wait(2);
+  const ownerNow = await readRetry(() => vault.owner(), "owner()");
   console.log("      owner() now:", ownerNow);
   if (ownerNow.toLowerCase() !== newOwner.address.toLowerCase()) {
     throw new Error("FAIL: owner() did not change to the new address.");
@@ -81,8 +95,8 @@ async function main() {
 
   // Step 5 — prove the NEW key IS in control. Fund it a little gas, then call onlyOwner.
   console.log("\n[5/5] New key takes control (fund gas, then onlyOwner call)…");
-  const fund = await oldOwner.sendTransaction({ to: newOwner.address, value: ethers.parseEther("0.0003") });
-  await fund.wait();
+  const fund = await oldOwner.sendTransaction({ to: newOwner.address, value: ethers.parseEther("0.00005") });
+  await fund.wait(2);
   const call = await vault.connect(newOwner).requestEmergencyWithdraw();
   await call.wait();
   console.log("      ✓ new key executed an onlyOwner call — it is in control.");
