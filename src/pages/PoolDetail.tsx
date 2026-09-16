@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, TrendingUp, ArrowUpDown, Plus, Minus, Activity } from "lucide-react";
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { CandleChart } from "@/components/CandleChart";
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import SwapWidget from "@/components/messenger/SwapWidget";
 import { formatTokenAmount, l1TokenDecimals } from "@/hooks/use-eth-price";
@@ -122,6 +123,7 @@ const PoolDetail = () => {
   const [stats, setStats] = useState<PoolStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [chartToken, setChartToken] = useState<"a" | "b">("a");
+  const [chartType, setChartType] = useState<"line" | "candles">("line");
   const [showSwapWidget, setShowSwapWidget] = useState(false);
 
   const wallet = loadUnifiedWallet();
@@ -307,7 +309,7 @@ const PoolDetail = () => {
                 <TrendingUp className="w-5 h-5 text-primary" />
                 <CardTitle>Price Chart</CardTitle>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   variant={chartToken === "a" ? "default" : "outline"}
                   size="sm"
@@ -321,6 +323,21 @@ const PoolDetail = () => {
                   onClick={() => setChartToken("b")}
                 >
                   {pool.token_b}/{pool.token_a}
+                </Button>
+                <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+                <Button
+                  variant={chartType === "line" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setChartType("line")}
+                >
+                  Line
+                </Button>
+                <Button
+                  variant={chartType === "candles" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setChartType("candles")}
+                >
+                  Candles
                 </Button>
               </div>
             </div>
@@ -338,6 +355,9 @@ const PoolDetail = () => {
           </CardHeader>
           <CardContent>
             {chartData.length > 0 ? (
+              chartType === "candles" ? (
+                <CandleChart points={chartData} fmtPrice={fmtPrice} height={300} />
+              ) : (
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -369,6 +389,7 @@ const PoolDetail = () => {
                   />
                 </LineChart>
               </ResponsiveContainer>
+              )
             ) : (
               <div className="h-[300px] flex items-center justify-center text-muted-foreground">
                 No price history yet. Make some swaps to see the chart!
