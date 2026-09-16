@@ -1394,6 +1394,13 @@ impl L1Node {
         symbol: &str,
         claimer_public_key: &str,
     ) -> Result<(), String> {
+        // Native + bridge tokens are protocol-canonical (no create_token tx) — nobody can claim
+        // their metadata, so reject explicitly rather than relying on "no creator found".
+        const RESERVED_SYMBOLS: &[&str] = &["XRGE", "QBTC", "QETH", "QUSDC", "ETH", "USDC"];
+        if RESERVED_SYMBOLS.contains(&symbol.to_uppercase().as_str()) {
+            return Err(format!("'{}' is a reserved token and cannot be claimed", symbol));
+        }
+
         // First check if metadata already exists
         if let Ok(Some(_)) = self.token_metadata_store.get_metadata(symbol) {
             return Err("Metadata already exists for this token. Use update instead.".to_string());
@@ -1791,7 +1798,7 @@ impl L1Node {
         total_supply: u64,
         decimals: u8,
     ) -> Result<(TxV1, String), String> {
-        const RESERVED_SYMBOLS: &[&str] = &["XRGE", "QETH", "QUSDC", "ETH", "USDC"];
+        const RESERVED_SYMBOLS: &[&str] = &["XRGE", "QBTC", "QETH", "QUSDC", "ETH", "USDC"];
         let symbol_upper = token_symbol.to_uppercase();
         if RESERVED_SYMBOLS.contains(&symbol_upper.as_str()) {
             return Err(format!("'{}' is a reserved token symbol", token_symbol));
