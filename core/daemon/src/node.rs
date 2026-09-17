@@ -6037,6 +6037,10 @@ impl L1Node {
         self.social_store.get_user_following(pubkey)
     }
 
+    pub fn social_get_user_followers(&self, pubkey: &str, limit: usize, offset: usize) -> Result<Vec<String>, String> {
+        self.social_store.get_user_followers(pubkey, limit, offset)
+    }
+
     // ===== Hidden Tracks =====
 
     pub fn social_set_track_hidden(&self, creator_pubkey: &str, track_id: &str, hidden: bool) -> Result<(), String> {

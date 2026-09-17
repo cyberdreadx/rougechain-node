@@ -1456,6 +1456,15 @@ class SocialClient {
     return data.artists ?? [];
   }
 
+  /** Followers of a pubkey, paginated (default 50, max 200 server-side). */
+  async getUserFollowers(pubkey: string, limit = 50, offset = 0): Promise<string[]> {
+    const q = `?limit=${limit}&offset=${offset}`;
+    const data = await this.rc.get<{ followers: string[] }>(
+      `/social/user/${encodeURIComponent(pubkey)}/followers${q}`
+    );
+    return data.followers ?? [];
+  }
+
   // ── Posts ──────────────────────────────────────────────
 
   async createPost(wallet: WalletKeys, body: string, replyToId?: string): Promise<ApiResponse & { post?: SocialPost }> {

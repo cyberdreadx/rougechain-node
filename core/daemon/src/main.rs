@@ -985,6 +985,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/social/artist/:pubkey/stats", get(social_artist_stats))
         .route("/api/social/user/:pubkey/likes", get(social_user_likes))
         .route("/api/social/user/:pubkey/following", get(social_user_following))
+        .route("/api/social/user/:pubkey/followers", get(social_user_followers))
         // Social endpoints (read — posts/timeline)
         .route("/api/social/post/:postId", get(social_get_post))
         .route("/api/social/post/:postId/stats", get(social_post_stats))
@@ -10104,6 +10105,27 @@ async fn social_user_following(
 ) -> Json<serde_json::Value> {
     match state.node.social_get_user_following(&pubkey) {
         Ok(artists) => Json(serde_json::json!({ "artists": artists })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+#[derive(Deserialize)]
+struct FollowersQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+/// Followers of a pubkey, paginated (default 50, max 200). Reads the reverse index that
+/// toggle_follow already maintains, so a whale's follower list never returns as one blob.
+async fn social_user_followers(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+    Query(q): Query<FollowersQuery>,
+) -> Json<serde_json::Value> {
+    let limit = q.limit.unwrap_or(50).min(200);
+    let offset = q.offset.unwrap_or(0);
+    match state.node.social_get_user_followers(&pubkey, limit, offset) {
+        Ok(followers) => Json(serde_json::json!({ "followers": followers })),
         Err(e) => Json(serde_json::json!({ "error": e })),
     }
 }
