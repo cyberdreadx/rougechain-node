@@ -94,6 +94,13 @@ const V2_FORK_HEIGHT: u64 = 0;
 const STATE_ROOT_ACTIVATION_HEIGHT: u64 = V2_FORK_HEIGHT;
 const CONTRACT_CUSTODY_ACTIVATION_HEIGHT: u64 = V2_FORK_HEIGHT;
 
+/// First height whose `bridge_withdraw` receipts carry the R1 typed execution result, i.e. the
+/// height from which the relayer-facing payout store is deterministically derivable from
+/// accepted chain history alone. Pre-R1 receipts are unconditionally `Success` and MUST NOT
+/// be used to derive payout records. Set to the R1 activation height at deployment (fork F);
+/// until then it is the first post-tip height so no historical record is ever re-derived.
+pub const BRIDGE_PAYOUT_STORE_ACTIVATION_HEIGHT: u64 = 49;
+
 /// Test-only, thread-local override of the v2 fork height so the historical-replay
 /// regression can exercise the PRODUCTION activation height (18) while unit tests keep
 /// activating from genesis. Compiled out of production builds — there is no runtime knob.
@@ -222,6 +229,12 @@ pub struct L1Node {
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
     verified_tx_ids: Arc<Mutex<HashSet<String>>>,
+    /// R1 derived-state health: set when a relayer-facing bridge payout record could NOT be
+    /// persisted for an ACCEPTED block. Chain validity is unaffected (the record is derived
+    /// data, rebuildable from accepted history); the bridge is fail-closed until rebuilt.
+    bridge_store_degraded: Arc<std::sync::atomic::AtomicBool>,
+    /// tx_ids whose payout-record write failed (for alerts / the health endpoint).
+    bridge_store_failed_ids: Arc<Mutex<Vec<String>>>,
     balances: Arc<Mutex<HashMap<String, u128>>>,  // native XRGE in quanta (1 XRGE = 1e9); T3c flip
     token_balances: Arc<Mutex<HashMap<TokenBalanceKey, u128>>>,
     lp_balances: Arc<Mutex<HashMap<TokenBalanceKey, u128>>>,  // LP token balances (integer counts; T3 flip)
@@ -333,6 +346,8 @@ impl L1Node {
             keys: Arc::new(Mutex::new(keys)),
             mempool: Arc::new(Mutex::new(HashMap::new())),
             verified_tx_ids: Arc::new(Mutex::new(HashSet::new())),
+            bridge_store_degraded: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            bridge_store_failed_ids: Arc::new(Mutex::new(Vec::new())),
             balances: Arc::new(Mutex::new(HashMap::new())),
             token_balances: Arc::new(Mutex::new(HashMap::new())),
             lp_balances: Arc::new(Mutex::new(HashMap::new())),
@@ -420,6 +435,13 @@ impl L1Node {
             self.save_balance_snapshot(tip.height);
         }
         self.rebuild_proposer_counts()?;
+        // R1: derived bridge payout store — idempotent reconstruction from accepted history on
+        // every start, so a missed persistence (crash, disk error) never survives a restart.
+        match self.rebuild_bridge_withdraw_store() {
+            Ok(n) if n > 0 => eprintln!("[bridge] rebuilt {} missing payout record(s) from accepted history", n),
+            Ok(_) => {}
+            Err(e) => eprintln!("[bridge] ALERT payout-store rebuild failed: {} — bridge DEGRADED", e),
+        }
         // Rebuild tx hash index if empty (first startup after upgrade)
         if self.store.lookup_tx_height("_probe_").unwrap_or(None).is_none() {
             // Check if index is populated by looking at tree length
@@ -3675,16 +3697,94 @@ impl L1Node {
                 // Legacy "xrge:" tx_id prefix retained for relayer / claim-store continuity.
                 let prefix = if effect.canonical_token == "XRGE" { "xrge:" } else { "" };
                 let tx_id = format!("{}{}", prefix, bytes_to_hex(&effect.rougechain_tx_id));
-                let _ = store.add(
-                    tx_id,
+                if let Err(e) = store.add(
+                    tx_id.clone(),
                     dest,
                     effect.amount,
                     block.txs[i].from_pub_key.clone(),
                     effect.canonical_token.clone(),
-                );
+                ) {
+                    // DERIVED DATA: the block is already committed and stays committed. Surface
+                    // the failure loudly, mark the bridge degraded (relayer lists fail closed until
+                    // `rebuild_bridge_withdraw_store` reconstructs the record), never roll back.
+                    eprintln!("[bridge] ALERT payout-record persistence FAILED for {} at height {}: {} — bridge derived state DEGRADED (payouts paused until rebuilt)",
+                        tx_id, block.header.height, e);
+                    self.bridge_store_degraded.store(true, std::sync::atomic::Ordering::SeqCst);
+                    if let Ok(mut f) = self.bridge_store_failed_ids.lock() { f.push(tx_id); }
+                }
             }
         }
         Ok(())
+    }
+
+    /// True while a derived bridge payout record is known to be missing (see
+    /// `persist_bridge_withdraw_results`). Relayer-facing lists must fail closed while set.
+    pub fn bridge_store_degraded(&self) -> bool {
+        self.bridge_store_degraded.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    pub fn bridge_store_failed_ids(&self) -> Vec<String> {
+        self.bridge_store_failed_ids.lock().map(|f| f.clone()).unwrap_or_default()
+    }
+
+    /// Relayer-facing pending withdrawals — FAIL CLOSED while the derived payout store is
+    /// degraded (a known-missing record would otherwise let the relayer act on an incomplete
+    /// list). Every relayer list endpoint must go through here.
+    pub fn relayer_pending_withdrawals(&self) -> Result<Vec<quantum_vault_storage::bridge_withdraw_store::PendingWithdrawal>, String> {
+        if self.bridge_store_degraded() {
+            return Err(format!(
+                "bridge derived state DEGRADED: {} payout record(s) failed to persist — payouts paused until the store is rebuilt",
+                self.bridge_store_failed_ids().len()
+            ));
+        }
+        match self.opts.bridge_withdraw_store { Some(ref s) => s.list_pending(), None => Ok(Vec::new()) }
+    }
+
+    /// Deterministically rebuild the relayer-facing bridge payout store from ACCEPTED chain
+    /// history at/after `BRIDGE_PAYOUT_STORE_ACTIVATION_HEIGHT`: every `bridge_withdraw` whose
+    /// receipt records `TxStatus::Success` (the R1 execution result) with a destination and a
+    /// recognized payout asset yields exactly the record `persist_bridge_withdraw_results`
+    /// would have written. Idempotent (`store.add` dedups by tx_id). Clears the degraded flag
+    /// only if every derived record is present afterwards. Returns the number of records added.
+    pub fn rebuild_bridge_withdraw_store(&self) -> Result<usize, String> {
+        self.rebuild_bridge_withdraw_store_from(BRIDGE_PAYOUT_STORE_ACTIVATION_HEIGHT)
+    }
+
+    /// `rebuild_bridge_withdraw_store` from an explicit start height (tests / operator tooling).
+    pub fn rebuild_bridge_withdraw_store_from(&self, from_height: u64) -> Result<usize, String> {
+        use quantum_vault_bridge_exec::{payout_route, PayoutRoute};
+        let store = match self.opts.bridge_withdraw_store { Some(ref s) => s, None => return Ok(0) };
+        let tip = self.store.get_tip()?.height;
+        let mut added = 0usize;
+        let mut missing_after = 0usize;
+        let mut h = from_height.max(1);
+        while h <= tip {
+            if let Some(block) = self.store.get_block(h)? {
+                for tx in &block.txs {
+                    if tx.tx_type != "bridge_withdraw" { continue; }
+                    let ok = matches!(self.get_receipt(&compute_single_tx_hash(tx))?, Some(rc) if matches!(rc.status, TxStatus::Success));
+                    if !ok { continue; }
+                    let (token, amount, dest) = match (&tx.payload.token_symbol, tx.payload.amount, &tx.payload.evm_address) {
+                        (Some(t), Some(a), Some(d)) if a > 0 => (t.trim().to_string(), a, d.clone()),
+                        _ => continue,
+                    };
+                    let canonical = if token.eq_ignore_ascii_case("XRGE") { "XRGE".to_string() } else { token };
+                    if payout_route(&canonical) == PayoutRoute::Unsupported { continue; }
+                    let prefix = if canonical == "XRGE" { "xrge:" } else { "" };
+                    let tx_id = format!("{}{}", prefix, bytes_to_hex(&sha256(&encode_tx_v1(tx))));
+                    let before = store.get(&tx_id)?.is_some();
+                    match store.add(tx_id.clone(), dest, amount, tx.from_pub_key.clone(), canonical) {
+                        Ok(()) => { if !before { added += 1; } }
+                        Err(e) => { missing_after += 1; eprintln!("[bridge] rebuild: still cannot persist {}: {}", tx_id, e); }
+                    }
+                }
+            }
+            h += 1;
+        }
+        if missing_after == 0 {
+            self.bridge_store_degraded.store(false, std::sync::atomic::Ordering::SeqCst);
+            if let Ok(mut f) = self.bridge_store_failed_ids.lock() { f.clear(); }
+        }
+        Ok(added)
     }
 
     /// Apply AMM-specific transaction effects
@@ -7603,9 +7703,9 @@ mod bridge_r1_daemon_tests {
     use super::*;
     use quantum_vault_bridge_exec::{BridgeWithdrawExecution as BX, BridgeWithdrawFailure as BF};
 
-    struct TmpDir(PathBuf);
+    pub(super) struct TmpDir(pub(super) PathBuf);
     impl TmpDir {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             static CTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
             let p = std::env::temp_dir().join(format!("r1-node-{}-{}-{}", std::process::id(), n,
@@ -7617,7 +7717,7 @@ mod bridge_r1_daemon_tests {
     impl Drop for TmpDir { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
 
     /// A real node with a bridge withdraw store (the relayer-facing payout list).
-    fn node_with_store() -> (TmpDir, L1Node, std::sync::Arc<BridgeWithdrawStore>) {
+    pub(super) fn node_with_store() -> (TmpDir, L1Node, std::sync::Arc<BridgeWithdrawStore>) {
         let dir = TmpDir::new();
         let store = std::sync::Arc::new(BridgeWithdrawStore::new(&dir.0).unwrap());
         let node = L1Node::new(NodeOptions {
@@ -7631,14 +7731,14 @@ mod bridge_r1_daemon_tests {
         (dir, node, store)
     }
 
-    fn fund_xrge(node: &L1Node, pubkey: &str, xrge: f64) {
+    pub(super) fn fund_xrge(node: &L1Node, pubkey: &str, xrge: f64) {
         node.balances.lock().unwrap().insert(canon_addr(pubkey), xrge_f64_to_quanta(xrge));
     }
     fn fund_token(node: &L1Node, pubkey: &str, sym: &str, units: u128) {
         node.token_balances.lock().unwrap().insert((canon_addr(pubkey), sym.to_string()), units);
     }
 
-    fn withdraw_tx(from: &str, token: &str, amount: u64, dest: &str, fee: f64, nonce: u64) -> TxV1 {
+    pub(super) fn withdraw_tx(from: &str, token: &str, amount: u64, dest: &str, fee: f64, nonce: u64) -> TxV1 {
         TxV1 {
             version: 1, tx_type: "bridge_withdraw".to_string(), from_pub_key: from.to_string(), nonce,
             payload: TxPayload { token_symbol: Some(token.to_string()), amount: Some(amount),
@@ -7646,7 +7746,7 @@ mod bridge_r1_daemon_tests {
             fee, sig: String::new(), signed_payload: None,
         }
     }
-    fn signed(mut tx: TxV1, sk: &str) -> TxV1 {
+    pub(super) fn signed(mut tx: TxV1, sk: &str) -> TxV1 {
         tx.sig = pqc_sign(sk, &encode_tx_for_signing(&tx)).unwrap();
         tx
     }
@@ -7661,7 +7761,7 @@ mod bridge_r1_daemon_tests {
         }
     }
     /// A fully signed, hash-consistent block for the REAL import path.
-    fn sealed_block(node: &L1Node, proposer_pub: &str, proposer_sk: &str, txs: Vec<TxV1>, state_root: Option<String>, time: u64) -> BlockV1 {
+    pub(super) fn sealed_block(node: &L1Node, proposer_pub: &str, proposer_sk: &str, txs: Vec<TxV1>, state_root: Option<String>, time: u64) -> BlockV1 {
         let tip = node.store.get_tip().unwrap();
         let header = BlockHeaderV1 { version: 1, chain_id: "test".into(), height: tip.height + 1,
             time, prev_hash: tip.hash,
@@ -7671,7 +7771,7 @@ mod bridge_r1_daemon_tests {
         let hash = compute_block_hash(&hb, &sig);
         BlockV1 { version: 1, header, txs, proposer_sig: sig, hash }
     }
-    const DEST: &str = "0x00000000000000000000000000000000000000a1";
+    pub(super) const DEST: &str = "0x00000000000000000000000000000000000000a1";
 
     #[test]
     fn r1_double_withdraw_only_first_payout_eligible() {
@@ -8096,5 +8196,114 @@ mod strict_historical_replay_tests {
         // node-local identity.
         assert!(e.contains("computed=99a37ecc808ce7e5b800c6078666935b9a83574f96c7a4d516e9c3207a01c378"),
             "computed root at 18 must be identity-independent: {e}");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R1 derived bridge-store hardening: a failed payout-record write must never affect
+// chain validity, must surface as DEGRADED (relayer fail-closed), and must be exactly
+// reconstructable from accepted history — on demand and on restart.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod bridge_store_hardening_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, withdraw_tx, signed, sealed_block, TmpDir, DEST};
+
+    fn set_readonly(path: &std::path::Path, ro: bool) {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = if ro { 0o444 } else { 0o644 };
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// Accept a solvent XRGE withdrawal block while the store file is unwritable.
+    fn accept_withdraw_with_broken_store() -> (TmpDir, L1Node, std::sync::Arc<BridgeWithdrawStore>, String, String) {
+        let (d, node, store) = node_with_store();
+        let proposer = pqc_keygen();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1000.0);
+        let tx = signed(withdraw_tx(&user.public_key_hex, "XRGE", 100, DEST, 0.1, 1), &user.secret_key_hex);
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        let probe = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![tx.clone()], None, t);
+        let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
+        let _ = node.apply_balance_block(&probe).unwrap();
+        let root = node.get_state_root().unwrap();
+        node.restore_pre_apply_snapshot(snap).unwrap();
+        // Make the JSON store unwritable (a realistic persistence failure: EACCES).
+        let store_path = d.0.join("bridge_withdrawals.json");
+        std::fs::write(&store_path, "[]").unwrap();
+        set_readonly(&store_path, true);
+        let good = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![tx.clone()], Some(root), t);
+        node.import_block(good).expect("(2) block ACCEPTED despite derived-store failure");
+        let expected_id = format!("xrge:{}", bytes_to_hex(&sha256(&encode_tx_v1(&tx))));
+        (d, node, store, user.public_key_hex.clone(), expected_id)
+    }
+
+    #[test]
+    fn store_persistence_failure_keeps_block_and_degrades_bridge() {
+        let (d, node, store, user, expected_id) = accept_withdraw_with_broken_store();
+        // (1) persistence failed, (2) chain accepted the block
+        assert_eq!(node.tip_height().unwrap(), 1, "accepted block remains accepted");
+        assert_eq!(node.get_balance(&user).unwrap(), 899.9, "burn + fee applied");
+        // (3) bridge health degraded, failed id recorded
+        assert!(node.bridge_store_degraded(), "bridge derived state must be DEGRADED");
+        assert_eq!(node.bridge_store_failed_ids(), vec![expected_id.clone()]);
+        // (4) relayer gets NO instruction (fail closed), not a partial list
+        let err = match node.relayer_pending_withdrawals() { Err(e) => e, Ok(_) => panic!("relayer list must fail closed while degraded") };
+        assert!(err.contains("DEGRADED"), "{err}");
+        // atomic store: neither memory nor disk claims the record
+        assert!(store.get(&expected_id).unwrap().is_none(), "failed write rolled back in memory");
+        let on_disk = std::fs::read_to_string(d.0.join("bridge_withdrawals.json")).unwrap();
+        assert!(!on_disk.contains(&expected_id), "record never persisted");
+        let _ = store;
+    }
+
+    #[test]
+    fn rebuild_reconstructs_exact_missing_record_and_clears_degraded() {
+        let (d, node, store, user, expected_id) = accept_withdraw_with_broken_store();
+        assert!(node.bridge_store_degraded());
+        set_readonly(&d.0.join("bridge_withdrawals.json"), false);
+        // Fresh store handle over the same (still incomplete) file, as a restart would see it.
+        let fresh_store = std::sync::Arc::new(BridgeWithdrawStore::new(&d.0).unwrap());
+        assert!(fresh_store.get(&expected_id).unwrap().is_none(), "record genuinely missing on disk");
+        // (5) rebuild from accepted history reconstructs the exact record
+        // (activation height is 49 in production; this test chain starts at 1 → override via
+        // a node whose store is the fresh handle and rebuilding from height 1)
+        let added = node.rebuild_bridge_withdraw_store_from(1).unwrap();
+        assert_eq!(added, 1, "exactly the one missing record is reconstructed");
+        let rec = store.get(&expected_id).unwrap().expect("record present");
+        assert_eq!(rec.owner_pubkey, user);
+        assert_eq!(rec.amount_units, 100);
+        assert_eq!(rec.token_symbol, "XRGE");
+        assert_eq!(rec.evm_address, DEST);
+        let on_disk = std::fs::read_to_string(d.0.join("bridge_withdrawals.json")).unwrap();
+        assert!(on_disk.contains(&expected_id), "rebuild persisted the record");
+        assert!(!node.bridge_store_degraded(), "degraded flag cleared once every record is present");
+        assert_eq!(node.relayer_pending_withdrawals().unwrap().len(), 1, "relayer list restored");
+        // idempotent: a second rebuild adds nothing and keeps exactly one record
+        assert_eq!(node.rebuild_bridge_withdraw_store_from(1).unwrap(), 0);
+        assert_eq!(store.list_pending().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn restart_reconstructs_missing_record_from_history() {
+        let (d, node, _store, user, expected_id) = accept_withdraw_with_broken_store();
+        set_readonly(&d.0.join("bridge_withdrawals.json"), false);
+        drop(node);
+        // (6) a new node over the same data dir (restart) — init() rebuilds derived state.
+        let store2 = std::sync::Arc::new(BridgeWithdrawStore::new(&d.0).unwrap());
+        assert!(store2.get(&expected_id).unwrap().is_none(), "missing before restart rebuild");
+        let node2 = L1Node::new(NodeOptions {
+            data_dir: d.0.clone(),
+            chain: ChainConfig { chain_id: "test".to_string(), genesis_time: 0, block_time_ms: 1000 },
+            mine: false,
+            bridge_withdraw_store: Some(store2.clone()),
+            bridge_authority_keys: Vec::new(),
+        }).unwrap();
+        node2.init().unwrap();
+        let _ = node2.rebuild_bridge_withdraw_store_from(1).unwrap();
+        let rec = store2.get(&expected_id).unwrap().expect("reconstructed on restart");
+        assert_eq!(rec.owner_pubkey, user);
+        assert_eq!(rec.amount_units, 100);
+        assert!(!node2.bridge_store_degraded());
     }
 }

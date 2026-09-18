@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from "fs
 import { tmpdir } from "os";
 import { join } from "path";
 import {
+  bridgeHealthAllowsPayouts,
   rougeBridgeId,
   payoutRoute,
   normalizeEthWithdrawal,
@@ -750,5 +751,19 @@ describe("preflight (R1D §11)", () => {
       for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
       Object.assign(process.env, saved);
     }
+  });
+});
+
+describe("daemon bridge health gate (derived payout-store hardening)", () => {
+  it("permits payouts only on an explicit healthy 200 { degraded:false }", () => {
+    expect(bridgeHealthAllowsPayouts({ status: 200, body: { degraded: false, failed_tx_ids: [], pending: 0 } })).toBe(true);
+  });
+  it("fails closed on degraded (503), on 200 without an explicit degraded:false, and when unreachable", () => {
+    expect(bridgeHealthAllowsPayouts({ status: 503, body: { degraded: true, failed_tx_ids: ["xrge:abc"] } })).toBe(false);
+    expect(bridgeHealthAllowsPayouts({ status: 200, body: { degraded: true } })).toBe(false);
+    expect(bridgeHealthAllowsPayouts({ status: 200, body: {} })).toBe(false);
+    expect(bridgeHealthAllowsPayouts({ status: 500, body: null })).toBe(false);
+    expect(bridgeHealthAllowsPayouts(null)).toBe(false);
+    expect(bridgeHealthAllowsPayouts(undefined)).toBe(false);
   });
 });

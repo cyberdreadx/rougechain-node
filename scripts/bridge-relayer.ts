@@ -47,6 +47,7 @@ import {
 import { base, baseSepolia } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import {
+  bridgeHealthAllowsPayouts,
   ROUGE_BRIDGE_ABI,
   BRIDGE_RELEASE_ETH_EVENT,
   BRIDGE_RELEASE_ERC20_EVENT,
@@ -1075,6 +1076,21 @@ async function main() {
 
   const run = async () => {
     stats.totalPolls++;
+    // R1 derived-state health gate: if the daemon reports its payout store DEGRADED (or the
+    // health endpoint is unreachable), refuse to operate on ANY withdrawal list this poll.
+    let health: { status: number; body: unknown } | null = null;
+    try {
+      const res = await fetch(`${CORE_API_URL}/api/bridge/health`, { signal: AbortSignal.timeout(10000) });
+      health = { status: res.status, body: await res.json().catch(() => ({})) };
+    } catch (e) {
+      health = null;
+    }
+    if (!bridgeHealthAllowsPayouts(health)) {
+      const detail = health ? `HTTP ${health.status} ${JSON.stringify(health.body).slice(0, 200)}` : "health endpoint unreachable";
+      console.error(`[health] bridge derived state NOT healthy — refusing to process withdrawals this poll (${detail})`);
+      await alert(`bridge-degraded`, `Daemon bridge payout store degraded/unreachable — relayer paused payouts: ${detail}`).catch(() => {});
+      return;
+    }
     // The EVM feed and the timelock queue poll share the custody signer/nonce → run sequentially.
     await Promise.all([
       (async () => { await processEthWithdrawals(); await processQueued(); })(),

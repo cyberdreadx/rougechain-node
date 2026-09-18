@@ -1,0 +1,27 @@
+{
+ "recipient": "0xd047e9ade4d31022d741b57aaff5bb484a2c745a",
+ "scan_from_block": 50073991,
+ "latest": 51479779,
+ "transfers": [
+  {
+   "tx": "0xe74a52989d721535fd17f9ca1630e9a9ffb234249c0881e862b06f05d890811b",
+   "block": 50075403,
+   "ts": 1786940153,
+   "from": "0xc0dca68efdcc63ad109b301585b4b8e38cae344e",
+   "amount_wei": 1000000000000000000000,
+   "tx_to": "0x147120faec9277ec02d957584cfcd92b56a24317",
+   "status": "0x1",
+   "confirmations": 1404376
+  },
+  {
+   "tx": "0x9527ac1ded2e7bf46bf96365f52889bfce154e3de3a09263afd42fcc95387a47",
+   "block": 50076394,
+   "ts": 1786942135,
+   "from": "0xb3f52f2c1bd5692494655cf59d8ee296d23bfab5",
+   "amount_wei": 250000000000000000000,
+   "tx_to": "0xb3f52f2c1bd5692494655cf59d8ee296d23bfab5",
+   "status": "0x1",
+   "confirmations": 1403385
+  }
+ ]
+}

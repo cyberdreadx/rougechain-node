@@ -1083,3 +1083,17 @@ export async function pollQueuedWithdrawals(deps: EvmPayoutDeps): Promise<void> 
     // active queue: wait — no retry, no failure counter, no refund
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Daemon derived-state health gate (R1 bridge-store hardening).
+// GET /api/bridge/health → { degraded, failed_tx_ids, pending }. The daemon answers 503 while
+// any payout record for an ACCEPTED block is missing. The relayer must not act on ANY list
+// (EVM / XRGE / BTC) while degraded — a partial list could mis-order or miss payouts.
+// ─────────────────────────────────────────────────────────────────────────────
+export interface BridgeHealthResponse { status: number; body: unknown }
+export function bridgeHealthAllowsPayouts(h: BridgeHealthResponse | null | undefined): boolean {
+  if (!h) return false;                       // unreachable/unknown health → fail closed
+  if (h.status !== 200) return false;         // 503 (degraded) or anything unexpected → fail closed
+  const b = (h.body ?? {}) as { degraded?: unknown };
+  return b.degraded === false;                // only an explicit healthy answer permits payouts
+}

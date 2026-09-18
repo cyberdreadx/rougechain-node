@@ -935,6 +935,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/bridge/config", get(bridge_config))
         .route("/api/bridge/claim", post(bridge_claim))
         .route("/api/bridge/withdraw", post(bridge_withdraw))
+        .route("/api/bridge/health", get(bridge_health))
         .route("/api/bridge/withdrawals", get(bridge_withdrawals))
         .route("/api/bridge/withdrawals/:tx_id", delete(bridge_withdrawal_fulfill))
         .route("/api/bridge/withdrawals/:tx_id/failure", post(bridge_withdrawal_report_failure))
@@ -7945,9 +7946,24 @@ fn is_usdc_withdrawal(w: &PendingWithdrawal) -> bool {
     w.token_symbol.eq_ignore_ascii_case("qUSDC")
 }
 
-async fn bridge_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdrawalsResponse> {
-    let list = state.bridge_withdraw_store.list_pending().unwrap_or_default();
-    Json(BridgeWithdrawalsResponse {
+/// R1 derived-state health for the relayer: `degraded == true` means at least one payout
+/// record for an ACCEPTED block could not be persisted; every relayer list is fail-closed
+/// (HTTP 503) until `rebuild_bridge_withdraw_store` succeeds (automatic on restart).
+async fn bridge_health(State(state): State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
+    let degraded = state.node.bridge_store_degraded();
+    let body = serde_json::json!({
+        "degraded": degraded,
+        "failed_tx_ids": state.node.bridge_store_failed_ids(),
+        "pending": state.bridge_withdraw_store.list_pending().map(|v| v.len()).unwrap_or(0),
+    });
+    (if degraded { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK }, Json(body))
+}
+
+async fn bridge_withdrawals(State(state): State<AppState>) -> Result<Json<BridgeWithdrawalsResponse>, (StatusCode, Json<serde_json::Value>)> {
+    // Fail closed while derived bridge state is degraded — the relayer must get NO list.
+    let list = state.node.relayer_pending_withdrawals()
+        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({ "error": e, "degraded": true }))))?;
+    Ok(Json(BridgeWithdrawalsResponse {
         withdrawals: list
             .into_iter()
             // R1B: the generic EVM list exposes ONLY explicitly supported EVM assets (qETH,
@@ -7967,7 +7983,7 @@ async fn bridge_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdra
                 last_error: w.last_error,
             })
             .collect(),
-    })
+    }))
 }
 
 #[derive(Serialize)]
@@ -8339,7 +8355,8 @@ async fn bridge_btc_claim(
 
 /// GET /api/bridge/btc/withdrawals — pending qBTC withdrawals for the BTC relayer to pay out.
 async fn bridge_btc_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdrawalsResponse> {
-    let list = state.bridge_withdraw_store.list_pending().unwrap_or_default();
+    // Fail closed while derived bridge state is degraded: the BTC relayer gets an EMPTY list.
+    let list = match state.node.relayer_pending_withdrawals() { Ok(v) => v, Err(e) => { eprintln!("[bridge] btc withdrawals list refused: {}", e); return Json(BridgeWithdrawalsResponse { withdrawals: Vec::new() }); } };
     Json(BridgeWithdrawalsResponse {
         withdrawals: list
             .into_iter()
@@ -8797,7 +8814,7 @@ async fn xrge_bridge_withdraw(
 }
 
 async fn xrge_bridge_withdrawals(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let list = state.bridge_withdraw_store.list_pending().unwrap_or_default();
+    let list = match state.node.relayer_pending_withdrawals() { Ok(v) => v, Err(e) => return Json(serde_json::json!({ "withdrawals": [], "degraded": true, "error": e })) };
     let xrge_withdrawals: Vec<_> = list.into_iter()
         .filter(is_xrge_withdrawal)
         .map(|w| serde_json::json!({
