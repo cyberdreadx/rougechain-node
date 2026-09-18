@@ -41,17 +41,17 @@ payment. Evidence files: `h5-onchain.json`, `h10-onchain.json` (public RPC only)
 | native ledger total | **178,438.965087099 XRGE** (178438965087099 q) | **168,183.885987828 XRGE** (168183885987828 q) |
 | committed / computed root at 48 | `f5af35d889618c9dbdab5e350eab84f8f36b291c57543a361977acdd82d793b1` (header) | `402ddd06…` is the hash-of-hashes; per-height computed root at 48 in `canon.jsonl` |
 | token_balances / lp_balances / burned_tokens / pool reserves | identical to canonical | identical to production |
-| `fees_burned` accumulator (not a balance) | 0.21323826751842256 | 0.11401217199999998 |
+| `fees_burned` accumulator (not a balance; pinned as f64 bits and migrated with the ledger, §11) | 0.21323826751842256 | 0.11401217199999998 |
 | accounts with a native-balance difference | 4 (+1 zero-value key) | — |
 
 ## 3. OPTION A — checkpoint history, preserve live balances
 Transition at F applied to the canonical ledger to reach production's ledger (delta = production − canonical):
 | account (canonical rouge1 address) | role | canonical (q) | production (q) | delta (q) | delta XRGE | category |
 |---|---|---|---|---|---|---|
-| `__treasury__` | treasury sentinel | 2148598812 | 1027656508750 | **+1025507909938** | +1025.507909938 | phantom fee distribution (restart-rebuild sum-delta bug) |
-| `rouge168fd0mad4eynev767u896zx5ng2dnh7eztw9cj24tjn8f6e5t7fsgh8qxj` | proposer + genesis validator `8ccf7878…` (stake 100000) | 17270880672 | 8594150175817 | **+8576879295145** | +8576.879295145 | phantom fee distribution |
-| `rouge19emhc0secrj0uadfvmp5xvun5jta9kpm0laff28x04ug4szf50nq5aer4c` | staked validator `21e0ed0a…` (10000 @h20) | 10000191853961 | 10652883715831 | **+652691861870** | +652.691861870 | phantom fee distribution |
-| `rouge1qm85k7gmudsrz46crku2zh03j7lx4xyg4adhkhxau2vx25qe97aqvvc378` | validator `c97f59a2…` (h29 stake tx was a no-op in BOTH ledgers) | 10000874654383 | 10000874686701 | **+32318** | +0.000032318 | fee-share rounding residual over the differing pools |
+| `__treasury__` | treasury sentinel | 2148598808 | 1027656508750 | **+1025507909942** | +1025.507909942 | phantom fee distribution (restart-rebuild sum-delta bug) |
+| `rouge168fd0mad4eynev767u896zx5ng2dnh7eztw9cj24tjn8f6e5t7fsgh8qxj` | proposer + genesis validator `8ccf7878…` (stake 100000) | 18066021023 | 8594150175817 | **+8576084154794** | +8576.084154794 | phantom fee distribution |
+| `rouge19emhc0secrj0uadfvmp5xvun5jta9kpm0laff28x04ug4szf50nq5aer4c` | staked validator `21e0ed0a…` (10000 @h20) | 10000271367997 | 10652883715831 | **+652612347834** | +652.612347834 | phantom fee distribution |
+| `rouge1qm85k7gmudsrz46crku2zh03j7lx4xyg4adhkhxau2vx25qe97aqvvc378` | `c97f59a2…` (h29 stake FAILED atomically under canonical rules: no debit, no validator entry) | 10000000000000 | 10000874686701 | **+874686701** | +0.874686701 | fee shares earned by unbacked (phantom) validator power h30–h48 |
 | `rouge1jfdeh3famu8dk6mwhx29lp7ywyun5qc0ptagr9290mg9kur380aqnak7vg` | user (h21 sender) | 0 | absent | 0 | 0 | key-presence artifact only (no value) |
 | **sum positive deltas** | | | | **+10255079099271** | **+10,255.079099271 XRGE** | |
 | **sum negative deltas** | | | | 0 | 0 | |
@@ -64,10 +64,12 @@ identity holds relative to that adjusted base.
 
 ## 4. OPTION B — adopt canonical deterministic re-execution state
 Transition at F applied to production's live ledger (delta = canonical − production): the same
-rows with signs reversed — `__treasury__` −1025.507909938; `rouge168fd…` −8576.879295145;
-`rouge19emhc…` −652.691861870; `rouge1qm85…` −0.000032318; sum positive 0; sum negative
-**−10,255.079099271 XRGE**; net **−10,255.079099271 XRGE**. Nothing else changes (token/LP/
-burned/pool identical).
+rows with signs reversed — `__treasury__` −1025.507909942; `rouge168fd…` −8576.084154794;
+`rouge19emhc…` −652.612347834; `rouge1qm85…` −0.874686701; sum positive 0; sum negative
+**−10,255.079099271 XRGE**; net **−10,255.079099271 XRGE** (total unchanged by the validator fix; the
+phantom pool only re-splits once `c97f59a2…` holds no validator power). Nothing else changes in the
+ledger (token/LP/burned/pool identical). **Validator state also transitions** (§11): `c97f59a2…`
+(10,000 unbacked power) is removed; total stake 120,000 → 110,000; quorum 80,001 → 73,334.
 
 ### Transactions with differing outcomes — COMPLETE TABLE
 Method: for 18..48 the historical outcome is inferred from the committed roots (unchanged root
@@ -77,16 +79,18 @@ effects coincide.
 | height | tx | type | historical/live outcome | canonical outcome | economic effect | affected accounts |
 |---|---|---|---|---|---|---|
 | 28 | `unshield` from `2a152293…` (1 XRGE) | unshield | NO-OP (root 27 == 28) | NO-OP | none | none |
-| 29 | `stake` from `c97f59a2…` (10000 + 1 fee) | stake | NO-OP (root 28 == 29; balance 10,000.87 < 10,001) | NO-OP (same) | none | none |
+| 29 | `stake` from `c97f59a2…` (10000 + 1 fee) | stake | ledger NO-OP (root 28 == 29; balance 10,000.87 < 10,001) **but validator store credited 10,000 of power** (validator-state atomicity bug) | FAILED atomically: no debit, no validator entry, receipt = failure | −10,000 validator power (never ledger-backed) | validator set only |
 | every other height 1..48 | — | — | applied | applied | identical | — |
-**Result: zero transactions change semantic outcome under Option B.** The earlier working note
-that h24/h25/h29 might differ is withdrawn — the outcome table shows they do not. Option B changes
-balances only through removal of the phantom credits (+ the 32,318-quanta residual).
+**Result: zero transactions change ledger outcome under Option B; exactly one (h29) changes validator-state
+outcome.** The earlier working note that h24/h25 might differ is withdrawn — the outcome table shows they do
+not. Option B changes balances only through removal of the phantom credits (incl. the 0.874686701 XRGE of
+fee shares the phantom validator earned h30–h48).
 
 ## 5. Economic comparison (quantified)
 | | Option A | Option B |
 |---|---|---|
-| visible balance changes at F | none (4 accounts keep +10,255.079099271 XRGE) | `__treasury__` −1025.507909938; genesis validator/proposer −8576.879295145; validator `21e0ed0a…` −652.691861870; validator `c97f59a2…` −0.000032318 |
+| visible balance changes at F | none (4 accounts keep +10,255.079099271 XRGE) | `__treasury__` −1025.507909942; genesis validator/proposer −8576.084154794; validator `21e0ed0a…` −652.612347834; `c97f59a2…` −0.874686701 |
+| validator set at F | unchanged (120,000 incl. 10,000 unbacked) | `c97f59a2…` removed; 110,000 backed; quorum 73,334 |
 | users affected | 0 end-users; 3 protocol/validator accounts unchanged | 0 end-users; treasury + 3 validator accounts reduced (all funds are phantom, never minted) |
 | historical tx outcomes | preserved (they are identical anyway) | preserved (identical) |
 | supply identity | violated by +10,255.079099271 XRGE, enshrined at F | restored exactly |
@@ -102,7 +106,7 @@ Every term maps to a persisted state component or an explicitly identified sink:
 | faucet (h1, h2) | block contents | 101,000,000,000 |
 | **inflows** | | **55,123,665,000,000,000** |
 | native ledger | `balances` map | 168,183,885,987,828 |
-| stake debited from the ledger | h20 `stake` (validator store entry for `21e0ed0a…`); **h29 `stake` was rejected at the balance level (10,000.87 < 10,001) but the validator store still records 10,000 for `c97f59a2…` — pre-existing validator-store/ledger inconsistency (finding), not ledger-sourced** | 10,000,000,000,000 |
+| stake debited from the ledger | h20 `stake` (validator store entry for `21e0ed0a…`). h29 `stake` FAILS atomically under the fixed rules (10,000.87 < 10,001): no debit, no validator entry. Canonical validator total = genesis 100,000 (never a ledger debit) + 10,000 = **110,000, all backed**; production's extra 10,000 for `c97f59a2…` is removed by VALIDATOR_TRANSITION | 10,000,000,000,000 |
 | shielded supply | `shielded_supply` (snapshot-db) — **0**, not 1: every unshield reduced the supply by its full value | 0 |
 | AMM XRGE reserve | `pool_store["XRGE-qUSDC"].reserve_a` = 54,945,220 XRGE (identical in both ledgers) | 54,945,220,000,000,000 |
 | bridge_withdraw burns | `burned_tokens["XRGE"]` = 255 | 255,000,000,000 |
@@ -154,3 +158,28 @@ decision and stop bridge/AMM activity until F** (bridge is paused; mints/withdra
 table); (iii) `BRIDGE_PAYOUT_STORE_ACTIVATION_HEIGHT` and the R1 activation are set to F.
 Earliest safe F = tip at decision time + 2 (one block to seal the frozen table, one to activate),
 recomputing the §3/§4 rows against the live ledger at F−1 in the fork PR.
+
+## 11. Validator state at F−1 (added 2026-09-18 — consensus-critical blocker found during Option-B work)
+`apply_validator_block` applied stake/unstake from tx TYPES, independently of whether the ledger debit
+succeeded. Live consequence at h29: the `stake` from `c97f59a2…` failed at the ledger (10,000.87 < 10,001)
+yet the validator store credited 10,000 of power — unbacked stake that inflated the proposer-selection
+weight and quorum (120,000 / 80,001) and earned 0.874686701 XRGE of fee shares over h30–h48. The fix
+(position-aligned `ValidatorExecution` results, sequential in-block shadow, validator effects applied only
+from results; see FORK_IMPLEMENTATION.md) is part of the fork binary; the canonical state at 48 was
+regenerated under it, and the migration transitions validator state atomically with the ledger.
+| | production @48 | canonical @48 |
+|---|---|---|
+| `8ccf7878…` | 100,000 (missed 0) | 100,000 (missed 0) |
+| `21e0ed0a…` | 10,000 (missed 29) | 10,000 (missed 29) |
+| `c97f59a2…` | 10,000 (missed 20) — never debited | **absent** |
+| total stake / quorum (`total*2/3+1`) | 120,000 / 80,001 | **110,000 / 73,334** |
+| unbonding queue | empty | empty |
+Consensus-relevant fields pinned: stake, slash_count, jailed_until, missed_blocks, total_slashed.
+Informational (excluded, untouched): blocks_proposed, entropy_contributions, name. Hashes:
+PRODUCTION_VALIDATOR_TABLE_SHA256 `7d18ef13…`, CANONICAL_VALIDATOR_TABLE_SHA256 `817e4fe1…`,
+VALIDATOR_TRANSITION_TABLE_SHA256 `3f920d77…`. Ledger effect of the regeneration: the same
+10,255.079099271 XRGE phantom total, re-split (§3/§4 rows updated); canonical root at 48 `35136edd…`.
+The §6 identity holds unchanged (stake term 10,000 = h20; sinks 6 XRGE). The persisted `fees_burned`
+accumulator is migrated to its canonical value (0.21323826751842256 → 0.11401217199999998) so a migrated node
+equals a fresh-sync node in every persisted component; `nonce_db` is not consensus state (never read by block
+import; wiped by a pre-existing startup heuristic) and is excluded from parity.

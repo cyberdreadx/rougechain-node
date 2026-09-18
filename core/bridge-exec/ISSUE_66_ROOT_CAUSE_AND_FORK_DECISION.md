@@ -80,6 +80,10 @@ bridge stays paused.
 - `rebuild_balances`: fee accounting unified with `apply_balance_block`
   (`fee_to_quanta(tx.fee).min(deducted)`) — no more phantom distributions on rebuild.
 - Atomic rejected-block rollback (`capture_pre_apply_snapshot` / `restore_pre_apply_snapshot`).
+- Validator-state atomicity: stake/unstake effects applied ONLY from per-tx `ValidatorExecution`
+  results of the ledger execution (sequential in-block shadow) — the h29 "power without debit"
+  exploit shape (`validator_atomicity_tests`) is closed; the canonical validator set at F−1 is
+  pinned and migrated with the ledger (FORK_DECISION_PACKAGE §11).
 - Strict historical replay regression (`strict_historical_replay_tests`): prefix 1..17 must
   import and root 18 must be identity-independent; the 48/48 test is `#[ignore]`d with the
   reason above and must be un-ignored as part of the fork PR.

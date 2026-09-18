@@ -107,6 +107,9 @@ pub const BRIDGE_PAYOUT_STORE_ACTIVATION_HEIGHT: u64 = crate::fork::FORK_HEIGHT;
 #[cfg(test)]
 thread_local! {
     static TEST_FORK_HEIGHT_OVERRIDE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    /// Test-only: skip the F-1 canonical-ledger assertion (used ONLY by the table generator test
+    /// that produces the canonical tables in the first place). Compiled out of production.
+    static TEST_SKIP_F_MINUS_1_ASSERT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 #[inline]
 fn state_root_activation_height() -> u64 {
@@ -199,6 +202,23 @@ pub struct NodeOptions {
 
 /// Key for token balances: (public_key, token_symbol)
 type TokenBalanceKey = (String, String);
+
+/// Position-aligned validator-state execution result of a `stake` / `unstake` tx. Produced by
+/// the SAME decision that debits the economic ledger (inside `apply_balance_tx_inner`, against a
+/// sequential in-block validator shadow); `apply_validator_block` consumes ONLY these results.
+/// A failed/no-op stake or unstake therefore can never change validator state.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ValidatorExecution {
+    StakeApplied { validator: String, amount: u128 },
+    UnstakeApplied { validator: String, amount: u128, release_height: u64 },
+    Failed(String),
+}
+
+/// Everything `apply_balance_block` decided, indexed by tx position.
+pub struct BlockExecution {
+    pub bridge: Vec<Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>>,
+    pub validator: Vec<Option<ValidatorExecution>>,
+}
 
 /// Queued unbonding entry — funds release after UNBONDING_BLOCKS
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -775,6 +795,7 @@ impl L1Node {
         // Replay all transactions to rebuild balances with fee distribution
         let mut created_symbols: HashSet<String> = HashSet::new();
         for block in blocks {
+            let mut rebuild_validator_shadow: HashMap<String, u128> = HashMap::new();
             // Apply transaction effects
             for tx in &block.txs {
                 if tx.tx_type == "create_token" {
@@ -796,7 +817,7 @@ impl L1Node {
                     }
                 }
                 let apply_identity = self.apply_identity_for(tx, "_rebuild_");
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &apply_identity, &self.unbonding_queue, block.header.height, &self.shielded_supply, &mut None);
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &apply_identity, &self.unbonding_queue, block.header.height, &self.shielded_supply, &mut None, &mut rebuild_validator_shadow, &mut None);
                 self.apply_web3_state_effects(tx, block.header.height);
                 Self::apply_amm_balance_effects(
                     &mut balances,
@@ -970,7 +991,7 @@ impl L1Node {
 
         // Any apply error (P3-4 fail-closed contract rejection included) must not
         // leave the ledger partially mutated.
-        let bridge_results = match self.apply_balance_block(&block) {
+        let block_exec = match self.apply_balance_block(&block) {
             Ok(results) => results,
             Err(e) => {
                 let _ = self.restore_pre_apply_snapshot(pre_snapshot);
@@ -978,6 +999,8 @@ impl L1Node {
             }
         };
 
+        #[allow(unused_mut)]
+        let mut check_f_minus_1 = false;
         if crate::fork::is_checkpoint_height(block.header.height) {
             // Historical era (18 ..= F-1): the committed root is a legacy operational commitment
             // that canonical execution cannot recompute. Accept it ONLY by equality against the
@@ -986,7 +1009,10 @@ impl L1Node {
                 let _ = self.restore_pre_apply_snapshot(pre_snapshot);
                 return Err(e);
             }
-            if block.header.height == crate::fork::FORK_HEIGHT - 1 {
+            check_f_minus_1 = block.header.height == crate::fork::FORK_HEIGHT - 1;
+            #[cfg(test)]
+            { if TEST_SKIP_F_MINUS_1_ASSERT.with(|c| c.get()) { check_f_minus_1 = false; } }
+            if check_f_minus_1 {
                 // The canonical ledger at F-1 is itself a consensus commitment: assert it.
                 if let Err(e) = self.assert_canonical_ledger_at_f_minus_1() {
                     let _ = self.restore_pre_apply_snapshot(pre_snapshot);
@@ -1011,9 +1037,16 @@ impl L1Node {
             }
         }
 
-        if let Err(e) = self.apply_validator_block(&block) {
+        if let Err(e) = self.apply_validator_block(&block, &block_exec.validator) {
             let _ = self.restore_pre_apply_snapshot(pre_snapshot);
             return Err(e);
+        }
+        if check_f_minus_1 {
+            // Validator state after F-1 is asserted once the block's validator effects are in.
+            if let Err(e) = self.assert_canonical_validators_at_f_minus_1() {
+                let _ = self.restore_pre_apply_snapshot(pre_snapshot);
+                return Err(format!("canonical validator assertion failed at F-1 ({}): {}", block.header.height, e));
+            }
         }
 
         // Only persist after state was applied successfully. If persisting fails
@@ -1024,13 +1057,13 @@ impl L1Node {
         }
 
         // Generate and store transaction receipts
-        let receipts = self.generate_receipts(&block, &bridge_results);
+        let receipts = self.generate_receipts(&block, &block_exec.bridge, &block_exec.validator);
         let _ = self.receipt_store.store_batch(&receipts);
 
         // R1: relayer-facing payout records ONLY for an accepted + persisted block.
         // (A block rejected above — apply error or state-root mismatch — never reaches
         // this line, so it leaves zero withdrawal-store side effects.)
-        self.persist_bridge_withdraw_results(&block, &bridge_results)?;
+        self.persist_bridge_withdraw_results(&block, &block_exec.bridge)?;
         if block.header.height == crate::fork::FORK_HEIGHT - 1 {
             self.set_canonical_marker()?; // fresh sync reached the canonical F-1 ledger
         }
@@ -1077,6 +1110,7 @@ impl L1Node {
         &self,
         block: &BlockV1,
         bridge_results: &[Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>],
+        validator_results: &[Option<ValidatorExecution>],
     ) -> Vec<TxReceipt> {
         let mut receipts = Vec::with_capacity(block.txs.len());
         for (index, tx) in block.txs.iter().enumerate() {
@@ -1295,6 +1329,13 @@ impl L1Node {
                     match bridge_receipt_status(bridge_results.get(index).and_then(|o| o.as_ref())) {
                         BridgeReceipt::Success => TxStatus::Success,
                         BridgeReceipt::Failed(reason) => TxStatus::Failed(reason), // Failed AND None
+                    }
+                } else if tx.tx_type == "stake" || tx.tx_type == "unstake" {
+                    // Derived observability: a stake/unstake that did not execute is not Success.
+                    match validator_results.get(index).and_then(|o| o.as_ref()) {
+                        Some(ValidatorExecution::StakeApplied { .. }) | Some(ValidatorExecution::UnstakeApplied { .. }) => TxStatus::Success,
+                        Some(ValidatorExecution::Failed(reason)) => TxStatus::Failed(reason.clone()),
+                        None => TxStatus::Failed("missing validator execution result".to_string()),
                     }
                 } else {
                     TxStatus::Success
@@ -2617,7 +2658,7 @@ impl L1Node {
         };
         // Apply to state ONCE, here. (The old post-append apply_balance_block call
         // is intentionally removed — applying twice would double-charge fees.)
-        let bridge_results = self.apply_balance_block(&prelim_block)?;
+        let block_exec = self.apply_balance_block(&prelim_block)?;
 
         // Stamp the post-state root, gated on the activation height.
         let state_root = if height >= state_root_activation_height() {
@@ -2649,18 +2690,18 @@ impl L1Node {
         }
 
         self.store.append_block(&block)?;
-        self.apply_validator_block(&block)?;
+        self.apply_validator_block(&block, &block_exec.validator)?;
         *self.finalized_height.lock().map_err(|_| "finality lock")? = block.header.height;
         // Note: finalized_height set here as proposer (single-validator mode).
         // In multi-validator mode, try_finalize_block (called by auto_vote_for_block)
         // handles finalization via vote quorum verification.
 
         // Generate and store transaction receipts
-        let receipts = self.generate_receipts(&block, &bridge_results);
+        let receipts = self.generate_receipts(&block, &block_exec.bridge, &block_exec.validator);
         let _ = self.receipt_store.store_batch(&receipts);
 
         // R1: payout records only after the block is appended/persisted (see import path).
-        self.persist_bridge_withdraw_results(&block, &bridge_results)?;
+        self.persist_bridge_withdraw_results(&block, &block_exec.bridge)?;
         
         // Track proposer stats — node key may differ from validator staking key
         let proposer_key = block.header.proposer_pub_key.clone();
@@ -2904,7 +2945,51 @@ impl L1Node {
         crate::fork::ledger_matches_table(&b, crate::fork::CANONICAL_LEDGER_AT_F_MINUS_1)?;
         let tok = self.token_balances.lock().map_err(|_| "token lock")?;
         let lp = self.lp_balances.lock().map_err(|_| "lp lock")?;
-        crate::fork::token_lp_match_tables(&tok, &lp)
+        crate::fork::token_lp_match_tables(&tok, &lp)?;
+        let fb = self.get_total_fees_burned().to_bits();
+        if fb != crate::fork::CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1 {
+            return Err(format!("fees_burned accumulator {} (bits {}) != canonical {}", f64::from_bits(fb), fb, f64::from_bits(crate::fork::CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1)));
+        }
+        Ok(())
+    }
+    /// Set the persisted `total_fees_burned` accumulator (in-memory + `fee_db["total_burned"]`).
+    fn set_total_fees_burned(&self, v: f64) -> Result<(), String> {
+        *self.total_fees_burned.lock().map_err(|_| "fees lock")? = v;
+        self.fee_db.insert(b"total_burned", v.to_string().as_bytes()).map_err(|e| e.to_string())?;
+        self.fee_db.flush().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    /// Consensus-relevant validator rows of the live store (see `fork::ValidatorRow`).
+    pub fn validator_rows(&self) -> Result<Vec<crate::fork::ValidatorRow>, String> {
+        let mut rows: Vec<crate::fork::ValidatorRow> = self.validator_store.list_validators()?.into_iter()
+            .map(|(k, v)| (k, v.stake, v.slash_count, v.jailed_until, v.missed_blocks, v.total_slashed)).collect();
+        rows.sort(); Ok(rows)
+    }
+    /// Validator state at F-1 is a consensus commitment too (proposer selection, quorum): the
+    /// live validator set must equal the pinned canonical table and the unbonding queue must be
+    /// empty (no unstake exists in history 1..=F-1).
+    fn assert_canonical_validators_at_f_minus_1(&self) -> Result<(), String> {
+        crate::fork::validators_match_table(&self.validator_rows()?, crate::fork::CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1)?;
+        let ub = self.validator_store.get_all_unbonding_entries()?;
+        if !ub.is_empty() { return Err(format!("unbonding queue must be empty at F-1, found {} entries", ub.len())); }
+        Ok(())
+    }
+    /// Apply `VALIDATOR_TRANSITION` to the live store: consensus fields are overwritten from the
+    /// row, informational counters (`blocks_proposed`, `entropy_contributions`, `name`) are kept.
+    fn apply_validator_transition_to_store(&self) -> Result<(), String> {
+        for (op, k, s, sc, j, m, ts) in crate::fork::VALIDATOR_TRANSITION {
+            match *op {
+                "set" => {
+                    let mut st = self.validator_store.get_validator(k)?.unwrap_or(ValidatorState {
+                        stake: 0, slash_count: 0, jailed_until: 0, entropy_contributions: 0, blocks_proposed: 0, name: None, missed_blocks: 0, total_slashed: 0 });
+                    st.stake = *s; st.slash_count = *sc; st.jailed_until = *j; st.missed_blocks = *m; st.total_slashed = *ts;
+                    self.validator_store.set_validator(k, &st)?;
+                }
+                "remove" => self.validator_store.delete_validator(k)?,
+                other => return Err(format!("unknown validator transition op {}", other)),
+            }
+        }
+        Ok(())
     }
     pub fn canonical_marker_present(&self) -> bool {
         self.snapshot_db.get(crate::fork::CANONICAL_MARKER_KEY).ok().flatten().is_some()
@@ -2932,43 +3017,81 @@ impl L1Node {
     /// `persist` performs the durable write (injected so tests can fail it); on ANY failure
     /// the in-memory ledger is restored exactly and the pre-migration snapshot re-persisted.
     pub fn migrate_canonical_ledger(&self, persist: &dyn Fn(&Self) -> Result<(), String>) -> Result<&'static str, String> {
-        crate::fork::verify_table_hashes()?;
+        use crate::fork::*;
+        verify_table_hashes()?;
         let tip = self.store.get_tip()?.height;
-        if tip != crate::fork::FORK_HEIGHT - 1 {
-            return Err(format!("migration requires tip == {} (F-1); current tip {}", crate::fork::FORK_HEIGHT - 1, tip));
+        if tip != FORK_HEIGHT - 1 {
+            return Err(format!("migration requires tip == {} (F-1); current tip {}", FORK_HEIGHT - 1, tip));
         }
         let pre = self.balances.lock().map_err(|_| "balance lock")?.clone();
+        let pre_rows = self.validator_rows()?;
         {
             let tok = self.token_balances.lock().map_err(|_| "token lock")?;
             let lp = self.lp_balances.lock().map_err(|_| "lp lock")?;
-            crate::fork::token_lp_match_tables(&tok, &lp)?;
+            token_lp_match_tables(&tok, &lp)?;
         }
-        if crate::fork::ledger_matches_table(&pre, crate::fork::CANONICAL_LEDGER_AT_F_MINUS_1).is_ok() {
+        let unbonding = self.validator_store.get_all_unbonding_entries()?;
+        if !unbonding.is_empty() { return Err(format!("unbonding queue has {} entries but history 1..=F-1 contains no unstake — ABORT, manual investigation", unbonding.len())); }
+        let pre_fees_burned = self.get_total_fees_burned();
+        let pre_fee_db_total_burned = self.fee_db.get(b"total_burned").map_err(|e| e.to_string())?.map(|v| v.to_vec());
+        let ledger_canon = ledger_matches_table(&pre, CANONICAL_LEDGER_AT_F_MINUS_1).is_ok();
+        let vals_canon = validators_match_table(&pre_rows, CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1).is_ok();
+        let fees_canon = pre_fees_burned.to_bits() == CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1;
+        if ledger_canon && vals_canon && fees_canon {
             if self.canonical_marker_present() { return Ok("already-migrated"); }
             self.set_canonical_marker()?;
             return Ok("already-canonical-marked");
         }
-        if self.canonical_marker_present() {
-            return Err("canonical marker present but ledger is not canonical — ABORT, manual investigation".into());
+        if ledger_canon != vals_canon || ledger_canon != fees_canon {
+            return Err(format!("INCONSISTENT state: ledger canonical={} validators canonical={} fees_burned canonical={} — ABORT, manual investigation", ledger_canon, vals_canon, fees_canon));
         }
-        if let Err(e) = crate::fork::ledger_matches_table(&pre, crate::fork::PRODUCTION_LEDGER_AT_F_MINUS_1) {
+        if pre_fees_burned.to_bits() != PRODUCTION_FEES_BURNED_BITS_AT_F_MINUS_1 {
+            return Err(format!("pre-migration fees_burned {} (bits {}) != PRODUCTION_FEES_BURNED_BITS_AT_F_MINUS_1 ({}) — ABORT, no partial migration", pre_fees_burned, pre_fees_burned.to_bits(), f64::from_bits(PRODUCTION_FEES_BURNED_BITS_AT_F_MINUS_1)));
+        }
+        if self.canonical_marker_present() {
+            return Err("canonical marker present but state is not canonical — ABORT, manual investigation".into());
+        }
+        if let Err(e) = ledger_matches_table(&pre, PRODUCTION_LEDGER_AT_F_MINUS_1) {
             return Err(format!("pre-migration ledger does not match PRODUCTION_LEDGER_AT_F_MINUS_1 — ABORT, no partial migration: {}", e));
         }
-        let after = crate::fork::apply_delta(&pre)?;
-        crate::fork::ledger_matches_table(&after, crate::fork::CANONICAL_LEDGER_AT_F_MINUS_1)
+        if let Err(e) = validators_match_table(&pre_rows, PRODUCTION_VALIDATOR_STATE_AT_F_MINUS_1) {
+            return Err(format!("pre-migration validator state does not match PRODUCTION_VALIDATOR_STATE_AT_F_MINUS_1 — ABORT, no partial migration: {}", e));
+        }
+        let after = apply_delta(&pre)?;
+        ledger_matches_table(&after, CANONICAL_LEDGER_AT_F_MINUS_1)
             .map_err(|e| format!("post-delta ledger does not equal CANONICAL_LEDGER_AT_F_MINUS_1 — ABORT: {}", e))?;
+        validators_match_table(&apply_validator_transition(&pre_rows), CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1)
+            .map_err(|e| format!("post-transition validators do not equal CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1 — ABORT: {}", e))?;
+        // full dump of the validator trees for byte-exact rollback (validators + unbonding + meta)
+        let mut vtrees: Vec<(sled::Tree, Vec<(Vec<u8>, Vec<u8>)>)> = Vec::new();
+        for t in self.validator_store.trees() { vtrees.push((t.clone(), snapshot_tree(t)?)); }
+        // ── apply BOTH components; any failure below rolls back both ──
         *self.balances.lock().map_err(|_| "balance lock")? = after;
         let result = (|| -> Result<(), String> {
+            self.apply_validator_transition_to_store()?;
+            validators_match_table(&self.validator_rows()?, CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1)?;
+            self.set_total_fees_burned(f64::from_bits(CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1))?;
             persist(self)?;
+            for t in self.validator_store.trees() { t.flush().map_err(|e| e.to_string())?; }
             self.set_canonical_marker()?;
             let b = self.balances.lock().map_err(|_| "balance lock")?;
-            crate::fork::ledger_matches_table(&b, crate::fork::CANONICAL_LEDGER_AT_F_MINUS_1)
+            ledger_matches_table(&b, CANONICAL_LEDGER_AT_F_MINUS_1)?;
+            validators_match_table(&self.validator_rows()?, CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1)?;
+            if self.get_total_fees_burned().to_bits() != CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1 { return Err("fees_burned not canonical after migration".into()); }
+            Ok(())
         })();
         if let Err(e) = result {
             *self.balances.lock().map_err(|_| "balance lock")? = pre;
-            let _ = self.snapshot_db.remove(crate::fork::CANONICAL_MARKER_KEY);
+            let mut rollback_err = None;
+            if let Ok(mut f) = self.total_fees_burned.lock() { *f = pre_fees_burned; }
+            let r = match &pre_fee_db_total_burned { Some(v) => self.fee_db.insert(b"total_burned", v.clone()).map(|_| ()), None => self.fee_db.remove(b"total_burned").map(|_| ()) };
+            if let Err(e) = r { rollback_err = Some(e.to_string()); }
+            let _ = self.fee_db.flush();
+            for (t, dump) in &vtrees { if let Err(e) = restore_tree(t, dump) { rollback_err = Some(e); } }
+            let _ = self.snapshot_db.remove(CANONICAL_MARKER_KEY);
             let _ = self.snapshot_db.flush();
             let _ = self.persist_snapshot_atomic(tip); // re-persist the exact pre-migration ledger
+            if let Some(re) = rollback_err { return Err(format!("migration FAILED ({}) AND validator rollback failed ({}) — manual investigation", e, re)); }
             return Err(format!("migration FAILED and was rolled back: {}", e));
         }
         Ok("migrated")
@@ -3017,7 +3140,8 @@ impl L1Node {
         let _ = self.fee_db.clear(); let _ = self.fee_db.flush();
         let _ = self.nonce_db.clear(); let _ = self.nonce_db.flush();
         let _ = self.snapshot_db.remove(crate::fork::CANONICAL_MARKER_KEY);
-        self.validator_store.reset()?;
+        // validators, unbonding queue AND meta: recovery re-derives every validator component
+        for t in self.validator_store.trees() { t.clear().map_err(|e| e.to_string())?; }
         self.pool_store.clear_all()?;
         self.nft_store.clear_all()?;
         self.token_metadata_store.clear()?;
@@ -3051,8 +3175,15 @@ impl L1Node {
         };
         let mut nonces = String::new(); for item in self.nonce_db.iter() { let (k, v) = item.map_err(|e| e.to_string())?; nonces.push_str(&format!("{}={}\n", bytes_to_hex(&k), bytes_to_hex(&v))); }
         let stakes: std::collections::BTreeMap<String, u128> = self.list_validators().unwrap_or_default().into_iter().map(|(k, v)| (k, v.stake)).collect();
+        // validators: consensus fields (exact), informational counters separately (excluded from parity)
+        let rows = self.validator_rows()?;
+        let validators: std::collections::BTreeMap<String, serde_json::Value> = rows.iter().map(|(k, s, sc, j, m, ts)| (k.clone(), serde_json::json!({ "stake": s, "slash_count": sc, "jailed_until": j, "missed_blocks": m, "total_slashed": ts }))).collect();
+        let informational: std::collections::BTreeMap<String, serde_json::Value> = self.list_validators().unwrap_or_default().into_iter().map(|(k, v)| (k, serde_json::json!({ "blocks_proposed": v.blocks_proposed, "entropy_contributions": v.entropy_contributions, "name": v.name }))).collect();
+        let (total_stake, quorum) = crate::fork::stake_and_quorum(&rows);
+        let mut ub: Vec<(String, u128, u64, u64)> = self.validator_store.get_all_unbonding_entries()?.into_iter().map(|e| (e.validator_pub_key, e.amount, e.initiated_at, e.completes_at)).collect(); ub.sort();
         Ok(serde_json::json!({
             "tip": self.store.get_tip()?.height, "state_root": self.get_state_root()?,
+            "validators": validators, "validators_informational": informational, "total_stake": total_stake, "quorum": quorum, "unbonding": ub,
             "balances": h(&sb.iter().map(|(k, v)| format!("{}={}\n", k, v)).collect::<String>()),
             "token_balances": h(&st.iter().map(|((a, x), v)| format!("{}|{}={}\n", a, x, v)).collect::<String>()),
             "lp_balances": h(&sl.iter().map(|((a, x), v)| format!("{}|{}={}\n", a, x, v)).collect::<String>()),
@@ -3352,10 +3483,7 @@ impl L1Node {
     /// bridge payout-store writes: it runs BEFORE state-root verification and its ledger
     /// effects may be rolled back, so the store is persisted only by
     /// `persist_bridge_withdraw_results` on the accepted-block path.
-    fn apply_balance_block(
-        &self,
-        block: &BlockV1,
-    ) -> Result<Vec<Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>>, String> {
+    fn apply_balance_block(&self, block: &BlockV1) -> Result<BlockExecution, String> {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
         let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let mut lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
@@ -3368,6 +3496,10 @@ impl L1Node {
         // below has early `continue` paths that would misalign every later result.
         let mut bridge_results: Vec<Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>> =
             vec![None; block.txs.len()];
+        // Validator results (position-indexed) + the sequential in-block stake shadow. Fee
+        // distribution below still uses the PRE-block validator set (unchanged consensus timing).
+        let mut validator_results: Vec<Option<ValidatorExecution>> = vec![None; block.txs.len()];
+        let mut validator_shadow: HashMap<String, u128> = HashMap::new();
 
         let node_pub_key = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         // Apply transaction effects (transfers, stakes, etc.) - fees deducted from senders
@@ -3414,9 +3546,11 @@ impl L1Node {
 
             let before = balances.values().sum::<u128>();
             let mut bwo: Option<quantum_vault_bridge_exec::BridgeWithdrawExecution> = None;
+            let mut vwo: Option<ValidatorExecution> = None;
             let apply_identity = self.apply_identity_for(tx, &node_pub_key);
-            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &apply_identity, &self.unbonding_queue, block.header.height, &self.shielded_supply, &mut bwo);
+            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &apply_identity, &self.unbonding_queue, block.header.height, &self.shielded_supply, &mut bwo, &mut validator_shadow, &mut vwo);
             bridge_results[tx_index] = bwo; // index by position — never push
+            validator_results[tx_index] = vwo;
             // Commit sequential nonce for this sender
             let _ = self.nonce_db.insert(tx.from_pub_key.as_bytes(), &tx.nonce.to_be_bytes());
 
@@ -3858,7 +3992,7 @@ impl L1Node {
         self.set_base_fee_quanta(next_base_fee);
         self.persist_fees_burned();
 
-        Ok(bridge_results)
+        Ok(BlockExecution { bridge: bridge_results, validator: validator_results })
     }
 
     /// R1: persist relayer-facing bridge payout records for an ACCEPTED, PERSISTED block.
@@ -4428,7 +4562,7 @@ impl L1Node {
         let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
         let node_pub_key = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         let block_height = self.store.get_tip().map(|t| t.height).unwrap_or(0);
-        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block_height, &self.shielded_supply, &mut None);
+        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block_height, &self.shielded_supply, &mut None, &mut HashMap::new(), &mut None);
         Ok(())
     }
 
@@ -4451,6 +4585,7 @@ impl L1Node {
         let mut created_token_symbols: HashSet<String> = HashSet::new();
 
         for block in &blocks {
+            let mut rebuild_validator_shadow: HashMap<String, u128> = HashMap::new();
             let mut actual_fees_collected: u128 = 0;
 
             for tx in &block.txs {
@@ -4468,7 +4603,7 @@ impl L1Node {
                 let sum_before: u128 = balances.values().sum();
 
                 let apply_identity = self.apply_identity_for(tx, "_rebuild_");
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &apply_identity, &self.unbonding_queue, block.header.height, &self.shielded_supply, &mut None);
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &apply_identity, &self.unbonding_queue, block.header.height, &self.shielded_supply, &mut None, &mut rebuild_validator_shadow, &mut None);
 
                 // Register token metadata during rebuild + track created symbols
                 // Uses merge to preserve user-updated fields (image, links, etc.)
@@ -5400,6 +5535,11 @@ impl L1Node {
         // R1: typed execution result for `bridge_withdraw` ONLY. Written at the existing
         // decision points of the arm below; every other arm leaves it untouched (None).
         bridge_out: &mut Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>,
+        // Sequential in-block validator stake shadow (pubkey → stake after earlier txs of this
+        // block) and the position-aligned validator result. Stake/unstake validity is decided
+        // HERE, together with the ledger debit, never by re-scanning the block later.
+        validator_shadow: &mut HashMap<String, u128>,
+        validator_out: &mut Option<ValidatorExecution>,
     ) {
         match tx.tx_type.as_str() {
             "transfer" => {
@@ -5457,35 +5597,51 @@ impl L1Node {
             }
             "stake" => {
                 let amount = tx.payload.amount.unwrap_or(0) as f64;
+                if tx.payload.amount.unwrap_or(0) == 0 {
+                    *validator_out = Some(ValidatorExecution::Failed("stake amount must be > 0".into()));
+                    return;
+                }
                 let xrge_bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
                 if xrge_bal < xrge_f64_to_quanta(amount + tx.fee) {
                     eprintln!("[node] Rejecting stake: insufficient XRGE ({:.4} < {:.4})", xrge_bal, amount + tx.fee);
-                    return;
+                    *validator_out = Some(ValidatorExecution::Failed(format!("insufficient XRGE for stake+fee ({} < {})", quanta_to_display(xrge_bal), amount + tx.fee)));
+                    return; // NO ledger debit ⇒ NO validator effect
                 }
                 *balances.entry(canon_addr(&tx.from_pub_key)).or_insert(0) -= xrge_f64_to_quanta(amount + tx.fee);
+                let current = *validator_shadow.entry(tx.from_pub_key.clone()).or_insert_with(|| {
+                    validator_store.and_then(|vs| vs.get_validator(&tx.from_pub_key).unwrap_or(None)).map(|v| v.stake).unwrap_or(0)
+                });
+                let amount_u = tx.payload.amount.unwrap_or(0) as u128;
+                validator_shadow.insert(tx.from_pub_key.clone(), current + amount_u);
+                *validator_out = Some(ValidatorExecution::StakeApplied { validator: tx.from_pub_key.clone(), amount: amount_u });
             }
             "unstake" => {
                 let amount = tx.payload.amount.unwrap_or(0) as f64;
-                // Verify staked balance before queueing
-                if let Some(vs) = validator_store {
-                    let staked = vs.get_validator(&tx.from_pub_key)
-                        .unwrap_or(None)
-                        .map(|v| v.stake)
-                        .unwrap_or(0);
-                    if (amount as u128) > staked {
-                        eprintln!("[node] Rejecting unstake: staked {} but requested {}", staked, amount);
-                        return;
-                    }
+                let amount_u = tx.payload.amount.unwrap_or(0) as u128;
+                if amount_u == 0 {
+                    *validator_out = Some(ValidatorExecution::Failed("unstake amount must be > 0".into()));
+                    return;
+                }
+                // SEQUENTIAL validator shadow: earlier stake/unstake txs of this block are visible.
+                let staked = *validator_shadow.entry(tx.from_pub_key.clone()).or_insert_with(|| {
+                    validator_store.and_then(|vs| vs.get_validator(&tx.from_pub_key).unwrap_or(None)).map(|v| v.stake).unwrap_or(0)
+                });
+                if amount_u > staked {
+                    eprintln!("[node] Rejecting unstake: staked {} but requested {}", staked, amount);
+                    *validator_out = Some(ValidatorExecution::Failed(format!("unstake {} exceeds sequential stake {}", amount_u, staked)));
+                    return; // no validator change, no unbonding
                 }
                 let xrge_bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
                 if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting unstake: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
-                    return;
+                    *validator_out = Some(ValidatorExecution::Failed("insufficient XRGE for unstake fee".into()));
+                    return; // fee failed ⇒ no validator change, no unbonding
                 }
                 // Deduct fee now, queue the unbonding (funds released after UNBONDING_BLOCKS)
                 *balances.entry(canon_addr(&tx.from_pub_key)).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
+                validator_shadow.insert(tx.from_pub_key.clone(), staked - amount_u);
+                let release_at = block_height + UNBONDING_BLOCKS;
                 if let Ok(mut queue) = unbonding_queue.lock() {
-                    let release_at = block_height + UNBONDING_BLOCKS;
                     queue.push(UnbondingEntry {
                         delegator: tx.from_pub_key.clone(),
                         amount,
@@ -5494,6 +5650,7 @@ impl L1Node {
                     eprintln!("[node] Unstake queued: {:.4} XRGE, releases at block {}",
                         amount, release_at);
                 }
+                *validator_out = Some(ValidatorExecution::UnstakeApplied { validator: tx.from_pub_key.clone(), amount: amount_u, release_height: release_at });
             }
             "create_token" => {
                 const RESERVED: &[&str] = &["XRGE", "QETH", "QUSDC", "ETH", "USDC"];
@@ -5888,9 +6045,30 @@ impl L1Node {
         self.get_validator_stakes()
     }
 
-    fn apply_validator_block(&self, block: &BlockV1) -> Result<(), String> {
-        for tx in &block.txs {
-            self.apply_validator_tx(tx, block.header.height)?;
+    fn apply_validator_block(&self, block: &BlockV1, validator_results: &[Option<ValidatorExecution>]) -> Result<(), String> {
+        if validator_results.len() != block.txs.len() {
+            return Err(format!("validator results ({}) not aligned to block txs ({})", validator_results.len(), block.txs.len()));
+        }
+        for (tx, res) in block.txs.iter().zip(validator_results.iter()) {
+            match res {
+                // ONLY a stake/unstake whose ledger execution succeeded reaches the store.
+                Some(ValidatorExecution::StakeApplied { validator, amount }) => {
+                    let mut state = self.validator_store.get_validator(validator)?.unwrap_or(ValidatorState {
+                        stake: 0, slash_count: 0, jailed_until: 0, entropy_contributions: 0, blocks_proposed: 0, name: None, missed_blocks: 0, total_slashed: 0 });
+                    state.stake += amount;
+                    self.persist_validator_state(validator, &state, block.header.height)?;
+                }
+                Some(ValidatorExecution::UnstakeApplied { validator, amount, .. }) => {
+                    if let Some(mut state) = self.validator_store.get_validator(validator)? {
+                        state.stake = state.stake.saturating_sub(*amount);
+                        self.persist_validator_state(validator, &state, block.header.height)?;
+                    }
+                }
+                Some(ValidatorExecution::Failed(_)) | None => {
+                    // slashing is not a ledger tx; it keeps its own path
+                    if tx.tx_type == "slash" { self.apply_validator_tx(tx, block.header.height)?; }
+                }
+            }
         }
         // Process unbonding queue — release matured entries
         self.process_unbonding_queue(block.header.height);
@@ -5974,17 +6152,8 @@ impl L1Node {
             })
         };
         match tx.tx_type.as_str() {
-            "stake" | "unstake" => {
-                let amount = tx.payload.amount.unwrap_or(0) as u128;
-                let current = ensure(self.validator_store.get_validator(&tx.from_pub_key)?);
-                let mut state = current;
-                if tx.tx_type == "stake" {
-                    state.stake += amount;
-                } else {
-                    state.stake = state.stake.saturating_sub(amount);
-                }
-                self.persist_validator_state(&tx.from_pub_key, &state, height)?;
-            }
+            // stake / unstake are applied from `ValidatorExecution` results only (see
+            // apply_validator_block) — never inferred from a tx's presence in a block.
             "slash" => {
                 let payload = SlashPayload {
                     target_pub_key: tx.payload.target_pub_key.clone().unwrap_or_default(),
@@ -6825,7 +6994,7 @@ mod ledger_tests {
         let uq: Arc<Mutex<Vec<UnbondingEntry>>> = Arc::new(Mutex::new(Vec::new()));
         let ss = Arc::new(Mutex::new(0.0f64));
         L1Node::apply_balance_tx_inner(
-            balances, &mut token_balances, &mut burned, tx, None, "", &uq, 1, &ss, &mut None,
+            balances, &mut token_balances, &mut burned, tx, None, "", &uq, 1, &ss, &mut None, &mut HashMap::new(), &mut None,
         );
         (token_balances, burned)
     }
@@ -7337,7 +7506,7 @@ mod live_amm_tests {
         let mut burned = node.burned_tokens.lock().unwrap();
         L1Node::apply_balance_tx_inner(
             &mut bal, &mut tok, &mut burned, tx,
-            Some(&node.validator_store), node_pub, &node.unbonding_queue, 1, &node.shielded_supply, &mut None,
+            Some(&node.validator_store), node_pub, &node.unbonding_queue, 1, &node.shielded_supply, &mut None, &mut HashMap::new(), &mut None,
         );
     }
 
@@ -7979,7 +8148,7 @@ mod bridge_r1_daemon_tests {
             withdraw_tx(&user.public_key_hex, "XRGE", 100, DEST, 0.1, 2),
         ];
         let block = prelim_block(&node, txs);
-        let results = node.apply_balance_block(&block).unwrap();
+        let results = node.apply_balance_block(&block).unwrap().bridge;
         assert_eq!(results.len(), 2, "one slot per tx");
         assert!(matches!(results[0], Some(BX::Success(_))), "first burns");
         assert_eq!(results[1], Some(BX::Failed(BF::InsufficientFee)), "second fails (balance drained)");
@@ -7992,7 +8161,7 @@ mod bridge_r1_daemon_tests {
         assert_eq!(pending[0].token_symbol, "XRGE");
         assert!(pending[0].tx_id.starts_with("xrge:"));
         // receipts: first Success, second Failed(reason)
-        let receipts = node.generate_receipts(&block, &results);
+        let receipts = node.generate_receipts(&block, &results, &[]);
         assert!(matches!(receipts[0].status, TxStatus::Success));
         assert!(matches!(&receipts[1].status, TxStatus::Failed(r) if r == "InsufficientFee"));
     }
@@ -8003,7 +8172,7 @@ mod bridge_r1_daemon_tests {
         let user = pqc_keygen();
         fund_xrge(&node, &user.public_key_hex, 50.1);
         let block = prelim_block(&node, vec![withdraw_tx(&user.public_key_hex, "XRGE", 100, DEST, 0.1, 1)]);
-        let results = node.apply_balance_block(&block).unwrap();
+        let results = node.apply_balance_block(&block).unwrap().bridge;
         assert_eq!(results[0], Some(BX::Failed(BF::InsufficientXrge)));
         assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 50.1, "no debit");
         assert!(node.burned_tokens.lock().unwrap().is_empty(), "no burn");
@@ -8022,7 +8191,7 @@ mod bridge_r1_daemon_tests {
             fee: 0.1, sig: String::new(), signed_payload: None };
         let txs = vec![skipped, withdraw_tx(&user.public_key_hex, "XRGE", 10, DEST, 0.1, 2)];
         let block = prelim_block(&node, txs);
-        let results = node.apply_balance_block(&block).unwrap();
+        let results = node.apply_balance_block(&block).unwrap().bridge;
         assert_eq!(results.len(), 2);
         assert!(results[0].is_none(), "skipped tx leaves its slot None");
         assert!(matches!(results[1], Some(BX::Success(_))), "withdrawal result lands at ITS index");
@@ -8042,13 +8211,13 @@ mod bridge_r1_daemon_tests {
         let block = prelim_block(&node, vec![withdraw_tx(&user.public_key_hex, "XRGE", 1, DEST, 0.1, 1)]);
         // absent result (defensive: never Success)
         let none: Vec<Option<BX>> = vec![None];
-        let r = node.generate_receipts(&block, &none);
+        let r = node.generate_receipts(&block, &none, &[]);
         assert!(matches!(&r[0].status, TxStatus::Failed(m) if m == "missing bridge execution result"));
         node.persist_bridge_withdraw_results(&block, &none).unwrap();
         assert!(store.list_pending().unwrap().is_empty(), "None never stored");
         // explicit failure
         let failed: Vec<Option<BX>> = vec![Some(BX::Failed(BF::ZeroAmount))];
-        let r = node.generate_receipts(&block, &failed);
+        let r = node.generate_receipts(&block, &failed, &[]);
         assert!(matches!(&r[0].status, TxStatus::Failed(m) if m == "ZeroAmount"));
         node.persist_bridge_withdraw_results(&block, &failed).unwrap();
         assert!(store.list_pending().unwrap().is_empty(), "Failed never stored");
@@ -8068,7 +8237,7 @@ mod bridge_r1_daemon_tests {
             withdraw_tx(&user.public_key_hex, "3EYE", 100, DEST, 0.1, 3),
         ];
         let block = prelim_block(&node, txs);
-        let results = node.apply_balance_block(&block).unwrap();
+        let results = node.apply_balance_block(&block).unwrap().bridge;
         // all three BURN at the ledger (execution semantics unchanged) ...
         assert!(results.iter().all(|r| matches!(r, Some(BX::Success(_)))));
         for sym in ["qUSDC", "qBTC", "3EYE"] {
@@ -8383,11 +8552,19 @@ mod strict_historical_replay_tests {
         // mints + faucet == ledger + stake + shielded + pool XRGE reserve + burned + fee-burn + implicit sinks
         let ledger: u128 = b.values().sum();
         // Stake term = XRGE actually debited from the ledger by SUCCESSFUL stake txs: h20 only
-        // (10,000). The h29 stake was rejected at the balance level (10,000.87 < 10,001) yet the
-        // validator store still records it — a pre-existing validator-store/ledger inconsistency
-        // (reported as a finding); the validator store therefore shows 120,000 total.
+        // (10,000). The h29 stake fails atomically (10,000.87 < 10,001): no debit, no validator
+        // power, no entry. Validator store = genesis 100,000 (never a ledger debit) + 10,000.
         let stake: u128 = 10_000;
-        assert_eq!(node.list_validators().unwrap().iter().map(|(_, v)| v.stake).sum::<u128>(), 120_000, "validator store: genesis 100,000 + h20 10,000 + h29 10,000 (h29 unbacked by a ledger debit)");
+        let rows = node.validator_rows().unwrap();
+        crate::fork::validators_match_table(&rows, crate::fork::CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1).expect("fresh sync reaches the pinned canonical validator set");
+        assert_eq!(crate::fork::stake_and_quorum(&rows), (110_000, 73_334), "backed stake only; quorum = total*2/3+1");
+        assert!(rows.iter().all(|r| !r.0.starts_with("c97f59a2")), "h29 unbacked staker holds no validator power");
+        assert!(node.validator_store.get_all_unbonding_entries().unwrap().is_empty());
+        assert_eq!(node.get_total_fees_burned().to_bits(), crate::fork::CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1, "fresh sync reproduces the pinned fees_burned accumulator");
+        let h29 = node.get_block(29).unwrap().unwrap();
+        let stake_tx = h29.txs.iter().find(|t| t.tx_type == "stake").expect("h29 carries the stake tx");
+        let rc = node.get_receipt(&compute_single_tx_hash(stake_tx)).unwrap().expect("receipt for h29 stake");
+        assert!(!matches!(rc.status, quantum_vault_types::TxStatus::Success), "h29 stake receipt marks failure: {:?}", rc.status);
         let pool_xrge: u128 = node.pool_store.list_pools().unwrap().iter().map(|p| if p.token_a == "XRGE" { p.reserve_a as u128 } else if p.token_b == "XRGE" { p.reserve_b as u128 } else { 0 }).sum();
         let burned = (*node.burned_tokens.lock().unwrap().get("XRGE").unwrap_or(&0.0) * 1e9).round() as u128;
         let fee_burn = (node.get_total_fees_burned() * 1e9).round() as u128;
@@ -8553,6 +8730,45 @@ mod bridge_store_hardening_tests {
 // economics, and the old rebuild-accounting bug regression.
 // ─────────────────────────────────────────────────────────────────────────────
 #[cfg(test)]
+mod fork_table_generation {
+    use super::*;
+    use super::strict_historical_replay_tests::{FIXTURE_BLOCKS, FIXTURE_GENESIS, TmpDir};
+    /// TABLE GENERATOR (run explicitly): fresh random-identity node, blocks 0..48 through the real
+    /// import path with the F-1 assertion disabled, then dump the canonical ledger + validator
+    /// state to fork-decision/canonical_state_48.json. Used to (re)generate fork_tables.rs.
+    #[test]
+    #[ignore = "table generator — run explicitly with --ignored"]
+    fn generate_canonical_state_at_f_minus_1() {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(18)));
+        TEST_SKIP_F_MINUS_1_ASSERT.with(|c| c.set(true));
+        let gc: crate::GenesisConfig = serde_json::from_str(&std::fs::read_to_string(FIXTURE_GENESIS).unwrap()).unwrap();
+        let dir = TmpDir(std::env::temp_dir().join(format!("gen-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let node = L1Node::new(NodeOptions { data_dir: dir.0.clone(), chain: ChainConfig { chain_id: gc.chain_id.clone(), genesis_time: gc.genesis_time, block_time_ms: gc.block_time_ms },
+            mine: false, bridge_withdraw_store: None, bridge_authority_keys: gc.initial_validators.iter().map(|v| v.pub_key.clone()).collect(),
+            genesis_allocations: gc.initial_allocations.clone(), genesis_validators: gc.initial_validators.clone() }).unwrap();
+        node.init().unwrap(); node.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators).unwrap();
+        for line in std::fs::read_to_string(FIXTURE_BLOCKS).unwrap().lines() {
+            let b: BlockV1 = serde_json::from_str(line).unwrap();
+            if b.header.height == 0 { continue; }
+            if b.header.height >= crate::fork::FORK_HEIGHT { break; }
+            node.import_block(b).unwrap();
+        }
+        assert_eq!(node.tip_height().unwrap(), crate::fork::FORK_HEIGHT - 1);
+        let bal: std::collections::BTreeMap<String, u128> = node.balances.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let tok: Vec<((String, String), u128)> = node.token_balances.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let lp: Vec<((String, String), u128)> = node.lp_balances.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let vals: Vec<(String, ValidatorState)> = node.list_validators().unwrap();
+        let out = serde_json::json!({ "height": node.tip_height().unwrap(), "state_root": node.get_state_root().unwrap(),
+            "balances": bal, "token_balances": tok, "lp_balances": lp, "validators": vals,
+            "unbonding": *node.unbonding_queue.lock().unwrap(), "shielded_supply": node.get_shielded_supply(), "fees_burned": node.get_total_fees_burned() });
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/../bridge-exec/fork-decision/canonical_state_48.json");
+        std::fs::write(p, serde_json::to_vec_pretty(&out).unwrap()).unwrap();
+        eprintln!("wrote {}", p);
+    }
+}
+
+#[cfg(test)]
 mod fork_integration_tests {
     use super::*;
     use super::strict_historical_replay_tests::{replay_fixture_node, TmpDir, FIXTURE_GENESIS};
@@ -8568,10 +8784,29 @@ mod fork_integration_tests {
         let (last, fail, node, dir) = replay_fixture_node();
         assert!(fail.is_none() && last == FORK_HEIGHT - 1);
         *node.balances.lock().unwrap() = prod_table();
+        // production validator store: h29 phantom validator present, consensus fields as exported
+        for (k, s, sc, j, m, ts) in PRODUCTION_VALIDATOR_STATE_AT_F_MINUS_1 {
+            let mut st = node.validator_store.get_validator(k).unwrap().unwrap_or(ValidatorState { stake: 0, slash_count: 0, jailed_until: 0, entropy_contributions: 0, blocks_proposed: 0, name: None, missed_blocks: 0, total_slashed: 0 });
+            st.stake = *s; st.slash_count = *sc; st.jailed_until = *j; st.missed_blocks = *m; st.total_slashed = *ts;
+            node.validator_store.set_validator(k, &st).unwrap();
+        }
+        validators_match_table(&node.validator_rows().unwrap(), PRODUCTION_VALIDATOR_STATE_AT_F_MINUS_1).unwrap();
+        assert_eq!(stake_and_quorum(&node.validator_rows().unwrap()), (120_000, 80_001), "production: 10,000 phantom power");
+        // production's phantom-era fees_burned accumulator
+        node.set_total_fees_burned(f64::from_bits(PRODUCTION_FEES_BURNED_BITS_AT_F_MINUS_1)).unwrap();
         let _ = node.snapshot_db.remove(CANONICAL_MARKER_KEY); let _ = node.snapshot_db.flush();
         node.persist_snapshot_atomic(FORK_HEIGHT - 1).unwrap();
         assert!(node.fork_readiness_check().unwrap_err().contains("LEGACY production ledger"), "startup guard demands migration");
         (node, dir)
+    }
+    fn assert_canonical_validators(n: &L1Node) {
+        let rows = n.validator_rows().unwrap();
+        validators_match_table(&rows, CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1).unwrap();
+        assert_eq!(stake_and_quorum(&rows), (110_000, 73_334));
+        assert!(rows.iter().all(|r| !r.0.starts_with("c97f59a2")), "h29 phantom validator removed");
+        assert!(n.validator_store.get_all_unbonding_entries().unwrap().is_empty());
+        assert_eq!(n.get_total_fees_burned().to_bits(), CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1, "fees_burned accumulator canonical");
+        assert_eq!(n.fee_db.get(b"total_burned").unwrap().map(|v| v.to_vec()), Some(f64::from_bits(CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1).to_string().into_bytes()));
     }
     fn reopen(opts: &NodeOptions) -> L1Node {
         let n = L1Node::new(NodeOptions { data_dir: opts.data_dir.clone(), chain: opts.chain.clone(), mine: false, bridge_withdraw_store: None,
@@ -8581,7 +8816,8 @@ mod fork_integration_tests {
     fn consensus_fields(n: &L1Node) -> serde_json::Value {
         let d = n.state_digest().unwrap();
         serde_json::json!({ "tip": d["tip"], "state_root": d["state_root"], "balances": d["balances"], "token_balances": d["token_balances"], "lp_balances": d["lp_balances"],
-            "burned_tokens": d["burned_tokens"], "stakes": d["stakes"], "shielded_supply_bits": d["shielded_supply_bits"], "base_fee_quanta": d["base_fee_quanta"] })
+            "burned_tokens": d["burned_tokens"], "stakes": d["stakes"], "shielded_supply_bits": d["shielded_supply_bits"], "base_fee_quanta": d["base_fee_quanta"],
+            "validators": d["validators"], "total_stake": d["total_stake"], "quorum": d["quorum"], "unbonding": d["unbonding"] })
     }
     struct Keys(String, String);
     fn proposer_keys() -> Keys { let k = pqc_keygen(); Keys(k.public_key_hex, k.secret_key_hex) }
@@ -8607,13 +8843,75 @@ mod fork_integration_tests {
         let (node, _d) = legacy_production_node();
         assert_eq!(node.migrate_canonical_ledger(&persist).unwrap(), "migrated");
         ledger_matches_table(&node.balances.lock().unwrap(), CANONICAL_LEDGER_AT_F_MINUS_1).unwrap();
+        assert_canonical_validators(&node);
         assert!(node.canonical_marker_present() && node.fork_readiness_check().is_ok());
         let before: u128 = prod_table().values().sum(); let after: u128 = canon_table().values().sum();
         assert_eq!(before - after, 10_255_079_099_271, "exactly the phantom amount removed");
+        // informational counters survive the transition untouched
+        assert!(node.list_validators().unwrap().iter().any(|(k, v)| k.starts_with("8ccf7878") && v.blocks_proposed > 0));
         let opts = node.opts.clone(); drop(node);
         let reloaded = reopen(&opts);
         ledger_matches_table(&reloaded.balances.lock().unwrap(), CANONICAL_LEDGER_AT_F_MINUS_1).unwrap();
+        assert_canonical_validators(&reloaded);
         assert_eq!(reloaded.migrate_canonical_ledger(&persist).unwrap(), "already-migrated", "double migration recognized idempotently");
+    }
+
+    #[test]
+    fn migration_refuses_validator_mismatch_and_inconsistent_partial_state() {
+        // (a) one extra missed block on a production validator ⇒ abort, nothing touched
+        let (node, _d) = legacy_production_node();
+        let (k, mut st) = node.list_validators().unwrap().into_iter().find(|(k, _)| k.starts_with("21e0ed0a")).unwrap();
+        st.missed_blocks += 1; node.validator_store.set_validator(&k, &st).unwrap();
+        let rows_before = node.validator_rows().unwrap(); let bal_before = node.balances.lock().unwrap().clone();
+        let err = node.migrate_canonical_ledger(&persist).unwrap_err();
+        assert!(err.contains("does not match PRODUCTION_VALIDATOR_STATE_AT_F_MINUS_1"), "{err}");
+        assert_eq!(node.validator_rows().unwrap(), rows_before); assert_eq!(*node.balances.lock().unwrap(), bal_before);
+        assert!(!node.canonical_marker_present());
+        // (b) ledger already canonical but validators still production ⇒ INCONSISTENT abort
+        st.missed_blocks -= 1; node.validator_store.set_validator(&k, &st).unwrap();
+        *node.balances.lock().unwrap() = canon_table();
+        let err = node.migrate_canonical_ledger(&persist).unwrap_err();
+        assert!(err.contains("INCONSISTENT state: ledger canonical=true validators canonical=false"), "{err}");
+        assert!(!node.canonical_marker_present());
+    }
+
+    #[test]
+    fn migration_rollback_restores_validator_store_byte_exact() {
+        let (node, _d) = legacy_production_node();
+        let dump_before: Vec<Vec<(Vec<u8>, Vec<u8>)>> = node.validator_store.trees().iter().map(|t| snapshot_tree(t).unwrap()).collect();
+        let err = node.migrate_canonical_ledger(&|n| {
+            // the ledger + validator transition are already applied in memory/store at this point
+            assert_canonical_validators(n);
+            Err("injected disk failure after validator transition".to_string())
+        }).unwrap_err();
+        assert!(err.contains("rolled back"), "{err}");
+        let dump_after: Vec<Vec<(Vec<u8>, Vec<u8>)>> = node.validator_store.trees().iter().map(|t| snapshot_tree(t).unwrap()).collect();
+        assert_eq!(dump_before, dump_after, "validator trees byte-exact after rollback");
+        assert_eq!(stake_and_quorum(&node.validator_rows().unwrap()), (120_000, 80_001), "phantom validator is back (legacy state)");
+        assert_eq!(node.get_total_fees_burned().to_bits(), PRODUCTION_FEES_BURNED_BITS_AT_F_MINUS_1, "fees_burned restored");
+        assert_eq!(node.fee_db.get(b"total_burned").unwrap().map(|v| v.to_vec()), Some(f64::from_bits(PRODUCTION_FEES_BURNED_BITS_AT_F_MINUS_1).to_string().into_bytes()));
+        ledger_matches_table(&node.balances.lock().unwrap(), PRODUCTION_LEDGER_AT_F_MINUS_1).unwrap();
+        assert_eq!(node.migrate_canonical_ledger(&persist).unwrap(), "migrated");
+        assert_canonical_validators(&node);
+    }
+
+    /// Finality after the fork counts ONLY ledger-backed stake: total 110,000, quorum 73,334.
+    /// The genesis validator alone (100,000) reaches quorum; the 10,000 validator alone does not;
+    /// the removed h29 staker has no weight at all.
+    #[test]
+    fn finality_quorum_uses_backed_stake_only() {
+        let (node, _d) = legacy_production_node();
+        assert_eq!(stake_and_quorum(&node.validator_rows().unwrap()), (120_000, 80_001), "legacy: 10,000 phantom weight inflates the quorum");
+        node.migrate_canonical_ledger(&persist).unwrap();
+        let stakes = node.get_validator_stakes().unwrap();
+        let total: u128 = stakes.values().sum();
+        let quorum = total * 2 / 3 + 1;
+        assert_eq!((total, quorum), (110_000, 73_334));
+        let expected: BTreeMap<String, u128> = CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1.iter().map(|(k, s, ..)| (k.to_string(), *s)).collect();
+        assert_eq!(stakes, expected, "proposer-selection stake map == canonical table");
+        let w = |prefix: &str| stakes.iter().filter(|(k, _)| k.starts_with(prefix)).map(|(_, s)| *s).sum::<u128>();
+        assert!(w("8ccf7878") >= quorum && w("21e0ed0a") < quorum && w("c97f59a2") == 0);
+        assert_eq!(node.state_digest().unwrap()["quorum"], 73_334);
     }
 
     #[test]
@@ -8638,7 +8936,9 @@ mod fork_integration_tests {
         assert!(!node.canonical_marker_present(), "no marker after failed migration");
         assert_eq!(node.snapshot_db.get(b"balances").unwrap().map(|v| v.to_vec()), snap_before, "persisted snapshot unchanged");
         assert!(node.fork_readiness_check().is_err(), "still a legacy node");
+        assert_eq!(stake_and_quorum(&node.validator_rows().unwrap()), (120_000, 80_001), "validator store untouched");
         assert_eq!(node.migrate_canonical_ledger(&persist).unwrap(), "migrated", "a later correct migration succeeds");
+        assert_canonical_validators(&node);
     }
 
     #[test]
@@ -8715,5 +9015,123 @@ mod fork_integration_tests {
         assert!(income > fees - fee_to_quanta(0.01), "fees (minus the base-fee burn) were distributed: {}", income);
         let q = *node.balances.lock().unwrap().get(&canon_addr(&user.public_key_hex)).unwrap();
         assert_eq!(q, xrge_f64_to_quanta(20_000.0) - fee_to_quanta(100.1) - fee_to_quanta(10_001.0), "user debited exactly principal + stake + fees (quanta)");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Validator-state atomicity (issue #66 final blocker): stake / unstake must share ONE
+// success decision between the economic ledger and the validator store, sequentially
+// within a block. These tests encode the REQUIRED behaviour; on the pre-fix code they
+// reproduce the live exploit shape (validator power without a ledger debit).
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod validator_atomicity_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, signed, sealed_block};
+
+    fn stake_tx(from: &str, amount: u64, fee: f64, nonce: u64) -> TxV1 {
+        TxV1 { version: 1, tx_type: "stake".into(), from_pub_key: from.into(), nonce,
+            payload: TxPayload { amount: Some(amount), ..Default::default() }, fee, sig: String::new(), signed_payload: None }
+    }
+    fn unstake_tx(from: &str, amount: u64, fee: f64, nonce: u64) -> TxV1 {
+        TxV1 { version: 1, tx_type: "unstake".into(), from_pub_key: from.into(), nonce,
+            payload: TxPayload { amount: Some(amount), ..Default::default() }, fee, sig: String::new(), signed_payload: None }
+    }
+    fn staked(node: &L1Node, pk: &str) -> u128 { node.validator_store.get_validator(pk).unwrap().map(|v| v.stake).unwrap_or(0) }
+    /// Import a block of `txs` with its correct root (probe + rollback), returning the receipts' statuses.
+    fn import_with_correct_root(node: &L1Node, proposer_pub: &str, proposer_sk: &str, txs: Vec<TxV1>) -> Vec<TxStatus> {
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        let probe = sealed_block(node, proposer_pub, proposer_sk, txs.clone(), None, t);
+        let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
+        let _ = node.apply_balance_block(&probe).unwrap();
+        let root = node.get_state_root().unwrap();
+        node.restore_pre_apply_snapshot(snap).unwrap();
+        let good = sealed_block(node, proposer_pub, proposer_sk, txs.clone(), Some(root), t);
+        node.import_block(good).expect("block accepted");
+        txs.iter().map(|tx| node.get_receipt(&compute_single_tx_hash(tx)).unwrap().unwrap().status).collect()
+    }
+
+    #[test]
+    fn insolvent_stake_cannot_create_validator_power() {
+        let (_d, node, _s) = node_with_store();
+        let p = pqc_keygen(); let u = pqc_keygen();
+        fund_xrge(&node, &u.public_key_hex, 10_000.87); // < 10,000 + 1 fee  (the h29 shape)
+        let st = import_with_correct_root(&node, &p.public_key_hex, &p.secret_key_hex,
+            vec![signed(stake_tx(&u.public_key_hex, 10_000, 1.0, 1), &u.secret_key_hex)]);
+        assert_eq!(node.get_balance(&u.public_key_hex).unwrap(), 10_000.87, "ledger debit must be a no-op");
+        assert_eq!(staked(&node, &u.public_key_hex), 0, "NO validator power without a ledger debit");
+        assert!(matches!(&st[0], TxStatus::Failed(_)), "failed stake must not be reported Success: {:?}", st[0]);
+    }
+
+    #[test]
+    fn same_block_double_stake_locks_only_what_was_paid() {
+        let (_d, node, _s) = node_with_store();
+        let p = pqc_keygen(); let u = pqc_keygen();
+        fund_xrge(&node, &u.public_key_hex, 10_001.5); // enough for exactly ONE 10,000 stake + fee
+        let st = import_with_correct_root(&node, &p.public_key_hex, &p.secret_key_hex, vec![
+            signed(stake_tx(&u.public_key_hex, 10_000, 1.0, 1), &u.secret_key_hex),
+            signed(stake_tx(&u.public_key_hex, 10_000, 1.0, 2), &u.secret_key_hex),
+        ]);
+        assert_eq!(staked(&node, &u.public_key_hex), 10_000, "validator power == XRGE actually locked (not 20,000)");
+        assert_eq!(node.get_balance(&u.public_key_hex).unwrap(), 0.5);
+        assert!(matches!(st[0], TxStatus::Success) && matches!(&st[1], TxStatus::Failed(_)), "{:?}", st);
+    }
+
+    #[test]
+    fn same_block_double_unstake_cannot_release_more_than_staked() {
+        let (_d, node, _s) = node_with_store();
+        let p = pqc_keygen(); let u = pqc_keygen();
+        fund_xrge(&node, &u.public_key_hex, 10_003.0);
+        // stake exactly 10,000 first (its own block)
+        import_with_correct_root(&node, &p.public_key_hex, &p.secret_key_hex,
+            vec![signed(stake_tx(&u.public_key_hex, 10_000, 1.0, 1), &u.secret_key_hex)]);
+        assert_eq!(staked(&node, &u.public_key_hex), 10_000);
+        let before_q = node.unbonding_queue.lock().unwrap().len();
+        let st = import_with_correct_root(&node, &p.public_key_hex, &p.secret_key_hex, vec![
+            signed(unstake_tx(&u.public_key_hex, 10_000, 1.0, 2), &u.secret_key_hex),
+            signed(unstake_tx(&u.public_key_hex, 10_000, 1.0, 3), &u.secret_key_hex),
+        ]);
+        assert_eq!(staked(&node, &u.public_key_hex), 0, "first unstake releases the whole stake");
+        let q = node.unbonding_queue.lock().unwrap();
+        let mine: Vec<_> = q.iter().skip(before_q).filter(|e| e.delegator == u.public_key_hex).collect();
+        assert_eq!(mine.len(), 1, "exactly ONE unbonding entry");
+        assert_eq!(mine[0].amount, 10_000.0, "totalling 10,000 — never 20,000");
+        drop(q);
+        assert!(matches!(st[0], TxStatus::Success) && matches!(&st[1], TxStatus::Failed(_)), "{:?}", st);
+        // exactly ONE unstake fee was paid: 10,003 − 10,001 (stake+fee) − 1 = 1.0, plus the staker's own
+        // validator fee-share income for this block (< 0.7 XRGE) — a second fee would leave < 1.0.
+        let bal = node.get_balance(&u.public_key_hex).unwrap();
+        assert!((1.0..1.7).contains(&bal), "only the successful unstake's fee was paid: {bal}");
+    }
+
+    #[test]
+    fn failed_fee_cannot_change_validator_state() {
+        let (_d, node, _s) = node_with_store();
+        let p = pqc_keygen(); let u = pqc_keygen();
+        fund_xrge(&node, &u.public_key_hex, 10_002.0);
+        import_with_correct_root(&node, &p.public_key_hex, &p.secret_key_hex,
+            vec![signed(stake_tx(&u.public_key_hex, 10_000, 1.0, 1), &u.secret_key_hex)]);
+        assert_eq!(node.get_balance(&u.public_key_hex).unwrap(), 1.0);
+        // unstake with a fee the account cannot pay (fee 5 > balance 1)
+        let st = import_with_correct_root(&node, &p.public_key_hex, &p.secret_key_hex,
+            vec![signed(unstake_tx(&u.public_key_hex, 10_000, 5.0, 2), &u.secret_key_hex)]);
+        assert_eq!(staked(&node, &u.public_key_hex), 10_000, "validator state unchanged when the fee fails");
+        assert!(node.unbonding_queue.lock().unwrap().iter().all(|e| e.delegator != u.public_key_hex), "no unbonding entry");
+        assert!(matches!(&st[0], TxStatus::Failed(_)));
+    }
+
+    #[test]
+    fn rejected_block_leaves_no_validator_or_unbonding_mutation() {
+        let (_d, node, _s) = node_with_store();
+        let p = pqc_keygen(); let u = pqc_keygen();
+        fund_xrge(&node, &u.public_key_hex, 20_003.0);
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        let vals_before = serde_json::to_string(&node.list_validators().unwrap()).unwrap(); let q_before = serde_json::to_string(&*node.unbonding_queue.lock().unwrap()).unwrap();
+        let bad = sealed_block(&node, &p.public_key_hex, &p.secret_key_hex,
+            vec![signed(stake_tx(&u.public_key_hex, 10_000, 1.0, 1), &u.secret_key_hex)], Some("ab".repeat(32)), t);
+        assert!(node.import_block(bad).unwrap_err().contains("state root mismatch"));
+        assert_eq!(serde_json::to_string(&node.list_validators().unwrap()).unwrap(), vals_before, "validator store untouched by a rejected block");
+        assert_eq!(serde_json::to_string(&*node.unbonding_queue.lock().unwrap()).unwrap(), q_before);
+        assert_eq!(staked(&node, &u.public_key_hex), 0);
     }
 }

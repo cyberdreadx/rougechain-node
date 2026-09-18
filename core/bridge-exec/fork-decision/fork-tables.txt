@@ -1,3 +1,4 @@
+== SUPERSEDED (2026-09-18): rows below predate the validator-state atomicity fix. Authoritative tables: fork_tables_F49.json / core/daemon/src/fork_tables.rs (see FORK_DECISION_PACKAGE.md §11). ==
 == OPTION A / B account rows (native XRGE, quanta 1e-9) ==
 __treasury__ | canonical=2.148598812 (2148598812) | production=1027.656508750 (1027656508750) | A_delta(prod-canon)=1025.507909938 (1025507909938) | B_delta(canon-prod)=-1025.507909938 (-1025507909938) | treasury: phantom fee distribution from historical restart-rebuild (sum-delta fee bug)
 rouge168fd0mad4eynev767u896zx5ng2dnh7eztw9cj24tjn8f6e5t7fsgh8qxj | canonical=17.270880672 (17270880672) | production=8594.150175817 (8594150175817) | A_delta(prod-canon)=8576.879295145 (8576879295145) | B_delta(canon-prod)=-8576.879295145 (-8576879295145) | proposer + genesis validator (node key 8ccf7878…, stake 100000): phantom fee distribution

@@ -56,6 +56,55 @@ pub fn serialize_token_lp(tok: &[(&str, &str, u128)], lp: &[(&str, &str, u128)])
 }
 pub fn sha256_hex(s: &str) -> String { bytes_to_hex(&sha256(s.as_bytes())) }
 
+/// Consensus-relevant validator fields: (pubkey, stake, slash_count, jailed_until,
+/// missed_blocks, total_slashed). `blocks_proposed` / `entropy_contributions` / `name` are
+/// informational (never read by proposer selection, quorum or slashing) and excluded.
+pub type ValidatorRow = (String, u128, u32, u64, u64, u128);
+fn owned_rows(t: &[(&str, u128, u32, u64, u64, u128)]) -> Vec<ValidatorRow> {
+    t.iter().map(|(k, s, sc, j, m, ts)| (k.to_string(), *s, *sc, *j, *m, *ts)).collect()
+}
+pub fn serialize_validators(rows: &[ValidatorRow]) -> String {
+    let mut v = rows.to_vec(); v.sort();
+    v.iter().map(|(k, s, sc, j, m, ts)| format!("{}|stake={}|slash_count={}|jailed_until={}|missed_blocks={}|total_slashed={}\n", k, s, sc, j, m, ts)).collect()
+}
+pub fn serialize_transition(t: &[(&str, &str, u128, u32, u64, u64, u128)]) -> String {
+    let mut v: Vec<_> = t.iter().map(|(op, k, s, sc, j, m, ts)| (k.to_string(), op.to_string(), *s, *sc, *j, *m, *ts)).collect(); v.sort();
+    v.iter().map(|(k, op, s, sc, j, m, ts)| format!("{}|{}|stake={}|slash_count={}|jailed_until={}|missed_blocks={}|total_slashed={}\n", op, k, s, sc, j, m, ts)).collect()
+}
+/// Pure application of `VALIDATOR_TRANSITION` to a validator row set ("set" overwrites the
+/// consensus fields, "remove" deletes the entry).
+pub fn apply_validator_transition(rows: &[ValidatorRow]) -> Vec<ValidatorRow> {
+    let mut m: HashMap<String, ValidatorRow> = rows.iter().map(|r| (r.0.clone(), r.clone())).collect();
+    for (op, k, s, sc, j, mb, ts) in VALIDATOR_TRANSITION {
+        match *op {
+            "set" => { m.insert(k.to_string(), (k.to_string(), *s, *sc, *j, *mb, *ts)); }
+            "remove" => { m.remove(*k); }
+            _ => unreachable!("VALIDATOR_TRANSITION op must be set|remove"),
+        }
+    }
+    let mut out: Vec<ValidatorRow> = m.into_values().collect(); out.sort(); out
+}
+/// `(total_stake, quorum)` over a row set — quorum is exactly the finality rule `total*2/3+1`.
+pub fn stake_and_quorum(rows: &[ValidatorRow]) -> (u128, u128) {
+    let total: u128 = rows.iter().map(|r| r.1).sum();
+    (total, if total == 0 { 0 } else { total * 2 / 3 + 1 })
+}
+/// Exact comparison of the live validator set (consensus fields) against a pinned table.
+/// Rows with stake 0, no slash and no jail are equivalent to absent (that is exactly when the
+/// store deletes them). Returns the first difference.
+pub fn validators_match_table(live: &[ValidatorRow], table: &[(&str, u128, u32, u64, u64, u128)]) -> Result<(), String> {
+    let mut want: HashMap<String, ValidatorRow> = owned_rows(table).into_iter().map(|r| (r.0.clone(), r)).collect();
+    for r in live.iter().filter(|r| !(r.1 == 0 && r.2 == 0 && r.3 == 0)) {
+        match want.remove(&r.0) {
+            Some(w) if w == *r => {}
+            Some(w) => return Err(format!("validator {} live {:?} table {:?}", r.0, (r.1, r.2, r.3, r.4, r.5), (w.1, w.2, w.3, w.4, w.5))),
+            None => return Err(format!("validator {} (stake {}) is not in the table", r.0, r.1)),
+        }
+    }
+    if let Some((k, w)) = want.into_iter().next() { return Err(format!("table validator {} (stake {}) missing from the live set", k, w.1)); }
+    Ok(())
+}
+
 /// Recompute every pinned table hash. Any edit to the fork data fails this.
 pub fn verify_table_hashes() -> Result<(), String> {
     let checks = [
@@ -64,10 +113,19 @@ pub fn verify_table_hashes() -> Result<(), String> {
         ("CANONICAL_LEDGER_TABLE_SHA256", sha256_hex(&serialize_ledger(CANONICAL_LEDGER_AT_F_MINUS_1)), CANONICAL_LEDGER_TABLE_SHA256),
         ("CANONICAL_DELTA_TABLE_SHA256", sha256_hex(&serialize_delta(CANONICAL_DELTA)), CANONICAL_DELTA_TABLE_SHA256),
         ("TOKEN_LP_TABLE_SHA256", sha256_hex(&serialize_token_lp(TOKEN_BALANCES_AT_F_MINUS_1, LP_BALANCES_AT_F_MINUS_1)), TOKEN_LP_TABLE_SHA256),
+        ("PRODUCTION_VALIDATOR_TABLE_SHA256", sha256_hex(&serialize_validators(&owned_rows(PRODUCTION_VALIDATOR_STATE_AT_F_MINUS_1))), PRODUCTION_VALIDATOR_TABLE_SHA256),
+        ("CANONICAL_VALIDATOR_TABLE_SHA256", sha256_hex(&serialize_validators(&owned_rows(CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1))), CANONICAL_VALIDATOR_TABLE_SHA256),
+        ("VALIDATOR_TRANSITION_TABLE_SHA256", sha256_hex(&serialize_transition(VALIDATOR_TRANSITION)), VALIDATOR_TRANSITION_TABLE_SHA256),
     ];
     for (name, got, want) in checks {
         if got != want { return Err(format!("{} mismatch: computed {} pinned {}", name, got, want)); }
     }
+    // structural: production validators + transition == canonical validators, exactly; stake sums pinned
+    let after = apply_validator_transition(&owned_rows(PRODUCTION_VALIDATOR_STATE_AT_F_MINUS_1));
+    validators_match_table(&after, CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1).map_err(|e| format!("production validators + transition != canonical validators: {}", e))?;
+    if stake_and_quorum(&owned_rows(CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1)).0 != CANONICAL_TOTAL_BACKED_STAKE { return Err("canonical backed-stake sum mismatch".into()); }
+    if stake_and_quorum(&owned_rows(PRODUCTION_VALIDATOR_STATE_AT_F_MINUS_1)).0 != PRODUCTION_TOTAL_VALIDATOR_STAKE { return Err("production stake sum mismatch".into()); }
+    if VALIDATOR_TRANSITION.iter().any(|(op, ..)| *op != "set" && *op != "remove") { return Err("unknown transition op".into()); }
     // structural: production + delta == canonical, exactly
     let mut m: HashMap<&str, i128> = PRODUCTION_LEDGER_AT_F_MINUS_1.iter().map(|(k, v)| (*k, *v as i128)).collect();
     for (k, d) in CANONICAL_DELTA { *m.entry(k).or_insert(0) += d; }
@@ -157,5 +215,28 @@ mod fork_tables_tests {
         // one-quanta perturbation is detected
         let mut off = prod.clone(); *off.get_mut("__treasury__").unwrap() += 1;
         assert!(ledger_matches_table(&off, PRODUCTION_LEDGER_AT_F_MINUS_1).is_err());
+    }
+    #[test]
+    fn validator_tables_pin_the_h29_phantom_removal_and_backed_quorum() {
+        let prod = owned_rows(PRODUCTION_VALIDATOR_STATE_AT_F_MINUS_1);
+        let canon = owned_rows(CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1);
+        assert_eq!(stake_and_quorum(&prod), (120_000, 80_001), "production: 100,000 + 10,000 (h20) + 10,000 phantom (h29)");
+        assert_eq!(stake_and_quorum(&canon), (110_000, 73_334), "canonical: only ledger-backed stake; quorum = total*2/3+1");
+        assert_eq!(CANONICAL_TOTAL_BACKED_STAKE, 110_000);
+        // the transition removes exactly ONE validator (the h29 unbacked staker) and keeps the two backed ones
+        let removed: Vec<&str> = VALIDATOR_TRANSITION.iter().filter(|(op, ..)| *op == "remove").map(|(_, k, ..)| *k).collect();
+        assert_eq!(removed.len(), 1, "one removal");
+        assert!(removed[0].starts_with("c97f59a2"), "the h29 staker");
+        assert!(canon.iter().all(|r| r.0.starts_with("21e0ed0a") || r.0.starts_with("8ccf7878")));
+        assert_eq!(apply_validator_transition(&prod), canon);
+        // consensus fields are compared exactly; one unit of stake or one missed block is detected
+        let mut off = canon.clone(); off[0].1 += 1;
+        assert!(validators_match_table(&off, CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1).is_err());
+        let mut off = canon.clone(); off[0].4 += 1;
+        assert!(validators_match_table(&off, CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1).is_err());
+        assert!(validators_match_table(&prod, CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1).unwrap_err().contains("not in the table"));
+        // an edited validator table breaks its pinned hash
+        let mut t = canon.clone(); t[0].1 -= 1;
+        assert_ne!(sha256_hex(&serialize_validators(&t)), CANONICAL_VALIDATOR_TABLE_SHA256);
     }
 }
