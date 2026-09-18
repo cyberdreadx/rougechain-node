@@ -118,7 +118,12 @@ impl PoolStore {
             db: Arc::new(db),
         })
     }
-    
+
+    /// Every sled tree this store writes to (rollback snapshot/restore).
+    pub fn trees(&self) -> Vec<&sled::Tree> {
+        vec![&**self.db]
+    }
+
     /// Save a pool to the store
     pub fn save_pool(&self, pool: &LiquidityPool) -> Result<(), String> {
         let key = pool.pool_id.as_bytes();

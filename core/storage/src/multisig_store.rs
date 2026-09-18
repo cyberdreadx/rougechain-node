@@ -53,6 +53,11 @@ impl MultisigStore {
         Ok(Self { wallets_db, proposals_db })
     }
 
+    /// Every sled tree this store writes to (rollback snapshot/restore).
+    pub fn trees(&self) -> Vec<&sled::Tree> {
+        vec![&*self.wallets_db, &*self.proposals_db]
+    }
+
     // ── Wallet CRUD ──
 
     pub fn create_wallet(&self, wallet: &MultisigWallet) -> Result<(), String> {

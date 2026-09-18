@@ -76,7 +76,12 @@ impl PoolEventStore {
             prices_db: Arc::new(prices_db),
         })
     }
-    
+
+    /// Every sled tree this store writes to (rollback snapshot/restore).
+    pub fn trees(&self) -> Vec<&sled::Tree> {
+        vec![&**self.events_db, &**self.prices_db]
+    }
+
     /// Save a pool event
     pub fn save_event(&self, event: &PoolEvent) -> Result<(), String> {
         // Key format: pool_id:timestamp:event_id for ordering

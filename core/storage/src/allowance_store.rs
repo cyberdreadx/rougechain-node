@@ -31,6 +31,11 @@ impl AllowanceStore {
         format!("{}:{}:{}", owner, spender, token)
     }
 
+    /// Every sled tree this store writes to (rollback snapshot/restore).
+    pub fn trees(&self) -> Vec<&sled::Tree> {
+        vec![&*self.db]
+    }
+
     pub fn set_allowance(&self, allowance: &Allowance) -> Result<(), String> {
         let key = Self::key(&allowance.owner, &allowance.spender, &allowance.token_symbol);
         if allowance.amount == 0 {

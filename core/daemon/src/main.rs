@@ -7786,44 +7786,14 @@ async fn bridge_withdraw(
     State(state): State<AppState>,
     Json(body): Json<BridgeWithdrawRequest>,
 ) -> Result<Json<BridgeWithdrawResponse>, (StatusCode, Json<BridgeWithdrawResponse>)> {
-    // Which token is being withdrawn. qBTC withdrawals are gated on the BTC bridge being
-    // configured (QV_BRIDGE_BTC_CUSTODY); every other token on the EVM (Base) custody address.
-    // This lets a node offer BTC bridging without the EVM bridge enabled, and vice versa —
-    // previously a qBTC withdrawal was wrongly rejected whenever the EVM custody was unset.
-    let token_symbol = body.payload.as_ref()
-        .and_then(|p| p.get("tokenSymbol"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("qETH")
-        .to_string();
-    let is_qbtc = token_symbol.eq_ignore_ascii_case("qBTC");
-    let bridge_ready = if is_qbtc {
-        bridge_btc::btc_custody_address().is_some()
-    } else {
-        state.bridge_custody_address.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
+    use quantum_vault_bridge_exec::{
+        authorize_bridge_withdraw, Endpoint, PayoutRoute, SignedWithdrawIntent, TopLevelCompat,
     };
-    if !bridge_ready {
-        return Ok(Json(BridgeWithdrawResponse {
-            success: false,
-            tx_id: None,
-            error: Some(if is_qbtc {
-                "BTC bridge is not enabled (QV_BRIDGE_BTC_CUSTODY not set)".to_string()
-            } else {
-                "Bridge is not enabled (QV_BRIDGE_CUSTODY_ADDRESS not set)".to_string()
-            }),
-        }));
-    }
-    if body.amount_units == 0 {
-        return Ok(Json(BridgeWithdrawResponse {
-            success: false,
-            tx_id: None,
-            error: Some("Amount must be greater than 0".to_string()),
-        }));
-    }
-    if let Err(e) = check_withdraw_guardrails(body.amount_units) {
-        return Ok(Json(BridgeWithdrawResponse { success: false, tx_id: None, error: Some(e) }));
-    }
+    let fail = |msg: String| Ok(Json(BridgeWithdrawResponse { success: false, tx_id: None, error: Some(msg) }));
 
-    // Prefer signed payload (client-side signing) over raw private key
+    // R1C: the VERIFIED signed payload is the sole authority for every security-relevant
+    // withdrawal value. Top-level `amountUnits` / `evmAddress` / `fee` are legacy compatibility
+    // copies that must EQUAL the signed values; they never override them.
     let tx_result = if let (Some(signature), Some(payload)) = (&body.signature, &body.payload) {
         let signed_req = SignedTransactionRequest {
             payload: payload.clone(),
@@ -7832,20 +7802,75 @@ async fn bridge_withdraw(
             payload_bytes_hex: None,
         };
         if let Err(e) = verify_signed_tx(&signed_req).await {
-            return Ok(Json(BridgeWithdrawResponse {
-                success: false,
-                tx_id: None,
-                error: Some(format!("Signature verification failed: {}", e)),
-            }));
+            return fail(format!("Signature verification failed: {}", e));
         }
+        // Mandatory signer binding (verify_signed_tx only checks `from` when present).
+        if payload.get("from").and_then(|v| v.as_str()) != Some(body.from_public_key.as_str()) {
+            return fail("signed payload 'from' must equal the authenticated public key".to_string());
+        }
+        // Durable account nonce if the client signed one (no-op otherwise; the persistent
+        // signature replay guard inside verify_signed_tx always applies).
+        if let Err(e) = check_signed_nonce(&state.node, &body.from_public_key, payload) {
+            return fail(e);
+        }
+        let intent = SignedWithdrawIntent {
+            op_type: payload.get("type").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            amount: payload.get("amount").and_then(|v| v.as_u64()),
+            destination: payload.get("evmAddress").and_then(|v| v.as_str()).map(str::to_string),
+            fee: payload.get("fee").and_then(|v| v.as_f64()),
+            token_symbol: payload.get("tokenSymbol").and_then(|v| v.as_str()).map(str::to_string),
+        };
+        let compat = TopLevelCompat {
+            amount: Some(body.amount_units),
+            destination: Some(body.evm_address.clone()),
+            fee: body.fee,
+        };
+        // R1B admission allowlist (qETH/qUSDC/qBTC; XRGE → its own endpoint; else rejected),
+        // R1C value binding, R1D fee policy (exactly 0.1 XRGE) + zero-amount/blank-destination.
+        let auth = match authorize_bridge_withdraw(Endpoint::Generic, &intent, &compat) {
+            Ok(a) => a,
+            Err(e) => return fail(format!("signed-intent rejected: {:?}", e)),
+        };
+        // Bridge readiness is keyed on the AUTHORIZED route, not a caller-chosen string.
+        let bridge_ready = match auth.route {
+            PayoutRoute::Btc => bridge_btc::btc_custody_address().is_some(),
+            _ => state.bridge_custody_address.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
+        };
+        if !bridge_ready {
+            return fail(if auth.route == PayoutRoute::Btc {
+                "BTC bridge is not enabled (QV_BRIDGE_BTC_CUSTODY not set)".to_string()
+            } else {
+                "Bridge is not enabled (QV_BRIDGE_CUSTODY_ADDRESS not set)".to_string()
+            });
+        }
+        if let Err(e) = check_withdraw_guardrails(auth.amount) {
+            return fail(e);
+        }
+        // The node-cosigned TxV1 is built ONLY from authorized (signed + canonicalized) values.
+        // Token-specific destination FORMAT validation (EVM vs Bitcoin) happens inside.
         state.node.submit_bridge_withdraw_tx_signed(
             &body.from_public_key,
-            body.amount_units,
-            &body.evm_address,
-            body.fee,
-            &token_symbol,
+            auth.amount,
+            &auth.destination,
+            Some(auth.fee),
+            &auth.canonical_token,
         )
     } else if let Some(ref private_key) = body.from_private_key {
+        // R1C-(8): deprecated raw-private-key path — default OFF. It is qETH-only by
+        // construction (submit_bridge_withdraw_tx hard-codes qETH) and still subject to the
+        // same admission checks; it can never reach qUSDC/qBTC/XRGE.
+        if std::env::var("QV_BRIDGE_ALLOW_RAW_KEY").map(|v| v == "true").unwrap_or(false) == false {
+            return fail("raw-private-key bridge withdrawal is disabled; use the signed path".to_string());
+        }
+        if !state.bridge_custody_address.as_ref().map(|s| !s.is_empty()).unwrap_or(false) {
+            return fail("Bridge is not enabled (QV_BRIDGE_CUSTODY_ADDRESS not set)".to_string());
+        }
+        if body.amount_units == 0 {
+            return fail("Amount must be greater than 0".to_string());
+        }
+        if let Err(e) = check_withdraw_guardrails(body.amount_units) {
+            return fail(e);
+        }
         state.node.submit_bridge_withdraw_tx(
             private_key,
             &body.from_public_key,
@@ -7854,11 +7879,7 @@ async fn bridge_withdraw(
             body.fee,
         )
     } else {
-        return Ok(Json(BridgeWithdrawResponse {
-            success: false,
-            tx_id: None,
-            error: Some("Either signature+payload or fromPrivateKey is required".to_string()),
-        }));
+        return fail("Either signature+payload or fromPrivateKey is required".to_string());
     };
 
     match tx_result {
@@ -7915,15 +7936,25 @@ fn is_xrge_withdrawal(w: &PendingWithdrawal) -> bool {
     w.token_symbol.eq_ignore_ascii_case("XRGE") || w.tx_id.starts_with("xrge:")
 }
 
+/// R1B: positive routing helpers for the generic (Base EVM) relayer list. There is NO
+/// catch-all: a record is served to the EVM relayer only if it is explicitly qETH or qUSDC.
+fn is_eth_withdrawal(w: &PendingWithdrawal) -> bool {
+    w.token_symbol.eq_ignore_ascii_case("qETH")
+}
+fn is_usdc_withdrawal(w: &PendingWithdrawal) -> bool {
+    w.token_symbol.eq_ignore_ascii_case("qUSDC")
+}
+
 async fn bridge_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdrawalsResponse> {
     let list = state.bridge_withdraw_store.list_pending().unwrap_or_default();
     Json(BridgeWithdrawalsResponse {
         withdrawals: list
             .into_iter()
-            // The ETH relayer must not pick up XRGE or qBTC withdrawals — those are served by
-            // /api/bridge/xrge/withdrawals and /api/bridge/btc/withdrawals and paid on their
-            // own chains. Paying a Bitcoin withdrawal as native ETH would be catastrophic.
-            .filter(|w| !is_xrge_withdrawal(w) && !is_btc_withdrawal(w))
+            // R1B: the generic EVM list exposes ONLY explicitly supported EVM assets (qETH,
+            // qUSDC) — never "anything that isn't XRGE/qBTC". XRGE and qBTC keep their
+            // dedicated lists; an unsupported/custom symbol appears on NO relayer list.
+            // `tokenSymbol` is included in every item so the relayer routes on it.
+            .filter(|w| is_eth_withdrawal(w) || is_usdc_withdrawal(w))
             .map(|w| BridgeWithdrawalItem {
                 tx_id: w.tx_id,
                 evm_address: w.evm_address,
@@ -7957,66 +7988,149 @@ fn payout_hash_from_body(body: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Verify a Base *native ETH* payout before a qETH withdrawal is marked fulfilled: the tx
-/// `from` must be custody, `to` the recipient, `value` at least what is owed, status success,
-/// with enough confirmations. Never trust the relayer's "done" without the on-chain receipt.
-async fn verify_native_eth_payout(
+/// R1D: the configured RougeBridge contract on Base. From `QV_ROUGE_BRIDGE_ADDRESS`, else the
+/// relayer's `ROUGE_BRIDGE_ADDRESS` (the node service shares that env file). `None` ⇒ qETH/
+/// qUSDC payouts cannot be verified and fulfillment FAILS CLOSED.
+fn rouge_bridge_address() -> Option<String> {
+    for key in ["QV_ROUGE_BRIDGE_ADDRESS", "ROUGE_BRIDGE_ADDRESS"] {
+        if let Ok(a) = std::env::var(key) {
+            let a = a.trim().to_lowercase();
+            if a.len() == 42 && a.starts_with("0x") && a[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+                return Some(a);
+            }
+        }
+    }
+    None
+}
+
+/// Event topic0 selectors for the RougeBridge release events (Ethereum keccak256 of the
+/// canonical signature). Pinned by `bridge_release_topics_match_solidity` in the tests.
+fn topic_bridge_release_eth() -> String {
+    format!("0x{}", quantum_vault_bridge_exec::bytes_to_hex(
+        &quantum_vault_bridge_exec::keccak256(b"BridgeReleaseETH(address,uint256,bytes32)")))
+}
+fn topic_bridge_release_erc20() -> String {
+    format!("0x{}", quantum_vault_bridge_exec::bytes_to_hex(
+        &quantum_vault_bridge_exec::keccak256(b"BridgeReleaseERC20(address,address,uint256,bytes32)")))
+}
+
+/// A decoded RougeBridge release event found in a receipt.
+struct RougeBridgeRelease {
+    recipient: String,      // lowercase 0x…
+    token: Option<String>,  // None for BridgeReleaseETH; Some(lowercase token) for ERC20
+    amount: u128,
+    l1_tx_id: String,       // lowercase 0x + 64 hex
+}
+
+/// Decode `BridgeReleaseETH` / `BridgeReleaseERC20` logs emitted BY `rouge_bridge` from a
+/// receipt's `logs` array. Layouts (RougeBridge.sol): ETH = topics[recipient], data =
+/// amount ‖ l1TxId; ERC20 = topics[recipient, token], data = amount ‖ l1TxId.
+fn decode_rouge_bridge_releases(logs: &[serde_json::Value], rouge_bridge: &str) -> Vec<RougeBridgeRelease> {
+    let t_eth = topic_bridge_release_eth();
+    let t_erc = topic_bridge_release_erc20();
+    let mut out = Vec::new();
+    for log in logs {
+        let emitter = log.get("address").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        if emitter != rouge_bridge { continue; }
+        let topics = match log.get("topics").and_then(|v| v.as_array()) { Some(t) => t, None => continue };
+        let t0 = topics.first().and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        let data = log.get("data").and_then(|v| v.as_str()).unwrap_or("0x").trim_start_matches("0x").to_lowercase();
+        if data.len() < 128 { continue; }
+        // uint256 word; a value above u128::MAX cannot be a real payout and is skipped.
+        let amount = match u128::from_str_radix(&data[..64], 16) { Ok(a) => a, Err(_) => continue };
+        let l1_tx_id = format!("0x{}", &data[64..128]);
+        if t0 == t_eth && topics.len() >= 2 {
+            out.push(RougeBridgeRelease {
+                recipient: topic_to_address(topics[1].as_str().unwrap_or("")),
+                token: None, amount, l1_tx_id,
+            });
+        } else if t0 == t_erc && topics.len() >= 3 {
+            out.push(RougeBridgeRelease {
+                recipient: topic_to_address(topics[1].as_str().unwrap_or("")),
+                token: Some(topic_to_address(topics[2].as_str().unwrap_or(""))), amount, l1_tx_id,
+            });
+        }
+    }
+    out
+}
+
+/// R1D §6/§7: verify a RougeBridge release payout by its EVENT, not by `tx.to == recipient`
+/// (the tx is sent to the contract). Requires: tx.to == configured RougeBridge; receipt success;
+/// a `BridgeReleaseETH` (qETH) or `BridgeReleaseERC20` with token == USDC (qUSDC) emitted BY
+/// the RougeBridge with recipient == expected, amount >= owed, l1TxId == canonical id; for
+/// qUSDC additionally the USDC `Transfer(from = RougeBridge → recipient, amount >= owed)`;
+/// and confirmation depth (fail closed if the head can't be read).
+async fn verify_rouge_bridge_release(
     client: &reqwest::Client,
     rpc_url: &str,
     tx_hash: &str,
-    from_custody: &str,
-    to_addr: &str,
-    min_wei: u128,
+    rouge_bridge: &str,
+    expected_recipient: &str,
+    expected_token: Option<&str>, // None = native ETH; Some(usdc) = ERC20
+    min_amount: u128,
+    canonical_l1_tx_id: &str,
 ) -> Result<(), String> {
     let tx_hash = if tx_hash.starts_with("0x") { tx_hash.to_string() } else { format!("0x{}", tx_hash) };
-    let from_custody = from_custody.to_lowercase();
-    let to_addr = to_addr.to_lowercase();
+    let rouge_bridge = rouge_bridge.to_lowercase();
+    let expected_recipient = expected_recipient.to_lowercase();
+    let canonical_l1_tx_id = canonical_l1_tx_id.to_lowercase();
 
-    let tx: serde_json::Value = client
-        .post(rpc_url)
+    // 1. The Base transaction destination must be the configured RougeBridge.
+    let tx: serde_json::Value = client.post(rpc_url)
         .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionByHash","params":[tx_hash],"id":1}))
         .send().await.map_err(|e| format!("RPC error: {}", e))?
         .json().await.map_err(|e| format!("bad RPC response: {}", e))?;
-    let result = tx.get("result").filter(|v| !v.is_null())
-        .ok_or_else(|| "payout tx not found or not yet mined".to_string())?;
-    let tx_from = result.get("from").and_then(|v| v.as_str()).unwrap_or_default().to_lowercase();
-    let tx_to = result.get("to").and_then(|v| v.as_str()).unwrap_or_default().to_lowercase();
-    if tx_from != from_custody {
-        return Err(format!("payout sender {} is not the custody address {}", tx_from, from_custody));
+    let txr = tx.get("result").filter(|v| !v.is_null()).ok_or_else(|| "payout tx not found or not yet mined".to_string())?;
+    let tx_to = txr.get("to").and_then(|v| v.as_str()).unwrap_or_default().to_lowercase();
+    if tx_to != rouge_bridge {
+        return Err(format!("payout tx destination {} is not the configured RougeBridge {}", tx_to, rouge_bridge));
     }
-    if tx_to != to_addr {
-        return Err(format!("payout recipient {} does not match the withdrawal address {}", tx_to, to_addr));
-    }
-    let value_hex = result.get("value").and_then(|v| v.as_str()).unwrap_or("0x0");
-    let value_wei = u128::from_str_radix(value_hex.trim_start_matches("0x"), 16).unwrap_or(0);
-    if value_wei < min_wei {
-        return Err(format!("payout {} wei is less than the {} wei owed", value_wei, min_wei));
-    }
-
-    let receipt: serde_json::Value = client
-        .post(rpc_url)
+    // 2. Successful receipt + the release event emitted by the RougeBridge.
+    let receipt: serde_json::Value = client.post(rpc_url)
         .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":[tx_hash],"id":1}))
         .send().await.map_err(|e| format!("RPC error: {}", e))?
         .json().await.map_err(|e| format!("bad RPC response: {}", e))?;
-    let rec = receipt.get("result").filter(|v| !v.is_null())
-        .ok_or_else(|| "payout receipt not found".to_string())?;
+    let rec = receipt.get("result").filter(|v| !v.is_null()).ok_or_else(|| "payout receipt not found".to_string())?;
     if rec.get("status").and_then(|v| v.as_str()).unwrap_or("0x0") != "0x1" {
         return Err("payout transaction reverted".to_string());
     }
+    let logs = rec.get("logs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let releases = decode_rouge_bridge_releases(&logs, &rouge_bridge);
+    let expected_token_lc = expected_token.map(|t| t.to_lowercase());
+    let matched = releases.iter().any(|r| {
+        r.recipient == expected_recipient
+            && r.token == expected_token_lc
+            && r.amount >= min_amount
+            && r.l1_tx_id == canonical_l1_tx_id
+    });
+    if !matched {
+        return Err(format!(
+            "no matching {} event from RougeBridge for recipient {} / l1TxId {} (amount >= {})",
+            if expected_token.is_some() { "BridgeReleaseERC20" } else { "BridgeReleaseETH" },
+            expected_recipient, canonical_l1_tx_id, min_amount
+        ));
+    }
+    // 3. qUSDC: the ERC20 Transfer must come FROM the RougeBridge contract (not the signer).
+    if let Some(usdc) = expected_token {
+        let dep = parse_erc20_transfer_to(client, rpc_url, &tx_hash, usdc, &expected_recipient).await
+            .map_err(|e| format!("USDC Transfer to recipient not found: {}", e))?;
+        if dep.from.to_lowercase() != rouge_bridge {
+            return Err(format!("USDC Transfer source {} is not the RougeBridge {}", dep.from, rouge_bridge));
+        }
+        if dep.amount < min_amount {
+            return Err(format!("USDC Transfer {} is less than the {} base units owed", dep.amount, min_amount));
+        }
+    }
+    // 4. Confirmation depth (fail closed).
     let block = rec.get("blockNumber").and_then(|v| v.as_str())
         .and_then(|h| u64::from_str_radix(h.trim_start_matches("0x"), 16).ok())
         .ok_or_else(|| "payout block missing".to_string())?;
     let min_conf = bridge_min_confirmations();
     match evm_latest_block(client, rpc_url).await {
-        Some(latest) => {
-            if latest < block + min_conf {
-                return Err(format!("payout needs {} confirmations (block {}, latest {})", min_conf, block, latest));
-            }
-        }
-        // Fail closed: if we cannot read the chain head, we cannot prove depth — refuse.
-        None => return Err("could not verify confirmations (Base RPC unavailable) — refusing to fulfill".to_string()),
+        Some(latest) if latest >= block + min_conf => Ok(()),
+        Some(latest) => Err(format!("payout needs {} confirmations (block {}, latest {})", min_conf, block, latest)),
+        None => Err("could not verify confirmations (Base RPC unavailable) — refusing to fulfill".to_string()),
     }
-    Ok(())
 }
 
 async fn bridge_withdrawal_fulfill(
@@ -8072,14 +8186,36 @@ async fn bridge_withdrawal_fulfill(
         Ok(None) => return Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found".to_string()) }),
         Err(e) => return Json(BridgeFulfillResponse { success: false, error: Some(e) }),
     };
-    let custody = match &state.bridge_custody_address {
-        Some(c) if !c.is_empty() => c.clone(),
-        _ => return Json(BridgeFulfillResponse { success: false, error: Some("bridge custody not configured".to_string()) }),
-    };
-    // qETH: 1 unit = 1e-6 ETH = 1e12 wei.
-    let min_wei = (record.amount_units as u128).saturating_mul(1_000_000_000_000u128);
+    // R1B/R1D: token-aware verification keyed on the STORED canonical token. A qUSDC record
+    // can never be fulfilled by an ETH transaction and vice-versa; XRGE/qBTC/unsupported are
+    // not fulfillable on this endpoint at all.
+    use quantum_vault_bridge_exec::{payout_route, rouge_bridge_id, PayoutRoute};
     let client = reqwest::Client::new();
-    if let Err(e) = verify_native_eth_payout(&client, &state.base_sepolia_rpc, &payout_hash, &custody, &record.evm_address, min_wei).await {
+    let canonical_id = format!("0x{}", quantum_vault_bridge_exec::bytes_to_hex(&rouge_bridge_id(&record.tx_id)));
+    let verification = match payout_route(&record.token_symbol) {
+        PayoutRoute::Eth => {
+            // qETH: 1 unit = 1e-6 ETH = 1e12 wei.
+            let min_wei = (record.amount_units as u128).saturating_mul(1_000_000_000_000u128);
+            match rouge_bridge_address() {
+                Some(rb) => verify_rouge_bridge_release(&client, &state.base_sepolia_rpc, &payout_hash, &rb,
+                    &record.evm_address, None, min_wei, &canonical_id).await,
+                None => Err("RougeBridge address not configured — refusing to verify qETH payout (fail closed)".to_string()),
+            }
+        }
+        PayoutRoute::Usdc => {
+            // qUSDC: 1 unit == 1 Base-USDC base unit (both 6-decimal). NO 10^12 scaling.
+            let min_units = record.amount_units as u128;
+            let usdc = bridge_usdc_address().or_else(|| std::env::var("USDC_ADDRESS").ok().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()));
+            match (rouge_bridge_address(), usdc) {
+                (Some(rb), Some(usdc)) => verify_rouge_bridge_release(&client, &state.base_sepolia_rpc, &payout_hash, &rb,
+                    &record.evm_address, Some(&usdc), min_units, &canonical_id).await,
+                (None, _) => Err("RougeBridge address not configured — refusing to verify qUSDC payout (fail closed)".to_string()),
+                (_, None) => Err("Base USDC address not configured — refusing to verify qUSDC payout (fail closed)".to_string()),
+            }
+        }
+        other => Err(format!("asset {} ({:?}) is not fulfillable on the EVM bridge endpoint", record.token_symbol, other)),
+    };
+    if let Err(e) = verification {
         return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout not verified: {}", e)) });
     }
     match state.bridge_withdraw_store.mark_fulfilled(&tx_id, &payout_hash) {
@@ -8571,14 +8707,11 @@ async fn xrge_bridge_withdraw(
     State(state): State<AppState>,
     Json(body): Json<XrgeBridgeWithdrawRequest>,
 ) -> Json<serde_json::Value> {
+    use quantum_vault_bridge_exec::{authorize_bridge_withdraw, Endpoint, SignedWithdrawIntent, TopLevelCompat};
+    let fail = |msg: String| Json(serde_json::json!({ "success": false, "error": msg }));
+
     if state.xrge_bridge_vault.is_none() {
-        return Json(serde_json::json!({ "success": false, "error": "XRGE bridge not enabled" }));
-    }
-    if body.amount == 0 {
-        return Json(serde_json::json!({ "success": false, "error": "Amount must be greater than 0" }));
-    }
-    if let Err(e) = check_withdraw_guardrails(body.amount) {
-        return Json(serde_json::json!({ "success": false, "error": e }));
+        return fail("XRGE bridge not enabled".to_string());
     }
 
     let tx_result = if let (Some(signature), Some(payload)) = (&body.signature, &body.payload) {
@@ -8589,16 +8722,52 @@ async fn xrge_bridge_withdraw(
             payload_bytes_hex: None,
         };
         if let Err(e) = verify_signed_tx(&signed_req).await {
-            return Json(serde_json::json!({ "success": false, "error": format!("Signature verification failed: {}", e) }));
+            return fail(format!("Signature verification failed: {}", e));
+        }
+        if payload.get("from").and_then(|v| v.as_str()) != Some(body.from_public_key.as_str()) {
+            return fail("signed payload 'from' must equal the authenticated public key".to_string());
+        }
+        if let Err(e) = check_signed_nonce(&state.node, &body.from_public_key, payload) {
+            return fail(e);
+        }
+        // R1C/R1D: amount, destination, fee and asset come ONLY from the verified payload.
+        // The signed fee MUST exist (no server-side carve-out) and must consume exactly the
+        // protocol 0.1 XRGE — authorize_bridge_withdraw enforces that policy.
+        let intent = SignedWithdrawIntent {
+            op_type: payload.get("type").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            amount: payload.get("amount").and_then(|v| v.as_u64()),
+            destination: payload.get("evmAddress").and_then(|v| v.as_str()).map(str::to_string),
+            fee: payload.get("fee").and_then(|v| v.as_f64()),
+            token_symbol: payload.get("tokenSymbol").and_then(|v| v.as_str()).map(str::to_string),
+        };
+        // This request struct has no top-level fee; amount/evmAddress are compatibility copies.
+        let compat = TopLevelCompat { amount: Some(body.amount), destination: Some(body.evm_address.clone()), fee: None };
+        let auth = match authorize_bridge_withdraw(Endpoint::Xrge, &intent, &compat) {
+            Ok(a) => a, // route == Xrge is guaranteed here (any other asset is rejected)
+            Err(e) => return fail(format!("signed-intent rejected: {:?}", e)),
+        };
+        if let Err(e) = check_withdraw_guardrails(auth.amount) {
+            return fail(e);
         }
         state.node.submit_bridge_withdraw_tx_signed(
             &body.from_public_key,
-            body.amount,
-            &body.evm_address,
-            Some(0.1),
-            "XRGE",
+            auth.amount,
+            &auth.destination,
+            Some(auth.fee),
+            &auth.canonical_token, // "XRGE"
         )
     } else if let Some(ref private_key) = body.from_private_key {
+        // Deprecated raw-key path: default OFF (and note submit_bridge_withdraw_tx is
+        // qETH-only, so it cannot produce an XRGE withdrawal at all).
+        if std::env::var("QV_BRIDGE_ALLOW_RAW_KEY").map(|v| v == "true").unwrap_or(false) == false {
+            return fail("raw-private-key bridge withdrawal is disabled; use the signed path".to_string());
+        }
+        if body.amount == 0 {
+            return fail("Amount must be greater than 0".to_string());
+        }
+        if let Err(e) = check_withdraw_guardrails(body.amount) {
+            return fail(e);
+        }
         state.node.submit_bridge_withdraw_tx(
             private_key,
             &body.from_public_key,
@@ -8607,7 +8776,7 @@ async fn xrge_bridge_withdraw(
             Some(0.1),
         )
     } else {
-        return Json(serde_json::json!({ "success": false, "error": "Either signature+payload or fromPrivateKey is required" }));
+        return fail("Either signature+payload or fromPrivateKey is required".to_string());
     };
 
     match tx_result {
@@ -10394,5 +10563,102 @@ mod image_guard_tests {
         assert!(validate_token_image(&Some(small)).is_ok());
         let huge = format!("data:image/png;base64,{}", "A".repeat(MAX_TOKEN_IMAGE_DATA_URI_BYTES));
         assert!(validate_token_image(&Some(huge)).is_err());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R1B/R1D — daemon-side unit tests for the bridge payout helpers (no network).
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod bridge_r1_helper_tests {
+    use super::*;
+
+    fn pw(tx_id: &str, token: &str) -> PendingWithdrawal {
+        PendingWithdrawal {
+            tx_id: tx_id.to_string(),
+            evm_address: "0x00000000000000000000000000000000000000a1".to_string(),
+            amount_units: 1,
+            created_at: 0,
+            owner_pubkey: "owner".to_string(),
+            token_symbol: token.to_string(),
+            status: WithdrawalStatus::Pending,
+            attempts: 0,
+            last_error: None,
+            payout_tx_hash: None,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn bridge_release_topics_match_solidity() {
+        // keccak256 of the canonical event signatures in RougeBridge.sol. The Transfer topic
+        // reproduces the well-known ERC20 constant, which cross-checks the hash function.
+        assert_eq!(topic_bridge_release_eth(), "0x6e92b6f202ac06fbce19b0d07299219ca32be691ccee41bc0cfe5d9ab51b524f");
+        assert_eq!(topic_bridge_release_erc20(), "0x4131db420291b34fea891e4c6b5cdf224c27982fae69fbddfba9b7d5ee7398a1");
+        let xfer = format!("0x{}", quantum_vault_bridge_exec::bytes_to_hex(
+            &quantum_vault_bridge_exec::keccak256(b"Transfer(address,address,uint256)")));
+        assert_eq!(xfer, "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef");
+    }
+
+    fn topic_addr(a: &str) -> String { format!("0x{:0>64}", a.trim_start_matches("0x")) }
+    fn word_u128(v: u128) -> String { format!("{:064x}", v) }
+
+    #[test]
+    fn decode_release_events_from_configured_bridge_only() {
+        let rb = "0x00000000000000000000000000000000000000bb";
+        let usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+        let recipient = "0x00000000000000000000000000000000000000a1";
+        let l1 = "11".repeat(32);
+        let eth_log = serde_json::json!({
+            "address": rb,
+            "topics": [topic_bridge_release_eth(), topic_addr(recipient)],
+            "data": format!("0x{}{}", word_u128(5_000_000_000_000u128), l1),
+        });
+        let erc_log = serde_json::json!({
+            "address": rb,
+            "topics": [topic_bridge_release_erc20(), topic_addr(recipient), topic_addr(usdc)],
+            "data": format!("0x{}{}", word_u128(123u128), l1),
+        });
+        // same event but emitted by a DIFFERENT contract → must be ignored
+        let impostor = serde_json::json!({
+            "address": "0x00000000000000000000000000000000000000cc",
+            "topics": [topic_bridge_release_eth(), topic_addr(recipient)],
+            "data": format!("0x{}{}", word_u128(5_000_000_000_000u128), l1),
+        });
+        let rel = decode_rouge_bridge_releases(&[eth_log, erc_log, impostor], rb);
+        assert_eq!(rel.len(), 2, "impostor emitter ignored");
+        assert_eq!(rel[0].recipient, recipient);
+        assert_eq!(rel[0].token, None);
+        assert_eq!(rel[0].amount, 5_000_000_000_000u128);
+        assert_eq!(rel[0].l1_tx_id, format!("0x{}", l1));
+        assert_eq!(rel[1].token.as_deref(), Some(usdc));
+        assert_eq!(rel[1].amount, 123);
+    }
+
+    #[test]
+    fn generic_list_routing_is_positive_only() {
+        // qETH / qUSDC (any case) are served to the EVM relayer; XRGE, qBTC, custom are NOT.
+        assert!(is_eth_withdrawal(&pw("a", "qETH")));
+        assert!(is_eth_withdrawal(&pw("a", "QETH")));
+        assert!(is_usdc_withdrawal(&pw("a", "qUSDC")));
+        for sym in ["XRGE", "qBTC", "3EYE", "", "qDAI"] {
+            assert!(!is_eth_withdrawal(&pw("a", sym)) && !is_usdc_withdrawal(&pw("a", sym)), "{sym} must not be on the EVM list");
+        }
+        // the dedicated lists still take their own assets
+        assert!(is_xrge_withdrawal(&pw("a", "XRGE")) && is_xrge_withdrawal(&pw("xrge:abc", "")));
+        assert!(is_btc_withdrawal(&pw("a", "qBTC")));
+    }
+
+    #[test]
+    fn rouge_bridge_address_fails_closed_on_invalid_config() {
+        // Env-driven; exercise the validator with isolated keys.
+        std::env::remove_var("QV_ROUGE_BRIDGE_ADDRESS");
+        std::env::remove_var("ROUGE_BRIDGE_ADDRESS");
+        assert_eq!(rouge_bridge_address(), None);
+        std::env::set_var("QV_ROUGE_BRIDGE_ADDRESS", "not-an-address");
+        assert_eq!(rouge_bridge_address(), None, "malformed → None (fail closed)");
+        std::env::set_var("QV_ROUGE_BRIDGE_ADDRESS", "0x00000000000000000000000000000000000000BB");
+        assert_eq!(rouge_bridge_address().as_deref(), Some("0x00000000000000000000000000000000000000bb"));
+        std::env::remove_var("QV_ROUGE_BRIDGE_ADDRESS");
     }
 }

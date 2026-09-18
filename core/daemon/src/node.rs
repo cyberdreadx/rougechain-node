@@ -94,6 +94,30 @@ const V2_FORK_HEIGHT: u64 = 0;
 const STATE_ROOT_ACTIVATION_HEIGHT: u64 = V2_FORK_HEIGHT;
 const CONTRACT_CUSTODY_ACTIVATION_HEIGHT: u64 = V2_FORK_HEIGHT;
 
+/// Test-only, thread-local override of the v2 fork height so the historical-replay
+/// regression can exercise the PRODUCTION activation height (18) while unit tests keep
+/// activating from genesis. Compiled out of production builds — there is no runtime knob.
+#[cfg(test)]
+thread_local! {
+    static TEST_FORK_HEIGHT_OVERRIDE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+#[inline]
+fn state_root_activation_height() -> u64 {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.get()) { return h; }
+    }
+    STATE_ROOT_ACTIVATION_HEIGHT
+}
+#[inline]
+fn contract_custody_activation_height() -> u64 {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.get()) { return h; }
+    }
+    CONTRACT_CUSTODY_ACTIVATION_HEIGHT
+}
+
 /// Height after which a P2P-imported block's proposer MUST be a staked validator
 /// (`stake > 0`) in the on-chain validator set, or the block is rejected on
 /// `import_block`. Blocks at or below this height skip *only that* check — a
@@ -738,7 +762,8 @@ impl L1Node {
                         );
                     }
                 }
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height, &self.shielded_supply);
+                let apply_identity = self.apply_identity_for(tx, "_rebuild_");
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &apply_identity, &self.unbonding_queue, block.header.height, &self.shielded_supply, &mut None);
                 self.apply_web3_state_effects(tx, block.header.height);
                 Self::apply_amm_balance_effects(
                     &mut balances,
@@ -901,36 +926,36 @@ impl L1Node {
         // Apply state BEFORE storing to disk (atomic: don't store blocks we can't apply)
         //
         // Phase 2: at/after the activation height, the block header commits to the
-        // post-state root. Snapshot the money maps first so a bad root can be
-        // rejected and the ledger restored exactly (side-effect stores are rebuilt
-        // from history on restart; the rejected block is never persisted).
-        let verify_root = block.header.height >= STATE_ROOT_ACTIVATION_HEIGHT;
-        let custody_active = block.header.height >= CONTRACT_CUSTODY_ACTIVATION_HEIGHT;
-        // Snapshot when either feature is live, so we can roll the money ledger
-        // back exactly on a rejected block — whether it's rejected by a
-        // fail-closed apply error (e.g. a bad contract) or a root mismatch.
-        let pre_snapshot = if verify_root || custody_active {
-            Some(self.snapshot_balance_maps()?)
-        } else {
-            None
-        };
+        // post-state root. ALWAYS take a full pre-apply snapshot first (money maps,
+        // burned tokens, fees, shielded supply, unbonding queue, nonce/address
+        // indexes and every side-effect sled store the block can touch) so ANY
+        // rejected block — apply error, root mismatch, validator-apply error or a
+        // persist failure — leaves the node state exactly as it was before the
+        // attempt. The rejected block is never persisted.
+        let verify_root = block.header.height >= state_root_activation_height();
+        let pre_snapshot = self.capture_pre_apply_snapshot(&block)?;
 
         // Any apply error (P3-4 fail-closed contract rejection included) must not
         // leave the ledger partially mutated.
-        if let Err(e) = self.apply_balance_block(&block) {
-            if let Some(snap) = pre_snapshot {
-                let _ = self.restore_balance_maps(snap);
+        let bridge_results = match self.apply_balance_block(&block) {
+            Ok(results) => results,
+            Err(e) => {
+                let _ = self.restore_pre_apply_snapshot(pre_snapshot);
+                return Err(e);
             }
-            return Err(e);
-        }
+        };
 
         if verify_root {
-            let computed = self.compute_current_state_root()?;
+            let computed = match self.compute_current_state_root() {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = self.restore_pre_apply_snapshot(pre_snapshot);
+                    return Err(e);
+                }
+            };
             if block.header.state_root.as_deref() != Some(computed.as_str()) {
                 // Divergence (or a faulty/malicious proposer): roll back and reject.
-                if let Some(snap) = pre_snapshot {
-                    let _ = self.restore_balance_maps(snap);
-                }
+                let _ = self.restore_pre_apply_snapshot(pre_snapshot);
                 return Err(format!(
                     "state root mismatch at height {}: header={:?}, computed={}",
                     block.header.height, block.header.state_root, computed
@@ -938,15 +963,27 @@ impl L1Node {
             }
         }
 
-        self.apply_validator_block(&block)?;
+        if let Err(e) = self.apply_validator_block(&block) {
+            let _ = self.restore_pre_apply_snapshot(pre_snapshot);
+            return Err(e);
+        }
 
-        // Only persist after state was applied successfully
-        self.store.append_block(&block)?;
-        
+        // Only persist after state was applied successfully. If persisting fails
+        // the block is not on our chain, so the applied state must not survive.
+        if let Err(e) = self.store.append_block(&block) {
+            let _ = self.restore_pre_apply_snapshot(pre_snapshot);
+            return Err(e);
+        }
+
         // Generate and store transaction receipts
-        let receipts = self.generate_receipts(&block);
+        let receipts = self.generate_receipts(&block, &bridge_results);
         let _ = self.receipt_store.store_batch(&receipts);
-        
+
+        // R1: relayer-facing payout records ONLY for an accepted + persisted block.
+        // (A block rejected above — apply error or state-root mismatch — never reaches
+        // this line, so it leaves zero withdrawal-store side effects.)
+        self.persist_bridge_withdraw_results(&block, &bridge_results)?;
+
         // Track proposer stats for imported blocks — node key may differ from validator key
         let proposer_key = block.header.proposer_pub_key.clone();
         if let Ok(Some(mut vstate)) = self.validator_store.get_validator(&proposer_key) {
@@ -982,9 +1019,14 @@ impl L1Node {
     }
 
     /// Generate receipts for all transactions in a block.
-    /// Called after successful block application — all txs are assumed successful
-    /// since invalid ones were rejected during signature verification.
-    fn generate_receipts(&self, block: &BlockV1) -> Vec<TxReceipt> {
+    /// Called after successful block application. Non-bridge txs keep the historical
+    /// `Success` status (out of R1 scope). For `bridge_withdraw`, the status is the
+    /// typed execution result — and an ABSENT result is `Failed`, never `Success`.
+    fn generate_receipts(
+        &self,
+        block: &BlockV1,
+        bridge_results: &[Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>],
+    ) -> Vec<TxReceipt> {
         let mut receipts = Vec::with_capacity(block.txs.len());
         for (index, tx) in block.txs.iter().enumerate() {
             let tx_hash = compute_single_tx_hash(tx);
@@ -1197,7 +1239,15 @@ impl L1Node {
                 index: index as u32,
                 tx_type: tx.tx_type.clone(),
                 from: tx.from_pub_key.clone(),
-                status: TxStatus::Success,
+                status: if tx.tx_type == "bridge_withdraw" {
+                    use quantum_vault_bridge_exec::{bridge_receipt_status, BridgeReceipt};
+                    match bridge_receipt_status(bridge_results.get(index).and_then(|o| o.as_ref())) {
+                        BridgeReceipt::Success => TxStatus::Success,
+                        BridgeReceipt::Failed(reason) => TxStatus::Failed(reason), // Failed AND None
+                    }
+                } else {
+                    TxStatus::Success
+                },
                 fee_paid: tx.fee,
                 logs: vec![log],
                 timestamp: block.header.time,
@@ -2516,10 +2566,10 @@ impl L1Node {
         };
         // Apply to state ONCE, here. (The old post-append apply_balance_block call
         // is intentionally removed — applying twice would double-charge fees.)
-        self.apply_balance_block(&prelim_block)?;
+        let bridge_results = self.apply_balance_block(&prelim_block)?;
 
         // Stamp the post-state root, gated on the activation height.
-        let state_root = if height >= STATE_ROOT_ACTIVATION_HEIGHT {
+        let state_root = if height >= state_root_activation_height() {
             Some(self.compute_current_state_root()?)
         } else {
             None
@@ -2553,10 +2603,13 @@ impl L1Node {
         // Note: finalized_height set here as proposer (single-validator mode).
         // In multi-validator mode, try_finalize_block (called by auto_vote_for_block)
         // handles finalization via vote quorum verification.
-        
+
         // Generate and store transaction receipts
-        let receipts = self.generate_receipts(&block);
+        let receipts = self.generate_receipts(&block, &bridge_results);
         let _ = self.receipt_store.store_batch(&receipts);
+
+        // R1: payout records only after the block is appended/persisted (see import path).
+        self.persist_bridge_withdraw_results(&block, &bridge_results)?;
         
         // Track proposer stats — node key may differ from validator staking key
         let proposer_key = block.header.proposer_pub_key.clone();
@@ -2837,19 +2890,272 @@ impl L1Node {
         *self.lp_balances.lock().map_err(|_| "lp balance lock")? = l;
         Ok(())
     }
+}
 
-    fn apply_balance_block(&self, block: &BlockV1) -> Result<(), String> {
+/// Complete pre-apply snapshot of EVERY node-state component that
+/// `apply_balance_block` (and the post-verification `apply_validator_block`)
+/// can mutate before a block is accepted. `import_block` captures one right
+/// before the speculative apply and, on ANY rejection (apply error, state-root
+/// mismatch, validator-apply error, persist failure), restores it with
+/// [`L1Node::restore_pre_apply_snapshot`] so the node state after a rejected
+/// block is byte-for-byte the state before it was attempted — nothing that
+/// can influence future execution, validity, fees, bridge execution or
+/// replay is left dirty.
+///
+/// Components (see `capture_pre_apply_snapshot` for the exact set):
+/// * in-memory `balances`, `token_balances`, `lp_balances`, `burned_tokens`
+/// * EIP-1559 base fee (sled `fee_db["base_fee"]`) and `total_fees_burned`
+///   (in-memory + sled `fee_db["total_burned"]`)
+/// * `shielded_supply`, `unbonding_queue`
+/// * `nonce_db` entries for every sender in the block
+/// * `address_db` (rouge1 index) entries for every sender/recipient
+/// * full dumps of the sled trees of the side-effect stores the block can
+///   touch (token metadata, pools, allowances, multisig, validators always;
+///   pool events / NFT / contract stores gated on the block's tx types
+///   because those trees grow with history).
+pub(crate) struct PreApplySnapshot {
+    balances: HashMap<String, u128>,
+    token_balances: HashMap<TokenBalanceKey, u128>,
+    lp_balances: HashMap<TokenBalanceKey, u128>,
+    burned_tokens: HashMap<String, f64>,
+    /// raw `fee_db` entries ("base_fee", "total_burned") → prior bytes (None = absent)
+    fee_db_entries: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    total_fees_burned: f64,
+    shielded_supply: f64,
+    unbonding_queue: Vec<UnbondingEntry>,
+    /// nonce_db key → prior value (None = key was absent)
+    nonce_entries: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    /// address_db key → prior value (None = key was absent)
+    address_entries: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    /// (tree handle, full key/value dump) for every snapshotted sled tree
+    trees: Vec<(sled::Tree, Vec<(Vec<u8>, Vec<u8>)>)>,
+}
+
+/// Full key/value dump of a sled tree (rollback primitive).
+pub(crate) fn snapshot_tree(tree: &sled::Tree) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+    let mut out = Vec::new();
+    for item in tree.iter() {
+        let (k, v) = item.map_err(|e| format!("snapshot tree iter: {}", e))?;
+        out.push((k.to_vec(), v.to_vec()));
+    }
+    Ok(out)
+}
+
+/// Restore a sled tree to a dump taken by [`snapshot_tree`]: clear, reinsert
+/// every entry, flush. Afterwards the tree holds exactly the snapshot's keys.
+pub(crate) fn restore_tree(tree: &sled::Tree, entries: &[(Vec<u8>, Vec<u8>)]) -> Result<(), String> {
+    tree.clear().map_err(|e| format!("restore tree clear: {}", e))?;
+    for (k, v) in entries {
+        tree.insert(k.as_slice(), v.as_slice()).map_err(|e| format!("restore tree insert: {}", e))?;
+    }
+    tree.flush().map_err(|e| format!("restore tree flush: {}", e))?;
+    Ok(())
+}
+
+/// The two `address_db` keys `index_address(pubkey)` writes, if derivable.
+fn address_index_keys(pubkey: &str) -> Option<(Vec<u8>, Vec<u8>)> {
+    use quantum_vault_crypto::{pub_key_to_address, address_to_hash};
+    let addr = pub_key_to_address(pubkey).ok()?;
+    let hash = address_to_hash(&addr).ok()?;
+    Some((bytes_to_hex(&hash).into_bytes(), pubkey.as_bytes().to_vec()))
+}
+
+impl L1Node {
+    /// Capture a [`PreApplySnapshot`] for `block`. Callers must not hold any of
+    /// the ledger locks; they are taken in the canonical order
+    /// (balances → token → lp → burned) matching `apply_balance_block`.
+    pub(crate) fn capture_pre_apply_snapshot(&self, block: &BlockV1) -> Result<PreApplySnapshot, String> {
+        let (balances, token_balances, lp_balances, burned_tokens) = {
+            let b = self.balances.lock().map_err(|_| "balance lock")?;
+            let t = self.token_balances.lock().map_err(|_| "token balance lock")?;
+            let l = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+            let bt = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
+            (b.clone(), t.clone(), l.clone(), bt.clone())
+        };
+        // Raw persisted fee state, restored byte-exactly (an absent key stays absent).
+        let mut fee_db_entries = Vec::new();
+        for key in [&b"base_fee"[..], &b"total_burned"[..]] {
+            let prev = self.fee_db.get(key).map_err(|e| format!("fee_db get: {}", e))?.map(|v| v.to_vec());
+            fee_db_entries.push((key.to_vec(), prev));
+        }
+        let total_fees_burned = *self.total_fees_burned.lock().map_err(|_| "fees burned lock")?;
+        let shielded_supply = *self.shielded_supply.lock().map_err(|_| "shielded supply lock")?;
+        let unbonding_queue = self.unbonding_queue.lock().map_err(|_| "unbonding lock")?.clone();
+
+        // Per-key snapshots of the two per-account sled indexes.
+        let mut nonce_entries = Vec::new();
+        let mut address_entries = Vec::new();
+        {
+            let mut seen_nonce: HashSet<&str> = HashSet::new();
+            let mut seen_addr: HashSet<&str> = HashSet::new();
+            for tx in &block.txs {
+                if seen_nonce.insert(tx.from_pub_key.as_str()) {
+                    let key = tx.from_pub_key.as_bytes().to_vec();
+                    let prev = self.nonce_db.get(&key).map_err(|e| format!("nonce_db get: {}", e))?
+                        .map(|v| v.to_vec());
+                    nonce_entries.push((key, prev));
+                }
+                let mut pks: Vec<&str> = vec![tx.from_pub_key.as_str()];
+                if let Some(ref to) = tx.payload.to_pub_key_hex { pks.push(to.as_str()); }
+                for pk in pks {
+                    if !seen_addr.insert(pk) { continue; }
+                    if let Some((k1, k2)) = address_index_keys(pk) {
+                        for key in [k1, k2] {
+                            let prev = self.address_db.get(&key).map_err(|e| format!("address_db get: {}", e))?
+                                .map(|v| v.to_vec());
+                            address_entries.push((key, prev));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Side-effect stores. Small, bounded stores are always snapshotted;
+        // history-sized ones only when the block carries a tx type that writes them.
+        let has = |pred: &dyn Fn(&str) -> bool| block.txs.iter().any(|tx| pred(tx.tx_type.as_str()));
+        let touches_amm = has(&|t| matches!(t,
+            "create_pool" | "add_liquidity" | "remove_liquidity" | "swap"
+            | "place_limit_order" | "cancel_limit_order"));
+        let touches_nft = has(&|t| t.starts_with("nft_"));
+        let touches_contract = has(&|t| t.starts_with("contract_"));
+
+        let mut handles: Vec<sled::Tree> = Vec::new();
+        let mut push_all = |ts: Vec<&sled::Tree>| for t in ts { handles.push(t.clone()); };
+        push_all(self.token_metadata_store.trees());
+        push_all(self.pool_store.trees());
+        push_all(self.allowance_store.trees());
+        push_all(self.multisig_store.trees());
+        push_all(self.validator_store.trees());
+        if touches_amm { push_all(self.pool_event_store.trees()); }
+        if touches_nft { push_all(self.nft_store.trees()); }
+        if touches_contract {
+            if let Some(ref cs) = self.contract_store { push_all(cs.trees()); }
+        }
+        let mut trees = Vec::with_capacity(handles.len());
+        for h in handles {
+            let dump = snapshot_tree(&h)?;
+            trees.push((h, dump));
+        }
+
+        Ok(PreApplySnapshot {
+            balances, token_balances, lp_balances, burned_tokens,
+            fee_db_entries, total_fees_burned, shielded_supply, unbonding_queue,
+            nonce_entries, address_entries, trees,
+        })
+    }
+
+    /// Restore every component captured by [`capture_pre_apply_snapshot`].
+    /// Continues past individual failures so one bad store cannot prevent the
+    /// rest from rolling back; the first error is returned at the end.
+    pub(crate) fn restore_pre_apply_snapshot(&self, snap: PreApplySnapshot) -> Result<(), String> {
+        let mut first_err: Option<String> = None;
+        let mut note = |r: Result<(), String>| if let Err(e) = r { if first_err.is_none() { first_err = Some(e); } };
+
+        // In-memory ledger, canonical lock order.
+        note((|| -> Result<(), String> {
+            let mut b = self.balances.lock().map_err(|_| "balance lock")?;
+            let mut t = self.token_balances.lock().map_err(|_| "token balance lock")?;
+            let mut l = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+            let mut bt = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
+            *b = snap.balances;
+            *t = snap.token_balances;
+            *l = snap.lp_balances;
+            *bt = snap.burned_tokens;
+            Ok(())
+        })());
+        note((|| -> Result<(), String> {
+            *self.shielded_supply.lock().map_err(|_| "shielded supply lock")? = snap.shielded_supply;
+            Ok(())
+        })());
+        note((|| -> Result<(), String> {
+            *self.unbonding_queue.lock().map_err(|_| "unbonding lock")? = snap.unbonding_queue;
+            Ok(())
+        })());
+        // Fees: in-memory burned total, and the raw persisted fee_db entries restored
+        // byte-exactly (base fee is read from fee_db on demand, so this also restores it;
+        // a key that was absent before the block stays absent — no default gets written).
+        note((|| -> Result<(), String> {
+            *self.total_fees_burned.lock().map_err(|_| "fees burned lock")? = snap.total_fees_burned;
+            Ok(())
+        })());
+        for (key, prev) in snap.fee_db_entries {
+            let r = match prev {
+                Some(v) => self.fee_db.insert(key, v).map(|_| ()),
+                None => self.fee_db.remove(key).map(|_| ()),
+            };
+            note(r.map_err(|e| format!("fee_db restore: {}", e)));
+        }
+        note(self.fee_db.flush().map(|_| ()).map_err(|e| format!("fee_db flush: {}", e)));
+
+        // Per-key sled indexes: reinsert the old value or remove the key.
+        for (key, prev) in snap.nonce_entries {
+            let r = match prev {
+                Some(v) => self.nonce_db.insert(key, v).map(|_| ()),
+                None => self.nonce_db.remove(key).map(|_| ()),
+            };
+            note(r.map_err(|e| format!("nonce_db restore: {}", e)));
+        }
+        note(self.nonce_db.flush().map(|_| ()).map_err(|e| format!("nonce_db flush: {}", e)));
+        for (key, prev) in snap.address_entries {
+            let r = match prev {
+                Some(v) => self.address_db.insert(key, v).map(|_| ()),
+                None => self.address_db.remove(key).map(|_| ()),
+            };
+            note(r.map_err(|e| format!("address_db restore: {}", e)));
+        }
+        note(self.address_db.flush().map(|_| ()).map_err(|e| format!("address_db flush: {}", e)));
+
+        // Side-effect store trees.
+        for (tree, dump) in &snap.trees {
+            note(restore_tree(tree, dump));
+        }
+
+        match first_err { Some(e) => Err(e), None => Ok(()) }
+    }
+
+    /// DETERMINISTIC identity for `apply_balance_tx_inner`'s faucet / `bridge_mint`
+    /// authorization. When the genesis-anchored bridge authority set is configured, a tx is
+    /// authorized iff its signer is in that set — the SAME answer on every node and on every
+    /// replay, independent of which node produced the block or which key this process holds
+    /// (issue #66, item 3: no node-local identity in block-state application). Only when no
+    /// authority set exists (devnets / unit tests) does the local node key decide, as before.
+    fn apply_identity_for(&self, tx: &TxV1, node_pub_key: &str) -> String {
+        let authority = &self.opts.bridge_authority_keys;
+        if authority.is_empty() {
+            node_pub_key.to_string()
+        } else if authority.iter().any(|k| k == &tx.from_pub_key) {
+            tx.from_pub_key.clone() // authorized signer: passes the equality gate
+        } else {
+            "_unauthorized_".to_string() // non-empty, never equal, never "_rebuild_": rejected
+        }
+    }
+
+    /// Speculative state application. Returns the per-tx `bridge_withdraw` execution
+    /// results, INDEXED BY TX POSITION (a slot stays `None` for any tx that is not a
+    /// bridge_withdraw or that an early `continue` skipped). This function performs NO
+    /// bridge payout-store writes: it runs BEFORE state-root verification and its ledger
+    /// effects may be rolled back, so the store is persisted only by
+    /// `persist_bridge_withdraw_results` on the accepted-block path.
+    fn apply_balance_block(
+        &self,
+        block: &BlockV1,
+    ) -> Result<Vec<Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>>, String> {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
         let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let mut lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
         let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
-        
+
         // Track actual fees collected (not all tx fees -- rejected txs don't pay)
         let mut actual_fees_collected: u128 = 0;
 
+        // R1: fixed-length, position-indexed result vector. Never push-based — the loop
+        // below has early `continue` paths that would misalign every later result.
+        let mut bridge_results: Vec<Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>> =
+            vec![None; block.txs.len()];
+
         let node_pub_key = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         // Apply transaction effects (transfers, stakes, etc.) - fees deducted from senders
-        for tx in &block.txs {
+        for (tx_index, tx) in block.txs.iter().enumerate() {
             // ── SECURITY: Consensus-layer guards (metadata store access) ──
             // These checks require &self and cannot live inside the static apply_balance_tx_inner.
             match tx.tx_type.as_str() {
@@ -2891,7 +3197,10 @@ impl L1Node {
             }
 
             let before = balances.values().sum::<u128>();
-            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block.header.height, &self.shielded_supply);
+            let mut bwo: Option<quantum_vault_bridge_exec::BridgeWithdrawExecution> = None;
+            let apply_identity = self.apply_identity_for(tx, &node_pub_key);
+            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &apply_identity, &self.unbonding_queue, block.header.height, &self.shielded_supply, &mut bwo);
+            bridge_results[tx_index] = bwo; // index by position — never push
             // Commit sequential nonce for this sender
             let _ = self.nonce_db.insert(tx.from_pub_key.as_bytes(), &tx.nonce.to_be_bytes());
 
@@ -3228,7 +3537,7 @@ impl L1Node {
                         actual_fees_collected += fee_to_quanta(tx.fee);
 
                         // Re-execute the contract call if runtime is available.
-                        let custody_active = block.header.height >= CONTRACT_CUSTODY_ACTIVATION_HEIGHT;
+                        let custody_active = block.header.height >= contract_custody_activation_height();
                         if let (Some(ref rt), Some(ref cs)) = (&self.wasm_runtime, &self.contract_store) {
                             // Full quanta balances — no u64 truncation (P3-2). The VM
                             // ABI is quanta-native, so pass the ledger as-is.
@@ -3310,32 +3619,10 @@ impl L1Node {
             }
         }
         
-        // Persist bridge_withdraw txs for operator to fulfill releases
-        if let Some(ref store) = self.opts.bridge_withdraw_store {
-            for tx in &block.txs {
-                if tx.tx_type == "bridge_withdraw"
-                    && tx.payload.amount.unwrap_or(0) > 0
-                {
-                    if let Some(evm_addr) = tx.payload.evm_address.as_ref() {
-                        let token = tx.payload.token_symbol.as_deref().unwrap_or("qETH");
-                        // Legacy "xrge:" tx_id prefix is retained for relayer / claim-store
-                        // continuity; the authoritative discriminator is now token_symbol.
-                        let prefix = if token == "XRGE" { "xrge:" } else { "" };
-                        let raw_id = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
-                        let tx_id = format!("{}{}", prefix, raw_id);
-                        let amount = tx.payload.amount.unwrap_or(0);
-                        let _ = store.add(
-                            tx_id.clone(),
-                            evm_addr.clone(),
-                            amount,
-                            tx.from_pub_key.clone(),
-                            token.to_string(),
-                        );
-                    }
-                }
-            }
-        }
-        
+        // R1: the bridge payout store is NOT written here (speculative apply may be rolled
+        // back on a state-root mismatch). See `persist_bridge_withdraw_results`, which runs
+        // only after the block is accepted and persisted.
+
         // Distribute only actually collected fees
         if actual_fees_collected > 0 {
             let base_fee = self.get_base_fee_quanta();
@@ -3354,10 +3641,52 @@ impl L1Node {
         let next_base_fee = self.calculate_next_base_fee(block.txs.len());
         self.set_base_fee_quanta(next_base_fee);
         self.persist_fees_burned();
-        
+
+        Ok(bridge_results)
+    }
+
+    /// R1: persist relayer-facing bridge payout records for an ACCEPTED, PERSISTED block.
+    /// Called only after `store.append_block` succeeded (import + mine paths). Requires
+    /// `results` to be position-aligned with `block.txs` (fail closed otherwise). A record is
+    /// written only for `Success(effect)` with a destination AND a recognized payout asset
+    /// (`is_payout_eligible`): `Failed`, `None`, no-destination and unsupported/custom tokens
+    /// never produce a record. Owner is the ORIGINAL sender of tx[i]; token/amount/tx_id/
+    /// destination are the effect's canonical values.
+    fn persist_bridge_withdraw_results(
+        &self,
+        block: &BlockV1,
+        results: &[Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>],
+    ) -> Result<(), String> {
+        use quantum_vault_bridge_exec::{is_payout_eligible, BridgeWithdrawExecution::Success};
+        if results.len() != block.txs.len() {
+            return Err(format!(
+                "bridge results ({}) not aligned to block txs ({}) at height {}",
+                results.len(), block.txs.len(), block.header.height
+            ));
+        }
+        let store = match self.opts.bridge_withdraw_store { Some(ref s) => s, None => return Ok(()) };
+        for (i, r) in results.iter().enumerate() {
+            let exec = match r {
+                Some(e) if is_payout_eligible(e) => e,
+                _ => continue, // None / Failed / no destination / Unsupported ⇒ no record
+            };
+            if let Success(effect) = exec {
+                let dest = match effect.destination.as_ref() { Some(d) => d.clone(), None => continue };
+                // Legacy "xrge:" tx_id prefix retained for relayer / claim-store continuity.
+                let prefix = if effect.canonical_token == "XRGE" { "xrge:" } else { "" };
+                let tx_id = format!("{}{}", prefix, bytes_to_hex(&effect.rougechain_tx_id));
+                let _ = store.add(
+                    tx_id,
+                    dest,
+                    effect.amount,
+                    block.txs[i].from_pub_key.clone(),
+                    effect.canonical_token.clone(),
+                );
+            }
+        }
         Ok(())
     }
-    
+
     /// Apply AMM-specific transaction effects
     fn apply_amm_tx_inner(
         &self,
@@ -3805,7 +4134,7 @@ impl L1Node {
         let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
         let node_pub_key = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         let block_height = self.store.get_tip().map(|t| t.height).unwrap_or(0);
-        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block_height, &self.shielded_supply);
+        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block_height, &self.shielded_supply, &mut None);
         Ok(())
     }
 
@@ -3844,7 +4173,8 @@ impl L1Node {
 
                 let sum_before: u128 = balances.values().sum();
 
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height, &self.shielded_supply);
+                let apply_identity = self.apply_identity_for(tx, "_rebuild_");
+                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &apply_identity, &self.unbonding_queue, block.header.height, &self.shielded_supply, &mut None);
 
                 // Register token metadata during rebuild + track created symbols
                 // Uses merge to preserve user-updated fields (image, links, etc.)
@@ -3880,10 +4210,16 @@ impl L1Node {
                 self.apply_web3_state_effects(tx, block.header.height);
 
                 let sum_after: u128 = balances.values().sum();
-                let fee_delta = sum_before as i128 - sum_after as i128;
-                if fee_delta > 0 {
-                    actual_fees_collected += fee_delta as u128;
-                } else if fee_delta == 0 && tx.fee > 0.0 {
+                // Deterministic fee accounting — the SAME rule as apply_balance_block:
+                // a tx contributes at most its declared fee, and only if it actually
+                // deducted something. The former `sum_before - sum_after` rule counted
+                // burned bridge_withdraw principal, `stake` debits and shielded amounts
+                // as "fees" and distributed them to proposer/validators/treasury on
+                // every restart-rebuild (issue #66 phantom credits).
+                let deducted = sum_before.saturating_sub(sum_after);
+                if deducted > 0 {
+                    actual_fees_collected += fee_to_quanta(tx.fee).min(deducted);
+                } else if tx.fee > 0.0 {
                     skipped_txs += 1;
                 }
             }
@@ -4767,6 +5103,9 @@ impl L1Node {
         unbonding_queue: &Arc<Mutex<Vec<UnbondingEntry>>>,
         block_height: u64,
         shielded_supply: &Arc<Mutex<f64>>,
+        // R1: typed execution result for `bridge_withdraw` ONLY. Written at the existing
+        // decision points of the arm below; every other arm leaves it untouched (None).
+        bridge_out: &mut Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>,
     ) {
         match tx.tx_type.as_str() {
             "transfer" => {
@@ -4957,6 +5296,11 @@ impl L1Node {
                 }
             }
             "bridge_withdraw" => {
+                // R1: this arm is INSTRUMENTED, not rewritten. Every balance/fee/burn expression,
+                // ordering, key casing and `return;` below is byte-identical to the pre-R1 code;
+                // the only additions are the `*bridge_out = ...` assignments that record what the
+                // existing arithmetic already decided. Failure paths mutate nothing (as before).
+                use quantum_vault_bridge_exec::{BridgeWithdrawExecution as BX, BridgeWithdrawFailure as BF, BridgeWithdrawEffect};
                 if let (Some(token_symbol), Some(amount)) = (
                     tx.payload.token_symbol.as_ref(),
                     tx.payload.amount,
@@ -4969,11 +5313,13 @@ impl L1Node {
                         let xrge_bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
                         if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                             eprintln!("[node] Rejecting bridge_withdraw: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
+                            *bridge_out = Some(BX::Failed(BF::InsufficientFee));
                             return;
                         }
                         if token_sym.eq_ignore_ascii_case("XRGE") {
                             if xrge_bal.saturating_sub(fee_to_quanta(tx.fee)) < xrge_f64_to_quanta(amount as f64) {
                                 eprintln!("[node] Rejecting bridge_withdraw: insufficient XRGE ({:.4} < {})", quanta_to_display(xrge_bal.saturating_sub(fee_to_quanta(tx.fee))), amount);
+                                *bridge_out = Some(BX::Failed(BF::InsufficientXrge));
                                 return;
                             }
                             *balances.entry(canon_addr(&tx.from_pub_key)).or_insert(0) -= xrge_f64_to_quanta(tx.fee + amount as f64);
@@ -4982,13 +5328,35 @@ impl L1Node {
                             let token_bal = *token_balances.get(&sender_key).unwrap_or(&0);
                             if token_bal < amount as u128 {
                                 eprintln!("[node] Rejecting bridge_withdraw: insufficient {} ({:.4} < {})", token_sym, token_bal, amount);
+                                *bridge_out = Some(BX::Failed(BF::InsufficientToken));
                                 return;
                             }
                             *balances.entry(canon_addr(&tx.from_pub_key)).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                             *token_balances.entry(sender_key).or_insert(0) -= amount as u128;
                         }
+                        // Canonical token for the DERIVED record/routing only; the burn key below
+                        // stays the RAW trimmed symbol (state-root relevant, unchanged).
+                        let canonical_token = if token_sym.eq_ignore_ascii_case("XRGE") { "XRGE".to_string() } else { token_sym.clone() };
                         *burned_tokens.entry(token_sym).or_insert(0.0) += amount as f64;
+                        let rougechain_tx_id = {
+                            let d = sha256(&encode_tx_v1(tx));
+                            let mut r = [0u8; 32];
+                            r.copy_from_slice(&d);
+                            r
+                        };
+                        *bridge_out = Some(BX::Success(BridgeWithdrawEffect {
+                            canonical_token,
+                            amount,
+                            destination: tx.payload.evm_address.clone(),
+                            rougechain_tx_id,
+                        }));
+                    } else {
+                        *bridge_out = Some(BX::Failed(BF::ZeroAmount));
                     }
+                } else {
+                    *bridge_out = Some(BX::Failed(
+                        if tx.payload.token_symbol.is_none() { BF::MissingToken } else { BF::MissingAmount }
+                    ));
                 }
             }
             "slash" => {}
@@ -6163,7 +6531,7 @@ mod ledger_tests {
         let uq: Arc<Mutex<Vec<UnbondingEntry>>> = Arc::new(Mutex::new(Vec::new()));
         let ss = Arc::new(Mutex::new(0.0f64));
         L1Node::apply_balance_tx_inner(
-            balances, &mut token_balances, &mut burned, tx, None, "", &uq, 1, &ss,
+            balances, &mut token_balances, &mut burned, tx, None, "", &uq, 1, &ss, &mut None,
         );
         (token_balances, burned)
     }
@@ -6674,7 +7042,7 @@ mod live_amm_tests {
         let mut burned = node.burned_tokens.lock().unwrap();
         L1Node::apply_balance_tx_inner(
             &mut bal, &mut tok, &mut burned, tx,
-            Some(&node.validator_store), node_pub, &node.unbonding_queue, 1, &node.shielded_supply,
+            Some(&node.validator_store), node_pub, &node.unbonding_queue, 1, &node.shielded_supply, &mut None,
         );
     }
 
@@ -7222,5 +7590,511 @@ mod live_amm_tests {
         // The over-transfer was refused at the VM host boundary: no XRGE moved.
         assert_eq!(a.get_balance("bob").unwrap(), 0.0, "bob got nothing — overspend refused");
         assert_eq!(a.get_balance(addr).unwrap(), 1.0, "contract balance intact");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R1 — daemon integration tests: bridge_withdraw execution result, index-aligned
+// results, post-acceptance store persistence, fail-closed receipts, and the
+// rejected-bad-state-root regression on the REAL import path.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod bridge_r1_daemon_tests {
+    use super::*;
+    use quantum_vault_bridge_exec::{BridgeWithdrawExecution as BX, BridgeWithdrawFailure as BF};
+
+    struct TmpDir(PathBuf);
+    impl TmpDir {
+        fn new() -> Self {
+            static CTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+            let p = std::env::temp_dir().join(format!("r1-node-{}-{}-{}", std::process::id(), n,
+                CTR.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
+            std::fs::create_dir_all(&p).unwrap();
+            TmpDir(p)
+        }
+    }
+    impl Drop for TmpDir { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+
+    /// A real node with a bridge withdraw store (the relayer-facing payout list).
+    fn node_with_store() -> (TmpDir, L1Node, std::sync::Arc<BridgeWithdrawStore>) {
+        let dir = TmpDir::new();
+        let store = std::sync::Arc::new(BridgeWithdrawStore::new(&dir.0).unwrap());
+        let node = L1Node::new(NodeOptions {
+            data_dir: dir.0.clone(),
+            chain: ChainConfig { chain_id: "test".to_string(), genesis_time: 0, block_time_ms: 1000 },
+            mine: false,
+            bridge_withdraw_store: Some(store.clone()),
+            bridge_authority_keys: Vec::new(),
+        }).expect("node");
+        node.init().expect("init");
+        (dir, node, store)
+    }
+
+    fn fund_xrge(node: &L1Node, pubkey: &str, xrge: f64) {
+        node.balances.lock().unwrap().insert(canon_addr(pubkey), xrge_f64_to_quanta(xrge));
+    }
+    fn fund_token(node: &L1Node, pubkey: &str, sym: &str, units: u128) {
+        node.token_balances.lock().unwrap().insert((canon_addr(pubkey), sym.to_string()), units);
+    }
+
+    fn withdraw_tx(from: &str, token: &str, amount: u64, dest: &str, fee: f64, nonce: u64) -> TxV1 {
+        TxV1 {
+            version: 1, tx_type: "bridge_withdraw".to_string(), from_pub_key: from.to_string(), nonce,
+            payload: TxPayload { token_symbol: Some(token.to_string()), amount: Some(amount),
+                evm_address: Some(dest.to_string()), ..Default::default() },
+            fee, sig: String::new(), signed_payload: None,
+        }
+    }
+    fn signed(mut tx: TxV1, sk: &str) -> TxV1 {
+        tx.sig = pqc_sign(sk, &encode_tx_for_signing(&tx)).unwrap();
+        tx
+    }
+    /// Unsigned block header/shell for apply_balance_block (which reads only height/time/txs).
+    fn prelim_block(node: &L1Node, txs: Vec<TxV1>) -> BlockV1 {
+        let tip = node.store.get_tip().unwrap();
+        BlockV1 {
+            version: 1,
+            header: BlockHeaderV1 { version: 1, chain_id: "test".into(), height: tip.height + 1, time: 1,
+                prev_hash: tip.hash, tx_hash: compute_tx_hash(&txs), proposer_pub_key: String::new(), state_root: None },
+            txs, proposer_sig: String::new(), hash: String::new(),
+        }
+    }
+    /// A fully signed, hash-consistent block for the REAL import path.
+    fn sealed_block(node: &L1Node, proposer_pub: &str, proposer_sk: &str, txs: Vec<TxV1>, state_root: Option<String>, time: u64) -> BlockV1 {
+        let tip = node.store.get_tip().unwrap();
+        let header = BlockHeaderV1 { version: 1, chain_id: "test".into(), height: tip.height + 1,
+            time, prev_hash: tip.hash,
+            tx_hash: compute_tx_hash(&txs), proposer_pub_key: proposer_pub.to_string(), state_root };
+        let hb = encode_header_v1(&header);
+        let sig = pqc_sign(proposer_sk, &hb).unwrap();
+        let hash = compute_block_hash(&hb, &sig);
+        BlockV1 { version: 1, header, txs, proposer_sig: sig, hash }
+    }
+    const DEST: &str = "0x00000000000000000000000000000000000000a1";
+
+    #[test]
+    fn r1_double_withdraw_only_first_payout_eligible() {
+        let (_d, node, store) = node_with_store();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 100.1); // exactly one 100-XRGE withdrawal + 0.1 fee
+        let txs = vec![
+            withdraw_tx(&user.public_key_hex, "XRGE", 100, DEST, 0.1, 1),
+            withdraw_tx(&user.public_key_hex, "XRGE", 100, DEST, 0.1, 2),
+        ];
+        let block = prelim_block(&node, txs);
+        let results = node.apply_balance_block(&block).unwrap();
+        assert_eq!(results.len(), 2, "one slot per tx");
+        assert!(matches!(results[0], Some(BX::Success(_))), "first burns");
+        assert_eq!(results[1], Some(BX::Failed(BF::InsufficientFee)), "second fails (balance drained)");
+        assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 0.0, "debited exactly once");
+        assert_eq!(*node.burned_tokens.lock().unwrap().get("XRGE").unwrap(), 100.0);
+        node.persist_bridge_withdraw_results(&block, &results).unwrap();
+        let pending = store.list_pending().unwrap();
+        assert_eq!(pending.len(), 1, "exactly ONE relayer-facing payout record for two attempts");
+        assert_eq!(pending[0].amount_units, 100);
+        assert_eq!(pending[0].token_symbol, "XRGE");
+        assert!(pending[0].tx_id.starts_with("xrge:"));
+        // receipts: first Success, second Failed(reason)
+        let receipts = node.generate_receipts(&block, &results);
+        assert!(matches!(receipts[0].status, TxStatus::Success));
+        assert!(matches!(&receipts[1].status, TxStatus::Failed(r) if r == "InsufficientFee"));
+    }
+
+    #[test]
+    fn r1_insolvent_withdrawal_no_payout() {
+        let (_d, node, store) = node_with_store();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 50.1);
+        let block = prelim_block(&node, vec![withdraw_tx(&user.public_key_hex, "XRGE", 100, DEST, 0.1, 1)]);
+        let results = node.apply_balance_block(&block).unwrap();
+        assert_eq!(results[0], Some(BX::Failed(BF::InsufficientXrge)));
+        assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 50.1, "no debit");
+        assert!(node.burned_tokens.lock().unwrap().is_empty(), "no burn");
+        node.persist_bridge_withdraw_results(&block, &results).unwrap();
+        assert!(store.list_pending().unwrap().is_empty(), "no payout record");
+    }
+
+    #[test]
+    fn r1_result_index_alignment_after_skipped_tx() {
+        let (_d, node, store) = node_with_store();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1000.0);
+        // tx[0]: mint_tokens for a symbol the sender does not own ⇒ consensus guard `continue`
+        let skipped = TxV1 { version: 1, tx_type: "mint_tokens".into(), from_pub_key: user.public_key_hex.clone(), nonce: 1,
+            payload: TxPayload { token_symbol: Some("NOPE".into()), token_total_supply: Some(5), ..Default::default() },
+            fee: 0.1, sig: String::new(), signed_payload: None };
+        let txs = vec![skipped, withdraw_tx(&user.public_key_hex, "XRGE", 10, DEST, 0.1, 2)];
+        let block = prelim_block(&node, txs);
+        let results = node.apply_balance_block(&block).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results[0].is_none(), "skipped tx leaves its slot None");
+        assert!(matches!(results[1], Some(BX::Success(_))), "withdrawal result lands at ITS index");
+        node.persist_bridge_withdraw_results(&block, &results).unwrap();
+        let pending = store.list_pending().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].owner_pubkey, user.public_key_hex, "record belongs to tx[1]'s sender");
+        assert_eq!(pending[0].amount_units, 10);
+        // misaligned results are refused
+        assert!(node.persist_bridge_withdraw_results(&block, &results[..1]).is_err());
+    }
+
+    #[test]
+    fn r1_failed_and_none_results_fail_closed_in_receipts() {
+        let (_d, node, store) = node_with_store();
+        let user = pqc_keygen();
+        let block = prelim_block(&node, vec![withdraw_tx(&user.public_key_hex, "XRGE", 1, DEST, 0.1, 1)]);
+        // absent result (defensive: never Success)
+        let none: Vec<Option<BX>> = vec![None];
+        let r = node.generate_receipts(&block, &none);
+        assert!(matches!(&r[0].status, TxStatus::Failed(m) if m == "missing bridge execution result"));
+        node.persist_bridge_withdraw_results(&block, &none).unwrap();
+        assert!(store.list_pending().unwrap().is_empty(), "None never stored");
+        // explicit failure
+        let failed: Vec<Option<BX>> = vec![Some(BX::Failed(BF::ZeroAmount))];
+        let r = node.generate_receipts(&block, &failed);
+        assert!(matches!(&r[0].status, TxStatus::Failed(m) if m == "ZeroAmount"));
+        node.persist_bridge_withdraw_results(&block, &failed).unwrap();
+        assert!(store.list_pending().unwrap().is_empty(), "Failed never stored");
+    }
+
+    #[test]
+    fn r1b_daemon_routing_qusdc_qbtc_recorded_custom_token_not() {
+        let (_d, node, store) = node_with_store();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 10.0);
+        fund_token(&node, &user.public_key_hex, "qUSDC", 100);
+        fund_token(&node, &user.public_key_hex, "qBTC", 100);
+        fund_token(&node, &user.public_key_hex, "3EYE", 100);
+        let txs = vec![
+            withdraw_tx(&user.public_key_hex, "qUSDC", 100, DEST, 0.1, 1),
+            withdraw_tx(&user.public_key_hex, "qBTC", 100, "bc1qexampledestaddr0000000000000000000000", 0.1, 2),
+            withdraw_tx(&user.public_key_hex, "3EYE", 100, DEST, 0.1, 3),
+        ];
+        let block = prelim_block(&node, txs);
+        let results = node.apply_balance_block(&block).unwrap();
+        // all three BURN at the ledger (execution semantics unchanged) ...
+        assert!(results.iter().all(|r| matches!(r, Some(BX::Success(_)))));
+        for sym in ["qUSDC", "qBTC", "3EYE"] {
+            assert_eq!(node.get_token_balance(&user.public_key_hex, sym).unwrap(), 0.0, "{sym} debited");
+        }
+        // ... but only RECOGNIZED payout assets reach the relayer-facing store.
+        node.persist_bridge_withdraw_results(&block, &results).unwrap();
+        let mut toks: Vec<String> = store.list_pending().unwrap().into_iter().map(|w| w.token_symbol).collect();
+        toks.sort();
+        assert_eq!(toks, vec!["qBTC".to_string(), "qUSDC".to_string()], "3EYE (unsupported) gets NO payout record");
+        let btc = store.list_pending().unwrap().into_iter().find(|w| w.token_symbol == "qBTC").unwrap();
+        assert!(btc.evm_address.starts_with("bc1q"), "BTC destination preserved verbatim (no EVM-format gate)");
+    }
+
+    #[test]
+    fn r1_rejected_bad_state_root_block_leaves_zero_store_side_effects() {
+        let (_d, node, store) = node_with_store();
+        let proposer = pqc_keygen();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1000.0);
+        let tx = signed(withdraw_tx(&user.public_key_hex, "XRGE", 100, DEST, 0.1, 1), &user.secret_key_hex);
+
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        // (a) valid-looking withdrawal inside a block with a DELIBERATELY WRONG state root
+        let bad = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![tx.clone()], Some("00".repeat(32)), t);
+        let base_fee_before = node.get_base_fee_quanta();
+        let err = node.import_block(bad).unwrap_err();
+        assert!(err.contains("state root mismatch"), "rejected on state root: {err}");
+        assert_eq!(node.tip_height().unwrap(), 0, "block NOT persisted");
+        assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 1000.0, "ledger rolled back exactly");
+        // Blocker B: the full pre-apply snapshot also rolls back everything outside the
+        // state root — the burn ledger and the EIP-1559 base fee included.
+        assert!(node.burned_tokens.lock().unwrap().is_empty(), "burned_tokens rolled back");
+        assert_eq!(node.get_base_fee_quanta(), base_fee_before, "base fee rolled back");
+        assert!(store.list_pending().unwrap().is_empty(), "ZERO withdrawal-store side effects");
+
+        // (b) the SAME block with the CORRECT post-state root is accepted → exactly one record
+        // Probe with the SAME proposer + time (fee distribution credits the proposer), then
+        // roll the probe back with the full pre-apply snapshot so the real import starts
+        // from exactly the state the probe saw.
+        let probe = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![tx.clone()], None, t);
+        let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
+        let _ = node.apply_balance_block(&probe).unwrap();
+        let correct_root = node.get_state_root().unwrap();
+        node.restore_pre_apply_snapshot(snap).unwrap();
+        assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 1000.0, "probe restored");
+        assert_eq!(node.get_base_fee_quanta(), base_fee_before, "probe base fee restored");
+
+        let good = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![tx.clone()], Some(correct_root), t);
+        node.import_block(good).expect("accepted with correct root");
+        assert_eq!(node.tip_height().unwrap(), 1);
+        assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 899.9, "1000 - 100 - 0.1");
+        let pending = store.list_pending().unwrap();
+        assert_eq!(pending.len(), 1, "payout record created ONLY for the accepted block");
+        assert_eq!(pending[0].owner_pubkey, user.public_key_hex);
+        assert_eq!(pending[0].amount_units, 100);
+        let rc = node.get_receipt(&compute_single_tx_hash(&tx)).unwrap().unwrap();
+        assert!(matches!(rc.status, TxStatus::Success));
+    }
+
+    // ── Blocker B: atomic rejected-block rollback ──────────────────────────────
+
+    /// Exact, comparable image of every node-state component a speculative apply
+    /// can touch. f64 fields are compared bit-for-bit; sled values as raw bytes.
+    #[derive(Debug, Clone, PartialEq)]
+    struct Fingerprint {
+        tip: u64,
+        balances: Vec<(String, u128)>,
+        token_balances: Vec<((String, String), u128)>,
+        lp_balances: Vec<((String, String), u128)>,
+        burned_tokens: Vec<(String, u64)>,
+        base_fee_quanta: u128,
+        base_fee_raw: Option<Vec<u8>>,
+        total_fees_burned_bits: u64,
+        total_burned_raw: Option<Vec<u8>>,
+        shielded_supply_bits: u64,
+        unbonding_len: usize,
+        nonces: Vec<(String, Option<Vec<u8>>)>,
+        address_index: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+        token_metadata: Vec<String>,
+        pools: Vec<String>,
+        allowances_len: usize,
+        withdraw_pending: Vec<String>,
+        receipts: Vec<Option<String>>,
+    }
+
+    fn fingerprint(node: &L1Node, store: &BridgeWithdrawStore, pubkeys: &[&str], tx_hashes: &[String]) -> Fingerprint {
+        let mut balances: Vec<_> = node.balances.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+        balances.sort();
+        let mut token_balances: Vec<_> = node.token_balances.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+        token_balances.sort();
+        let mut lp_balances: Vec<_> = node.lp_balances.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+        lp_balances.sort();
+        let mut burned_tokens: Vec<_> = node.burned_tokens.lock().unwrap().iter().map(|(k, v)| (k.clone(), v.to_bits())).collect();
+        burned_tokens.sort();
+        let mut nonces = Vec::new();
+        let mut address_index = Vec::new();
+        for pk in pubkeys {
+            nonces.push((pk.to_string(), node.nonce_db.get(pk.as_bytes()).unwrap().map(|v| v.to_vec())));
+            let (k1, k2) = address_index_keys(pk).expect("derivable address");
+            for k in [k1, k2] {
+                let v = node.address_db.get(&k).unwrap().map(|v| v.to_vec());
+                address_index.push((k, v));
+            }
+        }
+        let mut token_metadata: Vec<String> = node.token_metadata_store.get_all().unwrap()
+            .iter().map(|m| serde_json::to_string(m).unwrap()).collect();
+        token_metadata.sort();
+        let mut pools: Vec<String> = node.pool_store.list_pools().unwrap()
+            .iter().map(|p| serde_json::to_string(p).unwrap()).collect();
+        pools.sort();
+        let allowances_len = node.allowance_store.trees()[0].len();
+        let mut withdraw_pending: Vec<String> = store.list_pending().unwrap()
+            .iter().map(|w| format!("{}|{}|{}|{}|{}", w.tx_id, w.evm_address, w.amount_units, w.owner_pubkey, w.token_symbol)).collect();
+        withdraw_pending.sort();
+        let receipts = tx_hashes.iter()
+            .map(|h| node.get_receipt(h).unwrap().map(|r| format!("{:?}", r.status)))
+            .collect();
+        Fingerprint {
+            tip: node.tip_height().unwrap(),
+            balances, token_balances, lp_balances, burned_tokens,
+            base_fee_quanta: node.get_base_fee_quanta(),
+            base_fee_raw: node.fee_db.get(b"base_fee").unwrap().map(|v| v.to_vec()),
+            total_fees_burned_bits: node.get_total_fees_burned().to_bits(),
+            total_burned_raw: node.fee_db.get(b"total_burned").unwrap().map(|v| v.to_vec()),
+            shielded_supply_bits: node.get_shielded_supply().to_bits(),
+            unbonding_len: node.unbonding_queue.lock().unwrap().len(),
+            nonces, address_index, token_metadata, pools, allowances_len, withdraw_pending, receipts,
+        }
+    }
+
+    fn transfer_tx(from: &str, to: &str, amount: u64, fee: f64, nonce: u64) -> TxV1 {
+        TxV1 {
+            version: 1, tx_type: "transfer".to_string(), from_pub_key: from.to_string(), nonce,
+            payload: TxPayload { to_pub_key_hex: Some(to.to_string()), amount: Some(amount), ..Default::default() },
+            fee, sig: String::new(), signed_payload: None,
+        }
+    }
+    fn create_token_tx(from: &str, symbol: &str, supply: u64, fee: f64, nonce: u64) -> TxV1 {
+        TxV1 {
+            version: 1, tx_type: "create_token".to_string(), from_pub_key: from.to_string(), nonce,
+            payload: TxPayload { token_symbol: Some(symbol.to_string()), token_name: Some(format!("{symbol} token")),
+                token_total_supply: Some(supply), ..Default::default() },
+            fee, sig: String::new(), signed_payload: None,
+        }
+    }
+
+    /// A multi-component block: bridge_withdraw (burn ledger + fee), XRGE transfer
+    /// (fees / base fee / recipient), create_token (token metadata store + token ledger).
+    fn multi_component_txs(user: &PQKeypair, recipient: &str) -> Vec<TxV1> {
+        vec![
+            signed(withdraw_tx(&user.public_key_hex, "XRGE", 100, DEST, 0.1, 1), &user.secret_key_hex),
+            signed(transfer_tx(&user.public_key_hex, recipient, 50, 0.1, 2), &user.secret_key_hex),
+            signed(create_token_tx(&user.public_key_hex, "ROLL", 1_000, 0.1, 3), &user.secret_key_hex),
+        ]
+    }
+
+    #[test]
+    fn rejected_block_rollback_is_atomic() {
+        let (_d, node, store) = node_with_store();
+        let proposer = pqc_keygen();
+        let user = pqc_keygen();
+        let recipient = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1000.0);
+        let txs = multi_component_txs(&user, &recipient.public_key_hex);
+        let hashes: Vec<String> = txs.iter().map(compute_single_tx_hash).collect();
+        let pks = [user.public_key_hex.as_str(), recipient.public_key_hex.as_str(), proposer.public_key_hex.as_str()];
+
+        let before = fingerprint(&node, &store, &pks, &hashes);
+        assert!(node.get_token_metadata("ROLL").unwrap().is_none());
+        assert!(before.nonces.iter().all(|(_, v)| v.is_none()), "no nonces yet");
+
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        let bad = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, txs.clone(), Some("ab".repeat(32)), t);
+        let err = node.import_block(bad).unwrap_err();
+        assert!(err.contains("state root mismatch"), "rejected on state root: {err}");
+
+        assert_eq!(node.tip_height().unwrap(), 0, "tip unchanged");
+        assert!(node.get_block(1).unwrap().is_none(), "rejected block never persisted");
+        let after = fingerprint(&node, &store, &pks, &hashes);
+        assert_eq!(after, before, "EVERY state component identical after rejection");
+        // Spot checks on the components the old (maps-only) rollback left dirty.
+        assert!(node.burned_tokens.lock().unwrap().is_empty(), "burn ledger rolled back");
+        assert!(node.get_token_metadata("ROLL").unwrap().is_none(), "token metadata store rolled back");
+        assert!(node.nonce_db.get(user.public_key_hex.as_bytes()).unwrap().is_none(), "nonce_db rolled back");
+        assert_eq!(node.get_token_balance(&user.public_key_hex, "ROLL").unwrap(), 0.0);
+        assert_eq!(node.get_balance(&recipient.public_key_hex).unwrap(), 0.0);
+        for h in &hashes {
+            assert!(node.get_receipt(h).unwrap().is_none(), "no receipt for a rejected block's tx");
+        }
+        assert!(store.list_pending().unwrap().is_empty(), "withdrawal store empty");
+    }
+
+    #[test]
+    fn repeated_rejections_do_not_drift() {
+        let (_d, node, store) = node_with_store();
+        let proposer = pqc_keygen();
+        let user = pqc_keygen();
+        let recipient = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1000.0);
+        let txs = multi_component_txs(&user, &recipient.public_key_hex);
+        let hashes: Vec<String> = txs.iter().map(compute_single_tx_hash).collect();
+        let pks = [user.public_key_hex.as_str(), recipient.public_key_hex.as_str(), proposer.public_key_hex.as_str()];
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+
+        let before = fingerprint(&node, &store, &pks, &hashes);
+        for i in 0..5u8 {
+            let bogus = format!("{:02x}", i + 1).repeat(32);
+            let bad = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, txs.clone(), Some(bogus), t);
+            let err = node.import_block(bad).unwrap_err();
+            assert!(err.contains("state root mismatch"), "attempt {i}: {err}");
+            assert_eq!(fingerprint(&node, &store, &pks, &hashes), before, "no drift after rejection #{}", i + 1);
+        }
+
+        // Correct root via a probe apply rolled back with the full snapshot.
+        let probe = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, txs.clone(), None, t);
+        let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
+        let _ = node.apply_balance_block(&probe).unwrap();
+        let correct_root = node.get_state_root().unwrap();
+        node.restore_pre_apply_snapshot(snap).unwrap();
+        assert_eq!(fingerprint(&node, &store, &pks, &hashes), before, "probe fully rolled back");
+
+        let good = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, txs.clone(), Some(correct_root), t);
+        node.import_block(good).expect("accepted with correct root");
+        assert_eq!(node.tip_height().unwrap(), 1);
+        assert!(node.get_block(1).unwrap().is_some());
+        for h in &hashes {
+            let rc = node.get_receipt(h).unwrap().expect("receipt exists for accepted block");
+            assert!(matches!(rc.status, TxStatus::Success), "{h}: {:?}", rc.status);
+        }
+        let pending = store.list_pending().unwrap();
+        assert_eq!(pending.len(), 1, "exactly one withdrawal record");
+        assert_eq!(pending[0].owner_pubkey, user.public_key_hex);
+        assert_eq!(pending[0].amount_units, 100);
+        // Expected post-state: 1000 - (100 + 0.1) - (50 + 0.1) - 0.1
+        assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 849.7);
+        assert_eq!(node.get_balance(&recipient.public_key_hex).unwrap(), 50.0);
+        assert_eq!(node.get_token_balance(&user.public_key_hex, "ROLL").unwrap(), 1000.0);
+        assert_eq!(*node.burned_tokens.lock().unwrap().get("XRGE").unwrap(), 100.0);
+        assert!(node.get_token_metadata("ROLL").unwrap().is_some(), "token metadata registered once accepted");
+        assert_eq!(node.nonce_db.get(user.public_key_hex.as_bytes()).unwrap().map(|v| v.to_vec()),
+            Some(3u64.to_be_bytes().to_vec()), "nonce committed only by the accepted block");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #66 — strict historical replay regression: a FRESH node initialised from
+// genesis-mainnet.json must import every real mainnet block through the REAL
+// `import_block` path with NORMAL state-root verification. No skip flags, no
+// snapshots, no pre-seeded ledger. Expected: every block accepted, zero root
+// mismatches. Runs against the committed fixtures in `tests/fixtures/`.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod strict_historical_replay_tests {
+    use super::*;
+
+    const FIXTURE_BLOCKS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-48.jsonl");
+    const FIXTURE_GENESIS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/genesis-mainnet.json");
+
+    struct TmpDir(PathBuf);
+    impl Drop for TmpDir { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+
+    /// Replays the fixture chain and returns (last accepted height, first failure).
+    fn replay_fixture() -> (u64, Option<(u64, String)>) {
+        // Historical mainnet blocks were produced with the PRODUCTION fork height.
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(18)));
+        let gc: crate::GenesisConfig = serde_json::from_str(&std::fs::read_to_string(FIXTURE_GENESIS).unwrap()).unwrap();
+        let dir = TmpDir(std::env::temp_dir().join(format!("strict-replay-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let node = L1Node::new(NodeOptions {
+            data_dir: dir.0.clone(),
+            chain: ChainConfig { chain_id: gc.chain_id.clone(), genesis_time: gc.genesis_time, block_time_ms: gc.block_time_ms },
+            mine: false,
+            bridge_withdraw_store: None,
+            bridge_authority_keys: gc.initial_validators.iter().map(|v| v.pub_key.clone()).collect(),
+        }).unwrap();
+        node.init().unwrap();
+        node.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators).unwrap();
+        let mut last_ok = 0u64;
+        for line in std::fs::read_to_string(FIXTURE_BLOCKS).unwrap().lines() {
+            let block: BlockV1 = serde_json::from_str(line).unwrap();
+            let h = block.header.height;
+            if h == 0 {
+                let g = node.get_block(0).unwrap().unwrap();
+                if g.hash != block.hash { return (0, Some((0, format!("genesis mismatch: fresh={} fixture={}", g.hash, block.hash)))); }
+                continue;
+            }
+            if let Err(e) = node.import_block(block) { return (last_ok, Some((h, e))); }
+            last_ok = h;
+        }
+        (last_ok, None)
+    }
+
+    /// The production requirement: 48/48 imported, zero root mismatches.
+    /// BLOCKED ON THE #66 FORK DECISION — the committed roots from height 18 depend on
+    /// retired-binary ledger keying and restart-rebuild artifacts (see the validation
+    /// report); no deterministic replayer reproduces them. Kept `#[ignore]` so the suite
+    /// stays meaningful; run explicitly with `--ignored` to see the exact failing height.
+    #[test]
+    #[ignore = "blocked on issue #66 fork decision: committed roots 18..48 are not reproducible from block contents"]
+    fn strict_replay_full_history_verifies_every_root() {
+        let (last_ok, failure) = replay_fixture();
+        assert!(failure.is_none(), "first divergence at {:?} (last accepted {})", failure, last_ok);
+        assert_eq!(last_ok, 48, "48/48 imported");
+    }
+
+    /// Pinned CURRENT behaviour so a regression (or the eventual fix) is visible: the
+    /// pre-fork prefix imports cleanly and the first committed root (height 18) is where
+    /// a fresh replay stops today.
+    #[test]
+    fn strict_replay_prefix_accepts_1_to_17_and_stops_at_first_committed_root() {
+        let (last_ok, failure) = replay_fixture();
+        assert_eq!(last_ok, 17, "blocks 1..17 (no committed root) import cleanly");
+        let (h, e) = failure.expect("expected the known #66 divergence");
+        assert_eq!(h, 18);
+        assert!(e.contains("state root mismatch"), "{e}");
+        // Determinism: with authority-based (not node-key-based) mint/faucet gating, a node
+        // with a FRESH random key computes the same root a node holding the production key
+        // computed (validation harness value) — block application no longer depends on
+        // node-local identity.
+        assert!(e.contains("computed=99a37ecc808ce7e5b800c6078666935b9a83574f96c7a4d516e9c3207a01c378"),
+            "computed root at 18 must be identity-independent: {e}");
     }
 }

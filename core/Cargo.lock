@@ -1951,6 +1951,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantum-vault-bridge-exec"
+version = "0.1.0"
+dependencies = [
+ "sha3 0.10.9",
+]
+
+[[package]]
 name = "quantum-vault-cli"
 version = "1.0.0"
 dependencies = [
@@ -2007,6 +2014,7 @@ dependencies = [
  "hyper 0.14.32",
  "prost",
  "protoc-bin-vendored",
+ "quantum-vault-bridge-exec",
  "quantum-vault-consensus",
  "quantum-vault-crypto",
  "quantum-vault-storage",

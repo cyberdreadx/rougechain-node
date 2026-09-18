@@ -80,6 +80,11 @@ impl NftStore {
         })
     }
 
+    /// Every sled tree this store writes to (rollback snapshot/restore).
+    pub fn trees(&self) -> Vec<&sled::Tree> {
+        vec![&**self.collections_db, &**self.tokens_db]
+    }
+
     // ── Collections ──
 
     pub fn save_collection(&self, col: &NftCollection) -> Result<(), String> {

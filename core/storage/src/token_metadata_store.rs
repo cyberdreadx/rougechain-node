@@ -65,6 +65,11 @@ impl TokenMetadataStore {
         Ok(migrated)
     }
 
+    /// Every sled tree this store writes to (rollback snapshot/restore).
+    pub fn trees(&self) -> Vec<&sled::Tree> {
+        vec![&**self.db]
+    }
+
     /// Create or update token metadata (only creator can update)
     pub fn set_metadata(&self, metadata: &TokenMetadata) -> Result<(), String> {
         let key = metadata.symbol.to_uppercase();

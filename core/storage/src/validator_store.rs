@@ -51,6 +51,11 @@ impl ValidatorStore {
         Ok(Self { db, meta, unbonding })
     }
 
+    /// Every sled tree this store writes to (rollback snapshot/restore).
+    pub fn trees(&self) -> Vec<&sled::Tree> {
+        vec![&*self.db, &self.meta, &self.unbonding]
+    }
+
     pub fn get_validator(&self, public_key: &str) -> Result<Option<ValidatorState>, String> {
         let raw = self.db.get(public_key).map_err(|e| e.to_string())?;
         if let Some(value) = raw {
