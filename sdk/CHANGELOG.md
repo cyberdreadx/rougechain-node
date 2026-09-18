@@ -1,9 +1,9 @@
+# Changelog
+
 ## 1.7.0
 
 ### Added
-- `messenger`… no — social: `getUserFollowers(pubkey, limit?, offset?)` — paginated followers list, mirroring `getUserFollowing`. Backed by the new `GET /api/social/user/:pubkey/followers` endpoint (default 50, max 200).
-
-# Changelog
+- `social.getUserFollowers(pubkey, limit?, offset?)` — paginated followers list, mirroring `getUserFollowing`. Backed by the new `GET /api/social/user/:pubkey/followers` endpoint (default 50, max 200).
 
 ## 1.6.0
 
