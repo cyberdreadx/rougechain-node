@@ -8,6 +8,8 @@ maps at 48, canonical replay maps at every height (validation harness on
 candidate's authority-gated execution; identity-independent root at 18 = `99a37ecc…`), and the
 committed block headers. Quanta = 1e-9 XRGE.
 
+## DECISION: OPTION B SELECTED (2026-09-19). Implementation: `fork.rs`, `fork_tables.rs` (F = 49). See FORK_IMPLEMENTATION.md.
+
 ## 0. Frozen conclusion
 `roots[18..48] ≠ f(genesis, blocks, canonical rules)`. Causes (established): retired
 non-canonical balance-key layouts; split balance buckets; restart-rebuild fee mis-accounting
@@ -92,23 +94,25 @@ balances only through removal of the phantom credits (+ the 32,318-quanta residu
 | determinism after F | full | full |
 | bridge-relevant | none (XRGE burns/mints identical) | none |
 
-## 6. Supply / accounting reconciliation (native XRGE, whole history)
-Inflows: `bridge_mint` XRGE 55,123,564 + faucet 101 = 55,123,665. Outflows from the native
-ledger: `bridge_withdraw` burns 255 (both ledgers, `burned_tokens.XRGE = 255`); staked 10,000
-(h20 only — h29 was a no-op); net shielded 1 (h27 shield; h28 unshield no-op; h31–36 net 0);
-XRGE in the AMM pool reserve 54,945,220 (identical in both, LP 74,160,984); base-fee burns
-(`fees_burned`, canonical 0.114012172).
-Canonical identity: 55,123,665 − 255 − 10,000 − 1 − 54,945,220 − 0.114012172 = 168,188.885987828
-vs ledger 168,183.885987828 → residual **5.000000000 XRGE** retained inside the AMM through the
-h45 create / h46 remove / h47 add liquidity round-trip (minimum-liquidity + integer rounding,
-pool state identical in both ledgers, unaffected by the decision).
-Production: same terms + **10,255.079099271 XRGE that no inflow created** (phantom fee
-distribution: 255 burned principal + 10,001 h20 stake debit + real fees counted as "fees" by the
-retired rebuild rule and paid 10 % treasury / 83.6 % proposer-validator / 6.36 % validator
-`21e0…`, plus the 32,318-quanta rounding residual). `fees_burned` differs (0.213 vs 0.114) for the
-same reason (half the phantom "base fees" were counted as burned). Intended invariant
-(mints + faucet = ledger + staked + shielded + pool + burned + fee-burn + AMM residual) holds for
-the canonical ledger; production violates it by exactly the Option-B negative delta.
+## 6. Supply / accounting reconciliation (native XRGE, whole history) — CORRECTED, exact in quanta
+Every term maps to a persisted state component or an explicitly identified sink:
+| term | state component | quanta |
+|---|---|---|
+| bridge_mint XRGE (h3–h44) | block contents | 55,123,564,000,000,000 |
+| faucet (h1, h2) | block contents | 101,000,000,000 |
+| **inflows** | | **55,123,665,000,000,000** |
+| native ledger | `balances` map | 168,183,885,987,828 |
+| stake debited from the ledger | h20 `stake` (validator store entry for `21e0ed0a…`); **h29 `stake` was rejected at the balance level (10,000.87 < 10,001) but the validator store still records 10,000 for `c97f59a2…` — pre-existing validator-store/ledger inconsistency (finding), not ledger-sourced** | 10,000,000,000,000 |
+| shielded supply | `shielded_supply` (snapshot-db) — **0**, not 1: every unshield reduced the supply by its full value | 0 |
+| AMM XRGE reserve | `pool_store["XRGE-qUSDC"].reserve_a` = 54,945,220 XRGE (identical in both ledgers) | 54,945,220,000,000,000 |
+| bridge_withdraw burns | `burned_tokens["XRGE"]` = 255 | 255,000,000,000 |
+| base-fee burns | `fees_burned` (fee_db/snapshot) | 114,012,172 |
+| **implicit sinks (value destroyed, in NO state bucket)** | see below | **6,000,000,000** |
+| **sum** | | **55,123,665,000,000,000** ✓ exact |
+Implicit sinks (pre-existing implementation behaviour, identical in production and canonical, unaffected by the fork):
+- **unshield fee sink, 4 XRGE:** an `unshield` reduces `shielded_supply` by the full value but credits `value − 1` (the 1-XRGE fee is neither burned into `fees_burned` nor distributed): h28 (value 1 → credit 0, root unchanged), h32, h34, h36 (1 XRGE each).
+- **AMM sinks, 2 XRGE:** h46 `remove_liquidity` released the whole 55,000,000 XRGE reserve (pool → 0) but credited 54,999,999; h48 `swap` released 54,780 from the reserve (55,000,000 → 54,945,220) but credited 54,779.
+The earlier "5.000000000 XRGE AMM residual" statement was wrong (it assumed shielded = 1 and did not separate the sinks); it did NOT double-count the reserve. Production = the same identity **plus 10,255,079,099,271 quanta of phantom native balance** created by no inflow (and `fees_burned` 213,238,268 vs 114,012,172 for the same reason). After Option B: phantom = 0 and the identity above holds unchanged.
 
 ## 7. Fork mechanics (design only)
 **Common:** a single `FORK_F` constant; no runtime flag can skip verification; checkpoint data

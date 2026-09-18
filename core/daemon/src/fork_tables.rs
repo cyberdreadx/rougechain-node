@@ -1,0 +1,90 @@
+//! AUTO-GENERATED fork data for CANONICAL_LEDGER_FORK_HEIGHT = 49 (Option B). DO NOT EDIT BY HAND.
+//! Source: immutable mainnet fixture blocks 0..48 + production/canonical ledgers at 48.
+//! Every table is hash-pinned; `fork_tables_tests` recomputes the hashes.
+
+pub const FORK_HEIGHT: u64 = 49;
+/// Committed historical state roots 18..F-1 (explicit consensus commitments; verified by equality).
+pub const CHECKPOINT_ROOTS: &[(u64, &str)] = &[
+    (18, "c04e251a423f52645e1205be05087cb48cb258d3ed0db144779186594dee95ac"),
+    (19, "7b5c194156b90284b6480ad3d74a06c8c17d962116e481d9c8a6a6e8223f5c80"),
+    (20, "80d519039522770d9385a4256f42b1d6b3ab6ddfcd17ee4e88ff323e2cd81b47"),
+    (21, "96c6e5e93a98afa2aefb2d90ce8781ff2f7f3993c91052325e39d2e1ced4b3ca"),
+    (22, "70df99051d952b0f9bf2eda2f4495f9e59c2b422c7682c063f799dfc4edf4a84"),
+    (23, "1098e9c942a7682a4d40c55c01bd53974abdf35ed800b3fe946d1bcfc4e20314"),
+    (24, "4d54a6a71ed8d6eb17f7ca26092b90d15772dd66f1e20f3e19a8b84ce63083c5"),
+    (25, "f31a53516b7b7095c70796eb61eb3ecb32c1fe7a9fbf48679704fb2cabb9b8ce"),
+    (26, "8386ea467244f4f4a99b12cea8a1cd70d646ae1df51bdceecdecfb91b90e55e6"),
+    (27, "dfedda7e6ce5dbd84cb9dd6ecb0d1e2f3fe5d0858b8d3f84c4eee2f96a620a46"),
+    (28, "dfedda7e6ce5dbd84cb9dd6ecb0d1e2f3fe5d0858b8d3f84c4eee2f96a620a46"),
+    (29, "dfedda7e6ce5dbd84cb9dd6ecb0d1e2f3fe5d0858b8d3f84c4eee2f96a620a46"),
+    (30, "052873345cbb5ba429e3387b6f8c00777cc3bfcff7ac85f99cb7160c3b9ebdf0"),
+    (31, "3a0f7d98dc85e603771af89544b0772a8c7d77e96c3b22553ebe35422497894e"),
+    (32, "07d04408b0513ef7fe701a1a1ad50f7b41fae098f0e92041212f12a5e91074ee"),
+    (33, "7756ab480e1cff1cec3d8346aa4a590fcd28f49cce1acf823c90a11236aac1d2"),
+    (34, "53f39a2e072a620b50552c58acc2e3b604fbb184ab0fba4f25cb8b134ac85a0f"),
+    (35, "f4b2721e09cbfc29fec4289c002d63463243d82d3274a012c6d2a672fcdb8ee4"),
+    (36, "6d8e91a4041fac2955de34316820706a1d2d005e7efa105a8601e812ffc0f253"),
+    (37, "b3a2b105ba4ff51f6596fb392c313e5ea8272c47af3411ed892d660bd2a91370"),
+    (38, "0b0310512c197b655d138876e60448dd5c3965b71d716938192a7e078d3bab54"),
+    (39, "4fa71e7561a3be58deaf7cd4c23e06c462c6f5d89db2be02c673d3970606d57b"),
+    (40, "77ffa16f7172c1867e841917f513ddf1cd8074beaaad3eeb31695c755b1fd630"),
+    (41, "63b24beab49d23cfeb8fcbae5c8a56ededba7d66f96f852da3bf41c28ca93bdf"),
+    (42, "bd8d237d151fcf32b41e0fd69f90baebe88695901c1aa59e69ff386c13ce2533"),
+    (43, "1c186146f1fb52b48121430fee07f9704dc18957d7d8952cd2cb65d05ffafd2c"),
+    (44, "18cbbcc65a4fa23898cd5b0e74e72db40b33b81ab4a28eca0669966012ee36ac"),
+    (45, "9761e3b026035976a68fc7a729b6f502e0d2421eca8eb04698b25ae42ffde3b3"),
+    (46, "f9f147cb3e829f7fc0291781f7f346e59d9eec2b03a0cbebf2db80438797d1eb"),
+    (47, "8f1aff105f4364bbeee61744142c0482b170ea9fd3fe8b0e83884d0400b58521"),
+    (48, "f5af35d889618c9dbdab5e350eab84f8f36b291c57543a361977acdd82d793b1"),
+];
+/// Production native ledger at F-1 (quanta) — the ONLY pre-migration ledger the migration accepts.
+pub const PRODUCTION_LEDGER_AT_F_MINUS_1: &[(&str, u128)] = &[
+    ("__treasury__", 1027656508750),
+    ("probe0000000000000000000000000000000000000000000000000000000000000", 1000000000),
+    ("rouge13vft80euy3extzzh4yehmawudw0ksjal8xu0u3wv7zutk97emckqhwvlz4", 13000000000),
+    ("rouge168fd0mad4eynev767u896zx5ng2dnh7eztw9cj24tjn8f6e5t7fsgh8qxj", 8594150175817),
+    ("rouge19emhc0secrj0uadfvmp5xvun5jta9kpm0laff28x04ug4szf50nq5aer4c", 10652883715831),
+    ("rouge1aw424sfk3w9h2grllyhwpgjsngcu8cegyuksdfdgtye05lmwrpjqg8dk4n", 56749500000000),
+    ("rouge1cct9qam98e6aq4yxkrydnzeudggc747q3stfteuxhxj35n4uvezs9lvvsw", 299900000000),
+    ("rouge1fk7sjq2zvqztggjn2rw2d5zu2w3ldhxkp9dlugmqaxwj6c8zcqaq7y4kl6", 1000000000000),
+    ("rouge1qm85k7gmudsrz46crku2zh03j7lx4xyg4adhkhxau2vx25qe97aqvvc378", 10000874686701),
+    ("rouge1zfwpda7rl27lugmkxuu8at6ffe545cr5s5kaet7mfhnzaplhv8aqxd64w9", 90000000000000),
+    ("testmarket0000000000000000000000000000000000000000000000000000000000", 100000000000),
+];
+/// Canonical native ledger at F-1 (quanta) — the required post-migration ledger.
+pub const CANONICAL_LEDGER_AT_F_MINUS_1: &[(&str, u128)] = &[
+    ("__treasury__", 2148598812),
+    ("probe0000000000000000000000000000000000000000000000000000000000000", 1000000000),
+    ("rouge13vft80euy3extzzh4yehmawudw0ksjal8xu0u3wv7zutk97emckqhwvlz4", 13000000000),
+    ("rouge168fd0mad4eynev767u896zx5ng2dnh7eztw9cj24tjn8f6e5t7fsgh8qxj", 17270880672),
+    ("rouge19emhc0secrj0uadfvmp5xvun5jta9kpm0laff28x04ug4szf50nq5aer4c", 10000191853961),
+    ("rouge1aw424sfk3w9h2grllyhwpgjsngcu8cegyuksdfdgtye05lmwrpjqg8dk4n", 56749500000000),
+    ("rouge1cct9qam98e6aq4yxkrydnzeudggc747q3stfteuxhxj35n4uvezs9lvvsw", 299900000000),
+    ("rouge1fk7sjq2zvqztggjn2rw2d5zu2w3ldhxkp9dlugmqaxwj6c8zcqaq7y4kl6", 1000000000000),
+    ("rouge1jfdeh3famu8dk6mwhx29lp7ywyun5qc0ptagr9290mg9kur380aqnak7vg", 0),
+    ("rouge1qm85k7gmudsrz46crku2zh03j7lx4xyg4adhkhxau2vx25qe97aqvvc378", 10000874654383),
+    ("rouge1zfwpda7rl27lugmkxuu8at6ffe545cr5s5kaet7mfhnzaplhv8aqxd64w9", 90000000000000),
+    ("testmarket0000000000000000000000000000000000000000000000000000000000", 100000000000),
+];
+/// Canonical delta (canonical - production, quanta): applied atomically at migration.
+pub const CANONICAL_DELTA: &[(&str, i128)] = &[
+    ("__treasury__", -1025507909938),
+    ("rouge168fd0mad4eynev767u896zx5ng2dnh7eztw9cj24tjn8f6e5t7fsgh8qxj", -8576879295145),
+    ("rouge19emhc0secrj0uadfvmp5xvun5jta9kpm0laff28x04ug4szf50nq5aer4c", -652691861870),
+    ("rouge1qm85k7gmudsrz46crku2zh03j7lx4xyg4adhkhxau2vx25qe97aqvvc378", -32318),
+];
+/// Token / LP balances at F-1 (identical in both ledgers; verified untouched by the migration).
+pub const TOKEN_BALANCES_AT_F_MINUS_1: &[(&str, &str, u128)] = &[
+    ("rouge1aw424sfk3w9h2grllyhwpgjsngcu8cegyuksdfdgtye05lmwrpjqg8dk4n", "qBTC", 11100),
+    ("rouge1aw424sfk3w9h2grllyhwpgjsngcu8cegyuksdfdgtye05lmwrpjqg8dk4n", "qETH", 200),
+    ("rouge1aw424sfk3w9h2grllyhwpgjsngcu8cegyuksdfdgtye05lmwrpjqg8dk4n", "qUSDC", 200000),
+];
+pub const LP_BALANCES_AT_F_MINUS_1: &[(&str, &str, u128)] = &[
+    ("rouge1aw424sfk3w9h2grllyhwpgjsngcu8cegyuksdfdgtye05lmwrpjqg8dk4n", "XRGE-qUSDC", 74160984),
+];
+pub const CHECKPOINT_TABLE_SHA256: &str = "2d979994dbe21559efb2a7ee1aa67911218fbe9bdb2fe04c1c8319aa5486ad67";
+pub const PRODUCTION_LEDGER_TABLE_SHA256: &str = "bb8ea37fa0f2ad85611bfbd806405efaf9f5b5fb5340b100a18c63cc8c560b60";
+pub const CANONICAL_LEDGER_TABLE_SHA256: &str = "880e5c9e488eacabd272463b8a97942016583e7f65cf87e2736a71e65e5cc9ee";
+pub const CANONICAL_DELTA_TABLE_SHA256: &str = "af440c273ac81181425f2b98b20de20c45a9bacd970a1b72d6685a57ff1f59dd";
+pub const TOKEN_LP_TABLE_SHA256: &str = "7c2e1dfd003ff0f869886f768cc88bd07ff89cf941ed5e9212d44c952356a9dd";
+pub const CANONICAL_DELTA_SUM_QUANTA: i128 = -10255079099271;

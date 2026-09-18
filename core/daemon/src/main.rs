@@ -16,6 +16,8 @@ mod jsonrpc;
 mod indexer;
 mod bridge_btc;
 mod push;
+mod fork;
+mod fork_tables;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -124,6 +126,16 @@ struct Args {
     mine: bool,
     #[arg(long)]
     data_dir: Option<String>,
+    /// OPTION-B FORK: explicit, operator-invoked, one-time, atomic migration of a LEGACY
+    /// production ledger to the canonical ledger at fork height F-1. Refuses unless
+    /// tip == F-1 and the ledger equals the pinned PRODUCTION_LEDGER_AT_F_MINUS_1 table.
+    /// Never runs automatically. Exits after migrating.
+    #[arg(long)]
+    migrate_canonical_ledger: bool,
+    /// Read-only operator diagnostic: print canonical digests of this node's consensus state
+    /// (loads/recovers state exactly as a normal start would) and exit.
+    #[arg(long)]
+    print_state_digest: bool,
     #[arg(long, env = "QV_API_KEYS")]
     api_keys: Option<String>,
     /// Rate limit per minute (0 = unlimited, recommended for public testnets)
@@ -365,12 +377,14 @@ async fn main() -> Result<(), String> {
             .as_ref()
             .map(|gc| gc.initial_validators.iter().map(|v| v.pub_key.clone()).collect())
             .unwrap_or_default(),
+        genesis_allocations: genesis_config.as_ref().map(|gc| gc.initial_allocations.clone()).unwrap_or_default(),
+        genesis_validators: genesis_config.as_ref().map(|gc| gc.initial_validators.clone()).unwrap_or_default(),
     })?;
     // Inject WASM runtime/store so apply_balance_block can re-execute contract txs
     node.set_wasm_runtime(wasm_runtime.clone());
     node.set_contract_store(contract_store.clone());
     let node = Arc::new(node);
-    node.init()?;
+    if args.migrate_canonical_ledger { node.init_for_migration()?; } else { node.init()?; }
     node.backfill_address_index();
 
     // Apply genesis allocations on first boot (chain height == 0)
@@ -386,6 +400,19 @@ async fn main() -> Result<(), String> {
                     total, gc.initial_allocations.len(), gc.initial_validators.len());
             }
         }
+    }
+
+    if args.print_state_digest {
+        let d = node.state_digest()?;
+        println!("{}", serde_json::to_string_pretty(&d).map_err(|e| e.to_string())?);
+        return Ok(());
+    }
+    if args.migrate_canonical_ledger {
+        eprintln!("[fork] OPTION-B canonical-ledger migration requested (F = {})", fork::FORK_HEIGHT);
+        let outcome = node.migrate_canonical_ledger(&|n: &L1Node| n.persist_snapshot_atomic(fork::FORK_HEIGHT - 1))?;
+        eprintln!("[fork] migration outcome: {}", outcome);
+        println!("{}", serde_json::to_string_pretty(&node.state_digest()?).map_err(|e| e.to_string())?);
+        return Ok(());
     }
 
     let grpc_addr: SocketAddr = format!("{}:{}", args.host, args.port)
