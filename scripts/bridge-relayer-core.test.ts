@@ -9,6 +9,12 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   bridgeHealthAllowsPayouts,
+  observeOnlyEnabled,
+  observeGuardedDeps,
+  observeXrgeWithdrawal,
+  observeDeposit,
+  guardWrite,
+  ObserveOnlyViolation,
   rougeBridgeId,
   payoutRoute,
   normalizeEthWithdrawal,
@@ -765,5 +771,129 @@ describe("daemon bridge health gate (derived payout-store hardening)", () => {
     expect(bridgeHealthAllowsPayouts({ status: 500, body: null })).toBe(false);
     expect(bridgeHealthAllowsPayouts(null)).toBe(false);
     expect(bridgeHealthAllowsPayouts(undefined)).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OBSERVATION MODE (BRIDGE_OBSERVE_ONLY=true): ZERO write calls. Every test wires spies behind
+// the same guards production uses and requires every write counter to stay at 0.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("observation mode — zero writes", () => {
+  const writesOf = (c: Calls) => c.releaseETH.length + c.releaseERC20.length + c.fulfill.length + c.reportFailure.length + c.refund.length;
+  const observed = (o: FakeOpts = {}) => { const f = fake(o); return { ...f, deps: observeGuardedDeps(f.deps) }; };
+
+  it("flag parsing: default FALSE; only the literal true enables it", () => {
+    expect(observeOnlyEnabled({})).toBe(false);
+    expect(observeOnlyEnabled({ BRIDGE_OBSERVE_ONLY: "" })).toBe(false);
+    expect(observeOnlyEnabled({ BRIDGE_OBSERVE_ONLY: "false" })).toBe(false);
+    expect(observeOnlyEnabled({ BRIDGE_OBSERVE_ONLY: "1" })).toBe(false);
+    expect(observeOnlyEnabled({ BRIDGE_OBSERVE_ONLY: "true" })).toBe(true);
+    expect(observeOnlyEnabled({ BRIDGE_OBSERVE_ONLY: " TRUE " })).toBe(true);
+  });
+
+  it("qETH pending → logs WOULD_RELEASE, never calls releaseETH / fulfill / failure / refund, no local state", async () => {
+    const f = observed({ receiptLogs: [releaseEthLog()], autoRefund: true, shouldRefund: true });
+    expect(await processEvmWithdrawal(ethWithdrawal(), f.deps)).toBe("observed");
+    expect(writesOf(f.calls)).toBe(0);
+    expect(f.processedSet.size).toBe(0); expect(f.saves()).toBe(0); expect(f.queued.size).toBe(0);
+    expect(f.calls.logs.some((l) => l.startsWith("[OBSERVE] WOULD_RELEASE qETH") && l.includes(CANON))).toBe(true);
+  });
+
+  it("qUSDC pending → logs WOULD_RELEASE, never calls releaseERC20", async () => {
+    const f = observed({ receiptLogs: [releaseErc20Log(), transferLog()] });
+    expect(await processEvmWithdrawal(usdcWithdrawal(), f.deps)).toBe("observed");
+    expect(writesOf(f.calls)).toBe(0);
+    expect(f.calls.logs.some((l) => l.startsWith("[OBSERVE] WOULD_RELEASE qUSDC"))).toBe(true);
+  });
+
+  it("already paid on RougeBridge → read-only reconciliation logs WOULD_FULFILL, fulfills nothing", async () => {
+    const f = observed({ processed: true, releaseTxHashes: [TX1], receipts: { [TX1]: { status: "success", logs: [releaseEthLog()] } } });
+    expect(await processEvmWithdrawal(ethWithdrawal(), f.deps)).toBe("observed");
+    expect(writesOf(f.calls)).toBe(0); expect(f.processedSet.size).toBe(0);
+    expect(f.calls.logs.some((l) => l.includes("[OBSERVE] WOULD_FULFILL") && l.includes(TX1))).toBe(true);
+  });
+
+  it("queued withdrawal → read-only timelock inspection only (no fulfill, no status change, no save)", async () => {
+    const live = fake({ receiptLogs: [queuedLog(42n, 1000n)], timelock: { "42": ethRecord() } });
+    await processEvmWithdrawal(ethWithdrawal(), live.deps); // create the queued record with writes enabled
+    const before = JSON.stringify([...live.queued.entries()]); const savesBefore = live.saves();
+    const calls0 = writesOf(live.calls);
+    // now observe the same state with the timelock EXECUTED on-chain
+    const exec = fake({ queued: live.queued, timelock: { "42": ethRecord({ executed: true }) }, executedTxHashes: [TX2], receipts: { [TX2]: { status: "success", logs: [releaseEthLog()] } } });
+    const od = observeGuardedDeps(exec.deps);
+    await pollQueuedWithdrawals(od);
+    expect(await processEvmWithdrawal(ethWithdrawal(), od)).toBe("skipped_queued");
+    expect(writesOf(exec.calls)).toBe(0); expect(exec.saves()).toBe(0); expect(exec.processedSet.size).toBe(0);
+    expect(JSON.stringify([...live.queued.entries()])).toBe(before);
+    expect(live.saves()).toBe(savesBefore); expect(writesOf(live.calls)).toBe(calls0);
+    expect(exec.calls.logs.some((l) => l.includes("[OBSERVE] queued qETH") && l.includes("EXECUTED"))).toBe(true);
+  });
+
+  it("refund-eligible failure shape → no failure report, no refund (even with AUTO_REFUND=true)", async () => {
+    const f = observed({ releaseThrows: "rpc down", shouldRefund: true, attempts: 9, autoRefund: true, refundOk: true });
+    expect(await processEvmWithdrawal(ethWithdrawal(), f.deps)).toBe("observed");
+    expect(writesOf(f.calls)).toBe(0);
+    // the mutation helpers themselves refuse if ever reached
+    await expect(guardedRefund(ethWithdrawal(), "Eth", f.deps, 9)).rejects.toThrow(ObserveOnlyViolation);
+    expect(f.calls.refund).toHaveLength(0);
+  });
+
+  it("lowest-layer guards: every guarded writer throws BEFORE the underlying function runs", async () => {
+    const f = observed();
+    expect(() => f.deps.chain.releaseETH(RECIPIENT, 1n, CANON, 1)).toThrow(ObserveOnlyViolation);
+    expect(() => f.deps.chain.releaseERC20(USDC, RECIPIENT, 1n, CANON, 1)).toThrow(ObserveOnlyViolation);
+    expect(() => f.deps.daemon.fulfill(STORED_TX_ID, TX1)).toThrow(ObserveOnlyViolation);
+    expect(() => f.deps.daemon.reportFailure(STORED_TX_ID, "x")).toThrow(ObserveOnlyViolation);
+    expect(() => f.deps.daemon.refund(STORED_TX_ID)).toThrow(ObserveOnlyViolation);
+    expect(() => f.deps.markProcessed(STORED_TX_ID)).toThrow(ObserveOnlyViolation);
+    expect(() => f.deps.saveQueued()).toThrow(ObserveOnlyViolation);
+    expect(writesOf(f.calls)).toBe(0); expect(f.processedSet.size).toBe(0); expect(f.saves()).toBe(0);
+    expect(f.calls.logs.filter((l) => l.startsWith("[OBSERVE] WOULD_")).length).toBe(7);
+  });
+
+  it("XRGE pending → inspect/reconcile only: no vault.release, no fulfill, no failure, no refund", async () => {
+    const spies = { vaultRelease: 0, fulfill: 0, failure: 0, refund: 0 }; const logs: string[] = [];
+    const W = {
+      vaultRelease: guardWrite(true, "WOULD_RELEASE", () => "vault.release", () => { spies.vaultRelease++; }, (m) => logs.push(m)),
+      fulfill: guardWrite(true, "WOULD_FULFILL", () => "xrge fulfill", () => { spies.fulfill++; }, (m) => logs.push(m)),
+      failure: guardWrite(true, "WOULD_REPORT_FAILURE", () => "xrge failure", () => { spies.failure++; }, (m) => logs.push(m)),
+      refund: guardWrite(true, "WOULD_REFUND", () => "xrge refund", () => { spies.refund++; }, (m) => logs.push(m)),
+    };
+    const w = { tx_id: STORED_TX_ID, evm_address: RECIPIENT, amount: 250 };
+    expect(await observeXrgeWithdrawal(w, { processedOnVault: async () => false, findReleaseTx: async () => null, log: (m) => logs.push(m) })).toBe("would_release");
+    expect(await observeXrgeWithdrawal(w, { processedOnVault: async () => true, findReleaseTx: async () => TX1, log: (m) => logs.push(m) })).toBe("would_fulfill");
+    expect(await observeXrgeWithdrawal(w, { processedOnVault: async () => true, findReleaseTx: async () => null, log: (m) => logs.push(m) })).toBe("processed_no_release_found");
+    expect(await observeXrgeWithdrawal(w, { processedOnVault: async () => { throw new Error("rpc"); }, findReleaseTx: async () => null, log: (m) => logs.push(m) })).toBe("read_failed");
+    for (const fn of Object.values(W)) expect(() => (fn as any)()).toThrow(ObserveOnlyViolation);
+    expect(spies).toEqual({ vaultRelease: 0, fulfill: 0, failure: 0, refund: 0 });
+    expect(logs.some((l) => l.startsWith("[OBSERVE] WOULD_RELEASE XRGE 250"))).toBe(true);
+    expect(logs.some((l) => l.startsWith("[OBSERVE] WOULD_FULFILL XRGE"))).toBe(true);
+  });
+
+  it("deposit → logs WOULD_CLAIM_DEPOSIT, never claims/mints", () => {
+    let claims = 0; const logs: string[] = [];
+    const autoClaim = guardWrite(true, "WOULD_CLAIM_DEPOSIT", (h: string) => h, (_h: string) => { claims++; return true; }, (m) => logs.push(m));
+    observeDeposit({ token: "XRGE", txHash: TX1, pubkey: "ab".repeat(40) }, (m) => logs.push(m));
+    expect(() => autoClaim(TX1)).toThrow(ObserveOnlyViolation);
+    expect(claims).toBe(0);
+    expect(logs[0].startsWith("[OBSERVE] WOULD_CLAIM_DEPOSIT XRGE")).toBe(true);
+  });
+
+  it("guardWrite is transparent when observation mode is OFF", () => {
+    let n = 0; const fn = guardWrite(false, "WOULD_RELEASE", () => "x", () => { n++; return 5; });
+    expect(fn()).toBe(5); expect(n).toBe(1);
+  });
+
+  it("preflight and the bridge-health gate still execute normally in observation mode", async () => {
+    const client = {
+      getChainId: async () => 8453, getCode: async () => "0x6001" as Hex,
+      readContract: async ({ functionName }: any) => functionName === "owner" ? SIGNER : functionName === "paused" ? false : true,
+    };
+    const r = await preflight(client as any, { expectedChainId: 8453, bridgeAddress: BRIDGE, configuredUsdc: undefined, chainUsdc: USDC, vaultAddress: undefined, expectedOwner: SIGNER }, () => {});
+    expect(r).toEqual({ paused: false, owner: SIGNER, chainId: 8453 });
+    await expect(preflight(client as any, { expectedChainId: 8453, bridgeAddress: BRIDGE, configuredUsdc: undefined, chainUsdc: USDC, vaultAddress: undefined, expectedOwner: RECIPIENT }, () => {})).rejects.toThrow(PreflightError);
+    expect(bridgeHealthAllowsPayouts({ status: 200, body: { degraded: false } })).toBe(true);
+    expect(bridgeHealthAllowsPayouts({ status: 503, body: { degraded: true } })).toBe(false);
+    expect(bridgeHealthAllowsPayouts(null)).toBe(false);
   });
 });

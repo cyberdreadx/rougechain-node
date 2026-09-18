@@ -610,9 +610,12 @@ export interface EvmPayoutDeps {
   log(message: string): void;
   warn(message: string): void;
   sleep(ms: number): Promise<void>;
+  /** BRIDGE_OBSERVE_ONLY: read-only reconciliation + logging; every mutation refuses. */
+  observeOnly?: boolean;
 }
 
 export type PayoutOutcome =
+  | "observed"
   | "fulfilled"
   | "queued"
   | "reconciled_paid"
@@ -644,12 +647,68 @@ function short(s: string): string {
   return s.length > 18 ? `${s.slice(0, 16)}…` : s;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// OBSERVATION MODE (BRIDGE_OBSERVE_ONLY=true) — ZERO money-moving or state-mutating side
+// effects. Guards live at the LOWEST layer: every write function refuses BEFORE any side
+// effect (log `[OBSERVE] WOULD_…` then throw), and the processing paths take a read-only
+// branch first so a guard firing is itself a bug signal, never the normal path.
+// ─────────────────────────────────────────────────────────────────────────────
+export function observeOnlyEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return String(env.BRIDGE_OBSERVE_ONLY ?? "").trim().toLowerCase() === "true";
+}
+export type ObserveTag =
+  | "WOULD_RELEASE" | "WOULD_FULFILL" | "WOULD_REFUND" | "WOULD_CLAIM_DEPOSIT"
+  | "WOULD_REPORT_FAILURE" | "WOULD_PERSIST" | "WOULD_SWEEP" | "WOULD_WRITE";
+export class ObserveOnlyViolation extends Error {
+  constructor(public tag: ObserveTag, detail: string) {
+    super(`[OBSERVE] refused ${tag}: ${detail}`);
+    this.name = "ObserveOnlyViolation";
+  }
+}
+/** Log the intended action and refuse. Never returns. */
+export function observeRefuse(tag: ObserveTag, detail: string, log: (m: string) => void = console.log): never {
+  log(`[OBSERVE] ${tag} ${detail}`);
+  throw new ObserveOnlyViolation(tag, detail);
+}
+/**
+ * Wrap a write function: in observation mode it logs `[OBSERVE] <tag> …` and throws BEFORE the
+ * underlying function is invoked (so an injected spy counts zero calls); otherwise it is `fn`.
+ */
+export function guardWrite<A extends unknown[], R>(
+  observe: boolean, tag: ObserveTag, describe: (...a: A) => string, fn: (...a: A) => R,
+  log: (m: string) => void = console.log,
+): (...a: A) => R {
+  if (!observe) return fn;
+  return (...a: A): R => observeRefuse(tag, describe(...a), log);
+}
+/** Observation-mode view of the payout deps: every mutating member refuses; reads are untouched. */
+export function observeGuardedDeps(deps: EvmPayoutDeps): EvmPayoutDeps {
+  const log = (m: string) => deps.log(m);
+  return {
+    ...deps,
+    observeOnly: true,
+    markProcessed: guardWrite(true, "WOULD_PERSIST", (id: string) => `markProcessed ${id}`, deps.markProcessed, log),
+    saveQueued: guardWrite(true, "WOULD_PERSIST", () => `queued-state file`, deps.saveQueued, log),
+    chain: {
+      ...deps.chain,
+      releaseETH: guardWrite(true, "WOULD_RELEASE", (to: string, wei: bigint, id: Hex, _nonce: number) => `releaseETH ${wei} wei → ${to} l1TxId=${id}`, deps.chain.releaseETH, log),
+      releaseERC20: guardWrite(true, "WOULD_RELEASE", (token: string, to: string, amt: bigint, id: Hex, _nonce: number) => `releaseERC20 ${amt} of ${token} → ${to} l1TxId=${id}`, deps.chain.releaseERC20, log),
+    },
+    daemon: {
+      fulfill: guardWrite(true, "WOULD_FULFILL", (txId: string, h: Hex) => `${txId} via ${h}`, deps.daemon.fulfill, log),
+      reportFailure: guardWrite(true, "WOULD_REPORT_FAILURE", (txId: string, e: string) => `${txId}: ${e}`, deps.daemon.reportFailure, log),
+      refund: guardWrite(true, "WOULD_REFUND", (txId: string) => `${txId}`, deps.daemon.refund, log),
+    },
+  };
+}
+
 function persistQueued(
   deps: EvmPayoutDeps,
   w: NormalizedEvmWithdrawal,
   exp: ExpectedRelease,
   fields: { request_id: string; execute_after: string; release_submission_tx_hash: string; status: QueuedStatus; note?: string },
 ): void {
+  if (deps.observeOnly) observeRefuse("WOULD_PERSIST", `persistQueued reached in observation mode`, (m) => deps.log(m));
   deps.queued.set(queuedKey(exp.canonicalId), {
     stored_tx_id: w.tx_id,
     canonical_l1_tx_id: exp.canonicalId,
@@ -741,6 +800,7 @@ async function applyReconciliation(
   deps: EvmPayoutDeps,
   ctx: string,
 ): Promise<PayoutOutcome> {
+  if (deps.observeOnly) observeRefuse("WOULD_FULFILL", `applyReconciliation reached in observation mode`, (m) => deps.log(m));
   const label = exp.asset === "Eth" ? "qETH" : "qUSDC";
   switch (r.cls) {
     case "Paid": {
@@ -802,6 +862,7 @@ export async function guardedRefund(
   deps: EvmPayoutDeps,
   attempts: number,
 ): Promise<boolean> {
+  if (deps.observeOnly) observeRefuse("WOULD_REFUND", `guardedRefund reached in observation mode`, (m) => deps.log(m));
   if (route !== "Eth" && route !== "Usdc") {
     deps.warn(`[EVM] refund refused for ${w.tx_id}: route ${route} has no automated refund`);
     return false;
@@ -846,6 +907,7 @@ async function handleEvmFailure(
   error: string,
   deps: EvmPayoutDeps,
 ): Promise<PayoutOutcome> {
+  if (deps.observeOnly) observeRefuse("WOULD_REPORT_FAILURE", `handleEvmFailure reached in observation mode`, (m) => deps.log(m));
   const label = exp.asset === "Eth" ? "qETH" : "qUSDC";
   let processed: boolean;
   try {
@@ -910,6 +972,22 @@ export async function processEvmWithdrawal(w: NormalizedEvmWithdrawal, deps: Evm
   } catch (e: any) {
     deps.warn(`[${label}] processedL1Txs read failed for ${w.tx_id} (${e?.message || e}) — not releasing this poll`);
     return "skipped_rpc";
+  }
+  if (deps.observeOnly) {
+    // READ-ONLY: classify against on-chain truth and log the intended action. No release, no
+    // fulfill, no failure report, no refund, no local state write.
+    const human = route === "Eth" ? `${Number(exp.amount) / 1e18} ETH` : `${Number(exp.amount) / 1e6} USDC`;
+    if (!processedBefore) {
+      deps.log(`[OBSERVE] WOULD_RELEASE ${label} ${human} → ${exp.recipient} l1TxId=${canonicalId} (burn ${w.tx_id})`);
+    } else {
+      const r = await reconcileProcessedId(exp, deps);
+      const intent = r.cls === "Paid" ? `WOULD_FULFILL ${w.tx_id} via ${r.paidTxHash}`
+        : r.cls === "Queued" ? `WOULD_TRACK_QUEUED ${w.tx_id} requestId=${r.requestId}`
+        : r.cls === "CancelledRefundCandidate" ? `WOULD_FLAG_REFUND_CANDIDATE ${w.tx_id} requestId=${r.requestId} (no auto refund)`
+        : `WOULD_FLAG_AMBIGUOUS ${w.tx_id}: ${r.reason ?? "unclassifiable"}`;
+      deps.log(`[OBSERVE] ${intent} [${label} already processed on RougeBridge: ${r.cls}]`);
+    }
+    return "observed";
   }
   if (processedBefore) {
     const r = await reconcileProcessedId(exp, deps);
@@ -1023,6 +1101,14 @@ export async function pollQueuedWithdrawals(deps: EvmPayoutDeps): Promise<void> 
       deps.warn(`[${label}] queued ${rec.stored_tx_id}: timelockQueue(${requestId}) read failed: ${e?.message || e}`);
       continue;
     }
+    if (deps.observeOnly) {
+      const state = !timelockRecordMatches(onchain, expected) ? "BINDING_MISMATCH (would flag ambiguous)"
+        : onchain.executed ? "EXECUTED (WOULD_FULFILL after verifying the execution release)"
+        : onchain.cancelled ? "CANCELLED (would flag refund candidate; no auto refund)"
+        : "ACTIVE (waiting)";
+      deps.log(`[OBSERVE] queued ${label} ${rec.stored_tx_id} requestId=${requestId}: ${state}`);
+      continue;
+    }
     if (!timelockRecordMatches(onchain, expected)) {
       rec.status = "ambiguous";
       rec.note = `timelockQueue(${requestId}) no longer binds to this withdrawal`;
@@ -1096,4 +1182,29 @@ export function bridgeHealthAllowsPayouts(h: BridgeHealthResponse | null | undef
   if (h.status !== 200) return false;         // 503 (degraded) or anything unexpected → fail closed
   const b = (h.body ?? {}) as { degraded?: unknown };
   return b.degraded === false;                // only an explicit healthy answer permits payouts
+}
+
+// ── Observation-mode helpers for the XRGE vault and the deposit watcher (read-only) ──
+export interface XrgeObserveDeps {
+  processedOnVault(txId: string): Promise<boolean>;
+  findReleaseTx(txId: string): Promise<string | null>;
+  log(m: string): void;
+}
+export type XrgeObserveOutcome = "would_release" | "would_fulfill" | "processed_no_release_found" | "read_failed";
+/** READ-ONLY inspection of one pending XRGE withdrawal. Never releases, fulfills, fails or refunds. */
+export async function observeXrgeWithdrawal(
+  w: { tx_id: string; evm_address: string; amount: number }, deps: XrgeObserveDeps,
+): Promise<XrgeObserveOutcome> {
+  let processed: boolean;
+  try { processed = await deps.processedOnVault(w.tx_id); }
+  catch (e: any) { deps.log(`[OBSERVE] XRGE ${w.tx_id}: processedL1Txs read failed (${e?.message || e}) — no action`); return "read_failed"; }
+  if (!processed) { deps.log(`[OBSERVE] WOULD_RELEASE XRGE ${w.amount} → ${w.evm_address} l1TxId=${w.tx_id}`); return "would_release"; }
+  const rel = await deps.findReleaseTx(w.tx_id);
+  if (rel) { deps.log(`[OBSERVE] WOULD_FULFILL XRGE ${w.tx_id} via ${rel} (already released on-chain)`); return "would_fulfill"; }
+  deps.log(`[OBSERVE] XRGE ${w.tx_id} processed on-chain but no BridgeRelease found in scan — would alert for MANUAL REVIEW`);
+  return "processed_no_release_found";
+}
+/** READ-ONLY handling of a discovered deposit: log the intended claim, mint nothing. */
+export function observeDeposit(d: { token: string; txHash: string; pubkey: string }, log: (m: string) => void): void {
+  log(`[OBSERVE] WOULD_CLAIM_DEPOSIT ${d.token} ${d.txHash} → ${d.pubkey.slice(0, 16)}…`);
 }
