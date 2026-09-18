@@ -387,18 +387,15 @@ async fn main() -> Result<(), String> {
     if args.migrate_canonical_ledger { node.init_for_migration()?; } else { node.init()?; }
     node.backfill_address_index();
 
-    // Apply genesis allocations on first boot (chain height == 0)
+    // Genesis allocations/validators are applied EXACTLY ONCE, inside `L1Node::init()` →
+    // `recover_from_history` (the deterministic path a fresh chain and a snapshot-less restart
+    // share; NodeOptions carries the genesis seed). Applying them again here would double-credit
+    // every allocation on first boot.
     if let Some(ref gc) = genesis_config {
-        let current_height = node.tip_height().unwrap_or(0);
-        if current_height == 0 && (!gc.initial_allocations.is_empty() || !gc.initial_validators.is_empty()) {
-            eprintln!("[main] Applying genesis allocations (chain is fresh)...");
-            if let Err(e) = node.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators) {
-                eprintln!("[main] WARNING: Failed to apply genesis allocations: {}", e);
-            } else {
-                let total: u64 = gc.initial_allocations.iter().map(|a| a.amount).sum();
-                eprintln!("[main] Genesis: credited {} XRGE across {} addresses, {} validators staked",
-                    total, gc.initial_allocations.len(), gc.initial_validators.len());
-            }
+        if node.tip_height().unwrap_or(0) == 0 {
+            let total: u64 = gc.initial_allocations.iter().map(|a| a.amount).sum();
+            eprintln!("[main] Genesis seed (applied by init): {} XRGE across {} addresses, {} validators",
+                total, gc.initial_allocations.len(), gc.initial_validators.len());
         }
     }
 

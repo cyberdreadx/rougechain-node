@@ -19,6 +19,10 @@ pub use crate::fork_tables::*;
 /// Persisted marker (snapshot-db, `balance_snapshot` tree) proving the node's ledger at
 /// `FORK_HEIGHT-1` is the canonical one (set by fresh sync at F-1, or by the migration).
 pub const CANONICAL_MARKER_KEY: &[u8] = b"canonical_ledger_at_f_minus_1";
+/// The fork (checkpoint era, F-1 assertions, readiness guard, migration) is a MAINNET
+/// consensus commitment; every other chain id (testnet, dev, unit tests) runs plain
+/// recompute-and-verify at every height.
+pub const FORK_CHAIN_ID: &str = "rougechain-mainnet-1";
 
 pub fn is_checkpoint_height(height: u64) -> bool {
     (18..FORK_HEIGHT).contains(&height)

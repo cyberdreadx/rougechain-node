@@ -198,9 +198,47 @@ pub fn parse_peers(peers_str: &str) -> Vec<String> {
 }
 
 /// Sync blocks from a peer (with genesis reset if needed)
-async fn sync_from_peer(peer_url: &str, node: &L1Node, allow_genesis_reset: bool) -> Result<u64, String> {
-    // Fetch peer's blocks
-    // For fresh nodes (no blocks), request from height 0 to get genesis
+/// Verified application of a batch of peer blocks — the ONLY way peer sync changes local
+/// chain state. Every block goes through `import_block` (signatures, proposer auth,
+/// historical checkpoint equality 18..=F-1, canonical execution, F-1 assertions, normal
+/// root verification from F, atomic rollback). FAIL CLOSED on the first rejected block:
+/// no chain wipe, no raw replay, no "longer chain wins". An established local chain is
+/// never replaced because a peer has an equal/longer one; recovery from a genuine local
+/// fault is the operator-invoked deterministic path (`recover_from_history`), not sync.
+pub fn apply_peer_blocks(node: &L1Node, peer_url: &str, mut peer_blocks: Vec<BlockV1>) -> Result<u64, String> {
+    peer_blocks.sort_by_key(|b| b.header.height);
+
+    // Chain-ID guard: refuse to sync from a peer on a different network.
+    let local_chain_id = node.chain_id();
+    if let Some(foreign) = peer_blocks.iter().find(|b| b.header.chain_id != local_chain_id) {
+        return Err(format!("Peer {} is on chain '{}' but we are '{}' — refusing sync", peer_url, foreign.header.chain_id, local_chain_id));
+    }
+    // Genesis guard: the local genesis is seeded from the genesis config at init (never from a
+    // peer). A peer whose block 0 differs is an incompatible/orphaned chain — refuse.
+    let our_genesis = node.get_block(0)?.ok_or_else(|| "local genesis missing — node not initialized from genesis config; refusing to adopt any peer chain".to_string())?;
+    if let Some(pg) = peer_blocks.iter().find(|b| b.header.height == 0) {
+        if pg.hash != our_genesis.hash {
+            return Err(format!("Peer {} genesis {} != ours {} — incompatible chain, refusing sync", peer_url,
+                &pg.hash[..16.min(pg.hash.len())], &our_genesis.hash[..16.min(our_genesis.hash.len())]));
+        }
+    }
+
+    let local_height = node.get_tip_height()?;
+    let mut synced_count = 0u64;
+    for block in peer_blocks.into_iter().filter(|b| b.header.height > local_height) {
+        let h = block.header.height;
+        if let Err(e) = node.import_block(block) {
+            // FAIL CLOSED: local chain state is exactly as before this block (import rollback).
+            return Err(format!("Peer {} block {} rejected — sync stopped, local chain kept intact (no reset): {}", peer_url, h, e));
+        }
+        synced_count += 1;
+    }
+    Ok(synced_count)
+}
+
+async fn sync_from_peer(peer_url: &str, node: &L1Node) -> Result<u64, String> {
+    // Fetch peer's blocks. For fresh nodes (tip 0) request from height 0 so the peer's block 0
+    // is checked against our seeded genesis.
     let our_height = node.get_tip_height().unwrap_or(0);
     let url = if our_height == 0 {
         format!("{}/blocks?from_height=0&limit=1000", peer_url)
@@ -210,143 +248,26 @@ async fn sync_from_peer(peer_url: &str, node: &L1Node, allow_genesis_reset: bool
     let response = reqwest::get(&url)
         .await
         .map_err(|e| format!("Failed to fetch from {}: {}", peer_url, e))?;
-    
     if !response.status().is_success() {
         return Err(format!("Peer {} returned status {}", peer_url, response.status()));
     }
-    
     let data: serde_json::Value = response
         .json()
         .await
         .map_err(|e| format!("Failed to parse response from {}: {}", peer_url, e))?;
-    
     let blocks = data.get("blocks")
         .and_then(|b| b.as_array())
         .ok_or_else(|| "Invalid response format".to_string())?;
-    
     if blocks.is_empty() {
         return Ok(0);
     }
-    
-    // Parse all blocks
     let mut peer_blocks: Vec<BlockV1> = Vec::new();
     for block_json in blocks {
         let block: BlockV1 = serde_json::from_value(block_json.clone())
             .map_err(|e| format!("Failed to parse block: {}", e))?;
         peer_blocks.push(block);
     }
-    
-    // Sort by height
-    peer_blocks.sort_by_key(|b| b.header.height);
-
-    // Chain-ID guard: refuse to sync from a peer on a different network.
-    // Without this, longest-chain sync (and especially the genesis-reset branch
-    // below) lets any peer with a taller chain overwrite this node's history —
-    // e.g. a devnet peer hijacking a mainnet node. Reject if ANY fetched block
-    // carries a chain_id other than ours.
-    let local_chain_id = node.chain_id();
-    if let Some(foreign) = peer_blocks
-        .iter()
-        .find(|b| b.header.chain_id != local_chain_id)
-    {
-        return Err(format!(
-            "Peer {} is on chain '{}' but we are '{}' — refusing sync",
-            peer_url, foreign.header.chain_id, local_chain_id
-        ));
-    }
-
-    let local_height = node.get_tip_height()?;
-    let peer_height = peer_blocks.last().map(|b| b.header.height).unwrap_or(0);
-    
-    // Check if we need to reset from genesis (peer has longer chain and our genesis differs or we have no genesis)
-    if allow_genesis_reset && peer_height > local_height {
-        if let Some(peer_genesis) = peer_blocks.first() {
-            if peer_genesis.header.height == 0 {
-                let our_genesis = node.get_block(0)?;
-                let should_reset = match our_genesis {
-                    None => true, // Fresh node with no genesis - accept peer chain
-                    Some(our_gen) => {
-                        if our_gen.hash != peer_genesis.hash {
-                            // Same chain_id but a DIFFERENT genesis = an incompatible / orphaned
-                            // chain (e.g. a stale node still on a pre-reseed fork). Never reset an
-                            // established node onto it — that's how a longer stale chain could wipe
-                            // our real (e.g. freshly-staked) chain. Refuse outright.
-                            return Err(format!(
-                                "Peer {} genesis {} != ours {} — incompatible chain, refusing reset",
-                                peer_url,
-                                &peer_genesis.hash[..16.min(peer_genesis.hash.len())],
-                                &our_gen.hash[..16.min(our_gen.hash.len())]
-                            ));
-                        }
-                        false
-                    }
-                };
-                if should_reset {
-                    eprintln!("[peer] Syncing chain from peer genesis");
-                    node.reset_chain(&peer_blocks)?;
-                    return Ok(peer_blocks.len() as u64);
-                }
-            }
-        }
-    }
-    
-    // Normal incremental sync
-    let mut synced_count = 0u64;
-    let mut fork_detected = false;
-    for block in &peer_blocks {
-        if block.header.height <= local_height {
-            continue;
-        }
-        
-        if let Err(e) = node.import_block(block.clone()) {
-            eprintln!("[peer] Failed to import block {}: {}", block.header.height, e);
-            fork_detected = true;
-            break;
-        }
-        
-        synced_count += 1;
-    }
-
-    // Fork recovery: if incremental sync failed and the peer has a longer/equal chain,
-    // fetch the full chain from genesis and reset.
-    if fork_detected && synced_count == 0 && peer_height >= local_height {
-        eprintln!("[peer] Fork detected (peer height {} >= local {}) — fetching full chain for reset", peer_height, local_height);
-        let full_url = format!("{}/blocks?from_height=0&limit=10000", peer_url);
-        if let Ok(resp) = reqwest::get(&full_url).await {
-            if resp.status().is_success() {
-                if let Ok(full_data) = resp.json::<serde_json::Value>().await {
-                    if let Some(full_arr) = full_data.get("blocks").and_then(|b| b.as_array()) {
-                        let mut full_blocks: Vec<BlockV1> = Vec::new();
-                        for bj in full_arr {
-                            if let Ok(b) = serde_json::from_value::<BlockV1>(bj.clone()) {
-                                full_blocks.push(b);
-                            }
-                        }
-                        full_blocks.sort_by_key(|b| b.header.height);
-                        if !full_blocks.is_empty() && full_blocks[0].header.height == 0 {
-                            // Same genesis-hash guard on the fork-recovery path.
-                            if let Some(our_gen) = node.get_block(0)? {
-                                if our_gen.hash != full_blocks[0].hash {
-                                    return Err(format!(
-                                        "Peer {} genesis {} != ours {} — refusing fork-recovery reset",
-                                        peer_url,
-                                        &full_blocks[0].hash[..16.min(full_blocks[0].hash.len())],
-                                        &our_gen.hash[..16.min(our_gen.hash.len())]
-                                    ));
-                                }
-                            }
-                            eprintln!("[peer] Resetting chain with {} blocks from peer", full_blocks.len());
-                            node.reset_chain(&full_blocks)?;
-                            return Ok(full_blocks.len() as u64);
-                        }
-                    }
-                }
-            }
-        }
-        eprintln!("[peer] Fork recovery failed — could not fetch full chain from peer");
-    }
-    
-    Ok(synced_count)
+    apply_peer_blocks(node, peer_url, peer_blocks)
 }
 
 /// Discover peers from a known peer
@@ -412,10 +333,10 @@ pub async fn start_peer_sync(peer_manager: Arc<PeerManager>, node: Arc<L1Node>) 
         eprintln!("[peer] Starting peer sync with {} peers", initial_peers.len());
     }
     
-    // Initial sync - try each peer until one succeeds (allow genesis reset on first sync)
+    // Initial sync - try each peer until one succeeds (verified import only; no reset)
     for peer in &initial_peers {
         eprintln!("[peer] Attempting initial sync from {}", peer);
-        match sync_from_peer(peer, &node, true).await {
+        match sync_from_peer(peer, &node).await {
             Ok(count) => {
                 eprintln!("[peer] Synced {} blocks from {}", count, peer);
                 break;
@@ -449,12 +370,8 @@ pub async fn start_peer_sync(peer_manager: Arc<PeerManager>, node: Arc<L1Node>) 
         let peers = peer_manager.get_active_peers().await;
         let mut had_rate_limit = false;
         
-        // Allow genesis reset if we're still at height 0 (fresh node that hasn't synced yet)
-        let local_height = node.get_tip_height().unwrap_or(0);
-        let needs_genesis_reset = local_height == 0;
-
         for peer in &peers {
-            match sync_from_peer(peer, &node, needs_genesis_reset).await {
+            match sync_from_peer(peer, &node).await {
                 Ok(count) if count > 0 => {
                     eprintln!("[peer] Synced {} new blocks from {}", count, peer);
                     peer_manager.record_success(peer).await;
