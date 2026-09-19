@@ -1035,5 +1035,10 @@ describe("XRGE payout lifecycle — processed-first, confirmation depth, RPC-saf
     expect(blockRangesDescending(5n, 4n)).toEqual([]);
     expect(() => blockRangesDescending(0n, 10n, 2001n)).toThrow();
     await expect(findVaultReleases(async () => { throw new Error("rpc"); }, TXID, 100n, 50n)).rejects.toThrow("rpc"); // unknown ≠ not released
+    // rate-limited pages are RETRIED in place (never skipped) and paced; exhaustion still throws
+    let calls = 0; const seen: string[] = []; const slept: number[] = [];
+    const got = await findVaultReleases(async (r) => { calls++; if (calls % 2 === 1) throw new Error("429"); seen.push(`${r.fromBlock}-${r.toBlock}`); return []; }, TXID, 5999n, 5999n, 2000n, { retries: 3, backoffMs: 10, pauseMs: 5, sleep: async (ms) => { slept.push(ms); } });
+    expect(got).toEqual([]); expect(seen).toEqual(["4000-5999", "2000-3999", "0-1999"]); expect(slept.filter((m) => m === 5)).toHaveLength(3);
+    await expect(findVaultReleases(async () => { throw new Error("429"); }, TXID, 100n, 50n, 2000n, { retries: 2, backoffMs: 1, sleep: async () => {} })).rejects.toThrow("429");
   });
 });

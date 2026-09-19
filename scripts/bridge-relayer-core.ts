@@ -1254,11 +1254,21 @@ export type VaultLogFetcher = (range: { fromBlock: bigint; toBlock: bigint }) =>
  * Scans the whole window (no early exit) so a duplicate release can never hide behind the first hit.
  * Throws if any page fails — the caller must treat that as "unknown", never as "not released".
  */
-export async function findVaultReleases(fetchLogs: VaultLogFetcher, l1TxId: string, head: bigint, lookbackBlocks: bigint, maxSpan: bigint = MAX_LOG_SCAN_SPAN): Promise<VaultReleaseLog[]> {
+export interface ScanPacing { pauseMs?: number; retries?: number; backoffMs?: number; sleep?: (ms: number) => Promise<void> }
+export async function findVaultReleases(fetchLogs: VaultLogFetcher, l1TxId: string, head: bigint, lookbackBlocks: bigint, maxSpan: bigint = MAX_LOG_SCAN_SPAN, pacing: ScanPacing = {}): Promise<VaultReleaseLog[]> {
   const from = head > lookbackBlocks ? head - lookbackBlocks : 0n;
+  const sleep = pacing.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const retries = pacing.retries ?? 0, backoff = pacing.backoffMs ?? 1500, pause = pacing.pauseMs ?? 0;
   const hits: VaultReleaseLog[] = [];
   for (const r of blockRangesDescending(from, head, maxSpan)) {
-    for (const lg of await fetchLogs(r)) if (lg.l1TxId === l1TxId) hits.push(lg);
+    let logs: VaultReleaseLog[] | undefined;
+    for (let attempt = 0; ; attempt++) {
+      // the SAME page is retried (rate limits) — a page is never skipped, so no gap can appear
+      try { logs = await fetchLogs(r); break; }
+      catch (e) { if (attempt >= retries) throw e; await sleep(backoff * (attempt + 1)); }
+    }
+    for (const lg of logs!) if (lg.l1TxId === l1TxId) hits.push(lg);
+    if (pause > 0) await sleep(pause);
   }
   return hits;
 }

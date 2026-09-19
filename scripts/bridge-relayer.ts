@@ -287,7 +287,7 @@ async function findVaultReleasesForL1(publicClient: any, vaultAddress: `0x${stri
       txHash: lg.transactionHash as string, blockNumber: lg.blockNumber as bigint,
       recipient: String(lg.args?.recipient ?? lg.args?.to ?? ""), amount: BigInt(lg.args?.amount ?? 0), l1TxId: String(lg.args?.l1TxId ?? ""),
     }));
-  }, l1TxId, head, XRGE_RELEASE_SCAN_BLOCKS);
+  }, l1TxId, head, XRGE_RELEASE_SCAN_BLOCKS, undefined, { pauseMs: 200, retries: 5, backoffMs: 2000 }); // paced + retried: public RPCs rate-limit bursts
 }
 /** Observation-mode helper: first release tx hash for an id, or null (scan errors → null + warn). */
 async function findReleaseTxForL1(publicClient: any, vaultAddress: `0x${string}`, l1TxId: string): Promise<`0x${string}` | null> {
