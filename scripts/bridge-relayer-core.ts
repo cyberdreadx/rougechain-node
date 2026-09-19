@@ -1446,3 +1446,16 @@ export async function processXrgeWithdrawal(w: XrgeWithdrawal, deps: XrgePayoutD
   }
   return fulfillKnownXrgePayout(w, { txHash: hash, blockNumber: rc.blockNumber }, deps, false);
 }
+
+// ── Deposit watcher confirmation alignment ──
+/**
+ * Newest block the deposit watcher may scan / auto-claim: head − max(CONFIRMATIONS, daemon
+ * QV_BRIDGE_MIN_CONFIRMATIONS [default 6]). The daemon refuses to credit a shallower deposit, so
+ * the watcher must not intentionally hand it one. Returns null when nothing is deep enough yet.
+ * (An unreadable head never reaches here — the caller's RPC error aborts the poll: fail closed.)
+ */
+export function depositWatcherSafeHead(head: bigint, relayerConfirmations: number, env: Record<string, string | undefined> = process.env): bigint | null {
+  const depth = BigInt(Math.max(Number.isFinite(relayerConfirmations) ? relayerConfirmations : 0, daemonMinConfirmations(env)));
+  const safe = head - depth;
+  return safe > 0n ? safe : null;
+}

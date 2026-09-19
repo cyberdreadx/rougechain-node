@@ -17,6 +17,7 @@ import {
   ObserveOnlyViolation,
   scanLogPagesDescending,
   evmFulfillDepth,
+  depositWatcherSafeHead,
   processXrgeWithdrawal,
   findVaultReleases,
   blockRangesDescending,
@@ -1153,5 +1154,18 @@ describe("qETH/qUSDC — fulfill depth never below the daemon requirement; scans
     expect(pages).toEqual(["2000-3999", "0-1999"]); // each page retried in place, none skipped
     await expect(scanLogPagesDescending(async () => { throw new Error("rate limited"); }, 0n, 10n, 2000n, { retries: 3, backoffMs: 1, sleep: async () => {} })).rejects.toThrow("rate limited");
     expect(() => scanLogPagesDescending(async () => [], 0n, 10n, 5000n)).rejects.toThrow();
+  });
+});
+
+describe("deposit watcher — never scans newer than the daemon-required confirmation depth", () => {
+  it("safe head = head − max(CONFIRMATIONS, QV_BRIDGE_MIN_CONFIRMATIONS [default 6])", () => {
+    expect(depositWatcherSafeHead(1000n, 2, {})).toBe(994n);          // relayer 2 < daemon 6 ⇒ 6
+    expect(depositWatcherSafeHead(1000n, 10, {})).toBe(990n);         // relayer stricter ⇒ 10
+    expect(depositWatcherSafeHead(1000n, 2, { QV_BRIDGE_MIN_CONFIRMATIONS: "12" })).toBe(988n);
+    expect(depositWatcherSafeHead(1000n, NaN, {})).toBe(994n);
+    // a deposit at block 995 (depth 6 from head 1000 is block 994) is NOT yet visible to the watcher
+    expect(995n > depositWatcherSafeHead(1000n, 2, {})!).toBe(true);
+    expect(depositWatcherSafeHead(5n, 2, {})).toBeNull();             // chain too young ⇒ nothing to scan
+    expect(depositWatcherSafeHead(6n, 2, {})).toBeNull();
   });
 });

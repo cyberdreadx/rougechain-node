@@ -8,6 +8,7 @@ mod nft_store;
 mod pool_events;
 mod node;
 mod peer;
+mod rouge_bridge_deposit;
 mod pool_store;
 mod order_book;
 mod rollup;
@@ -7749,23 +7750,40 @@ async fn process_bridge_reclaim(
             }
             (amount, "XRGE", normalize_recipient(&dep.rougechain_pubkey))
         }
-        "USDC" => {
-            return serde_json::json!({ "success": false, "error": "USDC reclaim is temporarily unavailable during the security upgrade" });
+        "ETH" | "USDC" => {
+            // RougeBridge deposit auto-claim (dedicated verifier — see rouge_bridge_deposit.rs). The
+            // asset, amount AND recipient come exclusively from the BridgeDepositETH/ERC20 event
+            // emitted by the CONFIGURED RougeBridge in a successful receipt; a plain value transfer
+            // (no event) is still refused, and nothing caller-supplied is used.
+            let asset = if token == "ETH" { rouge_bridge_deposit::DepositAsset::Eth } else { rouge_bridge_deposit::DepositAsset::Usdc };
+            let bridge = match rouge_bridge_address() {
+                Some(b) => b,
+                None => return serde_json::json!({ "success": false, "error": "RougeBridge address not configured — refusing to credit" }),
+            };
+            let usdc = bridge_usdc_address().unwrap_or_default();
+            let receipt: serde_json::Value = match client.post(rpc_url)
+                .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":[tx_hash_hex],"id":1}))
+                .send().await {
+                Ok(r) => match r.json::<serde_json::Value>().await {
+                    Ok(v) => v.get("result").cloned().unwrap_or(serde_json::Value::Null),
+                    Err(e) => return serde_json::json!({ "success": false, "error": format!("bad RPC response: {} — refusing to credit", e) }),
+                },
+                Err(e) => return serde_json::json!({ "success": false, "error": format!("RPC error: {} — refusing to credit", e) }),
+            };
+            let dep = match rouge_bridge_deposit::verify_rouge_bridge_deposit(&receipt, asset, &bridge, &usdc) {
+                Ok(d) => d,
+                Err(e) => return serde_json::json!({ "success": false, "error": format!("No verifiable RougeBridge deposit: {}", e) }),
+            };
+            // Fail-closed confirmation depth (unknown head ⇒ no credit).
+            if let Err(e) = rouge_bridge_deposit::require_confirmations(dep.block, evm_latest_block(&client, rpc_url).await, bridge_min_confirmations()) {
+                return serde_json::json!({ "success": false, "error": e });
+            }
+            (dep.l1_units, dep.mint_symbol, normalize_recipient(&dep.rougechain_pubkey))
         }
-        _ => {
-            // ETH auto-claim/reclaim is DISABLED: a plain value transfer to custody carries no
-            // on-chain recipient, so this path cannot bind the mint destination. qETH deposits
-            // must use the signed /api/bridge/claim endpoint (recipient bound by the EVM signature).
-            return serde_json::json!({ "success": false, "error": "ETH auto-claim is disabled — use the signed /api/bridge/claim endpoint" });
+        other => {
+            return serde_json::json!({ "success": false, "error": format!("unsupported deposit token {}", other) });
         }
     };
-
-    // SECURITY: atomically reserve before minting (release on failure so a legit retry works).
-    match state.bridge_claim_store.insert_if_absent(claim_key.clone()).await {
-        Ok(true) => {}
-        Ok(false) => return serde_json::json!({ "success": false, "error": "Transaction already claimed" }),
-        Err(e) => return serde_json::json!({ "success": false, "error": format!("Failed to persist claim: {}", e) }),
-    }
 
     if !requested_recipient.is_empty() && requested_recipient != bound_recipient {
         eprintln!("[bridge-reclaim] request recipient {} != on-chain recipient {} — using on-chain",
@@ -7774,15 +7792,13 @@ async fn process_bridge_reclaim(
     eprintln!("[bridge-reclaim] Minting tx {} -> {} {} for {}", tx_hash_hex, amount_units, mint_symbol, &bound_recipient[..20.min(bound_recipient.len())]);
     use quantum_vault_crypto::{bytes_to_hex, sha256};
     use quantum_vault_types::encode_tx_v1;
-    match state.node.submit_bridge_mint_tx(&bound_recipient, amount_units, mint_symbol) {
+    // SECURITY: atomically reserve the Base tx BEFORE minting (released only if the mint fails).
+    match rouge_bridge_deposit::reserve_then_mint(&state.bridge_claim_store, &claim_key, || state.node.submit_bridge_mint_tx(&bound_recipient, amount_units, mint_symbol)).await {
         Ok(tx) => {
             let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
             serde_json::json!({ "success": true, "txId": id, "amount": amount_units, "token": mint_symbol })
         }
-        Err(e) => {
-            let _ = state.bridge_claim_store.remove(&claim_key).await;
-            serde_json::json!({ "success": false, "error": e })
-        }
+        Err(e) => serde_json::json!({ "success": false, "error": e }),
     }
 }
 

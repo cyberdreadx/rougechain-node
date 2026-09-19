@@ -57,6 +57,7 @@ import {
   findVaultReleases,
   scanLogPagesDescending,
   evmFulfillDepth,
+  depositWatcherSafeHead,
   xrgeFulfillConfirmations,
   type XrgeFulfillResult,
   type VaultReleaseLog,
@@ -964,9 +965,11 @@ async function main() {
       }
 
       // 2) Scan newly-confirmed blocks for fresh deposits.
+      // Effective confirmed head = head − max(CONFIRMATIONS, daemon QV_BRIDGE_MIN_CONFIRMATIONS): never
+      // hand the daemon a deposit it will refuse as too shallow. A head read failure throws → no claim.
       const head = await publicClient.getBlockNumber();
-      const safeHead = head - BigInt(CONFIRMATIONS);
-      if (safeHead <= 0n) return;
+      const safeHead = depositWatcherSafeHead(head, CONFIRMATIONS);
+      if (safeHead === null) return;
 
       let fromBlock: bigint;
       if (depositWatcher.lastBlock !== null) {
