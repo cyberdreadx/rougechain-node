@@ -77,7 +77,25 @@ pub fn verify_rouge_bridge_deposit(receipt: &serde_json::Value, expect: DepositA
     let logs = receipt.get("logs").and_then(|v| v.as_array()).ok_or("no logs in receipt")?;
     let want_topic = match expect { DepositAsset::Eth => topic_deposit_eth(), DepositAsset::Usdc => topic_deposit_erc20() };
 
+    // The claim is deduped by Base tx hash, so a claimable tx must carry EXACTLY ONE supported
+    // RougeBridge deposit in total (BridgeDepositETH + supported-USDC BridgeDepositERC20). Two
+    // deposits in one tx would mint one and strand the other forever behind the dedupe key.
+    let (t_eth, t_erc) = (topic_deposit_eth(), topic_deposit_erc20());
+    let supported_total = logs.iter().filter(|l| {
+        if lc(l.get("address")) != bridge { return false; }
+        let tp: Vec<String> = l.get("topics").and_then(|v| v.as_array()).map(|t| t.iter().map(|x| lc(Some(x))).collect()).unwrap_or_default();
+        match tp.first() {
+            Some(t0) if *t0 == t_eth => true,
+            Some(t0) if *t0 == t_erc => tp.len() == 3 && topic_addr(&tp[2]) == usdc,
+            _ => false,
+        }
+    }).count();
+    if supported_total > 1 {
+        return Err(format!("{} supported RougeBridge deposit events in one transaction — ambiguous, refusing to credit any of them", supported_total));
+    }
+
     let mut found: Vec<VerifiedDeposit> = Vec::new();
+    let mut unsupported_token: Option<String> = None;
     for log in logs {
         let topics: Vec<String> = log.get("topics").and_then(|v| v.as_array()).map(|t| t.iter().map(|x| lc(Some(x))).collect()).unwrap_or_default();
         if topics.first().map(|t| t != &want_topic).unwrap_or(true) { continue; }
@@ -97,7 +115,9 @@ pub fn verify_rouge_bridge_deposit(receipt: &serde_json::Value, expect: DepositA
                 if topics.len() != 3 { return Err("malformed BridgeDepositERC20 topics".into()); }
                 if usdc.len() != 42 { return Err("Base USDC address not configured".into()); }
                 let (sender, token) = (topic_addr(&topics[1]), topic_addr(&topics[2]));
-                if token != usdc { return Err(format!("deposit token {} is not the configured Base USDC {}", token, usdc)); }
+                // an ERC20 deposit of any other token is not a supported deposit: never claimable, and
+                // unrelated to a genuine USDC deposit elsewhere in the receipt
+                if token != usdc { unsupported_token = Some(token); continue; }
                 // the USDC contract itself must show the matching value moving sender → RougeBridge
                 let t_transfer = topic_erc20_transfer();
                 let matched = logs.iter().any(|l| {
@@ -112,10 +132,32 @@ pub fn verify_rouge_bridge_deposit(receipt: &serde_json::Value, expect: DepositA
         }
     }
     match found.len() {
+        0 if unsupported_token.is_some() => Err(format!("deposit token {} is not the configured Base USDC {}", unsupported_token.unwrap(), usdc)),
         0 => Err(format!("no {} event from the configured RougeBridge in this transaction", match expect { DepositAsset::Eth => "BridgeDepositETH", DepositAsset::Usdc => "BridgeDepositERC20" })),
         1 => Ok(found.remove(0)),
         n => Err(format!("{} deposit events in one transaction — ambiguous, refusing to credit", n)),
     }
+}
+
+/// Expected EVM chain for bridge deposits: `QV_BRIDGE_CHAIN_ID`, default 8453 (Base mainnet) when
+/// unset. A value that is set but unparseable is a configuration error ⇒ no credit.
+pub fn expected_bridge_chain_id(env_value: Option<&str>) -> Result<u64, String> {
+    match env_value.map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        None => Ok(8453),
+        Some(v) => v.parse::<u64>().map_err(|_| format!("QV_BRIDGE_CHAIN_ID '{}' is not a valid chain id — refusing to credit", v)),
+    }
+}
+/// Bind the auto-claim to the configured chain using the DAEMON's own RPC (`eth_chainId` JSON-RPC
+/// response, or the transport error). RPC failure, missing/malformed result or mismatch ⇒ Err.
+pub fn require_chain_id(rpc_response: Result<&serde_json::Value, &str>, expected: u64) -> Result<(), String> {
+    let v = rpc_response.map_err(|e| format!("could not verify EVM chain id (RPC unavailable: {}) — refusing to credit", e))?;
+    let hex_id = v.get("result").and_then(|r| r.as_str())
+        .ok_or_else(|| "could not verify EVM chain id (missing eth_chainId result) — refusing to credit".to_string())?;
+    let digits = hex_id.strip_prefix("0x").ok_or_else(|| format!("malformed eth_chainId result '{}' — refusing to credit", hex_id))?;
+    if digits.is_empty() { return Err("malformed eth_chainId result '0x' — refusing to credit".into()); }
+    let got = u64::from_str_radix(digits, 16).map_err(|_| format!("malformed eth_chainId result '{}' — refusing to credit", hex_id))?;
+    if got != expected { return Err(format!("EVM chain mismatch: daemon RPC reports {} but the bridge is configured for {} — refusing to credit", got, expected)); }
+    Ok(())
 }
 
 /// Fail-closed confirmation gate: an unknown head is NOT "deep enough".
@@ -253,6 +295,62 @@ mod tests {
             assert!(verify_rouge_bridge_deposit(&receipt("0x1", vec![xrge.clone()]), asset, BRIDGE, USDC).is_err());
         }
         assert_ne!(topic_deposit_eth(), topic_deposit_erc20());
+    }
+
+    #[test]
+    fn auto_claim_is_bound_to_the_configured_evm_chain() {
+        assert_eq!(expected_bridge_chain_id(None), Ok(8453));
+        assert_eq!(expected_bridge_chain_id(Some("")), Ok(8453));
+        assert_eq!(expected_bridge_chain_id(Some(" 84532 ")), Ok(84532));
+        assert!(expected_bridge_chain_id(Some("base")).unwrap_err().contains("refusing to credit"));
+        let ok = serde_json::json!({"jsonrpc":"2.0","id":1,"result":"0x2105"}); // 8453
+        assert!(require_chain_id(Ok(&ok), 8453).is_ok());
+        // wrong chain (Base Sepolia RPC while configured for mainnet, and vice versa)
+        let sepolia = serde_json::json!({"result":"0x14a34"});
+        assert!(require_chain_id(Ok(&sepolia), 8453).unwrap_err().contains("chain mismatch"));
+        assert!(require_chain_id(Ok(&ok), 84532).unwrap_err().contains("chain mismatch"));
+        // malformed / missing
+        for bad in [serde_json::json!({"result":"8453"}), serde_json::json!({"result":"0x"}), serde_json::json!({"result":"0xzz"}), serde_json::json!({"result":8453}),
+                    serde_json::json!({"result":null}), serde_json::json!({"error":{"code":-32000,"message":"rate limited"}}), serde_json::json!({})] {
+            assert!(require_chain_id(Ok(&bad), 8453).unwrap_err().contains("refusing to credit"), "{bad}");
+        }
+        // unavailable RPC
+        assert!(require_chain_id(Err("connection refused"), 8453).unwrap_err().contains("RPC unavailable"));
+    }
+
+    #[test]
+    fn a_claimable_tx_carries_exactly_one_supported_deposit_event_in_total() {
+        let usdc_pair = || vec![transfer_log(USDC, SENDER, BRIDGE, 1_000_000), erc_log(BRIDGE, USDC, 1_000_000, PUBKEY)];
+        // one ETH event = accepted; one USDC event = accepted
+        assert!(verify_rouge_bridge_deposit(&receipt("0x1", vec![eth_log(BRIDGE, WEI_PER_QETH_UNIT, PUBKEY)]), DepositAsset::Eth, BRIDGE, USDC).is_ok());
+        assert!(verify_rouge_bridge_deposit(&receipt("0x1", usdc_pair()), DepositAsset::Usdc, BRIDGE, USDC).is_ok());
+        // two ETH events = rejected
+        let two_eth = receipt("0x1", vec![eth_log(BRIDGE, WEI_PER_QETH_UNIT, PUBKEY), eth_log(BRIDGE, 2 * WEI_PER_QETH_UNIT, PUBKEY)]);
+        assert!(verify_rouge_bridge_deposit(&two_eth, DepositAsset::Eth, BRIDGE, USDC).unwrap_err().contains("ambiguous"));
+        // two USDC events = rejected
+        let mut two_usdc = usdc_pair(); two_usdc.extend(usdc_pair());
+        assert!(verify_rouge_bridge_deposit(&receipt("0x1", two_usdc), DepositAsset::Usdc, BRIDGE, USDC).unwrap_err().contains("ambiguous"));
+        // one ETH + one USDC = rejected, whichever asset is being claimed
+        let mut mixed = usdc_pair(); mixed.push(eth_log(BRIDGE, WEI_PER_QETH_UNIT, PUBKEY));
+        for asset in [DepositAsset::Eth, DepositAsset::Usdc] {
+            assert!(verify_rouge_bridge_deposit(&receipt("0x1", mixed.clone()), asset, BRIDGE, USDC).unwrap_err().contains("ambiguous"));
+        }
+        // unrelated events do not affect the count: other contracts' look-alike deposits, plain USDC
+        // transfers, an unsupported-token ERC20 deposit event, and arbitrary logs
+        let evil = "0x9999999999999999999999999999999999999999";
+        let noise = vec![
+            eth_log(evil, WEI_PER_QETH_UNIT, PUBKEY), erc_log(evil, USDC, 1_000_000, PUBKEY),
+            transfer_log(USDC, SENDER, evil, 5), erc_log(BRIDGE, evil, 7, PUBKEY),
+            serde_json::json!({ "address": BRIDGE, "topics": [topic("Paused(address)")], "data": "0x" }),
+        ];
+        let mut eth_noisy = noise.clone(); eth_noisy.push(eth_log(BRIDGE, 3 * WEI_PER_QETH_UNIT, PUBKEY));
+        assert_eq!(verify_rouge_bridge_deposit(&receipt("0x1", eth_noisy), DepositAsset::Eth, BRIDGE, USDC).unwrap().l1_units, 3);
+        let mut usdc_noisy = noise.clone(); usdc_noisy.extend(usdc_pair());
+        // (the unsupported-token ERC20 event is not a SUPPORTED deposit: the count stays 1 and the genuine
+        //  USDC deposit is still claimable)
+        assert_eq!(verify_rouge_bridge_deposit(&receipt("0x1", usdc_noisy), DepositAsset::Usdc, BRIDGE, USDC).unwrap().l1_units, 1_000_000);
+        // and the unsupported-token deposit on its own is still refused with the explicit reason
+        assert!(verify_rouge_bridge_deposit(&receipt("0x1", vec![transfer_log(evil, SENDER, BRIDGE, 7), erc_log(BRIDGE, evil, 7, PUBKEY)]), DepositAsset::Usdc, BRIDGE, USDC).unwrap_err().contains("not the configured Base USDC"));
     }
 
     #[tokio::test]

@@ -7761,6 +7761,20 @@ async fn process_bridge_reclaim(
                 None => return serde_json::json!({ "success": false, "error": "RougeBridge address not configured — refusing to credit" }),
             };
             let usdc = bridge_usdc_address().unwrap_or_default();
+            // Bind the credit to the configured EVM chain using the DAEMON's own RPC (independent of
+            // the relayer's preflight): RPC failure / malformed / mismatch ⇒ no credit.
+            let expected_chain = match rouge_bridge_deposit::expected_bridge_chain_id(std::env::var("QV_BRIDGE_CHAIN_ID").ok().as_deref()) {
+                Ok(c) => c,
+                Err(e) => return serde_json::json!({ "success": false, "error": e }),
+            };
+            let chain_resp: Result<serde_json::Value, String> = match client.post(rpc_url)
+                .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1})).send().await {
+                Ok(r) => r.json::<serde_json::Value>().await.map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            };
+            if let Err(e) = rouge_bridge_deposit::require_chain_id(chain_resp.as_ref().map_err(|e| e.as_str()), expected_chain) {
+                return serde_json::json!({ "success": false, "error": e });
+            }
             let receipt: serde_json::Value = match client.post(rpc_url)
                 .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":[tx_hash_hex],"id":1}))
                 .send().await {
