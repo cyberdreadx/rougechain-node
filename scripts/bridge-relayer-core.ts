@@ -1208,3 +1208,172 @@ export async function observeXrgeWithdrawal(
 export function observeDeposit(d: { token: string; txHash: string; pubkey: string }, log: (m: string) => void): void {
   log(`[OBSERVE] WOULD_CLAIM_DEPOSIT ${d.token} ${d.txHash} → ${d.pubkey.slice(0, 16)}…`);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// XRGE (BridgeVaultV2) payout lifecycle — fix for the block-53 controlled test.
+//   1. processedL1Txs(tx_id) is read BEFORE any release(); a read failure fails closed.
+//   2. processed == true ⇒ NEVER release: locate + verify the existing BridgeRelease and fulfill
+//      the daemon record with THAT payout tx hash.
+//   3. fulfill is only called once the payout has the daemon-required confirmation depth; a
+//      daemon "needs N confirmations" answer is retry-later bookkeeping — never a payout failure,
+//      never a failure report, never a refund, never another release.
+//   4. BridgeRelease log scans are paginated in contiguous, non-overlapping ranges ≤ 2,000 blocks.
+// ─────────────────────────────────────────────────────────────────────────────
+export const MAX_LOG_SCAN_SPAN = 2000n;
+
+/** Daemon-required confirmation depth (same env name the daemon reads; daemon default 6). */
+export function daemonMinConfirmations(env: Record<string, string | undefined> = process.env): number {
+  const n = parseInt(String(env.QV_BRIDGE_MIN_CONFIRMATIONS ?? ""), 10);
+  return Number.isFinite(n) && n > 0 ? n : 6;
+}
+/** ONE effective depth for XRGE fulfill: never below the daemon requirement. */
+export function xrgeFulfillConfirmations(relayerConfirmations: number, env: Record<string, string | undefined> = process.env): number {
+  return Math.max(Number.isFinite(relayerConfirmations) ? relayerConfirmations : 0, daemonMinConfirmations(env));
+}
+
+/** Contiguous, non-overlapping block ranges covering [from, to], newest first, each ≤ maxSpan. */
+export function blockRangesDescending(from: bigint, to: bigint, maxSpan: bigint = MAX_LOG_SCAN_SPAN): Array<{ fromBlock: bigint; toBlock: bigint }> {
+  if (maxSpan <= 0n || maxSpan > MAX_LOG_SCAN_SPAN) throw new Error(`maxSpan must be 1..${MAX_LOG_SCAN_SPAN}`);
+  const out: Array<{ fromBlock: bigint; toBlock: bigint }> = [];
+  if (to < from) return out;
+  let hi = to;
+  while (hi >= from) {
+    const lo = hi - maxSpan + 1n > from ? hi - maxSpan + 1n : from;
+    out.push({ fromBlock: lo, toBlock: hi });
+    if (lo === 0n || lo === from) break;
+    hi = lo - 1n;
+  }
+  return out;
+}
+
+export interface VaultReleaseLog { txHash: string; blockNumber: bigint; recipient: string; amount: bigint; l1TxId: string }
+export type VaultLogFetcher = (range: { fromBlock: bigint; toBlock: bigint }) => Promise<VaultReleaseLog[]>;
+
+/**
+ * Find EVERY BridgeRelease carrying `l1TxId` in [head - lookback, head], paging ≤ 2,000 blocks.
+ * Scans the whole window (no early exit) so a duplicate release can never hide behind the first hit.
+ * Throws if any page fails — the caller must treat that as "unknown", never as "not released".
+ */
+export async function findVaultReleases(fetchLogs: VaultLogFetcher, l1TxId: string, head: bigint, lookbackBlocks: bigint, maxSpan: bigint = MAX_LOG_SCAN_SPAN): Promise<VaultReleaseLog[]> {
+  const from = head > lookbackBlocks ? head - lookbackBlocks : 0n;
+  const hits: VaultReleaseLog[] = [];
+  for (const r of blockRangesDescending(from, head, maxSpan)) {
+    for (const lg of await fetchLogs(r)) if (lg.l1TxId === l1TxId) hits.push(lg);
+  }
+  return hits;
+}
+
+export interface XrgeFulfillResult { ok: boolean; status: number; error?: string }
+/** A daemon rejection that only means "not deep enough yet" (retry later). */
+export function isAwaitingConfirmationsError(r: XrgeFulfillResult): boolean {
+  return !r.ok && /confirmation/i.test(r.error ?? "");
+}
+
+export interface XrgeWithdrawal { tx_id: string; evm_address: string; amount: number }
+export interface XrgePayoutDeps {
+  requiredConfirmations: number;
+  processedOnVault(txId: string): Promise<boolean>;
+  release(to: string, wei: bigint, txId: string): Promise<string>;
+  /** resolves once the tx is mined (any depth ≥ 1); depth is enforced separately below */
+  waitForReceipt(hash: string): Promise<{ status: "success" | "reverted"; blockNumber: bigint }>;
+  headBlock(): Promise<bigint>;
+  /** every BridgeRelease for this l1TxId within the configured lookback (≤2,000-block pages) */
+  findReleases(txId: string): Promise<VaultReleaseLog[]>;
+  fulfill(txId: string, payoutTxHash: string): Promise<XrgeFulfillResult>;
+  /** real payout failure only (release never happened) */
+  handleFailure(txId: string, error: string): Promise<void>;
+  markProcessed(txId: string): void;
+  /** payouts known to be mined but not yet fulfilled (tx_id → payout) — in-memory retry state */
+  pendingFulfill: Map<string, { txHash: string; blockNumber: bigint }>;
+  alert(key: string, message: string): Promise<void> | void;
+  log(m: string): void;
+  warn(m: string): void;
+}
+export type XrgeOutcome =
+  | "fulfilled" | "reconciled_fulfilled" | "awaiting_confirmations" | "fulfill_rejected"
+  | "skipped_rpc" | "processed_no_release_found" | "ambiguous" | "failed";
+
+export function xrgeToWeiExact(amount: number): bigint { return BigInt(amount) * 10n ** 18n; }
+
+/** Fulfill a payout that is known to exist on-chain, honouring the confirmation depth. */
+async function fulfillKnownXrgePayout(w: XrgeWithdrawal, payout: { txHash: string; blockNumber: bigint }, deps: XrgePayoutDeps, reconciled: boolean): Promise<XrgeOutcome> {
+  let head: bigint;
+  try { head = await deps.headBlock(); }
+  catch (e: any) { deps.pendingFulfill.set(w.tx_id, payout); deps.warn(`[XRGE] ${w.tx_id}: head read failed (${e?.message || e}) — fulfill deferred`); return "awaiting_confirmations"; }
+  const depth = head >= payout.blockNumber ? Number(head - payout.blockNumber) + 1 : 0;
+  if (depth < deps.requiredConfirmations) {
+    deps.pendingFulfill.set(w.tx_id, payout);
+    deps.log(`[XRGE] ${w.tx_id}: payout ${payout.txHash} has ${depth}/${deps.requiredConfirmations} confirmations — fulfill deferred (no release, no failure)`);
+    return "awaiting_confirmations";
+  }
+  const r = await deps.fulfill(w.tx_id, payout.txHash);
+  if (r.ok) {
+    deps.pendingFulfill.delete(w.tx_id);
+    deps.markProcessed(w.tx_id);
+    deps.log(`[XRGE] ✓ ${reconciled ? "Reconciled + fulfilled" : "Fulfilled"} ${w.tx_id} (${payout.txHash})`);
+    return reconciled ? "reconciled_fulfilled" : "fulfilled";
+  }
+  deps.pendingFulfill.set(w.tx_id, payout);
+  if (isAwaitingConfirmationsError(r)) {
+    deps.log(`[XRGE] ${w.tx_id}: daemon wants more confirmations (HTTP ${r.status}: ${r.error}) — retry later (no release, no failure)`);
+    return "awaiting_confirmations";
+  }
+  deps.warn(`[XRGE] ✗ daemon REJECTED fulfill for ${w.tx_id} via ${payout.txHash}: HTTP ${r.status} ${r.error ?? "(no error body)"} — payout exists on-chain; NOT releasing, NOT failing, NOT refunding`);
+  await deps.alert(`xrge-fulfill:${w.tx_id}`, `XRGE ${w.tx_id.slice(0, 20)}… is PAID on Base (${payout.txHash}) but the daemon rejected fulfill: HTTP ${r.status} ${r.error ?? ""} — manual review`);
+  return "fulfill_rejected";
+}
+
+export async function processXrgeWithdrawal(w: XrgeWithdrawal, deps: XrgePayoutDeps): Promise<XrgeOutcome> {
+  // 1. on-chain truth FIRST — a read failure fails closed (no release).
+  let processed: boolean;
+  try { processed = await deps.processedOnVault(w.tx_id); }
+  catch (e: any) { deps.warn(`[XRGE] processedL1Txs read failed for ${w.tx_id} (${e?.message || e}) — NOT releasing this poll`); return "skipped_rpc"; }
+
+  if (processed) {
+    // 2. already paid ⇒ never release; reconcile against the real payout.
+    let payout = deps.pendingFulfill.get(w.tx_id);
+    if (!payout) {
+      let hits: VaultReleaseLog[];
+      try { hits = await deps.findReleases(w.tx_id); }
+      catch (e: any) { deps.warn(`[XRGE] ${w.tx_id} is processed on-chain; release-log scan failed (${e?.message || e}) — retry next poll (no release, no failure)`); return "skipped_rpc"; }
+      if (hits.length === 0) {
+        await deps.alert(`reconcile:${w.tx_id}`, `XRGE ${w.tx_id.slice(0, 20)}… is processed on-chain but no BridgeRelease was found in the scan window — MANUAL REVIEW, NOT releasing, NOT refunding`);
+        return "processed_no_release_found";
+      }
+      const want = xrgeToWeiExact(w.amount);
+      const good = hits.filter((h) => sameAddress(h.recipient, w.evm_address) && h.amount === want);
+      if (hits.length !== 1 || good.length !== 1) {
+        await deps.alert(`ambiguous:${w.tx_id}`, `XRGE ${w.tx_id.slice(0, 20)}… has ${hits.length} BridgeRelease event(s), ${good.length} matching recipient+amount — AMBIGUOUS, manual review (no fulfill, no release, no refund)`);
+        return "ambiguous";
+      }
+      payout = { txHash: good[0].txHash, blockNumber: good[0].blockNumber };
+      deps.log(`[XRGE] ${w.tx_id} already released on-chain via ${payout.txHash} (block ${payout.blockNumber}) — reconciling, NOT releasing`);
+    }
+    return fulfillKnownXrgePayout(w, payout, deps, true);
+  }
+
+  // 3. normal release path (processed == false).
+  let hash: string;
+  try { hash = await deps.release(w.evm_address, xrgeToWeiExact(w.amount), w.tx_id); }
+  catch (e: any) {
+    // The send may still have landed: consult the chain before calling it a failure.
+    let landed: boolean;
+    try { landed = await deps.processedOnVault(w.tx_id); }
+    catch { deps.warn(`[XRGE] release errored for ${w.tx_id} and the processed re-check failed — no failure report this poll`); return "skipped_rpc"; }
+    if (landed) { deps.log(`[XRGE] release call errored for ${w.tx_id} but the id is processed on-chain — reconciling next poll`); return "awaiting_confirmations"; }
+    await deps.handleFailure(w.tx_id, e?.message || "release failed");
+    return "failed";
+  }
+  deps.log(`[XRGE] Released ${w.amount} XRGE → ${w.evm_address.slice(0, 10)}... tx: ${hash}`);
+  let rc: { status: "success" | "reverted"; blockNumber: bigint };
+  try { rc = await deps.waitForReceipt(hash); }
+  catch (e: any) { deps.warn(`[XRGE] receipt wait failed for ${w.tx_id} (${hash}): ${e?.message || e} — will reconcile from chain state next poll`); return "awaiting_confirmations"; }
+  if (rc.status !== "success") {
+    let landed = false;
+    try { landed = await deps.processedOnVault(w.tx_id); } catch { return "skipped_rpc"; }
+    if (landed) return "awaiting_confirmations"; // an earlier send settled it; reconcile next poll
+    await deps.handleFailure(w.tx_id, `release tx reverted: ${hash}`);
+    return "failed";
+  }
+  return fulfillKnownXrgePayout(w, { txHash: hash, blockNumber: rc.blockNumber }, deps, false);
+}

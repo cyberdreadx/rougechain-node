@@ -15,6 +15,16 @@ import {
   observeDeposit,
   guardWrite,
   ObserveOnlyViolation,
+  processXrgeWithdrawal,
+  findVaultReleases,
+  blockRangesDescending,
+  xrgeFulfillConfirmations,
+  daemonMinConfirmations,
+  isAwaitingConfirmationsError,
+  MAX_LOG_SCAN_SPAN,
+  type XrgePayoutDeps,
+  type VaultReleaseLog,
+  type XrgeFulfillResult,
   rougeBridgeId,
   payoutRoute,
   normalizeEthWithdrawal,
@@ -895,5 +905,135 @@ describe("observation mode — zero writes", () => {
     expect(bridgeHealthAllowsPayouts({ status: 200, body: { degraded: false } })).toBe(true);
     expect(bridgeHealthAllowsPayouts({ status: 503, body: { degraded: true } })).toBe(false);
     expect(bridgeHealthAllowsPayouts(null)).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// XRGE payout lifecycle (block-53 controlled-test regressions)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("XRGE payout lifecycle — processed-first, confirmation depth, RPC-safe scans", () => {
+  const TXID = "60e06d7dcc6b213529e2042f7d1c707f3e7cdd1a2895ba108ef43a2e603a0133";
+  const PAYOUT = "0x1aa4c09d90d4c70bafa6972761816b70820bedcad2139233d272e41eead5f55c";
+  const W = { tx_id: TXID, evm_address: RECIPIENT, amount: 1 };
+  const ONE = 10n ** 18n;
+  interface X { processed?: boolean | (() => Promise<boolean>); head?: bigint; releases?: VaultReleaseLog[] | (() => Promise<VaultReleaseLog[]>); fulfill?: (n: number) => XrgeFulfillResult; releaseThrows?: string; receiptStatus?: "success" | "reverted"; receiptBlock?: bigint; required?: number; pending?: Map<string, { txHash: string; blockNumber: bigint }> }
+  function xfake(o: X = {}) {
+    const c = { release: [] as any[], fulfill: [] as any[], failure: [] as any[], alerts: [] as string[], logs: [] as string[], processed: [] as string[] };
+    let head = o.head ?? 1000n;
+    const deps: XrgePayoutDeps = {
+      requiredConfirmations: o.required ?? 6,
+      processedOnVault: async () => (typeof o.processed === "function" ? o.processed() : !!o.processed),
+      release: async (to, wei, id) => { c.release.push({ to, wei, id }); if (o.releaseThrows) throw new Error(o.releaseThrows); return PAYOUT; },
+      waitForReceipt: async () => ({ status: o.receiptStatus ?? "success", blockNumber: o.receiptBlock ?? 1000n }),
+      headBlock: async () => head,
+      findReleases: async () => (typeof o.releases === "function" ? o.releases() : o.releases ?? []),
+      fulfill: async (txId, h) => { c.fulfill.push({ txId, h }); return o.fulfill ? o.fulfill(c.fulfill.length) : { ok: true, status: 200 }; },
+      handleFailure: async (txId, e) => { c.failure.push({ txId, e }); },
+      markProcessed: (id) => c.processed.push(id),
+      pendingFulfill: o.pending ?? new Map(),
+      alert: (k, m) => { c.alerts.push(`${k}: ${m}`); },
+      log: (m) => c.logs.push(m), warn: (m) => c.logs.push(m),
+    };
+    return { deps, c, setHead: (h: bigint) => { head = h; } };
+  }
+  const rel = (o: Partial<VaultReleaseLog> = {}): VaultReleaseLog => ({ txHash: PAYOUT, blockNumber: 900n, recipient: RECIPIENT, amount: ONE, l1TxId: TXID, ...o });
+
+  it("ONE confirmation value: never below the daemon requirement (default 6)", () => {
+    expect(daemonMinConfirmations({})).toBe(6);
+    expect(daemonMinConfirmations({ QV_BRIDGE_MIN_CONFIRMATIONS: "12" })).toBe(12);
+    expect(xrgeFulfillConfirmations(2, {})).toBe(6);
+    expect(xrgeFulfillConfirmations(10, {})).toBe(10);
+    expect(xrgeFulfillConfirmations(2, { QV_BRIDGE_MIN_CONFIRMATIONS: "3" })).toBe(3);
+  });
+
+  it("already-processed XRGE NEVER calls release(): reconciles the existing payout and fulfills with THAT tx hash", async () => {
+    const f = xfake({ processed: true, releases: [rel()], head: 1000n });
+    expect(await processXrgeWithdrawal(W, f.deps)).toBe("reconciled_fulfilled");
+    expect(f.c.release).toHaveLength(0);
+    expect(f.c.fulfill).toEqual([{ txId: TXID, h: PAYOUT }]);
+    expect(f.c.processed).toEqual([TXID]);
+    expect(f.c.failure).toHaveLength(0);
+  });
+
+  it("restart with paid-but-pending daemon state (empty in-memory map) reconciles from chain logs", async () => {
+    const f = xfake({ processed: true, releases: [rel({ blockNumber: 500n })], head: 51_000n, pending: new Map() });
+    expect(await processXrgeWithdrawal(W, f.deps)).toBe("reconciled_fulfilled");
+    expect(f.c.release).toHaveLength(0); expect(f.c.fulfill[0].h).toBe(PAYOUT); expect(f.c.failure).toHaveLength(0);
+  });
+
+  it("insufficient confirmations: no fulfill call, no release, no failure; fulfills once deep enough", async () => {
+    const f = xfake({ processed: true, releases: [rel({ blockNumber: 998n })], head: 1000n }); // depth 3 < 6
+    expect(await processXrgeWithdrawal(W, f.deps)).toBe("awaiting_confirmations");
+    expect(f.c.fulfill).toHaveLength(0); expect(f.c.release).toHaveLength(0); expect(f.c.failure).toHaveLength(0);
+    f.setHead(1003n); // depth 6
+    expect(await processXrgeWithdrawal(W, f.deps)).toBe("reconciled_fulfilled");
+    expect(f.c.fulfill).toEqual([{ txId: TXID, h: PAYOUT }]); expect(f.c.release).toHaveLength(0);
+  });
+
+  it("daemon answers 'needs N confirmations' → retry-later bookkeeping: never another release, never failure/refund", async () => {
+    const f = xfake({ processed: false, receiptBlock: 1000n, head: 1005n, required: 6,
+      fulfill: (n) => n === 1 ? { ok: false, status: 200, error: "payout needs 6 confirmations (block 1000, latest 1004)" } : { ok: true, status: 200 } });
+    expect(await processXrgeWithdrawal(W, f.deps)).toBe("awaiting_confirmations");
+    expect(f.c.release).toHaveLength(1); expect(f.c.failure).toHaveLength(0);
+    expect(isAwaitingConfirmationsError({ ok: false, status: 200, error: "payout needs 6 confirmations" })).toBe(true);
+    // next poll: the vault now reports processed — the remembered payout is fulfilled; release is NOT called again
+    const g = xfake({ processed: true, head: 1010n, pending: f.deps.pendingFulfill });
+    expect(await processXrgeWithdrawal(W, g.deps)).toBe("reconciled_fulfilled");
+    expect(g.c.release).toHaveLength(0); expect(g.c.fulfill).toEqual([{ txId: TXID, h: PAYOUT }]); expect(g.c.failure).toHaveLength(0);
+  });
+
+  it("fresh release waits for depth before fulfilling (the block-53 shape: mined at depth 1)", async () => {
+    const f = xfake({ processed: false, receiptBlock: 1000n, head: 1000n });
+    expect(await processXrgeWithdrawal(W, f.deps)).toBe("awaiting_confirmations");
+    expect(f.c.release).toHaveLength(1); expect(f.c.fulfill).toHaveLength(0); expect(f.c.failure).toHaveLength(0);
+    expect(f.deps.pendingFulfill.get(TXID)).toEqual({ txHash: PAYOUT, blockNumber: 1000n });
+  });
+
+  it("RPC failure checking processedL1Txs fails closed: no release, no fulfill, no failure", async () => {
+    const f = xfake({ processed: async () => { throw new Error("rpc down"); } });
+    expect(await processXrgeWithdrawal(W, f.deps)).toBe("skipped_rpc");
+    expect(f.c.release).toHaveLength(0); expect(f.c.fulfill).toHaveLength(0); expect(f.c.failure).toHaveLength(0);
+  });
+
+  it("already-paid withdrawal never enters the failure/refund path — even when the log scan fails or the daemon rejects", async () => {
+    const scanFail = xfake({ processed: true, releases: async () => { throw new Error("RPC Request failed."); } });
+    expect(await processXrgeWithdrawal(W, scanFail.deps)).toBe("skipped_rpc");
+    const none = xfake({ processed: true, releases: [] });
+    expect(await processXrgeWithdrawal(W, none.deps)).toBe("processed_no_release_found");
+    const rejected = xfake({ processed: true, releases: [rel()], fulfill: () => ({ ok: false, status: 200, error: "payout sender 0xabc is not the XRGE vault" }) });
+    expect(await processXrgeWithdrawal(W, rejected.deps)).toBe("fulfill_rejected");
+    expect(rejected.c.logs.some((l) => l.includes("HTTP 200") && l.includes("not the XRGE vault"))).toBe(true);
+    for (const f of [scanFail, none, rejected]) { expect(f.c.release).toHaveLength(0); expect(f.c.failure).toHaveLength(0); }
+  });
+
+  it("two BridgeRelease events or a recipient/amount mismatch → ambiguous: no fulfill, no release, no refund", async () => {
+    const dup = xfake({ processed: true, releases: [rel(), rel({ txHash: TX2 })] });
+    expect(await processXrgeWithdrawal(W, dup.deps)).toBe("ambiguous");
+    const wrong = xfake({ processed: true, releases: [rel({ amount: 2n * ONE })] });
+    expect(await processXrgeWithdrawal(W, wrong.deps)).toBe("ambiguous");
+    for (const f of [dup, wrong]) { expect(f.c.fulfill).toHaveLength(0); expect(f.c.release).toHaveLength(0); expect(f.c.failure).toHaveLength(0); }
+  });
+
+  it("a genuine release failure (id NOT processed afterwards) is the ONLY path that reports failure", async () => {
+    const f = xfake({ processed: false, releaseThrows: "insufficient funds" });
+    expect(await processXrgeWithdrawal(W, f.deps)).toBe("failed");
+    expect(f.c.failure).toEqual([{ txId: TXID, e: "insufficient funds" }]);
+    let n = 0; const landed = xfake({ processed: async () => ++n > 1, releaseThrows: "timeout" }); // errored, but the send landed
+    expect(await processXrgeWithdrawal(W, landed.deps)).toBe("awaiting_confirmations");
+    expect(landed.c.failure).toHaveLength(0);
+  });
+
+  it("log scanning never requests > 2,000 blocks; pages are contiguous with no gaps or overlaps", async () => {
+    const asked: Array<{ fromBlock: bigint; toBlock: bigint }> = [];
+    const hits = await findVaultReleases(async (r) => { asked.push(r); return r.fromBlock <= 51_523_968n && 51_523_968n <= r.toBlock ? [rel({ blockNumber: 51_523_968n })] : []; }, TXID, 51_530_000n, 400_000n);
+    expect(hits).toHaveLength(1);
+    expect(asked.length).toBe(201);
+    for (const r of asked) expect(r.toBlock - r.fromBlock + 1n <= MAX_LOG_SCAN_SPAN).toBe(true);
+    expect(asked[0].toBlock).toBe(51_530_000n); expect(asked[asked.length - 1].fromBlock).toBe(51_130_000n);
+    for (let i = 1; i < asked.length; i++) expect(asked[i].toBlock).toBe(asked[i - 1].fromBlock - 1n); // contiguous, no overlap
+    expect(blockRangesDescending(0n, 10n)).toEqual([{ fromBlock: 0n, toBlock: 10n }]);
+    expect(blockRangesDescending(5n, 4n)).toEqual([]);
+    expect(() => blockRangesDescending(0n, 10n, 2001n)).toThrow();
+    await expect(findVaultReleases(async () => { throw new Error("rpc"); }, TXID, 100n, 50n)).rejects.toThrow("rpc"); // unknown ≠ not released
   });
 });
