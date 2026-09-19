@@ -55,6 +55,8 @@ import {
   observeDeposit,
   processXrgeWithdrawal,
   findVaultReleases,
+  scanLogPagesDescending,
+  evmFulfillDepth,
   xrgeFulfillConfirmations,
   type XrgeFulfillResult,
   type VaultReleaseLog,
@@ -102,6 +104,9 @@ const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || "3", 10);
 const XRGE_FULFILL_CONFIRMATIONS = xrgeFulfillConfirmations(CONFIRMATIONS);
 // How far back the XRGE BridgeRelease reconciliation scan looks (paged ≤ 2,000 blocks).
 const XRGE_RELEASE_SCAN_BLOCKS = BigInt(process.env.XRGE_RELEASE_SCAN_BLOCKS || "100000");
+// Lookback for RougeBridge release/timelock reconciliation scans (paged ≤ 2,000 blocks, paced, retried).
+const BRIDGE_LOG_SCAN_BLOCKS = BigInt(process.env.BRIDGE_LOG_SCAN_BLOCKS || "60000");
+const LOG_SCAN_PACING = { pauseMs: 200, retries: 5, backoffMs: 2000 };
 // Optional webhook (e.g. Slack/Discord incoming webhook) for failure alerts.
 const ALERT_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL || "";
 // Auto-refund a withdrawal once the daemon reports it has crossed the failure threshold.
@@ -287,7 +292,7 @@ async function findVaultReleasesForL1(publicClient: any, vaultAddress: `0x${stri
       txHash: lg.transactionHash as string, blockNumber: lg.blockNumber as bigint,
       recipient: String(lg.args?.recipient ?? lg.args?.to ?? ""), amount: BigInt(lg.args?.amount ?? 0), l1TxId: String(lg.args?.l1TxId ?? ""),
     }));
-  }, l1TxId, head, XRGE_RELEASE_SCAN_BLOCKS, undefined, { pauseMs: 200, retries: 5, backoffMs: 2000 }); // paced + retried: public RPCs rate-limit bursts
+  }, l1TxId, head, XRGE_RELEASE_SCAN_BLOCKS, undefined, LOG_SCAN_PACING); // paced + retried: public RPCs rate-limit bursts
 }
 /** Observation-mode helper: first release tx hash for an id, or null (scan errors → null + warn). */
 async function findReleaseTxForL1(publicClient: any, vaultAddress: `0x${string}`, l1TxId: string): Promise<`0x${string}` | null> {
@@ -381,15 +386,15 @@ async function fulfillEthWithdrawal(txId: string, evmTxHash: string): Promise<bo
   if (OBSERVE_ONLY) observeRefuse("WOULD_FULFILL", `EVM ${txId} via ${evmTxHash}`);
   const res = await fetch(`${CORE_API_URL}/api/bridge/withdrawals/${encodeURIComponent(txId)}`, {
     method: "DELETE",
-    headers: {
-      "x-bridge-relayer-secret": RELAYER_SECRET,
-      "Content-Type": "application/json",
-    },
+    headers: { "x-bridge-relayer-secret": RELAYER_SECRET, "Content-Type": "application/json" },
     body: JSON.stringify({ evmTxHash }),
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(20000),
   });
-  const data: any = await res.json().catch(() => ({}));
-  return data.success === true;
+  const text = await res.text();
+  let data: any = {}; try { data = JSON.parse(text); } catch { /* non-JSON body */ }
+  if (data.success === true) return true;
+  console.warn(`[EVM] daemon fulfill rejected ${txId} via ${evmTxHash}: HTTP ${res.status} ${String(data.error ?? text ?? "").slice(0, 300)}`);
+  return false;
 }
 
 async function fetchXrgeWithdrawals(): Promise<XrgeWithdrawal[]> {
@@ -555,33 +560,32 @@ async function handleWithdrawalFailure(kind: "XRGE", txId: string, error: string
 
 // ── RougeBridge on-chain adapters (network-facing side of the core's EvmChainDeps) ──
 
-/** Scan the bridge for logs of `event` (optionally filtered by indexed args) over recent blocks. */
+/**
+ * Scan RougeBridge logs of `event` (optionally filtered by indexed args) over the configured
+ * lookback: ≤ 2,000 blocks per request, contiguous/non-overlapping, paced, bounded retry. THROWS
+ * if any page cannot be read — a partial scan must never be reported as "nothing found".
+ */
 async function scanBridgeLogs(
   publicClient: PublicClient,
   bridgeAddress: Hex,
   event: any,
   args?: Record<string, unknown>,
-  opts: { windows?: number; window?: bigint; toBlockOverride?: bigint } = {},
+  opts: { lookbackBlocks?: bigint; toBlockOverride?: bigint } = {},
 ): Promise<any[]> {
   const latest = opts.toBlockOverride ?? (await publicClient.getBlockNumber());
-  const WINDOW = opts.window ?? 5000n;
-  const windows = BigInt(opts.windows ?? 12);
-  const out: any[] = [];
-  for (let i = 0n; i < windows; i++) {
-    const toBlock = latest - i * WINDOW;
-    if (toBlock < 0n) break;
-    const fromBlock = toBlock > WINDOW ? toBlock - WINDOW + 1n : 0n;
-    const logs = await publicClient.getLogs({ address: bridgeAddress, event, args, fromBlock, toBlock } as any);
-    out.push(...logs);
-    if (fromBlock === 0n) break;
-  }
-  return out;
+  const lookback = opts.lookbackBlocks ?? BRIDGE_LOG_SCAN_BLOCKS;
+  const from = latest > lookback ? latest - lookback : 0n;
+  return scanLogPagesDescending(
+    ({ fromBlock, toBlock }) => publicClient.getLogs({ address: bridgeAddress, event, args, fromBlock, toBlock } as any) as Promise<any[]>,
+    from, latest, undefined, LOG_SCAN_PACING,
+  );
 }
 
 function toReceiptLike(r: any): ReceiptLike {
   return {
     status: r.status === "success" ? "success" : "reverted",
     transactionHash: r.transactionHash,
+    blockNumber: r.blockNumber,
     logs: (r.logs || []).map((l: any): RawLog => ({
       address: l.address,
       data: l.data,
@@ -676,6 +680,7 @@ async function main() {
     console.warn("[relayer] No valid ROUGE_BRIDGE_ADDRESS — qETH/qUSDC payouts DISABLED (fail closed)");
   }
   console.log(`[relayer] AUTO_REFUND=${AUTO_REFUND}`);
+  console.log(`[relayer] qETH/qUSDC fulfill confirmations: ${evmFulfillDepth({ fulfillConfirmations: CONFIRMATIONS })} (relayer ${CONFIRMATIONS}, never below daemon QV_BRIDGE_MIN_CONFIRMATIONS); RougeBridge log scans ≤ 2000 blocks/page, lookback ${BRIDGE_LOG_SCAN_BLOCKS}`);
   console.log(`[relayer] XRGE fulfill confirmations: ${XRGE_FULFILL_CONFIRMATIONS} (relayer ${CONFIRMATIONS}, daemon-required ≥ ${XRGE_FULFILL_CONFIRMATIONS}); release-log scan ≤ 2000 blocks/page, lookback ${XRGE_RELEASE_SCAN_BLOCKS}`);
   console.log(`[relayer] RougeBridge signer (custody key account): ${account.address}`);
   if (OBSERVE_ONLY) console.log("[relayer] *** BRIDGE_OBSERVE_ONLY=true — OBSERVATION MODE: read-only; NO releases, NO fulfill, NO failure reports, NO refunds, NO deposit claims, NO state writes ***");
@@ -712,6 +717,7 @@ async function main() {
     usdcAddress: chainCfg.usdc,
     autoRefund: AUTO_REFUND,
     maxRetries: MAX_RETRIES,
+    fulfillConfirmations: CONFIRMATIONS, // effective depth = max(this, daemon QV_BRIDGE_MIN_CONFIRMATIONS)
     processedTxIds,
     markProcessed: (txId) => {
       processedTxIds.add(txId);
@@ -737,7 +743,7 @@ async function main() {
           nonce,
         }),
       waitForReceipt: async (hash) =>
-        toReceiptLike(await publicClient.waitForTransactionReceipt({ hash, confirmations: CONFIRMATIONS, timeout: 120_000 })),
+        toReceiptLike(await publicClient.waitForTransactionReceipt({ hash, confirmations: Math.max(1, CONFIRMATIONS), timeout: 120_000 })),
       getReceipt: async (hash) => {
         try {
           return toReceiptLike(await publicClient.getTransactionReceipt({ hash }));
@@ -747,6 +753,7 @@ async function main() {
       },
       processedL1Txs: (l1TxId) =>
         publicClient.readContract({ address: bridgeAddress!, abi: ROUGE_BRIDGE_ABI, functionName: "processedL1Txs", args: [l1TxId] }) as Promise<boolean>,
+      headBlock: () => publicClient.getBlockNumber(),
       timelockQueue: readTimelockQueue,
       findReleaseTxHashes: async (exp: ExpectedRelease) => {
         const event = exp.asset === "Eth" ? BRIDGE_RELEASE_ETH_EVENT : BRIDGE_RELEASE_ERC20_EVENT;
@@ -831,6 +838,7 @@ async function main() {
               stats.ethFailed++;
               break;
             case "skipped_queued":
+            case "awaiting_confirmations": // paid, waiting for the daemon-required depth — retried next poll
               break;
             default:
               stats.ethSkipped++;

@@ -565,6 +565,8 @@ export interface ReceiptLike {
   status: "success" | "reverted";
   logs: RawLog[];
   transactionHash?: Hex;
+  /** block the tx was mined in — required to prove confirmation depth before daemon fulfill */
+  blockNumber?: bigint;
 }
 
 export interface EvmChainDeps {
@@ -573,6 +575,8 @@ export interface EvmChainDeps {
   waitForReceipt(hash: Hex): Promise<ReceiptLike>;
   getReceipt(hash: Hex): Promise<ReceiptLike | null>;
   processedL1Txs(l1TxId: Hex): Promise<boolean>;
+  /** current chain head (confirmation-depth gate before daemon fulfill) */
+  headBlock(): Promise<bigint>;
   /** `confirmed` → read at (head - confirmations) so a reorg can't fool the cancel/execute path. */
   timelockQueue(requestId: bigint, opts?: { confirmed?: boolean }): Promise<TimelockRecord>;
   /** tx hashes of BridgeReleaseETH/ERC20 logs emitted by the bridge carrying this canonical id. */
@@ -610,11 +614,14 @@ export interface EvmPayoutDeps {
   log(message: string): void;
   warn(message: string): void;
   sleep(ms: number): Promise<void>;
+  /** relayer CONFIRMATIONS; the effective fulfill depth is max(this, daemon QV_BRIDGE_MIN_CONFIRMATIONS). */
+  fulfillConfirmations?: number;
   /** BRIDGE_OBSERVE_ONLY: read-only reconciliation + logging; every mutation refuses. */
   observeOnly?: boolean;
 }
 
 export type PayoutOutcome =
+  | "awaiting_confirmations"
   | "observed"
   | "fulfilled"
   | "queued"
@@ -728,6 +735,8 @@ export interface ReconcileResult {
   record?: TimelockRecord | null;
   executeAfter?: bigint;
   reason?: string;
+  /** a log/timelock scan page could not be read — the classification is UNKNOWN (retry later) */
+  scanFailed?: boolean;
 }
 
 /**
@@ -739,6 +748,7 @@ export async function reconcileProcessedId(exp: ExpectedRelease, deps: EvmPayout
   // 1) A verified release event (Paid)?
   let verifiedRelease = false;
   let paidTxHash: Hex | undefined;
+  let scanFailed = false;
   try {
     for (const h of await deps.chain.findReleaseTxHashes(exp)) {
       const rcpt = await deps.chain.getReceipt(h);
@@ -749,6 +759,7 @@ export async function reconcileProcessedId(exp: ExpectedRelease, deps: EvmPayout
       }
     }
   } catch (e: any) {
+    scanFailed = true;
     deps.warn(`[EVM] release-log scan failed for ${short(exp.canonicalId)}: ${e?.message || e}`);
   }
 
@@ -771,6 +782,7 @@ export async function reconcileProcessedId(exp: ExpectedRelease, deps: EvmPayout
         }
       }
     } catch (e: any) {
+      scanFailed = true;
       deps.warn(`[EVM] timelock scan failed for ${short(exp.canonicalId)}: ${e?.message || e}`);
     }
   }
@@ -789,7 +801,34 @@ export async function reconcileProcessedId(exp: ExpectedRelease, deps: EvmPayout
   // never equal the record → Ambiguous (fail closed). Use -1n as an impossible sentinel.
   const expected = expectedTimelockFor(exp, executeAfter ?? -1n);
   const cls = classifyProcessed({ verifiedRelease, queueRecord: record, expected });
-  return { cls, paidTxHash, requestId, record, executeAfter };
+  // A partial scan must never become "no payout found": unless the payout was positively verified,
+  // an unreadable page makes the result UNKNOWN (callers retry later; nothing is persisted).
+  return { cls, paidTxHash, requestId, record, executeAfter, scanFailed: scanFailed && cls !== "Paid" };
+}
+
+/** ONE effective fulfill depth for qETH/qUSDC: never below the daemon's QV_BRIDGE_MIN_CONFIRMATIONS. */
+export function evmFulfillDepth(deps: Pick<EvmPayoutDeps, "fulfillConfirmations">, env: Record<string, string | undefined> = process.env): number {
+  return Math.max(deps.fulfillConfirmations ?? 0, daemonMinConfirmations(env));
+}
+/**
+ * Confirmation gate before ANY daemon fulfill (immediate release, reconciled payout, executed
+ * timelock). Returns true only when the payout tx is provably at the required depth. Unknown
+ * block / unreadable head ⇒ false (retry later) — never a failure, refund or re-release.
+ */
+async function payoutDeepEnough(w: NormalizedEvmWithdrawal, label: string, hash: Hex, knownBlock: bigint | undefined, deps: EvmPayoutDeps): Promise<boolean> {
+  const need = evmFulfillDepth(deps);
+  let block = knownBlock;
+  try {
+    if (block === undefined) block = (await deps.chain.getReceipt(hash))?.blockNumber;
+    if (block === undefined) { deps.log(`[${label}] ${w.tx_id}: payout ${hash} block unknown — fulfill deferred (retry later)`); return false; }
+    const head = await deps.chain.headBlock();
+    const depth = head >= block ? Number(head - block) + 1 : 0;
+    if (depth < need) { deps.log(`[${label}] ${w.tx_id}: payout ${hash} has ${depth}/${need} confirmations — fulfill deferred (no release, no failure, no refund)`); return false; }
+    return true;
+  } catch (e: any) {
+    deps.warn(`[${label}] ${w.tx_id}: confirmation-depth read failed for ${hash} (${e?.message || e}) — fulfill deferred`);
+    return false;
+  }
 }
 
 /** Apply a reconciliation result: fulfill / persist queue / alert. Never refunds, never reports failure. */
@@ -802,8 +841,13 @@ async function applyReconciliation(
 ): Promise<PayoutOutcome> {
   if (deps.observeOnly) observeRefuse("WOULD_FULFILL", `applyReconciliation reached in observation mode`, (m) => deps.log(m));
   const label = exp.asset === "Eth" ? "qETH" : "qUSDC";
+  if (r.scanFailed) {
+    deps.log(`[${label}] ${w.tx_id} (${ctx}): reconciliation scan incomplete — state UNKNOWN, retry next poll (nothing persisted, no release, no failure, no refund)`);
+    return "skipped_rpc";
+  }
   switch (r.cls) {
     case "Paid": {
+      if (!(await payoutDeepEnough(w, label, r.paidTxHash!, undefined, deps))) return "awaiting_confirmations";
       const ok = await deps.daemon.fulfill(w.tx_id, r.paidTxHash!);
       if (ok) {
         deps.log(`[${label}] ✓ Reconciled ${w.tx_id} (${ctx}): already released, fulfilled via ${r.paidTxHash}`);
@@ -981,7 +1025,8 @@ export async function processEvmWithdrawal(w: NormalizedEvmWithdrawal, deps: Evm
       deps.log(`[OBSERVE] WOULD_RELEASE ${label} ${human} → ${exp.recipient} l1TxId=${canonicalId} (burn ${w.tx_id})`);
     } else {
       const r = await reconcileProcessedId(exp, deps);
-      const intent = r.cls === "Paid" ? `WOULD_FULFILL ${w.tx_id} via ${r.paidTxHash}`
+      const intent = r.scanFailed ? `UNKNOWN ${w.tx_id}: reconciliation scan incomplete (would retry next poll)`
+        : r.cls === "Paid" ? `WOULD_FULFILL ${w.tx_id} via ${r.paidTxHash}`
         : r.cls === "Queued" ? `WOULD_TRACK_QUEUED ${w.tx_id} requestId=${r.requestId}`
         : r.cls === "CancelledRefundCandidate" ? `WOULD_FLAG_REFUND_CANDIDATE ${w.tx_id} requestId=${r.requestId} (no auto refund)`
         : `WOULD_FLAG_AMBIGUOUS ${w.tx_id}: ${r.reason ?? "unclassifiable"}`;
@@ -1040,6 +1085,9 @@ export async function processEvmWithdrawal(w: NormalizedEvmWithdrawal, deps: Evm
 
   const cls = await classifyReleaseReceipt(receipt.logs, exp, (rid) => deps.chain.timelockQueue(rid));
   if (cls.kind === "Verified") {
+    // Paid and verified. Fulfill only at the daemon-required depth; otherwise the next poll's
+    // processedL1Txs pre-check reconciles it (never released again).
+    if (!(await payoutDeepEnough(w, label, hash, receipt.blockNumber, deps))) return "awaiting_confirmations";
     const ok = await deps.daemon.fulfill(w.tx_id, hash);
     if (ok) {
       deps.log(`[${label}] ✓ Fulfilled ${w.tx_id} (${hash})`);
@@ -1255,22 +1303,33 @@ export type VaultLogFetcher = (range: { fromBlock: bigint; toBlock: bigint }) =>
  * Throws if any page fails — the caller must treat that as "unknown", never as "not released".
  */
 export interface ScanPacing { pauseMs?: number; retries?: number; backoffMs?: number; sleep?: (ms: number) => Promise<void> }
-export async function findVaultReleases(fetchLogs: VaultLogFetcher, l1TxId: string, head: bigint, lookbackBlocks: bigint, maxSpan: bigint = MAX_LOG_SCAN_SPAN, pacing: ScanPacing = {}): Promise<VaultReleaseLog[]> {
-  const from = head > lookbackBlocks ? head - lookbackBlocks : 0n;
+/**
+ * Generic RPC-safe log pagination used by EVERY reconciliation scan (XRGE vault, RougeBridge
+ * releases, timelock queued/executed/cancelled): contiguous, non-overlapping pages ≤ 2,000 blocks,
+ * newest first, paced, with bounded in-place retry. A page is never skipped; if one still cannot
+ * be read the whole scan THROWS — callers must treat that as UNKNOWN, never as "nothing found".
+ */
+export async function scanLogPagesDescending<T>(
+  fetchPage: (range: { fromBlock: bigint; toBlock: bigint }) => Promise<T[]>,
+  from: bigint, to: bigint, maxSpan: bigint = MAX_LOG_SCAN_SPAN, pacing: ScanPacing = {},
+): Promise<T[]> {
   const sleep = pacing.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const retries = pacing.retries ?? 0, backoff = pacing.backoffMs ?? 1500, pause = pacing.pauseMs ?? 0;
-  const hits: VaultReleaseLog[] = [];
-  for (const r of blockRangesDescending(from, head, maxSpan)) {
-    let logs: VaultReleaseLog[] | undefined;
+  const out: T[] = [];
+  for (const r of blockRangesDescending(from, to, maxSpan)) {
+    let page: T[] | undefined;
     for (let attempt = 0; ; attempt++) {
-      // the SAME page is retried (rate limits) — a page is never skipped, so no gap can appear
-      try { logs = await fetchLogs(r); break; }
+      try { page = await fetchPage(r); break; }
       catch (e) { if (attempt >= retries) throw e; await sleep(backoff * (attempt + 1)); }
     }
-    for (const lg of logs!) if (lg.l1TxId === l1TxId) hits.push(lg);
+    out.push(...page!);
     if (pause > 0) await sleep(pause);
   }
-  return hits;
+  return out;
+}
+export async function findVaultReleases(fetchLogs: VaultLogFetcher, l1TxId: string, head: bigint, lookbackBlocks: bigint, maxSpan: bigint = MAX_LOG_SCAN_SPAN, pacing: ScanPacing = {}): Promise<VaultReleaseLog[]> {
+  const from = head > lookbackBlocks ? head - lookbackBlocks : 0n;
+  return (await scanLogPagesDescending(fetchLogs, from, head, maxSpan, pacing)).filter((lg) => lg.l1TxId === l1TxId);
 }
 
 export interface XrgeFulfillResult { ok: boolean; status: number; error?: string }

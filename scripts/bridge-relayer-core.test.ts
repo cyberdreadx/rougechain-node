@@ -15,6 +15,8 @@ import {
   observeDeposit,
   guardWrite,
   ObserveOnlyViolation,
+  scanLogPagesDescending,
+  evmFulfillDepth,
   processXrgeWithdrawal,
   findVaultReleases,
   blockRangesDescending,
@@ -132,6 +134,11 @@ interface FakeOpts {
   autoRefund?: boolean;
   queued?: QueuedState;
   maxRetries?: number;
+  /** chain head for the confirmation-depth gate (default: far ahead ⇒ every payout is deep) */
+  head?: bigint | (() => Promise<bigint>);
+  /** block the freshly submitted release is mined in (default 1) */
+  receiptBlock?: bigint;
+  fulfillConfirmations?: number;
 }
 function fake(o: FakeOpts = {}) {
   const calls: Calls = { releaseETH: [], releaseERC20: [], fulfill: [], reportFailure: [], refund: [], alerts: [], logs: [] };
@@ -147,8 +154,9 @@ function fake(o: FakeOpts = {}) {
   const chain: EvmChainDeps = {
     releaseETH: async (to, wei, id, nonce) => { calls.releaseETH.push({ to, wei, id, nonce }); if (o.releaseThrows) throw new Error(o.releaseThrows); return TX1; },
     releaseERC20: async (token, to, amount, id, nonce) => { calls.releaseERC20.push({ token, to, amount, id, nonce }); if (o.releaseThrows) throw new Error(o.releaseThrows); return TX1; },
-    waitForReceipt: async (hash) => ({ status: o.receiptStatus ?? "success", logs: o.receiptLogs ?? [], transactionHash: hash }),
-    getReceipt: async (hash) => o.receipts?.[hash] ?? null,
+    waitForReceipt: async (hash) => ({ status: o.receiptStatus ?? "success", logs: o.receiptLogs ?? [], transactionHash: hash, blockNumber: o.receiptBlock ?? 1n }),
+    getReceipt: async (hash) => { const r = o.receipts?.[hash]; return r ? { blockNumber: 1n, ...r } : null; },
+    headBlock: async () => (typeof o.head === "function" ? o.head() : o.head ?? 1_000_000n),
     processedL1Txs: async () => (typeof o.processed === "function" ? o.processed() : !!o.processed),
     timelockQueue: readTimelock,
     findReleaseTxHashes: async () => o.releaseTxHashes ?? [],
@@ -164,6 +172,7 @@ function fake(o: FakeOpts = {}) {
     usdcAddress: USDC,
     autoRefund: o.autoRefund ?? false,
     maxRetries: o.maxRetries ?? 1,
+    fulfillConfirmations: o.fulfillConfirmations ?? 2,
     processedTxIds: processedSet,
     markProcessed: (id) => processedSet.add(id),
     queued,
@@ -421,7 +430,7 @@ describe("processEvmWithdrawal — routing + fail-closed payout (R1B §5 / R1D �
     const chainKeys = Object.keys(f.deps.chain).sort();
     expect(chainKeys).toEqual([
       "findQueuedRequestIds", "findReleaseTxHashes", "findTimelockCancelled", "findTimelockExecutedTxHashes",
-      "findTimelockQueuedEvent", "getNonce", "getReceipt", "processedL1Txs", "releaseERC20", "releaseETH",
+      "findTimelockQueuedEvent", "getNonce", "getReceipt", "headBlock", "processedL1Txs", "releaseERC20", "releaseETH",
       "resetNonce", "timelockQueue", "waitForReceipt",
     ]);
     expect(Object.keys(f.deps).some((k) => /direct/i.test(k))).toBe(false);
@@ -612,7 +621,7 @@ describe("processedL1Txs reconciliation before failure (R1D §9 / R1E §4)", () 
     const f = fake({ maxRetries: 3, releaseThrows: "timeout", processed: async () => sends > 0 });
     f.deps.chain.releaseETH = async () => { sends++; throw new Error("timeout"); };
     f.deps.chain.findReleaseTxHashes = async () => [TX1];
-    f.deps.chain.getReceipt = async () => ({ status: "success", logs: [releaseEthLog()] });
+    f.deps.chain.getReceipt = async () => ({ status: "success", logs: [releaseEthLog()], blockNumber: 1n });
     expect(await processEvmWithdrawal(ethWithdrawal(), f.deps)).toBe("reconciled_paid");
     expect(sends).toBe(1);
   });
@@ -1040,5 +1049,109 @@ describe("XRGE payout lifecycle — processed-first, confirmation depth, RPC-saf
     const got = await findVaultReleases(async (r) => { calls++; if (calls % 2 === 1) throw new Error("429"); seen.push(`${r.fromBlock}-${r.toBlock}`); return []; }, TXID, 5999n, 5999n, 2000n, { retries: 3, backoffMs: 10, pauseMs: 5, sleep: async (ms) => { slept.push(ms); } });
     expect(got).toEqual([]); expect(seen).toEqual(["4000-5999", "2000-3999", "0-1999"]); expect(slept.filter((m) => m === 5)).toHaveLength(3);
     await expect(findVaultReleases(async () => { throw new Error("429"); }, TXID, 100n, 50n, 2000n, { retries: 2, backoffMs: 1, sleep: async () => {} })).rejects.toThrow("429");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// qETH / qUSDC lifecycle hardening: daemon-required fulfill depth + RPC-safe scans
+// ─────────────────────────────────────────────────────────────────────────────
+describe("qETH/qUSDC — fulfill depth never below the daemon requirement; scans ≤ 2,000 blocks and fail closed", () => {
+  const writes = (c: Calls) => c.releaseETH.length + c.releaseERC20.length;
+  const cases = [
+    { name: "qETH", w: () => ethWithdrawal(), logs: () => [releaseEthLog()], rel: (c: Calls) => c.releaseETH },
+    { name: "qUSDC", w: () => usdcWithdrawal(), logs: () => [releaseErc20Log(), transferLog()], rel: (c: Calls) => c.releaseERC20 },
+  ];
+
+  it("effective depth = max(relayer CONFIRMATIONS, daemon QV_BRIDGE_MIN_CONFIRMATIONS [default 6])", () => {
+    expect(evmFulfillDepth({ fulfillConfirmations: 2 }, {})).toBe(6);
+    expect(evmFulfillDepth({ fulfillConfirmations: 9 }, {})).toBe(9);
+    expect(evmFulfillDepth({}, { QV_BRIDGE_MIN_CONFIRMATIONS: "12" })).toBe(12);
+  });
+
+  for (const k of cases) {
+    it(`${k.name}: payout at 2 confirmations does NOT call daemon fulfill (requirement 6); fulfillable at depth 6; never a second release`, async () => {
+      let head = 101n; // mined at 100 ⇒ depth 2
+      let processed = false;
+      const f = fake({ receiptLogs: k.logs(), receiptBlock: 100n, head: async () => head, processed: async () => processed,
+        releaseTxHashes: [TX1], receipts: { [TX1]: { status: "success", logs: k.logs(), blockNumber: 100n } }, autoRefund: true, shouldRefund: true });
+      expect(await processEvmWithdrawal(k.w(), f.deps)).toBe("awaiting_confirmations");
+      expect(k.rel(f.calls)).toHaveLength(1);
+      expect(f.calls.fulfill).toHaveLength(0); expect(f.calls.reportFailure).toHaveLength(0); expect(f.calls.refund).toHaveLength(0);
+      expect(f.processedSet.size).toBe(0); expect(f.queued.size).toBe(0);
+      // next poll: RougeBridge reports the id processed; still only depth 4 ⇒ wait, no second release
+      processed = true; head = 103n;
+      expect(await processEvmWithdrawal(k.w(), f.deps)).toBe("awaiting_confirmations");
+      expect(writes(f.calls)).toBe(1); expect(f.calls.fulfill).toHaveLength(0);
+      // depth 6 ⇒ reconciles and fulfills with the ORIGINAL payout tx; still exactly one release
+      head = 105n;
+      expect(await processEvmWithdrawal(k.w(), f.deps)).toBe("reconciled_paid");
+      expect(f.calls.fulfill).toEqual([{ txId: STORED_TX_ID, hash: TX1 }]);
+      expect(writes(f.calls)).toBe(1); expect(f.calls.reportFailure).toHaveLength(0); expect(f.calls.refund).toHaveLength(0);
+    });
+
+    it(`${k.name}: immediate release already at the required depth fulfills in the same poll`, async () => {
+      const f = fake({ receiptLogs: k.logs(), receiptBlock: 100n, head: 105n });
+      expect(await processEvmWithdrawal(k.w(), f.deps)).toBe("fulfilled");
+      expect(f.calls.fulfill).toEqual([{ txId: STORED_TX_ID, hash: TX1 }]);
+    });
+
+    it(`${k.name}: already-processed payout waits for confirmations, then reconciles — never released`, async () => {
+      let head = 100n;
+      const f = fake({ processed: true, head: async () => head, releaseTxHashes: [TX1], receipts: { [TX1]: { status: "success", logs: k.logs(), blockNumber: 100n } }, autoRefund: true, shouldRefund: true });
+      expect(await processEvmWithdrawal(k.w(), f.deps)).toBe("awaiting_confirmations");
+      head = 105n;
+      expect(await processEvmWithdrawal(k.w(), f.deps)).toBe("reconciled_paid");
+      expect(writes(f.calls)).toBe(0); expect(f.calls.fulfill).toHaveLength(1); expect(f.calls.reportFailure).toHaveLength(0); expect(f.calls.refund).toHaveLength(0);
+    });
+  }
+
+  it("unknown payout block or unreadable head ⇒ fulfill deferred (retry later), never failure/refund", async () => {
+    const noBlock = fake({ processed: true, releaseTxHashes: [TX1], receipts: { [TX1]: { status: "success", logs: [releaseEthLog()], blockNumber: undefined } as any } });
+    (noBlock.deps.chain as any).getReceipt = async () => ({ status: "success", logs: [releaseEthLog()] });
+    expect(await processEvmWithdrawal(ethWithdrawal(), noBlock.deps)).toBe("awaiting_confirmations");
+    const headDown = fake({ receiptLogs: [releaseEthLog()], receiptBlock: 100n, head: async () => { throw new Error("rpc"); } });
+    expect(await processEvmWithdrawal(ethWithdrawal(), headDown.deps)).toBe("awaiting_confirmations");
+    for (const f of [noBlock, headDown]) { expect(f.calls.fulfill).toHaveLength(0); expect(f.calls.reportFailure).toHaveLength(0); expect(f.calls.refund).toHaveLength(0); }
+  });
+
+  it("executed timelock payout obeys the same depth", async () => {
+    const live = fake({ receiptLogs: [queuedLog(42n, 1000n)], timelock: { "42": ethRecord() } });
+    expect(await processEvmWithdrawal(ethWithdrawal(), live.deps)).toBe("queued");
+    let head = 501n; // execution mined at 500 ⇒ depth 2
+    const exec = fake({ queued: live.queued, head: async () => head, timelock: { "42": ethRecord({ executed: true }) }, executedTxHashes: [TX2],
+      receipts: { [TX2]: { status: "success", logs: [releaseEthLog()], blockNumber: 500n } }, autoRefund: true, shouldRefund: true });
+    await pollQueuedWithdrawals(exec.deps);
+    expect(exec.calls.fulfill).toHaveLength(0); expect(exec.queued.get(queuedKey(CANON))?.status).toBe("queued"); // untouched while waiting
+    head = 505n;
+    await pollQueuedWithdrawals(exec.deps);
+    expect(exec.calls.fulfill).toEqual([{ txId: STORED_TX_ID, hash: TX2 }]);
+    expect(exec.queued.has(queuedKey(CANON))).toBe(false);
+    expect(writes(exec.calls)).toBe(0); expect(exec.calls.reportFailure).toHaveLength(0); expect(exec.calls.refund).toHaveLength(0);
+  });
+
+  it("a failed/rate-limited reconciliation scan is UNKNOWN: nothing persisted, no ambiguous record, no release/failure/refund", async () => {
+    const f = fake({ processed: true, autoRefund: true, shouldRefund: true });
+    (f.deps.chain as any).findReleaseTxHashes = async () => { throw new Error("429 Too Many Requests"); };
+    expect(await processEvmWithdrawal(ethWithdrawal(), f.deps)).toBe("skipped_rpc");
+    expect(f.queued.size).toBe(0); expect(f.saves()).toBe(0);
+    expect(f.calls.alerts.filter((a) => a.startsWith("ambiguous"))).toHaveLength(0);
+    expect(writes(f.calls)).toBe(0); expect(f.calls.fulfill).toHaveLength(0); expect(f.calls.reportFailure).toHaveLength(0); expect(f.calls.refund).toHaveLength(0);
+    // a positively verified payout is still Paid even if a LATER scan page would have failed
+    const r = await reconcileProcessedId(expectedReleaseFor(ethWithdrawal(), "Eth", BRIDGE, USDC), fake({ processed: true, releaseTxHashes: [TX1], receipts: { [TX1]: { status: "success", logs: [releaseEthLog()] } } }).deps);
+    expect(r.cls).toBe("Paid"); expect(r.scanFailed).toBe(false);
+  });
+
+  it("generic paginator: no query > 2,000 blocks, contiguous/non-overlapping, retried in place, exhaustion throws", async () => {
+    const asked: Array<[bigint, bigint]> = [];
+    const out = await scanLogPagesDescending(async (r) => { asked.push([r.fromBlock, r.toBlock]); return [Number(r.toBlock)]; }, 51_440_000n, 51_500_000n);
+    expect(asked).toHaveLength(31); expect(out).toHaveLength(31);
+    for (const [a, b] of asked) expect(b - a + 1n <= 2000n).toBe(true);
+    expect(asked[0][1]).toBe(51_500_000n); expect(asked[asked.length - 1][0]).toBe(51_440_000n);
+    for (let i = 1; i < asked.length; i++) expect(asked[i][1]).toBe(asked[i - 1][0] - 1n);
+    let n = 0; const pages: string[] = [];
+    await scanLogPagesDescending(async (r) => { if (++n % 2 === 1) throw new Error("429"); pages.push(`${r.fromBlock}-${r.toBlock}`); return []; }, 0n, 3999n, 2000n, { retries: 2, backoffMs: 1, sleep: async () => {} });
+    expect(pages).toEqual(["2000-3999", "0-1999"]); // each page retried in place, none skipped
+    await expect(scanLogPagesDescending(async () => { throw new Error("rate limited"); }, 0n, 10n, 2000n, { retries: 3, backoffMs: 1, sleep: async () => {} })).rejects.toThrow("rate limited");
+    expect(() => scanLogPagesDescending(async () => [], 0n, 10n, 5000n)).rejects.toThrow();
   });
 });
