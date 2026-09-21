@@ -9,7 +9,7 @@ The `RougeBridge.sol` contract is a multi-asset bridge contract deployed on Base
 - **Timelock** — Large withdrawals require a delay period before execution
 - **Guardian role** — Separate from owner; can pause but cannot withdraw
 - **Replay protection** — Processed L1 transaction IDs are tracked to prevent double-releases
-- **Owner = multisig** — Deploy with a Gnosis Safe as owner for production
+- **Ownership** — The RougeBridge owner is currently a single operator key, not a multisig. Protections include the pause/guardian role, the 24-hour timelock on large releases, and daemon-side controls. Migrating ownership to multisig control is a planned security improvement.
 
 ## Key Functions
 
@@ -72,9 +72,4 @@ The XRGE bridge is live on **Base mainnet** (chain ID 8453) as `BridgeVaultV2` a
 
 ## Daemon Withdraw Guardrails
 
-Independent of the on-chain contract, the RougeChain daemon enforces its own withdraw
-guardrails via environment variables:
-
-- `QV_BRIDGE_WITHDRAW_PAUSED` — emergency kill-switch; blocks all withdrawals when `true`
-- `QV_BRIDGE_MAX_WITHDRAW_UNITS` — per-transaction withdrawal cap (0/unset = no cap)
-- `QV_BRIDGE_MIN_CONFIRMATIONS` — required Base confirmation depth for deposit claims (default 6)
+Independent of the on-chain contracts, the RougeChain daemon enforces its own withdraw controls (an operator pause, a per-transaction cap, and a required Base confirmation depth for deposit claims, default 6). Operator configuration is documented in the repository's [`scripts/README.md`](https://github.com/cyberdreadx/rougechain-node/blob/main/scripts/README.md).
