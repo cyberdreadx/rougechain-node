@@ -1129,6 +1129,8 @@ class MessengerClient {
     signingPublicKey: string;
     encryptionPublicKey: string;
     discoverable?: boolean;
+    /** Optional base64 data-URI avatar shared via the directory so peers can render it. */
+    avatarUrl?: string;
   }): Promise<ApiResponse> {
     const signed = signRequest(wallet, {
       id: opts.id,
@@ -1136,6 +1138,7 @@ class MessengerClient {
       signingPublicKey: opts.signingPublicKey,
       encryptionPublicKey: opts.encryptionPublicKey,
       discoverable: opts.discoverable ?? true,
+      ...(opts.avatarUrl ? { avatarUrl: opts.avatarUrl } : {}),
     });
     return this.rc.submitTx("/v2/messenger/wallets/register", signed);
   }
@@ -1160,6 +1163,27 @@ class MessengerClient {
       isGroup: opts.isGroup ?? false,
     });
     return this.rc.submitTx("/v2/messenger/conversations", signed);
+  }
+
+  /** Rename a group conversation (or clear its name by passing ""). Any participant may rename. */
+  async updateConversation(wallet: WalletKeys, conversationId: string, opts: { name?: string } = {}): Promise<ApiResponse> {
+    const signed = signRequest(wallet, {
+      conversationId,
+      name: opts.name,
+    });
+    return this.rc.submitTx("/v2/messenger/conversations/update", signed);
+  }
+
+  /**
+   * Add participants to an existing conversation. Any participant may add. Future messages
+   * encrypt to the new members automatically; they don't receive prior history.
+   */
+  async addParticipants(wallet: WalletKeys, conversationId: string, participantIds: string[]): Promise<ApiResponse> {
+    const signed = signRequest(wallet, {
+      conversationId,
+      participantIds,
+    });
+    return this.rc.submitTx("/v2/messenger/conversations/participants", signed);
   }
 
   async getMessages(wallet: WalletKeys, conversationId: string): Promise<MessengerMessage[]> {
@@ -1430,6 +1454,15 @@ class SocialClient {
   async getUserFollowing(pubkey: string): Promise<string[]> {
     const data = await this.rc.get<{ artists: string[] }>(`/social/user/${encodeURIComponent(pubkey)}/following`);
     return data.artists ?? [];
+  }
+
+  /** Followers of a pubkey, paginated (default 50, max 200 server-side). */
+  async getUserFollowers(pubkey: string, limit = 50, offset = 0): Promise<string[]> {
+    const q = `?limit=${limit}&offset=${offset}`;
+    const data = await this.rc.get<{ followers: string[] }>(
+      `/social/user/${encodeURIComponent(pubkey)}/followers${q}`
+    );
+    return data.followers ?? [];
   }
 
   // ── Posts ──────────────────────────────────────────────

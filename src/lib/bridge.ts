@@ -137,6 +137,10 @@ export interface BridgeConfig {
   /** undefined = daemon did not report a recognized Base chain → fail closed. */
   chainId?: number;
   supportedTokens?: string[];
+  /** Bitcoin custody address deposits are sent to (present when the BTC bridge is configured). */
+  btcCustodyAddress?: string;
+  /** Which Bitcoin network the custody address lives on — drives mempool.space links. */
+  btcNetwork?: "mainnet" | "testnet";
 }
 
 /**
@@ -163,6 +167,8 @@ export async function getBridgeConfig(): Promise<BridgeConfig> {
       custodyAddress: data.custodyAddress,
       chainId: isKnownBaseChain(rawChainId) ? rawChainId : undefined,
       supportedTokens: data.supportedTokens,
+      btcCustodyAddress: typeof data.btcCustodyAddress === "string" ? data.btcCustodyAddress : undefined,
+      btcNetwork: data.btcNetwork === "mainnet" || data.btcNetwork === "testnet" ? data.btcNetwork : undefined,
     };
   } catch {
     return { enabled: false };
@@ -211,7 +217,13 @@ export async function bridgeWithdraw(params: BridgeWithdrawParams): Promise<Brid
   if (!baseUrl) {
     return { success: false, error: "No API configured" };
   }
-  const evmAddr = params.evmAddress.startsWith("0x") ? params.evmAddress : `0x${params.evmAddress}`;
+  // qBTC withdrawals put a Bitcoin address in the evmAddress field (the daemon
+  // stores it generically) — it must be sent verbatim, never 0x-prefixed like a
+  // real EVM address. Only normalize for actual EVM-target tokens.
+  const isBtc = params.tokenSymbol === "qBTC";
+  const evmAddr = isBtc
+    ? params.evmAddress
+    : (params.evmAddress.startsWith("0x") ? params.evmAddress : `0x${params.evmAddress}`);
 
   const body: Record<string, unknown> = {
     fromPublicKey: params.fromPublicKey,
@@ -270,6 +282,84 @@ export async function claimBridgeDeposit(params: BridgeClaimParams): Promise<Bri
     txId: data.txId,
     error: data.error,
   };
+}
+
+// ── BTC Bridge (Bitcoin ↔ RougeChain via OP_RETURN deposits) ────
+
+export interface BtcBridgeClaimParams {
+  btcTxid: string;
+  recipientRougechainPubkey?: string;
+}
+
+/**
+ * Claim qBTC on RougeChain after sending BTC (with an OP_RETURN binding the
+ * recipient) to the custody address. Idempotent — an already-claimed deposit
+ * returns success. Verification needs Bitcoin confirmations, so callers should
+ * POLL this like the USDC/ETH claim flow.
+ */
+export async function claimBtcBridgeDeposit(params: BtcBridgeClaimParams): Promise<BridgeClaimResult> {
+  const baseUrl = getCoreApiBaseUrl();
+  if (!baseUrl) {
+    return { success: false, error: "No API configured" };
+  }
+  const res = await fetch(`${baseUrl}/bridge/btc/claim`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
+    body: JSON.stringify({
+      btcTxid: params.btcTxid,
+      ...(params.recipientRougechainPubkey ? { recipientRougechainPubkey: params.recipientRougechainPubkey } : {}),
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  return {
+    success: data.success === true,
+    txId: data.txId,
+    error: data.error,
+  };
+}
+
+export interface BtcDepositAddressResult {
+  success: boolean;
+  /** A unique bc1… Bitcoin address bound to the recipient (stable across calls). */
+  address?: string;
+  error?: string;
+}
+
+/**
+ * Request a unique Bitcoin deposit address bound to the recipient's rouge1…
+ * address. The daemon returns the same address for the same recipient, so BTC
+ * sent to it from ANY wallet (no OP_RETURN needed) is credited as qBTC once it
+ * confirms. If the daemon's address pool is still warming up it returns
+ * success:false with a "pool" error — callers should retry shortly.
+ */
+export async function getBtcDepositAddress(recipient: string): Promise<BtcDepositAddressResult> {
+  const baseUrl = getCoreApiBaseUrl();
+  if (!baseUrl) {
+    return { success: false, error: "No API configured" };
+  }
+  try {
+    const res = await fetch(`${baseUrl}/bridge/btc/deposit-address`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
+      body: JSON.stringify({ recipient }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return {
+      success: data.success === true,
+      address: typeof data.address === "string" ? data.address : undefined,
+      error: data.error,
+    };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "Failed to fetch deposit address" };
+  }
+}
+
+/** mempool.space tx link for a BTC payout/deposit txid (testnet-aware). */
+export function getMempoolTxUrl(txid: string, network?: "mainnet" | "testnet"): string {
+  const base = network === "testnet"
+    ? "https://mempool.space/testnet/tx/"
+    : "https://mempool.space/tx/";
+  return `${base}${txid}`;
 }
 
 // ── XRGE Bridge (Base ↔ RougeChain via BridgeVault) ─────────────
@@ -425,7 +515,7 @@ export async function getBridgeHistory(pubkey: string): Promise<BridgeHistoryEnt
     const data = await res.json().catch(() => ({ transactions: [] }));
     const txs: any[] = data.transactions || [];
     
-    const bridgeSymbols = ["qETH", "qUSDC", "XRGE"];
+    const bridgeSymbols = ["qETH", "qUSDC", "XRGE", "qBTC"];
     
     return txs
       .filter((tx: any) => {
@@ -470,6 +560,8 @@ export interface PendingWithdrawal {
   attempts: number;
   lastError?: string;
   createdAt: number;
+  /** For qBTC releases: the on-chain Bitcoin payout txid once fulfilled. */
+  payoutTxid?: string;
 }
 
 function normalizePendingWithdrawal(w: any): PendingWithdrawal {
@@ -483,6 +575,7 @@ function normalizePendingWithdrawal(w: any): PendingWithdrawal {
     attempts: w.attempts ?? 0,
     lastError: w.lastError ?? w.last_error ?? undefined,
     createdAt: w.createdAt ?? w.created_at ?? 0,
+    payoutTxid: w.payoutTxid ?? w.payout_txid ?? w.btcTxid ?? w.btc_txid ?? undefined,
   };
 }
 

@@ -1,27 +1,36 @@
 #!/usr/bin/env npx tsx
 /**
- * RougeChain Bridge Relayer v2 — Production-Hardened
+ * RougeChain Bridge Relayer v2 — Production-Hardened (R1B/R1D/R1E)
  *
  * Features:
  *   ✓ Multi-chain support (Base Mainnet + Sepolia)
  *   ✓ Nonce management (manual tracking, no stuck txs)
- *   ✓ Retry with exponential backoff (3 attempts)
- *   ✓ Gas estimation (no hardcoded gas limits)
- *   ✓ Double-spend protection (processed tx set)
- *   ✓ Graceful shutdown (SIGTERM/SIGINT)
- *   ✓ Health logging with uptime and stats
- *   ✓ Configurable confirmation count
+ *   ✓ Explicit asset routing: qETH → RougeBridge.releaseETH, qUSDC → RougeBridge.releaseERC20,
+ *     anything else → NO payout (no default ETH route)
+ *   ✓ RougeBridge REQUIRED: qETH/qUSDC payouts go ONLY through RougeBridge.releaseETH/releaseERC20.
+ *     There is no direct wallet send path and no env toggle for one; a missing/invalid
+ *     ROUGE_BRIDGE_ADDRESS fails preflight and the relayer refuses to start.
+ *   ✓ Receipt verification against BridgeReleaseETH/ERC20 (+ USDC Transfer) events
+ *   ✓ Timelock lifecycle: queued withdrawals persisted, never re-released, fulfilled from the
+ *     executeTimelock tx; cancellations surfaced as CancelledRefundCandidate (no auto refund)
+ *   ✓ processedL1Txs reconciliation before any failure/refund; refunds fail closed
+ *   ✓ Production preflight (chain id, code, owner, paused, USDC support) — refuses to start
+ *   ✓ Double-spend protection (processed tx set), graceful shutdown, health logging
  *
  * Env:
- *   CORE_API_URL               - RougeChain API (e.g. https://testnet.rougechain.io)
- *   BRIDGE_CUSTODY_PRIVATE_KEY - Private key (0x-prefixed hex)
- *   BASE_RPC_URL               - RPC URL (auto-set if BASE_CHAIN is specified)
- *   BASE_CHAIN                 - "mainnet" or "sepolia" (default: sepolia)
- *   XRGE_BRIDGE_VAULT          - BridgeVault contract address
- *   BRIDGE_RELAYER_SECRET      - Secret for fulfillment auth
- *   POLL_INTERVAL_MS           - Poll interval (default: 5000)
- *   CONFIRMATIONS              - Blocks to wait for tx confirmation (default: 2)
- *   MAX_RETRIES                - Max retries per withdrawal (default: 3)
+ *   CORE_API_URL                 - RougeChain API (e.g. https://testnet.rougechain.io)
+ *   BRIDGE_CUSTODY_PRIVATE_KEY   - Private key (0x-prefixed hex) — RougeBridge owner / signer
+ *   BASE_RPC_URL                 - RPC URL (auto-set if BASE_CHAIN is specified)
+ *   BASE_CHAIN                   - "mainnet" or "sepolia" (default: sepolia)
+ *   ROUGE_BRIDGE_ADDRESS         - RougeBridge contract (REQUIRED — startup refuses without a valid one)
+ *   ROUGE_BRIDGE_OWNER           - Optional: expected RougeBridge owner if not the relayer key
+ *   BRIDGE_USDC_ADDRESS          - Optional: must equal the built-in per-chain Base USDC address
+ *   XRGE_BRIDGE_VAULT            - BridgeVault contract address
+ *   BRIDGE_RELAYER_SECRET        - Secret for fulfillment auth
+ *   POLL_INTERVAL_MS             - Poll interval (default: 5000)
+ *   CONFIRMATIONS                - Blocks to wait for tx confirmation (default: 2)
+ *   MAX_RETRIES                  - Max release submission attempts per poll (default: 3)
+ *   AUTO_REFUND                  - Default FALSE. Even when true, refunds obey the fail-closed gate.
  */
 
 import {
@@ -31,14 +40,51 @@ import {
   parseAbi,
   parseAbiItem,
   getContract,
-  keccak256,
-  toBytes,
   type Chain,
+  type Hex,
   type PublicClient,
-  type WalletClient,
 } from "viem";
 import { base, baseSepolia } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
+import {
+  bridgeHealthAllowsPayouts,
+  observeOnlyEnabled,
+  observeRefuse,
+  observeGuardedDeps,
+  observeXrgeWithdrawal,
+  observeDeposit,
+  processXrgeWithdrawal,
+  findVaultReleases,
+  scanLogPagesDescending,
+  evmFulfillDepth,
+  depositWatcherSafeHead,
+  xrgeFulfillConfirmations,
+  type XrgeFulfillResult,
+  type VaultReleaseLog,
+  ROUGE_BRIDGE_ABI,
+  BRIDGE_RELEASE_ETH_EVENT,
+  BRIDGE_RELEASE_ERC20_EVENT,
+  TIMELOCK_QUEUED_EVENT,
+  TIMELOCK_EXECUTED_EVENT,
+  TIMELOCK_CANCELLED_EVENT,
+  normalizeEthWithdrawal,
+  parseTimelockQueueTuple,
+  loadQueuedState,
+  saveQueuedState,
+  atomicWriteFile,
+  autoRefundEnabled,
+  preflight,
+  processEvmWithdrawal,
+  pollQueuedWithdrawals,
+  sameHex,
+  isEvmAddress,
+  type EthWithdrawal,
+  type EvmPayoutDeps,
+  type ExpectedRelease,
+  type RawLog,
+  type ReceiptLike,
+  type TimelockRecord,
+} from "./bridge-relayer-core";
 
 // ── Config ──────────────────────────────────────────────────────
 
@@ -54,10 +100,27 @@ const VAULT_ADDRESS = process.env.XRGE_BRIDGE_VAULT;
 const RELAYER_SECRET = process.env.BRIDGE_RELAYER_SECRET || "";
 const CONFIRMATIONS = parseInt(process.env.CONFIRMATIONS || "2", 10);
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || "3", 10);
+// XRGE fulfill depth = max(CONFIRMATIONS, daemon QV_BRIDGE_MIN_CONFIRMATIONS [default 6]) — ONE value,
+// never below what the daemon's fulfill endpoint demands.
+const XRGE_FULFILL_CONFIRMATIONS = xrgeFulfillConfirmations(CONFIRMATIONS);
+// How far back the XRGE BridgeRelease reconciliation scan looks (paged ≤ 2,000 blocks).
+const XRGE_RELEASE_SCAN_BLOCKS = BigInt(process.env.XRGE_RELEASE_SCAN_BLOCKS || "100000");
+// Lookback for RougeBridge release/timelock reconciliation scans (paged ≤ 2,000 blocks, paced, retried).
+const BRIDGE_LOG_SCAN_BLOCKS = BigInt(process.env.BRIDGE_LOG_SCAN_BLOCKS || "60000");
+const LOG_SCAN_PACING = { pauseMs: 200, retries: 5, backoffMs: 2000 };
 // Optional webhook (e.g. Slack/Discord incoming webhook) for failure alerts.
 const ALERT_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL || "";
 // Auto-refund a withdrawal once the daemon reports it has crossed the failure threshold.
-const AUTO_REFUND = (process.env.AUTO_REFUND || "true").toLowerCase() !== "false";
+// DEFAULT FALSE (R1D §10). Even when enabled, qETH/qUSDC refunds go through the fail-closed
+// processedL1Txs gate (refundDecision) and XRGE through the BridgeVault processed guard.
+const AUTO_REFUND = autoRefundEnabled();
+// OBSERVATION MODE (default FALSE): read-only preflight/health/reconciliation/deposit scan + logging.
+// Every write path below refuses BEFORE any side effect when this is true.
+const OBSERVE_ONLY = observeOnlyEnabled();
+// Optional expected RougeBridge owner (defaults to the relayer/custody account).
+const ROUGE_BRIDGE_OWNER = process.env.ROUGE_BRIDGE_OWNER;
+// Optional operator-supplied USDC address — must equal CHAIN_CONFIG.usdc (preflight).
+const BRIDGE_USDC_ADDRESS = process.env.BRIDGE_USDC_ADDRESS;
 // Watch Base for deposit events and auto-claim them on L1 (no browser claim needed).
 const DEPOSIT_WATCHER = (process.env.DEPOSIT_WATCHER || "true").toLowerCase() !== "false";
 // Optional starting block for the deposit scan (defaults to current block on first run).
@@ -88,6 +151,8 @@ import { join } from "path";
 
 const PROCESSED_FILE = join(process.env.BRIDGE_DATA_DIR || ".", ".bridge-processed-txs.json");
 const DEPOSIT_STATE_FILE = join(process.env.BRIDGE_DATA_DIR || ".", ".bridge-deposit-watcher.json");
+// R1E §3: RougeBridge timelock-queued withdrawals, keyed by canonical l1TxId. Survives restart.
+const QUEUED_FILE = join(process.env.BRIDGE_DATA_DIR || ".", ".bridge-queued-txs.json");
 
 function loadProcessedTxIds(): Set<string> {
   try {
@@ -102,8 +167,9 @@ function loadProcessedTxIds(): Set<string> {
 }
 
 function saveProcessedTxIds(ids: Set<string>): void {
+  if (OBSERVE_ONLY) { console.log(`[OBSERVE] WOULD_PERSIST processed-tx ids (${ids.size}) — skipped`); return; }
   try {
-    writeFileSync(PROCESSED_FILE, JSON.stringify([...ids]), "utf-8");
+    atomicWriteFile(PROCESSED_FILE, JSON.stringify([...ids]));
   } catch (e: any) {
     console.warn(`[relayer] Could not persist processed tx IDs: ${e.message}`);
   }
@@ -140,6 +206,7 @@ function loadDepositState(): DepositWatcher {
 }
 
 function saveDepositState(w: DepositWatcher): void {
+  if (OBSERVE_ONLY) { console.log(`[OBSERVE] WOULD_PERSIST deposit-watcher state — skipped`); return; }
   try {
     const data: DepositWatcherState = {
       lastBlock: w.lastBlock !== null ? w.lastBlock.toString() : null,
@@ -155,6 +222,7 @@ function saveDepositState(w: DepositWatcher): void {
 // ── State ───────────────────────────────────────────────────────
 
 const processedTxIds = loadProcessedTxIds();  // Persisted to disk across restarts
+const queuedTxs = loadQueuedState(QUEUED_FILE); // RougeBridge timelock-queued withdrawals (R1E)
 const inFlightTxIds = new Set<string>();   // Currently being processed
 const depositWatcher = loadDepositState(); // Deposit scan cursor + claim dedup
 const nonceState = new Map<string, number>(); // per-signer managed nonce (address→next)
@@ -169,6 +237,9 @@ const stats = {
   xrgeFailed: 0,
   ethRefunded: 0,
   xrgeRefunded: 0,
+  ethQueued: 0,
+  ethAmbiguous: 0,
+  ethSkipped: 0,
   depositsClaimed: 0,
   depositsFailed: 0,
   alertsSent: 0,
@@ -193,11 +264,7 @@ const BRIDGE_RELEASE_EVENT = parseAbiItem(
   "event BridgeRelease(address indexed recipient, uint256 amount, string l1TxId)"
 );
 
-const ROUGE_BRIDGE_ABI = parseAbi([
-  "function releaseETH(address to, uint256 amount, bytes32 l1TxId) external",
-  "function releaseERC20(address token, address to, uint256 amount, bytes32 l1TxId) external",
-]);
-
+// RougeBridge ABI (release fns, getters, events) lives in bridge-relayer-core.ts.
 const ROUGE_BRIDGE_ADDRESS = process.env.ROUGE_BRIDGE_ADDRESS;
 
 // Deposit events watched on Base to auto-claim on L1.
@@ -213,91 +280,25 @@ const VAULT_DEPOSIT_EVENT = parseAbiItem(
 
 // ── Helpers ─────────────────────────────────────────────────────
 
-function unitsToWei(amountUnits: number): bigint {
-  return BigInt(amountUnits) * 10n ** 12n;
-}
-
 function xrgeToWei(amount: number): bigint {
   return BigInt(amount) * 10n ** 18n;
 }
 
-/** Scan recent vault BridgeRelease events for the tx that released a given L1 tx id. */
-async function findReleaseTxForL1(
-  publicClient: any,
-  vaultAddress: `0x${string}`,
-  l1TxId: string,
-): Promise<`0x${string}` | null> {
-  try {
-    const latest = await publicClient.getBlockNumber();
-    const WINDOW = 5000n;
-    for (let i = 0n; i < 12n; i++) {
-      const toBlock = latest - i * WINDOW;
-      if (toBlock < 0n) break;
-      const fromBlock = toBlock > WINDOW ? toBlock - WINDOW + 1n : 0n;
-      const logs = await publicClient.getLogs({
-        address: vaultAddress,
-        event: BRIDGE_RELEASE_EVENT,
-        fromBlock,
-        toBlock,
-      });
-      for (const lg of logs) {
-        if ((lg as any).args?.l1TxId === l1TxId) return lg.transactionHash as `0x${string}`;
-      }
-      if (fromBlock === 0n) break;
-    }
-  } catch (e: any) {
-    console.warn(`[XRGE] release-log scan failed for ${l1TxId}: ${e.message}`);
-  }
-  return null;
+/** Every vault BridgeRelease for `l1TxId` within XRGE_RELEASE_SCAN_BLOCKS, paged ≤ 2,000 blocks (throws on RPC failure). */
+async function findVaultReleasesForL1(publicClient: any, vaultAddress: `0x${string}`, l1TxId: string): Promise<VaultReleaseLog[]> {
+  const head: bigint = await publicClient.getBlockNumber();
+  return findVaultReleases(async ({ fromBlock, toBlock }) => {
+    const logs = await publicClient.getLogs({ address: vaultAddress, event: BRIDGE_RELEASE_EVENT, fromBlock, toBlock });
+    return logs.map((lg: any) => ({
+      txHash: lg.transactionHash as string, blockNumber: lg.blockNumber as bigint,
+      recipient: String(lg.args?.recipient ?? lg.args?.to ?? ""), amount: BigInt(lg.args?.amount ?? 0), l1TxId: String(lg.args?.l1TxId ?? ""),
+    }));
+  }, l1TxId, head, XRGE_RELEASE_SCAN_BLOCKS, undefined, LOG_SCAN_PACING); // paced + retried: public RPCs rate-limit bursts
 }
-
-/**
- * On-chain truth check + reconciliation for XRGE releases. The vault's release() is
- * idempotent (reverts AlreadyProcessed on a duplicate), so a release that mined but whose
- * receipt we lost looks like a "failure" to the naive path — which previously cascaded into
- * an auto-refund and paid the user on BOTH chains. Before EVER treating an XRGE release as
- * failed, ask the vault whether this l1TxId is already processed; if so, fulfill it against
- * the real BridgeRelease tx and return true so the caller skips failure/refund entirely.
- * Returns false when the release genuinely did not happen (safe to fail/refund) or when the
- * check itself failed (the daemon refund guard is the authoritative backstop either way).
- */
-async function reconcileXrgeIfReleased(
-  publicClient: any,
-  vaultAddress: `0x${string}`,
-  w: { tx_id: string; evm_address: string; amount: number },
-): Promise<boolean> {
-  let processed = false;
-  try {
-    processed = (await publicClient.readContract({
-      address: vaultAddress,
-      abi: BRIDGE_VAULT_ABI,
-      functionName: "processedL1Txs",
-      args: [w.tx_id],
-    })) as boolean;
-  } catch (e: any) {
-    console.warn(`[XRGE] reconcile read failed for ${w.tx_id}: ${e.message}`);
-    return false; // cannot confirm — let normal handling proceed; daemon guard still protects
-  }
-  if (!processed) return false;
-
-  const relTx = await findReleaseTxForL1(publicClient, vaultAddress, w.tx_id);
-  if (relTx) {
-    const ok = await fulfillXrgeWithdrawal(w.tx_id, relTx);
-    if (ok) {
-      console.log(`[XRGE] ✓ Reconciled ${w.tx_id}: already released, fulfilled via ${relTx}`);
-      processedTxIds.add(w.tx_id);
-      saveProcessedTxIds(processedTxIds);
-      stats.xrgeFulfilled++;
-    } else {
-      console.warn(`[XRGE] ✗ Reconcile: fulfill API rejected ${w.tx_id} (${relTx})`);
-    }
-  } else {
-    await alert(
-      `reconcile:${w.tx_id}`,
-      `XRGE ${w.tx_id.slice(0, 16)}… is processed on-chain but no BridgeRelease found in scan — MANUAL REVIEW, NOT refunding`,
-    );
-  }
-  return true; // handled — caller must NOT report failure or refund
+/** Observation-mode helper: first release tx hash for an id, or null (scan errors → null + warn). */
+async function findReleaseTxForL1(publicClient: any, vaultAddress: `0x${string}`, l1TxId: string): Promise<`0x${string}` | null> {
+  try { const hits = await findVaultReleasesForL1(publicClient, vaultAddress, l1TxId); return hits.length ? (hits[0].txHash as `0x${string}`) : null; }
+  catch (e: any) { console.warn(`[XRGE] release-log scan failed for ${l1TxId}: ${e.message}`); return null; }
 }
 
 function uptimeStr(): string {
@@ -355,14 +356,7 @@ function resetNonce(address?: `0x${string}`) {
 
 // ── API calls ───────────────────────────────────────────────────
 
-interface EthWithdrawal {
-  txId?: string;
-  tx_id?: string;
-  evmAddress?: string;
-  evm_address?: string;
-  amountUnits?: number;
-  amount_units?: number;
-}
+// EthWithdrawal / normalizeEthWithdrawal (carrying token_symbol) live in bridge-relayer-core.ts.
 
 interface XrgeWithdrawal {
   txId?: string;
@@ -370,15 +364,6 @@ interface XrgeWithdrawal {
   evmAddress?: string;
   evm_address?: string;
   amount: number;
-}
-
-/** Normalize a withdrawal from either camelCase or snake_case API response */
-function normalizeEthWithdrawal(w: EthWithdrawal): { tx_id: string; evm_address: string; amount_units: number } {
-  return {
-    tx_id: w.txId || w.tx_id || "",
-    evm_address: w.evmAddress || w.evm_address || "",
-    amount_units: w.amountUnits || w.amount_units || 0,
-  };
 }
 
 function normalizeXrgeWithdrawal(w: XrgeWithdrawal): { tx_id: string; evm_address: string; amount: number } {
@@ -394,22 +379,23 @@ async function fetchEthWithdrawals(): Promise<EthWithdrawal[]> {
     signal: AbortSignal.timeout(10000),
   });
   if (!res.ok) throw new Error(`API error ${res.status}`);
-  const data = await res.json();
+  const data: any = await res.json();
   return data.withdrawals || [];
 }
 
 async function fulfillEthWithdrawal(txId: string, evmTxHash: string): Promise<boolean> {
+  if (OBSERVE_ONLY) observeRefuse("WOULD_FULFILL", `EVM ${txId} via ${evmTxHash}`);
   const res = await fetch(`${CORE_API_URL}/api/bridge/withdrawals/${encodeURIComponent(txId)}`, {
     method: "DELETE",
-    headers: {
-      "x-bridge-relayer-secret": RELAYER_SECRET,
-      "Content-Type": "application/json",
-    },
+    headers: { "x-bridge-relayer-secret": RELAYER_SECRET, "Content-Type": "application/json" },
     body: JSON.stringify({ evmTxHash }),
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(20000),
   });
-  const data = await res.json().catch(() => ({}));
-  return data.success === true;
+  const text = await res.text();
+  let data: any = {}; try { data = JSON.parse(text); } catch { /* non-JSON body */ }
+  if (data.success === true) return true;
+  console.warn(`[EVM] daemon fulfill rejected ${txId} via ${evmTxHash}: HTTP ${res.status} ${String(data.error ?? text ?? "").slice(0, 300)}`);
+  return false;
 }
 
 async function fetchXrgeWithdrawals(): Promise<XrgeWithdrawal[]> {
@@ -418,28 +404,31 @@ async function fetchXrgeWithdrawals(): Promise<XrgeWithdrawal[]> {
       signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return [];
-    const data = await res.json();
+    const data: any = await res.json();
     return data.withdrawals || [];
   } catch {
     return [];
   }
 }
 
-async function fulfillXrgeWithdrawal(txId: string, evmTxHash: string): Promise<boolean> {
+async function fulfillXrgeWithdrawal(txId: string, evmTxHash: string): Promise<XrgeFulfillResult> {
+  if (OBSERVE_ONLY) observeRefuse("WOULD_FULFILL", `XRGE ${txId} via ${evmTxHash}`);
   try {
     const res = await fetch(`${CORE_API_URL}/api/bridge/xrge/withdrawals/${encodeURIComponent(txId)}`, {
       method: "DELETE",
-      headers: {
-        "x-bridge-relayer-secret": RELAYER_SECRET,
-        "Content-Type": "application/json",
-      },
+      headers: { "x-bridge-relayer-secret": RELAYER_SECRET, "Content-Type": "application/json" },
       body: JSON.stringify({ evmTxHash }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(20000),
     });
-    const data = await res.json().catch(() => ({}));
-    return data.success === true;
-  } catch {
-    return false;
+    const text = await res.text();
+    let data: any = {}; try { data = JSON.parse(text); } catch { /* non-JSON body */ }
+    if (data.success === true) return { ok: true, status: res.status };
+    const error = String(data.error ?? text ?? "").slice(0, 300);
+    console.warn(`[XRGE] daemon fulfill rejected ${txId}: HTTP ${res.status} ${error}`);
+    return { ok: false, status: res.status, error };
+  } catch (e: any) {
+    console.warn(`[XRGE] daemon fulfill request failed for ${txId}: ${e.message}`);
+    return { ok: false, status: 0, error: `request failed: ${e.message}` };
   }
 }
 
@@ -470,6 +459,7 @@ async function reportWithdrawalFailure(
   txId: string,
   error: string,
 ): Promise<{ shouldRefund: boolean; attempts: number }> {
+  if (OBSERVE_ONLY) observeRefuse("WOULD_REPORT_FAILURE", `${txId}: ${error}`);
   try {
     const res = await fetch(
       `${CORE_API_URL}/api/bridge/withdrawals/${encodeURIComponent(txId)}/failure`,
@@ -483,7 +473,7 @@ async function reportWithdrawalFailure(
         signal: AbortSignal.timeout(10000),
       },
     );
-    const data = await res.json().catch(() => ({}));
+    const data: any = await res.json().catch(() => ({}));
     return { shouldRefund: data.shouldRefund === true, attempts: data.attempts || 0 };
   } catch (e: any) {
     console.warn(`[relayer] Failed to report withdrawal failure for ${txId}: ${e.message}`);
@@ -500,6 +490,7 @@ async function autoClaimDeposit(
   recipientRougechainPubkey: string,
   token: "ETH" | "XRGE" | "USDC",
 ): Promise<{ ok: boolean; error?: string }> {
+  if (OBSERVE_ONLY) observeRefuse("WOULD_CLAIM_DEPOSIT", `${token} ${evmTxHash} → ${recipientRougechainPubkey.slice(0, 16)}…`);
   try {
     const res = await fetch(`${CORE_API_URL}/api/bridge/deposit/auto-claim`, {
       method: "POST",
@@ -510,7 +501,7 @@ async function autoClaimDeposit(
       body: JSON.stringify({ evmTxHash, recipientRougechainPubkey, token }),
       signal: AbortSignal.timeout(20000),
     });
-    const data = await res.json().catch(() => ({}));
+    const data: any = await res.json().catch(() => ({}));
     if (data.success === true) return { ok: true };
     return { ok: false, error: data.error || "unknown" };
   } catch (e: any) {
@@ -520,6 +511,7 @@ async function autoClaimDeposit(
 
 /** Ask the daemon to refund a withdrawal (re-mint burned tokens to the owner). */
 async function refundWithdrawal(txId: string): Promise<boolean> {
+  if (OBSERVE_ONLY) observeRefuse("WOULD_REFUND", txId);
   try {
     const res = await fetch(
       `${CORE_API_URL}/api/bridge/withdrawals/${encodeURIComponent(txId)}/refund`,
@@ -533,7 +525,7 @@ async function refundWithdrawal(txId: string): Promise<boolean> {
         signal: AbortSignal.timeout(15000),
       },
     );
-    const data = await res.json().catch(() => ({}));
+    const data: any = await res.json().catch(() => ({}));
     if (data.success === true) return true;
     console.warn(`[relayer] Refund API declined for ${txId}: ${data.error || "unknown"}`);
     return false;
@@ -544,10 +536,13 @@ async function refundWithdrawal(txId: string): Promise<boolean> {
 }
 
 /**
- * Common failure handling: report the failure to the daemon, alert on repeated
- * failure, and auto-refund once the daemon says the threshold is crossed.
+ * XRGE failure handling: report the failure to the daemon, alert on repeated failure, and
+ * auto-refund once the daemon says the threshold is crossed (only when AUTO_REFUND=true; the
+ * XRGE BridgeVault processed guard in reconcileXrgeIfReleased runs BEFORE this is reached).
+ * qETH/qUSDC failures never come here — they go through the core's fail-closed refund gate.
  */
-async function handleWithdrawalFailure(kind: "ETH" | "XRGE", txId: string, error: string): Promise<void> {
+async function handleWithdrawalFailure(kind: "XRGE", txId: string, error: string): Promise<void> {
+  if (OBSERVE_ONLY) observeRefuse("WOULD_REPORT_FAILURE", `${kind} ${txId}: ${error}`);
   const { shouldRefund, attempts } = await reportWithdrawalFailure(txId, error);
   if (attempts >= 3) {
     await alert(txId, `${kind} withdrawal ${txId.slice(0, 16)}… has failed ${attempts}× (last: ${error})`);
@@ -559,10 +554,47 @@ async function handleWithdrawalFailure(kind: "ETH" | "XRGE", txId: string, error
       await alert(`refund:${txId}`, `${kind} withdrawal ${txId.slice(0, 16)}… was REFUNDED on L1 after ${attempts} failures`);
       processedTxIds.add(txId);
       saveProcessedTxIds(processedTxIds);
-      if (kind === "ETH") stats.ethRefunded++;
-      else stats.xrgeRefunded++;
+      stats.xrgeRefunded++;
     }
   }
+}
+
+// ── RougeBridge on-chain adapters (network-facing side of the core's EvmChainDeps) ──
+
+/**
+ * Scan RougeBridge logs of `event` (optionally filtered by indexed args) over the configured
+ * lookback: ≤ 2,000 blocks per request, contiguous/non-overlapping, paced, bounded retry. THROWS
+ * if any page cannot be read — a partial scan must never be reported as "nothing found".
+ */
+async function scanBridgeLogs(
+  publicClient: PublicClient,
+  bridgeAddress: Hex,
+  event: any,
+  args?: Record<string, unknown>,
+  opts: { lookbackBlocks?: bigint; toBlockOverride?: bigint } = {},
+): Promise<any[]> {
+  const latest = opts.toBlockOverride ?? (await publicClient.getBlockNumber());
+  const lookback = opts.lookbackBlocks ?? BRIDGE_LOG_SCAN_BLOCKS;
+  const from = latest > lookback ? latest - lookback : 0n;
+  return scanLogPagesDescending(
+    ({ fromBlock, toBlock }) => publicClient.getLogs({ address: bridgeAddress, event, args, fromBlock, toBlock } as any) as Promise<any[]>,
+    from, latest, undefined, LOG_SCAN_PACING,
+  );
+}
+
+function toReceiptLike(r: any): ReceiptLike {
+  return {
+    status: r.status === "success" ? "success" : "reverted",
+    transactionHash: r.transactionHash,
+    blockNumber: r.blockNumber,
+    logs: (r.logs || []).map((l: any): RawLog => ({
+      address: l.address,
+      data: l.data,
+      topics: l.topics,
+      transactionHash: l.transactionHash,
+      blockNumber: l.blockNumber,
+    })),
+  };
 }
 
 // ── Main ────────────────────────────────────────────────────────
@@ -577,14 +609,41 @@ async function main() {
 
   const transport = http(chainCfg.rpc);
   const publicClient = createPublicClient({ chain: chainCfg.chain, transport });
-  const walletClient = createWalletClient({ account, chain: chainCfg.chain, transport });
+  // Observation mode never constructs a signing client: there is nothing that COULD sign.
+  const walletClient = OBSERVE_ONLY ? null : createWalletClient({ account, chain: chainCfg.chain, transport });
+
+  // ── Production preflight (R1D §11): refuse to start on ANY failure. Not env-bypassable and
+  //    no carve-outs: a missing/invalid ROUGE_BRIDGE_ADDRESS is itself a preflight failure.
+  //    Unit tests exercise `preflight` with an injected fake client instead.
+  try {
+    await preflight(
+      {
+        getChainId: () => publicClient.getChainId(),
+        getCode: (a) => publicClient.getCode(a),
+        readContract: (a) => publicClient.readContract(a as any),
+      },
+      {
+        expectedChainId: chainCfg.chain.id,
+        bridgeAddress: ROUGE_BRIDGE_ADDRESS,
+        configuredUsdc: BRIDGE_USDC_ADDRESS,
+        chainUsdc: chainCfg.usdc,
+        vaultAddress: VAULT_ADDRESS,
+        expectedOwner: ROUGE_BRIDGE_OWNER || account.address,
+      },
+    );
+  } catch (e: any) {
+    console.error(`${e?.message || e}\n[relayer] PREFLIGHT FAILED — refusing to start.`);
+    process.exit(1);
+  }
+  // preflight() threw unless ROUGE_BRIDGE_ADDRESS is a valid address with contract code.
+  const bridgeConfigured = isEvmAddress(ROUGE_BRIDGE_ADDRESS);
 
   // Dedicated XRGE-release signer (BridgeVaultV2 role split). Falls back to the custody
   // key when XRGE_RELAYER_PRIVATE_KEY is unset, so V1 / single-key setups are unchanged.
   const xrgeAccount = XRGE_RELAYER_KEY?.trim()
     ? privateKeyToAccount((XRGE_RELAYER_KEY.startsWith("0x") ? XRGE_RELAYER_KEY : `0x${XRGE_RELAYER_KEY}`) as `0x${string}`)
     : account;
-  const xrgeWalletClient = xrgeAccount === account
+  const xrgeWalletClient = OBSERVE_ONLY ? null : xrgeAccount === account
     ? walletClient
     : createWalletClient({ account: xrgeAccount, chain: chainCfg.chain, transport });
 
@@ -606,23 +665,26 @@ async function main() {
     vaultContract = getContract({
       address: VAULT_ADDRESS as `0x${string}`,
       abi: BRIDGE_VAULT_ABI,
-      client: { public: publicClient, wallet: xrgeWalletClient },
+      client: OBSERVE_ONLY ? { public: publicClient } : { public: publicClient, wallet: xrgeWalletClient! },
     });
     console.log(`[relayer] XRGE BridgeVault: ${VAULT_ADDRESS} (release signer: ${xrgeAccount.address}${xrgeAccount === account ? " = custody key" : " = dedicated XRGE key"})`);
   } else {
     console.log("[relayer] No XRGE_BRIDGE_VAULT — XRGE bridge disabled");
   }
 
-  // RougeBridge contract
-  let bridgeContract: ReturnType<typeof getContract> | null = null;
-  if (ROUGE_BRIDGE_ADDRESS) {
-    bridgeContract = getContract({
-      address: ROUGE_BRIDGE_ADDRESS as `0x${string}`,
-      abi: ROUGE_BRIDGE_ABI,
-      client: { public: publicClient, wallet: walletClient },
-    });
-    console.log(`[relayer] RougeBridge: ${ROUGE_BRIDGE_ADDRESS}`);
+  // RougeBridge contract (REQUIRED for qETH/qUSDC payouts — R1D §4)
+  const bridgeAddress: Hex | null = bridgeConfigured ? (ROUGE_BRIDGE_ADDRESS as Hex) : null;
+  if (bridgeAddress) {
+    console.log(`[relayer] RougeBridge: ${bridgeAddress} (USDC ${chainCfg.usdc}, queued=${queuedTxs.size})`);
+  } else {
+    // Unreachable after a passing preflight; kept as a defensive fail-closed message.
+    console.warn("[relayer] No valid ROUGE_BRIDGE_ADDRESS — qETH/qUSDC payouts DISABLED (fail closed)");
   }
+  console.log(`[relayer] AUTO_REFUND=${AUTO_REFUND}`);
+  console.log(`[relayer] qETH/qUSDC fulfill confirmations: ${evmFulfillDepth({ fulfillConfirmations: CONFIRMATIONS })} (relayer ${CONFIRMATIONS}, never below daemon QV_BRIDGE_MIN_CONFIRMATIONS); RougeBridge log scans ≤ 2000 blocks/page, lookback ${BRIDGE_LOG_SCAN_BLOCKS}`);
+  console.log(`[relayer] XRGE fulfill confirmations: ${XRGE_FULFILL_CONFIRMATIONS} (relayer ${CONFIRMATIONS}, daemon-required ≥ ${XRGE_FULFILL_CONFIRMATIONS}); release-log scan ≤ 2000 blocks/page, lookback ${XRGE_RELEASE_SCAN_BLOCKS}`);
+  console.log(`[relayer] RougeBridge signer (custody key account): ${account.address}`);
+  if (OBSERVE_ONLY) console.log("[relayer] *** BRIDGE_OBSERVE_ONLY=true — OBSERVATION MODE: read-only; NO releases, NO fulfill, NO failure reports, NO refunds, NO deposit claims, NO state writes ***");
 
   if (DEPOSIT_WATCHER && (ROUGE_BRIDGE_ADDRESS || VAULT_ADDRESS)) {
     const resume = depositWatcher.lastBlock !== null ? `resuming from block ${depositWatcher.lastBlock}` : "anchoring at chain head";
@@ -631,92 +693,183 @@ async function main() {
     console.log("[relayer] Deposit watcher: disabled");
   }
 
-  // ── ETH withdrawals ─────────────────────────────────────────
+  // ── qETH / qUSDC withdrawals via RougeBridge (R1B/R1D/R1E) ──
+
+  /** Read `timelockQueue(requestId)`; `confirmed` reads at head - CONFIRMATIONS. */
+  const readTimelockQueue = async (requestId: bigint, opts?: { confirmed?: boolean }): Promise<TimelockRecord> => {
+    if (!bridgeAddress) throw new Error("RougeBridge not configured");
+    let blockNumber: bigint | undefined;
+    if (opts?.confirmed) {
+      const head = await publicClient.getBlockNumber();
+      blockNumber = head > BigInt(CONFIRMATIONS) ? head - BigInt(CONFIRMATIONS) : 0n;
+    }
+    const tuple = await publicClient.readContract({
+      address: bridgeAddress,
+      abi: ROUGE_BRIDGE_ABI,
+      functionName: "timelockQueue",
+      args: [requestId],
+      ...(blockNumber !== undefined ? { blockNumber } : {}),
+    });
+    return parseTimelockQueueTuple(tuple as readonly unknown[]);
+  };
+
+  const evmDepsRaw: EvmPayoutDeps = {
+    bridgeAddress,
+    usdcAddress: chainCfg.usdc,
+    autoRefund: AUTO_REFUND,
+    maxRetries: MAX_RETRIES,
+    fulfillConfirmations: CONFIRMATIONS, // effective depth = max(this, daemon QV_BRIDGE_MIN_CONFIRMATIONS)
+    processedTxIds,
+    markProcessed: (txId) => {
+      processedTxIds.add(txId);
+      saveProcessedTxIds(processedTxIds);
+    },
+    queued: queuedTxs,
+    saveQueued: () => { if (OBSERVE_ONLY) observeRefuse("WOULD_PERSIST", "queued-state file"); saveQueuedState(QUEUED_FILE, queuedTxs); },
+    chain: {
+      releaseETH: (to, wei, l1TxId, nonce) =>
+        (OBSERVE_ONLY || !walletClient) ? observeRefuse("WOULD_RELEASE", `releaseETH ${wei} wei → ${to} l1TxId=${l1TxId}`) : walletClient.writeContract({
+          address: bridgeAddress!,
+          abi: ROUGE_BRIDGE_ABI,
+          functionName: "releaseETH",
+          args: [to as Hex, wei, l1TxId],
+          nonce,
+        }),
+      releaseERC20: (token, to, amount, l1TxId, nonce) =>
+        (OBSERVE_ONLY || !walletClient) ? observeRefuse("WOULD_RELEASE", `releaseERC20 ${amount} of ${token} → ${to} l1TxId=${l1TxId}`) : walletClient.writeContract({
+          address: bridgeAddress!,
+          abi: ROUGE_BRIDGE_ABI,
+          functionName: "releaseERC20",
+          args: [token as Hex, to as Hex, amount, l1TxId],
+          nonce,
+        }),
+      waitForReceipt: async (hash) =>
+        toReceiptLike(await publicClient.waitForTransactionReceipt({ hash, confirmations: Math.max(1, CONFIRMATIONS), timeout: 120_000 })),
+      getReceipt: async (hash) => {
+        try {
+          return toReceiptLike(await publicClient.getTransactionReceipt({ hash }));
+        } catch {
+          return null;
+        }
+      },
+      processedL1Txs: (l1TxId) =>
+        publicClient.readContract({ address: bridgeAddress!, abi: ROUGE_BRIDGE_ABI, functionName: "processedL1Txs", args: [l1TxId] }) as Promise<boolean>,
+      headBlock: () => publicClient.getBlockNumber(),
+      timelockQueue: readTimelockQueue,
+      findReleaseTxHashes: async (exp: ExpectedRelease) => {
+        const event = exp.asset === "Eth" ? BRIDGE_RELEASE_ETH_EVENT : BRIDGE_RELEASE_ERC20_EVENT;
+        const logs = await scanBridgeLogs(publicClient, bridgeAddress!, event, { recipient: exp.recipient as Hex });
+        const hashes: Hex[] = [];
+        for (const lg of logs) {
+          if (sameHex(lg.args?.l1TxId, exp.canonicalId) && lg.transactionHash && !hashes.includes(lg.transactionHash)) {
+            hashes.push(lg.transactionHash);
+          }
+        }
+        return hashes;
+      },
+      findQueuedRequestIds: async () => {
+        const logs = await scanBridgeLogs(publicClient, bridgeAddress!, TIMELOCK_QUEUED_EVENT);
+        const ids = new Set<bigint>();
+        for (const lg of logs) if (lg.args?.requestId !== undefined) ids.add(lg.args.requestId as bigint);
+        return [...ids];
+      },
+      findTimelockQueuedEvent: async (requestId) => {
+        const logs = await scanBridgeLogs(publicClient, bridgeAddress!, TIMELOCK_QUEUED_EVENT, { requestId });
+        const lg = logs[0];
+        return lg ? { executeAfter: lg.args.executeAfter as bigint, txHash: lg.transactionHash ?? null } : null;
+      },
+      findTimelockExecutedTxHashes: async (requestId) => {
+        const logs = await scanBridgeLogs(publicClient, bridgeAddress!, TIMELOCK_EXECUTED_EVENT, { requestId });
+        return [...new Set(logs.map((l) => l.transactionHash as Hex).filter(Boolean))];
+      },
+      findTimelockCancelled: async (requestId) => {
+        const head = await publicClient.getBlockNumber();
+        const safeHead = head > BigInt(CONFIRMATIONS) ? head - BigInt(CONFIRMATIONS) : 0n;
+        const logs = await scanBridgeLogs(publicClient, bridgeAddress!, TIMELOCK_CANCELLED_EVENT, { requestId }, { toBlockOverride: safeHead });
+        return logs.length > 0;
+      },
+      getNonce: () => getNextNonce(publicClient, account.address),
+      resetNonce: () => resetNonce(account.address),
+    },
+    daemon: {
+      fulfill: fulfillEthWithdrawal,
+      reportFailure: reportWithdrawalFailure,
+      refund: refundWithdrawal,
+    },
+    alert,
+    log: (m) => console.log(m),
+    warn: (m) => console.warn(m),
+    sleep,
+  };
+  // Observation mode: every mutating member of the deps refuses before any side effect.
+  const evmDeps: EvmPayoutDeps = OBSERVE_ONLY ? observeGuardedDeps(evmDepsRaw) : evmDepsRaw;
 
   const processEthWithdrawals = async () => {
     try {
-      const withdrawals = await fetchEthWithdrawals();
+      const withdrawals: EthWithdrawal[] = await fetchEthWithdrawals();
       if (withdrawals.length === 0) return;
 
       const balance = await publicClient.getBalance({ address: account.address });
-      console.log(`[ETH] Pending: ${withdrawals.length}, Balance: ${(Number(balance) / 1e18).toFixed(6)} ETH`);
+      console.log(`[EVM] Pending: ${withdrawals.length}, Signer balance: ${(Number(balance) / 1e18).toFixed(6)} ETH`);
 
       for (const raw of withdrawals) {
         const w = normalizeEthWithdrawal(raw);
         if (isShuttingDown) break;
-        if (processedTxIds.has(w.tx_id) || inFlightTxIds.has(w.tx_id)) continue;
+        if (!w.tx_id || processedTxIds.has(w.tx_id) || inFlightTxIds.has(w.tx_id)) continue;
         inFlightTxIds.add(w.tx_id);
-
         try {
-          const wei = unitsToWei(w.amount_units);
-          const nonce = await getNextNonce(publicClient, account.address);
-
-          const hash = await withRetry(`ETH-${w.tx_id.slice(0, 8)}`, async () => {
-            if (bridgeContract) {
-              const l1TxIdBytes = keccak256(toBytes(w.tx_id));
-              return await (bridgeContract as any).write.releaseETH([
-                w.evm_address as `0x${string}`,
-                wei,
-                l1TxIdBytes,
-              ], { nonce });
-            } else {
-              // Estimate gas instead of hardcoding
-              const gas = await publicClient.estimateGas({
-                account: account.address,
-                to: w.evm_address as `0x${string}`,
-                value: wei,
-              });
-              return await walletClient.sendTransaction({
-                to: w.evm_address as `0x${string}`,
-                value: wei,
-                gas: gas + (gas / 10n), // 10% buffer
-                nonce,
-              });
-            }
-          });
-
-          console.log(`[ETH] Sent ${Number(wei) / 1e18} ETH → ${w.evm_address.slice(0, 10)}... tx: ${hash}`);
-
-          const receipt = await publicClient.waitForTransactionReceipt({
-            hash,
-            confirmations: CONFIRMATIONS,
-            timeout: 120_000,
-          });
-
-          if (receipt.status !== "success") {
-            console.error(`[ETH] Tx REVERTED for ${w.tx_id}: ${hash}`);
-            stats.ethFailed++;
-            resetNonce(account.address);
-            await handleWithdrawalFailure("ETH", w.tx_id, `release tx reverted: ${hash}`);
-            inFlightTxIds.delete(w.tx_id);
-            continue;
-          }
-
-          const ok = await fulfillEthWithdrawal(w.tx_id, hash);
-          if (ok) {
-            console.log(`[ETH] ✓ Fulfilled ${w.tx_id} (${hash})`);
-            processedTxIds.add(w.tx_id);
-            saveProcessedTxIds(processedTxIds);
-            stats.ethFulfilled++;
-          } else {
-            console.warn(`[ETH] ✗ Fulfill API failed: ${w.tx_id}`);
+          const outcome = await processEvmWithdrawal(w, evmDeps);
+          switch (outcome) {
+            case "fulfilled":
+            case "reconciled_paid":
+              stats.ethFulfilled++;
+              break;
+            case "queued":
+            case "reconciled_queued":
+              stats.ethQueued++;
+              break;
+            case "ambiguous":
+            case "cancelled_refund_candidate":
+              stats.ethAmbiguous++;
+              break;
+            case "refunded":
+              stats.ethRefunded++;
+              break;
+            case "failed":
+              stats.ethFailed++;
+              break;
+            case "skipped_queued":
+            case "awaiting_confirmations": // paid, waiting for the daemon-required depth — retried next poll
+              break;
+            default:
+              stats.ethSkipped++;
           }
         } catch (e: any) {
-          console.error(`[ETH] Failed ${w.tx_id}: ${e.message}`);
-          stats.ethFailed++;
+          // The core handles its own failure paths; anything escaping here is unexpected.
+          console.error(`[EVM] Unexpected error for ${w.tx_id}: ${e.message}`);
           resetNonce(account.address);
-          await handleWithdrawalFailure("ETH", w.tx_id, e.message || "release failed");
         } finally {
           inFlightTxIds.delete(w.tx_id);
         }
       }
     } catch (e: any) {
-      console.error("[ETH] Poll error:", e.message);
+      console.error("[EVM] Poll error:", e.message);
+    }
+  };
+
+  const processQueued = async () => {
+    if (!bridgeAddress || queuedTxs.size === 0) return;
+    try {
+      await pollQueuedWithdrawals(evmDeps);
+    } catch (e: any) {
+      console.error("[EVM] Queue poll error:", e.message);
     }
   };
 
   // ── XRGE withdrawals ────────────────────────────────────────
 
+  // payouts mined but not yet fulfilled (awaiting daemon-required confirmations): tx_id → payout
+  const xrgePendingFulfill = new Map<string, { txHash: string; blockNumber: bigint }>();
   const processXrgeWithdrawals = async () => {
     if (!vaultContract) return;
 
@@ -730,62 +883,46 @@ async function main() {
         const w = normalizeXrgeWithdrawal(raw);
         if (isShuttingDown) break;
         if (processedTxIds.has(w.tx_id) || inFlightTxIds.has(w.tx_id)) continue;
+        if (OBSERVE_ONLY) {
+          await observeXrgeWithdrawal(w, {
+            processedOnVault: (id) => publicClient.readContract({ address: VAULT_ADDRESS as `0x${string}`, abi: BRIDGE_VAULT_ABI, functionName: "processedL1Txs", args: [id] }) as Promise<boolean>,
+            findReleaseTx: (id) => findReleaseTxForL1(publicClient, VAULT_ADDRESS as `0x${string}`, id),
+            log: (m) => console.log(m),
+          });
+          continue;
+        }
         inFlightTxIds.add(w.tx_id);
-
         try {
-          const weiAmount = xrgeToWei(w.amount);
-          const nonce = await getNextNonce(publicClient, xrgeAccount.address);
-
-          const hash = await withRetry(`XRGE-${w.tx_id.slice(0, 8)}`, async () => {
-            return await (vaultContract as any).write.release([
-              w.evm_address as `0x${string}`,
-              weiAmount,
-              w.tx_id,
-            ], { nonce });
+          const outcome = await processXrgeWithdrawal(w, {
+            requiredConfirmations: XRGE_FULFILL_CONFIRMATIONS,
+            processedOnVault: (id) => publicClient.readContract({ address: VAULT_ADDRESS as `0x${string}`, abi: BRIDGE_VAULT_ABI, functionName: "processedL1Txs", args: [id] }) as Promise<boolean>,
+            release: async (to, wei, id) => {
+              if (OBSERVE_ONLY) observeRefuse("WOULD_RELEASE", `XRGE vault.release ${wei} → ${to} l1TxId=${id}`);
+              const nonce = await getNextNonce(publicClient, xrgeAccount.address);
+              try { return await (vaultContract as any).write.release([to as `0x${string}`, wei, id], { nonce }); }
+              catch (e) { resetNonce(xrgeAccount.address); throw e; }
+            },
+            waitForReceipt: async (hash) => {
+              const r = await publicClient.waitForTransactionReceipt({ hash: hash as `0x${string}`, confirmations: 1, timeout: 120_000 });
+              if (r.status !== "success") resetNonce(xrgeAccount.address);
+              return { status: r.status, blockNumber: r.blockNumber };
+            },
+            headBlock: () => publicClient.getBlockNumber(),
+            findReleases: (id) => findVaultReleasesForL1(publicClient, VAULT_ADDRESS as `0x${string}`, id),
+            fulfill: fulfillXrgeWithdrawal,
+            handleFailure: (id, err) => handleWithdrawalFailure("XRGE", id, err),
+            markProcessed: (id) => { processedTxIds.add(id); saveProcessedTxIds(processedTxIds); },
+            pendingFulfill: xrgePendingFulfill,
+            alert,
+            log: (m) => console.log(m),
+            warn: (m) => console.warn(m),
           });
-
-          console.log(`[XRGE] Released ${w.amount} XRGE → ${w.evm_address.slice(0, 10)}... tx: ${hash}`);
-
-          const receipt = await publicClient.waitForTransactionReceipt({
-            hash,
-            confirmations: CONFIRMATIONS,
-            timeout: 120_000,
-          });
-
-          if (receipt.status !== "success") {
-            console.error(`[XRGE] Tx REVERTED for ${w.tx_id}: ${hash}`);
-            resetNonce(xrgeAccount.address);
-            // A revert may just mean a PRIOR release already settled this l1TxId
-            // (AlreadyProcessed). Reconcile against on-chain truth before ever
-            // reporting failure — never refund an already-paid withdrawal.
-            if (await reconcileXrgeIfReleased(publicClient, VAULT_ADDRESS as `0x${string}`, w)) {
-              continue;
-            }
-            stats.xrgeFailed++;
-            await handleWithdrawalFailure("XRGE", w.tx_id, `release tx reverted: ${hash}`);
-            continue;
-          }
-
-          const ok = await fulfillXrgeWithdrawal(w.tx_id, hash);
-          if (ok) {
-            console.log(`[XRGE] ✓ Fulfilled ${w.tx_id} (${hash})`);
-            processedTxIds.add(w.tx_id);
-            saveProcessedTxIds(processedTxIds);
-            stats.xrgeFulfilled++;
-          } else {
-            console.warn(`[XRGE] ✗ Fulfill API failed: ${w.tx_id}`);
-          }
+          if (outcome === "fulfilled" || outcome === "reconciled_fulfilled") stats.xrgeFulfilled++;
+          else if (outcome === "failed") stats.xrgeFailed++;
         } catch (e: any) {
-          console.error(`[XRGE] Failed ${w.tx_id}: ${e.message}`);
+          // processXrgeWithdrawal handles its own failure paths; anything here is unexpected — never a refund trigger.
+          console.error(`[XRGE] Unexpected error for ${w.tx_id}: ${e.message}`);
           resetNonce(xrgeAccount.address);
-          // The most common cause here is a release that mined but whose receipt we lost:
-          // the retry reverts AlreadyProcessed and throws. Treat an already-processed
-          // l1TxId as SUCCESS (fulfill it), never as a failure that could trigger a refund.
-          if (await reconcileXrgeIfReleased(publicClient, VAULT_ADDRESS as `0x${string}`, w)) {
-            continue;
-          }
-          stats.xrgeFailed++;
-          await handleWithdrawalFailure("XRGE", w.tx_id, e.message || "release failed");
         } finally {
           inFlightTxIds.delete(w.tx_id);
         }
@@ -799,6 +936,7 @@ async function main() {
 
   /** Attempt to claim one discovered deposit; route the result into claimed/pending. */
   const claimOne = async (d: DepositRecord): Promise<void> => {
+    if (OBSERVE_ONLY) { observeDeposit(d, (m) => console.log(m)); depositWatcher.claimed.add(d.key); /* in-memory only: avoid re-logging; never persisted */ return; }
     const { ok, error } = await autoClaimDeposit(d.txHash, d.pubkey, d.token);
     // "already claimed" means a browser claim beat us to it — treat as done.
     if (ok || (error && error.toLowerCase().includes("already claimed"))) {
@@ -827,9 +965,11 @@ async function main() {
       }
 
       // 2) Scan newly-confirmed blocks for fresh deposits.
+      // Effective confirmed head = head − max(CONFIRMATIONS, daemon QV_BRIDGE_MIN_CONFIRMATIONS): never
+      // hand the daemon a deposit it will refuse as too shallow. A head read failure throws → no claim.
       const head = await publicClient.getBlockNumber();
-      const safeHead = head - BigInt(CONFIRMATIONS);
-      if (safeHead <= 0n) return;
+      const safeHead = depositWatcherSafeHead(head, CONFIRMATIONS);
+      if (safeHead === null) return;
 
       let fromBlock: bigint;
       if (depositWatcher.lastBlock !== null) {
@@ -906,17 +1046,41 @@ async function main() {
 
   const run = async () => {
     stats.totalPolls++;
-    await Promise.all([processEthWithdrawals(), processXrgeWithdrawals(), processDeposits()]);
+    // R1 derived-state health gate: if the daemon reports its payout store DEGRADED (or the
+    // health endpoint is unreachable), refuse to operate on ANY withdrawal list this poll.
+    let health: { status: number; body: unknown } | null = null;
+    try {
+      const res = await fetch(`${CORE_API_URL}/api/bridge/health`, { signal: AbortSignal.timeout(10000) });
+      health = { status: res.status, body: await res.json().catch(() => ({})) };
+    } catch (e) {
+      health = null;
+    }
+    if (!bridgeHealthAllowsPayouts(health)) {
+      const detail = health ? `HTTP ${health.status} ${JSON.stringify(health.body).slice(0, 200)}` : "health endpoint unreachable";
+      console.error(`[health] bridge derived state NOT healthy — refusing to process withdrawals this poll (${detail})`);
+      await alert(`bridge-degraded`, `Daemon bridge payout store degraded/unreachable — relayer paused payouts: ${detail}`).catch(() => {});
+      return;
+    }
+    // The EVM feed and the timelock queue poll share the custody signer/nonce → run sequentially.
+    await Promise.all([
+      (async () => { await processEthWithdrawals(); await processQueued(); })(),
+      processXrgeWithdrawals(),
+      processDeposits(),
+    ]);
 
+    if (OBSERVE_ONLY) {
+      console.log(`[OBSERVE] poll ${stats.totalPolls} complete — bridge health OK; writes performed: 0`);
+    }
     // Health log every 60 polls
     if (stats.totalPolls % 60 === 0) {
       console.log(
         `[health] uptime=${uptimeStr()} polls=${stats.totalPolls} ` +
-        `eth_ok=${stats.ethFulfilled} eth_fail=${stats.ethFailed} ` +
+        `evm_ok=${stats.ethFulfilled} evm_fail=${stats.ethFailed} evm_queued=${stats.ethQueued} ` +
+        `evm_ambiguous=${stats.ethAmbiguous} evm_skipped=${stats.ethSkipped} ` +
         `xrge_ok=${stats.xrgeFulfilled} xrge_fail=${stats.xrgeFailed} ` +
         `refunded=${stats.ethRefunded + stats.xrgeRefunded} alerts=${stats.alertsSent} ` +
         `deposits_ok=${stats.depositsClaimed} deposits_pending=${depositWatcher.pending.size} ` +
-        `processed=${processedTxIds.size} inflight=${inFlightTxIds.size}`
+        `processed=${processedTxIds.size} queued=${queuedTxs.size} inflight=${inFlightTxIds.size}`
       );
     }
   };
@@ -932,6 +1096,7 @@ async function main() {
     );
     // Persist state before exit
     saveProcessedTxIds(processedTxIds);
+    if (!OBSERVE_ONLY) saveQueuedState(QUEUED_FILE, queuedTxs);
     saveDepositState(depositWatcher);
     // Wait for in-flight txs
     if (inFlightTxIds.size > 0) {

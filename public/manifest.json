@@ -1,7 +1,7 @@
 {
   "name": "RougeChain",
   "short_name": "RougeChain",
-  "description": "Quantum-safe blockchain powered by NIST-approved post-quantum cryptography (ML-DSA-65, ML-KEM-768)",
+  "description": "Quantum-safe blockchain powered by NIST-standardized post-quantum cryptography (ML-DSA-65, ML-KEM-768)",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0c12",

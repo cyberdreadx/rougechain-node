@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { getAllTokenMetadata, TokenMetadata } from "@/lib/secure-api";
+import { setTokenDecimalsCache } from "@/hooks/use-eth-price";
 
 /**
  * Hook to fetch and cache token metadata from the blockchain
@@ -14,10 +15,15 @@ export function useTokenMetadata(pollInterval: number = 60_000) {
       const result = await getAllTokenMetadata();
       if (result.success && result.data) {
         const metadataMap: Record<string, TokenMetadata> = {};
+        const decimalsMap: Record<string, number | undefined> = {};
         for (const token of result.data) {
           metadataMap[token.symbol] = token;
+          decimalsMap[token.symbol] = (token as { decimals?: number }).decimals;
         }
         setMetadata(metadataMap);
+        // Feed the daemon's authoritative decimals into the shared cache so every formatter
+        // (l1TokenDecimals / humanToRaw / rawToHuman / formatTokenAmount) uses it.
+        setTokenDecimalsCache(decimalsMap);
         setError(null);
       }
     } catch (e) {

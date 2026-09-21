@@ -335,6 +335,24 @@ impl SocialStore {
         Ok(artists)
     }
 
+    /// Followers of `artist_pubkey`, paginated. Mirrors get_user_following on the reverse index
+    /// (`followers` tree, keyed "{artist}:{follower}"), which toggle_follow already maintains in
+    /// lockstep with the follower count — so it can't drift. sled keys sort lexicographically, so
+    /// the order is deterministic and `offset` stays stable across pages.
+    pub fn get_user_followers(&self, artist_pubkey: &str, limit: usize, offset: usize) -> Result<Vec<String>, String> {
+        let followers = self.followers_tree()?;
+        let prefix = format!("{}:", artist_pubkey);
+        let mut out = Vec::new();
+        for entry in followers.scan_prefix(prefix.as_bytes()).skip(offset).take(limit) {
+            let (k, _) = entry.map_err(|e| e.to_string())?;
+            let key_str = String::from_utf8_lossy(&k);
+            if let Some(fpk) = key_str.strip_prefix(&prefix) {
+                out.push(fpk.to_string());
+            }
+        }
+        Ok(out)
+    }
+
     // ── Posts ────────────────────────────────────────────────
 
     fn posts_tree(&self) -> Result<sled::Tree, String> {

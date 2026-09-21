@@ -7,6 +7,7 @@ import {
     clearUnifiedWallet,
     getVaultSettings,
     saveVaultSettings,
+    exportWalletBackup,
 } from "../../lib/unified-wallet";
 import {
     getCustomNodeUrl,
@@ -28,6 +29,9 @@ export default function SettingsTab({ wallet, onLock, onDisconnect }: Props) {
     const [network, setNetwork] = useState<NetworkType>(getActiveNetwork());
     const [autoLock, setAutoLock] = useState(getVaultSettings().autoLockMinutes);
     const [showExport, setShowExport] = useState(false);
+    const [backupPassword, setBackupPassword] = useState("");
+    const [backupBusy, setBackupBusy] = useState(false);
+    const [backupError, setBackupError] = useState("");
     const [showSeedPhrase, setShowSeedPhrase] = useState(false);
     const [seedCopied, setSeedCopied] = useState(false);
     const [evmCopied, setEvmCopied] = useState(false);
@@ -61,15 +65,33 @@ export default function SettingsTab({ wallet, onLock, onDisconnect }: Props) {
         saveVaultSettings({ autoLockMinutes: minutes });
     };
 
-    const exportWallet = () => {
-        const data = JSON.stringify(wallet, null, 2);
-        const blob = new Blob([data], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `rougechain-wallet-${wallet.displayName}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
+    // Export an ENCRYPTED, portable `.pqcbackup` (PBKDF2-600k + AES-256-GCM, the same
+    // base64 envelope rougechain.io and Qwalla use) — never the plaintext wallet, which
+    // would write the seed phrase and private keys to disk in the clear.
+    const handleExportBackup = async () => {
+        if (backupPassword.length < 8) {
+            setBackupError("Use at least 8 characters.");
+            return;
+        }
+        setBackupBusy(true);
+        setBackupError("");
+        try {
+            const encrypted = await exportWalletBackup(wallet, backupPassword);
+            const blob = new Blob([encrypted], { type: "application/octet-stream" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `rougechain-wallet-${wallet.displayName}.pqcbackup`;
+            a.click();
+            URL.revokeObjectURL(url);
+            setBackupPassword("");
+            setShowExport(false);
+        } catch (err) {
+            console.error("Backup export failed:", err);
+            setBackupError("Export failed — please try again.");
+        } finally {
+            setBackupBusy(false);
+        }
     };
 
     return (
@@ -263,12 +285,43 @@ export default function SettingsTab({ wallet, onLock, onDisconnect }: Props) {
                     </div>
                 )}
 
-                <button
-                    onClick={exportWallet}
-                    className="w-full py-1.5 rounded-lg bg-secondary text-secondary-foreground text-xs font-medium hover:bg-secondary/80 transition-colors flex items-center justify-center gap-1.5"
-                >
-                    <Download className="w-3 h-3" /> Export Wallet JSON
-                </button>
+                {!showExport ? (
+                    <button
+                        onClick={() => { setShowExport(true); setBackupError(""); }}
+                        className="w-full py-1.5 rounded-lg bg-secondary text-secondary-foreground text-xs font-medium hover:bg-secondary/80 transition-colors flex items-center justify-center gap-1.5"
+                    >
+                        <Download className="w-3 h-3" /> Export Encrypted Backup
+                    </button>
+                ) : (
+                    <div className="space-y-1.5">
+                        <p className="text-[10px] text-muted-foreground">
+                            Set a password to encrypt your <span className="font-mono">.pqcbackup</span>. You'll need it to restore — it can't be recovered. This file also imports into the RougeChain website and Qwalla.
+                        </p>
+                        <input
+                            type="password"
+                            placeholder="Backup password (min 8 chars)"
+                            value={backupPassword}
+                            onChange={e => { setBackupPassword(e.target.value); setBackupError(""); }}
+                            className="w-full px-3 py-1.5 rounded-lg bg-input border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                        {backupError && <p className="text-[10px] text-destructive">{backupError}</p>}
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => { setShowExport(false); setBackupPassword(""); setBackupError(""); }}
+                                className="flex-1 py-1.5 rounded-lg bg-muted text-muted-foreground text-xs font-medium hover:bg-muted/80 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleExportBackup}
+                                disabled={backupBusy || backupPassword.length < 8}
+                                className="flex-1 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-1.5"
+                            >
+                                <Download className="w-3 h-3" /> {backupBusy ? "Encrypting…" : "Download"}
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Open Web App */}

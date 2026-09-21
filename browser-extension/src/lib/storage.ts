@@ -14,7 +14,9 @@ let cache: Record<string, string> = {};
 let initialized = false;
 
 // Keys held in memory-only session storage (never persisted to disk).
-const SESSION_KEYS = new Set<string>(["pqc-unified-wallet"]);
+// The decrypted active wallet and the decrypted vault (all wallets) live here so
+// plaintext keys never touch disk — only the AES-GCM-encrypted blob does.
+const SESSION_KEYS = new Set<string>(["pqc-unified-wallet", "pqc-unified-vault"]);
 
 function sessionArea(): chrome.storage.StorageArea | null {
     try {

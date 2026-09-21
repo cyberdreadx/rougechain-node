@@ -3,8 +3,12 @@
 The bridge relayer connects RougeChain L1 with Base. It runs three jobs in one
 polling loop:
 
-1. **Withdrawal fulfillment (L1 → Base):** releases ETH and XRGE to users from the
-   custody wallet when they burn qETH/XRGE on L1.
+1. **Withdrawal fulfillment (L1 → Base):** releases ETH / USDC via the `RougeBridge`
+   contract (qETH → `releaseETH`, qUSDC → `releaseERC20`) and XRGE via the BridgeVault
+   when users burn qETH / qUSDC / XRGE on L1. Any other token symbol on the EVM feed is
+   **never** paid (no default ETH route). Large releases that RougeBridge timelocks are
+   persisted in `.bridge-queued-txs.json`, never re-released, and fulfilled from the
+   `executeTimelock` transaction; cancellations are surfaced as `CancelledRefundCandidate`.
 2. **Deposit watcher (Base → L1):** watches the bridge contracts for deposit events
    and auto-claims them on L1 — users no longer need a manual browser claim.
 3. **Failure handling:** reports failed releases to the daemon, alerts on repeated
@@ -15,6 +19,10 @@ polling loop:
 
 - **Custody wallet**: the EVM address that holds bridge liquidity. Its private key
   signs releases and it must hold enough ETH/XRGE (plus gas) to pay out withdrawals.
+- **RougeBridge contract**: a valid `ROUGE_BRIDGE_ADDRESS` is mandatory. The relayer
+  runs a startup preflight (chain id, contract code, owner, paused state, USDC support)
+  and refuses to start if any check fails. All qETH/qUSDC payouts are released through
+  this contract — there is no direct wallet send mode.
 - Base RPC access (defaults to Base Sepolia; set `BASE_CHAIN=mainnet` for the live Base bridge).
 - Network access to the RougeChain node API.
 
@@ -33,12 +41,14 @@ cp bridge-relayer.env.example bridge-relayer.env
 | `BRIDGE_CUSTODY_PRIVATE_KEY` | Custody EOA private key (**required**) |
 | `BASE_CHAIN` | `mainnet` or `sepolia` (default `sepolia`) |
 | `BASE_RPC_URL` | Base RPC URL (this is the name the relayer reads — not `BASE_SEPOLIA_RPC`) |
-| `ROUGE_BRIDGE_ADDRESS` | RougeBridge contract (ETH/ERC20) |
+| `ROUGE_BRIDGE_ADDRESS` | RougeBridge contract (ETH/ERC20). **Mandatory**: startup preflight refuses to run without a valid address that has contract code. qETH/qUSDC payouts go only through `RougeBridge.releaseETH` / `releaseERC20`; there is no direct wallet send path and no env var that enables one |
 | `XRGE_BRIDGE_VAULT` | BridgeVault contract (XRGE) |
 | `BRIDGE_RELAYER_SECRET` | Shared secret authenticating relayer → daemon calls |
 | `POLL_INTERVAL_MS` | Poll interval (default 5000) |
 | `CONFIRMATIONS` | Confirmations before acting on a tx (default 2) |
-| `AUTO_REFUND` | Auto-refund failed withdrawals (default `true`) |
+| `AUTO_REFUND` | Auto-refund failed withdrawals (default **`false`**). Even when `true`, qETH/qUSDC refunds are gated by `RougeBridge.processedL1Txs` (RPC failure → refused) and XRGE by the vault's processed guard |
+| `ROUGE_BRIDGE_OWNER` | Optional expected `RougeBridge.owner()`; defaults to the custody key's address (checked at startup) |
+| `BRIDGE_USDC_ADDRESS` | Optional; if set it must equal the built-in per-chain Base USDC address (checked at startup) |
 | `ALERT_WEBHOOK_URL` | Optional Slack/Discord webhook for failure alerts |
 | `DEPOSIT_WATCHER` | Enable deposit auto-claim (default `true`) |
 | `DEPOSIT_WATCH_FROM_BLOCK` | Optional start block (default: anchor at chain head, no backfill) |

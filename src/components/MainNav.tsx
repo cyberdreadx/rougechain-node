@@ -10,6 +10,7 @@ import {
   Network,
   Activity,
   BookOpen,
+  Sprout,
   ExternalLink
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
@@ -23,6 +24,7 @@ const navItems = [
   { to: "/transactions", label: "Tx Feed", icon: Activity },
   { to: "/validators", label: "Validators", icon: Shield },
   { to: "/node", label: "Core Node", icon: Network },
+  { to: "/regenerate", label: "Regenerate", icon: Sprout },
 ];
 
 export function MainNav() {

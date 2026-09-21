@@ -48,19 +48,36 @@ const truncateText = (text: string, maxLen: number) => {
   return text.slice(0, maxLen) + "...";
 };
 
+// Fallback directory of the chain's built-in tokens (native + bridge). The daemon's /api/tokens
+// now returns these too, but keeping them here means the page is correct even before the node
+// redeploys, and if the API is briefly unreachable.
 const BUILTIN_TOKENS: TokenInfo[] = [
   {
     symbol: "XRGE",
     name: "XRGE",
     creator: "",
-    description: "Native chain token of RougeChain — quantum-resistant L1",
+    description: "Native token of RougeChain — quantum-resistant (ML-DSA-65) L1",
+    created_at: 0,
+  },
+  {
+    symbol: "qBTC",
+    name: "qBTC",
+    creator: "",
+    description: "Quantum-wrapped Bitcoin — bridged 1:1 via the RougeChain BTC bridge (8 decimals)",
     created_at: 0,
   },
   {
     symbol: "qETH",
     name: "qETH",
     creator: "",
-    description: "Quantum-wrapped Ethereum — bridged via RougeChain Bridge (6 decimals)",
+    description: "Quantum-wrapped Ethereum — bridged via the RougeChain EVM bridge (6 decimals)",
+    created_at: 0,
+  },
+  {
+    symbol: "qUSDC",
+    name: "qUSDC",
+    creator: "",
+    description: "Quantum-wrapped USDC — bridged via the RougeChain EVM bridge (6 decimals)",
     created_at: 0,
   },
 ];

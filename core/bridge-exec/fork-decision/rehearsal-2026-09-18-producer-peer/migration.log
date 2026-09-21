@@ -1,0 +1,9 @@
+[main] Loaded genesis config: chain_id=rougechain-mainnet-1, allocations=0, validators=1
+[node] Loaded persisted node keys (pub: 8ccf7878003b2668...)
+[init] Loaded balance snapshot at height 48 — skipping rebuild
+[node] Assigned 1 unmatched blocks to top validator 8ccf7878003b2668...
+[node] Rebuilt proposer counts from 49 blocks (48 matched, 1 assigned to top validator)
+[node] Rebuilt tx hash index: 48 txs indexed
+[bft] Finalized height: 48 (tip: 48)
+[fork] OPTION-B canonical-ledger migration requested (F = 49)
+[fork] migration outcome: migrated

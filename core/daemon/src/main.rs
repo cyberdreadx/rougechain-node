@@ -8,12 +8,17 @@ mod nft_store;
 mod pool_events;
 mod node;
 mod peer;
+mod rouge_bridge_deposit;
 mod pool_store;
 mod order_book;
 mod rollup;
 mod websocket;
 mod jsonrpc;
 mod indexer;
+mod bridge_btc;
+mod push;
+mod fork;
+mod fork_tables;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -37,6 +42,7 @@ use tower_http::cors::{Any, AllowOrigin, CorsLayer};
 
 use crate::websocket::WsBroadcaster;
 
+use quantum_vault_storage::bridge_btc_deposit_store::{BtcDepositStore, PoolEntry};
 use quantum_vault_storage::bridge_claim_store::BridgeClaimStore;
 use quantum_vault_storage::bridge_withdraw_store::{BridgeWithdrawStore, PendingWithdrawal, WithdrawalStatus};
 
@@ -121,6 +127,16 @@ struct Args {
     mine: bool,
     #[arg(long)]
     data_dir: Option<String>,
+    /// OPTION-B FORK: explicit, operator-invoked, one-time, atomic migration of a LEGACY
+    /// production ledger to the canonical ledger at fork height F-1. Refuses unless
+    /// tip == F-1 and the ledger equals the pinned PRODUCTION_LEDGER_AT_F_MINUS_1 table.
+    /// Never runs automatically. Exits after migrating.
+    #[arg(long)]
+    migrate_canonical_ledger: bool,
+    /// Read-only operator diagnostic: print canonical digests of this node's consensus state
+    /// (loads/recovers state exactly as a normal start would) and exit.
+    #[arg(long)]
+    print_state_digest: bool,
     #[arg(long, env = "QV_API_KEYS")]
     api_keys: Option<String>,
     /// Rate limit per minute (0 = unlimited, recommended for public testnets)
@@ -186,6 +202,9 @@ struct AppState {
     base_sepolia_rpc: String,
     bridge_claim_store: Arc<BridgeClaimStore>,
     bridge_withdraw_store: std::sync::Arc<BridgeWithdrawStore>,
+    /// Watch-only registry of HD deposit addresses (pool + per-recipient assignments). The daemon
+    /// holds no Bitcoin key; the relayer derives these from its seed and registers them here.
+    btc_deposit_store: Arc<BtcDepositStore>,
     bridge_relayer_secret: Option<String>,
     xrge_bridge_vault: Option<String>,
     xrge_bridge_token: String,
@@ -211,6 +230,8 @@ struct AppState {
     replay_nonces: Arc<RwLock<HashMap<String, i64>>>,
     /// Groq API key for Quantum Bot proxy
     groq_api_key: Option<String>,
+    /// Fire-and-forget Expo push dispatcher (transfer / message / mail notifications)
+    push: push::PushDispatcher,
 }
 
 #[derive(Clone)]
@@ -357,27 +378,39 @@ async fn main() -> Result<(), String> {
             .as_ref()
             .map(|gc| gc.initial_validators.iter().map(|v| v.pub_key.clone()).collect())
             .unwrap_or_default(),
+        genesis_allocations: genesis_config.as_ref().map(|gc| gc.initial_allocations.clone()).unwrap_or_default(),
+        genesis_validators: genesis_config.as_ref().map(|gc| gc.initial_validators.clone()).unwrap_or_default(),
     })?;
     // Inject WASM runtime/store so apply_balance_block can re-execute contract txs
     node.set_wasm_runtime(wasm_runtime.clone());
     node.set_contract_store(contract_store.clone());
     let node = Arc::new(node);
-    node.init()?;
+    if args.migrate_canonical_ledger { node.init_for_migration()?; } else { node.init()?; }
     node.backfill_address_index();
 
-    // Apply genesis allocations on first boot (chain height == 0)
+    // Genesis allocations/validators are applied EXACTLY ONCE, inside `L1Node::init()` →
+    // `recover_from_history` (the deterministic path a fresh chain and a snapshot-less restart
+    // share; NodeOptions carries the genesis seed). Applying them again here would double-credit
+    // every allocation on first boot.
     if let Some(ref gc) = genesis_config {
-        let current_height = node.tip_height().unwrap_or(0);
-        if current_height == 0 && (!gc.initial_allocations.is_empty() || !gc.initial_validators.is_empty()) {
-            eprintln!("[main] Applying genesis allocations (chain is fresh)...");
-            if let Err(e) = node.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators) {
-                eprintln!("[main] WARNING: Failed to apply genesis allocations: {}", e);
-            } else {
-                let total: u64 = gc.initial_allocations.iter().map(|a| a.amount).sum();
-                eprintln!("[main] Genesis: credited {} XRGE across {} addresses, {} validators staked",
-                    total, gc.initial_allocations.len(), gc.initial_validators.len());
-            }
+        if node.tip_height().unwrap_or(0) == 0 {
+            let total: u64 = gc.initial_allocations.iter().map(|a| a.amount).sum();
+            eprintln!("[main] Genesis seed (applied by init): {} XRGE across {} addresses, {} validators",
+                total, gc.initial_allocations.len(), gc.initial_validators.len());
         }
+    }
+
+    if args.print_state_digest {
+        let d = node.state_digest()?;
+        println!("{}", serde_json::to_string_pretty(&d).map_err(|e| e.to_string())?);
+        return Ok(());
+    }
+    if args.migrate_canonical_ledger {
+        eprintln!("[fork] OPTION-B canonical-ledger migration requested (F = {})", fork::FORK_HEIGHT);
+        let outcome = node.migrate_canonical_ledger(&|n: &L1Node| n.persist_snapshot_atomic(fork::FORK_HEIGHT - 1))?;
+        eprintln!("[fork] migration outcome: {}", outcome);
+        println!("{}", serde_json::to_string_pretty(&node.state_digest()?).map_err(|e| e.to_string())?);
+        return Ok(());
     }
 
     let grpc_addr: SocketAddr = format!("{}:{}", args.host, args.port)
@@ -427,6 +460,27 @@ async fn main() -> Result<(), String> {
     let bridge_claim_store = Arc::new(
         BridgeClaimStore::new(&data_dir_clone).map_err(|e| format!("bridge store: {}", e))?
     );
+    let btc_deposit_store = Arc::new(
+        BtcDepositStore::new(&data_dir_clone).map_err(|e| format!("btc deposit store: {}", e))?
+    );
+    // Expo push dispatcher — enabled by default; QV_PUSH_ENABLED=0/false turns it off. When
+    // enabled it spawns one background task that POSTs to Expo; call sites only enqueue.
+    let push_dispatcher = {
+        let enabled = std::env::var("QV_PUSH_ENABLED")
+            .map(|v| {
+                let v = v.trim().to_lowercase();
+                v != "0" && v != "false" && v != "off" && v != "no"
+            })
+            .unwrap_or(true);
+        if enabled {
+            eprintln!("[push] Expo push dispatcher enabled");
+            push::spawn(node.clone())
+        } else {
+            eprintln!("[push] Expo push dispatcher disabled (QV_PUSH_ENABLED)");
+            push::PushDispatcher::disabled()
+        }
+    };
+
     let app_state = AppState {
         node: node.clone(),
         auth,
@@ -443,6 +497,7 @@ async fn main() -> Result<(), String> {
         base_sepolia_rpc: args.base_sepolia_rpc.clone(),
         bridge_claim_store,
         bridge_withdraw_store,
+        btc_deposit_store,
         bridge_relayer_secret: std::env::var("BRIDGE_RELAYER_SECRET").ok().filter(|s| !s.is_empty()),
         admin_key: std::env::var("QV_ADMIN_KEY").ok().filter(|s| !s.is_empty()),
         xrge_bridge_vault: std::env::var("XRGE_BRIDGE_VAULT").ok().filter(|s| !s.is_empty()),
@@ -463,8 +518,59 @@ async fn main() -> Result<(), String> {
         mine_notify: node.mine_notify(),
         replay_nonces: Arc::new(RwLock::new(HashMap::new())),
         groq_api_key: args.groq_api_key.clone(),
+        push: push_dispatcher,
     };
-    
+
+    // BTC HD deposit watcher: poll each assigned deposit address, two-provider-verify incoming
+    // deposits, and mint qBTC to the bound recipient (dedupe per txid:vout). The daemon holds no
+    // Bitcoin key here — it only watches; the relayer sweeps the funds afterward.
+    {
+        let watch_node = app_state.node.clone();
+        let watch_deposits = app_state.btc_deposit_store.clone();
+        let watch_claims = app_state.bridge_claim_store.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                if bridge_btc::btc_custody_address().is_none() {
+                    continue; // BTC bridge not enabled
+                }
+                let assignments = match watch_deposits.list_assignments() {
+                    Ok(a) => a,
+                    Err(_) => continue,
+                };
+                for a in assignments {
+                    let deposits = match bridge_btc::scan_btc_address_deposits(&a.address).await {
+                        Ok(d) => d,
+                        Err(_) => continue, // provider hiccup — retry next cycle
+                    };
+                    for d in deposits {
+                        let key = format!("btcaddr:{}:{}", d.txid, d.vout);
+                        match watch_claims.insert_if_absent(key.clone()).await {
+                            Ok(true) => match watch_node.submit_bridge_mint_tx(
+                                &a.recipient,
+                                d.sats,
+                                bridge_btc::QBTC_SYMBOL,
+                            ) {
+                                Ok(_) => eprintln!(
+                                    "[btc-watch] minted {} qBTC to {} (deposit {}:{})",
+                                    d.sats, a.recipient, d.txid, d.vout
+                                ),
+                                Err(e) => {
+                                    eprintln!("[btc-watch] mint failed for {}: {} — rolling back", a.recipient, e);
+                                    let _ = watch_claims.remove(&key).await;
+                                }
+                            },
+                            Ok(false) => {} // already credited
+                            Err(e) => eprintln!("[btc-watch] dedupe persist error: {}", e),
+                        }
+                    }
+                    // Be polite to public Esplora between addresses.
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+            }
+        });
+    }
+
     // Backfill indexer on startup
     {
         let idx = app_state.indexer.clone();
@@ -547,6 +653,7 @@ async fn main() -> Result<(), String> {
         let ws_bc = ws_broadcaster.clone();
         let idx_bc = app_state.indexer.clone();
         let ob_bc = app_state.order_book.clone();
+        let push_bc = app_state.push.clone();
         let mine_wake = node.mine_notify();
         let mine_interval = args.block_time_ms;
         tokio::spawn(async move {
@@ -602,6 +709,29 @@ async fn main() -> Result<(), String> {
                                         Ok(_) => eprintln!("[orders] Cancelled order {}", order_id),
                                         Err(e) => eprintln!("[orders] Cancel failed for {}: {}", order_id, e),
                                     }
+                                }
+                            }
+                            "transfer" => {
+                                // Notify the recipient that funds arrived. Recipient pubkey is the
+                                // same key their push token is registered under.
+                                if let Some(to) = tx.payload.to_pub_key_hex.as_deref() {
+                                    let amount = tx.payload.amount.unwrap_or(0);
+                                    let sym = tx.payload.token_symbol.as_deref().unwrap_or("XRGE");
+                                    let dec = token_decimals(sym) as i32;
+                                    let human = if dec > 0 {
+                                        let v = amount as f64 / 10f64.powi(dec);
+                                        // Trim trailing zeros for a clean "0.001" rather than "0.00100000".
+                                        format!("{}", v)
+                                    } else {
+                                        amount.to_string()
+                                    };
+                                    let body = format!("You received {} {}", human, sym);
+                                    push_bc.notify_to(
+                                        vec![to.to_string()],
+                                        "Received",
+                                        &body,
+                                        serde_json::json!({ "type": "transfer", "symbol": sym, "amount": amount }),
+                                    );
                                 }
                             }
                             _ => {}
@@ -741,6 +871,8 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/messenger/wallets/register", post(register_messenger_wallet_signed))
         .route("/api/v2/messenger/conversations/list", post(get_conversations_signed))
         .route("/api/v2/messenger/conversations", post(create_conversation_signed))
+        .route("/api/v2/messenger/conversations/update", post(update_conversation_signed))
+        .route("/api/v2/messenger/conversations/participants", post(add_conversation_participants_signed))
         .route("/api/v2/messenger/conversations/delete", post(delete_conversation_signed))
         .route("/api/v2/messenger/messages/list", post(get_messages_signed))
         .route("/api/v2/messenger/messages", post(send_message_signed))
@@ -828,10 +960,17 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/bridge/config", get(bridge_config))
         .route("/api/bridge/claim", post(bridge_claim))
         .route("/api/bridge/withdraw", post(bridge_withdraw))
+        .route("/api/bridge/health", get(bridge_health))
         .route("/api/bridge/withdrawals", get(bridge_withdrawals))
         .route("/api/bridge/withdrawals/:tx_id", delete(bridge_withdrawal_fulfill))
         .route("/api/bridge/withdrawals/:tx_id/failure", post(bridge_withdrawal_report_failure))
         .route("/api/bridge/withdrawals/:tx_id/refund", post(bridge_withdrawal_refund))
+        .route("/api/bridge/btc/claim", post(bridge_btc_claim))
+        .route("/api/bridge/btc/withdrawals", get(bridge_btc_withdrawals))
+        .route("/api/bridge/btc/withdrawals/:tx_id", delete(bridge_btc_withdrawal_fulfill))
+        .route("/api/bridge/btc/deposit-address", post(bridge_btc_deposit_address))
+        .route("/api/bridge/btc/deposit-pool", post(bridge_btc_deposit_pool))
+        .route("/api/bridge/btc/deposit-addresses", get(bridge_btc_deposit_addresses))
         // XRGE bridge endpoints
         .route("/api/bridge/xrge/config", get(xrge_bridge_config))
         .route("/api/bridge/xrge/claim", post(xrge_bridge_claim))
@@ -872,6 +1011,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/social/artist/:pubkey/stats", get(social_artist_stats))
         .route("/api/social/user/:pubkey/likes", get(social_user_likes))
         .route("/api/social/user/:pubkey/following", get(social_user_following))
+        .route("/api/social/user/:pubkey/followers", get(social_user_followers))
         // Social endpoints (read — posts/timeline)
         .route("/api/social/post/:postId", get(social_get_post))
         .route("/api/social/post/:postId/stats", get(social_post_stats))
@@ -1563,12 +1703,44 @@ struct TokenMetadataResponse {
     mintable: bool,
     max_supply: Option<u64>,
     total_minted: u64,
+    /// Canonical token decimals (source of truth for display/amount conversion).
+    decimals: u8,
 }
 
 #[derive(Serialize)]
 struct AllTokensResponse {
     success: bool,
     tokens: Vec<TokenMetadataResponse>,
+}
+
+/// Canonical decimals for a token symbol — the single source of truth the chain exposes so
+/// clients stop hardcoding. Bridge tokens are fixed at the protocol level; user tokens are raw
+/// integers (0) until on-chain decimals are added to token metadata.
+fn token_decimals(symbol: &str) -> u8 {
+    match symbol.to_uppercase().as_str() {
+        "QBTC" => 8, // 1 unit = 1 satoshi
+        "QUSDC" | "QETH" => 6,
+        _ => 0, // XRGE + user-created tokens
+    }
+}
+
+/// The chain's built-in tokens: native XRGE + the bridge assets. These have no on-chain metadata
+/// row (they exist implicitly as balances), so the token APIs synthesize them here — otherwise the
+/// directory could only ever show user-created tokens (of which there are none) and clients are
+/// forced to hardcode. Registry (user-created) metadata always takes precedence over these.
+struct CanonicalToken {
+    symbol: &'static str,
+    name: &'static str,
+    description: &'static str,
+}
+
+fn canonical_tokens() -> &'static [CanonicalToken] {
+    &[
+        CanonicalToken { symbol: "XRGE", name: "XRGE", description: "Native token of RougeChain — the quantum-resistant (ML-DSA-65) L1." },
+        CanonicalToken { symbol: "qBTC", name: "qBTC", description: "Quantum-wrapped Bitcoin — bridged 1:1 via the RougeChain BTC bridge. 8 decimals (1 unit = 1 satoshi)." },
+        CanonicalToken { symbol: "qETH", name: "qETH", description: "Quantum-wrapped Ethereum — bridged via the RougeChain EVM bridge. 6 decimals." },
+        CanonicalToken { symbol: "qUSDC", name: "qUSDC", description: "Quantum-wrapped USDC — bridged via the RougeChain EVM bridge. 6 decimals." },
+    ]
 }
 
 async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensResponse>, StatusCode> {
@@ -1579,6 +1751,7 @@ async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensR
                 .into_iter()
                 .map(|t| TokenMetadataResponse {
                     success: true,
+                    decimals: token_decimals(&t.symbol),
                     symbol: t.symbol,
                     name: t.name,
                     creator: t.creator,
@@ -1595,9 +1768,36 @@ async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensR
                     total_minted: t.total_minted,
                 })
                 .collect();
+            // Prepend the built-in native + bridge tokens that aren't already registered as
+            // user metadata, so the directory always shows the full set with correct decimals.
+            let existing: std::collections::HashSet<String> =
+                token_list.iter().map(|t| t.symbol.to_uppercase()).collect();
+            let mut merged: Vec<TokenMetadataResponse> = canonical_tokens()
+                .iter()
+                .filter(|c| !existing.contains(&c.symbol.to_uppercase()))
+                .map(|c| TokenMetadataResponse {
+                    success: true,
+                    decimals: token_decimals(c.symbol),
+                    symbol: c.symbol.to_string(),
+                    name: c.name.to_string(),
+                    creator: String::new(),
+                    image: None,
+                    description: Some(c.description.to_string()),
+                    website: None,
+                    twitter: None,
+                    discord: None,
+                    created_at: 0,
+                    updated_at: 0,
+                    frozen: false,
+                    mintable: false,
+                    max_supply: None,
+                    total_minted: 0,
+                })
+                .collect();
+            merged.extend(token_list);
             Ok(Json(AllTokensResponse {
                 success: true,
-                tokens: token_list,
+                tokens: merged,
             }))
         }
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
@@ -1612,6 +1812,7 @@ async fn get_token_metadata(
     match node.get_token_metadata(&symbol) {
         Ok(Some(meta)) => Ok(Json(serde_json::json!({
             "success": true,
+            "decimals": token_decimals(&meta.symbol),
             "symbol": meta.symbol,
             "name": meta.name,
             "creator": meta.creator,
@@ -1623,10 +1824,31 @@ async fn get_token_metadata(
             "created_at": meta.created_at,
             "updated_at": meta.updated_at,
         }))),
-        Ok(None) => Ok(Json(serde_json::json!({
-            "success": false,
-            "error": format!("Token {} not found", symbol),
-        }))),
+        Ok(None) => {
+            // Fall back to a built-in token (native/bridge) so /token/qBTC etc. resolve even
+            // without an on-chain metadata row.
+            if let Some(c) = canonical_tokens().iter().find(|c| c.symbol.eq_ignore_ascii_case(&symbol)) {
+                Ok(Json(serde_json::json!({
+                    "success": true,
+                    "decimals": token_decimals(c.symbol),
+                    "symbol": c.symbol,
+                    "name": c.name,
+                    "creator": "",
+                    "image": serde_json::Value::Null,
+                    "description": c.description,
+                    "website": serde_json::Value::Null,
+                    "twitter": serde_json::Value::Null,
+                    "discord": serde_json::Value::Null,
+                    "created_at": 0,
+                    "updated_at": 0,
+                })))
+            } else {
+                Ok(Json(serde_json::json!({
+                    "success": false,
+                    "error": format!("Token {} not found", symbol),
+                })))
+            }
+        }
         Err(e) => Ok(Json(serde_json::json!({
             "success": false,
             "error": e,
@@ -3962,6 +4184,7 @@ async fn register_messenger_wallet(
         encryption_public_key: encryption_key,
         created_at: chrono::Utc::now().to_rfc3339(),
         discoverable: body.get("discoverable").and_then(|v| v.as_bool()).unwrap_or(true),
+        avatar_url: body.get("avatarUrl").and_then(|v| v.as_str()).filter(|s| !s.is_empty() && s.len() <= MESSENGER_AVATAR_MAX_BYTES).map(|s| s.to_string()),
     };
     let wallet = node.register_wallet(wallet).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -4051,6 +4274,9 @@ async fn send_messenger_message(
         spoiler: body.get("spoiler").and_then(|v| v.as_bool()).unwrap_or(false),
     };
     let message = node.send_message(message).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let recipients: Vec<String> = state.node.get_conversation_participants(&message.conversation_id)
+        .into_iter().filter(|p| *p != message.sender_wallet_id).collect();
+    state.push.notify_to(recipients, "New message", "You received a new encrypted message", serde_json::json!({ "type": "message", "conversationId": message.conversation_id }));
     Ok(Json(serde_json::json!({ "success": true, "message": message })))
 }
 
@@ -4196,6 +4422,8 @@ async fn send_mail(
         attachment_encrypted: body.get("attachmentEncrypted").and_then(|v| v.as_str()).map(|s| s.to_string()),
     };
     let msg = state.node.send_mail(msg).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let recipients: Vec<String> = msg.to_wallet_ids.iter().filter(|w| **w != msg.from_wallet_id).cloned().collect();
+    state.push.notify_to(recipients, "New mail", "You received a new encrypted message", serde_json::json!({ "type": "mail", "id": msg.id }));
     Ok(Json(serde_json::json!({ "success": true, "message": msg })))
 }
 
@@ -4640,6 +4868,8 @@ async fn send_mail_signed(
         attachment_encrypted: p.get("attachmentEncrypted").and_then(|v| v.as_str()).map(|s| s.to_string()),
     };
     let msg = state.node.send_mail(msg).map_err(|e| signed_internal(&e))?;
+    let recipients: Vec<String> = msg.to_wallet_ids.iter().filter(|w| **w != msg.from_wallet_id).cloned().collect();
+    state.push.notify_to(recipients, "New mail", "You received a new encrypted message", serde_json::json!({ "type": "mail", "id": msg.id }));
     Ok(Json(serde_json::json!({ "success": true, "message": msg })))
 }
 
@@ -4753,6 +4983,10 @@ async fn delete_mail_signed(
 // Secured messenger handlers (require signed requests)
 // ============================================
 
+/// Max size of a directory-shared avatar (base64 data URI). Peers pull the whole directory, so
+/// keep it modest; tighten here if directory payloads grow.
+const MESSENGER_AVATAR_MAX_BYTES: usize = 256 * 1024;
+
 async fn register_messenger_wallet_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
@@ -4812,6 +5046,17 @@ async fn register_messenger_wallet_signed(
         }
     }
 
+    // Optional directory-shared avatar (base64 data URI) so peers can render it. Kept small —
+    // peers fetch the whole directory, so cap the size (one-line change to tighten further).
+    let avatar_url = match p.get("avatarUrl").and_then(|v| v.as_str()) {
+        Some(a) if !a.is_empty() => {
+            if a.len() > MESSENGER_AVATAR_MAX_BYTES {
+                return Err(signed_bad("Avatar too large (max 256 KB)"));
+            }
+            Some(a.to_string())
+        }
+        _ => None,
+    };
     let wallet = quantum_vault_storage::messenger_store::MessengerWallet {
         id: id.clone(),
         display_name,
@@ -4819,6 +5064,7 @@ async fn register_messenger_wallet_signed(
         encryption_public_key: encryption_key,
         created_at: chrono::Utc::now().to_rfc3339(),
         discoverable: p.get("discoverable").and_then(|v| v.as_bool()).unwrap_or(true),
+        avatar_url,
     };
     let wallet = state.node.register_wallet(wallet).map_err(|e| signed_internal(&e))?;
 
@@ -4879,6 +5125,106 @@ async fn create_conversation_signed(
     Ok(Json(serde_json::json!({ "success": true, "conversation": conversation })))
 }
 
+/// Rename (or clear the name of) a conversation. Any existing participant may rename.
+async fn update_conversation_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let conversation_id = p.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    if conversation_id.is_empty() {
+        return Err(signed_bad("conversationId is required"));
+    }
+    if !is_conversation_participant(&state.node, &conversation_id, &authed_key) {
+        return Err(signed_err("Not a participant in this conversation"));
+    }
+
+    // `name` present (non-empty) sets it; absent or empty/whitespace clears it.
+    let name: Option<String> = match p.get("name").and_then(|v| v.as_str()) {
+        Some(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else if t.chars().count() > 100 {
+                return Err(signed_bad("Name too long (max 100 characters)"));
+            } else {
+                Some(t.to_string())
+            }
+        }
+        None => None,
+    };
+
+    let conv = state.node.rename_conversation(&conversation_id, name)
+        .map_err(|e| signed_internal(&e))?
+        .ok_or_else(|| signed_bad("Conversation not found"))?;
+
+    // Notify the other participants of the change.
+    let recipients: Vec<String> = state.node.get_conversation_participants(&conversation_id)
+        .into_iter().filter(|pk| pk != &authed_key).collect();
+    let label = conv.name.clone().unwrap_or_else(|| "the group".to_string());
+    state.push.notify_to(
+        recipients,
+        "Group updated",
+        &format!("Renamed to {}", label),
+        serde_json::json!({ "type": "conversation_update", "conversationId": conversation_id }),
+    );
+
+    Ok(Json(serde_json::json!({ "success": true, "conversation": conv })))
+}
+
+/// Add one or more participants to a conversation. Any existing participant may add. Future
+/// messages automatically encrypt to new members (per-recipient wrapped CEK); they don't get
+/// prior history — correct E2E behavior.
+async fn add_conversation_participants_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+
+    let conversation_id = p.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    if conversation_id.is_empty() {
+        return Err(signed_bad("conversationId is required"));
+    }
+    if !is_conversation_participant(&state.node, &conversation_id, &authed_key) {
+        return Err(signed_err("Not a participant in this conversation"));
+    }
+
+    let new_ids: Vec<String> = p.get("participantIds")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+    if new_ids.is_empty() {
+        return Err(signed_bad("participantIds is required"));
+    }
+
+    // Enforce the 50-participant cap on the resulting union.
+    let current = state.node.get_conversation_participants(&conversation_id);
+    let mut union: std::collections::HashSet<&str> = current.iter().map(|s| s.as_str()).collect();
+    for id in &new_ids { union.insert(id.as_str()); }
+    if union.len() > 50 {
+        return Err(signed_bad("Maximum 50 participants"));
+    }
+
+    let conv = state.node.add_conversation_participants(&conversation_id, &new_ids)
+        .map_err(|e| signed_internal(&e))?
+        .ok_or_else(|| signed_bad("Conversation not found"))?;
+
+    // Notify only the members that were actually newly added.
+    let added: Vec<String> = new_ids.into_iter().filter(|id| !current.iter().any(|c| c == id)).collect();
+    let label = conv.name.clone().unwrap_or_else(|| "a group chat".to_string());
+    state.push.notify_to(
+        added,
+        "Added to group",
+        &format!("You were added to {}", label),
+        serde_json::json!({ "type": "conversation_participant", "conversationId": conversation_id }),
+    );
+
+    Ok(Json(serde_json::json!({ "success": true, "conversation": conv })))
+}
+
 async fn get_messages_signed(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
@@ -4935,6 +5281,10 @@ async fn send_message_signed(
         spoiler: p.get("spoiler").and_then(|v| v.as_bool()).unwrap_or(false),
     };
     let message = state.node.send_message(message).map_err(|e| signed_internal(&e))?;
+    // Notify every other participant (recipient pubkeys == push-store keys). authed_key is the sender.
+    let recipients: Vec<String> = state.node.get_conversation_participants(&message.conversation_id)
+        .into_iter().filter(|p| p != &authed_key).collect();
+    state.push.notify_to(recipients, "New message", "You received a new encrypted message", serde_json::json!({ "type": "message", "conversationId": message.conversation_id }));
     Ok(Json(serde_json::json!({ "success": true, "message": message })))
 }
 
@@ -6716,6 +7066,13 @@ struct BridgeConfigResponse {
     /// clients must treat that as "unknown network" and refuse to bridge.
     chain_id: Option<u64>,
     supported_tokens: Vec<String>,
+    /// Bitcoin custody address to send BTC deposits to (with an OP_RETURN recipient).
+    /// None when the BTC bridge is not configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    btc_custody_address: Option<String>,
+    /// Bitcoin network the BTC bridge is on ("mainnet"/"testnet"). None when not configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    btc_network: Option<String>,
 }
 
 /// The Base chain the bridge is configured to talk to. Fail-safe by design:
@@ -6912,11 +7269,25 @@ async fn bridge_config(State(state): State<AppState>) -> Json<BridgeConfigRespon
     // if a custody address is present.
     let enabled = custody_ok && chain_id.is_some();
     let custody_address = if enabled { state.bridge_custody_address.clone() } else { None };
+
+    // The BTC bridge is independent of the Base (EVM) bridge: it only needs a Bitcoin custody
+    // address configured. Advertise "BTC" and the custody address only when that is set.
+    let btc_custody_address = bridge_btc::btc_custody_address();
+    let mut supported_tokens = vec!["ETH".to_string(), "USDC".to_string()];
+    let btc_network = if btc_custody_address.is_some() {
+        supported_tokens.push("BTC".to_string());
+        Some(bridge_btc::btc_network())
+    } else {
+        None
+    };
+
     Json(BridgeConfigResponse {
         enabled,
         custody_address,
         chain_id,
-        supported_tokens: vec!["ETH".to_string(), "USDC".to_string()],
+        supported_tokens,
+        btc_custody_address,
+        btc_network,
     })
 }
 
@@ -7379,23 +7750,54 @@ async fn process_bridge_reclaim(
             }
             (amount, "XRGE", normalize_recipient(&dep.rougechain_pubkey))
         }
-        "USDC" => {
-            return serde_json::json!({ "success": false, "error": "USDC reclaim is temporarily unavailable during the security upgrade" });
+        "ETH" | "USDC" => {
+            // RougeBridge deposit auto-claim (dedicated verifier — see rouge_bridge_deposit.rs). The
+            // asset, amount AND recipient come exclusively from the BridgeDepositETH/ERC20 event
+            // emitted by the CONFIGURED RougeBridge in a successful receipt; a plain value transfer
+            // (no event) is still refused, and nothing caller-supplied is used.
+            let asset = if token == "ETH" { rouge_bridge_deposit::DepositAsset::Eth } else { rouge_bridge_deposit::DepositAsset::Usdc };
+            let bridge = match rouge_bridge_address() {
+                Some(b) => b,
+                None => return serde_json::json!({ "success": false, "error": "RougeBridge address not configured — refusing to credit" }),
+            };
+            let usdc = bridge_usdc_address().unwrap_or_default();
+            // Bind the credit to the configured EVM chain using the DAEMON's own RPC (independent of
+            // the relayer's preflight): RPC failure / malformed / mismatch ⇒ no credit.
+            let expected_chain = match rouge_bridge_deposit::expected_bridge_chain_id(std::env::var("QV_BRIDGE_CHAIN_ID").ok().as_deref()) {
+                Ok(c) => c,
+                Err(e) => return serde_json::json!({ "success": false, "error": e }),
+            };
+            let chain_resp: Result<serde_json::Value, String> = match client.post(rpc_url)
+                .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1})).send().await {
+                Ok(r) => r.json::<serde_json::Value>().await.map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            };
+            if let Err(e) = rouge_bridge_deposit::require_chain_id(chain_resp.as_ref().map_err(|e| e.as_str()), expected_chain) {
+                return serde_json::json!({ "success": false, "error": e });
+            }
+            let receipt: serde_json::Value = match client.post(rpc_url)
+                .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":[tx_hash_hex],"id":1}))
+                .send().await {
+                Ok(r) => match r.json::<serde_json::Value>().await {
+                    Ok(v) => v.get("result").cloned().unwrap_or(serde_json::Value::Null),
+                    Err(e) => return serde_json::json!({ "success": false, "error": format!("bad RPC response: {} — refusing to credit", e) }),
+                },
+                Err(e) => return serde_json::json!({ "success": false, "error": format!("RPC error: {} — refusing to credit", e) }),
+            };
+            let dep = match rouge_bridge_deposit::verify_rouge_bridge_deposit(&receipt, asset, &bridge, &usdc) {
+                Ok(d) => d,
+                Err(e) => return serde_json::json!({ "success": false, "error": format!("No verifiable RougeBridge deposit: {}", e) }),
+            };
+            // Fail-closed confirmation depth (unknown head ⇒ no credit).
+            if let Err(e) = rouge_bridge_deposit::require_confirmations(dep.block, evm_latest_block(&client, rpc_url).await, bridge_min_confirmations()) {
+                return serde_json::json!({ "success": false, "error": e });
+            }
+            (dep.l1_units, dep.mint_symbol, normalize_recipient(&dep.rougechain_pubkey))
         }
-        _ => {
-            // ETH auto-claim/reclaim is DISABLED: a plain value transfer to custody carries no
-            // on-chain recipient, so this path cannot bind the mint destination. qETH deposits
-            // must use the signed /api/bridge/claim endpoint (recipient bound by the EVM signature).
-            return serde_json::json!({ "success": false, "error": "ETH auto-claim is disabled — use the signed /api/bridge/claim endpoint" });
+        other => {
+            return serde_json::json!({ "success": false, "error": format!("unsupported deposit token {}", other) });
         }
     };
-
-    // SECURITY: atomically reserve before minting (release on failure so a legit retry works).
-    match state.bridge_claim_store.insert_if_absent(claim_key.clone()).await {
-        Ok(true) => {}
-        Ok(false) => return serde_json::json!({ "success": false, "error": "Transaction already claimed" }),
-        Err(e) => return serde_json::json!({ "success": false, "error": format!("Failed to persist claim: {}", e) }),
-    }
 
     if !requested_recipient.is_empty() && requested_recipient != bound_recipient {
         eprintln!("[bridge-reclaim] request recipient {} != on-chain recipient {} — using on-chain",
@@ -7404,15 +7806,13 @@ async fn process_bridge_reclaim(
     eprintln!("[bridge-reclaim] Minting tx {} -> {} {} for {}", tx_hash_hex, amount_units, mint_symbol, &bound_recipient[..20.min(bound_recipient.len())]);
     use quantum_vault_crypto::{bytes_to_hex, sha256};
     use quantum_vault_types::encode_tx_v1;
-    match state.node.submit_bridge_mint_tx(&bound_recipient, amount_units, mint_symbol) {
+    // SECURITY: atomically reserve the Base tx BEFORE minting (released only if the mint fails).
+    match rouge_bridge_deposit::reserve_then_mint(&state.bridge_claim_store, &claim_key, || state.node.submit_bridge_mint_tx(&bound_recipient, amount_units, mint_symbol)).await {
         Ok(tx) => {
             let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
             serde_json::json!({ "success": true, "txId": id, "amount": amount_units, "token": mint_symbol })
         }
-        Err(e) => {
-            let _ = state.bridge_claim_store.remove(&claim_key).await;
-            serde_json::json!({ "success": false, "error": e })
-        }
+        Err(e) => serde_json::json!({ "success": false, "error": e }),
     }
 }
 
@@ -7441,31 +7841,14 @@ async fn bridge_withdraw(
     State(state): State<AppState>,
     Json(body): Json<BridgeWithdrawRequest>,
 ) -> Result<Json<BridgeWithdrawResponse>, (StatusCode, Json<BridgeWithdrawResponse>)> {
-    if state.bridge_custody_address.is_none() || state.bridge_custody_address.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
-        return Ok(Json(BridgeWithdrawResponse {
-            success: false,
-            tx_id: None,
-            error: Some("Bridge is not enabled (QV_BRIDGE_CUSTODY_ADDRESS not set)".to_string()),
-        }));
-    }
-    if body.amount_units == 0 {
-        return Ok(Json(BridgeWithdrawResponse {
-            success: false,
-            tx_id: None,
-            error: Some("Amount must be greater than 0".to_string()),
-        }));
-    }
-    if let Err(e) = check_withdraw_guardrails(body.amount_units) {
-        return Ok(Json(BridgeWithdrawResponse { success: false, tx_id: None, error: Some(e) }));
-    }
+    use quantum_vault_bridge_exec::{
+        authorize_bridge_withdraw, Endpoint, PayoutRoute, SignedWithdrawIntent, TopLevelCompat,
+    };
+    let fail = |msg: String| Ok(Json(BridgeWithdrawResponse { success: false, tx_id: None, error: Some(msg) }));
 
-    let token_symbol = body.payload.as_ref()
-        .and_then(|p| p.get("tokenSymbol"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("qETH")
-        .to_string();
-
-    // Prefer signed payload (client-side signing) over raw private key
+    // R1C: the VERIFIED signed payload is the sole authority for every security-relevant
+    // withdrawal value. Top-level `amountUnits` / `evmAddress` / `fee` are legacy compatibility
+    // copies that must EQUAL the signed values; they never override them.
     let tx_result = if let (Some(signature), Some(payload)) = (&body.signature, &body.payload) {
         let signed_req = SignedTransactionRequest {
             payload: payload.clone(),
@@ -7474,20 +7857,75 @@ async fn bridge_withdraw(
             payload_bytes_hex: None,
         };
         if let Err(e) = verify_signed_tx(&signed_req).await {
-            return Ok(Json(BridgeWithdrawResponse {
-                success: false,
-                tx_id: None,
-                error: Some(format!("Signature verification failed: {}", e)),
-            }));
+            return fail(format!("Signature verification failed: {}", e));
         }
+        // Mandatory signer binding (verify_signed_tx only checks `from` when present).
+        if payload.get("from").and_then(|v| v.as_str()) != Some(body.from_public_key.as_str()) {
+            return fail("signed payload 'from' must equal the authenticated public key".to_string());
+        }
+        // Durable account nonce if the client signed one (no-op otherwise; the persistent
+        // signature replay guard inside verify_signed_tx always applies).
+        if let Err(e) = check_signed_nonce(&state.node, &body.from_public_key, payload) {
+            return fail(e);
+        }
+        let intent = SignedWithdrawIntent {
+            op_type: payload.get("type").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            amount: payload.get("amount").and_then(|v| v.as_u64()),
+            destination: payload.get("evmAddress").and_then(|v| v.as_str()).map(str::to_string),
+            fee: payload.get("fee").and_then(|v| v.as_f64()),
+            token_symbol: payload.get("tokenSymbol").and_then(|v| v.as_str()).map(str::to_string),
+        };
+        let compat = TopLevelCompat {
+            amount: Some(body.amount_units),
+            destination: Some(body.evm_address.clone()),
+            fee: body.fee,
+        };
+        // R1B admission allowlist (qETH/qUSDC/qBTC; XRGE → its own endpoint; else rejected),
+        // R1C value binding, R1D fee policy (exactly 0.1 XRGE) + zero-amount/blank-destination.
+        let auth = match authorize_bridge_withdraw(Endpoint::Generic, &intent, &compat) {
+            Ok(a) => a,
+            Err(e) => return fail(format!("signed-intent rejected: {:?}", e)),
+        };
+        // Bridge readiness is keyed on the AUTHORIZED route, not a caller-chosen string.
+        let bridge_ready = match auth.route {
+            PayoutRoute::Btc => bridge_btc::btc_custody_address().is_some(),
+            _ => state.bridge_custody_address.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
+        };
+        if !bridge_ready {
+            return fail(if auth.route == PayoutRoute::Btc {
+                "BTC bridge is not enabled (QV_BRIDGE_BTC_CUSTODY not set)".to_string()
+            } else {
+                "Bridge is not enabled (QV_BRIDGE_CUSTODY_ADDRESS not set)".to_string()
+            });
+        }
+        if let Err(e) = check_withdraw_guardrails(auth.amount) {
+            return fail(e);
+        }
+        // The node-cosigned TxV1 is built ONLY from authorized (signed + canonicalized) values.
+        // Token-specific destination FORMAT validation (EVM vs Bitcoin) happens inside.
         state.node.submit_bridge_withdraw_tx_signed(
             &body.from_public_key,
-            body.amount_units,
-            &body.evm_address,
-            body.fee,
-            &token_symbol,
+            auth.amount,
+            &auth.destination,
+            Some(auth.fee),
+            &auth.canonical_token,
         )
     } else if let Some(ref private_key) = body.from_private_key {
+        // R1C-(8): deprecated raw-private-key path — default OFF. It is qETH-only by
+        // construction (submit_bridge_withdraw_tx hard-codes qETH) and still subject to the
+        // same admission checks; it can never reach qUSDC/qBTC/XRGE.
+        if std::env::var("QV_BRIDGE_ALLOW_RAW_KEY").map(|v| v == "true").unwrap_or(false) == false {
+            return fail("raw-private-key bridge withdrawal is disabled; use the signed path".to_string());
+        }
+        if !state.bridge_custody_address.as_ref().map(|s| !s.is_empty()).unwrap_or(false) {
+            return fail("Bridge is not enabled (QV_BRIDGE_CUSTODY_ADDRESS not set)".to_string());
+        }
+        if body.amount_units == 0 {
+            return fail("Amount must be greater than 0".to_string());
+        }
+        if let Err(e) = check_withdraw_guardrails(body.amount_units) {
+            return fail(e);
+        }
         state.node.submit_bridge_withdraw_tx(
             private_key,
             &body.from_public_key,
@@ -7496,11 +7934,7 @@ async fn bridge_withdraw(
             body.fee,
         )
     } else {
-        return Ok(Json(BridgeWithdrawResponse {
-            success: false,
-            tx_id: None,
-            error: Some("Either signature+payload or fromPrivateKey is required".to_string()),
-        }));
+        return fail("Either signature+payload or fromPrivateKey is required".to_string());
     };
 
     match tx_result {
@@ -7557,14 +7991,40 @@ fn is_xrge_withdrawal(w: &PendingWithdrawal) -> bool {
     w.token_symbol.eq_ignore_ascii_case("XRGE") || w.tx_id.starts_with("xrge:")
 }
 
-async fn bridge_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdrawalsResponse> {
-    let list = state.bridge_withdraw_store.list_pending().unwrap_or_default();
-    Json(BridgeWithdrawalsResponse {
+/// R1B: positive routing helpers for the generic (Base EVM) relayer list. There is NO
+/// catch-all: a record is served to the EVM relayer only if it is explicitly qETH or qUSDC.
+fn is_eth_withdrawal(w: &PendingWithdrawal) -> bool {
+    w.token_symbol.eq_ignore_ascii_case("qETH")
+}
+fn is_usdc_withdrawal(w: &PendingWithdrawal) -> bool {
+    w.token_symbol.eq_ignore_ascii_case("qUSDC")
+}
+
+/// R1 derived-state health for the relayer: `degraded == true` means at least one payout
+/// record for an ACCEPTED block could not be persisted; every relayer list is fail-closed
+/// (HTTP 503) until `rebuild_bridge_withdraw_store` succeeds (automatic on restart).
+async fn bridge_health(State(state): State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
+    let degraded = state.node.bridge_store_degraded();
+    let body = serde_json::json!({
+        "degraded": degraded,
+        "failed_tx_ids": state.node.bridge_store_failed_ids(),
+        "pending": state.bridge_withdraw_store.list_pending().map(|v| v.len()).unwrap_or(0),
+    });
+    (if degraded { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK }, Json(body))
+}
+
+async fn bridge_withdrawals(State(state): State<AppState>) -> Result<Json<BridgeWithdrawalsResponse>, (StatusCode, Json<serde_json::Value>)> {
+    // Fail closed while derived bridge state is degraded — the relayer must get NO list.
+    let list = state.node.relayer_pending_withdrawals()
+        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({ "error": e, "degraded": true }))))?;
+    Ok(Json(BridgeWithdrawalsResponse {
         withdrawals: list
             .into_iter()
-            // The ETH relayer must not pick up XRGE withdrawals — those are served
-            // by /api/bridge/xrge/withdrawals and released via the XRGE vault.
-            .filter(|w| !is_xrge_withdrawal(w))
+            // R1B: the generic EVM list exposes ONLY explicitly supported EVM assets (qETH,
+            // qUSDC) — never "anything that isn't XRGE/qBTC". XRGE and qBTC keep their
+            // dedicated lists; an unsupported/custom symbol appears on NO relayer list.
+            // `tokenSymbol` is included in every item so the relayer routes on it.
+            .filter(|w| is_eth_withdrawal(w) || is_usdc_withdrawal(w))
             .map(|w| BridgeWithdrawalItem {
                 tx_id: w.tx_id,
                 evm_address: w.evm_address,
@@ -7577,7 +8037,7 @@ async fn bridge_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdra
                 last_error: w.last_error,
             })
             .collect(),
-    })
+    }))
 }
 
 #[derive(Serialize)]
@@ -7598,66 +8058,149 @@ fn payout_hash_from_body(body: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Verify a Base *native ETH* payout before a qETH withdrawal is marked fulfilled: the tx
-/// `from` must be custody, `to` the recipient, `value` at least what is owed, status success,
-/// with enough confirmations. Never trust the relayer's "done" without the on-chain receipt.
-async fn verify_native_eth_payout(
+/// R1D: the configured RougeBridge contract on Base. From `QV_ROUGE_BRIDGE_ADDRESS`, else the
+/// relayer's `ROUGE_BRIDGE_ADDRESS` (the node service shares that env file). `None` ⇒ qETH/
+/// qUSDC payouts cannot be verified and fulfillment FAILS CLOSED.
+fn rouge_bridge_address() -> Option<String> {
+    for key in ["QV_ROUGE_BRIDGE_ADDRESS", "ROUGE_BRIDGE_ADDRESS"] {
+        if let Ok(a) = std::env::var(key) {
+            let a = a.trim().to_lowercase();
+            if a.len() == 42 && a.starts_with("0x") && a[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+                return Some(a);
+            }
+        }
+    }
+    None
+}
+
+/// Event topic0 selectors for the RougeBridge release events (Ethereum keccak256 of the
+/// canonical signature). Pinned by `bridge_release_topics_match_solidity` in the tests.
+fn topic_bridge_release_eth() -> String {
+    format!("0x{}", quantum_vault_bridge_exec::bytes_to_hex(
+        &quantum_vault_bridge_exec::keccak256(b"BridgeReleaseETH(address,uint256,bytes32)")))
+}
+fn topic_bridge_release_erc20() -> String {
+    format!("0x{}", quantum_vault_bridge_exec::bytes_to_hex(
+        &quantum_vault_bridge_exec::keccak256(b"BridgeReleaseERC20(address,address,uint256,bytes32)")))
+}
+
+/// A decoded RougeBridge release event found in a receipt.
+struct RougeBridgeRelease {
+    recipient: String,      // lowercase 0x…
+    token: Option<String>,  // None for BridgeReleaseETH; Some(lowercase token) for ERC20
+    amount: u128,
+    l1_tx_id: String,       // lowercase 0x + 64 hex
+}
+
+/// Decode `BridgeReleaseETH` / `BridgeReleaseERC20` logs emitted BY `rouge_bridge` from a
+/// receipt's `logs` array. Layouts (RougeBridge.sol): ETH = topics[recipient], data =
+/// amount ‖ l1TxId; ERC20 = topics[recipient, token], data = amount ‖ l1TxId.
+fn decode_rouge_bridge_releases(logs: &[serde_json::Value], rouge_bridge: &str) -> Vec<RougeBridgeRelease> {
+    let t_eth = topic_bridge_release_eth();
+    let t_erc = topic_bridge_release_erc20();
+    let mut out = Vec::new();
+    for log in logs {
+        let emitter = log.get("address").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        if emitter != rouge_bridge { continue; }
+        let topics = match log.get("topics").and_then(|v| v.as_array()) { Some(t) => t, None => continue };
+        let t0 = topics.first().and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        let data = log.get("data").and_then(|v| v.as_str()).unwrap_or("0x").trim_start_matches("0x").to_lowercase();
+        if data.len() < 128 { continue; }
+        // uint256 word; a value above u128::MAX cannot be a real payout and is skipped.
+        let amount = match u128::from_str_radix(&data[..64], 16) { Ok(a) => a, Err(_) => continue };
+        let l1_tx_id = format!("0x{}", &data[64..128]);
+        if t0 == t_eth && topics.len() >= 2 {
+            out.push(RougeBridgeRelease {
+                recipient: topic_to_address(topics[1].as_str().unwrap_or("")),
+                token: None, amount, l1_tx_id,
+            });
+        } else if t0 == t_erc && topics.len() >= 3 {
+            out.push(RougeBridgeRelease {
+                recipient: topic_to_address(topics[1].as_str().unwrap_or("")),
+                token: Some(topic_to_address(topics[2].as_str().unwrap_or(""))), amount, l1_tx_id,
+            });
+        }
+    }
+    out
+}
+
+/// R1D §6/§7: verify a RougeBridge release payout by its EVENT, not by `tx.to == recipient`
+/// (the tx is sent to the contract). Requires: tx.to == configured RougeBridge; receipt success;
+/// a `BridgeReleaseETH` (qETH) or `BridgeReleaseERC20` with token == USDC (qUSDC) emitted BY
+/// the RougeBridge with recipient == expected, amount >= owed, l1TxId == canonical id; for
+/// qUSDC additionally the USDC `Transfer(from = RougeBridge → recipient, amount >= owed)`;
+/// and confirmation depth (fail closed if the head can't be read).
+async fn verify_rouge_bridge_release(
     client: &reqwest::Client,
     rpc_url: &str,
     tx_hash: &str,
-    from_custody: &str,
-    to_addr: &str,
-    min_wei: u128,
+    rouge_bridge: &str,
+    expected_recipient: &str,
+    expected_token: Option<&str>, // None = native ETH; Some(usdc) = ERC20
+    min_amount: u128,
+    canonical_l1_tx_id: &str,
 ) -> Result<(), String> {
     let tx_hash = if tx_hash.starts_with("0x") { tx_hash.to_string() } else { format!("0x{}", tx_hash) };
-    let from_custody = from_custody.to_lowercase();
-    let to_addr = to_addr.to_lowercase();
+    let rouge_bridge = rouge_bridge.to_lowercase();
+    let expected_recipient = expected_recipient.to_lowercase();
+    let canonical_l1_tx_id = canonical_l1_tx_id.to_lowercase();
 
-    let tx: serde_json::Value = client
-        .post(rpc_url)
+    // 1. The Base transaction destination must be the configured RougeBridge.
+    let tx: serde_json::Value = client.post(rpc_url)
         .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionByHash","params":[tx_hash],"id":1}))
         .send().await.map_err(|e| format!("RPC error: {}", e))?
         .json().await.map_err(|e| format!("bad RPC response: {}", e))?;
-    let result = tx.get("result").filter(|v| !v.is_null())
-        .ok_or_else(|| "payout tx not found or not yet mined".to_string())?;
-    let tx_from = result.get("from").and_then(|v| v.as_str()).unwrap_or_default().to_lowercase();
-    let tx_to = result.get("to").and_then(|v| v.as_str()).unwrap_or_default().to_lowercase();
-    if tx_from != from_custody {
-        return Err(format!("payout sender {} is not the custody address {}", tx_from, from_custody));
+    let txr = tx.get("result").filter(|v| !v.is_null()).ok_or_else(|| "payout tx not found or not yet mined".to_string())?;
+    let tx_to = txr.get("to").and_then(|v| v.as_str()).unwrap_or_default().to_lowercase();
+    if tx_to != rouge_bridge {
+        return Err(format!("payout tx destination {} is not the configured RougeBridge {}", tx_to, rouge_bridge));
     }
-    if tx_to != to_addr {
-        return Err(format!("payout recipient {} does not match the withdrawal address {}", tx_to, to_addr));
-    }
-    let value_hex = result.get("value").and_then(|v| v.as_str()).unwrap_or("0x0");
-    let value_wei = u128::from_str_radix(value_hex.trim_start_matches("0x"), 16).unwrap_or(0);
-    if value_wei < min_wei {
-        return Err(format!("payout {} wei is less than the {} wei owed", value_wei, min_wei));
-    }
-
-    let receipt: serde_json::Value = client
-        .post(rpc_url)
+    // 2. Successful receipt + the release event emitted by the RougeBridge.
+    let receipt: serde_json::Value = client.post(rpc_url)
         .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":[tx_hash],"id":1}))
         .send().await.map_err(|e| format!("RPC error: {}", e))?
         .json().await.map_err(|e| format!("bad RPC response: {}", e))?;
-    let rec = receipt.get("result").filter(|v| !v.is_null())
-        .ok_or_else(|| "payout receipt not found".to_string())?;
+    let rec = receipt.get("result").filter(|v| !v.is_null()).ok_or_else(|| "payout receipt not found".to_string())?;
     if rec.get("status").and_then(|v| v.as_str()).unwrap_or("0x0") != "0x1" {
         return Err("payout transaction reverted".to_string());
     }
+    let logs = rec.get("logs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let releases = decode_rouge_bridge_releases(&logs, &rouge_bridge);
+    let expected_token_lc = expected_token.map(|t| t.to_lowercase());
+    let matched = releases.iter().any(|r| {
+        r.recipient == expected_recipient
+            && r.token == expected_token_lc
+            && r.amount >= min_amount
+            && r.l1_tx_id == canonical_l1_tx_id
+    });
+    if !matched {
+        return Err(format!(
+            "no matching {} event from RougeBridge for recipient {} / l1TxId {} (amount >= {})",
+            if expected_token.is_some() { "BridgeReleaseERC20" } else { "BridgeReleaseETH" },
+            expected_recipient, canonical_l1_tx_id, min_amount
+        ));
+    }
+    // 3. qUSDC: the ERC20 Transfer must come FROM the RougeBridge contract (not the signer).
+    if let Some(usdc) = expected_token {
+        let dep = parse_erc20_transfer_to(client, rpc_url, &tx_hash, usdc, &expected_recipient).await
+            .map_err(|e| format!("USDC Transfer to recipient not found: {}", e))?;
+        if dep.from.to_lowercase() != rouge_bridge {
+            return Err(format!("USDC Transfer source {} is not the RougeBridge {}", dep.from, rouge_bridge));
+        }
+        if dep.amount < min_amount {
+            return Err(format!("USDC Transfer {} is less than the {} base units owed", dep.amount, min_amount));
+        }
+    }
+    // 4. Confirmation depth (fail closed).
     let block = rec.get("blockNumber").and_then(|v| v.as_str())
         .and_then(|h| u64::from_str_radix(h.trim_start_matches("0x"), 16).ok())
         .ok_or_else(|| "payout block missing".to_string())?;
     let min_conf = bridge_min_confirmations();
     match evm_latest_block(client, rpc_url).await {
-        Some(latest) => {
-            if latest < block + min_conf {
-                return Err(format!("payout needs {} confirmations (block {}, latest {})", min_conf, block, latest));
-            }
-        }
-        // Fail closed: if we cannot read the chain head, we cannot prove depth — refuse.
-        None => return Err("could not verify confirmations (Base RPC unavailable) — refusing to fulfill".to_string()),
+        Some(latest) if latest >= block + min_conf => Ok(()),
+        Some(latest) => Err(format!("payout needs {} confirmations (block {}, latest {})", min_conf, block, latest)),
+        None => Err("could not verify confirmations (Base RPC unavailable) — refusing to fulfill".to_string()),
     }
-    Ok(())
 }
 
 async fn bridge_withdrawal_fulfill(
@@ -7713,20 +8256,389 @@ async fn bridge_withdrawal_fulfill(
         Ok(None) => return Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found".to_string()) }),
         Err(e) => return Json(BridgeFulfillResponse { success: false, error: Some(e) }),
     };
-    let custody = match &state.bridge_custody_address {
-        Some(c) if !c.is_empty() => c.clone(),
-        _ => return Json(BridgeFulfillResponse { success: false, error: Some("bridge custody not configured".to_string()) }),
-    };
-    // qETH: 1 unit = 1e-6 ETH = 1e12 wei.
-    let min_wei = (record.amount_units as u128).saturating_mul(1_000_000_000_000u128);
+    // R1B/R1D: token-aware verification keyed on the STORED canonical token. A qUSDC record
+    // can never be fulfilled by an ETH transaction and vice-versa; XRGE/qBTC/unsupported are
+    // not fulfillable on this endpoint at all.
+    use quantum_vault_bridge_exec::{payout_route, rouge_bridge_id, PayoutRoute};
     let client = reqwest::Client::new();
-    if let Err(e) = verify_native_eth_payout(&client, &state.base_sepolia_rpc, &payout_hash, &custody, &record.evm_address, min_wei).await {
+    let canonical_id = format!("0x{}", quantum_vault_bridge_exec::bytes_to_hex(&rouge_bridge_id(&record.tx_id)));
+    let verification = match payout_route(&record.token_symbol) {
+        PayoutRoute::Eth => {
+            // qETH: 1 unit = 1e-6 ETH = 1e12 wei.
+            let min_wei = (record.amount_units as u128).saturating_mul(1_000_000_000_000u128);
+            match rouge_bridge_address() {
+                Some(rb) => verify_rouge_bridge_release(&client, &state.base_sepolia_rpc, &payout_hash, &rb,
+                    &record.evm_address, None, min_wei, &canonical_id).await,
+                None => Err("RougeBridge address not configured — refusing to verify qETH payout (fail closed)".to_string()),
+            }
+        }
+        PayoutRoute::Usdc => {
+            // qUSDC: 1 unit == 1 Base-USDC base unit (both 6-decimal). NO 10^12 scaling.
+            let min_units = record.amount_units as u128;
+            let usdc = bridge_usdc_address().or_else(|| std::env::var("USDC_ADDRESS").ok().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()));
+            match (rouge_bridge_address(), usdc) {
+                (Some(rb), Some(usdc)) => verify_rouge_bridge_release(&client, &state.base_sepolia_rpc, &payout_hash, &rb,
+                    &record.evm_address, Some(&usdc), min_units, &canonical_id).await,
+                (None, _) => Err("RougeBridge address not configured — refusing to verify qUSDC payout (fail closed)".to_string()),
+                (_, None) => Err("Base USDC address not configured — refusing to verify qUSDC payout (fail closed)".to_string()),
+            }
+        }
+        other => Err(format!("asset {} ({:?}) is not fulfillable on the EVM bridge endpoint", record.token_symbol, other)),
+    };
+    if let Err(e) = verification {
         return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout not verified: {}", e)) });
     }
     match state.bridge_withdraw_store.mark_fulfilled(&tx_id, &payout_hash) {
         Ok(true) => Json(BridgeFulfillResponse { success: true, error: None }),
         Ok(false) => Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found or already fulfilled".to_string()) }),
         Err(e) => Json(BridgeFulfillResponse { success: false, error: Some(e) }),
+    }
+}
+
+// ============================================
+// BTC Bridge endpoints (Bitcoin <-> RougeChain L1)
+// ============================================
+//
+// BTC → qBTC: user sends BTC to the custody address with an OP_RETURN carrying their
+// RougeChain recipient; the daemon cross-checks two Esplora providers and mints qBTC (8-dec,
+// 1 unit = 1 satoshi). qBTC → BTC: user burns qBTC via /api/bridge/withdraw (tokenSymbol
+// "qBTC", evmAddress = BTC destination); an external capped BTC relayer pays it out and the
+// daemon verifies that Bitcoin payout before marking it fulfilled. The daemon holds no BTC key.
+
+/// True for a qBTC withdrawal, so the ETH relayer's list excludes it and the BTC relayer's
+/// list includes only it.
+fn is_btc_withdrawal(w: &PendingWithdrawal) -> bool {
+    w.token_symbol.eq_ignore_ascii_case("qBTC") || w.tx_id.starts_with("btc:")
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BtcBridgeClaimRequest {
+    btc_txid: String,
+    /// Optional expected recipient. When present it must equal the on-chain OP_RETURN
+    /// recipient, guarding against a UI that submits the wrong deposit.
+    recipient_rougechain_pubkey: Option<String>,
+}
+
+/// POST /api/bridge/btc/claim — verify a BTC deposit and mint qBTC to the OP_RETURN recipient.
+/// Idempotent: dedupe key is `btc:{txid}`. Permissionless — anyone may submit the txid; the
+/// mint always credits the recipient baked into the deposit's OP_RETURN, so this cannot be
+/// used to redirect someone else's funds.
+async fn bridge_btc_claim(
+    State(state): State<AppState>,
+    Json(body): Json<BtcBridgeClaimRequest>,
+) -> Json<BridgeClaimResponse> {
+    let custody = match bridge_btc::btc_custody_address() {
+        Some(c) => c,
+        None => {
+            return Json(BridgeClaimResponse {
+                success: false,
+                tx_id: None,
+                error: Some("BTC bridge is not enabled (QV_BRIDGE_BTC_CUSTODY not set)".to_string()),
+            })
+        }
+    };
+    let txid = body.btc_txid.trim().trim_start_matches("0x").to_lowercase();
+    let claim_key = format!("btc:{}", txid);
+
+    // Early dedupe — treat an already-claimed deposit as success so the frontend poll stops.
+    if state.bridge_claim_store.contains(&claim_key).await {
+        return Json(BridgeClaimResponse {
+            success: true,
+            tx_id: None,
+            error: Some("Deposit already claimed".to_string()),
+        });
+    }
+
+    let dep = match bridge_btc::verify_btc_deposit(&txid, &custody).await {
+        Ok(d) => d,
+        Err(e) => return Json(BridgeClaimResponse { success: false, tx_id: None, error: Some(e) }),
+    };
+
+    let recipient = normalize_recipient(&dep.recipient);
+    if recipient.is_empty() {
+        return Json(BridgeClaimResponse {
+            success: false,
+            tx_id: None,
+            error: Some("deposit OP_RETURN did not decode to a RougeChain recipient".to_string()),
+        });
+    }
+    if let Some(expected) = body.recipient_rougechain_pubkey.as_ref() {
+        let expected = normalize_recipient(expected);
+        if !expected.is_empty() && expected != recipient {
+            return Json(BridgeClaimResponse {
+                success: false,
+                tx_id: None,
+                error: Some("expected recipient does not match the deposit's OP_RETURN".to_string()),
+            });
+        }
+    }
+
+    // Atomically reserve the deposit before minting (persisted before the mint, fail-closed).
+    match state.bridge_claim_store.insert_if_absent(claim_key.clone()).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return Json(BridgeClaimResponse {
+                success: true,
+                tx_id: None,
+                error: Some("Deposit already claimed".to_string()),
+            })
+        }
+        Err(e) => {
+            return Json(BridgeClaimResponse {
+                success: false,
+                tx_id: None,
+                error: Some(format!("Failed to persist claim: {}", e)),
+            })
+        }
+    }
+
+    use quantum_vault_crypto::{bytes_to_hex, sha256};
+    use quantum_vault_types::encode_tx_v1;
+    match state.node.submit_bridge_mint_tx(&recipient, dep.sats, bridge_btc::QBTC_SYMBOL) {
+        Ok(tx) => {
+            let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
+            Json(BridgeClaimResponse { success: true, tx_id: Some(id), error: None })
+        }
+        Err(e) => {
+            let _ = state.bridge_claim_store.remove(&claim_key).await;
+            Json(BridgeClaimResponse { success: false, tx_id: None, error: Some(format!("mint failed: {}", e)) })
+        }
+    }
+}
+
+/// GET /api/bridge/btc/withdrawals — pending qBTC withdrawals for the BTC relayer to pay out.
+async fn bridge_btc_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdrawalsResponse> {
+    // Fail closed while derived bridge state is degraded: the BTC relayer gets an EMPTY list.
+    let list = match state.node.relayer_pending_withdrawals() { Ok(v) => v, Err(e) => { eprintln!("[bridge] btc withdrawals list refused: {}", e); return Json(BridgeWithdrawalsResponse { withdrawals: Vec::new() }); } };
+    Json(BridgeWithdrawalsResponse {
+        withdrawals: list
+            .into_iter()
+            .filter(is_btc_withdrawal)
+            .map(|w| BridgeWithdrawalItem {
+                tx_id: w.tx_id,
+                evm_address: w.evm_address,
+                amount_units: w.amount_units,
+                created_at: w.created_at,
+                owner_pubkey: w.owner_pubkey,
+                token_symbol: w.token_symbol,
+                status: w.status,
+                attempts: w.attempts,
+                last_error: w.last_error,
+            })
+            .collect(),
+    })
+}
+
+/// Extract the Bitcoin payout txid from a relayer fulfill body: top-level `{ "btcTxid": "…" }`
+/// (relayer-secret path) or inside a signed request's `payload`.
+fn btc_payout_txid_from_body(body: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    v.get("btcTxid")
+        .or_else(|| v.get("payout_tx_hash"))
+        .or_else(|| v.get("payload").and_then(|p| p.get("btcTxid")))
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// DELETE /api/bridge/btc/withdrawals/:tx_id — mark a qBTC withdrawal fulfilled, but only after
+/// verifying the Bitcoin payout on-chain (custody-funded, paid the recipient ≥ the owed sats,
+/// with enough confirmations). Auth mirrors the ETH path: relayer secret or node-signed body.
+async fn bridge_btc_withdrawal_fulfill(
+    State(state): State<AppState>,
+    Path(tx_id): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> Json<BridgeFulfillResponse> {
+    let relayer_auth = if let Some(ref secret) = state.bridge_relayer_secret {
+        headers
+            .get("x-bridge-relayer-secret")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| constant_time_eq(v, secret.as_str()))
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    if !relayer_auth {
+        match serde_json::from_str::<SignedTransactionRequest>(&body) {
+            Ok(signed_body) => {
+                if signed_body.public_key != state.node.get_node_public_key() {
+                    return Json(BridgeFulfillResponse {
+                        success: false,
+                        error: Some("unauthorized: only the node operator can fulfill withdrawals".to_string()),
+                    });
+                }
+                if let Err(e) = verify_signed_tx(&signed_body).await {
+                    return Json(BridgeFulfillResponse {
+                        success: false,
+                        error: Some(format!("signature verification failed: {}", e)),
+                    });
+                }
+            }
+            Err(_) => {
+                return Json(BridgeFulfillResponse {
+                    success: false,
+                    error: Some("unauthorized: provide x-bridge-relayer-secret header or signed body".to_string()),
+                });
+            }
+        }
+    }
+
+    let payout_txid = match btc_payout_txid_from_body(&body) {
+        Some(h) => h,
+        None => return Json(BridgeFulfillResponse { success: false, error: Some("missing btcTxid (Bitcoin payout txid) in body".to_string()) }),
+    };
+    let record = match state.bridge_withdraw_store.get(&tx_id) {
+        Ok(Some(w)) => w,
+        Ok(None) => return Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found".to_string()) }),
+        Err(e) => return Json(BridgeFulfillResponse { success: false, error: Some(e) }),
+    };
+    if !is_btc_withdrawal(&record) {
+        return Json(BridgeFulfillResponse { success: false, error: Some("not a qBTC withdrawal".to_string()) });
+    }
+    let custody = match bridge_btc::btc_custody_address() {
+        Some(c) => c,
+        None => return Json(BridgeFulfillResponse { success: false, error: Some("BTC bridge custody not configured".to_string()) }),
+    };
+    // qBTC: 1 unit == 1 satoshi, so the owed sats equal the burned unit count.
+    let min_sats = record.amount_units;
+    if let Err(e) = bridge_btc::verify_btc_payout(&payout_txid, &custody, &record.evm_address, min_sats).await {
+        return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout not verified: {}", e)) });
+    }
+    match state.bridge_withdraw_store.mark_fulfilled(&tx_id, &payout_txid) {
+        Ok(true) => Json(BridgeFulfillResponse { success: true, error: None }),
+        Ok(false) => Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found or already fulfilled".to_string()) }),
+        Err(e) => Json(BridgeFulfillResponse { success: false, error: Some(e) }),
+    }
+}
+
+// ── HD deposit addresses: "send from any wallet, no OP_RETURN" ──
+//
+// The relayer derives a pool of receive addresses from its HD seed and registers them via
+// /deposit-pool (relayer-secret gated). A user calls /deposit-address to get their own unique
+// address bound to their RougeChain recipient; they send BTC from ANY wallet (no OP_RETURN); the
+// deposit watcher (spawned in main) two-provider-verifies the deposit and mints qBTC. The daemon
+// holds no Bitcoin key — it only assigns + watches; the relayer sweeps the funds into custody.
+
+fn relayer_authorized(state: &AppState, headers: &axum::http::HeaderMap) -> bool {
+    match &state.bridge_relayer_secret {
+        Some(secret) => headers
+            .get("x-bridge-relayer-secret")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| constant_time_eq(v, secret.as_str()))
+            .unwrap_or(false),
+        None => false,
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BtcDepositAddressRequest {
+    recipient: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BtcDepositAddressResponse {
+    success: bool,
+    address: Option<String>,
+    error: Option<String>,
+}
+
+/// POST /api/bridge/btc/deposit-address — hand the caller a unique BTC deposit address bound to
+/// their RougeChain recipient (stable per recipient). Public: the address credits the recipient
+/// the caller names, so it can never redirect anyone else's funds.
+async fn bridge_btc_deposit_address(
+    State(state): State<AppState>,
+    Json(body): Json<BtcDepositAddressRequest>,
+) -> Json<BtcDepositAddressResponse> {
+    if bridge_btc::btc_custody_address().is_none() {
+        return Json(BtcDepositAddressResponse {
+            success: false,
+            address: None,
+            error: Some("BTC bridge is not enabled".to_string()),
+        });
+    }
+    let recipient = normalize_recipient(&body.recipient);
+    if recipient.is_empty() {
+        return Json(BtcDepositAddressResponse {
+            success: false,
+            address: None,
+            error: Some("recipient (RougeChain address) is required".to_string()),
+        });
+    }
+    match state.btc_deposit_store.assign(&recipient) {
+        Ok(Some(addr)) => Json(BtcDepositAddressResponse { success: true, address: Some(addr), error: None }),
+        Ok(None) => Json(BtcDepositAddressResponse {
+            success: false,
+            address: None,
+            error: Some("No deposit address available yet — the relayer is topping up the pool, try again shortly.".to_string()),
+        }),
+        Err(e) => Json(BtcDepositAddressResponse { success: false, address: None, error: Some(e) }),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BtcDepositPoolRequest {
+    addresses: Vec<PoolEntryReq>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PoolEntryReq {
+    index: u32,
+    address: String,
+}
+
+/// POST /api/bridge/btc/deposit-pool — relayer registers freshly-derived pool addresses.
+/// Relayer-secret gated. Addresses are validated for the configured network before storing.
+async fn bridge_btc_deposit_pool(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<BtcDepositPoolRequest>,
+) -> Json<serde_json::Value> {
+    if !relayer_authorized(&state, &headers) {
+        return Json(serde_json::json!({"success": false, "error": "unauthorized"}));
+    }
+    let network = bridge_btc::btc_network();
+    let entries: Vec<PoolEntry> = body
+        .addresses
+        .into_iter()
+        .filter(|e| bridge_btc::validate_btc_address(&e.address, &network).is_ok())
+        .map(|e| PoolEntry { index: e.index, address: e.address })
+        .collect();
+    match state.btc_deposit_store.add_to_pool(entries) {
+        Ok(added) => Json(serde_json::json!({
+            "success": true, "added": added, "poolRemaining": state.btc_deposit_store.pool_remaining()
+        })),
+        Err(e) => Json(serde_json::json!({"success": false, "error": e})),
+    }
+}
+
+/// GET /api/bridge/btc/deposit-addresses — assigned (address, index, recipient) list for the
+/// relayer to sweep. Relayer-secret gated (exposes the address↔recipient map).
+async fn bridge_btc_deposit_addresses(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> Json<serde_json::Value> {
+    if !relayer_authorized(&state, &headers) {
+        return Json(serde_json::json!({"success": false, "error": "unauthorized"}));
+    }
+    match state.btc_deposit_store.list_assignments() {
+        Ok(list) => {
+            let items: Vec<serde_json::Value> = list
+                .into_iter()
+                .map(|a| serde_json::json!({"address": a.address, "index": a.index, "recipient": a.recipient}))
+                .collect();
+            Json(serde_json::json!({
+                "success": true, "addresses": items,
+                "poolRemaining": state.btc_deposit_store.pool_remaining(),
+                "maxIndex": state.btc_deposit_store.max_index()
+            }))
+        }
+        Err(e) => Json(serde_json::json!({"success": false, "error": e})),
     }
 }
 
@@ -7866,14 +8778,11 @@ async fn xrge_bridge_withdraw(
     State(state): State<AppState>,
     Json(body): Json<XrgeBridgeWithdrawRequest>,
 ) -> Json<serde_json::Value> {
+    use quantum_vault_bridge_exec::{authorize_bridge_withdraw, Endpoint, SignedWithdrawIntent, TopLevelCompat};
+    let fail = |msg: String| Json(serde_json::json!({ "success": false, "error": msg }));
+
     if state.xrge_bridge_vault.is_none() {
-        return Json(serde_json::json!({ "success": false, "error": "XRGE bridge not enabled" }));
-    }
-    if body.amount == 0 {
-        return Json(serde_json::json!({ "success": false, "error": "Amount must be greater than 0" }));
-    }
-    if let Err(e) = check_withdraw_guardrails(body.amount) {
-        return Json(serde_json::json!({ "success": false, "error": e }));
+        return fail("XRGE bridge not enabled".to_string());
     }
 
     let tx_result = if let (Some(signature), Some(payload)) = (&body.signature, &body.payload) {
@@ -7884,16 +8793,52 @@ async fn xrge_bridge_withdraw(
             payload_bytes_hex: None,
         };
         if let Err(e) = verify_signed_tx(&signed_req).await {
-            return Json(serde_json::json!({ "success": false, "error": format!("Signature verification failed: {}", e) }));
+            return fail(format!("Signature verification failed: {}", e));
+        }
+        if payload.get("from").and_then(|v| v.as_str()) != Some(body.from_public_key.as_str()) {
+            return fail("signed payload 'from' must equal the authenticated public key".to_string());
+        }
+        if let Err(e) = check_signed_nonce(&state.node, &body.from_public_key, payload) {
+            return fail(e);
+        }
+        // R1C/R1D: amount, destination, fee and asset come ONLY from the verified payload.
+        // The signed fee MUST exist (no server-side carve-out) and must consume exactly the
+        // protocol 0.1 XRGE — authorize_bridge_withdraw enforces that policy.
+        let intent = SignedWithdrawIntent {
+            op_type: payload.get("type").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            amount: payload.get("amount").and_then(|v| v.as_u64()),
+            destination: payload.get("evmAddress").and_then(|v| v.as_str()).map(str::to_string),
+            fee: payload.get("fee").and_then(|v| v.as_f64()),
+            token_symbol: payload.get("tokenSymbol").and_then(|v| v.as_str()).map(str::to_string),
+        };
+        // This request struct has no top-level fee; amount/evmAddress are compatibility copies.
+        let compat = TopLevelCompat { amount: Some(body.amount), destination: Some(body.evm_address.clone()), fee: None };
+        let auth = match authorize_bridge_withdraw(Endpoint::Xrge, &intent, &compat) {
+            Ok(a) => a, // route == Xrge is guaranteed here (any other asset is rejected)
+            Err(e) => return fail(format!("signed-intent rejected: {:?}", e)),
+        };
+        if let Err(e) = check_withdraw_guardrails(auth.amount) {
+            return fail(e);
         }
         state.node.submit_bridge_withdraw_tx_signed(
             &body.from_public_key,
-            body.amount,
-            &body.evm_address,
-            Some(0.1),
-            "XRGE",
+            auth.amount,
+            &auth.destination,
+            Some(auth.fee),
+            &auth.canonical_token, // "XRGE"
         )
     } else if let Some(ref private_key) = body.from_private_key {
+        // Deprecated raw-key path: default OFF (and note submit_bridge_withdraw_tx is
+        // qETH-only, so it cannot produce an XRGE withdrawal at all).
+        if std::env::var("QV_BRIDGE_ALLOW_RAW_KEY").map(|v| v == "true").unwrap_or(false) == false {
+            return fail("raw-private-key bridge withdrawal is disabled; use the signed path".to_string());
+        }
+        if body.amount == 0 {
+            return fail("Amount must be greater than 0".to_string());
+        }
+        if let Err(e) = check_withdraw_guardrails(body.amount) {
+            return fail(e);
+        }
         state.node.submit_bridge_withdraw_tx(
             private_key,
             &body.from_public_key,
@@ -7902,7 +8847,7 @@ async fn xrge_bridge_withdraw(
             Some(0.1),
         )
     } else {
-        return Json(serde_json::json!({ "success": false, "error": "Either signature+payload or fromPrivateKey is required" }));
+        return fail("Either signature+payload or fromPrivateKey is required".to_string());
     };
 
     match tx_result {
@@ -7923,7 +8868,7 @@ async fn xrge_bridge_withdraw(
 }
 
 async fn xrge_bridge_withdrawals(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let list = state.bridge_withdraw_store.list_pending().unwrap_or_default();
+    let list = match state.node.relayer_pending_withdrawals() { Ok(v) => v, Err(e) => return Json(serde_json::json!({ "withdrawals": [], "degraded": true, "error": e })) };
     let xrge_withdrawals: Vec<_> = list.into_iter()
         .filter(is_xrge_withdrawal)
         .map(|w| serde_json::json!({
@@ -9404,6 +10349,27 @@ async fn social_user_following(
     }
 }
 
+#[derive(Deserialize)]
+struct FollowersQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+/// Followers of a pubkey, paginated (default 50, max 200). Reads the reverse index that
+/// toggle_follow already maintains, so a whale's follower list never returns as one blob.
+async fn social_user_followers(
+    State(state): State<AppState>,
+    Path(pubkey): Path<String>,
+    Query(q): Query<FollowersQuery>,
+) -> Json<serde_json::Value> {
+    let limit = q.limit.unwrap_or(50).min(200);
+    let offset = q.offset.unwrap_or(0);
+    match state.node.social_get_user_followers(&pubkey, limit, offset) {
+        Ok(followers) => Json(serde_json::json!({ "followers": followers })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
 // ============================================
 // Social handlers (write — v2 signed POST)
 // ============================================
@@ -9668,5 +10634,102 @@ mod image_guard_tests {
         assert!(validate_token_image(&Some(small)).is_ok());
         let huge = format!("data:image/png;base64,{}", "A".repeat(MAX_TOKEN_IMAGE_DATA_URI_BYTES));
         assert!(validate_token_image(&Some(huge)).is_err());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R1B/R1D — daemon-side unit tests for the bridge payout helpers (no network).
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod bridge_r1_helper_tests {
+    use super::*;
+
+    fn pw(tx_id: &str, token: &str) -> PendingWithdrawal {
+        PendingWithdrawal {
+            tx_id: tx_id.to_string(),
+            evm_address: "0x00000000000000000000000000000000000000a1".to_string(),
+            amount_units: 1,
+            created_at: 0,
+            owner_pubkey: "owner".to_string(),
+            token_symbol: token.to_string(),
+            status: WithdrawalStatus::Pending,
+            attempts: 0,
+            last_error: None,
+            payout_tx_hash: None,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn bridge_release_topics_match_solidity() {
+        // keccak256 of the canonical event signatures in RougeBridge.sol. The Transfer topic
+        // reproduces the well-known ERC20 constant, which cross-checks the hash function.
+        assert_eq!(topic_bridge_release_eth(), "0x6e92b6f202ac06fbce19b0d07299219ca32be691ccee41bc0cfe5d9ab51b524f");
+        assert_eq!(topic_bridge_release_erc20(), "0x4131db420291b34fea891e4c6b5cdf224c27982fae69fbddfba9b7d5ee7398a1");
+        let xfer = format!("0x{}", quantum_vault_bridge_exec::bytes_to_hex(
+            &quantum_vault_bridge_exec::keccak256(b"Transfer(address,address,uint256)")));
+        assert_eq!(xfer, "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef");
+    }
+
+    fn topic_addr(a: &str) -> String { format!("0x{:0>64}", a.trim_start_matches("0x")) }
+    fn word_u128(v: u128) -> String { format!("{:064x}", v) }
+
+    #[test]
+    fn decode_release_events_from_configured_bridge_only() {
+        let rb = "0x00000000000000000000000000000000000000bb";
+        let usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+        let recipient = "0x00000000000000000000000000000000000000a1";
+        let l1 = "11".repeat(32);
+        let eth_log = serde_json::json!({
+            "address": rb,
+            "topics": [topic_bridge_release_eth(), topic_addr(recipient)],
+            "data": format!("0x{}{}", word_u128(5_000_000_000_000u128), l1),
+        });
+        let erc_log = serde_json::json!({
+            "address": rb,
+            "topics": [topic_bridge_release_erc20(), topic_addr(recipient), topic_addr(usdc)],
+            "data": format!("0x{}{}", word_u128(123u128), l1),
+        });
+        // same event but emitted by a DIFFERENT contract → must be ignored
+        let impostor = serde_json::json!({
+            "address": "0x00000000000000000000000000000000000000cc",
+            "topics": [topic_bridge_release_eth(), topic_addr(recipient)],
+            "data": format!("0x{}{}", word_u128(5_000_000_000_000u128), l1),
+        });
+        let rel = decode_rouge_bridge_releases(&[eth_log, erc_log, impostor], rb);
+        assert_eq!(rel.len(), 2, "impostor emitter ignored");
+        assert_eq!(rel[0].recipient, recipient);
+        assert_eq!(rel[0].token, None);
+        assert_eq!(rel[0].amount, 5_000_000_000_000u128);
+        assert_eq!(rel[0].l1_tx_id, format!("0x{}", l1));
+        assert_eq!(rel[1].token.as_deref(), Some(usdc));
+        assert_eq!(rel[1].amount, 123);
+    }
+
+    #[test]
+    fn generic_list_routing_is_positive_only() {
+        // qETH / qUSDC (any case) are served to the EVM relayer; XRGE, qBTC, custom are NOT.
+        assert!(is_eth_withdrawal(&pw("a", "qETH")));
+        assert!(is_eth_withdrawal(&pw("a", "QETH")));
+        assert!(is_usdc_withdrawal(&pw("a", "qUSDC")));
+        for sym in ["XRGE", "qBTC", "3EYE", "", "qDAI"] {
+            assert!(!is_eth_withdrawal(&pw("a", sym)) && !is_usdc_withdrawal(&pw("a", sym)), "{sym} must not be on the EVM list");
+        }
+        // the dedicated lists still take their own assets
+        assert!(is_xrge_withdrawal(&pw("a", "XRGE")) && is_xrge_withdrawal(&pw("xrge:abc", "")));
+        assert!(is_btc_withdrawal(&pw("a", "qBTC")));
+    }
+
+    #[test]
+    fn rouge_bridge_address_fails_closed_on_invalid_config() {
+        // Env-driven; exercise the validator with isolated keys.
+        std::env::remove_var("QV_ROUGE_BRIDGE_ADDRESS");
+        std::env::remove_var("ROUGE_BRIDGE_ADDRESS");
+        assert_eq!(rouge_bridge_address(), None);
+        std::env::set_var("QV_ROUGE_BRIDGE_ADDRESS", "not-an-address");
+        assert_eq!(rouge_bridge_address(), None, "malformed → None (fail closed)");
+        std::env::set_var("QV_ROUGE_BRIDGE_ADDRESS", "0x00000000000000000000000000000000000000BB");
+        assert_eq!(rouge_bridge_address().as_deref(), Some("0x00000000000000000000000000000000000000bb"));
+        std::env::remove_var("QV_ROUGE_BRIDGE_ADDRESS");
     }
 }

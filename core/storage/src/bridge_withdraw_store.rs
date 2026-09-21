@@ -84,6 +84,7 @@ impl BridgeWithdrawStore {
         owner_pubkey: String,
         token_symbol: String,
     ) -> Result<(), String> {
+        let tx_id_for_rollback = tx_id.clone();
         {
             let mut pending = self.pending.write().map_err(|_| "lock")?;
             // Idempotent: a re-applied block must not duplicate a withdrawal.
@@ -105,7 +106,16 @@ impl BridgeWithdrawStore {
                 payout_tx_hash: None,
             });
         }
-        self.persist()
+        // ATOMIC: if the durable write fails, the in-memory list must not claim a record the
+        // disk does not have (otherwise a later idempotent rebuild would dedup against memory
+        // and never re-persist). Roll the push back and surface the error.
+        if let Err(e) = self.persist() {
+            if let Ok(mut pending) = self.pending.write() {
+                if pending.last().map(|w| w.tx_id == tx_id_for_rollback).unwrap_or(false) { pending.pop(); }
+            }
+            return Err(e);
+        }
+        Ok(())
     }
 
     pub fn list(&self) -> Result<Vec<PendingWithdrawal>, String> {

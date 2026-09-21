@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { X, TrendingUp, TrendingDown, ExternalLink, Edit2, Loader2, BarChart3, Send, Download, ArrowLeftRight, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CandleChart } from "@/components/CandleChart";
+import { l1TokenDecimals } from "@/hooks/use-eth-price";
 import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { formatUsd, formatTokenPrice } from "@/lib/price-service";
 import { TokenIcon } from "@/components/ui/token-icon";
@@ -67,6 +69,7 @@ const TokenDetailDialog = ({
   const [loading, setLoading] = useState(true);
   const [showEditMetadata, setShowEditMetadata] = useState(false);
   const [poolId, setPoolId] = useState<string | null>(null);
+  const [chartType, setChartType] = useState<"line" | "candles">("line");
 
   // Fetch price history from pool events
   useEffect(() => {
@@ -142,6 +145,23 @@ const TokenDetailDialog = ({
           Not enough data for chart
         </div>
       );
+    }
+
+    if (chartType === "candles") {
+      const fmtPrice = (v: number) => {
+        if (!isFinite(v) || v === 0) return "0";
+        const abs = Math.abs(v);
+        if (abs >= 1) return v.toLocaleString(undefined, { maximumFractionDigits: 4 });
+        if (abs >= 0.001) return v.toFixed(6);
+        return v.toPrecision(4);
+      };
+      // Counterpart is XRGE (0 decimals); humanize this token's price by its own decimals.
+      const factor = 10 ** l1TokenDecimals(symbol);
+      const pts = priceHistory.map((p) => ({
+        timestamp: p.timestamp < 1e12 ? p.timestamp * 1000 : p.timestamp,
+        price: p.price * factor,
+      }));
+      return <CandleChart points={pts} fmtPrice={fmtPrice} height={140} />;
     }
 
     const prices = priceHistory.map(p => p.price);
@@ -257,7 +277,13 @@ const TokenDetailDialog = ({
             {/* Price Chart (for custom tokens with pools) */}
             {symbol !== "XRGE" && (
               <div className="p-4 rounded-lg bg-secondary/20 border border-border">
-                <h3 className="text-sm font-medium mb-3">Price Chart (XRGE pair)</h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium">Price Chart (XRGE pair)</h3>
+                  <div className="flex items-center gap-1">
+                    <Button variant={chartType === "line" ? "default" : "outline"} size="sm" onClick={() => setChartType("line")}>Line</Button>
+                    <Button variant={chartType === "candles" ? "default" : "outline"} size="sm" onClick={() => setChartType("candles")}>Candles</Button>
+                  </div>
+                </div>
                 {loading ? (
                   <div className="h-32 flex items-center justify-center">
                     <Loader2 className="w-5 h-5 animate-spin text-primary" />

@@ -32,6 +32,7 @@ import Privacy from "./pages/Privacy";
 import Contracts from "./pages/Contracts";
 import ContractDetail from "./pages/ContractDetail";
 import Agents from "./pages/Agents";
+import Regenerate from "./pages/Regenerate";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -140,6 +141,7 @@ const App = () => (
                 <Route path="/contracts" element={<Contracts />} />
                 <Route path="/contract/:addr" element={<ContractDetail />} />
                 <Route path="/agents" element={<Agents />} />
+                <Route path="/regenerate" element={<Regenerate />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

@@ -75,6 +75,11 @@ impl ContractStore {
         Ok(Self { contracts, code, state, events, event_counter })
     }
 
+    /// Every sled tree this store writes to (rollback snapshot/restore).
+    pub fn trees(&self) -> Vec<&sled::Tree> {
+        vec![&self.contracts, &self.code, &self.state, &self.events, &self.event_counter]
+    }
+
     /// Deploy a new contract
     pub fn deploy(
         &self,

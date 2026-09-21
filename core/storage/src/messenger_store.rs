@@ -13,6 +13,10 @@ pub struct MessengerWallet {
     pub created_at: String,
     #[serde(default = "default_discoverable")]
     pub discoverable: bool,
+    /// Optional avatar shared via the directory (base64 data URI) so peers can render it.
+    /// Absent for wallets registered before this field existed.
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 fn default_discoverable() -> bool {
@@ -337,6 +341,53 @@ impl MessengerStore {
         }
 
         Ok(conv)
+    }
+
+    /// Fetch a single conversation by id (for e.g. resolving push-notification recipients).
+    pub fn get_conversation(&self, conversation_id: &str) -> Result<Option<Conversation>, String> {
+        let tree = self.conversations_tree()?;
+        match tree.get(conversation_id.as_bytes()).map_err(|e| e.to_string())? {
+            Some(v) => Ok(Some(serde_json::from_slice(&v).map_err(|e| e.to_string())?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Set (or clear, with `None`) a conversation's name. Returns the updated conversation,
+    /// or `None` if it doesn't exist.
+    pub fn rename_conversation(&self, conversation_id: &str, name: Option<String>) -> Result<Option<Conversation>, String> {
+        let tree = self.conversations_tree()?;
+        let mut conv: Conversation = match tree.get(conversation_id.as_bytes()).map_err(|e| e.to_string())? {
+            Some(v) => serde_json::from_slice(&v).map_err(|e| e.to_string())?,
+            None => return Ok(None),
+        };
+        conv.name = name;
+        let bytes = serde_json::to_vec(&conv).map_err(|e| e.to_string())?;
+        tree.insert(conversation_id.as_bytes(), bytes.as_slice()).map_err(|e| e.to_string())?;
+        Ok(Some(conv))
+    }
+
+    /// Add participants to a conversation (deduped, skips existing). CRUCIAL: also writes the
+    /// participant index (`{pid}:{conv_id}`) so the new members' conversation lists include this
+    /// chat — membership is driven by that index, not by `participant_ids` alone. Returns the
+    /// updated conversation, or `None` if it doesn't exist.
+    pub fn add_participants(&self, conversation_id: &str, new_ids: &[String]) -> Result<Option<Conversation>, String> {
+        let tree = self.conversations_tree()?;
+        let mut conv: Conversation = match tree.get(conversation_id.as_bytes()).map_err(|e| e.to_string())? {
+            Some(v) => serde_json::from_slice(&v).map_err(|e| e.to_string())?,
+            None => return Ok(None),
+        };
+        let part_idx = self.participant_index_tree()?;
+        for pid in new_ids {
+            if pid.is_empty() || conv.participant_ids.iter().any(|x| x == pid) {
+                continue;
+            }
+            conv.participant_ids.push(pid.clone());
+            let key = format!("{}:{}", pid, conversation_id);
+            part_idx.insert(key.as_bytes(), b"").map_err(|e| e.to_string())?;
+        }
+        let bytes = serde_json::to_vec(&conv).map_err(|e| e.to_string())?;
+        tree.insert(conversation_id.as_bytes(), bytes.as_slice()).map_err(|e| e.to_string())?;
+        Ok(Some(conv))
     }
 
     pub fn delete_conversation(&self, conversation_id: &str) -> Result<(), String> {

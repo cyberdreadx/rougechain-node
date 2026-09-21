@@ -405,6 +405,9 @@ export interface MessengerWallet {
   signingPublicKey: string;
   encryptionPublicKey: string;
   created_at: number;
+  /** Directory-shared avatar (base64 data URI), when the wallet set one. Snake_case on the wire. */
+  avatarUrl?: string;
+  avatar_url?: string;
 }
 
 export interface MessengerConversation {

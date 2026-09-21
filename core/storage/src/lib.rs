@@ -1,4 +1,5 @@
 pub mod allowance_store;
+pub mod bridge_btc_deposit_store;
 pub mod bridge_claim_store;
 pub mod bridge_withdraw_store;
 pub mod chain_store;

@@ -17,7 +17,10 @@ import {
   ExternalLink,
   Shield,
   ShieldOff,
-  DollarSign
+  DollarSign,
+  AlertTriangle,
+  Copy,
+  Check
 } from "lucide-react";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { useTokenPrices } from "@/hooks/use-token-prices";
@@ -107,6 +110,12 @@ const Wallet = () => {
   const [unlocking, setUnlocking] = useState(false);
   const [vaultSettings, setVaultSettings] = useState<VaultSettings>(() => getVaultSettings());
   const [lastActivity, setLastActivity] = useState(Date.now());
+
+  // Recovery-phrase reveal after wallet creation (must be seen before password)
+  const [showSeedReveal, setShowSeedReveal] = useState(false);
+  const [newMnemonic, setNewMnemonic] = useState("");
+  const [seedSaved, setSeedSaved] = useState(false);
+  const [seedRevealCopied, setSeedRevealCopied] = useState(false);
 
   // Password setup after wallet creation
   const [showPasswordSetup, setShowPasswordSetup] = useState(false);
@@ -376,7 +385,11 @@ const Wallet = () => {
         console.warn("Failed to register wallet on node:", err);
       }
 
-      setShowPasswordSetup(true);
+      // Show the recovery phrase FIRST — the user must see and save it before we
+      // move on to the password. This is the only moment it's surfaced proactively.
+      setNewMnemonic(mnemonic);
+      setSeedSaved(false);
+      setShowSeedReveal(true);
     } catch (error) {
       console.error("Failed to create wallet:", error);
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -712,6 +725,77 @@ const Wallet = () => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (showSeedReveal) {
+    const words = newMnemonic.split(" ");
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="max-w-md mx-auto px-4 py-12">
+          <Card className="border-border">
+            <CardHeader className="text-center">
+              <div className="mx-auto w-12 h-12 rounded-full bg-warning/10 flex items-center justify-center mb-3">
+                <FileKey2 className="w-6 h-6 text-warning" />
+              </div>
+              <CardTitle className="text-xl">Save Your Recovery Phrase</CardTitle>
+              <p className="text-sm text-muted-foreground mt-2">
+                These {words.length} words are the ONLY way to recover this wallet if you
+                lose your device or backup file. Write them down and store them offline.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Never share these words. Anyone who has them can take your funds.
+                  RougeChain support will never ask for them.
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {words.map((word, i) => (
+                  <div key={i} className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-muted/50 border border-border">
+                    <span className="text-[10px] text-muted-foreground w-4 text-right">{i + 1}</span>
+                    <span className="text-xs font-mono">{word}</span>
+                  </div>
+                ))}
+              </div>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(newMnemonic);
+                    setSeedRevealCopied(true);
+                    setTimeout(() => setSeedRevealCopied(false), 2000);
+                  } catch { /* clipboard blocked */ }
+                }}
+              >
+                {seedRevealCopied ? <><Check className="w-4 h-4 mr-2" /> Copied</> : <><Copy className="w-4 h-4 mr-2" /> Copy phrase</>}
+              </Button>
+              <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={seedSaved}
+                  onChange={(e) => setSeedSaved(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span className="text-muted-foreground">I have written down my recovery phrase and stored it safely.</span>
+              </label>
+              <Button
+                className="w-full"
+                disabled={!seedSaved}
+                onClick={() => { setShowSeedReveal(false); setShowPasswordSetup(true); }}
+              >
+                Continue
+              </Button>
+              <p className="text-xs text-muted-foreground text-center">
+                You can view this phrase again later under Backup → Seed Phrase.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }

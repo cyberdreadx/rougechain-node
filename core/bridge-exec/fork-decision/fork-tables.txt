@@ -1,0 +1,67 @@
+== SUPERSEDED (2026-09-18): rows below predate the validator-state atomicity fix. Authoritative tables: fork_tables_F49.json / core/daemon/src/fork_tables.rs (see FORK_DECISION_PACKAGE.md §11). ==
+== OPTION A / B account rows (native XRGE, quanta 1e-9) ==
+__treasury__ | canonical=2.148598812 (2148598812) | production=1027.656508750 (1027656508750) | A_delta(prod-canon)=1025.507909938 (1025507909938) | B_delta(canon-prod)=-1025.507909938 (-1025507909938) | treasury: phantom fee distribution from historical restart-rebuild (sum-delta fee bug)
+rouge168fd0mad4eynev767u896zx5ng2dnh7eztw9cj24tjn8f6e5t7fsgh8qxj | canonical=17.270880672 (17270880672) | production=8594.150175817 (8594150175817) | A_delta(prod-canon)=8576.879295145 (8576879295145) | B_delta(canon-prod)=-8576.879295145 (-8576879295145) | proposer + genesis validator (node key 8ccf7878…, stake 100000): phantom fee distribution
+rouge19emhc0secrj0uadfvmp5xvun5jta9kpm0laff28x04ug4szf50nq5aer4c | canonical=10000.191853961 (10000191853961) | production=10652.883715831 (10652883715831) | A_delta(prod-canon)=652.691861870 (652691861870) | B_delta(canon-prod)=-652.691861870 (-652691861870) | staked validator (21e0ed0a…, stake 10000 at h20): phantom fee distribution
+rouge1jfdeh3famu8dk6mwhx29lp7ywyun5qc0ptagr9290mg9kur380aqnak7vg | canonical=0.000000000 (0) | production=ABSENT (None) | A_delta(prod-canon)=0.000000000 (0) | B_delta(canon-prod)=0.000000000 (0) | canonicalization: zero-balance key present only in canonical map (no value difference)
+rouge1qm85k7gmudsrz46crku2zh03j7lx4xyg4adhkhxau2vx25qe97aqvvc378 | canonical=10000.874654383 (10000874654383) | production=10000.874686701 (10000874686701) | A_delta(prod-canon)=0.000032318 (32318) | B_delta(canon-prod)=-0.000032318 (-32318) | validator c97f59a2… (h29 stake): fee-share residual (rounding of fee distribution over differing validator pools)
+Option A: sum positive deltas=10255.079099271 (10255079099271); sum negative=0.000000000 (0); net=10255.079099271 (10255079099271)
+Option B: sum positive deltas=0.000000000 (0); sum negative=-10255.079099271 (-10255079099271); net=-10255.079099271 (-10255079099271)
+token_balances identical: True  lp identical: True  burned identical: True
+fees_burned: production=0.21323826751842256 canonical=0.11401217199999998
+
+== SUPPLY RECONCILIATION (native XRGE) ==
+bridge_mint XRGE total=55123564  faucet total=101  bridge_withdraw burned=255  validator store stakes (whole XRGE)=120000 [[('21e0ed0a', 10000), ('8ccf7878', 100000), ('c97f59a2', 10000)]]
+PRODUCTION: ledger total=178438.965087099 XRGE (178438965087099 quanta); treasury=1027.656508750; fees_burned=0.21323826751842256; burned_tokens={'XRGE': 255.0}
+CANONICAL: ledger total=168183.885987828 XRGE (168183885987828 quanta); treasury=2.148598812; fees_burned=0.11401217199999998; burned_tokens={'XRGE': 255.0}
+ledger difference (production - canonical) = 10255.079099271 XRGE (10255079099271 quanta)
+
+== PER-HEIGHT OUTCOME TABLE (historical inferred from committed roots; canonical from replay roots/maps) ==
+h= 1 transfer         amt=100 fee=0.0 from=8ccf7878 | historical: n/a (no committed root) | canonical: applied (root changed)
+h= 2 transfer         amt=1 fee=0.0 from=8ccf7878 | historical: n/a (no committed root) | canonical: applied (root changed)
+h= 3 bridge_mint      amt=1000 fee=0.0 from=8ccf7878 | historical: n/a (no committed root) | canonical: applied (root changed)
+h= 4 bridge_mint      amt=500 fee=0.0 from=8ccf7878 | historical: n/a (no committed root) | canonical: applied (root changed)
+h= 5 bridge_withdraw  amt=250 fee=0.1 from=45e33257 | historical: n/a (no committed root) | canonical: applied (root changed)
+h= 6 bridge_mint      amt=50 fee=0.0 from=8ccf7878 | historical: n/a (no committed root) | canonical: applied (root changed)
+h= 7 bridge_mint      amt=1000 fee=0.0 from=8ccf7878 | historical: n/a (no committed root) | canonical: applied (root changed)
+h= 8 bridge_mint      amt=1000 fee=0.0 from=8ccf7878 | historical: n/a (no committed root) | canonical: applied (root changed)
+h= 9 bridge_mint      amt=5 fee=0.0 from=8ccf7878 | historical: n/a (no committed root) | canonical: applied (root changed)
+h=10 bridge_withdraw  amt=1 fee=0.1 from=df255dbd | historical: n/a (no committed root) | canonical: applied (root changed)
+h=11 bridge_mint      amt=1 fee=0.0 from=8ccf7878 | historical: n/a (no committed root) | canonical: applied (root changed)
+h=12 bridge_withdraw  amt=1 fee=0.1 from=df255dbd | historical: n/a (no committed root) | canonical: applied (root changed)
+h=13 bridge_withdraw  amt=1 fee=0.1 from=df255dbd | historical: n/a (no committed root) | canonical: applied (root changed)
+h=14 bridge_mint      amt=1 fee=0.0 from=8ccf7878 | historical: n/a (no committed root) | canonical: applied (root changed)
+h=15 bridge_mint      amt=1 fee=0.0 from=8ccf7878 | historical: n/a (no committed root) | canonical: applied (root changed)
+h=16 bridge_mint      amt=1 fee=0.0 from=8ccf7878 | historical: n/a (no committed root) | canonical: applied (root changed)
+h=17 bridge_withdraw  amt=1 fee=0.1 from=df255dbd | historical: n/a (no committed root) | canonical: applied (root changed)
+h=18 bridge_withdraw  amt=1 fee=0.1 from=df255dbd | historical: applied (root changed) | canonical: applied (root changed)
+h=19 bridge_mint      amt=20000 fee=0.0 from=8ccf7878 | historical: applied (root changed) | canonical: applied (root changed)
+h=20 stake            amt=10000 fee=1.0 from=21e0ed0a | historical: applied (root changed) | canonical: applied (root changed)
+h=21 transfer         amt=1999 fee=1.0 from=673b0421 | historical: applied (root changed) | canonical: applied (root changed)
+h=22 bridge_mint      amt=5 fee=0.0 from=8ccf7878 | historical: applied (root changed) | canonical: applied (root changed)
+h=23 bridge_mint      amt=10000 fee=0.0 from=8ccf7878 | historical: applied (root changed) | canonical: applied (root changed)
+h=24 transfer         amt=5 fee=1.0 from=df255dbd | historical: applied (root changed) | canonical: applied (root changed)
+h=25 transfer         amt=9995 fee=1.0 from=df255dbd | historical: applied (root changed) | canonical: applied (root changed)
+h=26 transfer         amt=1 fee=1.0 from=df255dbd | historical: applied (root changed) | canonical: applied (root changed)
+h=27 shield           amt=None fee=1.0 from=df255dbd | historical: applied (root changed) | canonical: applied (root changed)
+h=28 unshield         amt=None fee=1.0 from=2a152293 | historical: NO-OP (root unchanged) | canonical: NO-OP (root unchanged)
+h=29 stake            amt=10000 fee=1.0 from=c97f59a2 | historical: NO-OP (root unchanged) | canonical: NO-OP (root unchanged)
+h=30 transfer         amt=1 fee=1.0 from=df255dbd | historical: applied (root changed) | canonical: applied (root changed)
+h=31 shield           amt=None fee=1.0 from=df255dbd | historical: applied (root changed) | canonical: applied (root changed)
+h=32 unshield         amt=None fee=1.0 from=2a152293 | historical: applied (root changed) | canonical: applied (root changed)
+h=33 shield           amt=None fee=1.0 from=df255dbd | historical: applied (root changed) | canonical: applied (root changed)
+h=34 unshield         amt=None fee=1.0 from=2a152293 | historical: applied (root changed) | canonical: applied (root changed)
+h=35 shield           amt=None fee=1.0 from=df255dbd | historical: applied (root changed) | canonical: applied (root changed)
+h=36 unshield         amt=None fee=1.0 from=2a152293 | historical: applied (root changed) | canonical: applied (root changed)
+h=37 bridge_mint      amt=100000 fee=0.0 from=8ccf7878 | historical: applied (root changed) | canonical: applied (root changed)
+h=38 bridge_mint      amt=100000 fee=0.0 from=8ccf7878 | historical: applied (root changed) | canonical: applied (root changed)
+h=39 bridge_mint      amt=100000 fee=0.0 from=8ccf7878 | historical: applied (root changed) | canonical: applied (root changed)
+h=40 bridge_mint      amt=90000 fee=0.0 from=8ccf7878 | historical: applied (root changed) | canonical: applied (root changed)
+h=41 bridge_mint      amt=11100 fee=0.0 from=8ccf7878 | historical: applied (root changed) | canonical: applied (root changed)
+h=42 bridge_mint      amt=200 fee=0.0 from=8ccf7878 | historical: applied (root changed) | canonical: applied (root changed)
+h=43 bridge_mint      amt=100000000 fee=0.0 from=8ccf7878 | historical: applied (root changed) | canonical: applied (root changed)
+h=44 bridge_mint      amt=55000000 fee=0.0 from=8ccf7878 | historical: applied (root changed) | canonical: applied (root changed)
+h=45 create_pool      amt=None fee=10.0 from=df255dbd | historical: applied (root changed) | canonical: applied (root changed)
+h=46 remove_liquidity amt=None fee=1.0 from=df255dbd | historical: applied (root changed) | canonical: applied (root changed)
+h=47 add_liquidity    amt=None fee=1.0 from=df255dbd | historical: applied (root changed) | canonical: applied (root changed)
+h=48 swap             amt=100000 fee=1.0 from=df255dbd | historical: applied (root changed) | canonical: applied (root changed)

@@ -12,11 +12,17 @@ interface PriceCache {
   priceChange24h: number;
   volume24h: number;
   liquidity: number;
+  source: string;
   timestamp: number;
 }
 
 let priceCache: PriceCache | null = null;
 const CACHE_TTL = 60_000; // 1 minute
+
+// Primary source: GeckoTerminal (CoinGecko's on-chain DEX data) — no key, browser-friendly.
+const GECKOTERMINAL_POOL_API =
+  "https://api.geckoterminal.com/api/v2/networks/base/pools/0x059e10d26c64a63d04e1814f46305210eddc447d";
+const XRGE_TOKEN_ADDRESS = "0x147120faec9277ec02d957584cfcd92b56a24317";
 
 export interface XRGEPriceData {
   priceUsd: number;
@@ -27,11 +33,54 @@ export interface XRGEPriceData {
   source: string;
 }
 
+/** Primary source: GeckoTerminal (CoinGecko on-chain DEX data). No key, CORS-friendly. */
+async function fetchFromGeckoTerminal(): Promise<XRGEPriceData | null> {
+  const res = await fetch(GECKOTERMINAL_POOL_API, { headers: { accept: "application/json" } });
+  if (!res.ok) return null;
+  const json = await res.json();
+  const attr = json?.data?.attributes;
+  if (!attr) return null;
+
+  // The pool is XRGE/USDC — pick the XRGE side by matching the token address.
+  const baseId = String(json?.data?.relationships?.base_token?.data?.id ?? "").toLowerCase();
+  const xrgeIsBase = baseId.includes(XRGE_TOKEN_ADDRESS);
+  const priceUsd = parseFloat(xrgeIsBase ? attr.base_token_price_usd : attr.quote_token_price_usd) || 0;
+  if (priceUsd <= 0) return null;
+
+  // price_change_percentage.h24 tracks the base token; invert for the quote side.
+  const baseChange = parseFloat(attr.price_change_percentage?.h24 ?? "0") || 0;
+  return {
+    priceUsd,
+    priceChange24h: xrgeIsBase ? baseChange : -baseChange,
+    volume24h: parseFloat(attr.volume_usd?.h24 ?? "0") || 0,
+    liquidity: parseFloat(attr.reserve_in_usd ?? "0") || 0,
+    lastUpdated: new Date(),
+    source: "GeckoTerminal",
+  };
+}
+
+/** Fallback source: the node backend proxy (DexScreener). */
+async function fetchFromNode(): Promise<XRGEPriceData | null> {
+  const baseUrl = getNodeApiBaseUrl();
+  if (!baseUrl) return null;
+  const response = await fetch(`${baseUrl}/price/xrge`, { headers: getCoreApiHeaders() });
+  if (!response.ok) return null;
+  const data = await response.json();
+  if (!data?.success) return null;
+  return {
+    priceUsd: data.price_usd || 0,
+    priceChange24h: data.price_change_24h || 0,
+    volume24h: data.volume_24h || 0,
+    liquidity: data.liquidity || 0,
+    lastUpdated: new Date(),
+    source: data.source || "DexScreener",
+  };
+}
+
 /**
- * Fetch XRGE price from backend (which fetches from DexScreener)
+ * Fetch XRGE price: GeckoTerminal primary, node/DexScreener fallback, then stale cache.
  */
 export async function fetchXRGEPrice(): Promise<XRGEPriceData | null> {
-  // Check cache
   if (priceCache && Date.now() - priceCache.timestamp < CACHE_TTL) {
     return {
       priceUsd: priceCache.price,
@@ -39,73 +88,39 @@ export async function fetchXRGEPrice(): Promise<XRGEPriceData | null> {
       volume24h: priceCache.volume24h,
       liquidity: priceCache.liquidity,
       lastUpdated: new Date(priceCache.timestamp),
-      source: "DexScreener (cached)",
+      source: `${priceCache.source} (cached)`,
     };
   }
 
-  try {
-    const baseUrl = getNodeApiBaseUrl();
-    if (!baseUrl) {
-      console.error("No API base URL configured");
-      return null;
-    }
+  let result: XRGEPriceData | null = null;
+  try { result = await fetchFromGeckoTerminal(); } catch (e) { console.warn("GeckoTerminal price failed:", e); }
+  if (!result) {
+    try { result = await fetchFromNode(); } catch (e) { console.warn("Node price fallback failed:", e); }
+  }
 
-    const response = await fetch(`${baseUrl}/price/xrge`, {
-      headers: getCoreApiHeaders(),
-    });
-
-    if (!response.ok) {
-      console.error("Price API error:", response.status);
-      return null;
-    }
-
-    const data = await response.json();
-
-    if (!data.success) {
-      console.error("Price API returned error:", data.error);
-      return null;
-    }
-
-    // Extract price data from backend response
-    const priceUsd = data.price_usd || 0;
-    const priceChange24h = data.price_change_24h || 0;
-    const volume24h = data.volume_24h || 0;
-    const liquidity = data.liquidity || 0;
-
-    // Update cache
+  if (result && result.priceUsd > 0) {
     priceCache = {
-      price: priceUsd,
-      priceChange24h,
-      volume24h,
-      liquidity,
+      price: result.priceUsd,
+      priceChange24h: result.priceChange24h,
+      volume24h: result.volume24h,
+      liquidity: result.liquidity,
+      source: result.source,
       timestamp: Date.now(),
     };
-
-    return {
-      priceUsd,
-      priceChange24h,
-      volume24h,
-      liquidity,
-      lastUpdated: new Date(),
-      source: data.source || "DexScreener",
-    };
-  } catch (error) {
-    console.error("Failed to fetch XRGE price:", error);
-    
-    // Return cached data if available, even if stale
-    if (priceCache) {
-      return {
-        priceUsd: priceCache.price,
-        priceChange24h: priceCache.priceChange24h,
-        volume24h: priceCache.volume24h,
-        liquidity: priceCache.liquidity,
-        lastUpdated: new Date(priceCache.timestamp),
-        source: "DexScreener (stale cache)",
-      };
-    }
-    
-    return null;
+    return result;
   }
+
+  if (priceCache) {
+    return {
+      priceUsd: priceCache.price,
+      priceChange24h: priceCache.priceChange24h,
+      volume24h: priceCache.volume24h,
+      liquidity: priceCache.liquidity,
+      lastUpdated: new Date(priceCache.timestamp),
+      source: `${priceCache.source} (stale)`,
+    };
+  }
+  return null;
 }
 
 /**

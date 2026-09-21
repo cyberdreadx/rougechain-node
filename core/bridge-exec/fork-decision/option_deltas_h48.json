@@ -1,0 +1,67 @@
+{
+ "height": 48,
+ "quanta_per_xrge": 1000000000,
+ "rows": [
+  {
+   "account": "__treasury__",
+   "canonical_replay_quanta": 2148598812,
+   "current_production_quanta": 1027656508750,
+   "option_a_delta_quanta": 1025507909938,
+   "option_b_delta_quanta": -1025507909938,
+   "category": "phantom fee distribution (restart-rebuild sum-delta bug)"
+  },
+  {
+   "account": "rouge168fd0mad4eynev767u896zx5ng2dnh7eztw9cj24tjn8f6e5t7fsgh8qxj",
+   "canonical_replay_quanta": 17270880672,
+   "current_production_quanta": 8594150175817,
+   "option_a_delta_quanta": 8576879295145,
+   "option_b_delta_quanta": -8576879295145,
+   "category": "phantom fee distribution (proposer + genesis validator 8ccf7878, stake 100000)"
+  },
+  {
+   "account": "rouge19emhc0secrj0uadfvmp5xvun5jta9kpm0laff28x04ug4szf50nq5aer4c",
+   "canonical_replay_quanta": 10000191853961,
+   "current_production_quanta": 10652883715831,
+   "option_a_delta_quanta": 652691861870,
+   "option_b_delta_quanta": -652691861870,
+   "category": "phantom fee distribution (validator 21e0ed0a, stake 10000 @h20)"
+  },
+  {
+   "account": "rouge1jfdeh3famu8dk6mwhx29lp7ywyun5qc0ptagr9290mg9kur380aqnak7vg",
+   "canonical_replay_quanta": 0,
+   "current_production_quanta": null,
+   "option_a_delta_quanta": 0,
+   "option_b_delta_quanta": 0,
+   "category": "key-presence artifact (zero value)"
+  },
+  {
+   "account": "rouge1qm85k7gmudsrz46crku2zh03j7lx4xyg4adhkhxau2vx25qe97aqvvc378",
+   "canonical_replay_quanta": 10000874654383,
+   "current_production_quanta": 10000874686701,
+   "option_a_delta_quanta": 32318,
+   "option_b_delta_quanta": -32318,
+   "category": "fee-share rounding residual (validator c97f59a2; h29 stake no-op in both)"
+  }
+ ],
+ "option_a": {
+  "sum_positive_quanta": 10255079099271,
+  "sum_negative_quanta": 0,
+  "net_quanta": 10255079099271
+ },
+ "option_b": {
+  "sum_positive_quanta": 0,
+  "sum_negative_quanta": -10255079099271,
+  "net_quanta": -10255079099271
+ },
+ "ledger_totals_quanta": {
+  "production": 178438965087099,
+  "canonical": 168183885987828
+ },
+ "fees_burned": {
+  "production": 0.21323826751842256,
+  "canonical": 0.11401217199999998
+ },
+ "token_lp_burned_pool_identical": true,
+ "committed_root_48": "f5af35d889618c9dbdab5e350eab84f8f36b291c57543a361977acdd82d793b1",
+ "canonical_computed_root_48": "2cd774546648c4c137918b9a0465c8ce808fae5f12b8b44d4f8bcdfb15b72640"
+}

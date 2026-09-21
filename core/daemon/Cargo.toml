@@ -25,6 +25,7 @@ quantum-vault-crypto = { path = "../crypto" }
 quantum-vault-consensus = { path = "../consensus" }
 quantum-vault-storage = { path = "../storage" }
 quantum-vault-vm = { path = "../vm" }
+quantum-vault-bridge-exec = { path = "../bridge-exec" }
 sled = "0.34"
 eth-ecdsa-verifier = "0.1"
 rayon = "1.10"

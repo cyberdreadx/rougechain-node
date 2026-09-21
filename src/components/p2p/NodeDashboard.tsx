@@ -509,8 +509,11 @@ export function NodeDashboard() {
                   That's it! Run this one command. Your node will connect to the network, sync the blockchain, and start running.
                 </p>
                 <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all whitespace-pre-wrap break-all">
-                  ./target/release/quantum-vault-daemon --api-port 5100 --peers "https://api.rougechain.io/api"
+                  ./target/release/quantum-vault-daemon --genesis daemon/genesis-mainnet.json --chain-id rougechain-mainnet-1 --api-port 5100 --peers "https://api.rougechain.io/api"
                 </code>
+                <p className="text-xs text-muted-foreground mt-2">
+                  <strong>Note:</strong> <code className="text-xs bg-background px-1 rounded">--genesis</code> and <code className="text-xs bg-background px-1 rounded">--chain-id</code> are required to join mainnet — without them the node builds its own genesis and refuses to sync.
+                </p>
                 <p className="text-xs text-muted-foreground mt-2">
                   🎉 <strong>You're done!</strong> Your node is now part of the RougeChain network.
                 </p>
@@ -529,7 +532,7 @@ export function NodeDashboard() {
                   <a href="/blockchain" className="text-primary underline">network globe</a>? Add <code className="text-xs bg-background px-1 rounded">--node-name</code>:
                 </p>
                 <code className="text-xs bg-background border border-border px-3 py-2 rounded-lg block font-mono select-all whitespace-pre-wrap break-all">
-                  ./target/release/quantum-vault-daemon --api-port 5100 --node-name "MyAwesomeNode" --peers "https://api.rougechain.io/api"
+                  ./target/release/quantum-vault-daemon --genesis daemon/genesis-mainnet.json --chain-id rougechain-mainnet-1 --api-port 5100 --node-name "MyAwesomeNode" --peers "https://api.rougechain.io/api"
                 </code>
               </div>
             </div>

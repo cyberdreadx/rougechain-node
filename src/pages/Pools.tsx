@@ -29,7 +29,7 @@ import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { secureCreatePool, secureAddLiquidity, secureRemoveLiquidity } from "@/lib/secure-api";
 import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
 import SwapWidget from "@/components/messenger/SwapWidget";
-import { formatTokenAmount } from "@/hooks/use-eth-price";
+import { formatTokenAmount, humanToRaw, rawToHuman } from "@/hooks/use-eth-price";
 import { useTokenMetadata } from "@/hooks/use-token-metadata";
 
 interface Pool {
@@ -197,8 +197,8 @@ const Pools = () => {
         wallet.privateKey,
         newTokenA,
         newTokenB,
-        Math.floor(parseFloat(newAmountA)),
-        Math.floor(parseFloat(newAmountB))
+        humanToRaw(parseFloat(newAmountA), newTokenA),
+        humanToRaw(parseFloat(newAmountB), newTokenB)
       );
       
       if (result.success) {
@@ -234,8 +234,8 @@ const Pools = () => {
         wallet.publicKey,
         wallet.privateKey,
         selectedPool.pool_id,
-        Math.floor(parseFloat(addAmountA)),
-        Math.floor(parseFloat(addAmountB))
+        humanToRaw(parseFloat(addAmountA), selectedPool.token_a),
+        humanToRaw(parseFloat(addAmountB), selectedPool.token_b)
       );
       
       if (result.success) {
@@ -293,13 +293,15 @@ const Pools = () => {
   };
 
   // Calculate quote for proportional liquidity
+  // Quote the paired human amount to keep an existing pool's ratio. Reserves are raw, so convert
+  // them to human first — otherwise a mixed-decimal pair (e.g. XRGE 0-dec / qUSDC 6-dec) quotes
+  // off by the decimals gap. Returns 0 for an empty pool (first liquidity sets the ratio freely).
   const calculateQuote = (pool: Pool, amountA: number, isTokenA: boolean) => {
     if (!pool.reserve_a || !pool.reserve_b) return 0;
-    if (isTokenA) {
-      return (amountA * pool.reserve_b) / pool.reserve_a;
-    } else {
-      return (amountA * pool.reserve_a) / pool.reserve_b;
-    }
+    const ra = rawToHuman(pool.reserve_a, pool.token_a);
+    const rb = rawToHuman(pool.reserve_b, pool.token_b);
+    if (!ra || !rb) return 0;
+    return isTokenA ? (amountA * rb) / ra : (amountA * ra) / rb;
   };
 
   const formatNumber = (n: number, symbol?: string) => {
@@ -570,8 +572,12 @@ const Pools = () => {
                       value={addAmountA}
                       onChange={(e) => {
                         setAddAmountA(e.target.value);
-                        const quote = calculateQuote(selectedPool, parseFloat(e.target.value) || 0, true);
-                        setAddAmountB(quote.toFixed(0));
+                        // Only auto-fill the other side when the pool already has a ratio.
+                        // For an empty (first-seed) pool, leave the other field alone.
+                        if (selectedPool.reserve_a > 0 && selectedPool.reserve_b > 0) {
+                          const quote = calculateQuote(selectedPool, parseFloat(e.target.value) || 0, true);
+                          setAddAmountB(quote > 0 ? String(Number(quote.toFixed(8))) : "");
+                        }
                       }}
                     />
                   </div>
@@ -583,8 +589,10 @@ const Pools = () => {
                       value={addAmountB}
                       onChange={(e) => {
                         setAddAmountB(e.target.value);
-                        const quote = calculateQuote(selectedPool, parseFloat(e.target.value) || 0, false);
-                        setAddAmountA(quote.toFixed(0));
+                        if (selectedPool.reserve_a > 0 && selectedPool.reserve_b > 0) {
+                          const quote = calculateQuote(selectedPool, parseFloat(e.target.value) || 0, false);
+                          setAddAmountA(quote > 0 ? String(Number(quote.toFixed(8))) : "");
+                        }
                       }}
                     />
                   </div>
