@@ -17,7 +17,7 @@ see [Status & Roadmap](status.md).
 |---|---|
 | RougeChain side of every bridge | ML-DSA-65-signed withdrawals |
 | XRGE on Base (`BridgeVaultV2`) | **Classical** Base-side authorization (Safe multisig + capped relayer key). Hardened R1 architecture. |
-| qETH / qUSDC on Base (`RougeBridge`) | **Classical** Base-side authorization; owner is currently a single operator key, not a multisig |
+| qETH / qUSDC on Base (`RougeBridge`) | **Classical** Base-side authorization: single operator owner/release key, with a 2-of-3 Safe multisig guardian that can pause the bridge and cancel queued large releases |
 | Bitcoin (qBTC) | Separate bridge; Bitcoin custody uses Bitcoin's classical signatures |
 
 So: assets held **on RougeChain** are protected by post-quantum signatures. The **Base-side

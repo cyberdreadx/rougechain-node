@@ -2,7 +2,8 @@
 
 > **Status:** the **R1 production bridge is LIVE** on Base mainnet. XRGE, qETH and qUSDC paths have
 > been tested end-to-end. Base-side authorization is **classical**: XRGE uses a Safe multisig plus a capped relayer
-> key; qETH/qUSDC (`RougeBridge`) are currently owned by a single operator key. The post-quantum **V3 XRGE bridge is built but NOT activated** — see
+> key; qETH/qUSDC (`RougeBridge`) use a single operator owner/release key, with a 2-of-3 Safe multisig
+> guardian that can pause the bridge and cancel queued large releases. The post-quantum **V3 XRGE bridge is built but NOT activated** — see
 > [V3 Post-Quantum XRGE Bridge](v3-xrge-bridge.md) and [Status & Roadmap](../status.md).
 
 RougeChain has two separate bridge systems:
