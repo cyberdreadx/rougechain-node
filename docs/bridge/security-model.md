@@ -11,7 +11,7 @@ This page states plainly who can authorize what, today and under V3. See
 | Deposits | Every mint is verified against the actual Base transaction (contract, sender, amount) at a confirmation depth (default 6). Claims are de-duplicated, so a deposit cannot mint twice. |
 | Payouts | Each withdrawal is paid at most once; fulfillment is re-verified on Base at confirmation depth before it is marked complete. |
 | XRGE vault (`BridgeVaultV2`) | Owned by a **Safe multisig (2-of-3)**. A separate hot relayer key can only call `release()` within per-transaction and rolling daily caps, and only while unpaused. Emergency withdrawal is behind a 48-hour timelock. |
-| qETH / qUSDC (`RougeBridge`) | The RougeBridge owner is currently a single operator key, not a multisig. Protections include the pause/guardian role, the 24-hour timelock on large releases, and daemon-side controls. Migrating ownership to multisig control is a planned security improvement. Releases are also protected against replay by L1 transaction id. |
+| qETH / qUSDC (`RougeBridge`) | The RougeBridge owner is currently a single operator key, not a multisig; that key also performs releases. The guardian role is held by a 2-of-3 Safe multisig, which can pause the bridge and cancel queued large releases. Other protections include the 24-hour timelock on large releases and daemon-side controls. Migrating ownership to multisig control is a planned security improvement. Releases are also protected against replay by L1 transaction id. |
 | Operations | Daemon-side kill switch and per-transaction cap; automatic refunds are **disabled** in production (failed releases are handled manually). |
 
 **The trust assumption:** releases on Base are authorized by **classical ECDSA keys** (the relayer
