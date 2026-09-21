@@ -9,6 +9,40 @@ _Last reviewed: 2026-09-21._
 > on the hardened R1 architecture. A V3 XRGE bridge using ML-DSA-65 post-quantum authorization has
 > been built and is undergoing final rehearsal before production activation.
 
+## ⚠️ Mandatory node upgrade (block 49)
+
+If you run a RougeChain mainnet node or validator, **you must upgrade.** On 2026-09-18 mainnet
+activated a protocol upgrade at **block 49** (bridge security hardening and a fix to validator-stake
+accounting). The upgraded code is on the public repository:
+[`rougechain-node` main](https://github.com/cyberdreadx/rougechain-node).
+
+A node running a build from before 2026-09-18 may show the correct block height, but it executes
+blocks with the old rules and ends up with incorrect balances and validator state. There is no
+partial fix: upgrade and resync. **Stake is unaffected** — an un-upgraded validator simply is not
+participating.
+
+```bash
+sudo systemctl stop rougechain-validator
+cp -a ~/.quantum-vault/mainnet ~/.quantum-vault/mainnet.backup     # keep a backup
+cd ~/rougechain && git pull --ff-only
+source ~/.cargo/env && cd core && cargo build --release --locked -p quantum-vault-daemon
+mv ~/.quantum-vault/mainnet ~/.quantum-vault/mainnet.old
+mkdir -p ~/.quantum-vault/mainnet
+cp ~/.quantum-vault/mainnet.backup/node-keys.json ~/.quantum-vault/mainnet/
+sudo systemctl start rougechain-validator
+```
+
+Paths and the service name are the `install-validator.sh` defaults; adjust them to your setup.
+`node-keys.json` is your validator identity — keep it and never share it. A fresh sync takes under
+a minute.
+
+**Verify you are on the canonical chain:**
+
+- block 49 has hash `4c7ec92d9fc4dd24146036474128072d07d146d5cde93a0d31c0462eea895abb`
+  (`curl -s "localhost:5100/api/blocks?limit=100"`)
+- `state_root` from `curl -s localhost:5100/api/stats` equals the one at
+  `https://api.rougechain.io/api/stats` at the same height
+
 ## Live today
 
 | Component | Status | Notes |
