@@ -65,5 +65,5 @@ Independent of the on-chain contracts, the RougeChain daemon enforces its own wi
 
 - The relayer's EVM private key should be stored securely (not in code)
 - Use a dedicated wallet with limited funds for the relayer
-- The RougeBridge owner is currently a single operator key, not a multisig. Protections include the pause/guardian role, the 24-hour timelock on large releases, and daemon-side controls. Migrating ownership to multisig control is a planned security improvement.
+- The RougeBridge owner is currently a single operator key, not a multisig; that key also performs releases. The guardian role is held by a 2-of-3 Safe multisig, which can pause the bridge and cancel queued large releases. Other protections include the 24-hour timelock on large releases and daemon-side controls. Migrating ownership to multisig control is a planned security improvement.
 - The `BRIDGE_RELAYER_SECRET` should be a strong random string

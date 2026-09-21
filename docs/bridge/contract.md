@@ -9,7 +9,7 @@ The `RougeBridge.sol` contract is a multi-asset bridge contract deployed on Base
 - **Timelock** — Large withdrawals require a delay period before execution
 - **Guardian role** — Separate from owner; can pause but cannot withdraw
 - **Replay protection** — Processed L1 transaction IDs are tracked to prevent double-releases
-- **Ownership** — The RougeBridge owner is currently a single operator key, not a multisig. Protections include the pause/guardian role, the 24-hour timelock on large releases, and daemon-side controls. Migrating ownership to multisig control is a planned security improvement.
+- **Ownership** — The RougeBridge owner is currently a single operator key, not a multisig; that key also performs releases. The guardian role is held by a 2-of-3 Safe multisig, which can pause the bridge and cancel queued large releases. Other protections include the 24-hour timelock on large releases and daemon-side controls. Migrating ownership to multisig control is a planned security improvement.
 
 ## Key Functions
 
