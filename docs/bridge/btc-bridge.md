@@ -1,8 +1,13 @@
-# BTC ⇄ qBTC Bridge
+# Bitcoin Bridge (BTC ⇄ qBTC)
 
-Bridges native **Bitcoin** to **qBTC** on RougeChain L1 and back. qBTC is post-quantum by virtue
-of living on RougeChain (ML-DSA-65); the bridge's job is to move value out of quantum-vulnerable
-Bitcoin into the quantum-safe chain and back.
+> **Status: separate system, staged rollout.** The Bitcoin bridge is independent of the Base
+> bridge (R1) and is **not part of the V3 XRGE bridge**. On mainnet, BTC payouts (qBTC → BTC) are
+> currently **not being served** while the rollout is staged. Do not send significant value; check
+> [Status & Roadmap](../status.md).
+
+Bridges native **Bitcoin** to **qBTC** on RougeChain L1 and back. qBTC held on RougeChain is controlled
+by ML-DSA-65 keys. The BTC backing it sits in a Bitcoin custody address protected by Bitcoin's own
+(classical) signatures, so the bridge custody itself is **not** post-quantum.
 
 qBTC uses **8 decimals — 1 on-chain unit = 1 satoshi.**
 

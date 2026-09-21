@@ -184,8 +184,8 @@ curl "https://testnet.rougechain.io/api/balance/YOUR_PUBLIC_KEY"
 
 ### Bridge deposit not credited
 
-1. Confirm the EVM transaction was confirmed on Base Sepolia
-2. Wait up to 2 minutes — the bridge relayer polls periodically
+1. Confirm the EVM transaction was confirmed on **Base mainnet** (Base Sepolia only if you are on testnet)
+2. Deposits are credited after the required confirmation depth (default 6 Base blocks), then the deposit watcher claims them
 3. Check the bridge config: `GET /api/bridge/config`
 4. Verify the custody address matches your bridge target
 
@@ -194,7 +194,8 @@ curl "https://testnet.rougechain.io/api/balance/YOUR_PUBLIC_KEY"
 Withdrawals require the bridge relayer to process them. Check status:
 
 ```bash
-curl "https://testnet.rougechain.io/api/bridge/withdrawals"
+curl "https://api.rougechain.io/api/bridge/withdrawals"          # mainnet
+curl "https://testnet.rougechain.io/api/bridge/withdrawals"      # testnet
 ```
 
 ---

@@ -64,7 +64,9 @@ function setLargeWithdrawalThreshold(uint256) external;  // Owner
 
 ## Deployment
 
-The XRGE bridge is live on **Base mainnet** (chain ID 8453) as `BridgeVaultV2` at `0x7BB10752E99e8872d7D2DE5D92bfd43cd935Cd2D`. Its owner is a **Gnosis Safe multisig (2-of-3)** — no single key can move or drain the vault. Routine releases are signed by a *separate* hot relayer key that may only call `release()` within on-chain per-transaction and rolling daily caps and only while unpaused; the multisig alone can rotate that key, change the caps, pause, or (behind a 48-hour timelock) emergency-withdraw. The ETH/USDC custody contract is at `0x0c09C764AdC024497729cd452ECfeE8869d35d83`. Base Sepolia (chain ID 84532) is used for testing.
+The XRGE bridge is live on **Base mainnet** (chain ID 8453) as `BridgeVaultV2` at `0x7BB10752E99e8872d7D2DE5D92bfd43cd935Cd2D`. Its owner is a **Gnosis Safe multisig (2-of-3)** — no single key can move or drain the vault. Routine releases are signed by a *separate* hot relayer key that may only call `release()` within on-chain per-transaction and rolling daily caps and only while unpaused; the multisig alone can rotate that key, change the caps, pause, or (behind a 48-hour timelock) emergency-withdraw. The ETH/USDC custody contract is at `0x0c09C764AdC024497729cd452ECfeE8869d35d83`. Base Sepolia (chain ID 84532) is used only for testing.
+
+> `BridgeVaultV3` (post-quantum XRGE vault) is **not deployed** on Base mainnet. See [V3 Post-Quantum XRGE Bridge](v3-xrge-bridge.md).
 
 > **Migration note:** the previous single-owner XRGE vault (`0xb3f5…bFAb5`) is being retired in favor of `BridgeVaultV2`; do not deposit to the old address.
 

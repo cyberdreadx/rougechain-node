@@ -16,15 +16,16 @@ Returns bridge status, custody address, chain ID, and supported tokens.
   "enabled": true,
   "custodyAddress": "0x...",
   "chainId": 8453,
-  "supportedTokens": ["ETH"]
+  "supportedTokens": ["ETH", "USDC"]
 }
 ```
 
 > `enabled` is `false` when the custody address is unset. `chainId` is `8453` on Base
 > mainnet (`84532` on Base Sepolia).
 >
-> Only **ETH** (→ qETH) is claimable through this endpoint today. qUSDC bridging is
-> planned but **not yet enabled** — do not treat USDC as claimable.
+> **ETH** (→ qETH) and **USDC** (→ qUSDC) are claimable through this endpoint. `"BTC"` also
+> appears in `supportedTokens` when the separate Bitcoin bridge is configured. These endpoints are
+> the R1 production bridge; no V3 endpoint is live.
 
 ### Claim Bridge Deposit
 
@@ -32,7 +33,7 @@ Returns bridge status, custody address, chain ID, and supported tokens.
 POST /api/bridge/claim
 ```
 
-Claim wrapped **qETH** after depositing ETH on Base. (Usually automatic — see the auto-claim note below.) qUSDC is not mintable — USDC bridging is planned but not yet enabled.
+Claim wrapped **qETH** or **qUSDC** after depositing ETH or USDC on Base. (Usually automatic — see the auto-claim note below.)
 
 **Body:**
 ```json
@@ -45,7 +46,7 @@ Claim wrapped **qETH** after depositing ETH on Base. (Usually automatic — see 
 }
 ```
 
-The `token` field is `"ETH"` (default); this mints qETH. `"USDC"` is not claimable yet.
+The `token` field is `"ETH"` (default, mints qETH) or `"USDC"` (mints qUSDC).
 The node verifies the on-chain deposit (the `Transfer` to custody, not a caller-supplied
 amount), checks the EVM signature, requires the configured confirmation depth
 (`QV_BRIDGE_MIN_CONFIRMATIONS`, default 6), and then mints qETH.
