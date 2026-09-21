@@ -123,7 +123,7 @@ The `payload` is JSON-serialized with keys sorted alphabetically, then signed wi
 | `/api/validators` | GET | List validators |
 | `/api/validators/stats` | GET | Validator vote stats |
 | `/api/selection` | GET | Proposer selection |
-| `/api/finality` | GET | Finality status |
+| `/api/finality` | GET | Finality status (legacy, informational — see [Finality](../staking/finality.md)) |
 | `/api/votes` | GET | Vote quorum info |
 | `/api/v2/stake` | POST | Stake tokens (signed) |
 | `/api/v2/unstake` | POST | Unstake tokens (signed) |
