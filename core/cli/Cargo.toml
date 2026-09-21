@@ -17,4 +17,4 @@ quantum-vault-crypto = { path = "../crypto" }
 quantum-vault-types = { path = "../types" }
 hex = "0.4"
 dirs = "5"
-rand = "0.8"
+rand = "0.10"
