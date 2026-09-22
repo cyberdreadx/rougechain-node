@@ -1,5 +1,9 @@
 const LOGO_MAX_DIM = 256;
-const LOGO_MAX_BYTES = 100 * 1024; // 100 KB max for on-chain storage
+// The node rejects an inline logo whose WHOLE data-URI string exceeds 32 KiB
+// (MAX_TOKEN_IMAGE_DATA_URI_BYTES in core/daemon). Aim a little under it.
+const LOGO_MAX_DATA_URI_CHARS = 30 * 1024;
+const LOGO_DIMS = [256, 192, 160, 128, 96];
+const LOGO_QUALITIES = [0.85, 0.7, 0.5, 0.35];
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -18,36 +22,26 @@ export async function fileToLogoDataUri(file: File): Promise<string> {
   }
 
   const bitmap = await createImageBitmap(file);
-  const dim = Math.min(bitmap.width, bitmap.height, LOGO_MAX_DIM);
-
-  const canvas = new OffscreenCanvas(dim, dim);
-  const ctx = canvas.getContext("2d")!;
-
-  // Center-crop to square
   const srcSize = Math.min(bitmap.width, bitmap.height);
   const sx = (bitmap.width - srcSize) / 2;
   const sy = (bitmap.height - srcSize) / 2;
-  ctx.drawImage(bitmap, sx, sy, srcSize, srcSize, 0, 0, dim, dim);
-  bitmap.close();
 
-  for (const quality of [0.85, 0.7, 0.5, 0.3]) {
-    const blob = await canvas.convertToBlob({ type: "image/webp", quality });
-    if (blob.size <= LOGO_MAX_BYTES) {
-      const base64 = arrayBufferToBase64(await blob.arrayBuffer());
-      return `data:image/webp;base64,${base64}`;
+  try {
+    for (const maxDim of LOGO_DIMS) {
+      const dim = Math.min(srcSize, maxDim);
+      const canvas = new OffscreenCanvas(dim, dim);
+      const ctx = canvas.getContext("2d")!;
+      // Center-crop to square
+      ctx.drawImage(bitmap, sx, sy, srcSize, srcSize, 0, 0, dim, dim);
+      for (const quality of LOGO_QUALITIES) {
+        const blob = await canvas.convertToBlob({ type: "image/webp", quality });
+        const dataUri = `data:image/webp;base64,${arrayBufferToBase64(await blob.arrayBuffer())}`;
+        if (dataUri.length <= LOGO_MAX_DATA_URI_CHARS) return dataUri;
+      }
+      if (dim < maxDim) break; // source is already smaller than this step
     }
+  } finally {
+    bitmap.close();
   }
-
-  // Final fallback: shrink to 128px
-  const small = new OffscreenCanvas(128, 128);
-  const sctx = small.getContext("2d")!;
-  const bmp2 = await createImageBitmap(file);
-  const srcSize2 = Math.min(bmp2.width, bmp2.height);
-  const sx2 = (bmp2.width - srcSize2) / 2;
-  const sy2 = (bmp2.height - srcSize2) / 2;
-  sctx.drawImage(bmp2, sx2, sy2, srcSize2, srcSize2, 0, 0, 128, 128);
-  bmp2.close();
-  const blob = await small.convertToBlob({ type: "image/webp", quality: 0.5 });
-  const base64 = arrayBufferToBase64(await blob.arrayBuffer());
-  return `data:image/webp;base64,${base64}`;
+  throw new Error("Image is too detailed to fit the 32 KB on-chain limit — use a simpler logo or host it and paste a URL");
 }
