@@ -14,8 +14,10 @@ const DiscordLogo = ({ className }: { className?: string }) => (
   </svg>
 );
 import xrgeLogo from "@/assets/xrge-logo.webp";
+import { useTranslation } from "react-i18next";
 
 export function Footer() {
+  const { t } = useTranslation();
   return (
     <footer className="border-t border-red-500/20 bg-black/40 backdrop-blur-sm mt-auto">
       <div className="max-w-6xl mx-auto px-4 py-8">
@@ -27,17 +29,17 @@ export function Footer() {
               <span className="font-bold text-lg text-white">RougeChain</span>
             </div>
             <p className="text-sm text-muted-foreground mb-4">
-              Post-quantum Layer 1 blockchain secured by ML-DSA-65 signatures.
+              {t("footer.tagline")}
             </p>
             <div className="flex items-center gap-1 px-2 py-1 rounded bg-success/10 border border-success/30 w-fit">
               <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
-              <span className="text-xs text-success font-mono">MAINNET LIVE</span>
+              <span className="text-xs text-success font-mono">{t("footer.badge")}</span>
             </div>
           </div>
 
           {/* Resources */}
           <div>
-            <h4 className="font-semibold text-white mb-3 text-sm">Resources</h4>
+            <h4 className="font-semibold text-white mb-3 text-sm">{t("footer.resources")}</h4>
             <ul className="space-y-2">
               <li>
                 <a
@@ -47,7 +49,7 @@ export function Footer() {
                   className="text-sm text-muted-foreground hover:text-red-400 flex items-center gap-1.5 transition-colors"
                 >
                   <BookOpen className="w-3.5 h-3.5" />
-                  Documentation
+                  {t("footer.docs")}
                   <ExternalLink className="w-3 h-3 opacity-50" />
                 </a>
               </li>
@@ -71,7 +73,7 @@ export function Footer() {
                   className="text-sm text-muted-foreground hover:text-red-400 flex items-center gap-1.5 transition-colors"
                 >
                   <Puzzle className="w-3.5 h-3.5" />
-                  Chrome Extension
+                  {t("footer.chromeExtension")}
                   <ExternalLink className="w-3 h-3 opacity-50" />
                 </a>
               </li>
@@ -80,7 +82,7 @@ export function Footer() {
 
           {/* Trade */}
           <div>
-            <h4 className="font-semibold text-white mb-3 text-sm">Trade XRGE</h4>
+            <h4 className="font-semibold text-white mb-3 text-sm">{t("footer.trade")}</h4>
             <ul className="space-y-2">
               <li>
                 <a
@@ -109,15 +111,15 @@ export function Footer() {
 
           {/* Security */}
           <div>
-            <h4 className="font-semibold text-white mb-3 text-sm">Security</h4>
+            <h4 className="font-semibold text-white mb-3 text-sm">{t("footer.security")}</h4>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li className="flex items-center gap-1.5">
                 <Shield className="w-3.5 h-3.5 text-red-400" />
-                ML-DSA-65 Signatures
+                {t("footer.signatures")}
               </li>
               <li className="flex items-center gap-1.5">
                 <Shield className="w-3.5 h-3.5 text-fuchsia-400" />
-                ML-KEM-768 Key Exchange
+                {t("footer.keyExchange")}
               </li>
               <li className="flex items-center gap-1.5">
                 <Shield className="w-3.5 h-3.5 text-amber-400" />
@@ -130,7 +132,7 @@ export function Footer() {
         {/* Bottom */}
         <div className="mt-8 pt-6 border-t border-red-500/10 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-xs text-muted-foreground/60 font-mono">
-            RougeChain Mainnet v1.0 • Post-Quantum Secured
+            {t("footer.version")}
           </p>
           <div className="flex items-center gap-4">
             <a
@@ -138,7 +140,7 @@ export function Footer() {
               target="_blank"
               rel="noopener noreferrer"
               className="text-muted-foreground hover:text-red-400 transition-colors"
-              title="Follow on X"
+              title={t("footer.followX")}
             >
               <XLogo className="w-4 h-4" />
             </a>
@@ -147,7 +149,7 @@ export function Footer() {
               target="_blank"
               rel="noopener noreferrer"
               className="text-muted-foreground hover:text-red-400 transition-colors"
-              title="Join Discord"
+              title={t("footer.joinDiscord")}
             >
               <DiscordLogo className="w-4 h-4" />
             </a>
@@ -156,7 +158,7 @@ export function Footer() {
               target="_blank"
               rel="noopener noreferrer"
               className="text-muted-foreground hover:text-red-400 transition-colors"
-              title="View on GitHub"
+              title={t("footer.viewGithub")}
             >
               <Github className="w-4 h-4" />
             </a>

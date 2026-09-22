@@ -32,7 +32,12 @@
     "validators": "Validadores",
     "coreNode": "Nodo",
     "agents": "Agentes",
-    "group": { "defi": "DeFi", "explorer": "Explorador", "social": "Social", "network": "Red" },
+    "group": {
+      "defi": "DeFi",
+      "explorer": "Explorador",
+      "social": "Social",
+      "network": "Red"
+    },
     "resources": "Recursos",
     "docs": "Documentación",
     "whitepaper": "Whitepaper",
@@ -42,5 +47,572 @@
     "unreadMessages_other": "{{count}} mensajes sin leer",
     "unreadEmails_one": "{{count}} correo sin leer",
     "unreadEmails_other": "{{count}} correos sin leer"
+  },
+  "swap": {
+    "title": "Swap",
+    "secure": "Seguro",
+    "loader": "Ejecutando swap cuántico",
+    "youPay": "Pagas",
+    "youReceive": "Recibes",
+    "balance": "Saldo: {{balance}}",
+    "gettingQuote": "Obteniendo cotización...",
+    "picker": {
+      "select": "Elegir",
+      "title": "Elegir token",
+      "searchPlaceholder": "Busca por nombre o pega el símbolo...",
+      "noMatch": "No hay tokens que coincidan con \"{{query}}\"",
+      "noTokens": "No hay tokens disponibles"
+    },
+    "settings": {
+      "title": "Ajustes del swap",
+      "slippage": "Tolerancia de deslizamiento (slippage): {{value}}%"
+    },
+    "quote": {
+      "rate": "Tasa",
+      "priceImpact": "Impacto en el precio",
+      "minReceived": "Mínimo a recibir",
+      "route": "Ruta"
+    },
+    "errors": {
+      "insufficientBalance": "Saldo insuficiente"
+    },
+    "button": {
+      "swapping": "Intercambiando...",
+      "connectWallet": "Conectar cartera",
+      "enterAmount": "Ingresa un monto",
+      "noRoute": "No se encontró ruta",
+      "insufficientBalance": "Saldo insuficiente",
+      "swap": "Swap"
+    },
+    "toasts": {
+      "connectFirst": "Primero conecta tu cartera y obtén una cotización",
+      "submitted": "Swap enviado: {{amount}} {{tokenIn}} → ~{{amountOut}} {{tokenOut}}",
+      "signedOnDevice": "Firmado de forma segura en tu dispositivo",
+      "failed": "El swap falló",
+      "executeFailed": "No se pudo ejecutar el swap"
+    },
+    "info": {
+      "amm": "Los swaps usan un creador de mercado automatizado (AMM) con una comisión del 0.3%. Las comisiones van a los proveedores de liquidez.",
+      "multiHop": "Se admiten swaps de varios saltos para conseguir mejores tasas a través de varios pools."
+    }
+  },
+  "home": {
+    "hero": {
+      "badge": "MAINNET EN VIVO",
+      "title": "<grad>Post-cuántica</grad> desde el génesis.",
+      "subtitle": "RougeChain es una blockchain de capa 1 construida sobre criptografía post-cuántica. Explora carteras, mensajería y aplicaciones on-chain, o crea las tuyas.",
+      "exploreEcosystem": "Explora el ecosistema",
+      "buildOn": "Construye en RougeChain",
+      "buyXrge": "Comprar XRGE",
+      "whitepaper": "Whitepaper",
+      "explorer": "Explorador"
+    },
+    "network": {
+      "title": "Estado de la red",
+      "fullExplorer": "Explorador completo",
+      "checking": "Revisando la red…",
+      "unavailable": "El estado de la red no está disponible por ahora: el nodo público no respondió. Esto no significa que la cadena esté caída; prueba el <explorer>explorador</explorer>.",
+      "blockHeight": "Altura de bloque",
+      "peers": "Pares",
+      "validators": "Validadores",
+      "stale": "los datos pueden estar desactualizados · ",
+      "updatedAgo": "actualizado hace {{seconds}} s",
+      "singleNode": "Esta es una red temprana con solo unos cuantos nodos públicos, así que un número bajo de pares es lo esperado. Las cifras de arriba se leen en vivo del nodo público; consulta el <explorer>explorador</explorer> para ver el historial completo."
+    },
+    "brand": {
+      "rougechain": {
+        "tag": "La red",
+        "body": "Una blockchain de capa 1 construida sobre criptografía post-cuántica: las firmas, el cifrado y el hashing usan algoritmos estandarizados por el NIST."
+      },
+      "xrge": {
+        "tag": "El token nativo",
+        "body": "Paga las comisiones de transacción (desde 0.1 XRGE) y el gas, y se pone en staking para operar validadores (10,000 XRGE). También se negocia como ERC-20 en Base; pásalo por el puente para usarlo de forma nativa."
+      },
+      "qwalla": {
+        "tag": "Una cartera para el ecosistema",
+        "body": "Una cartera móvil para guardar XRGE, enviar chat y correo cifrados y abrir apps on-chain. Una de varias formas de entrar a RougeChain."
+      }
+    },
+    "ecosystem": {
+      "title": "Explora el ecosistema",
+      "subtitle": "Todo lo que RougeChain hace posible: carteras, trading, desarrollo y exploración, todo post-cuántico.",
+      "showAll": "Ver todas las apps",
+      "showLess": "Ver menos",
+      "groups": {
+        "use": "Usar",
+        "trade": "Operar",
+        "build": "Construir",
+        "explore": "Explorar y participar"
+      },
+      "items": {
+        "webWallet": {
+          "title": "Cartera web",
+          "desc": "Cartera post-cuántica en el navegador"
+        },
+        "qwalla": {
+          "title": "Qwalla",
+          "desc": "Cartera móvil, ya disponible en iOS"
+        },
+        "messenger": {
+          "title": "Mensajes",
+          "desc": "Chat cifrado de extremo a extremo"
+        },
+        "mail": {
+          "title": "Correo",
+          "desc": "Correo cifrado on-chain"
+        },
+        "swap": {
+          "title": "Swap",
+          "desc": "Intercambio de tokens on-chain"
+        },
+        "bridge": {
+          "title": "Puente",
+          "desc": "Mueve activos desde y hacia Base"
+        },
+        "pools": {
+          "title": "Pools",
+          "desc": "Aporta liquidez"
+        },
+        "contracts": {
+          "title": "Contratos inteligentes",
+          "desc": "Despliega contratos WASM"
+        },
+        "tokens": {
+          "title": "Tokens",
+          "desc": "Lanza tus propios tokens"
+        },
+        "nfts": {
+          "title": "NFTs",
+          "desc": "Colecciones RC-721"
+        },
+        "sdk": {
+          "title": "SDK y docs",
+          "desc": "@rougechain/sdk"
+        },
+        "mcp": {
+          "title": "Agentes MCP",
+          "desc": "Integración nativa para IA"
+        },
+        "explorer": {
+          "title": "Explorador",
+          "desc": "Bloques y transacciones"
+        },
+        "validators": {
+          "title": "Validadores",
+          "desc": "Haz staking y asegura la cadena"
+        },
+        "runNode": {
+          "title": "Opera un nodo",
+          "desc": "Guía para configurar un nodo"
+        },
+        "source": {
+          "title": "Código fuente",
+          "desc": "Licencia Apache 2.0 en GitHub"
+        }
+      }
+    },
+    "regenerate": {
+      "eyebrow": "RougeChain Regenerate",
+      "title": "La tecnología debería mejorar el territorio que toca.",
+      "body": "Un programa y una tesorería de regeneración en RougeChain que financian proyectos locales transparentes y medibles. Primer territorio: Tulum.",
+      "explore": "Explorar Regenerate",
+      "propose": "Proponer un proyecto"
+    },
+    "qwalla": {
+      "badge": "MÓVIL",
+      "subtitle": "Cartera post-cuántica para iOS",
+      "body": "Guarda XRGE, envía chat y correo cifrados de extremo a extremo y abre apps on-chain desde tu teléfono, con firmas ML-DSA-65.",
+      "chips": {
+        "sendReceive": "Enviar / Recibir",
+        "encryptedChats": "Chats cifrados",
+        "encryptedMail": "Correo cifrado",
+        "dappBrowser": "Navegador de dApps"
+      },
+      "visit": "Visitar qwalla.io",
+      "download": "Descargar en el App Store",
+      "note": "Ya <hl>disponible en el App Store</hl>. Siempre respalda tu frase de recuperación.",
+      "screenshotAlt": "Cartera móvil Qwalla: saldo, acciones rápidas y apps cifradas"
+    },
+    "extension": {
+      "title": "Extensión de cartera para el navegador",
+      "badge": "GRATIS",
+      "body": "Una cartera resistente a la computación cuántica para Chrome, Edge, Brave, Firefox, Arc y Opera: envía XRGE, firma transacciones y usa chat y correo cifrados.",
+      "chips": {
+        "signing": "Firmas ML-DSA-65",
+        "messenger": "Mensajes E2E",
+        "mail": "Correo PQC",
+        "vault": "Bóveda con bloqueo automático"
+      },
+      "add": "Agregar al navegador",
+      "meta": "Manifest V3 · 6 navegadores",
+      "screenshotAlt": "Captura de la extensión: {{label}}",
+      "prev": "Captura anterior",
+      "next": "Siguiente captura",
+      "goTo": "Ir a la captura {{n}}",
+      "screenshots": {
+        "wallet": "Cartera",
+        "messenger": "Mensajes",
+        "mail": "Correo",
+        "tokens": "Tokens",
+        "createToken": "Crear token"
+      }
+    },
+    "dev": {
+      "title": "Construye en RougeChain",
+      "subtitle": "Primitivas post-cuánticas, un SDK tipado, contratos WASM y una integración MCP para agentes de IA.",
+      "links": {
+        "quickstart": {
+          "title": "Inicio rápido",
+          "desc": "Corre un nodo y tu primera tx en ~5 min"
+        },
+        "example": {
+          "title": "Contrato de ejemplo",
+          "desc": "Plantilla ERC-20 (WASM)"
+        },
+        "sdk": {
+          "title": "Docs del SDK y la API",
+          "desc": "@rougechain/sdk + REST/gRPC"
+        },
+        "node": {
+          "title": "Opera un nodo / validador",
+          "desc": "Configuración de nodo y staking"
+        },
+        "github": {
+          "title": "GitHub",
+          "desc": "cyberdreadx/rougechain-node"
+        },
+        "mcp": {
+          "title": "Servidor MCP",
+          "desc": "@rougechain/mcp-server"
+        }
+      }
+    },
+    "xrge": {
+      "title": "XRGE y las dos redes",
+      "subtitle": "El mismo token vive en dos lugares. Usa el correcto para cada acción.",
+      "native": {
+        "title": "XRGE nativo — en RougeChain",
+        "body": "Paga comisiones y gas, se pone en staking para operar validadores y hace funcionar las apps on-chain: swaps, contratos, tokens, mensajes y correo."
+      },
+      "base": {
+        "title": "XRGE (ERC-20) — en Base",
+        "body": "Donde hoy compras u operas XRGE (por ejemplo, en Aerodrome). <bridge>Pásalo por el puente</bridge> a RougeChain para usarlo de forma nativa."
+      },
+      "buyOnBase": "Comprar XRGE en Base",
+      "bridgeTo": "Puente a RougeChain",
+      "price": {
+        "title": "Precio de XRGE",
+        "onBase": "· en Base",
+        "price": "Precio",
+        "change24h": "24 h",
+        "volume24h": "Volumen 24 h",
+        "liquidity": "Liquidez",
+        "chartTitle": "Gráfica de precio de XRGE (Base)"
+      }
+    },
+    "security": {
+      "title": "Seguridad",
+      "algos": {
+        "mldsa": "Firmas digitales (antes Dilithium)",
+        "mlkem": "Encapsulación de claves (antes Kyber)",
+        "sha256": "Hashing de bloques y transacciones"
+      },
+      "nist": "RougeChain se basa en estos algoritmos <hl>estandarizados por el NIST</hl>. El NIST estandariza las primitivas; no ha revisado ni certificado a RougeChain.",
+      "audit": "<hl>Estado de auditoría:</hl> el protocolo y las apps <hl>todavía no han pasado por una auditoría de seguridad independiente</hl>. Es una red temprana (hoy con un solo nodo público). Úsala con ese criterio y guarda tus propios respaldos.",
+      "report": "¿Encontraste una vulnerabilidad? Repórtala en privado a través de <advisories>GitHub Security Advisories</advisories> en lugar de abrir un issue público."
+    },
+    "cta": {
+      "badge": "MAINNET EN VIVO",
+      "body": "Abre una cartera, pasa activos desde Base por el puente o empieza a construir en una capa 1 post-cuántica.",
+      "openWallet": "Abrir cartera",
+      "quickstart": "Inicio rápido"
+    }
+  },
+  "footer": {
+    "tagline": "Blockchain de capa 1 post-cuántica, asegurada con firmas ML-DSA-65.",
+    "badge": "MAINNET EN VIVO",
+    "resources": "Recursos",
+    "docs": "Documentación",
+    "chromeExtension": "Extensión para Chrome",
+    "trade": "Operar con XRGE",
+    "security": "Seguridad",
+    "signatures": "Firmas ML-DSA-65",
+    "keyExchange": "Intercambio de claves ML-KEM-768",
+    "version": "RougeChain Mainnet v1.0 • Seguridad post-cuántica",
+    "followX": "Síguenos en X",
+    "joinDiscord": "Únete al Discord",
+    "viewGithub": "Ver en GitHub"
+  },
+  "bridge": {
+    "title": "Puente",
+    "subtitle": "Mueve activos entre Base y RougeChain",
+    "loader": "Calentando el condensador de flujo...",
+    "notEnabled": "El puente no está habilitado en este nodo.",
+    "processing": "Procesando...",
+    "asset": "Activo",
+    "tabs": {
+      "deposit": "Depositar",
+      "withdraw": "Retirar"
+    },
+    "networkUnknown": {
+      "title": "Red no confirmada",
+      "body": "Este nodo no reportó una cadena Base reconocida, así que el puente no puede saber si estás en Base mainnet o en una testnet. El puente está deshabilitado aquí para proteger tus fondos. Revisa la configuración del puente del nodo (<code>chainId</code> en <code>/bridge/config</code>) y recarga la página."
+    },
+    "networkMismatch": {
+      "title": "Las redes no coinciden: puente deshabilitado",
+      "body": "Estás en la red <net>{{network}}</net> de RougeChain, pero el puente de este nodo reporta <chain>{{chainLabel}}</chain> (cadena {{chainId}}). Una red {{network}} no debe puentear {{assets}}, así que el puente está deshabilitado para proteger tus fondos. Es un error de configuración del nodo: el <code>chainId</code>/token de su puente debe coincidir con la cadena Base de {{network}}.",
+      "realMainnetAssets": "activos reales de mainnet",
+      "testnetAssets": "activos de testnet"
+    },
+    "form": {
+      "from": "Desde · {{chain}}",
+      "to": "Hacia · {{chain}}",
+      "balance": "Saldo: {{balance}}",
+      "receiveAtBitcoin": "Recibir en (dirección de Bitcoin)",
+      "receiveAtBase": "Recibir en (dirección de Base)",
+      "btcAddressPlaceholder": "bc1… / dirección de Bitcoin",
+      "btcTestnetAddressPlaceholder": "tb1… / dirección de testnet",
+      "chooseWallet": "Elige una cartera",
+      "baseWallet": "cartera de Base",
+      "connectWallet": "Conectar {{wallet}}",
+      "connectWalletWithChain": "Conectar {{wallet}} ({{chain}})",
+      "bridgeTo": "Puentear {{asset}} a {{chain}}"
+    },
+    "info": {
+      "depositXrge": "Aprobar + depositar en dos transacciones de tu cartera de Base. Conversión 1:1.",
+      "depositEvm": "Envía {{asset}} desde tu cartera de Base → se reclama {{l1}} automáticamente en RougeChain. Conversión 1:1.",
+      "withdrawBtc": "Envía el retiro → el relayer de BTC manda Bitcoin a tu dirección. El tiempo de confirmación depende de la red de Bitcoin.",
+      "withdrawEvm": "Envía el retiro → el relayer lo procesa en Base (normalmente < 2 min)."
+    },
+    "btc": {
+      "connectForAddress": "Conecta tu cartera de RougeChain para obtener tu dirección de depósito de Bitcoin.",
+      "received": "Recibido: se acreditaron {{amount}} qBTC",
+      "nowInWallet": "Tus qBTC ya están en tu cartera de RougeChain.",
+      "yourDepositAddress": "Tu dirección de depósito de Bitcoin",
+      "fetchingAddress": "Obteniendo tu dirección de depósito…",
+      "tryAgain": "Intentar de nuevo",
+      "depositQrAlt": "QR de la dirección de depósito de Bitcoin",
+      "depositAddressLabel": "Dirección de depósito",
+      "copyDepositAddress": "Copiar dirección de depósito",
+      "sendFromAnyWallet": "Envía BTC desde cualquier cartera: cualquier monto, sin memo ni etiqueta. Tus qBTC aparecerán automáticamente cuando el depósito se confirme (~30–60 min en Bitcoin).",
+      "testnetOnly": "Testnet: envía solo BTC de testnet.",
+      "addressWarmingUp": "Estamos preparando tu dirección de depósito, intenta de nuevo en un momento.",
+      "addressFetchFailed": "No se pudo obtener una dirección de depósito. Intenta de nuevo.",
+      "advanced": {
+        "title": "Avanzado: depositar con OP_RETURN",
+        "intro": "Para usuarios avanzados, o para recuperar un depósito manual que ya enviaste con un OP_RETURN.",
+        "step1": "Envía BTC a la dirección de custodia",
+        "custodyQrAlt": "QR de la dirección de custodia de Bitcoin",
+        "custodyAddressLabel": "Dirección de custodia",
+        "copyCustodyAddress": "Copiar dirección de custodia",
+        "step2": "Agrega un OP_RETURN con tu dirección de RougeChain",
+        "step2Help": "En la misma transacción, pega esto en el campo OP_RETURN / memo / datos de tu cartera. Vincula el depósito con tu cartera; sin esto no se pueden acreditar los fondos.",
+        "connectWalletPlaceholder": "Conecta tu cartera de RougeChain…",
+        "rougeAddressLabel": "Dirección de RougeChain",
+        "copyRougeAddress": "Copiar dirección de RougeChain",
+        "opReturnWallets": "Carteras como Sparrow, Electrum, BlueWallet (modo avanzado) y bitcoinjs admiten OP_RETURN. Las apps custodiales (Coinbase, Cash App) normalmente no pueden agregarlo; usa una cartera compatible con OP_RETURN para este depósito.",
+        "step3": "Pega el txid de Bitcoin para reclamar qBTC",
+        "txidPlaceholder": "ID de transacción de Bitcoin (64 caracteres hex)",
+        "claimButton": "Reclamar qBTC",
+        "claimHelp": "La verificación espera las confirmaciones de Bitcoin, así que puede tardar. Reclamar es idempotente: puedes volver a pegar el mismo txid más tarde sin problema."
+      }
+    },
+    "claim": {
+      "title": "Reclamar un depósito existente",
+      "help": "¿Enviaste ETH o USDC al puente y no llegaron? Pega el hash de la transacción de Base para reclamarlos; se acuñan en tu cartera de RougeChain conectada. Espera las confirmaciones automáticamente.",
+      "txHashLabel": "Hash de transacción de Base",
+      "claiming": "Reclamando…",
+      "button": "Reclamar depósito"
+    },
+    "activity": {
+      "title": "Actividad reciente del puente",
+      "empty": "Aún no hay actividad en el puente",
+      "emptyHint": "Los depósitos y retiros del puente aparecerán aquí",
+      "bridgedIn": "Depósito",
+      "bridgedOut": "Retiro",
+      "statusPending": "pendiente",
+      "statusCompleted": "completado"
+    },
+    "pending": {
+      "title": "Estado de liberación de retiros",
+      "failedAttempts_one": "{{count}} intento fallido",
+      "failedAttempts_other": "{{count}} intentos fallidos",
+      "viewOnMempool": "Ver en mempool.space",
+      "status": {
+        "retrying": "Reintentando",
+        "refunded": "Reembolsado",
+        "released": "Liberado",
+        "pending": "Pendiente"
+      }
+    },
+    "steps": {
+      "approvingXrge": "Aprobando XRGE...",
+      "waitingApproval": "Esperando la confirmación de la aprobación...",
+      "depositingVault": "Depositando en la bóveda...",
+      "waitingDeposit": "Esperando la confirmación del depósito...",
+      "waitingBase": "Esperando confirmaciones de Base…",
+      "waitingBaseAttempt": "Esperando confirmaciones de Base… ({{attempt}}/30)",
+      "waitingBitcoin": "Esperando confirmaciones de Bitcoin…",
+      "waitingBitcoinAttempt": "Esperando confirmaciones de Bitcoin… ({{attempt}}/30)",
+      "sendingToBridge": "Enviando {{symbol}} al puente...",
+      "signingClaim": "Firmando la reclamación...",
+      "submittingWithdrawal": "Enviando el retiro..."
+    },
+    "toasts": {
+      "copied": "{{label}} copiada",
+      "connected": "Conectado a {{chain}}",
+      "claimed": "¡Reclamado! Se acuñaron {{token}} en tu cartera de RougeChain.",
+      "claimedQbtc": "¡Reclamado! Se acuñaron qBTC en tu cartera de RougeChain.",
+      "btcNotConfirmedYet": "El depósito aún no se confirma; Bitcoin puede tardar. Vuelve a pegar el txid para reclamar cuando se confirme.",
+      "bridgedXrge": "¡Se puentearon {{amount}} XRGE a RougeChain!",
+      "xrgeArrivesAutomatically": "Depósito confirmado en Base: tus XRGE llegarán a RougeChain automáticamente cuando se finalice.",
+      "bridgedEvm": "¡Se puentearon {{amount}} {{from}} → {{to}}!",
+      "depositSentPending": "Depósito enviado: {{token}} llegará cuando se confirme. Si no llega, usa \"Reclamar un depósito existente\" con la tx {{tx}}… ({{error}})",
+      "withdrawQueuedBtc": "Retiro en cola: el relayer de BTC enviará BTC a tu dirección de Bitcoin.",
+      "withdrawSubmittedXrge": "¡Retiro enviado! El relayer liberará XRGE en Base.",
+      "withdrawSubmittedEvm": "¡Retiro enviado! El relayer enviará {{symbol}} a tu dirección de Base."
+    },
+    "errors": {
+      "installWallet": "Instala una cartera compatible con Base (MetaMask, Coinbase Wallet, etc.)",
+      "networkNotConfirmed": "Red no confirmada: puente deshabilitado para proteger tus fondos",
+      "connectFailed": "No se pudo conectar",
+      "baseTimeout": "se agotó el tiempo esperando confirmaciones de Base",
+      "bitcoinTimeout": "se agotó el tiempo esperando confirmaciones de Bitcoin",
+      "invalidBaseTxHash": "Ingresa un hash de transacción de Base válido (0x + 64 hex)",
+      "connectSendingBaseWallet": "Conecta la cartera de Base que envió el depósito",
+      "connectRougeToReceive": "Conecta tu cartera de RougeChain para recibir los fondos",
+      "connectRougeToReceiveQbtc": "Conecta tu cartera de RougeChain para recibir los qBTC",
+      "noBaseProvider": "No hay un proveedor de cartera de Base disponible",
+      "signatureRejected": "Firma rechazada: firma con la cartera de Base que envió el depósito",
+      "claimFailed": "La reclamación falló",
+      "btcClaimFailed": "La reclamación de BTC falló",
+      "invalidBtcTxid": "Ingresa un ID de transacción de Bitcoin válido (64 caracteres hex)",
+      "connectBaseFirst": "Primero conecta tu cartera de Base",
+      "noBaseWallet": "No hay una cartera de Base disponible",
+      "rougeNotConnected": "La cartera de RougeChain no está conectada",
+      "connectRougeFirst": "Primero conecta tu cartera de RougeChain",
+      "invalidAmount": "Ingresa un monto válido",
+      "insufficientOnBase": "Saldo de {{symbol}} insuficiente en Base",
+      "insufficientBalance": "Saldo de {{symbol}} insuficiente",
+      "xrgeNotConfigured": "El puente de XRGE no está completamente configurado",
+      "notConfigured": "El puente no está configurado",
+      "depositTxFailed": "La transacción de depósito falló o se agotó el tiempo en Base",
+      "depositFailed": "El depósito al puente falló",
+      "invalidBtcAddress": "Ingresa una dirección de Bitcoin válida",
+      "invalidQbtcAmount": "Ingresa un monto de qBTC válido",
+      "invalidEvmAddress": "Ingresa una dirección EVM válida",
+      "withdrawFailed": "El retiro falló"
+    }
+  },
+  "wallet": {
+    "actions": {
+      "title": "Acciones rápidas",
+      "backupTitle": "Respaldar cartera",
+      "send": "Enviar",
+      "receive": "Recibir",
+      "create": "Crear",
+      "shield": "Proteger",
+      "unshield": "Desproteger",
+      "disconnect": "Desconectar"
+    },
+    "sync": {
+      "failed": "Falló la sincronización",
+      "notYet": "Aún no sincronizado",
+      "justNow": "Actualizado justo ahora",
+      "secondsAgo": "Actualizado hace {{seconds}}s",
+      "minutesAgo": "Actualizado hace {{minutes}}m",
+      "hoursAgo": "Actualizado hace {{hours}}h"
+    },
+    "empty": {
+      "receiveTokens": "Recibir tokens",
+      "claimFaucet": "Reclamar del faucet",
+      "shareAddressHint": "Comparte tu dirección para recibir tokens",
+      "faucetHint": "Reclama del faucet para empezar"
+    },
+    "seedReveal": {
+      "title": "Guarda tu frase de recuperación",
+      "intro": "Estas {{count}} palabras son la ÚNICA forma de recuperar esta cartera si pierdes tu dispositivo o tu archivo de respaldo. Escríbelas y guárdalas fuera de línea.",
+      "warning": "Nunca compartas estas palabras. Cualquiera que las tenga puede llevarse tus fondos. El soporte de RougeChain nunca te las pedirá.",
+      "copied": "Copiada",
+      "copyPhrase": "Copiar frase",
+      "confirmSaved": "Ya escribí mi frase de recuperación y la guardé en un lugar seguro.",
+      "continue": "Continuar",
+      "viewLater": "Puedes volver a ver esta frase más tarde en Respaldo → Frase semilla."
+    },
+    "passwordSetup": {
+      "title": "Crea una contraseña",
+      "intro": "Tu contraseña cifra la cartera en este dispositivo. La necesitarás cada vez que quieras desbloquear tu cartera.",
+      "createPlaceholder": "Crea una contraseña (mín. 6 caracteres)",
+      "confirmPlaceholder": "Confirma la contraseña",
+      "encrypting": "Cifrando...",
+      "submit": "Guardar contraseña y continuar",
+      "neverSent": "Tu contraseña nunca se envía a ningún lado. Cifra tus llaves privadas localmente con AES-256-GCM.",
+      "errors": {
+        "tooShort": "La contraseña debe tener al menos 6 caracteres",
+        "mismatch": "Las contraseñas no coinciden",
+        "encryptFailed": "No se pudo cifrar la cartera"
+      }
+    },
+    "locked": {
+      "title": "Cartera bloqueada",
+      "namedLocked": "{{name}} está bloqueada.",
+      "yourWalletLocked": "Tu cartera está bloqueada.",
+      "passwordPlaceholder": "Ingresa la contraseña de la bóveda",
+      "enterPassword": "Ingresa la contraseña de tu bóveda",
+      "unlocking": "Desbloqueando...",
+      "unlockButton": "Desbloquear cartera",
+      "unlockFailed": "No se pudo desbloquear",
+      "unlockFailedDesc": "Contraseña incorrecta o faltan datos de la bóveda"
+    },
+    "tokenInfo": {
+      "title": "Información del token XRGE",
+      "explorer": "Explorador",
+      "tokenType": "Tipo de token",
+      "nativeChainToken": "Token nativo de la cadena",
+      "nativeCurrency": "XRGE es la moneda nativa de RougeChain",
+      "name": "Nombre",
+      "network": "Red",
+      "chainId": "ID de cadena",
+      "supplyModel": "Modelo de suministro",
+      "capped": "Limitado",
+      "livePrice": "Precio en vivo (Base)",
+      "totalSupply": "Suministro total",
+      "circulating": "En circulación",
+      "remaining": "Restante",
+      "percentInCirculation": "{{percent}}% en circulación"
+    },
+    "extensionPromo": {
+      "title": "Extensión RougeChain Wallet"
+    },
+    "faucet": {
+      "httpFailed": "El faucet falló: {{status}} {{statusText}}",
+      "invalidResponse": "Respuesta del servidor no válida",
+      "requestFailed": "La solicitud al faucet falló",
+      "notSuccessful": "La solicitud al faucet no tuvo éxito",
+      "claimedXrge": "🎉 ¡Reclamaste 10,000 XRGE!",
+      "claimedAmount": "¡Reclamaste {{amount}}!",
+      "balanceUpdates": "El saldo se actualizará cuando se mine el bloque.",
+      "claimFailed": "No se pudieron reclamar los tokens",
+      "claimTokenFailed": "No se pudo reclamar {{token}}"
+    },
+    "toasts": {
+      "locked": "Cartera bloqueada",
+      "lockedDesc": "Desbloquéala para continuar",
+      "createdSecured": "¡Cartera creada y protegida!",
+      "createdSecuredDesc": "Tu cartera está cifrada con tu contraseña.",
+      "disconnected": "Cartera desconectada",
+      "extensionConnected": "¡Cartera de la extensión conectada!",
+      "unlocked": "Cartera desbloqueada"
+    },
+    "errors": {
+      "loadFailed": "No se pudieron cargar los datos de la cartera",
+      "unknown": "Error desconocido",
+      "createFailed": "No se pudo crear la cartera",
+      "connectFirst": "Primero conecta tu cartera",
+      "extensionNotFound": "No se encontró la extensión RougeChain Wallet",
+      "extensionNotFoundDesc": "Instálala desde la Chrome Web Store",
+      "extensionNoPublicKey": "La extensión no devolvió una llave pública",
+      "extensionConnectFailed": "No se pudo conectar la extensión"
+    }
   }
 }
