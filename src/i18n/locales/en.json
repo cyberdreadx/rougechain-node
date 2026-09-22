@@ -13,7 +13,8 @@
     "learnMore": "Learn more",
     "viewAll": "View all",
     "mainnet": "Mainnet",
-    "testnet": "Testnet"
+    "testnet": "Testnet",
+    "language": "Language"
   },
   "nav": {
     "home": "Home",
@@ -318,7 +319,7 @@
         "sha256": "Hashing for blocks & transactions"
       },
       "nist": "RougeChain builds on these <hl>NIST-standardized</hl> algorithms. NIST standardizes the primitives — it has not reviewed or certified RougeChain itself.",
-      "audit": "<hl>Audit status:</hl> the protocol and apps have <hl>not yet had an independent third-party security audit</hl>. It’s an early network (currently a single public node). Use accordingly and keep your own backups.",
+      "audit": "<hl>Audit status:</hl> the protocol and apps have <hl>not yet had an independent third-party security audit</hl>. It’s an early network with only a few public nodes. Use accordingly and keep your own backups.",
       "report": "Found a vulnerability? Please report it privately via <advisories>GitHub Security Advisories</advisories> rather than a public issue."
     },
     "cta": {

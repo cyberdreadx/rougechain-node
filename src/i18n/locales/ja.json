@@ -1,0 +1,619 @@
+{
+  "common": {
+    "switchLanguage": "{{language}}に切り替える",
+    "loading": "読み込み中…",
+    "error": "問題が発生しました",
+    "copy": "コピー",
+    "copied": "コピーしました",
+    "close": "閉じる",
+    "cancel": "キャンセル",
+    "confirm": "確認",
+    "back": "戻る",
+    "next": "次へ",
+    "learnMore": "詳しく見る",
+    "viewAll": "すべて表示",
+    "mainnet": "メインネット",
+    "testnet": "テストネット",
+    "language": "言語"
+  },
+  "nav": {
+    "home": "ホーム",
+    "regenerate": "Regenerate",
+    "wallet": "ウォレット",
+    "swap": "スワップ",
+    "bridge": "ブリッジ",
+    "pools": "プール",
+    "blockchain": "ブロックチェーン",
+    "txFeed": "トランザクション",
+    "contracts": "コントラクト",
+    "tokens": "トークン",
+    "nfts": "NFT",
+    "messenger": "メッセンジャー",
+    "mail": "メール",
+    "validators": "バリデーター",
+    "coreNode": "コアノード",
+    "agents": "エージェント",
+    "group": {
+      "defi": "DeFi",
+      "explorer": "エクスプローラー",
+      "social": "ソーシャル",
+      "network": "ネットワーク"
+    },
+    "resources": "リソース",
+    "docs": "ドキュメント",
+    "whitepaper": "ホワイトペーパー",
+    "searchPlaceholder": "アドレス / tx / ブロックを検索...",
+    "switchNetwork": "タップしてネットワークを切り替え",
+    "unreadMessages_one": "未読メッセージ{{count}}件",
+    "unreadMessages_other": "未読メッセージ{{count}}件",
+    "unreadEmails_one": "未読メール{{count}}件",
+    "unreadEmails_other": "未読メール{{count}}件"
+  },
+  "swap": {
+    "title": "スワップ",
+    "secure": "安全",
+    "loader": "量子スワップを実行中",
+    "youPay": "支払い",
+    "youReceive": "受け取り",
+    "balance": "残高: {{balance}}",
+    "gettingQuote": "見積もりを取得中...",
+    "picker": {
+      "select": "選択",
+      "title": "トークンを選択",
+      "searchPlaceholder": "名前で検索、またはシンボルを貼り付け...",
+      "noMatch": "「{{query}}」に一致するトークンはありません",
+      "noTokens": "利用可能なトークンがありません"
+    },
+    "settings": {
+      "title": "スワップ設定",
+      "slippage": "スリッページ許容値: {{value}}%"
+    },
+    "quote": {
+      "rate": "レート",
+      "priceImpact": "価格インパクト",
+      "minReceived": "最小受取額",
+      "route": "ルート"
+    },
+    "errors": {
+      "insufficientBalance": "残高不足"
+    },
+    "button": {
+      "swapping": "スワップ中...",
+      "connectWallet": "ウォレットを接続",
+      "enterAmount": "金額を入力",
+      "noRoute": "ルートが見つかりません",
+      "insufficientBalance": "残高不足",
+      "swap": "スワップ"
+    },
+    "toasts": {
+      "connectFirst": "先にウォレットを接続して見積もりを取得してください",
+      "submitted": "スワップを送信しました: {{amount}} {{tokenIn}} → 約{{amountOut}} {{tokenOut}}",
+      "signedOnDevice": "お使いのデバイス上で安全に署名しました",
+      "failed": "スワップに失敗しました",
+      "executeFailed": "スワップを実行できませんでした"
+    },
+    "info": {
+      "amm": "スワップは手数料0.3%の自動マーケットメーカー（AMM）を利用します。手数料は流動性提供者に分配されます。",
+      "multiHop": "複数のプールを経由するマルチホップスワップに対応しており、より良いレートで交換できます。"
+    }
+  },
+  "home": {
+    "hero": {
+      "badge": "メインネット稼働中",
+      "title": "<grad>ポスト量子</grad>を、ジェネシスから。",
+      "subtitle": "RougeChainは、ポスト量子暗号を基盤とするレイヤー1ブロックチェーンです。ウォレット、メッセージング、オンチェーンアプリを利用したり、ご自身で開発したりできます。",
+      "exploreEcosystem": "エコシステムを見る",
+      "buildOn": "RougeChainで開発する",
+      "buyXrge": "XRGEを購入",
+      "whitepaper": "ホワイトペーパー",
+      "explorer": "エクスプローラー"
+    },
+    "network": {
+      "title": "ネットワーク状況",
+      "fullExplorer": "エクスプローラーを開く",
+      "checking": "ネットワークを確認中…",
+      "unavailable": "ネットワーク状況を一時的に取得できません。公開ノードが応答しませんでした。チェーンが停止しているとは限りません。<explorer>エクスプローラー</explorer>をお試しください。",
+      "blockHeight": "ブロック高",
+      "peers": "ピア数",
+      "validators": "バリデーター数",
+      "stale": "データが古い可能性があります · ",
+      "updatedAgo": "{{seconds}}秒前に更新",
+      "singleNode": "公開ノードがまだ少ない初期段階のネットワークのため、ピア数が少ないのは想定どおりです。上記の数値は公開ノードからリアルタイムで取得しています。全履歴は<explorer>エクスプローラー</explorer>をご覧ください。"
+    },
+    "brand": {
+      "rougechain": {
+        "tag": "ネットワーク",
+        "body": "ポスト量子暗号を基盤とするレイヤー1ブロックチェーン。署名、暗号化、ハッシュにNISTが標準化したアルゴリズムを採用しています。"
+      },
+      "xrge": {
+        "tag": "ネイティブトークン",
+        "body": "トランザクション手数料（0.1 XRGEから）とガス代の支払いに使われ、バリデーターの運用にはステーキング（10,000 XRGE）が必要です。Base上ではERC-20としても取引されており、ブリッジするとネイティブで利用できます。"
+      },
+      "qwalla": {
+        "tag": "エコシステムのウォレット",
+        "body": "XRGEの保管、暗号化されたチャットとメールの送信、オンチェーンアプリの利用ができるモバイルウォレット。RougeChainへの入り口のひとつです。"
+      }
+    },
+    "ecosystem": {
+      "title": "エコシステムを見る",
+      "subtitle": "ウォレット、取引、開発、探索。RougeChainで実現できるすべてがポスト量子です。",
+      "showAll": "すべてのアプリを表示",
+      "showLess": "折りたたむ",
+      "groups": {
+        "use": "使う",
+        "trade": "取引する",
+        "build": "開発する",
+        "explore": "探索・参加する"
+      },
+      "items": {
+        "webWallet": {
+          "title": "ウェブウォレット",
+          "desc": "ブラウザで使えるポスト量子ウォレット"
+        },
+        "qwalla": {
+          "title": "Qwalla",
+          "desc": "モバイルウォレット、iOSで提供中"
+        },
+        "messenger": {
+          "title": "メッセンジャー",
+          "desc": "エンドツーエンド暗号化チャット"
+        },
+        "mail": {
+          "title": "メール",
+          "desc": "オンチェーンの暗号化メール"
+        },
+        "swap": {
+          "title": "スワップ",
+          "desc": "オンチェーンのトークンスワップ"
+        },
+        "bridge": {
+          "title": "ブリッジ",
+          "desc": "Baseとの間で資産を移動"
+        },
+        "pools": {
+          "title": "プール",
+          "desc": "流動性を提供"
+        },
+        "contracts": {
+          "title": "スマートコントラクト",
+          "desc": "WASMコントラクトをデプロイ"
+        },
+        "tokens": {
+          "title": "トークン",
+          "desc": "独自トークンを発行"
+        },
+        "nfts": {
+          "title": "NFT",
+          "desc": "RC-721コレクション"
+        },
+        "sdk": {
+          "title": "SDKとドキュメント",
+          "desc": "@rougechain/sdk"
+        },
+        "mcp": {
+          "title": "MCPエージェント",
+          "desc": "AIネイティブな連携"
+        },
+        "explorer": {
+          "title": "エクスプローラー",
+          "desc": "ブロックとトランザクション"
+        },
+        "validators": {
+          "title": "バリデーター",
+          "desc": "ステーキングでチェーンを守る"
+        },
+        "runNode": {
+          "title": "ノードを運用",
+          "desc": "ノード構築ガイド"
+        },
+        "source": {
+          "title": "ソースコード",
+          "desc": "Apache 2.0ライセンスでGitHubに公開"
+        }
+      }
+    },
+    "regenerate": {
+      "eyebrow": "RougeChain Regenerate",
+      "title": "テクノロジーは、それが触れる土地をより良くするべきです。",
+      "body": "RougeChain上の再生プログラムとトレジャリー。透明で成果を測定できる地域プロジェクトに資金を提供します。最初の対象地域はトゥルムです。",
+      "explore": "Regenerateを見る",
+      "propose": "プロジェクトを提案"
+    },
+    "qwalla": {
+      "badge": "モバイル",
+      "subtitle": "iOS向けポスト量子ウォレット",
+      "body": "XRGEの保管、エンドツーエンド暗号化されたチャットとメールの送信、オンチェーンアプリの利用をスマートフォンから。ML-DSA-65署名で保護されています。",
+      "chips": {
+        "sendReceive": "送金 / 受取",
+        "encryptedChats": "暗号化チャット",
+        "encryptedMail": "暗号化メール",
+        "dappBrowser": "dAppブラウザ"
+      },
+      "visit": "qwalla.ioを見る",
+      "download": "App Storeでダウンロード",
+      "note": "<hl>App Storeで公開中</hl>。リカバリーフレーズは必ずバックアップしてください。",
+      "screenshotAlt": "Qwallaモバイルウォレット。残高、クイックアクション、暗号化アプリ"
+    },
+    "extension": {
+      "title": "ブラウザウォレット拡張機能",
+      "badge": "無料",
+      "body": "Chrome、Edge、Brave、Firefox、Arc、Operaに対応した耐量子ウォレット。XRGEの送金、トランザクションの署名、暗号化されたチャットとメールが利用できます。",
+      "chips": {
+        "signing": "ML-DSA-65署名",
+        "messenger": "E2Eメッセンジャー",
+        "mail": "PQCメール",
+        "vault": "自動ロック保管庫"
+      },
+      "add": "ブラウザに追加",
+      "meta": "Manifest V3 · 6ブラウザ対応",
+      "screenshotAlt": "拡張機能のスクリーンショット: {{label}}",
+      "prev": "前のスクリーンショット",
+      "next": "次のスクリーンショット",
+      "goTo": "スクリーンショット{{n}}へ移動",
+      "screenshots": {
+        "wallet": "ウォレット",
+        "messenger": "メッセンジャー",
+        "mail": "メール",
+        "tokens": "トークン",
+        "createToken": "トークン作成"
+      }
+    },
+    "dev": {
+      "title": "RougeChainで開発する",
+      "subtitle": "ポスト量子プリミティブ、型付きSDK、WASMコントラクト、AIエージェント向けMCP連携。",
+      "links": {
+        "quickstart": {
+          "title": "クイックスタート",
+          "desc": "約5分でノード起動と最初のtxを実行"
+        },
+        "example": {
+          "title": "サンプルコントラクト",
+          "desc": "ERC-20テンプレート（WASM）"
+        },
+        "sdk": {
+          "title": "SDKとAPIドキュメント",
+          "desc": "@rougechain/sdk + REST/gRPC"
+        },
+        "node": {
+          "title": "ノード / バリデーターを運用",
+          "desc": "ノード構築とステーキング"
+        },
+        "github": {
+          "title": "GitHub",
+          "desc": "cyberdreadx/rougechain-node"
+        },
+        "mcp": {
+          "title": "MCPサーバー",
+          "desc": "@rougechain/mcp-server"
+        }
+      }
+    },
+    "xrge": {
+      "title": "XRGEと2つのネットワーク",
+      "subtitle": "同じトークンが2つの場所に存在します。用途に合わせて適切な方をお使いください。",
+      "native": {
+        "title": "ネイティブXRGE — RougeChain上",
+        "body": "手数料とガス代の支払い、バリデーター運用のためのステーキングに使われ、スワップ、コントラクト、トークン、メッセンジャー、メールといったオンチェーンアプリを動かします。"
+      },
+      "base": {
+        "title": "XRGE（ERC-20）— Base上",
+        "body": "現在XRGEを購入・取引できる場所です（例: Aerodrome）。RougeChainに<bridge>ブリッジ</bridge>するとネイティブで利用できます。"
+      },
+      "buyOnBase": "BaseでXRGEを購入",
+      "bridgeTo": "RougeChainへブリッジ",
+      "price": {
+        "title": "XRGE価格",
+        "onBase": "· Base上",
+        "price": "価格",
+        "change24h": "24時間",
+        "volume24h": "24時間出来高",
+        "liquidity": "流動性",
+        "chartTitle": "XRGE価格チャート（Base）"
+      }
+    },
+    "security": {
+      "title": "セキュリティ",
+      "algos": {
+        "mldsa": "デジタル署名（旧Dilithium）",
+        "mlkem": "鍵カプセル化（旧Kyber）",
+        "sha256": "ブロックとトランザクションのハッシュ"
+      },
+      "nist": "RougeChainはこれらの<hl>NIST標準化</hl>アルゴリズムを基盤としています。NISTが標準化しているのはプリミティブであり、RougeChain自体を審査・認証したものではありません。",
+      "audit": "<hl>監査状況:</hl> プロトコルとアプリは<hl>まだ独立した第三者によるセキュリティ監査を受けていません</hl>。公開ノードがまだ少ない初期段階のネットワークです。その点を踏まえてご利用いただき、ご自身でバックアップを保管してください。",
+      "report": "脆弱性を発見された場合は、公開のissueではなく<advisories>GitHub Security Advisories</advisories>から非公開でご報告ください。"
+    },
+    "cta": {
+      "badge": "メインネット稼働中",
+      "body": "ウォレットを開設し、Baseから資産をブリッジし、ポスト量子レイヤー1での開発を始めましょう。",
+      "openWallet": "ウォレットを開く",
+      "quickstart": "クイックスタート"
+    }
+  },
+  "footer": {
+    "tagline": "ML-DSA-65署名で保護されたポスト量子レイヤー1ブロックチェーン。",
+    "badge": "メインネット稼働中",
+    "resources": "リソース",
+    "docs": "ドキュメント",
+    "chromeExtension": "Chrome拡張機能",
+    "trade": "XRGEを取引",
+    "security": "セキュリティ",
+    "signatures": "ML-DSA-65署名",
+    "keyExchange": "ML-KEM-768鍵交換",
+    "version": "RougeChain メインネット v1.0 • ポスト量子セキュリティ",
+    "followX": "Xでフォロー",
+    "joinDiscord": "Discordに参加",
+    "viewGithub": "GitHubで見る"
+  },
+  "bridge": {
+    "title": "ブリッジ",
+    "subtitle": "BaseとRougeChainの間で資産を移動",
+    "loader": "次元転移装置を暖機中...",
+    "notEnabled": "このノードではブリッジが有効になっていません。",
+    "processing": "処理中...",
+    "asset": "資産",
+    "tabs": {
+      "deposit": "入金",
+      "withdraw": "出金"
+    },
+    "networkUnknown": {
+      "title": "ネットワーク未確認",
+      "body": "このノードは認識できるBaseチェーンを報告しなかったため、ブリッジはBaseメインネットとテストネットのどちらに接続しているか判断できません。資金保護のため、ここではブリッジを無効にしています。ノードのブリッジ設定（<code>/bridge/config</code>の<code>chainId</code>）を確認して再読み込みしてください。"
+    },
+    "networkMismatch": {
+      "title": "ネットワーク不一致 — ブリッジ無効",
+      "body": "現在RougeChainの<net>{{network}}</net>ネットワークに接続していますが、このノードのブリッジは<chain>{{chainLabel}}</chain>（チェーン{{chainId}}）を報告しています。{{network}}ネットワークで{{assets}}をブリッジしてはならないため、資金保護のためブリッジを無効にしています。これはノードの設定ミスです。ブリッジの<code>chainId</code>/トークンは{{network}}のBaseチェーンと一致している必要があります。",
+      "realMainnetAssets": "メインネットの実資産",
+      "testnetAssets": "テストネットの資産"
+    },
+    "form": {
+      "from": "送金元 · {{chain}}",
+      "to": "送金先 · {{chain}}",
+      "balance": "残高: {{balance}}",
+      "receiveAtBitcoin": "受取先（Bitcoinアドレス）",
+      "receiveAtBase": "受取先（Baseアドレス）",
+      "btcAddressPlaceholder": "bc1… / Bitcoinアドレス",
+      "btcTestnetAddressPlaceholder": "tb1… / テストネットアドレス",
+      "chooseWallet": "ウォレットを選択",
+      "baseWallet": "Baseウォレット",
+      "connectWallet": "{{wallet}}を接続",
+      "connectWalletWithChain": "{{wallet}}を接続（{{chain}}）",
+      "bridgeTo": "{{asset}}を{{chain}}へブリッジ"
+    },
+    "info": {
+      "depositXrge": "Baseウォレットで承認と入金の2件のトランザクションを行います。1:1で変換されます。",
+      "depositEvm": "Baseウォレットから{{asset}}を送金 → RougeChain上で{{l1}}が自動的に受け取られます。1:1で変換されます。",
+      "withdrawBtc": "出金を送信 → BTCリレイヤーがお客様のアドレスへBitcoinを送金します。確認時間はBitcoinネットワークの状況によります。",
+      "withdrawEvm": "出金を送信 → リレイヤーがBase上で処理します（通常2分未満）。"
+    },
+    "btc": {
+      "connectForAddress": "RougeChainウォレットを接続すると、Bitcoin入金アドレスを取得できます。",
+      "received": "受領 — {{amount}} qBTCが入金されました",
+      "nowInWallet": "qBTCがRougeChainウォレットに反映されました。",
+      "yourDepositAddress": "あなたのBitcoin入金アドレス",
+      "fetchingAddress": "入金アドレスを取得中…",
+      "tryAgain": "もう一度試す",
+      "depositQrAlt": "Bitcoin入金アドレスのQRコード",
+      "depositAddressLabel": "入金アドレス",
+      "copyDepositAddress": "入金アドレスをコピー",
+      "sendFromAnyWallet": "任意のウォレットからBTCを送金してください。金額は自由で、メモやタグは不要です。入金が確認されると（Bitcoinで約30〜60分）、qBTCが自動的に反映されます。",
+      "testnetOnly": "テストネット — テストネットBTCのみ送金してください。",
+      "addressWarmingUp": "入金アドレスを準備しています。しばらくしてからもう一度お試しください。",
+      "addressFetchFailed": "入金アドレスを取得できませんでした。もう一度お試しください。",
+      "advanced": {
+        "title": "上級者向け: OP_RETURNで入金",
+        "intro": "上級者向け、またはOP_RETURNで紐付けて手動送金済みの入金を回収する場合に使用します。",
+        "step1": "カストディアドレスにBTCを送金",
+        "custodyQrAlt": "BitcoinカストディアドレスのQRコード",
+        "custodyAddressLabel": "カストディアドレス",
+        "copyCustodyAddress": "カストディアドレスをコピー",
+        "step2": "RougeChainアドレスを含むOP_RETURNを追加",
+        "step2Help": "同じトランザクション内で、これをウォレットのOP_RETURN / メモ / データ欄に貼り付けてください。入金をあなたのウォレットに紐付けるもので、これがないと資金を反映できません。",
+        "connectWalletPlaceholder": "RougeChainウォレットを接続してください…",
+        "rougeAddressLabel": "RougeChainアドレス",
+        "copyRougeAddress": "RougeChainアドレスをコピー",
+        "opReturnWallets": "OP_RETURNはSparrow、Electrum、BlueWallet（上級者モード）、bitcoinjsなどのウォレットで利用できます。カストディ型アプリ（Coinbase、Cash App）では通常付与できないため、この入金にはOP_RETURN対応ウォレットをお使いください。",
+        "step3": "Bitcoinのtxidを貼り付けてqBTCを受け取る",
+        "txidPlaceholder": "Bitcoinトランザクションid（64桁の16進数）",
+        "claimButton": "qBTCを受け取る",
+        "claimHelp": "検証はBitcoinの承認を待つため、時間がかかることがあります。受け取り処理は冪等なので、後で同じtxidを再度貼り付けても問題ありません。"
+      }
+    },
+    "claim": {
+      "title": "既存の入金を受け取る",
+      "help": "ブリッジにETHやUSDCを送ったのに届かない場合は、Baseのトランザクションハッシュを貼り付けて受け取ってください。接続中のRougeChainウォレットにミントされます。承認は自動的に待機します。",
+      "txHashLabel": "Baseトランザクションハッシュ",
+      "claiming": "受け取り中…",
+      "button": "入金を受け取る"
+    },
+    "activity": {
+      "title": "最近のブリッジ履歴",
+      "empty": "ブリッジ履歴はまだありません",
+      "emptyHint": "ブリッジの入金と出金がここに表示されます",
+      "bridgedIn": "入金",
+      "bridgedOut": "出金",
+      "statusPending": "保留中",
+      "statusCompleted": "完了"
+    },
+    "pending": {
+      "title": "出金リリース状況",
+      "failedAttempts_one": "失敗{{count}}回",
+      "failedAttempts_other": "失敗{{count}}回",
+      "viewOnMempool": "mempool.spaceで見る",
+      "status": {
+        "retrying": "再試行中",
+        "refunded": "返金済み",
+        "released": "リリース済み",
+        "pending": "保留中"
+      }
+    },
+    "steps": {
+      "approvingXrge": "XRGEを承認中...",
+      "waitingApproval": "承認の確認を待っています...",
+      "depositingVault": "ボールトに入金中...",
+      "waitingDeposit": "入金の確認を待っています...",
+      "waitingBase": "Baseの承認を待っています…",
+      "waitingBaseAttempt": "Baseの承認を待っています…（{{attempt}}/30）",
+      "waitingBitcoin": "Bitcoinの承認を待っています…",
+      "waitingBitcoinAttempt": "Bitcoinの承認を待っています…（{{attempt}}/30）",
+      "sendingToBridge": "{{symbol}}をブリッジへ送金中...",
+      "signingClaim": "受け取りに署名中...",
+      "submittingWithdrawal": "出金を送信中..."
+    },
+    "toasts": {
+      "copied": "{{label}}をコピーしました",
+      "connected": "{{chain}}に接続しました",
+      "claimed": "受け取り完了。{{token}}をRougeChainウォレットにミントしました。",
+      "claimedQbtc": "受け取り完了。qBTCをRougeChainウォレットにミントしました。",
+      "btcNotConfirmedYet": "入金はまだ確認されていません。Bitcoinは時間がかかることがあります。確認後にtxidを再度貼り付けて受け取ってください。",
+      "bridgedXrge": "{{amount}} XRGEをRougeChainにブリッジしました！",
+      "xrgeArrivesAutomatically": "Baseで入金が確認されました。ファイナライズ後、XRGEは自動的にRougeChainに届きます。",
+      "bridgedEvm": "{{amount}} {{from}} → {{to}}をブリッジしました！",
+      "depositSentPending": "入金を送信しました。確認後に{{token}}が届きます。届かない場合は、tx {{tx}}…を使って「既存の入金を受け取る」をお試しください（{{error}}）",
+      "withdrawQueuedBtc": "出金をキューに追加しました。BTCリレイヤーがお客様のBitcoinアドレスへBTCを送金します。",
+      "withdrawSubmittedXrge": "出金を送信しました！リレイヤーがBase上でXRGEをリリースします。",
+      "withdrawSubmittedEvm": "出金を送信しました！リレイヤーがお客様のBaseアドレスへ{{symbol}}を送金します。"
+    },
+    "errors": {
+      "installWallet": "Base対応ウォレット（MetaMask、Coinbase Walletなど）をインストールしてください",
+      "networkNotConfirmed": "ネットワーク未確認 — 資金保護のためブリッジを無効にしています",
+      "connectFailed": "接続に失敗しました",
+      "baseTimeout": "Baseの承認待ちがタイムアウトしました",
+      "bitcoinTimeout": "Bitcoinの承認待ちがタイムアウトしました",
+      "invalidBaseTxHash": "有効なBaseトランザクションハッシュを入力してください（0x + 64桁の16進数）",
+      "connectSendingBaseWallet": "入金を送信したBaseウォレットを接続してください",
+      "connectRougeToReceive": "資金を受け取るにはRougeChainウォレットを接続してください",
+      "connectRougeToReceiveQbtc": "qBTCを受け取るにはRougeChainウォレットを接続してください",
+      "noBaseProvider": "利用可能なBaseウォレットプロバイダーがありません",
+      "signatureRejected": "署名が拒否されました — 入金を送信したBaseウォレットで署名してください",
+      "claimFailed": "受け取りに失敗しました",
+      "btcClaimFailed": "BTCの受け取りに失敗しました",
+      "invalidBtcTxid": "有効なBitcoinトランザクションidを入力してください（64桁の16進数）",
+      "connectBaseFirst": "先にBaseウォレットを接続してください",
+      "noBaseWallet": "利用可能なBaseウォレットがありません",
+      "rougeNotConnected": "RougeChainウォレットが接続されていません",
+      "connectRougeFirst": "先にRougeChainウォレットを接続してください",
+      "invalidAmount": "有効な金額を入力してください",
+      "insufficientOnBase": "Base上の{{symbol}}残高が不足しています",
+      "insufficientBalance": "{{symbol}}残高が不足しています",
+      "xrgeNotConfigured": "XRGEブリッジの設定が完了していません",
+      "notConfigured": "ブリッジが設定されていません",
+      "depositTxFailed": "入金トランザクションがBase上で失敗またはタイムアウトしました",
+      "depositFailed": "ブリッジ入金に失敗しました",
+      "invalidBtcAddress": "有効なBitcoinアドレスを入力してください",
+      "invalidQbtcAmount": "有効なqBTC金額を入力してください",
+      "invalidEvmAddress": "有効なEVMアドレスを入力してください",
+      "withdrawFailed": "出金に失敗しました"
+    }
+  },
+  "wallet": {
+    "actions": {
+      "title": "クイックアクション",
+      "backupTitle": "ウォレットをバックアップ",
+      "send": "送金",
+      "receive": "受け取る",
+      "create": "作成",
+      "shield": "シールド",
+      "unshield": "シールド解除",
+      "disconnect": "切断"
+    },
+    "sync": {
+      "failed": "同期に失敗しました",
+      "notYet": "未同期",
+      "justNow": "たった今更新",
+      "secondsAgo": "{{seconds}}秒前に更新",
+      "minutesAgo": "{{minutes}}分前に更新",
+      "hoursAgo": "{{hours}}時間前に更新"
+    },
+    "empty": {
+      "receiveTokens": "トークンを受け取る",
+      "claimFaucet": "フォーセットから受け取る",
+      "shareAddressHint": "アドレスを共有してトークンを受け取りましょう",
+      "faucetHint": "まずはフォーセットから受け取りましょう"
+    },
+    "seedReveal": {
+      "title": "リカバリーフレーズを保存",
+      "intro": "デバイスやバックアップファイルを紛失した場合、この{{count}}個の単語がこのウォレットを復元する唯一の手段です。書き留めてオフラインで保管してください。",
+      "warning": "この単語は絶対に他人に教えないでください。知った人は誰でもあなたの資金を持ち出せます。RougeChainのサポートがこれを尋ねることは決してありません。",
+      "copied": "コピーしました",
+      "copyPhrase": "フレーズをコピー",
+      "confirmSaved": "リカバリーフレーズを書き留め、安全に保管しました。",
+      "continue": "続行",
+      "viewLater": "このフレーズは後から「バックアップ → シードフレーズ」で再度確認できます。"
+    },
+    "passwordSetup": {
+      "title": "パスワードを設定",
+      "intro": "パスワードはこのデバイス上でウォレットを暗号化します。ウォレットのロックを解除するたびに必要になります。",
+      "createPlaceholder": "パスワードを作成（6文字以上）",
+      "confirmPlaceholder": "パスワードを再入力",
+      "encrypting": "暗号化中...",
+      "submit": "パスワードを設定して続行",
+      "neverSent": "パスワードが外部に送信されることはありません。秘密鍵はAES-256-GCMでローカルに暗号化されます。",
+      "errors": {
+        "tooShort": "パスワードは6文字以上にしてください",
+        "mismatch": "パスワードが一致しません",
+        "encryptFailed": "ウォレットを暗号化できませんでした"
+      }
+    },
+    "locked": {
+      "title": "ウォレットはロック中",
+      "namedLocked": "{{name}}はロックされています。",
+      "yourWalletLocked": "ウォレットはロックされています。",
+      "passwordPlaceholder": "保管庫のパスワードを入力",
+      "enterPassword": "保管庫のパスワードを入力してください",
+      "unlocking": "ロック解除中...",
+      "unlockButton": "ウォレットのロックを解除",
+      "unlockFailed": "ロック解除に失敗しました",
+      "unlockFailedDesc": "パスワードが正しくないか、保管庫データが見つかりません"
+    },
+    "tokenInfo": {
+      "title": "XRGEトークン情報",
+      "explorer": "エクスプローラー",
+      "tokenType": "トークン種別",
+      "nativeChainToken": "チェーンのネイティブトークン",
+      "nativeCurrency": "XRGEはRougeChainのネイティブ通貨です",
+      "name": "名前",
+      "network": "ネットワーク",
+      "chainId": "チェーンID",
+      "supplyModel": "供給モデル",
+      "capped": "上限あり",
+      "livePrice": "現在価格（Base）",
+      "totalSupply": "総供給量",
+      "circulating": "流通量",
+      "remaining": "残り",
+      "percentInCirculation": "{{percent}}%が流通中"
+    },
+    "extensionPromo": {
+      "title": "RougeChainウォレット拡張機能"
+    },
+    "faucet": {
+      "httpFailed": "フォーセットに失敗しました: {{status}} {{statusText}}",
+      "invalidResponse": "サーバーの応答が無効です",
+      "requestFailed": "フォーセットのリクエストに失敗しました",
+      "notSuccessful": "フォーセットのリクエストは成功しませんでした",
+      "claimedXrge": "🎉 10,000 XRGEを受け取りました！",
+      "claimedAmount": "{{amount}}を受け取りました！",
+      "balanceUpdates": "ブロックがマイニングされると残高が更新されます。",
+      "claimFailed": "トークンを受け取れませんでした",
+      "claimTokenFailed": "{{token}}を受け取れませんでした"
+    },
+    "toasts": {
+      "locked": "ウォレットをロックしました",
+      "lockedDesc": "続けるにはロックを解除してください",
+      "createdSecured": "ウォレットを作成して保護しました！",
+      "createdSecuredDesc": "ウォレットはパスワードで暗号化されています。",
+      "disconnected": "ウォレットを切断しました",
+      "extensionConnected": "拡張機能のウォレットを接続しました！",
+      "unlocked": "ウォレットのロックを解除しました"
+    },
+    "errors": {
+      "loadFailed": "ウォレットデータを読み込めませんでした",
+      "unknown": "不明なエラー",
+      "createFailed": "ウォレットを作成できませんでした",
+      "connectFirst": "先にウォレットを接続してください",
+      "extensionNotFound": "RougeChainウォレット拡張機能が見つかりません",
+      "extensionNotFoundDesc": "Chromeウェブストアからインストールしてください",
+      "extensionNoPublicKey": "拡張機能が公開鍵を返しませんでした",
+      "extensionConnectFailed": "拡張機能に接続できませんでした"
+    }
+  }
+}

@@ -13,7 +13,8 @@
     "learnMore": "Más información",
     "viewAll": "Ver todo",
     "mainnet": "Mainnet",
-    "testnet": "Testnet"
+    "testnet": "Testnet",
+    "language": "Idioma"
   },
   "nav": {
     "home": "Inicio",
@@ -318,7 +319,7 @@
         "sha256": "Hashing de bloques y transacciones"
       },
       "nist": "RougeChain se basa en estos algoritmos <hl>estandarizados por el NIST</hl>. El NIST estandariza las primitivas; no ha revisado ni certificado a RougeChain.",
-      "audit": "<hl>Estado de auditoría:</hl> el protocolo y las apps <hl>todavía no han pasado por una auditoría de seguridad independiente</hl>. Es una red temprana (hoy con un solo nodo público). Úsala con ese criterio y guarda tus propios respaldos.",
+      "audit": "<hl>Estado de auditoría:</hl> el protocolo y las apps <hl>todavía no han pasado por una auditoría de seguridad independiente</hl>. Es una red temprana con solo unos cuantos nodos públicos. Úsala con ese criterio y guarda tus propios respaldos.",
       "report": "¿Encontraste una vulnerabilidad? Repórtala en privado a través de <advisories>GitHub Security Advisories</advisories> en lugar de abrir un issue público."
     },
     "cta": {
