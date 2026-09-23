@@ -171,7 +171,7 @@ const TX_SEEN_INDEXED_TIP_KEY: &[u8] = b"__indexed_tip_v2";
 /// randomness: if the designated proposer is offline the chain halts at `H-1`. At the same height the
 /// legacy missed-block accounting (increment / auto-slash / auto-jail) is frozen: without a fallback
 /// there is no consensus block from which a missed slot could be derived. `None` = not scheduled.
-pub const PROPOSER_SELECTION_ACTIVATION_HEIGHT: Option<u64> = None;
+pub const PROPOSER_SELECTION_ACTIVATION_HEIGHT: Option<u64> = Some(100);
 #[cfg(test)]
 thread_local! {
     static TEST_PROPOSER_SELECTION_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
