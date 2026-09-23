@@ -26,7 +26,7 @@ export const team: TeamMember[] = [
   {
     name: "Brandon Menard",
     alias: "Cyberdreadx",
-    role: "CEO · Main Dev",
+    role: "Founder / Lead Developer",
     bio: "Brandon Menard, professionally known as CyberDreadx, is an American music producer, AI developer, and blockchain innovator based in Miami. As the founder of Rougee and RougeCoin, he\u2019s building the next-generation music platform that merges Web3 ownership, streaming, and creator empowerment. With a background in AI and cybersecurity, Brandon leads the technical vision and development of Rougee\u2019s decentralized ecosystem, bridging art, tech, and freedom of expression.",
     image: "/team/brandon-menard.jpg",
     x: "https://x.com/cyberdreadx",
