@@ -224,7 +224,10 @@ blocked at the edge; the active tx-integrity rule is untouched.
   appended (crash between journal and append) is re-imported through the normal import path at the next
   `mine_pending` and at `init`, and handed back for broadcast, so the chain is not stranded. If that
   re-import ever fails the producer refuses to seal anything for that slot and raises a high-severity
-  error (operator inspects `proposal-journal-db`). The producer also refuses to seal a height it is not
+  error (operator inspects `proposal-journal-db`).
+  A record written by an attempt that then FAILS before append in the same process (rollback path) is
+  withdrawn with the rollback: that block was never durable and never broadcast, so no second proposal
+  can have been seen by anyone. The producer also refuses to seal a height it is not
   designated for (node-local; stops the race between upgraded nodes before the fork activates).
   **Limitation:** the journal binds one *process*; copying the proposer private key to a second machine
   defeats it. Running more than one active producer with the same proposer key is unsupported.
