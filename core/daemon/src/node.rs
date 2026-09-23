@@ -2728,6 +2728,11 @@ impl L1Node {
         // unbonding) → post-state root → sign → validator effects → append (COMMIT POINT)
         // → derived bookkeeping (mined hashes, finality, receipts, payouts, stats).
         let pre_snapshot = self.capture_pre_apply_snapshot(&prelim_block)?;
+        // Slot key journaled by THIS attempt (None until the journal write succeeded). A failure
+        // after that point but before append means the block was never durable nor broadcast, so
+        // the record is withdrawn with the rollback; a record left by an earlier attempt/process is
+        // never touched here (it is re-imported at the top of mine_pending instead).
+        let journaled_key: std::cell::Cell<Option<Vec<u8>>> = std::cell::Cell::new(None);
         let attempt = (|| -> Result<(BlockV1, BlockExecution), String> {
             // Apply to state ONCE, here. (The old post-append apply_balance_block call
             // is intentionally removed — applying twice would double-charge fees.)
@@ -2748,6 +2753,7 @@ impl L1Node {
             // Amendment 2: durable proposal record for (height, parent) BEFORE the block can be made
             // durable or broadcast. A different record for this slot ⇒ refuse (equivocation guard).
             self.journal_proposal(&block)?;
+            journaled_key.set(Some(Self::proposal_key(block.header.height, &block.header.prev_hash)));
             // Validator-store effects BEFORE the block is durable (post-root, store-only).
             self.apply_validator_block(&block, &block_exec.validator)?;
             #[cfg(test)]
@@ -2761,6 +2767,7 @@ impl L1Node {
             Ok(v) => v,
             Err(e) => {
                 let restore = self.restore_pre_apply_snapshot(pre_snapshot);
+                if let Some(k) = journaled_key.take() { let _ = self.proposal_journal.remove(k); let _ = self.proposal_journal.flush(); }
                 // Requeue the drained (already signature-verified) transactions.
                 if let Ok(mut mempool) = self.mempool.lock() {
                     if let Ok(mut verified) = self.verified_tx_ids.lock() {
