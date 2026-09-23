@@ -56,4 +56,15 @@ export const team: TeamMember[] = [
     website: "https://thebitpoint.io/",
     linkedin: "https://www.linkedin.com/in/elijah-john-bowdre-28122a35/",
   },
+  {
+    name: "Teresa Castagnino",
+    alias: "Tere",
+    role: "CEO & Co-Founder, Like Group Management",
+    bio: "Teresa Castagnino is CEO and co-founder of Like Group Management, a Tulum-based accelerator and incubator focused on regenerative projects, co-founder of Tulum Crypto Fest, and Head of Forbes M\u00e9xico for the Caribbean. With a background in industrial design and architecture, she connects founders, businesses and investors across the Mayan Riviera.",
+    image: "/team/teresa-castagnino.jpg",
+    x: "",
+    github: "",
+    website: "",
+    linkedin: "https://www.linkedin.com/in/teresa-castagninolgm",
+  },
 ];
