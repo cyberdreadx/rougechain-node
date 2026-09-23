@@ -120,6 +120,8 @@ sha256sum target/release/quantum-vault-daemon
 # expected: d50f7e5d34d03200f6efc45c8b7b63c61079e7f9d5b5c70f5b3c3c3544105eba (rustc/cargo 1.94.0, x86_64 Linux)
 ```
 
+Verified 2026-09-23: building commit `203507e` of this repository with the recipe above (at the same source path as the release build) produced a byte-identical binary, sha256 `d50f7e5d…`.
+
 Cargo's metadata hash includes the package path, so two builds only match when they are made at the
 same absolute source path with the same remapping. A different absolute path yields a different, still
 valid, binary; compare against a second build at your own path if you want to check reproducibility
