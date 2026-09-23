@@ -248,3 +248,17 @@ Answers, from the code as it runs today:
 Implications carried into Release 2: a minimum stake and/or an activation delay (stake effective after N
 blocks) and an unbonding-period slash for a designated proposer that halts the chain are the natural
 mitigations; none is part of Release 1.
+
+## 13. Release 1 — release record
+
+| Item | Value |
+|---|---|
+| Activation | `PROPOSER_SELECTION_ACTIVATION_HEIGHT = Some(100)` (approved 2026-09-23; canonical tip 95 = `ea25cc0b353ce4055982268de59fcae45ac93e22033fe9a297e51228de48f793`, state root `5620f4efc2f7041c2373eb9c0c60cd23893048cff874abba23408dee860b6318`) |
+| Source commit | `b69d0c9e71a5353ad3d487c1ec5923c9a0967841` (branch `consensus/proposer-selection`; commit time 2026-09-23T17:44:05Z) |
+| Binary | `quantum-vault-daemon-proposer-selection-b69d0c9`, 26,866,528 bytes, sha256 `d50f7e5d34d03200f6efc45c8b7b63c61079e7f9d5b5c70f5b3c3c3544105eba` |
+| Build | `cargo build --release --locked --offline -p quantum-vault-daemon`, `SOURCE_DATE_EPOCH=1790185445`, `RUSTFLAGS` remap-path-prefix (src→`/build/src`, target→`/build/target`, `~/.cargo`→`/build/cargo`, `$HOME`→`/build/home`); two fresh checkouts + fresh targets at the same absolute path → byte-identical |
+| Toolchain | rustc 1.94.0 (4a4ef493e 2026-03-02), cargo 1.94.0 (85eff7c80 2026-01-15), x86_64-unknown-linux-gnu |
+| Tests (at `b69d0c9`) | daemon 156 passed / 0 failed / 1 ignored (table generator); workspace 247 / 0 / 1; includes the 0–95 canonical replay gates (`t13_t14_*`) |
+| Verification tool | `sign-block-b69d0c9` (sha256 `18bf9610943d5f667bc1bf95491777a8c3552a043add31675787019dc86eb32e`): re-signs a canonical block with another validator key, changing only the proposer identity, to exercise the rejection path without enabling mining |
+| Read-only report | startup log line `[consensus] proposer selection: …` and `/api/stats` fields `proposer_selection_activation_height`, `designated_proposer_next_height`, `proposer_selection_active_next`, `designated_proposer_next` |
+| Designated proposer for 100 | `8ccf7878…` (100,000 stake); `c97f59a2…` (10,000) and `21e0ed0a…` (9,000) eligible, not selected |
