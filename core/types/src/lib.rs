@@ -310,6 +310,38 @@ pub fn compute_block_hash(header_bytes: &[u8], proposer_sig: &str) -> String {
 }
 
 /// Compute a unique hash for a single transaction.
+/// KEY-BOUND transaction identity (used by the transaction-uniqueness consensus rule, the
+/// mempool replay guard and the tx-seen index). It covers exactly the bytes the sender's
+/// signature commits to and NOTHING an outsider can vary:
+///
+/// * V2 (`signed_payload` present): `sha256(0x02 || pubkey_bytes || signed_payload_bytes)`.
+///   The signature is over `signed_payload`; every other struct field (nonce, payload, fee)
+///   is server-derived and MUST be bound to the payload by `verify_v2_binding`.
+/// * V1 (no `signed_payload`): `sha256(0x01 || encode_tx_for_signing(tx))` — the signed
+///   fields (version, tx_type, from_pub_key, nonce, payload, fee); the signature itself and
+///   any attached payload are excluded, so signature re-encoding (hex case, a fresh
+///   randomized signature by the owner, a bogus attachment) cannot change the identity.
+///
+/// Distinct from `compute_single_tx_hash` (the storage/receipt hash over the full struct,
+/// which an outsider CAN vary and which therefore must never be used for uniqueness).
+pub fn tx_identity(tx: &TxV1) -> String {
+    let mut h = Sha256::new();
+    match tx.signed_payload.as_deref() {
+        Some(sp) => {
+            h.update([0x02u8]);
+            let pk = hex::decode(&tx.from_pub_key).unwrap_or_else(|_| tx.from_pub_key.as_bytes().to_vec());
+            h.update((pk.len() as u64).to_be_bytes());
+            h.update(&pk);
+            h.update(sp.as_bytes());
+        }
+        None => {
+            h.update([0x01u8]);
+            h.update(encode_tx_for_signing(tx));
+        }
+    }
+    hex::encode(h.finalize())
+}
+
 pub fn compute_single_tx_hash(tx: &TxV1) -> String {
     let bytes = encode_tx_v1(tx);
     hex::encode(Sha256::digest(&bytes))
