@@ -97,8 +97,9 @@ pre-apply snapshot and never reaches the index. Those are the only paths, and bo
 | Live canonical tip at selection | height 60, hash `ea90a89107bb741743516e41d3fb5428816cf95a69f46e660992075a0bc79096`, state root `069a9d03c9eec33915caac641e1c5b89faa7077d40df387315ff7f7a65bc27e4` (primary and node #2 in agreement; node #2 non-mining; P2P containment in place) |
 | Activation height N | **90** (tip + 25, rounded up) |
 | Blocks to activation | 30 (mainnet mines on demand) |
-| Source commit | `34bccdb3a9936587ce54bdf90f7d9263b849a250` (branch `consensus/tx-integrity`) |
+| Source commit | `175358f3b3569f1840ca5650f42f6de6ad359b2d` (branch `consensus/tx-integrity`; code identical to `34bccdb`, which set N — the later commits touch only this file) |
 | Toolchain | rustc 1.94.0 (4a4ef493e 2026-03-02), cargo 1.94.0 (85eff7c80 2026-01-15), stable-x86_64-unknown-linux-gnu; `Cargo.lock` frozen (`--locked --offline`) |
-| Build | `cargo build --release --locked -p quantum-vault-daemon` with `--remap-path-prefix` (source → `/build/src`, cargo home → `/build/cargo`), two independent clean checkouts — hashes below |
-| Binary SHA-256 | _(filled by the release pipeline)_ |
+| Build | `cargo build --release --locked --offline -p quantum-vault-daemon` with `SOURCE_DATE_EPOCH` = commit time and `RUSTFLAGS=--remap-path-prefix` for source → `/build/src`, target → `/build/target`, cargo home → `/build/cargo`, home → `/build/home`. Two fresh checkouts + fresh target dirs at the SAME absolute path produced byte-identical binaries (cargo's crate-metadata hash includes the package path, so the path must match; a first attempt at two different paths differed only in LLVM anonymous symbol ids). |
+| Binary SHA-256 | **`9ad81dbf98e8e78a86b34be61af2360a34dba055f9f7a4be81b1a69c15942287`** (26,639,552 bytes), `quantum-vault-daemon`, reproduced twice |
+| Test results at N = 90 | daemon 140 passed / 0 failed / 1 ignored (incl. canonical replay 0→60 pinned to tip `ea90a891…` / root `069a9d03…`); workspace 231 passed / 0 failed |
 | Active proposers to upgrade | primary `8ccf7878…` (mining), node #2 `c97f59a2…` (non-mining, must still run the rule); outside validator `21e0ed0a…` staked but never connected/produced — cannot reach either node under containment |
