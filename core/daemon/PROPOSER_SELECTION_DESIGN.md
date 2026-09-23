@@ -262,3 +262,24 @@ mitigations; none is part of Release 1.
 | Verification tool | `sign-block-b69d0c9` (sha256 `18bf9610943d5f667bc1bf95491777a8c3552a043add31675787019dc86eb32e`): re-signs a canonical block with another validator key, changing only the proposer identity, to exercise the rejection path without enabling mining |
 | Read-only report | startup log line `[consensus] proposer selection: …` and `/api/stats` fields `proposer_selection_activation_height`, `designated_proposer_next_height`, `proposer_selection_active_next`, `designated_proposer_next` |
 | Designated proposer for 100 | `8ccf7878…` (100,000 stake); `c97f59a2…` (10,000) and `21e0ed0a…` (9,000) eligible, not selected |
+
+## 14. Release 1 — activation record (mainnet, 2026-09-23)
+
+Binary `d50f7e5d…` (commit `b69d0c9`) installed on the primary (18:13 UTC, rollback copy
+`quantum-vault-daemon.pre-proposer-selection` = tx-integrity binary `9ad81dbf…`) and on node #2
+(18:51 UTC, by the operator, checksum verified). Both reported at startup
+`activation height Some(100); next height 96 (rule inactive); designated proposer for 96: 8ccf7878…`.
+Blocks 96–99 produced deliberately (one transfer each); both nodes identical after each block.
+
+| Check | Evidence |
+|---|---|
+| Both nodes derive the proposer for 100 | at tip 99 both `/api/stats`: `designated_proposer_next_height=100`, `proposer_selection_active_next=true`, `designated_proposer_next=8ccf7878…` |
+| Competing block, tip 99 | node #2 built a fresh empty block 100 (parent `74757a95…`, proposer `c97f59a2…`, hash `6c96a1c0…`) with `sign-block-v2` (no mining). Node #2 local import and primary import both returned `block 100 rejected: proposer c97f59a2409eb025 is not the designated proposer (8ccf7878003b2668)`; repeat submission gave the same result |
+| No mutation on rejection | before/after diff on both nodes: height 99, finalized 99, state root `2c321119…`, fee totals, all validator counters (stake/missed/slash/jail/proposed), operator and node #2 balances unchanged; primary `proposal-journal-db` files untouched |
+| Canonical block 100 | proposer `8ccf7878…`, hash `1610395d908b9a5925345aa8074520214e8b8963ab1e0e4d14f298ed83ccd746`, state root `35db41adc96379c52179d5efa95776eaa88c07f77d4ae617db140226aea408fb`, accepted by primary (producer) and node #2 (import), identical on both |
+| A/B on a scratch node held at 99 (same binary, same state) | competing block → rejected (proposer rule), tip/root unchanged; canonical block 100 → accepted, root `35db41ad…`; competing block again at tip 100 → rejected by the height check (ordering as designed) |
+| Missed-block freeze | node #2 `missedBlocks` 41 at 99 (legacy rule would have auto-slashed at 50); still 41 at 100 and at 106; `21e0ed0a` unchanged (11 missed, jailedUntil 89) |
+| No slash / jail | no slash, jail, equivocation or HIGH SEVERITY log lines; `slashCount`/`jailedUntil` unchanged on both nodes |
+| Observation | blocks 101–106 produced normally; primary and node #2 identical hash + state root after every block |
+
+Node #2 remains non-mining. `/api/blocks/import` and `/api/peers/register` remain 403 at nginx.
