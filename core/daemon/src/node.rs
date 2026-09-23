@@ -550,6 +550,15 @@ impl L1Node {
         // Amendment 2: a proposal journaled before a crash but never appended is re-imported now,
         // so this node re-broadcasts the same block instead of sealing a second one.
         self.recover_pending_proposal();
+        // Proposer selection Release 1: report the compiled activation height and what this node
+        // derives for the next height, so operators can compare nodes before activation.
+        if let Ok(t) = self.store.get_tip() {
+            let next = t.height + 1;
+            let d = self.designated_proposer(next).unwrap_or(None);
+            eprintln!("[consensus] proposer selection: activation height {:?}; next height {} (rule {}); designated proposer for {}: {}",
+                PROPOSER_SELECTION_ACTIVATION_HEIGHT, next, if proposer_selection_active(next) { "ACTIVE" } else { "inactive" },
+                next, d.as_deref().map(|d| &d[..16.min(d.len())]).unwrap_or("none"));
+        }
         // R1: derived bridge payout store — idempotent reconstruction from accepted history on
         // every start, so a missed persistence (crash, disk error) never survives a restart.
         match self.rebuild_bridge_withdraw_store() {
