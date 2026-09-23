@@ -162,7 +162,7 @@ pub fn tx_uniqueness_rule_active(height: u64) -> bool {
     matches!(tx_uniqueness_activation_height(), Some(a) if height >= a)
 }
 /// Meta key inside the tx-seen tree: the tip height the index is complete up to.
-const TX_SEEN_INDEXED_TIP_KEY: &[u8] = b"__indexed_tip";
+const TX_SEEN_INDEXED_TIP_KEY: &[u8] = b"__indexed_tip_v2";
 
 /// Height after which a P2P-imported block's proposer MUST be a staked validator
 /// (`stake > 0`) in the on-chain validator set, or the block is rejected on
@@ -1817,8 +1817,9 @@ impl L1Node {
 
         // C1: a tx that is already in an accepted block is a replay — refuse it regardless
         // of the (gap-tolerant) nonce check above.
-        if let Some(h) = self.tx_included_at(&tx_hash) {
-            return Err(format!("transaction {} already included in block {}", &tx_hash[..16], h));
+        let identity = quantum_vault_types::tx_identity(&tx);
+        if let Some(h) = self.tx_included_at(&identity) {
+            return Err(format!("transaction {} already included in block {}", &identity[..16], h));
         }
 
         // Reject txs already mined in a recent block
@@ -2617,7 +2618,7 @@ impl L1Node {
         drop(verified_set);
         // C1: never include a tx the chain already accepted (replay), whatever its nonce says.
         let verified_entries: Vec<(String, TxV1)> = verified_entries.into_iter()
-            .filter(|(id, _)| !self.tx_already_included(id))
+            .filter(|(_, tx)| !self.tx_already_included(&quantum_vault_types::tx_identity(tx)))
             .collect();
         if verified_entries.is_empty() {
             return Ok(None);
@@ -2776,12 +2777,16 @@ impl L1Node {
     }
     pub fn tx_already_included(&self, tx_hash: &str) -> bool { self.tx_included_at(tx_hash).is_some() }
 
-    /// Consensus check: every tx hash in the block must be new to the chain and unique
-    /// within the block. Pure read; no state is touched.
+    /// Consensus check: every tx IDENTITY (`tx_identity`, key-bound) in the block must be new
+    /// to the chain and unique within the block. Fail-closed on the index: if the tx-seen
+    /// index is not complete for the current tip (crash between append and record, or a
+    /// failed record write) it is rebuilt from the stored chain here, BEFORE the block can
+    /// be judged, so an incomplete index can never let a replay through.
     fn check_block_tx_uniqueness(&self, block: &BlockV1) -> Result<(), String> {
+        self.ensure_tx_seen_index()?;
         let mut in_block: HashSet<String> = HashSet::with_capacity(block.txs.len());
         for (i, tx) in block.txs.iter().enumerate() {
-            let h = quantum_vault_types::compute_single_tx_hash(tx);
+            let h = quantum_vault_types::tx_identity(tx);
             if let Some(prev) = self.tx_included_at(&h) {
                 return Err(format!("block {} rejected: tx #{} ({}) already included in block {} (replay)",
                     block.header.height, i, &h[..16], prev));
@@ -2800,7 +2805,7 @@ impl L1Node {
     fn record_block_tx_hashes(&self, block: &BlockV1) {
         let hb = block.header.height.to_be_bytes();
         for tx in &block.txs {
-            let _ = self.tx_seen_db.insert(quantum_vault_types::compute_single_tx_hash(tx).as_bytes(), &hb);
+            let _ = self.tx_seen_db.insert(quantum_vault_types::tx_identity(tx).as_bytes(), &hb);
         }
         let _ = self.tx_seen_db.insert(TX_SEEN_INDEXED_TIP_KEY, &hb);
         let _ = self.tx_seen_db.flush();
@@ -2820,7 +2825,7 @@ impl L1Node {
         for b in &blocks {
             let hb = b.header.height.to_be_bytes();
             for tx in &b.txs {
-                self.tx_seen_db.insert(quantum_vault_types::compute_single_tx_hash(tx).as_bytes(), &hb).map_err(|e| e.to_string())?;
+                self.tx_seen_db.insert(quantum_vault_types::tx_identity(tx).as_bytes(), &hb).map_err(|e| e.to_string())?;
                 n += 1;
             }
         }
@@ -9397,8 +9402,8 @@ mod peer_sync_tests {
 mod tx_uniqueness_tests {
     use super::*;
     use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, sealed_block, signed};
-    use quantum_vault_crypto::pqc_keygen;
-    use quantum_vault_types::compute_single_tx_hash;
+    use quantum_vault_crypto::{pqc_keygen, pqc_sign, pqc_verify};
+    use quantum_vault_types::{compute_single_tx_hash, encode_tx_for_signing};
 
     fn transfer(from: &str, to: &str, amount: u64, nonce: u64) -> TxV1 {
         TxV1 { version: 1, tx_type: "transfer".into(), from_pub_key: from.into(), nonce,
@@ -9425,7 +9430,7 @@ mod tx_uniqueness_tests {
     fn replay_of_an_included_tx_is_rejected_once_the_rule_is_active() {
         let (_d, node, p, user, other) = setup(Some(1));
         let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
-        let h = compute_single_tx_hash(&t1);
+        let h = quantum_vault_types::tx_identity(&t1);
         import(&node, &p, vec![t1.clone()]).expect("first inclusion");
         assert_eq!(node.tx_included_at(&h), Some(1));
         let before = bal(&node, &user.public_key_hex);
@@ -9503,13 +9508,62 @@ mod tx_uniqueness_tests {
     }
 
     #[test]
+    fn v1_identity_is_fixed_by_the_signed_fields_only() {
+        // An outsider can re-encode the signature or attach a payload; neither changes the
+        // identity, so neither escapes the uniqueness rule. Only the signed fields do.
+        let user = pqc_keygen(); let other = pqc_keygen();
+        let t = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
+        let id = quantum_vault_types::tx_identity(&t);
+        let mut upper = t.clone(); upper.sig = upper.sig.to_uppercase();
+        assert_ne!(upper.sig, t.sig); assert_eq!(quantum_vault_types::tx_identity(&upper), id, "sig hex case");
+        assert_ne!(quantum_vault_types::compute_single_tx_hash(&upper), quantum_vault_types::compute_single_tx_hash(&t), "(the raw storage hash DOES change — why it is not the identity)");
+        let mut resigned = t.clone(); resigned.sig = pqc_sign(&user.secret_key_hex, &encode_tx_for_signing(&t)).unwrap();
+        assert_ne!(resigned.sig, t.sig, "ML-DSA signing is randomized"); assert_eq!(quantum_vault_types::tx_identity(&resigned), id, "owner re-signature");
+        // a V1 tx with a bogus attachment is a DIFFERENT identity class (V2) — but such a tx must not verify as V2:
+        // its signature is over the V1 fields, not over the attachment, so import/mempool reject it (covered by the
+        // signature checks); here we only pin that the attachment does not alias the V1 identity.
+        let mut attached = t.clone(); attached.signed_payload = Some("{}".into());
+        assert_ne!(quantum_vault_types::tx_identity(&attached), id);
+        for (name, m) in [("nonce", { let mut m = t.clone(); m.nonce += 1; m }), ("amount", { let mut m = t.clone(); m.payload.amount = Some(101); m }), ("fee", { let mut m = t.clone(); m.fee = 0.2; m }), ("to", { let mut m = t.clone(); m.payload.to_pub_key_hex = Some(user.public_key_hex.clone()); m })] {
+            assert_ne!(quantum_vault_types::tx_identity(&m), id, "{name} is a signed field: changing it changes the identity (and breaks the signature)");
+            assert!(pqc_verify(&user.public_key_hex, &encode_tx_for_signing(&m), &m.sig).ok() != Some(true), "{name}: altered V1 tx no longer verifies");
+        }
+    }
+
+    #[test]
+    fn crash_between_append_and_index_write_cannot_let_a_replay_through() {
+        // Simulate: block appended + receipts stored, process died before record_block_tx_hashes.
+        let (_d, node, p, user, other) = setup(Some(1));
+        let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        let b1 = sealed_block(&node, &p.public_key_hex, &p.secret_key_hex, vec![t1.clone()], None, t);
+        // (a) the live-process shape: the record write is lost
+        node.store.append_block(&b1).unwrap();
+        assert!(!node.tx_already_included(&quantum_vault_types::tx_identity(&t1)), "index incomplete");
+        // next block replays t1 → the consensus check must first make the index complete, then reject
+        let err = import(&node, &p, vec![t1.clone()]).unwrap_err();
+        assert!(err.contains("already included in block 1"), "{err}");
+        assert_eq!(node.tip_height().unwrap(), 1);
+        assert_eq!(node.tx_included_at(&quantum_vault_types::tx_identity(&t1)), Some(1), "index healed");
+        // (b) a genuinely new block still imports after the heal, and gets recorded
+        let t2 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 5, 8), &user.secret_key_hex);
+        import(&node, &p, vec![t2.clone()]).unwrap();
+        assert_eq!(node.tx_included_at(&quantum_vault_types::tx_identity(&t2)), Some(2));
+        // (c) restart shape: init() also heals (indexed tip marker stale)
+        node.tx_seen_db.insert(TX_SEEN_INDEXED_TIP_KEY, &1u64.to_be_bytes()).unwrap();
+        node.tx_seen_db.remove(quantum_vault_types::tx_identity(&t2).as_bytes()).unwrap();
+        node.ensure_tx_seen_index().unwrap();
+        assert_eq!(node.tx_included_at(&quantum_vault_types::tx_identity(&t2)), Some(2));
+    }
+
+    #[test]
     fn index_is_rebuilt_from_the_stored_chain_on_start_and_after_recovery() {
         let (_d, node, p, user, other) = setup(None);
         let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
         let t2 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 1, 8), &user.secret_key_hex);
         import(&node, &p, vec![t1.clone()]).unwrap();
         import(&node, &p, vec![t2.clone()]).unwrap();
-        let (h1, h2) = (compute_single_tx_hash(&t1), compute_single_tx_hash(&t2));
+        let (h1, h2) = (quantum_vault_types::tx_identity(&t1), quantum_vault_types::tx_identity(&t2));
         // upgrade-from-old-binary shape: index missing entirely
         node.tx_seen_db.clear().unwrap();
         assert!(!node.tx_already_included(&h1));
