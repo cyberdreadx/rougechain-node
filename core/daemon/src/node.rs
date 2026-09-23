@@ -8509,6 +8509,54 @@ mod strict_historical_replay_tests {
         (last_ok, None, node, dir)
     }
 
+    pub(super) const FIXTURE_BLOCKS_0_60: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-60.jsonl");
+
+    /// Transaction-integrity release gate: replay ALL canonical mainnet history (genesis through
+    /// the live tip at the time of release preparation, height 60) through the real import path
+    /// and land on exactly the live primary's tip hash and state root. The tx-uniqueness rule is
+    /// unscheduled here (None) — exactly the binary that will run below N.
+    #[test]
+    fn strict_replay_full_history_through_live_tip_60() {
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(None)));
+        let (last_ok, failure, node, _dir) = replay_fixture_node_from(FIXTURE_BLOCKS_0_60);
+        assert!(failure.is_none(), "first divergence at {:?} (last accepted {})", failure, last_ok);
+        assert_eq!(last_ok, 60);
+        let tip = node.get_block(60).unwrap().unwrap();
+        assert_eq!(tip.hash, "ea90a89107bb741743516e41d3fb5428816cf95a69f46e660992075a0bc79096", "live primary tip hash at 60");
+        assert_eq!(node.compute_current_state_root().unwrap(), "069a9d03c9eec33915caac641e1c5b89faa7077d40df387315ff7f7a65bc27e4", "live primary state root at 60");
+        // every historical tx is now in the identity index, and none repeats
+        let blocks: Vec<BlockV1> = std::fs::read_to_string(FIXTURE_BLOCKS_0_60).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        let mut ids = std::collections::HashSet::new();
+        for b in &blocks { for tx in &b.txs { assert!(ids.insert(quantum_vault_types::tx_identity(tx)), "no identity repeats in history"); assert_eq!(node.tx_included_at(&quantum_vault_types::tx_identity(tx)), Some(b.header.height)); } }
+        assert_eq!(ids.len(), 61 - 1 + 0, "61 txs over 61 blocks? (one tx per block except genesis)");
+    }
+
+    pub(super) fn replay_fixture_node_from(fixture: &str) -> (u64, Option<(u64, String)>, L1Node, TmpDir) {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(18)));
+        let gc: crate::GenesisConfig = serde_json::from_str(&std::fs::read_to_string(FIXTURE_GENESIS).unwrap()).unwrap();
+        let dir = TmpDir(std::env::temp_dir().join(format!("strict-replay-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let node = L1Node::new(NodeOptions {
+            data_dir: dir.0.clone(),
+            chain: ChainConfig { chain_id: gc.chain_id.clone(), genesis_time: gc.genesis_time, block_time_ms: gc.block_time_ms },
+            mine: false, bridge_withdraw_store: None,
+            bridge_authority_keys: gc.initial_validators.iter().map(|v| v.pub_key.clone()).collect(),
+            genesis_allocations: gc.initial_allocations.clone(), genesis_validators: gc.initial_validators.clone(),
+        }).unwrap();
+        node.init().unwrap();
+        node.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators).unwrap();
+        let mut last_ok = 0u64;
+        for line in std::fs::read_to_string(fixture).unwrap().lines() {
+            let block: BlockV1 = serde_json::from_str(line).unwrap();
+            let h = block.header.height;
+            if h == 0 { let g = node.get_block(0).unwrap().unwrap(); if g.hash != block.hash { return (0, Some((0, "genesis mismatch".into())), node, dir); } continue; }
+            if let Err(e) = node.import_block(block) { return (last_ok, Some((h, e)), node, dir); }
+            last_ok = h;
+        }
+        (last_ok, None, node, dir)
+    }
+
     /// Option-B fork: a FRESH node (random identity, empty data dir) imports every historical
     /// block through the real import path — heights 18..=F-1 verified by equality against the
     /// compiled checkpoint table, canonical execution throughout — and arrives at exactly the
