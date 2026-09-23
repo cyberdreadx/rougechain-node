@@ -45,7 +45,7 @@ export const team: TeamMember[] = [
     name: "Elijah Bowdre",
     alias: "Blockchain Bowdre",
     role: "Chairman, Miami-Dade County Cryptocurrency Task Force",
-    bio: "Elijah John Bowdre chairs the Miami-Dade County Cryptocurrency Task Force and is president and co-founder of the US Crypto Policy Alliance. He authored Florida\u2019s first state blockchain bill, Miami-Dade County\u2019s Blockchain Board ordinance and the City of Miami\u2019s crypto payment policy, and hosts the crypto news show TheBitPoint.",
+    bio: "Elijah John Bowdre chairs the Miami-Dade County Cryptocurrency Task Force and is president and co-founder of the US Crypto Policy Alliance. He authored Florida\u2019s first state blockchain bill, Miami-Dade County\u2019s Blockchain Board ordinance and the City of Miami\u2019s crypto payment policy, hosts the crypto news show TheBitPoint, and was a candidate for Mayor of Miami in 2025.",
     image: "/team/elijah-bowdre.jpg",
     x: "https://x.com/blockchainbow",
     github: "",
