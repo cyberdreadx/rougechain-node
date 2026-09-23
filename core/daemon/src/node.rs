@@ -131,6 +131,39 @@ fn contract_custody_activation_height() -> u64 {
     CONTRACT_CUSTODY_ACTIVATION_HEIGHT
 }
 
+/// C1 — TRANSACTION-UNIQUENESS consensus rule (scheduled hard fork).
+///
+/// Block import verifies signatures but, before this rule, never checked that a signed
+/// transaction had not already been included, so any accepted proposer could re-include a
+/// historical signed tx and debit its sender again (the mempool nonce check is bypassed by a
+/// proposer building the block directly; mainnet history is not nonce-sequential, so a
+/// consensus nonce rule is NOT possible without splitting the chain).
+///
+/// From this height on, a block is INVALID if any of its transactions (by canonical tx hash,
+/// `compute_single_tx_hash` = sha256(encode_tx_v1)) appears twice in the block or was already
+/// included in an earlier accepted block. `None` = not scheduled (rule inactive everywhere;
+/// the index and the mempool guard still run, which are node-local and change no block
+/// validity). Set to the chosen fork height together with a validator rollout.
+pub const TX_UNIQUENESS_ACTIVATION_HEIGHT: Option<u64> = None;
+#[cfg(test)]
+thread_local! {
+    static TEST_TX_UNIQUENESS_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[inline]
+fn tx_uniqueness_activation_height() -> Option<u64> {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.get()) { return h; }
+    }
+    TX_UNIQUENESS_ACTIVATION_HEIGHT
+}
+#[inline]
+pub fn tx_uniqueness_rule_active(height: u64) -> bool {
+    matches!(tx_uniqueness_activation_height(), Some(a) if height >= a)
+}
+/// Meta key inside the tx-seen tree: the tip height the index is complete up to.
+const TX_SEEN_INDEXED_TIP_KEY: &[u8] = b"__indexed_tip";
+
 /// Height after which a P2P-imported block's proposer MUST be a staked validator
 /// (`stake > 0`) in the on-chain validator set, or the block is rejected on
 /// `import_block`. Blocks at or below this height skip *only that* check — a
@@ -252,6 +285,10 @@ pub struct L1Node {
     allowance_store: AllowanceStore,
     nullifier_store: NullifierStore,
     receipt_store: ReceiptStore,
+    /// C1: canonical tx hash -> height of the accepted block that included it (see
+    /// `TX_UNIQUENESS_ACTIVATION_HEIGHT`). Written only after a block is durable; rebuilt
+    /// from the stored chain on every start.
+    tx_seen_db: sled::Tree,
     social_store: SocialStore,
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
@@ -325,6 +362,10 @@ impl L1Node {
         let receipt_db = sled::open(opts.data_dir.join("receipt-db"))
             .map_err(|e| format!("open receipt DB: {}", e))?;
         let receipt_store = ReceiptStore::new(&receipt_db)?;
+        let tx_seen_db = sled::open(opts.data_dir.join("tx-seen-db"))
+            .map_err(|e| format!("open tx-seen DB: {}", e))?
+            .open_tree("tx_hashes")
+            .map_err(|e| format!("open tx-seen tree: {}", e))?;
         let keys = Self::load_or_create_keys(&opts.data_dir)?;
             let nonce_db = sled::open(opts.data_dir.join("nonce-db"))
                 .map_err(|e| format!("open nonce DB: {}", e))?
@@ -397,6 +438,7 @@ impl L1Node {
             mine_notify: Arc::new(tokio::sync::Notify::new()),
             shielded_supply: Arc::new(Mutex::new(0.0)),
             mined_tx_hashes: Arc::new(Mutex::new(HashSet::new())),
+            tx_seen_db,
             wasm_runtime: None,
             contract_store: None,
             snapshot_db,
@@ -469,6 +511,8 @@ impl L1Node {
             self.fork_readiness_check()?;
         }
         self.rebuild_proposer_counts()?;
+        // C1: the tx-seen index is derived state — make it complete for the stored chain.
+        self.ensure_tx_seen_index()?;
         // R1: derived bridge payout store — idempotent reconstruction from accepted history on
         // every start, so a missed persistence (crash, disk error) never survives a restart.
         match self.rebuild_bridge_withdraw_store() {
@@ -911,6 +955,11 @@ impl L1Node {
             }
         }
         
+        // C1: transaction uniqueness (consensus rule from TX_UNIQUENESS_ACTIVATION_HEIGHT).
+        if tx_uniqueness_rule_active(block.header.height) {
+            self.check_block_tx_uniqueness(&block)?;
+        }
+
         // Apply state BEFORE storing to disk (atomic: don't store blocks we can't apply)
         //
         // Phase 2: at/after the activation height, the block header commits to the
@@ -993,6 +1042,7 @@ impl L1Node {
         // Generate and store transaction receipts
         let receipts = self.generate_receipts(&block, &block_exec.bridge, &block_exec.validator);
         let _ = self.receipt_store.store_batch(&receipts);
+        self.record_block_tx_hashes(&block);
 
         // R1: relayer-facing payout records ONLY for an accepted + persisted block.
         // (A block rejected above — apply error or state-root mismatch — never reaches
@@ -1764,6 +1814,12 @@ impl L1Node {
         self.check_nonce_valid(&tx.from_pub_key, tx.nonce)?;
 
         let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
+
+        // C1: a tx that is already in an accepted block is a replay — refuse it regardless
+        // of the (gap-tolerant) nonce check above.
+        if let Some(h) = self.tx_included_at(&tx_hash) {
+            return Err(format!("transaction {} already included in block {}", &tx_hash[..16], h));
+        }
 
         // Reject txs already mined in a recent block
         if let Ok(mined) = self.mined_tx_hashes.lock() {
@@ -2559,6 +2615,10 @@ impl L1Node {
         };
         verified_set.clear();
         drop(verified_set);
+        // C1: never include a tx the chain already accepted (replay), whatever its nonce says.
+        let verified_entries: Vec<(String, TxV1)> = verified_entries.into_iter()
+            .filter(|(id, _)| !self.tx_already_included(id))
+            .collect();
         if verified_entries.is_empty() {
             return Ok(None);
         }
@@ -2660,6 +2720,7 @@ impl L1Node {
         // Generate and store transaction receipts
         let receipts = self.generate_receipts(&block, &block_exec.bridge, &block_exec.validator);
         let _ = self.receipt_store.store_batch(&receipts);
+        self.record_block_tx_hashes(&block);
 
         // R1: payout records only after the block is appended/persisted (see import path).
         self.persist_bridge_withdraw_results(&block, &block_exec.bridge)?;
@@ -2705,6 +2766,70 @@ impl L1Node {
     }
 
     /// Get the current nonce for an account (0 if never used)
+    // ── C1: transaction-uniqueness index + rule ─────────────────────────────────────
+    /// Height of the accepted block that included `tx_hash` (canonical hash), if any.
+    pub fn tx_included_at(&self, tx_hash: &str) -> Option<u64> {
+        match self.tx_seen_db.get(tx_hash.as_bytes()) {
+            Ok(Some(v)) if v.len() == 8 => Some(u64::from_be_bytes(v.as_ref().try_into().unwrap_or([0u8; 8]))),
+            _ => None,
+        }
+    }
+    pub fn tx_already_included(&self, tx_hash: &str) -> bool { self.tx_included_at(tx_hash).is_some() }
+
+    /// Consensus check: every tx hash in the block must be new to the chain and unique
+    /// within the block. Pure read; no state is touched.
+    fn check_block_tx_uniqueness(&self, block: &BlockV1) -> Result<(), String> {
+        let mut in_block: HashSet<String> = HashSet::with_capacity(block.txs.len());
+        for (i, tx) in block.txs.iter().enumerate() {
+            let h = quantum_vault_types::compute_single_tx_hash(tx);
+            if let Some(prev) = self.tx_included_at(&h) {
+                return Err(format!("block {} rejected: tx #{} ({}) already included in block {} (replay)",
+                    block.header.height, i, &h[..16], prev));
+            }
+            if !in_block.insert(h.clone()) {
+                return Err(format!("block {} rejected: tx #{} ({}) duplicated within the block",
+                    block.header.height, i, &h[..16]));
+            }
+        }
+        Ok(())
+    }
+
+    /// Record the hashes of an ACCEPTED + PERSISTED block (post-commit bookkeeping only; a
+    /// rejected block never reaches this). Failure to record is not fatal here — the index
+    /// is re-derived from the stored chain at the next start (`ensure_tx_seen_index`).
+    fn record_block_tx_hashes(&self, block: &BlockV1) {
+        let hb = block.header.height.to_be_bytes();
+        for tx in &block.txs {
+            let _ = self.tx_seen_db.insert(quantum_vault_types::compute_single_tx_hash(tx).as_bytes(), &hb);
+        }
+        let _ = self.tx_seen_db.insert(TX_SEEN_INDEXED_TIP_KEY, &hb);
+        let _ = self.tx_seen_db.flush();
+    }
+
+    /// Make the index complete for the stored chain: if its recorded tip is not the chain
+    /// tip (fresh node, upgrade from a binary without the index, crash between append and
+    /// record), rebuild it from every stored block. Deterministic and idempotent.
+    fn ensure_tx_seen_index(&self) -> Result<(), String> {
+        let tip = self.store.get_tip()?.height;
+        let indexed = self.tx_seen_db.get(TX_SEEN_INDEXED_TIP_KEY).map_err(|e| e.to_string())?
+            .and_then(|v| v.as_ref().try_into().ok().map(u64::from_be_bytes));
+        if indexed == Some(tip) { return Ok(()); }
+        let blocks = self.store.get_all_blocks()?;
+        self.tx_seen_db.clear().map_err(|e| e.to_string())?;
+        let mut n = 0usize;
+        for b in &blocks {
+            let hb = b.header.height.to_be_bytes();
+            for tx in &b.txs {
+                self.tx_seen_db.insert(quantum_vault_types::compute_single_tx_hash(tx).as_bytes(), &hb).map_err(|e| e.to_string())?;
+                n += 1;
+            }
+        }
+        self.tx_seen_db.insert(TX_SEEN_INDEXED_TIP_KEY, &tip.to_be_bytes()).map_err(|e| e.to_string())?;
+        self.tx_seen_db.flush().map_err(|e| e.to_string())?;
+        eprintln!("[init] tx-seen index rebuilt: {} tx hashes over {} blocks (tip {})", n, blocks.len(), tip);
+        Ok(())
+    }
+
     pub fn get_account_nonce(&self, pubkey: &str) -> u64 {
         match self.nonce_db.get(pubkey.as_bytes()) {
             Ok(Some(bytes)) => {
@@ -3111,6 +3236,7 @@ impl L1Node {
         }
         let _ = self.fee_db.clear(); let _ = self.fee_db.flush();
         let _ = self.nonce_db.clear(); let _ = self.nonce_db.flush();
+        let _ = self.tx_seen_db.clear(); let _ = self.tx_seen_db.flush();
         let _ = self.snapshot_db.remove(crate::fork::CANONICAL_MARKER_KEY);
         // validators, unbonding queue AND meta: recovery re-derives every validator component
         for t in self.validator_store.trees() { t.clear().map_err(|e| e.to_string())?; }
@@ -9263,5 +9389,140 @@ mod peer_sync_tests {
         assert_eq!(digest(&fresh), established);
         // (d) an EQUAL-height peer with identical history is simply a no-op
         assert_eq!(apply_peer_blocks(&fresh, "src", blocks).unwrap(), 0);
+    }
+}
+
+/// C1 — transaction-uniqueness rule (replay of an already-included signed tx).
+#[cfg(test)]
+mod tx_uniqueness_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, sealed_block, signed};
+    use quantum_vault_crypto::pqc_keygen;
+    use quantum_vault_types::compute_single_tx_hash;
+
+    fn transfer(from: &str, to: &str, amount: u64, nonce: u64) -> TxV1 {
+        TxV1 { version: 1, tx_type: "transfer".into(), from_pub_key: from.into(), nonce,
+            payload: TxPayload { to_pub_key_hex: Some(to.into()), amount: Some(amount), ..Default::default() },
+            fee: 0.1, sig: String::new(), signed_payload: None }
+    }
+    /// State-root commitment is not what these tests are about: disable it (test-only knob),
+    /// and set the C1 activation height for this thread.
+    fn setup(activation: Option<u64>) -> (super::bridge_r1_daemon_tests::TmpDir, L1Node, PQKeypair, PQKeypair, PQKeypair) {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(u64::MAX)));
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(activation)));
+        let (d, node, _store) = node_with_store();
+        let proposer = pqc_keygen(); let user = pqc_keygen(); let other = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1_000.0);
+        (d, node, proposer, user, other)
+    }
+    fn import(node: &L1Node, p: &PQKeypair, txs: Vec<TxV1>) -> Result<(), String> {
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        node.import_block(sealed_block(node, &p.public_key_hex, &p.secret_key_hex, txs, None, t))
+    }
+    fn bal(node: &L1Node, pk: &str) -> u128 { *node.balances.lock().unwrap().get(&canon_addr(pk)).unwrap_or(&0) }
+
+    #[test]
+    fn replay_of_an_included_tx_is_rejected_once_the_rule_is_active() {
+        let (_d, node, p, user, other) = setup(Some(1));
+        let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
+        let h = compute_single_tx_hash(&t1);
+        import(&node, &p, vec![t1.clone()]).expect("first inclusion");
+        assert_eq!(node.tx_included_at(&h), Some(1));
+        let before = bal(&node, &user.public_key_hex);
+        let err = import(&node, &p, vec![t1.clone()]).unwrap_err();
+        assert!(err.contains("already included in block 1") && err.contains("replay"), "{err}");
+        assert_eq!(node.tip_height().unwrap(), 1, "replay block never persisted");
+        assert_eq!(bal(&node, &user.public_key_hex), before, "victim not debited twice");
+        // a genuinely new tx from the same sender still works
+        let t2 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 5, 8), &user.secret_key_hex);
+        import(&node, &p, vec![t2]).expect("fresh tx accepted");
+        assert_eq!(node.tip_height().unwrap(), 2);
+    }
+
+    #[test]
+    fn duplicate_within_one_block_is_rejected() {
+        let (_d, node, p, user, other) = setup(Some(1));
+        let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
+        let err = import(&node, &p, vec![t1.clone(), t1]).unwrap_err();
+        assert!(err.contains("duplicated within the block"), "{err}");
+        assert_eq!(node.tip_height().unwrap(), 0);
+    }
+
+    #[test]
+    fn rule_is_inactive_below_the_activation_height_and_when_unscheduled() {
+        // Documents (and pins) the LEGACY behaviour the fork removes: below the activation
+        // height a replayed block is still accepted, so history before the fork replays
+        // identically on every node.
+        for activation in [Some(10), None] {
+            let (_d, node, p, user, other) = setup(activation);
+            let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
+            import(&node, &p, vec![t1.clone()]).unwrap();
+            let before = bal(&node, &user.public_key_hex);
+            import(&node, &p, vec![t1]).expect("legacy: replay accepted below activation");
+            assert!(bal(&node, &user.public_key_hex) < before, "legacy: debited again (the bug being fixed)");
+            assert_eq!(node.tip_height().unwrap(), 2);
+        }
+    }
+
+    #[test]
+    fn rule_activates_exactly_at_the_activation_height() {
+        let (_d, node, p, user, other) = setup(Some(3));
+        let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 10, 7), &user.secret_key_hex);
+        import(&node, &p, vec![t1.clone()]).unwrap();          // h1
+        import(&node, &p, vec![t1.clone()]).unwrap();          // h2: still legacy
+        let err = import(&node, &p, vec![t1]).unwrap_err();    // h3: rule active
+        assert!(err.contains("replay"), "{err}");
+        assert_eq!(node.tip_height().unwrap(), 2);
+    }
+
+    #[test]
+    fn mempool_refuses_an_included_tx_even_when_the_nonce_check_would_pass() {
+        // Real-world shape: after a nonce_db migration/clear the gap-tolerant nonce check no
+        // longer knows the tx's nonce, so only the tx-seen index stands between a public
+        // API caller and a replay mined by an honest producer.
+        let (_d, node, p, user, other) = setup(None);
+        let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 1_789_443_418_154), &user.secret_key_hex);
+        import(&node, &p, vec![t1.clone()]).unwrap();
+        node.nonce_db.clear().unwrap(); // what migrate_nonce_db does for timestamp nonces
+        assert!(node.check_nonce_valid(&t1.from_pub_key, t1.nonce).is_ok(), "nonce check alone would pass");
+        let err = node.insert_tx_to_mempool(t1).unwrap_err();
+        assert!(err.contains("already included in block 1"), "{err}");
+        assert!(node.mempool.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn producer_never_includes_an_already_included_tx() {
+        let (_d, node, p, user, other) = setup(None);
+        let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
+        import(&node, &p, vec![t1.clone()]).unwrap();
+        // bypass admission entirely (simulates a stale mempool / pre-fix peer gossip)
+        node.mempool.lock().unwrap().insert(compute_single_tx_hash(&t1), t1);
+        let mined = node.mine_pending().unwrap();
+        assert!(mined.is_none(), "nothing left to mine once the replay is dropped");
+        assert_eq!(node.tip_height().unwrap(), 1);
+    }
+
+    #[test]
+    fn index_is_rebuilt_from_the_stored_chain_on_start_and_after_recovery() {
+        let (_d, node, p, user, other) = setup(None);
+        let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
+        let t2 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 1, 8), &user.secret_key_hex);
+        import(&node, &p, vec![t1.clone()]).unwrap();
+        import(&node, &p, vec![t2.clone()]).unwrap();
+        let (h1, h2) = (compute_single_tx_hash(&t1), compute_single_tx_hash(&t2));
+        // upgrade-from-old-binary shape: index missing entirely
+        node.tx_seen_db.clear().unwrap();
+        assert!(!node.tx_already_included(&h1));
+        node.ensure_tx_seen_index().unwrap();
+        assert_eq!((node.tx_included_at(&h1), node.tx_included_at(&h2)), (Some(1), Some(2)));
+        // crash-between-append-and-record shape: stale indexed tip
+        node.tx_seen_db.insert(TX_SEEN_INDEXED_TIP_KEY, &1u64.to_be_bytes()).unwrap();
+        node.tx_seen_db.remove(h2.as_bytes()).unwrap();
+        node.ensure_tx_seen_index().unwrap();
+        assert_eq!(node.tx_included_at(&h2), Some(2));
+        // full deterministic recovery re-derives it through import_block
+        node.recover_from_history().unwrap();
+        assert_eq!((node.tx_included_at(&h1), node.tx_included_at(&h2)), (Some(1), Some(2)));
+        assert_eq!(node.tip_height().unwrap(), 2);
     }
 }
