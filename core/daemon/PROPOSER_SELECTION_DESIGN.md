@@ -208,3 +208,40 @@ together with skip certificates; enabling it now would halt the chain on 2 of ev
 
 Node #2 and the outside validator stay non-mining; public block-import and peer-registration ingress stay
 blocked at the edge; the active tx-integrity rule is untouched.
+
+## 11. Approved amendments (2026-09-23) and implementation notes
+
+* **Rule as approved:** `proposer(H)` = greatest stake among validators with `stake > 0 && jailed_until ≤ H`
+  in the canonical validator state after `H−1`; ties → lowest raw public-key bytes; unauthorized proposer
+  rejected in `import_block` before the pre-apply snapshot. No fallback, rotation, randomness or slashing.
+* **Amendment 1 — missed-block freeze:** from the activation height `check_missed_blocks` performs no
+  `missed_blocks` increment, no auto-slash and no auto-jail for anyone; historical counters are left as
+  they are; `blocks_proposed` (informational; pre-existing double count per import preserved) still counts.
+* **Amendment 2 — producer anti-equivocation journal (node-local):** `proposal-journal-db` keyed by
+  `(height, parent_hash)` holds the complete sealed block. Write ordering in `mine_pending`: snapshot →
+  apply → root → sign → **journal (flushed)** → validator effects → append (commit) → broadcast. A second,
+  different block for a journaled slot is refused (`EQUIVOCATION GUARD`). A journaled block that was never
+  appended (crash between journal and append) is re-imported through the normal import path at the next
+  `mine_pending` and at `init`, and handed back for broadcast, so the chain is not stranded. If that
+  re-import ever fails the producer refuses to seal anything for that slot and raises a high-severity
+  error (operator inspects `proposal-journal-db`). The producer also refuses to seal a height it is not
+  designated for (node-local; stops the race between upgraded nodes before the fork activates).
+  **Limitation:** the journal binds one *process*; copying the proposer private key to a second machine
+  defeats it. Running more than one active producer with the same proposer key is unsupported.
+
+## 12. Validator admission — security consideration (unchanged in this release)
+
+Answers, from the code as it runs today:
+
+| Question | Answer |
+|---|---|
+| Can any account become proposer-eligible simply by staking? | **Yes.** A `stake` transaction from any funded account creates the validator record; eligibility for selection is `stake > 0 && jailed_until ≤ H`. |
+| Is validator registration permissionless? | **Yes.** No allow-list, no genesis membership requirement, no identity binding beyond the signing key. |
+| Is there a minimum stake? | **Only at the API.** `/api/v2/stake` and the CLI refuse `< 10,000 XRGE`; the consensus apply path (`apply_balance_tx_inner`, `"stake"`) enforces only `amount > 0` and sufficient balance. A raw block or a modified client can stake 1 XRGE. |
+| Is stake immediately effective for proposer selection at H+1? | **Yes.** A stake applied in block `H` is in the validator state after `H`, so it counts for `proposer(H+1)`. |
+| Can stake be withdrawn immediately? | The validator's `stake` field is reduced **immediately** by an `unstake` (it stops counting for selection at the next height); the XRGE itself is released after the 500-block unbonding period. |
+| Can an attacker temporarily out-stake the current producer and then exit? | **Yes, in two blocks.** Stake `> 100,000 XRGE` in block `H`, be the designated proposer from `H+1`, then unstake (the XRGE is locked for 500 blocks but nothing else is at stake). While designated and offline, the chain halts (no fallback); while designated and online, they control block production and transaction inclusion. **Cost:** the liquid XRGE required, ≈ 100,001 XRGE at today's stake distribution, locked for 500 blocks. Whether that is expensive depends on XRGE's market price and Base DEX liquidity, which were not assessed here and should not be assumed. |
+
+Implications carried into Release 2: a minimum stake and/or an activation delay (stake effective after N
+blocks) and an unbonding-period slash for a designated proposer that halts the chain are the natural
+mitigations; none is part of Release 1.
