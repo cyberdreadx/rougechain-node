@@ -19,6 +19,7 @@ mod bridge_btc;
 mod push;
 mod fork;
 mod fork_tables;
+mod v2_binding;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -5401,7 +5402,6 @@ async fn v2_transfer(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -5464,22 +5464,8 @@ async fn v2_transfer(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "transfer".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: state.node.get_next_nonce(&body.public_key),
-        payload: TxPayload {
-            to_pub_key_hex: Some(to.to_string()),
-            amount: Some(amount as u64),
-            token_name: Some(token.to_string()),
-            token_symbol: if token != "XRGE" { Some(token.to_string()) } else { None },
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("transfer", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -5497,7 +5483,7 @@ async fn v2_batch_submit(
     State(state): State<AppState>,
     Json(batch): Json<Vec<SignedTransactionRequest>>,
 ) -> Json<serde_json::Value> {
-    use quantum_vault_types::{TxPayload, TxV1};
+    use quantum_vault_types::TxV1;
 
     const MAX_BATCH: usize = 50;
     const VERIFY_CONCURRENCY: usize = 4;
@@ -5576,7 +5562,7 @@ async fn v2_batch_submit(
         let to = payload.get("to").and_then(|v| v.as_str()).unwrap_or_default();
         let amount = payload.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let token = payload.get("token").and_then(|v| v.as_str()).unwrap_or("XRGE");
-        let fee = 1.0_f64;
+        let _fee = 1.0_f64;
 
         if to.is_empty() || amount <= 0.0 || to == req.public_key {
             results[i] = serde_json::json!({"success": false, "error": "invalid transfer params"});
@@ -5590,22 +5576,8 @@ async fn v2_batch_submit(
             }
         }
 
-        let tx = TxV1 {
-            version: 1,
-            tx_type: "transfer".to_string(),
-            from_pub_key: req.public_key.clone(),
-            nonce: node.get_next_nonce(&req.public_key),
-            payload: TxPayload {
-                to_pub_key_hex: Some(to.to_string()),
-                amount: Some(amount as u64),
-                token_name: Some(token.to_string()),
-                token_symbol: if token != "XRGE" { Some(token.to_string()) } else { None },
-                ..Default::default()
-            },
-            fee,
-            sig: req.signature.clone(),
-            signed_payload: Some(signed_payload),
-        };
+        // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("transfer", req.public_key.clone(), node.get_next_nonce(&req.public_key), &req.payload, req.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => { results[i] = serde_json::json!({"success": false, "error": e}); continue; } };
 
         match node.add_tx_to_mempool_verified(tx.clone()) {
             Ok(()) => {
@@ -5646,7 +5618,6 @@ async fn v2_create_token(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -5657,9 +5628,9 @@ async fn v2_create_token(
     let token_symbol = payload.get("token_symbol").and_then(|v| v.as_str()).unwrap_or_default();
     let initial_supply = payload.get("initial_supply").and_then(|v| v.as_u64()).unwrap_or(0);
     let token_image = payload.get("image").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let token_description = payload.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let mintable = payload.get("mintable").and_then(|v| v.as_bool()).unwrap_or(false);
-    let max_supply = payload.get("max_supply").and_then(|v| v.as_u64());
+    let _token_description = payload.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let _mintable = payload.get("mintable").and_then(|v| v.as_bool()).unwrap_or(false);
+    let _max_supply = payload.get("max_supply").and_then(|v| v.as_u64());
     let fee = 100.0_f64; // Server-enforced token creation fee
 
     if token_name.is_empty() || token_symbol.is_empty() {
@@ -5709,24 +5680,8 @@ async fn v2_create_token(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "create_token".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: state.node.get_next_nonce(&body.public_key),
-        payload: TxPayload {
-            token_name: Some(token_name.to_string()),
-            token_symbol: Some(token_symbol.to_string()),
-            token_decimals: Some(18),
-            token_total_supply: Some(initial_supply),
-            metadata_image: token_image,
-            metadata_description: token_description,
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("create_token", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -5813,7 +5768,6 @@ async fn v2_token_approve(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let node = &state.node;
@@ -5833,21 +5787,8 @@ async fn v2_token_approve(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE for fee: {:.4} < {:.4}", bal, fee)}))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "approve".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            spender_pub_key: Some(spender.to_string()),
-            token_symbol: Some(token_symbol.to_string()),
-            allowance_amount: Some(amount),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("approve", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -5868,7 +5809,6 @@ async fn v2_token_transfer_from(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let node = &state.node;
@@ -5899,22 +5839,8 @@ async fn v2_token_transfer_from(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE for fee: {:.4} < {:.4}", bal, fee)}))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "transfer_from".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            owner_pub_key: Some(owner.to_string()),
-            to_pub_key_hex: Some(to.to_string()),
-            token_symbol: Some(token_symbol.to_string()),
-            amount: Some(amount),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("transfer_from", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -5997,7 +5923,6 @@ async fn v2_create_pool(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -6063,23 +5988,8 @@ async fn v2_create_pool(
         }
     }
     
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "create_pool".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            pool_id: Some(pool_id.clone()),
-            token_a_symbol: Some(token_a.to_string()),
-            token_b_symbol: Some(token_b.to_string()),
-            amount_a: Some(amount_a),
-            amount_b: Some(amount_b),
-            ..Default::default()
-        },
-        fee: pool_fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("create_pool", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -6098,7 +6008,6 @@ async fn v2_add_liquidity(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -6151,21 +6060,8 @@ async fn v2_add_liquidity(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "liquidity amounts must be greater than zero"}))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "add_liquidity".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            pool_id: Some(pool_id.to_string()),
-            amount_a: Some(amount_a),
-            amount_b: Some(amount_b),
-            ..Default::default()
-        },
-        fee: liq_fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("add_liquidity", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -6183,7 +6079,6 @@ async fn v2_remove_liquidity(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -6224,20 +6119,8 @@ async fn v2_remove_liquidity(
         }))));
     }
     
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "remove_liquidity".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            pool_id: Some(pool_id.to_string()),
-            lp_amount: Some(lp_amount),
-            ..Default::default()
-        },
-        fee: remove_fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("remove_liquidity", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -6255,7 +6138,6 @@ async fn v2_execute_swap(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -6265,7 +6147,7 @@ async fn v2_execute_swap(
     let token_in = payload.get("token_in").and_then(|v| v.as_str()).unwrap_or_default();
     let token_out = payload.get("token_out").and_then(|v| v.as_str()).unwrap_or_default();
     let amount_in = payload.get("amount_in").and_then(|v| v.as_u64()).unwrap_or(0);
-    let min_amount_out = payload.get("min_amount_out").and_then(|v| v.as_u64()).unwrap_or(0);
+    let _min_amount_out = payload.get("min_amount_out").and_then(|v| v.as_u64()).unwrap_or(0);
     
     let swap_fee = 1.0_f64;
 
@@ -6306,26 +6188,10 @@ async fn v2_execute_swap(
         }
     }
 
-    let pool_id = LiquidityPool::make_pool_id(token_in, token_out);
+    let _pool_id = LiquidityPool::make_pool_id(token_in, token_out);
     
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "swap".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            amount: Some(amount_in),
-            pool_id: Some(pool_id),
-            token_a_symbol: Some(token_in.to_string()),
-            token_b_symbol: Some(token_out.to_string()),
-            amount_a: Some(amount_in),
-            min_amount_out: Some(min_amount_out),
-            ..Default::default()
-        },
-        fee: swap_fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("swap", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -6343,7 +6209,6 @@ async fn v2_stake(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -6366,19 +6231,8 @@ async fn v2_stake(
         }))));
     }
     
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "stake".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            amount: Some(amount),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("stake", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -6396,7 +6250,6 @@ async fn v2_unstake(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -6433,19 +6286,8 @@ async fn v2_unstake(
         }))));
     }
     
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "unstake".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            amount: Some(amount),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("unstake", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -6513,28 +6355,27 @@ async fn v2_nft_create_collection(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let symbol = p.get("symbol").and_then(|v| v.as_str()).unwrap_or_default();
-    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
-    let description = p.get("description").and_then(|v| v.as_str()).map(String::from);
-    let image = p.get("image").and_then(|v| v.as_str()).map(String::from);
-    let max_supply = p.get("maxSupply").and_then(|v| v.as_u64());
-    let royalty_bps = p.get("royaltyBps").and_then(|v| v.as_u64()).map(|v| v as u16);
-    let royalty_recipient = p
+    let _name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+    let _description = p.get("description").and_then(|v| v.as_str()).map(String::from);
+    let _image = p.get("image").and_then(|v| v.as_str()).map(String::from);
+    let _max_supply = p.get("maxSupply").and_then(|v| v.as_u64());
+    let _royalty_bps = p.get("royaltyBps").and_then(|v| v.as_u64()).map(|v| v as u16);
+    let _royalty_recipient = p
         .get("royaltyRecipient")
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(String::from);
-    let public_mint = p.get("publicMint").and_then(|v| v.as_bool());
-    let mint_price = p.get("mintPrice").and_then(|v| v.as_f64());
-    let token_gate_symbol = p.get("tokenGateSymbol").and_then(|v| v.as_str()).map(String::from);
-    let token_gate_amount = p.get("tokenGateAmount").and_then(|v| v.as_f64());
-    let discount_pct = p.get("discountPct").and_then(|v| v.as_u64()).map(|v| v as u32);
+    let _public_mint = p.get("publicMint").and_then(|v| v.as_bool());
+    let _mint_price = p.get("mintPrice").and_then(|v| v.as_f64());
+    let _token_gate_symbol = p.get("tokenGateSymbol").and_then(|v| v.as_str()).map(String::from);
+    let _token_gate_amount = p.get("tokenGateAmount").and_then(|v| v.as_f64());
+    let _discount_pct = p.get("discountPct").and_then(|v| v.as_u64()).map(|v| v as u32);
 
     let nft_fee = 50.0_f64;
     let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
@@ -6542,30 +6383,8 @@ async fn v2_nft_create_collection(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE balance for collection fee: have {:.4}, need {:.4}", bal, nft_fee)}))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "nft_create_collection".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            nft_collection_symbol: Some(symbol.to_string()),
-            nft_collection_name: Some(name.to_string()),
-            nft_description: description,
-            nft_image: image,
-            nft_max_supply: max_supply,
-            nft_royalty_bps: royalty_bps,
-            nft_royalty_recipient: royalty_recipient,
-            nft_public_mint: public_mint,
-            nft_mint_price: mint_price,
-            nft_token_gate_symbol: token_gate_symbol,
-            nft_token_gate_amount: token_gate_amount,
-            nft_discount_pct: discount_pct,
-            ..Default::default()
-        },
-        fee: nft_fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("nft_create_collection", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let creator_short = if body.public_key.len() >= 16 { &body.public_key[..16] } else { &body.public_key };
     let collection_id = format!("col:{}:{}", creator_short, symbol.to_uppercase());
@@ -6587,15 +6406,14 @@ async fn v2_nft_mint(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
-    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
-    let metadata_uri = p.get("metadataUri").and_then(|v| v.as_str()).map(String::from);
-    let attributes = p.get("attributes").cloned();
+    let _name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+    let _metadata_uri = p.get("metadataUri").and_then(|v| v.as_str()).map(String::from);
+    let _attributes = p.get("attributes").cloned();
 
     let mint_fee = 5.0_f64;
     let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
@@ -6639,22 +6457,8 @@ async fn v2_nft_mint(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE: have {:.4}, need {:.4} (fee {:.4} + mint price {:.4})", bal, total_needed, mint_fee, mint_price_charge)}))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "nft_mint".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            nft_collection_id: Some(collection_id.to_string()),
-            nft_token_name: Some(name.to_string()),
-            nft_metadata_uri: metadata_uri,
-            nft_attributes: attributes,
-            ..Default::default()
-        },
-        fee: mint_fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("nft_mint", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     state.node.add_tx_to_mempool_verified(tx)
@@ -6672,7 +6476,6 @@ async fn v2_nft_batch_mint(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
@@ -6710,29 +6513,15 @@ async fn v2_nft_batch_mint(
         return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"success": false, "error": "collection not found"}))));
     }
 
-    let uris: Option<Vec<String>> = p.get("uris")
+    let _uris: Option<Vec<String>> = p.get("uris")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
-    let attributes: Option<Vec<serde_json::Value>> = p.get("attributes")
+    let _attributes: Option<Vec<serde_json::Value>> = p.get("attributes")
         .and_then(|v| v.as_array())
         .map(|arr| arr.to_vec());
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "nft_batch_mint".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            nft_collection_id: Some(collection_id.to_string()),
-            nft_batch_names: Some(names),
-            nft_batch_uris: uris,
-            nft_batch_attributes: attributes,
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("nft_batch_mint", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     state.node.add_tx_to_mempool_verified(tx)
@@ -6750,14 +6539,13 @@ async fn v2_nft_transfer(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
     let token_id = p.get("tokenId").and_then(|v| v.as_u64()).unwrap_or(0);
-    let to = p.get("to").and_then(|v| v.as_str()).unwrap_or_default();
+    let _to = p.get("to").and_then(|v| v.as_str()).unwrap_or_default();
     let sale_price = p.get("salePrice").and_then(|v| v.as_u64());
 
     let transfer_fee = 1.0_f64;
@@ -6794,22 +6582,8 @@ async fn v2_nft_transfer(
         }
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "nft_transfer".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            nft_collection_id: Some(collection_id.to_string()),
-            nft_token_id: Some(token_id),
-            to_pub_key_hex: Some(to.to_string()),
-            amount: sale_price,
-            ..Default::default()
-        },
-        fee: transfer_fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("nft_transfer", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     state.node.add_tx_to_mempool_verified(tx)
@@ -6827,7 +6601,6 @@ async fn v2_nft_burn(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
@@ -6853,20 +6626,8 @@ async fn v2_nft_burn(
         }
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "nft_burn".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            nft_collection_id: Some(collection_id.to_string()),
-            nft_token_id: Some(token_id),
-            ..Default::default()
-        },
-        fee: 0.1,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("nft_burn", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     state.node.add_tx_to_mempool_verified(tx)
@@ -6884,14 +6645,13 @@ async fn v2_nft_lock(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
     let token_id = p.get("tokenId").and_then(|v| v.as_u64()).unwrap_or(0);
-    let locked = p.get("locked").and_then(|v| v.as_bool()).unwrap_or(true);
+    let _locked = p.get("locked").and_then(|v| v.as_bool()).unwrap_or(true);
 
     let lock_fee = 0.1_f64;
     let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
@@ -6911,21 +6671,8 @@ async fn v2_nft_lock(
         }
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "nft_lock".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            nft_collection_id: Some(collection_id.to_string()),
-            nft_token_id: Some(token_id),
-            nft_locked: Some(locked),
-            ..Default::default()
-        },
-        fee: 0.1,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("nft_lock", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     state.node.add_tx_to_mempool_verified(tx)
@@ -6943,13 +6690,12 @@ async fn v2_nft_freeze_collection(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
-    let frozen = p.get("frozen").and_then(|v| v.as_bool()).unwrap_or(true);
+    let _frozen = p.get("frozen").and_then(|v| v.as_bool()).unwrap_or(true);
 
     let freeze_fee = 0.1_f64;
     let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
@@ -6969,20 +6715,8 @@ async fn v2_nft_freeze_collection(
         }
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "nft_freeze_collection".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            nft_collection_id: Some(collection_id.to_string()),
-            nft_frozen: Some(frozen),
-            ..Default::default()
-        },
-        fee: 0.1,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("nft_freeze_collection", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     state.node.add_tx_to_mempool_verified(tx)
@@ -9244,7 +8978,6 @@ async fn v2_shield(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
@@ -9275,20 +9008,8 @@ async fn v2_shield(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "shield".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: state.node.get_next_nonce(&body.public_key),
-        payload: TxPayload {
-            shielded_commitment: Some(commitment.to_string()),
-            shielded_value: Some(amount),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("shield", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -9308,7 +9029,6 @@ async fn v2_shielded_transfer(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
@@ -9389,22 +9109,8 @@ async fn v2_shielded_transfer(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "shielded_transfer".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: state.node.get_next_nonce(&body.public_key),
-        payload: TxPayload {
-            shielded_nullifiers: Some(nullifiers),
-            shielded_output_commitments: Some(output_commitments),
-            shielded_proof: Some(proof_hex.to_string()),
-            shielded_fee: Some(shielded_fee),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("shielded_transfer", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -9423,7 +9129,6 @@ async fn v2_unshield(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
@@ -9498,21 +9203,8 @@ async fn v2_unshield(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "unshield".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: state.node.get_next_nonce(&body.public_key),
-        payload: TxPayload {
-            shielded_nullifiers: Some(nullifiers),
-            shielded_value: Some(amount),
-            shielded_proof: Some(proof_hex.to_string()),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("unshield", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -9834,7 +9526,6 @@ async fn v2_token_mint(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
@@ -9900,20 +9591,8 @@ async fn v2_token_mint(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "mint_tokens".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: state.node.get_next_nonce(&body.public_key),
-        payload: TxPayload {
-            token_symbol: Some(token_symbol.to_string()),
-            token_total_supply: Some(amount),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("mint_tokens", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
