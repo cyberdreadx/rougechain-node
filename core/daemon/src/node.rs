@@ -164,6 +164,31 @@ pub fn tx_uniqueness_rule_active(height: u64) -> bool {
 /// Meta key inside the tx-seen tree: the tip height the index is complete up to.
 const TX_SEEN_INDEXED_TIP_KEY: &[u8] = b"__indexed_tip_v2";
 
+/// PROPOSER SELECTION, Release 1 (see `PROPOSER_SELECTION_DESIGN.md`). From this height on, block
+/// `H` is valid only if its proposer is `designated_proposer(H)`: the eligible validator
+/// (`stake > 0 && jailed_until <= H`) with the greatest stake in the canonical validator state after
+/// block `H-1`, ties broken by the lowest raw public-key bytes. No fallback, no rotation, no
+/// randomness: if the designated proposer is offline the chain halts at `H-1`. At the same height the
+/// legacy missed-block accounting (increment / auto-slash / auto-jail) is frozen: without a fallback
+/// there is no consensus block from which a missed slot could be derived. `None` = not scheduled.
+pub const PROPOSER_SELECTION_ACTIVATION_HEIGHT: Option<u64> = None;
+#[cfg(test)]
+thread_local! {
+    static TEST_PROPOSER_SELECTION_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[inline]
+fn proposer_selection_activation_height() -> Option<u64> {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_PROPOSER_SELECTION_OVERRIDE.with(|c| c.get()) { return h; }
+    }
+    PROPOSER_SELECTION_ACTIVATION_HEIGHT
+}
+#[inline]
+pub fn proposer_selection_active(height: u64) -> bool {
+    matches!(proposer_selection_activation_height(), Some(a) if height >= a)
+}
+
 /// Height after which a P2P-imported block's proposer MUST be a staked validator
 /// (`stake > 0`) in the on-chain validator set, or the block is rejected on
 /// `import_block`. Blocks at or below this height skip *only that* check — a
@@ -289,6 +314,10 @@ pub struct L1Node {
     /// `TX_UNIQUENESS_ACTIVATION_HEIGHT`). Written only after a block is durable; rebuilt
     /// from the stored chain on every start.
     tx_seen_db: sled::Tree,
+    /// Producer anti-equivocation journal (node-local safety, NOT a consensus rule): the exact sealed
+    /// block this node proposed for each (height, parent_hash), written before the block is made
+    /// durable/broadcast. See `journal_proposal` / `recover_pending_proposal`.
+    proposal_journal: sled::Tree,
     social_store: SocialStore,
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
@@ -362,6 +391,10 @@ impl L1Node {
         let receipt_db = sled::open(opts.data_dir.join("receipt-db"))
             .map_err(|e| format!("open receipt DB: {}", e))?;
         let receipt_store = ReceiptStore::new(&receipt_db)?;
+        let proposal_journal = sled::open(opts.data_dir.join("proposal-journal-db"))
+            .map_err(|e| format!("open proposal journal: {}", e))?
+            .open_tree("proposals")
+            .map_err(|e| format!("open proposal tree: {}", e))?;
         let tx_seen_db = sled::open(opts.data_dir.join("tx-seen-db"))
             .map_err(|e| format!("open tx-seen DB: {}", e))?
             .open_tree("tx_hashes")
@@ -439,6 +472,7 @@ impl L1Node {
             shielded_supply: Arc::new(Mutex::new(0.0)),
             mined_tx_hashes: Arc::new(Mutex::new(HashSet::new())),
             tx_seen_db,
+            proposal_journal,
             wasm_runtime: None,
             contract_store: None,
             snapshot_db,
@@ -513,6 +547,9 @@ impl L1Node {
         self.rebuild_proposer_counts()?;
         // C1: the tx-seen index is derived state — make it complete for the stored chain.
         self.ensure_tx_seen_index()?;
+        // Amendment 2: a proposal journaled before a crash but never appended is re-imported now,
+        // so this node re-broadcasts the same block instead of sealing a second one.
+        self.recover_pending_proposal();
         // R1: derived bridge payout store — idempotent reconstruction from accepted history on
         // every start, so a missed persistence (crash, disk error) never survives a restart.
         match self.rebuild_bridge_withdraw_store() {
@@ -958,6 +995,12 @@ impl L1Node {
         // C1: transaction uniqueness (consensus rule from TX_UNIQUENESS_ACTIVATION_HEIGHT).
         if tx_uniqueness_rule_active(block.header.height) {
             self.check_block_tx_uniqueness(&block)?;
+        }
+        // Proposer selection (consensus rule from PROPOSER_SELECTION_ACTIVATION_HEIGHT): judged
+        // against the validator state after H-1 = the store as it is right now, before any
+        // state of this block is applied.
+        if proposer_selection_active(block.header.height) {
+            self.check_designated_proposer(&block)?;
         }
 
         // Apply state BEFORE storing to disk (atomic: don't store blocks we can't apply)
@@ -2597,6 +2640,29 @@ impl L1Node {
     }
 
     pub fn mine_pending(&self) -> Result<Option<BlockV1>, String> {
+        // Producer-side proposer rule + anti-equivocation journal, BEFORE touching the mempool.
+        {
+            let tip = self.store.get_tip()?;
+            let next = tip.height + 1;
+            // A proposal already journaled for (next, tip.hash) is THE proposal for this slot:
+            // re-import/re-broadcast it, never construct a second one.
+            if let Some(recorded) = self.pending_proposal(next, &tip.hash)? {
+                return self.replay_recorded_proposal(recorded).map(Some);
+            }
+            if proposer_selection_active(next) {
+                let me = self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone();
+                match self.designated_proposer(next)? {
+                    Some(d) if d == me => {}
+                    other => {
+                        // Not our slot (or no eligible validator): refuse to seal. Transactions stay
+                        // queued for the designated proposer / a later slot.
+                        eprintln!("[miner] not the designated proposer for height {} (designated: {}) — not sealing",
+                            next, other.map(|d| d[..16.min(d.len())].to_string()).unwrap_or_else(|| "none".into()));
+                        return Ok(None);
+                    }
+                }
+            }
+        }
         let mut mempool = self.mempool.lock().map_err(|_| "mempool lock")?;
         if mempool.is_empty() {
             return Ok(None);
@@ -2679,6 +2745,9 @@ impl L1Node {
             let proposer_sig = pqc_sign(&self.keys.lock().map_err(|_| "keys lock")?.secret_key_hex, &header_bytes)?;
             let hash = compute_block_hash(&header_bytes, &proposer_sig);
             let block = BlockV1 { version: 1, header, txs: prelim_block.txs.clone(), proposer_sig, hash };
+            // Amendment 2: durable proposal record for (height, parent) BEFORE the block can be made
+            // durable or broadcast. A different record for this slot ⇒ refuse (equivocation guard).
+            self.journal_proposal(&block)?;
             // Validator-store effects BEFORE the block is durable (post-root, store-only).
             self.apply_validator_block(&block, &block_exec.validator)?;
             #[cfg(test)]
@@ -2841,6 +2910,93 @@ impl L1Node {
         self.tx_seen_db.flush().map_err(|e| e.to_string())?;
         eprintln!("[init] tx-seen index rebuilt: {} tx hashes over {} blocks (tip {})", n, blocks.len(), tip);
         Ok(())
+    }
+
+    // ── Proposer selection (Release 1) ───────────────────────────────────────────────
+    /// Eligible validators after the current tip, ordered by raw public-key bytes (never by
+    /// store iteration order). Eligible ⇔ stake > 0 && jailed_until <= height.
+    fn eligible_validators_ordered(&self, height: u64) -> Result<Vec<(Vec<u8>, String, u128)>, String> {
+        let mut v: Vec<(Vec<u8>, String, u128)> = self.validator_store.list_validators()?
+            .into_iter()
+            .filter(|(_, st)| st.stake > 0 && st.jailed_until <= height)
+            .map(|(pk, st)| (quantum_vault_crypto::hex_to_bytes(&pk).unwrap_or_else(|_| pk.as_bytes().to_vec()), pk, st.stake))
+            .collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(v)
+    }
+
+    /// `designated_proposer(H)`: greatest stake among the eligible validators in the canonical
+    /// validator state after `H-1` (= the store now, when called with H = tip+1 or from
+    /// `import_block` before the block is applied); ties → lowest raw key bytes (first in order).
+    pub fn designated_proposer(&self, height: u64) -> Result<Option<String>, String> {
+        let mut best: Option<(String, u128)> = None;
+        for (_, pk, stake) in self.eligible_validators_ordered(height)? {
+            match &best { Some((_, s)) if *s >= stake => {} _ => best = Some((pk, stake)) }
+        }
+        Ok(best.map(|(pk, _)| pk))
+    }
+
+    fn check_designated_proposer(&self, block: &BlockV1) -> Result<(), String> {
+        let h = block.header.height;
+        match self.designated_proposer(h)? {
+            Some(d) if d == block.header.proposer_pub_key => Ok(()),
+            Some(d) => Err(format!("block {} rejected: proposer {} is not the designated proposer ({})",
+                h, &block.header.proposer_pub_key[..16.min(block.header.proposer_pub_key.len())], &d[..16.min(d.len())])),
+            None => Err(format!("block {} rejected: no eligible validator to propose", h)),
+        }
+    }
+
+    // ── Producer anti-equivocation journal (node-local) ─────────────────────────────
+    fn proposal_key(height: u64, parent_hash: &str) -> Vec<u8> { format!("{}:{}", height, parent_hash).into_bytes() }
+
+    /// The proposal this node already journaled for (height, parent), if any.
+    pub fn pending_proposal(&self, height: u64, parent_hash: &str) -> Result<Option<BlockV1>, String> {
+        match self.proposal_journal.get(Self::proposal_key(height, parent_hash)).map_err(|e| e.to_string())? {
+            Some(v) => serde_json::from_slice(&v).map(Some).map_err(|e| format!("proposal journal corrupt: {}", e)),
+            None => Ok(None),
+        }
+    }
+
+    /// Record the exact sealed block for its (height, parent). Byte-identical re-record is a no-op;
+    /// a DIFFERENT block for the same slot is refused — this node must never sign two proposals for
+    /// one slot. Durable (flushed) before returning.
+    fn journal_proposal(&self, block: &BlockV1) -> Result<(), String> {
+        let key = Self::proposal_key(block.header.height, &block.header.prev_hash);
+        let bytes = serde_json::to_vec(block).map_err(|e| e.to_string())?;
+        if let Some(existing) = self.proposal_journal.get(&key).map_err(|e| e.to_string())? {
+            if existing.as_ref() == bytes.as_slice() { return Ok(()); }
+            let prev: Option<BlockV1> = serde_json::from_slice(&existing).ok();
+            return Err(format!("EQUIVOCATION GUARD: refusing to seal a second, different block for height {} on parent {} (already proposed {}; candidate {})",
+                block.header.height, &block.header.prev_hash[..16], prev.map(|b| b.hash[..16].to_string()).unwrap_or_else(|| "?".into()), &block.hash[..16]));
+        }
+        self.proposal_journal.insert(key, bytes).map_err(|e| e.to_string())?;
+        self.proposal_journal.flush().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// A journaled proposal for (tip+1, tip.hash) that is not yet on our chain: make it our block
+    /// through the real import path (same validation as any block) and hand it back for broadcast.
+    fn replay_recorded_proposal(&self, recorded: BlockV1) -> Result<BlockV1, String> {
+        let tip = self.store.get_tip()?;
+        if recorded.header.height == tip.height && recorded.hash == tip.hash { return Ok(recorded); } // already ours
+        eprintln!("[miner] re-using journaled proposal for height {} ({}) instead of sealing a new block",
+            recorded.header.height, &recorded.hash[..16]);
+        self.import_block(recorded.clone()).map_err(|e| format!(
+            "HIGH SEVERITY: journaled proposal for height {} ({}) cannot be re-imported ({}); refusing to seal a different block for the same slot — operator inspection required (proposal-journal-db)",
+            recorded.header.height, &recorded.hash[..16], e))?;
+        Ok(recorded)
+    }
+
+    fn recover_pending_proposal(&self) {
+        let Ok(tip) = self.store.get_tip() else { return };
+        match self.pending_proposal(tip.height + 1, &tip.hash) {
+            Ok(Some(b)) => match self.replay_recorded_proposal(b) {
+                Ok(b) => eprintln!("[init] recovered journaled proposal {} at height {}", &b.hash[..16], b.header.height),
+                Err(e) => eprintln!("[init] {}", e),
+            },
+            Ok(None) => {}
+            Err(e) => eprintln!("[init] proposal journal: {}", e),
+        }
     }
 
     pub fn get_account_nonce(&self, pubkey: &str) -> u64 {
@@ -6082,6 +6238,18 @@ impl L1Node {
     fn check_missed_blocks(&self, block: &BlockV1) {
         // Get the block proposer
         let proposer = &block.header.proposer_pub_key;
+        if proposer_selection_active(block.header.height) {
+            // Amendment 1: legacy missed-block accounting is FROZEN from the activation height.
+            // Only the designated proposer can produce a block, and without a fallback proposer a
+            // missed slot never becomes a consensus block, so no validator may accumulate
+            // `missed_blocks`, be auto-slashed or auto-jailed here. Historical counters are left
+            // exactly as they are. `blocks_proposed` is informational and still counts.
+            if let Ok(Some(mut state)) = self.validator_store.get_validator(proposer) {
+                state.blocks_proposed += 1;
+                let _ = self.validator_store.set_validator(proposer, &state);
+            }
+            return;
+        }
         // Get all active validators
         if let Ok(validators) = self.validator_store.list_validators() {
             for (pubkey, mut state) in validators {
@@ -9847,5 +10015,311 @@ mod v2_binding_tests {
         eprintln!("HISTORICAL V2 BINDING: {ok} pass, {} differ:\n  {}", fail.len(), fail.join("\n  "));
         // 20 API-format + 6 CLI-envelope txs; ALL satisfy the proposed rule (pinned).
         assert_eq!((ok, fail.len()), (26, 0), "{fail:?}");
+    }
+}
+
+/// Proposer selection, Release 1 (PROPOSER_SELECTION_DESIGN.md) — consensus rule, missed-block
+/// freeze (Amendment 1) and the producer anti-equivocation journal (Amendment 2).
+#[cfg(test)]
+mod proposer_selection_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, sealed_block, signed, TmpDir};
+    use quantum_vault_crypto::pqc_keygen;
+    use quantum_vault_storage::validator_store::ValidatorState;
+
+    fn vstate(stake: u128) -> ValidatorState {
+        ValidatorState { stake, slash_count: 0, jailed_until: 0, entropy_contributions: 0, blocks_proposed: 0, name: None, missed_blocks: 0, total_slashed: 0 }
+    }
+    fn set_v(node: &L1Node, pk: &str, st: ValidatorState) { node.validator_store.set_validator(pk, &st).unwrap(); }
+    fn setup(activation: Option<u64>) -> (TmpDir, L1Node) {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(u64::MAX)));
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(None)));
+        TEST_PROPOSER_SELECTION_OVERRIDE.with(|c| c.set(Some(activation)));
+        let (d, node, _s) = node_with_store();
+        (d, node)
+    }
+    fn reopen(d: &TmpDir) -> L1Node {
+        let node = L1Node::new(NodeOptions {
+            data_dir: d.0.clone(),
+            chain: ChainConfig { chain_id: "test".to_string(), genesis_time: 0, block_time_ms: 1000 },
+            mine: false, bridge_withdraw_store: None, bridge_authority_keys: Vec::new(),
+            genesis_allocations: Vec::new(), genesis_validators: Vec::new(),
+        }).expect("reopen");
+        node.init().expect("init");
+        node
+    }
+    fn transfer(from: &PQKeypair, to: &str, amount: u64, nonce: u64) -> TxV1 {
+        signed(TxV1 { version: 1, tx_type: "transfer".into(), from_pub_key: from.public_key_hex.clone(), nonce,
+            payload: TxPayload { to_pub_key_hex: Some(to.into()), amount: Some(amount), ..Default::default() },
+            fee: 0.1, sig: String::new(), signed_payload: None }, &from.secret_key_hex)
+    }
+    fn stake(from: &PQKeypair, amount: u64, nonce: u64) -> TxV1 {
+        signed(TxV1 { version: 1, tx_type: "stake".into(), from_pub_key: from.public_key_hex.clone(), nonce,
+            payload: TxPayload { amount: Some(amount), ..Default::default() }, fee: 1.0, sig: String::new(), signed_payload: None }, &from.secret_key_hex)
+    }
+    fn seal(node: &L1Node, p: &PQKeypair, txs: Vec<TxV1>) -> BlockV1 {
+        sealed_block(node, &p.public_key_hex, &p.secret_key_hex, txs, None, chrono::Utc::now().timestamp_millis() as u64)
+    }
+    /// Two keys ordered by RAW key bytes (lo, hi).
+    fn ordered_pair() -> (PQKeypair, PQKeypair) {
+        let (a, b) = (pqc_keygen(), pqc_keygen());
+        let (ab, bb) = (quantum_vault_crypto::hex_to_bytes(&a.public_key_hex).unwrap(), quantum_vault_crypto::hex_to_bytes(&b.public_key_hex).unwrap());
+        if ab < bb { (a, b) } else { (b, a) }
+    }
+
+    #[test]
+    fn t01_t02_authorized_accepted_unauthorized_rejected_same_height() {
+        let (_d, node) = setup(Some(1));
+        let (a, b) = (pqc_keygen(), pqc_keygen()); let user = pqc_keygen(); fund_xrge(&node, &user.public_key_hex, 100.0);
+        set_v(&node, &a.public_key_hex, vstate(100_000)); set_v(&node, &b.public_key_hex, vstate(10_000));
+        assert_eq!(node.designated_proposer(1).unwrap().as_deref(), Some(a.public_key_hex.as_str()));
+        // both validators seal height 1 on the same parent (the height-60 shape)
+        let tx = transfer(&user, &a.public_key_hex, 1, 1);
+        let by_b = seal(&node, &b, vec![tx.clone()]); let by_a = seal(&node, &a, vec![tx]);
+        let before = node.balances.lock().unwrap().clone();
+        let err = node.import_block(by_b).unwrap_err();
+        assert!(err.contains("not the designated proposer"), "{err}");
+        assert_eq!(node.tip_height().unwrap(), 0); assert_eq!(*node.balances.lock().unwrap(), before, "rejected before any state application");
+        node.import_block(by_a).expect("designated proposer accepted");
+        assert_eq!(node.tip_height().unwrap(), 1);
+    }
+
+    #[test]
+    fn t03_activation_boundary() {
+        let (_d, node) = setup(Some(2));
+        let (a, b) = (pqc_keygen(), pqc_keygen()); let user = pqc_keygen(); fund_xrge(&node, &user.public_key_hex, 100.0);
+        set_v(&node, &a.public_key_hex, vstate(100_000)); set_v(&node, &b.public_key_hex, vstate(10_000));
+        node.import_block(seal(&node, &b, vec![transfer(&user, &a.public_key_hex, 1, 1)])).expect("A-1: legacy — any staked validator");
+        let err = node.import_block(seal(&node, &b, vec![transfer(&user, &a.public_key_hex, 1, 2)])).unwrap_err();
+        assert!(err.contains("not the designated proposer"), "A: {err}");
+        node.import_block(seal(&node, &a, vec![transfer(&user, &a.public_key_hex, 1, 2)])).unwrap();
+        assert_eq!(node.tip_height().unwrap(), 2);
+    }
+
+    #[test]
+    fn t04_t05_highest_stake_wins_and_raw_key_tie_break() {
+        let (_d, node) = setup(Some(1));
+        let (lo, hi) = ordered_pair();
+        set_v(&node, &lo.public_key_hex, vstate(10_000)); set_v(&node, &hi.public_key_hex, vstate(100_000));
+        assert_eq!(node.designated_proposer(1).unwrap().unwrap(), hi.public_key_hex, "highest stake wins");
+        set_v(&node, &lo.public_key_hex, vstate(100_000));
+        assert_eq!(node.designated_proposer(1).unwrap().unwrap(), lo.public_key_hex, "equal stake → lowest raw key bytes");
+        // hex case of the stored key must not matter for the ordering (raw bytes are compared)
+    }
+
+    #[test]
+    fn t06_t07_stake_in_h_minus_1_affects_h_stake_in_h_affects_h_plus_1() {
+        let (_d, node) = setup(Some(1));
+        let a = pqc_keygen(); let c = pqc_keygen(); fund_xrge(&node, &c.public_key_hex, 200_000.0);
+        set_v(&node, &a.public_key_hex, vstate(100_000));
+        // block 1 (proposed by A, judged against the state after block 0) carries C's 150k stake
+        assert_eq!(node.designated_proposer(1).unwrap().unwrap(), a.public_key_hex);
+        node.import_block(seal(&node, &a, vec![stake(&c, 150_000, 1)])).unwrap();
+        assert_eq!(node.validator_store.get_validator(&c.public_key_hex).unwrap().unwrap().stake, 150_000);
+        // from block 2 on, C is designated: A's block 2 is rejected, C's accepted
+        assert_eq!(node.designated_proposer(2).unwrap().unwrap(), c.public_key_hex, "stake applied in H-1 counts for H");
+        let err = node.import_block(seal(&node, &a, vec![transfer(&c, &a.public_key_hex, 1, 2)])).unwrap_err();
+        assert!(err.contains("not the designated proposer"), "{err}");
+        node.import_block(seal(&node, &c, vec![transfer(&c, &a.public_key_hex, 1, 2)])).unwrap();
+        assert_eq!(node.tip_height().unwrap(), 2);
+    }
+
+    #[test]
+    fn t08_t09_jailed_excluded_and_jail_expiry_deterministic() {
+        let (_d, node) = setup(Some(1));
+        let (a, b) = (pqc_keygen(), pqc_keygen());
+        set_v(&node, &a.public_key_hex, vstate(100_000));
+        set_v(&node, &b.public_key_hex, ValidatorState { jailed_until: 10, ..vstate(200_000) });
+        for h in 1..10 { assert_eq!(node.designated_proposer(h).unwrap().unwrap(), a.public_key_hex, "h{h}: jailed B excluded"); }
+        assert_eq!(node.designated_proposer(10).unwrap().unwrap(), b.public_key_hex, "jailed_until <= H ⇒ eligible again exactly at 10");
+        assert_eq!(node.designated_proposer(11).unwrap().unwrap(), b.public_key_hex);
+        set_v(&node, &b.public_key_hex, ValidatorState { jailed_until: 10, stake: 0, ..vstate(0) });
+        assert_eq!(node.designated_proposer(11).unwrap().unwrap(), a.public_key_hex, "stake 0 never eligible");
+    }
+
+    #[test]
+    fn t10_ordering_independent_of_store_iteration_order() {
+        let keys: Vec<PQKeypair> = (0..5).map(|_| pqc_keygen()).collect();
+        let (_d1, n1) = setup(Some(1)); let (_d2, n2) = setup(Some(1));
+        for k in keys.iter() { set_v(&n1, &k.public_key_hex, vstate(50_000)); }
+        for k in keys.iter().rev() { set_v(&n2, &k.public_key_hex, vstate(50_000)); }
+        // overwrite in a third, shuffled order too
+        for k in [3usize, 0, 4, 1, 2].iter().map(|i| &keys[*i]) { set_v(&n2, &k.public_key_hex, vstate(50_000)); }
+        let e1 = n1.eligible_validators_ordered(1).unwrap(); let e2 = n2.eligible_validators_ordered(1).unwrap();
+        assert_eq!(e1, e2); assert!(e1.windows(2).all(|w| w[0].0 < w[1].0), "strictly ascending raw key bytes");
+        assert_eq!(n1.designated_proposer(1).unwrap(), n2.designated_proposer(1).unwrap());
+        let min_key = keys.iter().min_by_key(|k| quantum_vault_crypto::hex_to_bytes(&k.public_key_hex).unwrap()).unwrap();
+        assert_eq!(n1.designated_proposer(1).unwrap().unwrap(), min_key.public_key_hex);
+    }
+
+    #[test]
+    fn t11_separate_nodes_derive_identical_proposer_from_the_same_blocks() {
+        let (_d1, n1) = setup(Some(1)); let (_d2, n2) = setup(Some(1));
+        let a = pqc_keygen(); let c = pqc_keygen();
+        for n in [&n1, &n2] { fund_xrge(n, &c.public_key_hex, 200_000.0); set_v(n, &a.public_key_hex, vstate(100_000)); }
+        let b1 = seal(&n1, &a, vec![stake(&c, 150_000, 1)]);
+        n1.import_block(b1.clone()).unwrap(); n2.import_block(b1).unwrap();
+        assert_eq!(n1.designated_proposer(2).unwrap(), n2.designated_proposer(2).unwrap());
+        assert_eq!(n1.designated_proposer(2).unwrap().unwrap(), c.public_key_hex);
+        let b2 = seal(&n1, &c, vec![transfer(&c, &a.public_key_hex, 1, 2)]);
+        n1.import_block(b2.clone()).unwrap(); n2.import_block(b2).unwrap();
+        assert_eq!(n1.get_block(2).unwrap().unwrap().hash, n2.get_block(2).unwrap().unwrap().hash);
+    }
+
+    #[test]
+    fn t12_restart_derives_identical_proposer() {
+        let (d, node) = setup(Some(1));
+        let a = pqc_keygen(); let c = pqc_keygen(); fund_xrge(&node, &c.public_key_hex, 200_000.0);
+        set_v(&node, &a.public_key_hex, vstate(100_000));
+        node.import_block(seal(&node, &a, vec![stake(&c, 150_000, 1)])).unwrap();
+        let before = node.designated_proposer(2).unwrap();
+        drop(node);
+        let node = reopen(&d);
+        assert_eq!(node.designated_proposer(2).unwrap(), before);
+        assert_eq!(node.designated_proposer(2).unwrap().unwrap(), c.public_key_hex);
+    }
+
+    #[test]
+    fn t15_t16_passive_validators_accumulate_no_missed_blocks_and_cannot_be_slashed_at_or_above_a() {
+        let (_d, node) = setup(Some(3));
+        let (a, b) = (pqc_keygen(), pqc_keygen()); let user = pqc_keygen(); fund_xrge(&node, &user.public_key_hex, 1_000.0);
+        set_v(&node, &a.public_key_hex, vstate(100_000));
+        set_v(&node, &b.public_key_hex, ValidatorState { missed_blocks: 47, ..vstate(10_000) }); // node #2's shape
+        let v = |pk: &str| node.validator_store.get_validator(pk).unwrap().unwrap();
+        // below A (heights 1, 2): legacy accounting still increments (pinned)
+        for n in 1..=2u64 { node.import_block(seal(&node, &a, vec![transfer(&user, &a.public_key_hex, 1, n)])).unwrap(); }
+        assert_eq!(v(&b.public_key_hex).missed_blocks, 49, "legacy below A: 47 + 2");
+        // at/above A: 25 blocks by the designated proposer; B stays passive
+        for n in 3..=27u64 { node.import_block(seal(&node, &a, vec![transfer(&user, &a.public_key_hex, 1, n)])).unwrap(); }
+        let vb = v(&b.public_key_hex);
+        assert_eq!(vb.missed_blocks, 49, "frozen: no increments at/above A (would have crossed 50 on the first block)");
+        assert_eq!((vb.stake, vb.slash_count, vb.jailed_until, vb.total_slashed), (10_000, 0, 0, 0), "no auto-slash, no jail");
+        let va = v(&a.public_key_hex);
+        // blocks_proposed is informational and is (pre-existing behaviour) incremented twice per imported
+        // block: once in check_missed_blocks and once in import_block's proposer-stats bookkeeping.
+        assert_eq!(va.missed_blocks, 0); assert_eq!(va.blocks_proposed, 2 * 27, "informational counter still counts (legacy double count preserved)");
+        assert_eq!(node.tip_height().unwrap(), 27);
+    }
+
+    #[test]
+    fn t16b_legacy_auto_slash_still_fires_below_activation_pinned() {
+        let (_d, node) = setup(Some(100));
+        let (a, b) = (pqc_keygen(), pqc_keygen()); let user = pqc_keygen(); fund_xrge(&node, &user.public_key_hex, 100.0);
+        set_v(&node, &a.public_key_hex, vstate(100_000));
+        set_v(&node, &b.public_key_hex, ValidatorState { missed_blocks: 49, ..vstate(10_000) });
+        node.import_block(seal(&node, &a, vec![transfer(&user, &a.public_key_hex, 1, 1)])).unwrap();
+        let vb = node.validator_store.get_validator(&b.public_key_hex).unwrap().unwrap();
+        assert_eq!((vb.stake, vb.slash_count, vb.jailed_until, vb.missed_blocks), (9_000, 1, 1 + 20, 0), "the legacy rule that slashed the outside validator at 69");
+    }
+
+    // ── 13/14: full canonical mainnet replay through the live tip (95) ──
+    fn replay_0_95(activation: Option<u64>) {
+        TEST_PROPOSER_SELECTION_OVERRIDE.with(|c| c.set(Some(activation)));
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(Some(90))));   // the production value
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-95.jsonl");
+        let (last_ok, failure, node, _dir) = super::strict_historical_replay_tests::replay_fixture_node_from(fixture);
+        assert!(failure.is_none(), "activation {activation:?}: first divergence at {failure:?} (last accepted {last_ok})");
+        assert_eq!(last_ok, 95);
+        let blocks: Vec<BlockV1> = std::fs::read_to_string(fixture).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        // every stored block is byte-identical to the fixture (hash) and its committed root is what we recomputed
+        for b in &blocks { assert_eq!(node.get_block(b.header.height).unwrap().unwrap().hash, b.hash, "h{}", b.header.height); }
+        assert_eq!(node.compute_current_state_root().unwrap(), blocks[95].header.state_root.clone().unwrap(), "live tip state root");
+        // canonical validator state after 95 → the designated proposer for 96 is the primary
+        assert_eq!(node.designated_proposer(96).unwrap().unwrap()[..8].to_string(), "8ccf7878");
+        let v21 = node.list_validators().unwrap().into_iter().find(|(k, _)| k.starts_with("21e0ed0a")).unwrap().1;
+        assert_eq!((v21.stake, v21.slash_count, v21.jailed_until), (9_000, 1, 89), "outside validator's historical slash at 69 is preserved");
+    }
+    #[test] fn t13_t14_replay_0_95_with_rule_unscheduled() { replay_0_95(None); }
+    #[test] fn t13_t14_replay_0_95_with_rule_scheduled_after_tip() { replay_0_95(Some(96)); }
+
+    // ── 17–20: producer anti-equivocation journal + producer-side proposer rule ──
+    /// A producer node: its OWN key is the designated proposer.
+    fn producer(activation: Option<u64>) -> (TmpDir, L1Node, PQKeypair) {
+        let (d, node) = setup(activation);
+        let me = node.keys.lock().unwrap().clone();
+        set_v(&node, &me.public_key_hex, vstate(100_000));
+        let user = pqc_keygen(); fund_xrge(&node, &user.public_key_hex, 1_000.0);
+        (d, node, user)
+    }
+
+    #[test]
+    fn t17_durable_proposal_survives_restart() {
+        let (d, node, user) = producer(Some(1));
+        node.mempool.lock().unwrap().insert("t1".into(), transfer(&user, &user.public_key_hex, 1, 1));
+        let mined = node.mine_pending().unwrap().expect("sealed");
+        let genesis_hash = node.get_block(0).unwrap().unwrap().hash;
+        assert_eq!(node.pending_proposal(1, &genesis_hash).unwrap().unwrap().hash, mined.hash);
+        drop(node);
+        let node = reopen(&d);
+        assert_eq!(serde_json::to_vec(&node.pending_proposal(1, &genesis_hash).unwrap().unwrap()).unwrap(), serde_json::to_vec(&mined).unwrap(), "byte-identical record after restart");
+        assert_eq!(node.tip_height().unwrap(), 1);
+    }
+
+    #[test]
+    fn t18_second_different_proposal_for_the_same_slot_is_refused() {
+        let (_d, node, user) = producer(Some(1));
+        let me = node.keys.lock().unwrap().clone();
+        let b1 = seal(&node, &me, vec![transfer(&user, &user.public_key_hex, 1, 1)]);
+        let b2 = seal(&node, &me, vec![transfer(&user, &user.public_key_hex, 2, 1)]);
+        assert_ne!(b1.hash, b2.hash);
+        node.journal_proposal(&b1).unwrap();
+        node.journal_proposal(&b1).expect("byte-identical re-record is a no-op");
+        let err = node.journal_proposal(&b2).unwrap_err();
+        assert!(err.contains("EQUIVOCATION GUARD"), "{err}");
+        let genesis_hash = node.get_block(0).unwrap().unwrap().hash;
+        assert_eq!(node.pending_proposal(1, &genesis_hash).unwrap().unwrap().hash, b1.hash, "first record kept");
+        // and the producer path: with a record present that cannot be re-imported, no NEW block is ever sealed
+        let bad = seal(&node, &me, vec![TxV1 { sig: "00".repeat(10), ..transfer(&user, &user.public_key_hex, 3, 1) }]);
+        let (_d2, node2, user2) = producer(Some(1));
+        let me2 = node2.keys.lock().unwrap().clone();
+        let bad2 = seal(&node2, &me2, vec![TxV1 { sig: "00".repeat(10), ..transfer(&user2, &user2.public_key_hex, 3, 1) }]);
+        node2.journal_proposal(&bad2).unwrap();
+        node2.mempool.lock().unwrap().insert("t".into(), transfer(&user2, &user2.public_key_hex, 1, 1));
+        let err = node2.mine_pending().unwrap_err();
+        assert!(err.contains("HIGH SEVERITY") && err.contains("refusing to seal a different block"), "{err}");
+        assert_eq!(node2.tip_height().unwrap(), 0); assert_eq!(node2.mempool.lock().unwrap().len(), 1, "tx still queued");
+        let _ = bad;
+    }
+
+    #[test]
+    fn t19_identical_stored_proposal_is_recovered_and_rebroadcast_after_a_crash_before_append() {
+        let (d, node, user) = producer(Some(1));
+        let me = node.keys.lock().unwrap().clone();
+        // crash shape: the proposal was journaled, the block was never appended
+        let b1 = seal(&node, &me, vec![transfer(&user, &user.public_key_hex, 1, 1)]);
+        node.journal_proposal(&b1).unwrap();
+        assert_eq!(node.tip_height().unwrap(), 0);
+        // (a) the producer path re-uses it instead of sealing a new block, even with other txs queued
+        node.mempool.lock().unwrap().insert("other".into(), transfer(&user, &user.public_key_hex, 5, 1));
+        let out = node.mine_pending().unwrap().unwrap();
+        assert_eq!(out.hash, b1.hash, "the journaled block is what gets (re)broadcast");
+        assert_eq!(node.tip_height().unwrap(), 1); assert_eq!(node.get_block(1).unwrap().unwrap().hash, b1.hash);
+        assert_eq!(node.mempool.lock().unwrap().len(), 1, "queued tx untouched");
+        // (b) restart shape: journal present, block not appended → init recovers it
+        let (d2, node2, user2) = producer(Some(1));
+        let me2 = node2.keys.lock().unwrap().clone();
+        let c1 = seal(&node2, &me2, vec![transfer(&user2, &user2.public_key_hex, 1, 1)]);
+        node2.journal_proposal(&c1).unwrap();
+        // the funded balance lives only in memory in this harness; persist the ledger so a reopen sees it
+        node2.save_balance_snapshot(0);
+        drop(node2);
+        let node2 = reopen(&d2);
+        assert_eq!(node2.tip_height().unwrap(), 1, "recovered on init");
+        assert_eq!(node2.get_block(1).unwrap().unwrap().hash, c1.hash);
+        let _ = (d, d2);
+    }
+
+    #[test]
+    fn t20_producer_refuses_to_seal_when_not_designated() {
+        let (_d, node) = setup(Some(1));
+        let me = node.keys.lock().unwrap().clone(); let other = pqc_keygen(); let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 100.0);
+        set_v(&node, &me.public_key_hex, vstate(10_000)); set_v(&node, &other.public_key_hex, vstate(100_000));
+        node.mempool.lock().unwrap().insert("t".into(), transfer(&user, &user.public_key_hex, 1, 1));
+        assert!(node.mine_pending().unwrap().is_none(), "not our slot");
+        assert_eq!(node.tip_height().unwrap(), 0); assert_eq!(node.mempool.lock().unwrap().len(), 1, "tx stays queued");
+        // below activation the same node still seals (legacy)
+        TEST_PROPOSER_SELECTION_OVERRIDE.with(|c| c.set(Some(Some(50))));
+        assert!(node.mine_pending().unwrap().is_some());
     }
 }
