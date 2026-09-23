@@ -103,3 +103,16 @@ pre-apply snapshot and never reaches the index. Those are the only paths, and bo
 | Binary SHA-256 | **`9ad81dbf98e8e78a86b34be61af2360a34dba055f9f7a4be81b1a69c15942287`** (26,639,552 bytes), `quantum-vault-daemon`, reproduced twice |
 | Test results at N = 90 | daemon 140 passed / 0 failed / 1 ignored (incl. canonical replay 0→60 pinned to tip `ea90a891…` / root `069a9d03…`); workspace 231 passed / 0 failed |
 | Active proposers to upgrade | primary `8ccf7878…` (mining), node #2 `c97f59a2…` (non-mining, must still run the rule); outside validator `21e0ed0a…` staked but never connected/produced — cannot reach either node under containment |
+
+## Activation evidence (2026-09-23)
+
+| Step | Result |
+|---|---|
+| Binary installed | primary (16:30Z, rollback copy kept) and node #2 (non-mining), both sha256 `9ad81dbf…`; tx-seen index rebuilt on start (`60 tx hashes over 61 blocks`) |
+| Blocks 61 → 90 | 30 deliberate 1-XRGE CLI-envelope transfers (operator → owner), one per block; node #2 imported every block with identical hash and state root |
+| Pre-activation ingress (h88) | h61 transfer (70 XRGE) replayed with an edited nonce at both nodes' local `/api/tx/broadcast` → `already included in block 61` |
+| Block 90 (first under the rule) | accepted on both nodes, `c1950f1b…`, root `5702e766…` |
+| Consensus: replay block | signed block 91 carrying the h62 tx pushed to both nodes' `/api/blocks/import` → `block 91 rejected: tx #0 … already included in block 62 (replay)`; tip, state root and balances unchanged |
+| Consensus: forged block | signed block 91 carrying the h61 tx with amount rewritten 70 → 5000 → `signed-payload binding failed: transfer payload does not match its signed_payload`; no state change |
+| Post-activation | blocks 91–95 with normal transactions accepted; both nodes at 95, tip `ea25cc0b…`, root `5620f4ef…`, identical; owner balance reconciles exactly (46,648.5 − 71 + 33 = 46,610.5) |
+| Peers / services | primary mining, node #2 non-mining, peered both ways; bridge relayer active; public API serving |
