@@ -1817,6 +1817,9 @@ impl L1Node {
 
         // C1: a tx that is already in an accepted block is a replay — refuse it regardless
         // of the (gap-tolerant) nonce check above.
+        // V2 binding (node-local, always on): the executable fields must be the canonical
+        // derivation of the signed payload, or an outsider could re-point a signed intent.
+        crate::v2_binding::verify_v2_binding(&tx)?;
         let identity = quantum_vault_types::tx_identity(&tx);
         if let Some(h) = self.tx_included_at(&identity) {
             return Err(format!("transaction {} already included in block {}", &identity[..16], h));
@@ -2786,6 +2789,11 @@ impl L1Node {
         self.ensure_tx_seen_index()?;
         let mut in_block: HashSet<String> = HashSet::with_capacity(block.txs.len());
         for (i, tx) in block.txs.iter().enumerate() {
+            // V2 binding is part of the same consensus rule: a signed-payload tx whose fields
+            // are not the canonical derivation of its payload makes the block invalid.
+            if let Err(e) = crate::v2_binding::verify_v2_binding(tx) {
+                return Err(format!("block {} rejected: tx #{} signed-payload binding failed: {}", block.header.height, i, e));
+            }
             let h = quantum_vault_types::tx_identity(tx);
             if let Some(prev) = self.tx_included_at(&h) {
                 return Err(format!("block {} rejected: tx #{} ({}) already included in block {} (replay)",
@@ -9578,5 +9586,218 @@ mod tx_uniqueness_tests {
         node.recover_from_history().unwrap();
         assert_eq!((node.tx_included_at(&h1), node.tx_included_at(&h2)), (Some(1), Some(2)));
         assert_eq!(node.tip_height().unwrap(), 2);
+    }
+}
+
+/// V2 signed-payload binding: the executable fields of a signed-payload transaction are a
+/// deterministic function of the signed JSON, at every ingress and (from N) in consensus.
+#[cfg(test)]
+mod v2_binding_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, sealed_block};
+    use crate::v2_binding::{build_v2_tx, verify_v2_binding, derive_v2_fields};
+    use quantum_vault_crypto::{pqc_keygen, pqc_sign};
+    use quantum_vault_types::tx_identity;
+    use serde_json::{json, Value};
+
+    /// One representative signed payload per V2 transaction type (every type the API builds).
+    fn sample_payloads(from: &str, to: &str) -> Vec<(&'static str, Value)> {
+        let ts = 1_790_000_000_000i64;
+        vec![
+            ("transfer", json!({"from": from, "to": to, "amount": 12.7, "token": "XRGE", "timestamp": ts})),
+            ("transfer", json!({"from": from, "to": to, "amount": 5, "token": "KOALA", "timestamp": ts})),
+            ("create_token", json!({"from": from, "token_name": "Koala", "token_symbol": "KOALA", "initial_supply": 1000000, "image": "https://x/y.png", "description": "d", "timestamp": ts})),
+            ("mint_tokens", json!({"from": from, "token_symbol": "KOALA", "amount": 50, "timestamp": ts})),
+            ("approve", json!({"from": from, "spender": to, "token_symbol": "KOALA", "amount": 7, "timestamp": ts})),
+            ("transfer_from", json!({"from": from, "owner": to, "to": from, "token_symbol": "KOALA", "amount": 3, "timestamp": ts})),
+            ("create_pool", json!({"from": from, "token_a": "KOALA", "token_b": "XRGE", "amount_a": 100, "amount_b": 10, "timestamp": ts})),
+            ("add_liquidity", json!({"from": from, "pool_id": "KOALA-XRGE", "amount_a": 1, "amount_b": 2, "timestamp": ts})),
+            ("remove_liquidity", json!({"from": from, "pool_id": "KOALA-XRGE", "lp_amount": 9, "timestamp": ts})),
+            ("swap", json!({"from": from, "token_in": "XRGE", "token_out": "KOALA", "amount_in": 4, "min_amount_out": 1, "timestamp": ts})),
+            ("stake", json!({"from": from, "amount": 10000, "timestamp": ts})),
+            ("unstake", json!({"from": from, "amount": 10000, "timestamp": ts})),
+            ("nft_create_collection", json!({"from": from, "symbol": "KOL", "name": "Koalas", "description": "d", "image": "i", "maxSupply": 10, "royaltyBps": 250, "royaltyRecipient": " rouge1abc ", "publicMint": true, "mintPrice": 1.5, "tokenGateSymbol": "KOALA", "tokenGateAmount": 2.0, "discountPct": 10, "timestamp": ts})),
+            ("nft_mint", json!({"from": from, "collectionId": "col:1", "name": "K#1", "metadataUri": "ipfs://a", "attributes": {"eyes": "blue"}, "timestamp": ts})),
+            ("nft_batch_mint", json!({"from": from, "collectionId": "col:1", "names": ["a", "b", "c"], "uris": ["u1", "u2", "u3"], "attributes": [{"x": 1}, {"x": 2}, {"x": 3}], "timestamp": ts})),
+            ("nft_transfer", json!({"from": from, "collectionId": "col:1", "tokenId": 1, "to": to, "salePrice": 40, "timestamp": ts})),
+            ("nft_burn", json!({"from": from, "collectionId": "col:1", "tokenId": 2, "timestamp": ts})),
+            ("nft_lock", json!({"from": from, "collectionId": "col:1", "tokenId": 3, "locked": false, "timestamp": ts})),
+            ("nft_freeze_collection", json!({"from": from, "collectionId": "col:1", "frozen": true, "timestamp": ts})),
+            ("shield", json!({"from": from, "amount": 3, "commitment": "ab".repeat(32), "timestamp": ts})),
+            ("shielded_transfer", json!({"from": from, "nullifiers": ["n1"], "output_commitments": ["c1", "c2"], "proof": "deadbeef", "fee": 1, "timestamp": ts})),
+            ("unshield", json!({"from": from, "nullifiers": ["n1"], "amount": 3, "proof": "deadbeef", "timestamp": ts})),
+        ]
+    }
+
+    fn v2(kp: &PQKeypair, ty: &str, payload: &Value, nonce: u64) -> TxV1 {
+        let sp = serde_json::to_string(payload).unwrap(); // what verify_signed_tx returns without payload_bytes_hex
+        let sig = pqc_sign(&kp.secret_key_hex, sp.as_bytes()).unwrap();
+        build_v2_tx(ty, kp.public_key_hex.clone(), nonce, payload, sig, sp).unwrap()
+    }
+
+    /// Every payload/fee field that a forger could want to change, expressed as a mutation of the
+    /// constructed tx. Each must be detected by the binding check.
+    fn mutations(t: &TxV1, attacker: &str) -> Vec<(&'static str, TxV1)> {
+        let mut out = vec![];
+        macro_rules! m { ($n:expr, $f:expr) => {{ let mut x = t.clone(); $f(&mut x); out.push(($n, x)); }} }
+        m!("fee+", |x: &mut TxV1| x.fee += 1.0);
+        m!("fee=0", |x: &mut TxV1| x.fee = 0.0);
+        m!("version", |x: &mut TxV1| x.version = 2);
+        m!("tx_type", |x: &mut TxV1| x.tx_type = if x.tx_type == "transfer" { "stake".into() } else { "transfer".into() });
+        let p = &t.payload;
+        if p.to_pub_key_hex.is_some() { m!("to", |x: &mut TxV1| x.payload.to_pub_key_hex = Some(attacker.to_string())); }
+        if p.amount.is_some() { m!("amount", |x: &mut TxV1| x.payload.amount = Some(999_999)); }
+        if p.token_symbol.is_some() { m!("token_symbol", |x: &mut TxV1| x.payload.token_symbol = Some("OTHER".into())); }
+        if p.token_symbol.is_none() && t.tx_type == "transfer" { m!("token_symbol_added", |x: &mut TxV1| x.payload.token_symbol = Some("KOALA".into())); }
+        if p.token_total_supply.is_some() { m!("supply", |x: &mut TxV1| x.payload.token_total_supply = Some(u64::MAX)); }
+        if p.spender_pub_key.is_some() { m!("spender", |x: &mut TxV1| x.payload.spender_pub_key = Some(attacker.to_string())); }
+        if p.allowance_amount.is_some() { m!("allowance", |x: &mut TxV1| x.payload.allowance_amount = Some(u64::MAX)); }
+        if p.owner_pub_key.is_some() { m!("owner", |x: &mut TxV1| x.payload.owner_pub_key = Some(attacker.to_string())); }
+        if p.pool_id.is_some() { m!("pool_id", |x: &mut TxV1| x.payload.pool_id = Some("X-Y".into())); }
+        if p.amount_a.is_some() { m!("amount_a", |x: &mut TxV1| x.payload.amount_a = x.payload.amount_a.map(|v| v + 1000)); }
+        if p.amount_b.is_some() { m!("amount_b", |x: &mut TxV1| x.payload.amount_b = x.payload.amount_b.map(|v| v + 1000)); }
+        if p.lp_amount.is_some() { m!("lp_amount", |x: &mut TxV1| x.payload.lp_amount = x.payload.lp_amount.map(|v| v + 1000)); }
+        if p.min_amount_out.is_some() { m!("min_out", |x: &mut TxV1| x.payload.min_amount_out = x.payload.min_amount_out.map(|v| v + 1)); }
+        if p.token_a_symbol.is_some() { m!("token_a", |x: &mut TxV1| x.payload.token_a_symbol = Some("Z".into())); }
+        if p.nft_collection_id.is_some() { m!("collection", |x: &mut TxV1| x.payload.nft_collection_id = Some("col:9".into())); }
+        if p.nft_token_id.is_some() { m!("token_id", |x: &mut TxV1| x.payload.nft_token_id = x.payload.nft_token_id.map(|v| v + 77)); }
+        if p.nft_royalty_bps.is_some() { m!("royalty", |x: &mut TxV1| x.payload.nft_royalty_bps = Some(9999)); }
+        if p.nft_royalty_recipient.is_some() { m!("royalty_to", |x: &mut TxV1| x.payload.nft_royalty_recipient = Some(attacker.to_string())); }
+        if p.nft_mint_price.is_some() { m!("mint_price", |x: &mut TxV1| x.payload.nft_mint_price = Some(0.0)); }
+        if p.nft_public_mint.is_some() { m!("public_mint", |x: &mut TxV1| x.payload.nft_public_mint = Some(false)); }
+        if p.nft_batch_names.is_some() { m!("batch_names", |x: &mut TxV1| x.payload.nft_batch_names = Some(vec!["a".into()])); }
+        if p.nft_locked.is_some() { m!("locked", |x: &mut TxV1| x.payload.nft_locked = x.payload.nft_locked.map(|b| !b)); }
+        if p.nft_frozen.is_some() { m!("frozen", |x: &mut TxV1| x.payload.nft_frozen = x.payload.nft_frozen.map(|b| !b)); }
+        if p.nft_metadata_uri.is_some() { m!("uri", |x: &mut TxV1| x.payload.nft_metadata_uri = Some("ipfs://evil".into())); }
+        if p.shielded_value.is_some() { m!("shielded_value", |x: &mut TxV1| x.payload.shielded_value = Some(u64::MAX)); }
+        if p.shielded_commitment.is_some() { m!("commitment", |x: &mut TxV1| x.payload.shielded_commitment = Some("00".repeat(32))); }
+        if p.shielded_nullifiers.is_some() { m!("nullifiers", |x: &mut TxV1| x.payload.shielded_nullifiers = Some(vec!["other".into()])); }
+        if p.shielded_proof.is_some() { m!("proof", |x: &mut TxV1| x.payload.shielded_proof = Some("00".into())); }
+        if p.shielded_fee.is_some() { m!("shielded_fee", |x: &mut TxV1| x.payload.shielded_fee = Some(0)); }
+        m!("extra_field", |x: &mut TxV1| x.payload.reason = Some("smuggled".into()));
+        m!("signed_payload_swapped", |x: &mut TxV1| x.signed_payload = Some(r#"{"from":"x","to":"y","amount":1,"timestamp":1}"#.into()));
+        out
+    }
+
+    #[test]
+    fn every_v2_type_round_trips_and_every_field_mutation_is_detected() {
+        let user = pqc_keygen(); let other = pqc_keygen(); let attacker = pqc_keygen();
+        let mut types_seen = std::collections::BTreeSet::new(); let mut mutations_checked = 0;
+        for (ty, payload) in sample_payloads(&user.public_key_hex, &other.public_key_hex) {
+            let t = v2(&user, ty, &payload, 1);
+            types_seen.insert(ty);
+            verify_v2_binding(&t).unwrap_or_else(|e| panic!("{ty}: honest tx must bind: {e}"));
+            let (p2, fee2) = derive_v2_fields(ty, &payload).unwrap();
+            assert_eq!((t.payload.clone(), t.fee), (p2, fee2), "{ty}: derivation is deterministic");
+            for (name, mutated) in mutations(&t, &attacker.public_key_hex) {
+                assert!(verify_v2_binding(&mutated).is_err(), "{ty}: mutation '{name}' must fail the binding");
+                mutations_checked += 1;
+            }
+            // nonce is server-assigned and NOT part of the identity — a replay with a new nonce is the same tx
+            let mut n = t.clone(); n.nonce += 1;
+            assert!(verify_v2_binding(&n).is_ok()); assert_eq!(tx_identity(&n), tx_identity(&t), "{ty}: nonce does not change the identity");
+            // from_pub_key: bound by `from` in the payload (and by the signature)
+            let mut f = t.clone(); f.from_pub_key = attacker.public_key_hex.clone();
+            assert!(verify_v2_binding(&f).is_err(), "{ty}: from mismatch");
+        }
+        assert_eq!(types_seen.len(), 21, "all 21 distinct V2 tx types exercised: {types_seen:?}");
+        assert!(mutations_checked >= 120, "{mutations_checked} mutations checked");
+    }
+
+    /// The `rougechain` CLI signs an envelope {tx_type, from, nonce, fee, payload} and posts a
+    /// complete TxV1 to /api/tx/broadcast (mainnet blocks 29, 49–52, 59).
+    fn cli_tx(kp: &PQKeypair, tx_type: &str, nonce: u64, fee: u64, payload: Value) -> TxV1 {
+        let env = json!({"tx_type": tx_type, "from": kp.public_key_hex, "nonce": nonce, "fee": fee, "payload": payload});
+        let sp = serde_json::to_string(&env).unwrap();
+        let sig = pqc_sign(&kp.secret_key_hex, sp.as_bytes()).unwrap();
+        TxV1 { version: 1, tx_type: tx_type.into(), from_pub_key: kp.public_key_hex.clone(), nonce,
+            payload: serde_json::from_value(payload).unwrap(), fee: fee as f64, sig, signed_payload: Some(sp) }
+    }
+
+    #[test]
+    fn cli_envelope_binds_type_nonce_fee_and_payload() {
+        let user = pqc_keygen(); let other = pqc_keygen(); let attacker = pqc_keygen();
+        for (ty, payload) in [("stake", json!({"amount": 10000})), ("transfer", json!({"to_pub_key_hex": other.public_key_hex, "amount": 1}))] {
+            let t = cli_tx(&user, ty, 2, 1, payload);
+            verify_v2_binding(&t).unwrap();
+            let mut m = t.clone(); m.nonce = 3; assert!(verify_v2_binding(&m).is_err(), "{ty}: nonce IS bound in the envelope");
+            let mut m = t.clone(); m.fee = 100.0; assert!(verify_v2_binding(&m).is_err(), "{ty}: fee bound");
+            let mut m = t.clone(); m.tx_type = "unstake".into(); assert!(verify_v2_binding(&m).is_err(), "{ty}: tx_type bound");
+            let mut m = t.clone(); m.payload.amount = Some(999_999); assert!(verify_v2_binding(&m).is_err(), "{ty}: amount bound");
+            let mut m = t.clone(); m.payload.to_pub_key_hex = Some(attacker.public_key_hex.clone()); assert!(verify_v2_binding(&m).is_err(), "{ty}: recipient bound");
+            let mut m = t.clone(); m.payload.token_symbol = Some("KOALA".into()); assert!(verify_v2_binding(&m).is_err(), "{ty}: smuggled field");
+            let mut m = t.clone(); m.from_pub_key = attacker.public_key_hex.clone(); assert!(verify_v2_binding(&m).is_err(), "{ty}: from bound");
+        }
+    }
+
+    #[test]
+    fn forged_v2_transfer_is_refused_at_mempool_and_by_consensus_without_touching_state() {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(u64::MAX)));
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(Some(1))));
+        let (_d, node, _s) = node_with_store();
+        let proposer = pqc_keygen(); let user = pqc_keygen(); let friend = pqc_keygen(); let thief = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1_000.0);
+        let honest = v2(&user, "transfer", &json!({"from": user.public_key_hex, "to": friend.public_key_hex, "amount": 10, "token": "XRGE", "timestamp": 1_790_000_000_000i64}), 1);
+        let mut forged = honest.clone();
+        forged.payload.to_pub_key_hex = Some(thief.public_key_hex.clone()); forged.payload.amount = Some(900);
+        // (1) mempool / P2P ingress (node-local, regardless of activation)
+        let err = node.add_tx_to_mempool(forged.clone()).unwrap_err();
+        assert!(err.contains("does not match its signed_payload"), "{err}");
+        // (2) consensus at/after N: block rejected, no state change
+        let before = node.balances.lock().unwrap().clone();
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        let err = node.import_block(sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![forged.clone()], None, t)).unwrap_err();
+        assert!(err.contains("signed-payload binding failed"), "{err}");
+        assert_eq!(node.tip_height().unwrap(), 0);
+        assert_eq!(*node.balances.lock().unwrap(), before, "no balance mutation");
+        assert!(!node.tx_already_included(&tx_identity(&forged)), "no index mutation");
+        assert!(node.get_receipt(&compute_single_tx_hash(&forged)).unwrap().is_none(), "no receipt");
+        // (3) the honest tx still goes through
+        node.import_block(sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![honest.clone()], None, t)).unwrap();
+        assert_eq!(*node.balances.lock().unwrap().get(&canon_addr(&friend.public_key_hex)).unwrap(), xrge_f64_to_quanta(10.0));
+        // (4) and a nonce-changed replay of it (different raw hash!) is a replay
+        let mut replay = honest.clone(); replay.nonce = 99;
+        assert_ne!(compute_single_tx_hash(&replay), compute_single_tx_hash(&honest));
+        let err = node.import_block(sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![replay], None, t)).unwrap_err();
+        assert!(err.contains("already included in block 1"), "{err}");
+    }
+
+    #[test]
+    fn forged_v2_is_legacy_accepted_below_activation_but_never_at_ingress() {
+        // Documents the pre-fork consensus behaviour (the bug) and that upgraded nodes' ingress
+        // already refuses it — the reason the fork is still required (other proposers).
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(u64::MAX)));
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(Some(100))));
+        let (_d, node, _s) = node_with_store();
+        let proposer = pqc_keygen(); let user = pqc_keygen(); let friend = pqc_keygen(); let thief = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1_000.0);
+        let mut forged = v2(&user, "transfer", &json!({"from": user.public_key_hex, "to": friend.public_key_hex, "amount": 10, "token": "XRGE", "timestamp": 1_790_000_000_000i64}), 1);
+        forged.payload.to_pub_key_hex = Some(thief.public_key_hex.clone()); forged.payload.amount = Some(900);
+        assert!(node.add_tx_to_mempool(forged.clone()).is_err(), "ingress refuses even below N");
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        node.import_block(sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![forged], None, t)).expect("LEGACY consensus (below N) still accepts the forgery — hence the fork");
+        assert_eq!(*node.balances.lock().unwrap().get(&canon_addr(&thief.public_key_hex)).unwrap(), xrge_f64_to_quanta(900.0));
+    }
+
+    #[test]
+    fn historical_mainnet_v2_transactions_against_the_proposed_binding() {
+        // Blocks 20–60 of rougechain-mainnet-1: every signed-payload tx, exactly as stored.
+        // The rule only applies from N (> 60), so failures here are INFORMATIONAL: they show
+        // which historical constructions differ from today's canonical mapping.
+        let raw = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-v2-txs-h20-60.json")).unwrap();
+        let rows: Vec<Value> = serde_json::from_str(&raw).unwrap();
+        assert_eq!(rows.len(), 26);
+        let mut ok = 0; let mut fail = vec![];
+        for r in &rows {
+            let tx: TxV1 = serde_json::from_value(r["tx"].clone()).unwrap();
+            let h = r["height"].as_u64().unwrap();
+            match verify_v2_binding(&tx) { Ok(()) => ok += 1, Err(e) => fail.push(format!("h{h} {}: {e}", tx.tx_type)) }
+            // the identity is well-defined for all of them and distinct
+        }
+        let ids: std::collections::BTreeSet<String> = rows.iter().map(|r| tx_identity(&serde_json::from_value::<TxV1>(r["tx"].clone()).unwrap())).collect();
+        assert_eq!(ids.len(), 26, "26 distinct identities");
+        eprintln!("HISTORICAL V2 BINDING: {ok} pass, {} differ:\n  {}", fail.len(), fail.join("\n  "));
+        // 20 API-format + 6 CLI-envelope txs; ALL satisfy the proposed rule (pinned).
+        assert_eq!((ok, fail.len()), (26, 0), "{fail:?}");
     }
 }
