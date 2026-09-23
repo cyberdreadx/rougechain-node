@@ -7,7 +7,8 @@
  *            slightly portrait works best (rendered 4:5, desaturated until hover)
  *   x      — full URL (https://x.com/…)
  *   github — full URL
- *   website — full URL (personal site or LinkedIn)
+ *   website — full URL (personal site)
+ *   linkedin — full LinkedIn profile URL
  */
 export interface TeamMember {
   name: string;
@@ -18,6 +19,7 @@ export interface TeamMember {
   x?: string;
   github?: string;
   website?: string;
+  linkedin?: string;
 }
 
 export const team: TeamMember[] = [
@@ -28,8 +30,9 @@ export const team: TeamMember[] = [
     bio: "Brandon Menard, professionally known as CyberDreadx, is an American music producer, AI developer, and blockchain innovator based in Miami. As the founder of Rougee and RougeCoin, he\u2019s building the next-generation music platform that merges Web3 ownership, streaming, and creator empowerment. With a background in AI and cybersecurity, Brandon leads the technical vision and development of Rougee\u2019s decentralized ecosystem, bridging art, tech, and freedom of expression.",
     image: "/team/brandon-menard.jpg",
     x: "",
-    github: "",
+    github: "https://github.com/cyberdreadx",
     website: "",
+    linkedin: "https://www.linkedin.com/in/brandon-menard-91364273/",
   },
   {
     name: "Andersen Scherberger",
@@ -40,6 +43,7 @@ export const team: TeamMember[] = [
     x: "",
     github: "",
     website: "",
+    linkedin: "https://www.linkedin.com/in/andersscherberger/",
   },
   {
     name: "Elijah Bowdre",
@@ -50,5 +54,6 @@ export const team: TeamMember[] = [
     x: "https://x.com/blockchainbow",
     github: "",
     website: "https://thebitpoint.io/",
+    linkedin: "https://www.linkedin.com/in/elijah-john-bowdre-28122a35/",
   },
 ];

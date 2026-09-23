@@ -337,7 +337,8 @@
       "social": {
         "x": "{{name}} 的 X",
         "github": "{{name}} 的 GitHub",
-        "website": "{{name}} 的网站"
+        "website": "{{name}} 的网站",
+        "linkedin": "{{name}} 的 LinkedIn"
       }
     }
   },

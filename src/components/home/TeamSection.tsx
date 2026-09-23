@@ -1,4 +1,4 @@
-import { Github, Globe } from "lucide-react";
+import { Github, Globe, Linkedin } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { team, type TeamMember } from "@/data/team";
 
@@ -27,7 +27,7 @@ const SocialLink = ({ href, label, children }: { href: string; label: string; ch
 
 const MemberCard = ({ m }: { m: TeamMember }) => {
   const { t } = useTranslation();
-  const hasSocial = Boolean(m.x || m.github || m.website);
+  const hasSocial = Boolean(m.x || m.github || m.website || m.linkedin);
   return (
     <li className="group flex flex-col">
       {/* Photo: 4:5, restrained border, desaturated until hover (motion-safe only) */}
@@ -61,6 +61,7 @@ const MemberCard = ({ m }: { m: TeamMember }) => {
           <div className="mt-2 -ml-1.5 flex items-center gap-0.5">
             {m.x && <SocialLink href={m.x} label={t("home.team.social.x", { name: m.name })}><XGlyph className="h-3.5 w-3.5" /></SocialLink>}
             {m.github && <SocialLink href={m.github} label={t("home.team.social.github", { name: m.name })}><Github className="h-3.5 w-3.5" /></SocialLink>}
+            {m.linkedin && <SocialLink href={m.linkedin} label={t("home.team.social.linkedin", { name: m.name })}><Linkedin className="h-3.5 w-3.5" /></SocialLink>}
             {m.website && <SocialLink href={m.website} label={t("home.team.social.website", { name: m.name })}><Globe className="h-3.5 w-3.5" /></SocialLink>}
           </div>
         )}

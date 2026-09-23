@@ -337,7 +337,8 @@
       "social": {
         "x": "{{name}}のX",
         "github": "{{name}}のGitHub",
-        "website": "{{name}}のウェブサイト"
+        "website": "{{name}}のウェブサイト",
+        "linkedin": "{{name}}のLinkedIn"
       }
     }
   },

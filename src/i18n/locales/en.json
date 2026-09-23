@@ -337,7 +337,8 @@
       "social": {
         "x": "{{name}} on X",
         "github": "{{name}} on GitHub",
-        "website": "{{name}} — website"
+        "website": "{{name}} — website",
+        "linkedin": "{{name}} on LinkedIn"
       }
     }
   },
