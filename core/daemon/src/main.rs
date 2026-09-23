@@ -1595,6 +1595,14 @@ struct StatsResponse {
     /// Canonical ledger state root (Phase 2). Same across honest nodes at the
     /// same height — compare it across nodes to spot divergence.
     state_root: String,
+    /// Proposer selection Release 1 (read-only report): the compiled activation height, the
+    /// next height this node will judge, whether the rule applies at that height, and the
+    /// validator this node derives as designated proposer for it (from canonical validator
+    /// state after the current tip). Compare across nodes before/at activation.
+    proposer_selection_activation_height: Option<u64>,
+    designated_proposer_next_height: u64,
+    proposer_selection_active_next: bool,
+    designated_proposer_next: Option<String>,
 }
 
 async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, StatusCode> {
@@ -1618,8 +1626,13 @@ async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>,
         base_fee: node.get_base_fee(),
         total_fees_burned: node.get_total_fees_burned(),
         state_root: node.get_state_root().unwrap_or_default(),
+        proposer_selection_activation_height: crate::node::PROPOSER_SELECTION_ACTIVATION_HEIGHT,
+        designated_proposer_next_height: height + 1,
+        proposer_selection_active_next: crate::node::proposer_selection_active(height + 1),
+        designated_proposer_next: node.designated_proposer(height + 1).unwrap_or(None),
     }))
 }
+
 
 #[derive(Serialize)]
 struct BurnAddressResponse {
