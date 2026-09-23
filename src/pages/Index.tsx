@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import {
   Wallet, MessageSquareLock, Shield, Lock, Activity, ExternalLink,
   TrendingUp, ArrowDownUp, Droplets, Coins, Image as ImageIcon,
@@ -14,6 +14,7 @@ import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/net
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { useXRGEPrice } from "@/hooks/use-xrge-price";
 import { EmailCaptureBanner, EmailCapturePopup } from "@/components/EmailCapture";
+import { TeamSection } from "@/components/home/TeamSection";
 import { formatUsd } from "@/lib/price-service";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import qwallaApp from "@/assets/qwalla-app.jpg";
@@ -660,6 +661,16 @@ const ExtensionBanner = () => {
 
 const Index = () => {
   const { t } = useTranslation();
+  // In-page anchors reachable from the app navigation (e.g. /#team): scroll once the
+  // section has mounted; instant when the user prefers reduced motion.
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (!hash) return;
+    const el = document.getElementById(hash.slice(1));
+    if (!el) return;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  }, [hash]);
   return (
     <div className="min-h-screen bg-background relative">
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
@@ -765,6 +776,9 @@ const Index = () => {
         {/* 6 · Security + network status */}
         <SecuritySection />
         <NetworkStatus />
+
+        {/* 6b · Team */}
+        <TeamSection />
 
         {/* 7 · Community / resources */}
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center">

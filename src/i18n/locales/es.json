@@ -47,7 +47,8 @@
     "unreadMessages_one": "{{count}} mensaje sin leer",
     "unreadMessages_other": "{{count}} mensajes sin leer",
     "unreadEmails_one": "{{count}} correo sin leer",
-    "unreadEmails_other": "{{count}} correos sin leer"
+    "unreadEmails_other": "{{count}} correos sin leer",
+    "team": "Equipo"
   },
   "swap": {
     "title": "Swap",
@@ -327,6 +328,17 @@
       "body": "Abre una cartera, pasa activos desde Base por el puente o empieza a construir en una capa 1 post-cuántica.",
       "openWallet": "Abrir cartera",
       "quickstart": "Inicio rápido"
+    },
+    "team": {
+      "eyebrow": "EL EQUIPO",
+      "title": "Las personas detrás de RougeChain.",
+      "subtitle": "Construyendo infraestructura para un mundo post-cuántico.",
+      "photoAlt": "Retrato de {{name}}",
+      "social": {
+        "x": "{{name}} en X",
+        "github": "{{name}} en GitHub",
+        "website": "{{name}} — sitio web"
+      }
     }
   },
   "footer": {

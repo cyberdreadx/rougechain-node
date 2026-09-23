@@ -47,7 +47,8 @@
     "unreadMessages_one": "{{count}} unread message",
     "unreadMessages_other": "{{count}} unread messages",
     "unreadEmails_one": "{{count}} unread email",
-    "unreadEmails_other": "{{count}} unread emails"
+    "unreadEmails_other": "{{count}} unread emails",
+    "team": "Team"
   },
   "swap": {
     "title": "Swap",
@@ -327,6 +328,17 @@
       "body": "Open a wallet, bridge assets from Base, or start building on a post-quantum Layer 1.",
       "openWallet": "Open Wallet",
       "quickstart": "Quickstart"
+    },
+    "team": {
+      "eyebrow": "THE TEAM",
+      "title": "The people behind RougeChain.",
+      "subtitle": "Building infrastructure for a post-quantum world.",
+      "photoAlt": "Portrait of {{name}}",
+      "social": {
+        "x": "{{name}} on X",
+        "github": "{{name}} on GitHub",
+        "website": "{{name}} — website"
+      }
     }
   },
   "footer": {

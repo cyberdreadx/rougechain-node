@@ -47,7 +47,8 @@
     "unreadMessages_one": "未読メッセージ{{count}}件",
     "unreadMessages_other": "未読メッセージ{{count}}件",
     "unreadEmails_one": "未読メール{{count}}件",
-    "unreadEmails_other": "未読メール{{count}}件"
+    "unreadEmails_other": "未読メール{{count}}件",
+    "team": "チーム"
   },
   "swap": {
     "title": "スワップ",
@@ -327,6 +328,17 @@
       "body": "ウォレットを開設し、Baseから資産をブリッジし、ポスト量子レイヤー1での開発を始めましょう。",
       "openWallet": "ウォレットを開く",
       "quickstart": "クイックスタート"
+    },
+    "team": {
+      "eyebrow": "チーム",
+      "title": "RougeChainを支える人々。",
+      "subtitle": "ポスト量子時代のインフラを構築しています。",
+      "photoAlt": "{{name}}のポートレート",
+      "social": {
+        "x": "{{name}}のX",
+        "github": "{{name}}のGitHub",
+        "website": "{{name}}のウェブサイト"
+      }
     }
   },
   "footer": {

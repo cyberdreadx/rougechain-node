@@ -47,7 +47,8 @@
     "unreadMessages_one": "{{count}} 条未读消息",
     "unreadMessages_other": "{{count}} 条未读消息",
     "unreadEmails_one": "{{count}} 封未读邮件",
-    "unreadEmails_other": "{{count}} 封未读邮件"
+    "unreadEmails_other": "{{count}} 封未读邮件",
+    "team": "团队"
   },
   "swap": {
     "title": "Swap",
@@ -327,6 +328,17 @@
       "body": "开设钱包、从 Base 跨链转移资产，或开始在后量子 Layer 1 上构建。",
       "openWallet": "打开钱包",
       "quickstart": "快速开始"
+    },
+    "team": {
+      "eyebrow": "团队",
+      "title": "RougeChain 背后的人。",
+      "subtitle": "为后量子世界构建基础设施。",
+      "photoAlt": "{{name}}的照片",
+      "social": {
+        "x": "{{name}} 的 X",
+        "github": "{{name}} 的 GitHub",
+        "website": "{{name}} 的网站"
+      }
     }
   },
   "footer": {
