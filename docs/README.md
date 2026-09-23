@@ -7,6 +7,7 @@ Welcome to **RougeChain** — a post-quantum secure Layer 1 blockchain built wit
 | Component | Status |
 |---|---|
 | RougeChain mainnet | **LIVE** |
+| Consensus Release 1 (tx-integrity @90, proposer selection @100) | **LIVE — mandatory upgrade**, see [Mandatory upgrade](running-a-node/mandatory-upgrade-2026-09.md) |
 | R1 production bridge | **LIVE** |
 | XRGE / qETH / qUSDC bridge paths | **TESTED / USABLE** |
 | V3 XRGE bridge | **AUDIT CANDIDATE / NOT ACTIVATED** |
