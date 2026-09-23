@@ -144,7 +144,7 @@ fn contract_custody_activation_height() -> u64 {
 /// included in an earlier accepted block. `None` = not scheduled (rule inactive everywhere;
 /// the index and the mempool guard still run, which are node-local and change no block
 /// validity). Set to the chosen fork height together with a validator rollout.
-pub const TX_UNIQUENESS_ACTIVATION_HEIGHT: Option<u64> = None;
+pub const TX_UNIQUENESS_ACTIVATION_HEIGHT: Option<u64> = Some(90);
 #[cfg(test)]
 thread_local! {
     static TEST_TX_UNIQUENESS_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
