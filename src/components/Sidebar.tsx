@@ -450,7 +450,7 @@ export function Sidebar({ children }: SidebarProps) {
           <img src={xrgeLogo} alt="XRGE" className="w-7 h-7 rounded-full" />
         </span>
         <span className="font-bold">RougeChain</span>
-        <LanguageSwitcher compact className="ml-auto" />
+        <LanguageSwitcher compact direction="down" align="right" className="ml-auto" />
         <button
           onClick={() => {
             const current = getActiveNetwork();

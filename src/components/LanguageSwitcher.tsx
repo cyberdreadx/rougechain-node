@@ -7,10 +7,15 @@ import { cn } from "@/lib/utils";
 interface LanguageSwitcherProps {
   /** Compact: icon + short code only (sidebar collapsed / mobile header). */
   compact?: boolean;
+  /** Where the menu opens. The sidebar instance sits at the bottom of the screen and opens
+   *  upward; the mobile-header instance sits at the top and must open downward. */
+  direction?: "up" | "down";
+  /** Horizontal anchor of the menu relative to the button. */
+  align?: "left" | "right";
   className?: string;
 }
 
-export function LanguageSwitcher({ compact = false, className }: LanguageSwitcherProps) {
+export function LanguageSwitcher({ compact = false, direction = "up", align = "left", className }: LanguageSwitcherProps) {
   const { i18n, t } = useTranslation();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -52,7 +57,11 @@ export function LanguageSwitcher({ compact = false, className }: LanguageSwitche
         <ul
           role="listbox"
           aria-label={t("common.language")}
-          className="absolute bottom-full left-0 z-50 mb-1 min-w-[9rem] rounded-lg border border-border bg-card p-1 shadow-lg"
+          className={cn(
+            "absolute z-50 min-w-[9rem] rounded-lg border border-border bg-card p-1 shadow-lg",
+            direction === "up" ? "bottom-full mb-1" : "top-full mt-1",
+            align === "left" ? "left-0" : "right-0"
+          )}
         >
           {SUPPORTED_LANGUAGES.map((l) => (
             <li key={l.code}>
