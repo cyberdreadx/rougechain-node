@@ -342,6 +342,11 @@
         "website": "{{name}} — website",
         "linkedin": "{{name}} on LinkedIn"
       }
+    },
+    "buy": {
+      "title": "Buy XRGE",
+      "subtitle": "Swap ETH or USDC for XRGE on Base, right here, through the Aerodrome pool. Your wallet signs; we never hold your funds.",
+      "details": "contract address, steps and other ways to buy"
     }
   },
   "footer": {

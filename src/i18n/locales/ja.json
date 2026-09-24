@@ -342,6 +342,11 @@
         "website": "{{name}}のウェブサイト",
         "linkedin": "{{name}}のLinkedIn"
       }
+    },
+    "buy": {
+      "title": "XRGE を購入",
+      "subtitle": "Aerodrome プールを通じて、ここで直接 ETH や USDC を Base 上の XRGE にスワップできます。署名はご自身のウォレットで行い、資金を預かることはありません。",
+      "details": "コントラクトアドレス、手順、その他の購入方法"
     }
   },
   "footer": {

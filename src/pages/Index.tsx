@@ -8,7 +8,8 @@ import {
   Boxes, Wrench, Compass, AlertTriangle, Sprout,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, lazy, Suspense } from "react";
+const AerodromeSwap = lazy(() => import("@/components/buy/AerodromeSwap"));
 import { useTranslation, Trans } from "react-i18next";
 import { getCoreApiBaseUrl, getCoreApiHeaders, getNetworkLabel } from "@/lib/network";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
@@ -703,11 +704,9 @@ const Index = () => {
             <Button size="lg" className="gap-2" onClick={scrollTo("ecosystem")}>
               <Boxes className="w-5 h-5" /> {t("home.hero.exploreEcosystem")}
             </Button>
-            <Link to="/buy">
-              <Button size="lg" variant="outline" className="gap-2 border-accent/60 text-accent hover:bg-accent/10">
-                <Coins className="w-5 h-5" /> {t("home.hero.buyXrge")}
-              </Button>
-            </Link>
+            <Button size="lg" variant="outline" className="gap-2 border-accent/60 text-accent hover:bg-accent/10" onClick={scrollTo("buy-xrge")}>
+              <Coins className="w-5 h-5" /> {t("home.hero.buyXrge")}
+            </Button>
             <a href={`${DOCS}/getting-started/quick-start`} target="_blank" rel="noopener noreferrer">
               <Button size="lg" variant="outline" className="gap-2 border-primary/50 text-primary hover:bg-primary/10">
                 <Code className="w-5 h-5" /> {t("home.hero.buildOn")}
@@ -721,6 +720,22 @@ const Index = () => {
             <Link to="/blockchain" className="text-muted-foreground hover:text-foreground flex items-center gap-1">{t("home.hero.explorer")} <ArrowRight className="w-3.5 h-3.5" /></Link>
           </div>
         </motion.div>
+
+        {/* 1b · Buy XRGE — the swap box itself, right under the hero */}
+        <motion.section id="buy-xrge" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="mb-14">
+          <div className="text-center mb-4">
+            <h2 className="text-xl font-semibold">{t("home.buy.title")}</h2>
+            <p className="text-sm text-muted-foreground max-w-xl mx-auto">{t("home.buy.subtitle")}</p>
+          </div>
+          <div className="flex justify-center">
+            <Suspense fallback={<div className="w-full max-w-md h-72 rounded-2xl border border-border bg-card animate-pulse" />}>
+              <AerodromeSwap />
+            </Suspense>
+          </div>
+          <p className="text-center text-xs text-muted-foreground mt-3">
+            <span className="font-mono">XRGE · Base · {XRGE_BASE_ADDRESS.slice(0, 8)}…{XRGE_BASE_ADDRESS.slice(-6)}</span> · <Link to="/buy" className="text-primary hover:underline">{t("home.buy.details")}</Link>
+          </p>
+        </motion.section>
 
         {/* 2 · Brand relationship */}
         <BrandIntro />
