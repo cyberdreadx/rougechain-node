@@ -67,4 +67,15 @@ export const team: TeamMember[] = [
     website: "",
     linkedin: "https://www.linkedin.com/in/teresa-castagninolgm",
   },
+  {
+    name: "Dr. Ghulam Abbas",
+    alias: "",
+    role: "Digital Marketing Strategist & Project Manager",
+    bio: "Dr. Ghulam Abbas is a digital marketing strategist and project manager with a background in healthcare as a qualified homeopathic physician (DHMS) and founder of Eco Cure Clinic. He combines data-driven digital strategy, search-optimized content and cross-functional project management with professional medical knowledge, focusing on organic audience growth, brand positioning and streamlined operational workflows that deliver sustainable, measurable results.",
+    image: "/team/ghulam-abbas.jpg",
+    x: "",
+    github: "",
+    website: "",
+    linkedin: "https://www.linkedin.com/in/dr-ghulam-abbas/",
+  },
 ];
