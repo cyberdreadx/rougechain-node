@@ -1,6 +1,6 @@
 import { NavLink } from "@/components/NavLink";
 import { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { 
   Home, 
   Wallet, 
@@ -77,8 +77,10 @@ export function MainNav() {
         <div className="flex items-center justify-between">
           {/* Logo */}
           <div className="flex items-center gap-3">
-            <img src={xrgeLogo} alt="XRGE" className="w-8 h-8 rounded-full" />
-            <span className="font-bold text-lg hidden sm:block">RougeChain</span>
+            <Link to="/" aria-label="RougeChain home" className="flex items-center gap-3">
+              <img src={xrgeLogo} alt="XRGE" className="w-8 h-8 rounded-full" />
+              <span className="font-bold text-lg hidden sm:block">RougeChain</span>
+            </Link>
             <div className="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-full bg-card border border-border text-xs text-muted-foreground">
               <span className={`h-2 w-2 rounded-full ${getActiveNetwork() === "mainnet" ? "bg-success" : "bg-amber-500"}`} />
               <span className="font-medium text-foreground">{networkLabel}</span>
