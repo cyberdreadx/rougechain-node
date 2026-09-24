@@ -48,7 +48,8 @@
     "unreadMessages_other": "未読メッセージ{{count}}件",
     "unreadEmails_one": "未読メール{{count}}件",
     "unreadEmails_other": "未読メール{{count}}件",
-    "team": "チーム"
+    "team": "チーム",
+    "status": "ステータス"
   },
   "swap": {
     "title": "スワップ",
@@ -628,5 +629,34 @@
       "extensionNoPublicKey": "拡張機能が公開鍵を返しませんでした",
       "extensionConnectFailed": "拡張機能に接続できませんでした"
     }
+  },
+  "status": {
+    "title": "ネットワーク状態",
+    "subtitle": "公開ノード API から取得したメインネットのライブ数値と、稼働中／未有効化の機能一覧。",
+    "autoRefresh": "15 秒ごとに更新",
+    "apiError": "API に接続できません",
+    "height": "ブロック高",
+    "finalized": "最終確定",
+    "validators": "バリデータ（稼働 / 合計）",
+    "peers": "ピア数",
+    "totalStake": "総ステーク",
+    "baseFee": "基本手数料",
+    "burned": "バーン済み手数料",
+    "chainId": "チェーン ID",
+    "consensusTitle": "コンセンサス",
+    "stateRoot": "ステートルート",
+    "designatedProposer": "指定プロポーザー（次ブロック）",
+    "rule": "ルール",
+    "activation": "有効化ブロック高",
+    "state": "状態",
+    "validatorsTitle": "バリデータとノードリリース",
+    "active": "稼働中",
+    "inactive": "停止中",
+    "nodeRelease": "現在のノードリリース",
+    "mandatory": "必須アップグレード",
+    "bridgeTitle": "ブリッジ",
+    "audits": "監査",
+    "footer": "稼働中と構築済み未有効化の一覧はこちらで管理：",
+    "updated": "情報更新日"
   }
 }

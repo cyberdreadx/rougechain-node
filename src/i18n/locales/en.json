@@ -48,7 +48,8 @@
     "unreadMessages_other": "{{count}} unread messages",
     "unreadEmails_one": "{{count}} unread email",
     "unreadEmails_other": "{{count}} unread emails",
-    "team": "Team"
+    "team": "Team",
+    "status": "Status"
   },
   "swap": {
     "title": "Swap",
@@ -628,5 +629,34 @@
       "extensionNoPublicKey": "Extension did not return a public key",
       "extensionConnectFailed": "Failed to connect extension"
     }
+  },
+  "status": {
+    "title": "Network status",
+    "subtitle": "Live mainnet figures read from the public node API, plus what is live and what is not.",
+    "autoRefresh": "refreshes every 15 s",
+    "apiError": "Could not reach the API",
+    "height": "Height",
+    "finalized": "Finalized",
+    "validators": "Validators (active / total)",
+    "peers": "Peers",
+    "totalStake": "Total stake",
+    "baseFee": "Base fee",
+    "burned": "Fees burned",
+    "chainId": "Chain ID",
+    "consensusTitle": "Consensus",
+    "stateRoot": "State root",
+    "designatedProposer": "Designated proposer (next block)",
+    "rule": "Rule",
+    "activation": "Activation height",
+    "state": "State",
+    "validatorsTitle": "Validators & node release",
+    "active": "active",
+    "inactive": "inactive",
+    "nodeRelease": "Current node release",
+    "mandatory": "mandatory upgrade",
+    "bridgeTitle": "Bridges",
+    "audits": "Audits",
+    "footer": "What is live versus built-but-not-activated is maintained at",
+    "updated": "Facts updated"
   }
 }

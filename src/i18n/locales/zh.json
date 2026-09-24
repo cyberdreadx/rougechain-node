@@ -48,7 +48,8 @@
     "unreadMessages_other": "{{count}} 条未读消息",
     "unreadEmails_one": "{{count}} 封未读邮件",
     "unreadEmails_other": "{{count}} 封未读邮件",
-    "team": "团队"
+    "team": "团队",
+    "status": "网络状态"
   },
   "swap": {
     "title": "Swap",
@@ -628,5 +629,34 @@
       "extensionNoPublicKey": "扩展未返回公钥",
       "extensionConnectFailed": "连接扩展失败"
     }
+  },
+  "status": {
+    "title": "网络状态",
+    "subtitle": "来自公共节点 API 的主网实时数据，以及哪些功能已上线、哪些尚未启用。",
+    "autoRefresh": "每 15 秒刷新",
+    "apiError": "无法连接 API",
+    "height": "区块高度",
+    "finalized": "已最终确认",
+    "validators": "验证者（活跃 / 总数）",
+    "peers": "节点连接数",
+    "totalStake": "总质押",
+    "baseFee": "基础费用",
+    "burned": "已销毁手续费",
+    "chainId": "链 ID",
+    "consensusTitle": "共识",
+    "stateRoot": "状态根",
+    "designatedProposer": "指定提议者（下一区块）",
+    "rule": "规则",
+    "activation": "激活高度",
+    "state": "状态",
+    "validatorsTitle": "验证者与节点版本",
+    "active": "活跃",
+    "inactive": "非活跃",
+    "nodeRelease": "当前节点版本",
+    "mandatory": "强制升级",
+    "bridgeTitle": "跨链桥",
+    "audits": "审计",
+    "footer": "已上线与已构建但未启用的功能列表维护于",
+    "updated": "数据更新日期"
   }
 }

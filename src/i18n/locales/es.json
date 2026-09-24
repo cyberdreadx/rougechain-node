@@ -48,7 +48,8 @@
     "unreadMessages_other": "{{count}} mensajes sin leer",
     "unreadEmails_one": "{{count}} correo sin leer",
     "unreadEmails_other": "{{count}} correos sin leer",
-    "team": "Equipo"
+    "team": "Equipo",
+    "status": "Estado"
   },
   "swap": {
     "title": "Swap",
@@ -628,5 +629,34 @@
       "extensionNoPublicKey": "La extensión no devolvió una llave pública",
       "extensionConnectFailed": "No se pudo conectar la extensión"
     }
+  },
+  "status": {
+    "title": "Estado de la red",
+    "subtitle": "Cifras en vivo de mainnet leídas de la API pública del nodo, más lo que está activo y lo que no.",
+    "autoRefresh": "se actualiza cada 15 s",
+    "apiError": "No se pudo conectar con la API",
+    "height": "Altura",
+    "finalized": "Finalizado",
+    "validators": "Validadores (activos / total)",
+    "peers": "Peers",
+    "totalStake": "Stake total",
+    "baseFee": "Tarifa base",
+    "burned": "Comisiones quemadas",
+    "chainId": "ID de cadena",
+    "consensusTitle": "Consenso",
+    "stateRoot": "Raíz de estado",
+    "designatedProposer": "Proponente designado (siguiente bloque)",
+    "rule": "Regla",
+    "activation": "Altura de activación",
+    "state": "Estado",
+    "validatorsTitle": "Validadores y versión del nodo",
+    "active": "activo",
+    "inactive": "inactivo",
+    "nodeRelease": "Versión actual del nodo",
+    "mandatory": "actualización obligatoria",
+    "bridgeTitle": "Puentes",
+    "audits": "Auditorías",
+    "footer": "Lo que está activo frente a lo construido pero no activado se mantiene en",
+    "updated": "Datos actualizados"
   }
 }

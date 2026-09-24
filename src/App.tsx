@@ -14,6 +14,7 @@ import Blockchain from "./pages/Blockchain";
 import Messenger from "./pages/Messenger";
 import Wallet from "./pages/Wallet";
 import Validators from "./pages/Validators";
+import Status from "./pages/Status";
 import GenesisValidators from "./pages/GenesisValidators";
 import Node from "./pages/Node";
 import Transactions from "./pages/Transactions";
@@ -122,6 +123,7 @@ const App = () => (
                 <Route path="/messenger" element={<Messenger />} />
                 <Route path="/wallet" element={<Wallet />} />
                 <Route path="/validators" element={<Validators />} />
+                <Route path="/status" element={<Status />} />
                 <Route path="/genesis-validators" element={<GenesisValidators />} />
                 <Route path="/node" element={<Node />} />
                 <Route path="/transactions" element={<Transactions />} />
