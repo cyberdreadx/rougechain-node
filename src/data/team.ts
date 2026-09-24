@@ -87,6 +87,6 @@ export const team: TeamMember[] = [
     x: "",
     github: "",
     website: "",
-    linkedin: "",
+    linkedin: "https://www.linkedin.com/in/miranda-brenda/",
   },
 ];
