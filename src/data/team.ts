@@ -78,4 +78,15 @@ export const team: TeamMember[] = [
     website: "",
     linkedin: "https://www.linkedin.com/in/dr-ghulam-abbas/",
   },
+  {
+    name: "Brenda Miranda",
+    alias: "",
+    role: "Journalist, Media & PR",
+    bio: "Brenda Miranda is a multimedia journalist and anchor at Caplin News at Florida International University and a media contributor at the Kopenhaver Center for Women in Communication. Now based in Tulum, she covers community, wellness, the arts and human-interest stories. She graduates from FIU this fall with a bachelor\u2019s degree in digital communication and media.",
+    image: "/team/brenda-miranda.jpg",
+    x: "",
+    github: "",
+    website: "",
+    linkedin: "",
+  },
 ];
