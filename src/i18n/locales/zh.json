@@ -673,6 +673,30 @@
     "altTitle": "其他方式",
     "aerodrome": "直接在 Aerodrome 交易",
     "bridge": "将 XRGE 跨链至 RougeChain",
-    "disclaimer": "兑换通过第三方路由在您自己的钱包中执行；RougeChain 不会持有您的资金或密钥。价格随资金池变动，确认前请检查滑点。本页不构成投资建议。"
+    "disclaimer": "兑换通过第三方路由在您自己的钱包中执行；RougeChain 不会持有您的资金或密钥。价格随资金池变动，确认前请检查滑点。本页不构成投资建议。",
+    "swap": {
+      "title": "在 Base 上购买 XRGE",
+      "youPay": "支付",
+      "youReceive": "获得",
+      "minReceived": "最少获得",
+      "priceImpact": "价格影响",
+      "route": "路径",
+      "slippage": "滑点",
+      "connect": "连接钱包",
+      "swap": "兑换为 XRGE",
+      "approving": "正在授权 USDC…",
+      "swapping": "正在兑换…",
+      "insufficient": "余额不足",
+      "impactTooHigh": "价格影响过高",
+      "refresh": "刷新",
+      "viewTx": "在 Basescan 查看交易",
+      "noWallet": "未找到支持 Base 的钱包。请安装 Coinbase Wallet、MetaMask 或 Rabby。",
+      "connectFailed": "无法连接钱包",
+      "wrongChain": "请将钱包切换到 Base（链 8453）",
+      "quoteFailed": "无法获取报价",
+      "done": "兑换已确认，XRGE 已到账",
+      "reverted": "兑换在链上被回滚",
+      "failed": "兑换失败"
+    }
   }
 }

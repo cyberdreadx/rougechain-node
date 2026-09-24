@@ -2,10 +2,6 @@
   command = "npm run build"
   publish = "dist"
 
-[build.environment]
-  # the /buy page bundles the LI.FI router widget; rollup needs more heap than the Node default
-  NODE_OPTIONS = "--max-old-space-size=4096"
-
 [[headers]]
   for = "/assets/*"
   [headers.values]

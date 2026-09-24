@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LiFiWidget, type WidgetConfig } from "@lifi/widget";
+import AerodromeSwap from "@/components/buy/AerodromeSwap";
 import { Copy, Check, ExternalLink, ShieldCheck, Coins, Info } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,21 +9,6 @@ export const XRGE_BASE = "0x147120faEC9277ec02d957584CFCD92B56A24317";
 const AERODROME = `https://aerodrome.finance/swap?from=0x833589fcd6edb6e08f4c7c32d4f71b54bda02913&to=${XRGE_BASE}&chain0=8453&chain1=8453`;
 const BASESCAN = `https://basescan.org/token/${XRGE_BASE}`;
 
-// Buy on Base only: destination chain and token are locked to XRGE on Base (8453); source can be any chain/token the router supports.
-const widgetConfig: WidgetConfig = {
-  integrator: "rougechain",
-  variant: "compact",
-  subvariant: "default",
-  appearance: "dark",
-  toChain: 8453,
-  toToken: XRGE_BASE,
-  fromChain: 8453,
-  fromToken: "0x0000000000000000000000000000000000000000",
-  chains: { to: { allow: [8453] } },
-  disabledUI: ["toToken"],
-  hiddenUI: ["toAddress", "poweredBy"],
-  theme: { container: { border: "1px solid rgba(255,255,255,0.08)", borderRadius: "16px" }, palette: { primary: { main: "#e11d48" } } },
-};
 
 export default function Buy() {
   const { t } = useTranslation();
@@ -36,7 +21,7 @@ export default function Buy() {
         <p className="text-sm text-muted-foreground mt-2 max-w-2xl mx-auto">{t("buy.subtitle")}</p>
       </div>
       <div className="grid lg:grid-cols-[minmax(0,1fr)_380px] gap-6 items-start">
-        <div className="flex justify-center"><LiFiWidget integrator="rougechain" config={widgetConfig} /></div>
+        <div className="flex justify-center"><AerodromeSwap /></div>
         <div className="space-y-4">
           <Card><CardContent className="p-4 space-y-2">
             <div className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center gap-1"><ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> {t("buy.contractLabel")}</div>

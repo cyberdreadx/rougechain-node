@@ -673,6 +673,30 @@
     "altTitle": "Other ways",
     "aerodrome": "Trade directly on Aerodrome",
     "bridge": "Bridge XRGE to RougeChain",
-    "disclaimer": "Swaps execute in your own wallet through a third-party router; RougeChain never holds your funds or keys. Prices move with the pool; check slippage before confirming. This is not investment advice."
+    "disclaimer": "Swaps execute in your own wallet through a third-party router; RougeChain never holds your funds or keys. Prices move with the pool; check slippage before confirming. This is not investment advice.",
+    "swap": {
+      "title": "Buy XRGE on Base",
+      "youPay": "You pay",
+      "youReceive": "You receive",
+      "minReceived": "Min. received",
+      "priceImpact": "Price impact",
+      "route": "Route",
+      "slippage": "Slippage",
+      "connect": "Connect wallet",
+      "swap": "Swap for XRGE",
+      "approving": "Approving USDC…",
+      "swapping": "Swapping…",
+      "insufficient": "Insufficient balance",
+      "impactTooHigh": "Price impact too high",
+      "refresh": "Refresh",
+      "viewTx": "View transaction on Basescan",
+      "noWallet": "No Base-compatible wallet found. Install Coinbase Wallet, MetaMask or Rabby.",
+      "connectFailed": "Could not connect the wallet",
+      "wrongChain": "Switch your wallet to Base (chain 8453)",
+      "quoteFailed": "Could not fetch a quote",
+      "done": "Swap confirmed — XRGE is in your wallet",
+      "reverted": "The swap reverted on chain",
+      "failed": "Swap failed"
+    }
   }
 }

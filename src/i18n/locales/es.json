@@ -673,6 +673,30 @@
     "altTitle": "Otras opciones",
     "aerodrome": "Operar directamente en Aerodrome",
     "bridge": "Llevar XRGE a RougeChain",
-    "disclaimer": "Los intercambios se ejecutan en tu propia cartera a través de un enrutador de terceros; RougeChain nunca custodia tus fondos ni tus claves. El precio varía con el pool; revisa el deslizamiento antes de confirmar. Esto no es asesoría de inversión."
+    "disclaimer": "Los intercambios se ejecutan en tu propia cartera a través de un enrutador de terceros; RougeChain nunca custodia tus fondos ni tus claves. El precio varía con el pool; revisa el deslizamiento antes de confirmar. Esto no es asesoría de inversión.",
+    "swap": {
+      "title": "Comprar XRGE en Base",
+      "youPay": "Pagas",
+      "youReceive": "Recibes",
+      "minReceived": "Mín. recibido",
+      "priceImpact": "Impacto en precio",
+      "route": "Ruta",
+      "slippage": "Deslizamiento",
+      "connect": "Conectar cartera",
+      "swap": "Cambiar por XRGE",
+      "approving": "Aprobando USDC…",
+      "swapping": "Intercambiando…",
+      "insufficient": "Saldo insuficiente",
+      "impactTooHigh": "Impacto en precio demasiado alto",
+      "refresh": "Actualizar",
+      "viewTx": "Ver transacción en Basescan",
+      "noWallet": "No se encontró una cartera compatible con Base. Instala Coinbase Wallet, MetaMask o Rabby.",
+      "connectFailed": "No se pudo conectar la cartera",
+      "wrongChain": "Cambia tu cartera a Base (cadena 8453)",
+      "quoteFailed": "No se pudo obtener la cotización",
+      "done": "Intercambio confirmado: XRGE está en tu cartera",
+      "reverted": "El intercambio se revirtió en la cadena",
+      "failed": "El intercambio falló"
+    }
   }
 }

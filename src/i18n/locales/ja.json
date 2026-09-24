@@ -673,6 +673,30 @@
     "altTitle": "その他の方法",
     "aerodrome": "Aerodrome で直接取引",
     "bridge": "XRGE を RougeChain へブリッジ",
-    "disclaimer": "スワップはサードパーティのルーターを通じてご自身のウォレットで実行され、RougeChain が資金や鍵を預かることはありません。価格はプールにより変動するため、承認前にスリッページをご確認ください。投資助言ではありません。"
+    "disclaimer": "スワップはサードパーティのルーターを通じてご自身のウォレットで実行され、RougeChain が資金や鍵を預かることはありません。価格はプールにより変動するため、承認前にスリッページをご確認ください。投資助言ではありません。",
+    "swap": {
+      "title": "Base で XRGE を購入",
+      "youPay": "支払い",
+      "youReceive": "受け取り",
+      "minReceived": "最小受取額",
+      "priceImpact": "価格影響",
+      "route": "ルート",
+      "slippage": "スリッページ",
+      "connect": "ウォレットを接続",
+      "swap": "XRGE にスワップ",
+      "approving": "USDC を承認中…",
+      "swapping": "スワップ中…",
+      "insufficient": "残高不足",
+      "impactTooHigh": "価格影響が大きすぎます",
+      "refresh": "更新",
+      "viewTx": "Basescan で取引を見る",
+      "noWallet": "Base 対応ウォレットが見つかりません。Coinbase Wallet、MetaMask、Rabby をインストールしてください。",
+      "connectFailed": "ウォレットに接続できませんでした",
+      "wrongChain": "ウォレットを Base（チェーン 8453）に切り替えてください",
+      "quoteFailed": "見積もりを取得できませんでした",
+      "done": "スワップ完了。XRGE がウォレットに入りました",
+      "reverted": "スワップはチェーン上でリバートされました",
+      "failed": "スワップに失敗しました"
+    }
   }
 }
