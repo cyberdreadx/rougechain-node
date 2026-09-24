@@ -84,6 +84,7 @@ const navGroups: NavGroup[] = [
   {
     title: "nav.group.network",
     items: [
+      { to: "/buy", label: "nav.buy", icon: Coins },
       { to: "/status", label: "nav.status", icon: Activity },
       { to: "/validators", label: "nav.validators", icon: Shield },
       { to: "/node", label: "nav.coreNode", icon: Network },

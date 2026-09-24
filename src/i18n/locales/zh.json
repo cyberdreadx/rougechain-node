@@ -49,7 +49,8 @@
     "unreadEmails_one": "{{count}} 封未读邮件",
     "unreadEmails_other": "{{count}} 封未读邮件",
     "team": "团队",
-    "status": "网络状态"
+    "status": "网络状态",
+    "buy": "购买 XRGE"
   },
   "swap": {
     "title": "Swap",
@@ -658,5 +659,20 @@
     "audits": "审计",
     "footer": "已上线与已构建但未启用的功能列表维护于",
     "updated": "数据更新日期"
+  },
+  "buy": {
+    "title": "在 Base 上购买 XRGE",
+    "subtitle": "XRGE 是 RougeChain 在 Base 主网上的 ERC-20 代币。在这里直接用 ETH、USDC 或其他链上的代币兑换 XRGE，路由价格来自 Aerodrome 资金池。之后可通过跨链桥将 XRGE 转入 RougeChain。",
+    "contractLabel": "XRGE 官方合约（Base，链 ID 8453）",
+    "contractNote": "购买前务必核对地址。XRGE 只有一个。可在此核验：",
+    "howTitle": "操作步骤",
+    "step1": "连接支持 Base 的钱包（Coinbase Wallet、MetaMask、Rabby 等）。",
+    "step2": "选择支付资产。Base 上的 ETH 手续费最低；其他链和代币会自动路由。",
+    "step3": "查看报价并在钱包中确认，即可在 Base 上收到 XRGE。",
+    "step4": "可选：通过跨链桥把 XRGE 转入 RougeChain，用于质押、链上 DEX 交易或应用。",
+    "altTitle": "其他方式",
+    "aerodrome": "直接在 Aerodrome 交易",
+    "bridge": "将 XRGE 跨链至 RougeChain",
+    "disclaimer": "兑换通过第三方路由在您自己的钱包中执行；RougeChain 不会持有您的资金或密钥。价格随资金池变动，确认前请检查滑点。本页不构成投资建议。"
   }
 }

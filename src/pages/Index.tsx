@@ -703,6 +703,11 @@ const Index = () => {
             <Button size="lg" className="gap-2" onClick={scrollTo("ecosystem")}>
               <Boxes className="w-5 h-5" /> {t("home.hero.exploreEcosystem")}
             </Button>
+            <Link to="/buy">
+              <Button size="lg" variant="outline" className="gap-2 border-accent/60 text-accent hover:bg-accent/10">
+                <Coins className="w-5 h-5" /> {t("home.hero.buyXrge")}
+              </Button>
+            </Link>
             <a href={`${DOCS}/getting-started/quick-start`} target="_blank" rel="noopener noreferrer">
               <Button size="lg" variant="outline" className="gap-2 border-primary/50 text-primary hover:bg-primary/10">
                 <Code className="w-5 h-5" /> {t("home.hero.buildOn")}
@@ -712,7 +717,6 @@ const Index = () => {
 
           {/* Secondary links */}
           <div className="flex items-center justify-center gap-x-5 gap-y-2 flex-wrap text-sm">
-            <a href={AERODROME_BUY} target="_blank" rel="noopener noreferrer" className="text-accent hover:text-accent/80 flex items-center gap-1">{t("home.hero.buyXrge")} <ExternalLink className="w-3.5 h-3.5" /></a>
             <a href="/RougeChain-Whitepaper.pdf" target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground flex items-center gap-1">{t("home.hero.whitepaper")} <ExternalLink className="w-3.5 h-3.5" /></a>
             <Link to="/blockchain" className="text-muted-foreground hover:text-foreground flex items-center gap-1">{t("home.hero.explorer")} <ArrowRight className="w-3.5 h-3.5" /></Link>
           </div>

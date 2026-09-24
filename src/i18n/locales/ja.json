@@ -49,7 +49,8 @@
     "unreadEmails_one": "未読メール{{count}}件",
     "unreadEmails_other": "未読メール{{count}}件",
     "team": "チーム",
-    "status": "ステータス"
+    "status": "ステータス",
+    "buy": "XRGEを購入"
   },
   "swap": {
     "title": "スワップ",
@@ -658,5 +659,20 @@
     "audits": "監査",
     "footer": "稼働中と構築済み未有効化の一覧はこちらで管理：",
     "updated": "情報更新日"
+  },
+  "buy": {
+    "title": "Base で XRGE を購入",
+    "subtitle": "XRGE は Base メインネット上の RougeChain の ERC-20 トークンです。ETH、USDC、他チェーンのトークンをここで直接 XRGE にスワップできます。価格は Aerodrome プールを経由して算出されます。その後 RougeChain へ移すにはブリッジをご利用ください。",
+    "contractLabel": "XRGE 公式コントラクト（Base、チェーン ID 8453）",
+    "contractNote": "購入前に必ずアドレスを確認してください。XRGE は 1 つだけです。確認先：",
+    "howTitle": "手順",
+    "step1": "Base 対応ウォレット（Coinbase Wallet、MetaMask、Rabby など）を接続します。",
+    "step2": "支払い資産を選びます。Base 上の ETH が最も安価で、他チェーン・他トークンは自動でルーティングされます。",
+    "step3": "見積もりを確認してウォレットで承認すると、Base 上で XRGE を受け取れます。",
+    "step4": "任意：ブリッジで XRGE を RougeChain へ移し、ステーキングやオンチェーン DEX、アプリで利用できます。",
+    "altTitle": "その他の方法",
+    "aerodrome": "Aerodrome で直接取引",
+    "bridge": "XRGE を RougeChain へブリッジ",
+    "disclaimer": "スワップはサードパーティのルーターを通じてご自身のウォレットで実行され、RougeChain が資金や鍵を預かることはありません。価格はプールにより変動するため、承認前にスリッページをご確認ください。投資助言ではありません。"
   }
 }

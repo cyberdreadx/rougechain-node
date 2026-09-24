@@ -49,7 +49,8 @@
     "unreadEmails_one": "{{count}} unread email",
     "unreadEmails_other": "{{count}} unread emails",
     "team": "Team",
-    "status": "Status"
+    "status": "Status",
+    "buy": "Buy XRGE"
   },
   "swap": {
     "title": "Swap",
@@ -658,5 +659,20 @@
     "audits": "Audits",
     "footer": "What is live versus built-but-not-activated is maintained at",
     "updated": "Facts updated"
+  },
+  "buy": {
+    "title": "Buy XRGE on Base",
+    "subtitle": "XRGE is the ERC-20 token of RougeChain on Base mainnet. Swap ETH, USDC or tokens from other chains for XRGE right here; the route is priced through the Aerodrome pool. To move XRGE onto RougeChain afterwards, use the bridge.",
+    "contractLabel": "Official XRGE contract (Base, chain id 8453)",
+    "contractNote": "Always check the address before you buy. There is only one XRGE. Verify on",
+    "howTitle": "How it works",
+    "step1": "Connect a wallet that supports Base (Coinbase Wallet, MetaMask, Rabby…).",
+    "step2": "Choose what you pay with. ETH on Base is cheapest; other chains and tokens are routed automatically.",
+    "step3": "Review the quote and confirm in your wallet. You receive XRGE on Base.",
+    "step4": "Optional: bridge XRGE to RougeChain to stake, trade on the on-chain DEX or use the apps.",
+    "altTitle": "Other ways",
+    "aerodrome": "Trade directly on Aerodrome",
+    "bridge": "Bridge XRGE to RougeChain",
+    "disclaimer": "Swaps execute in your own wallet through a third-party router; RougeChain never holds your funds or keys. Prices move with the pool; check slippage before confirming. This is not investment advice."
   }
 }

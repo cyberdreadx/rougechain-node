@@ -49,7 +49,8 @@
     "unreadEmails_one": "{{count}} correo sin leer",
     "unreadEmails_other": "{{count}} correos sin leer",
     "team": "Equipo",
-    "status": "Estado"
+    "status": "Estado",
+    "buy": "Comprar XRGE"
   },
   "swap": {
     "title": "Swap",
@@ -658,5 +659,20 @@
     "audits": "Auditorías",
     "footer": "Lo que está activo frente a lo construido pero no activado se mantiene en",
     "updated": "Datos actualizados"
+  },
+  "buy": {
+    "title": "Comprar XRGE en Base",
+    "subtitle": "XRGE es el token ERC-20 de RougeChain en la mainnet de Base. Cambia ETH, USDC o tokens de otras cadenas por XRGE aquí mismo; la ruta se cotiza a través del pool de Aerodrome. Para llevar XRGE a RougeChain después, usa el puente.",
+    "contractLabel": "Contrato oficial de XRGE (Base, chain id 8453)",
+    "contractNote": "Verifica siempre la dirección antes de comprar. Solo existe un XRGE. Compruébalo en",
+    "howTitle": "Cómo funciona",
+    "step1": "Conecta una cartera compatible con Base (Coinbase Wallet, MetaMask, Rabby…).",
+    "step2": "Elige con qué pagas. ETH en Base es lo más barato; otras cadenas y tokens se enrutan automáticamente.",
+    "step3": "Revisa la cotización y confirma en tu cartera. Recibes XRGE en Base.",
+    "step4": "Opcional: lleva XRGE a RougeChain con el puente para hacer staking, operar en el DEX o usar las apps.",
+    "altTitle": "Otras opciones",
+    "aerodrome": "Operar directamente en Aerodrome",
+    "bridge": "Llevar XRGE a RougeChain",
+    "disclaimer": "Los intercambios se ejecutan en tu propia cartera a través de un enrutador de terceros; RougeChain nunca custodia tus fondos ni tus claves. El precio varía con el pool; revisa el deslizamiento antes de confirmar. Esto no es asesoría de inversión."
   }
 }
