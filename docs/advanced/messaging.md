@@ -171,8 +171,8 @@ The browser extension tracks unread counts for both **Chat** and **Mail** tabs:
 | **Badge clearing** | Viewing a conversation or inbox marks items as read server-side and updates the badge immediately |
 
 Notifications are powered by two channels:
-- **WebSocket** — Real-time transaction and balance events via `wss://testnet.rougechain.io/api/ws`
-- **Polling** — Unread messenger and mail counts checked every 15 seconds via signed `/api/v2/` endpoints
+- **WebSocket** (`wss://api.rougechain.io/api/ws`): real-time transaction and balance events, plus **private new-message events**. Each app authenticates its socket with a signed `messenger_ws_subscribe` request, and the node sends a wallet only the events for its own conversations, never message content. See [Real-time Events](../api-reference/messenger.md#real-time-events-websocket).
+- **Polling**: a slow safety net, used at full speed only while the socket is down. Mail counts are still polled via signed `/api/v2/` endpoints.
 
 ### QWalla Mobile App
 

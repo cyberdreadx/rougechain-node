@@ -340,7 +340,7 @@ The node replies `{"type":"subscribed","topics":["messenger"]}` or `{"type":"aut
   "sender_wallet_id": "<sender signing pubkey>", "participant_ids": ["<signing pubkey>", "…"] }
 ```
 
-Events never contain message content. Refetch the conversation with `POST /api/v2/messenger/messages/list`. Unauthenticated sockets never receive message events, and `inbox:*` topics cannot be joined with a plain `subscribe`. Public events (`new_block`, `new_transaction`, `stats`) are unchanged. Keep a slow fallback poll for when the socket is down.
+Events never contain message content. Refetch the conversation with `POST /api/v2/messenger/messages/list`. With the SDK (1.8.0+): `const stop = rc.messenger.subscribe(wallet, (ev) => refresh(ev.conversation_id))`. Unauthenticated sockets never receive message events, and `inbox:*` topics cannot be joined with a plain `subscribe`. Public events (`new_block`, `new_transaction`, `stats`) are unchanged. Keep a slow fallback poll for when the socket is down.
 
 ## Media Messages
 
