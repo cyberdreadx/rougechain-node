@@ -40,6 +40,14 @@ pub enum WsEvent {
         token: String,
         new_balance: f64,
     },
+    /// A new encrypted messenger message was stored. Routing hint only: carries the
+    /// conversation id (an opaque hash of the participants) and the message id — never
+    /// content, sender or participant ids — so clients can refetch instead of polling.
+    NewMessage {
+        conversation_id: String,
+        message_id: String,
+        created_at: String,
+    },
     /// Subscription confirmation
     Subscribed {
         topics: Vec<String>,
@@ -67,6 +75,10 @@ impl WsEvent {
                     format!("token:{}", token),
                 ]
             }
+            WsEvent::NewMessage { conversation_id, .. } => vec![
+                "messenger".to_string(),
+                format!("conversation:{}", conversation_id),
+            ],
             WsEvent::Subscribed { .. } => vec![], // Always sent to the requesting client
         }
     }
@@ -145,6 +157,15 @@ impl WsBroadcaster {
             from: from.to_string(),
             to: to.map(|s| s.to_string()),
             amount,
+        });
+    }
+
+    /// Broadcast a messenger new-message routing hint (no content).
+    pub fn broadcast_new_message(&self, conversation_id: &str, message_id: &str, created_at: &str) {
+        self.broadcast(WsEvent::NewMessage {
+            conversation_id: conversation_id.to_string(),
+            message_id: message_id.to_string(),
+            created_at: created_at.to_string(),
         });
     }
 

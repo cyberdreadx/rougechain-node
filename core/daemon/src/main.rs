@@ -4297,6 +4297,7 @@ async fn send_messenger_message(
         deleted_at: None,
     };
     let message = node.send_message(message).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    state.ws_broadcaster.broadcast_new_message(&message.conversation_id, &message.id, &message.created_at);
     let recipients: Vec<String> = state.node.get_conversation_participants(&message.conversation_id)
         .into_iter().filter(|p| *p != message.sender_wallet_id).collect();
     state.push.notify_to(recipients, "New message", "You received a new encrypted message", serde_json::json!({ "type": "message", "conversationId": message.conversation_id }));
@@ -5308,6 +5309,8 @@ async fn send_message_signed(
         deleted_at: None,
     };
     let message = state.node.send_message(message).map_err(|e| signed_internal(&e))?;
+    // Real-time routing hint for connected clients (Qwalla / site / extension refetch on it).
+    state.ws_broadcaster.broadcast_new_message(&message.conversation_id, &message.id, &message.created_at);
     // Notify every other participant (recipient pubkeys == push-store keys). authed_key is the sender.
     let recipients: Vec<String> = state.node.get_conversation_participants(&message.conversation_id)
         .into_iter().filter(|p| p != &authed_key).collect();
