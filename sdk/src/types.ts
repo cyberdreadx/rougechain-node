@@ -410,6 +410,21 @@ export interface MessengerWallet {
   avatar_url?: string;
 }
 
+/** Messenger conversation list folder. */
+export type MessengerFolder = "inbox" | "trash" | "all";
+
+/** Private real-time event, delivered only to an authenticated participant's socket. */
+export interface MessengerNewMessageEvent {
+  type: "new_message";
+  conversation_id: string;
+  message_id: string;
+  created_at: string;
+  /** Sender's signing public key. */
+  sender_wallet_id: string;
+  /** Participants' signing public keys. */
+  participant_ids: string[];
+}
+
 export interface MessengerConversation {
   id: string;
   participants: string[];
