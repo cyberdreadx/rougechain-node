@@ -42,12 +42,12 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@noble/hashes": "~2.0.0",
-    "@noble/post-quantum": "~0.5.4",
+    "@noble/hashes": "~2.4.0",
+    "@noble/post-quantum": "~0.7.1",
     "@scure/bip39": "^2.0.1"
   },
   "devDependencies": {
     "tsup": "^8.0.0",
-    "typescript": "^5.4.0"
+    "typescript": "^7.0.2"
   }
 }
