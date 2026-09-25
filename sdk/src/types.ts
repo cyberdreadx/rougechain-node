@@ -427,11 +427,23 @@ export interface MessengerNewMessageEvent {
 
 export interface MessengerConversation {
   id: string;
+  /** Participant ids exactly as the node returns them (signing keys or wallet UUIDs). */
+  participant_ids: string[];
+  /**
+   * Same list as `participant_ids`. The node never sends this field; the SDK fills it in
+   * so code written against earlier SDK types keeps working.
+   */
   participants: string[];
-  created_at: number;
+  created_by?: string;
+  name?: string | null;
+  is_group?: boolean;
+  /** RFC 3339 timestamp. */
+  created_at: string;
+  /** Canonical wallet id -> time, for each participant who moved the thread to trash. */
+  deleted_by?: Record<string, string>;
   last_message_at?: string;
   last_sender_id?: string;
-  last_message_preview?: string;
+  last_message_preview?: string | null;
   unread_count?: number;
 }
 

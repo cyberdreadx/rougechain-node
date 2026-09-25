@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.1
+
+### Fixed
+- `messenger.getConversations()` conversations now carry their members. The node returns them as `participant_ids`, but the `MessengerConversation` type declared `participants`, so apps reading `participants` got `undefined`. They showed every thread as a conversation with yourself and merged all threads into one. The SDK now fills in both `participant_ids` and `participants`.
+- `MessengerConversation` type matches the node: adds `participant_ids`, `created_by`, `name`, `is_group`, `deleted_by`; `created_at` is an RFC 3339 string (was typed as a number); `last_message_preview` may be `null`.
+
 ## 1.8.0
 
 ### Added

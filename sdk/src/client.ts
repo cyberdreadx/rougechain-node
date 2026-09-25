@@ -1117,6 +1117,16 @@ class MailClient {
 
 // ===== Messenger Sub-client =====
 
+/**
+ * The node returns conversation members as `participant_ids`; earlier SDK types called
+ * the field `participants`, so apps reading `participants` saw no members at all.
+ * Fill in both so either name works.
+ */
+function normalizeConversation(c: Partial<MessengerConversation>): MessengerConversation {
+  const ids = c.participant_ids ?? c.participants ?? [];
+  return { ...c, participant_ids: ids, participants: ids } as MessengerConversation;
+}
+
 class MessengerClient {
   constructor(private readonly rc: RougeChain) {}
 
@@ -1152,10 +1162,10 @@ class MessengerClient {
   async getConversations(wallet: WalletKeys, opts: { folder?: MessengerFolder } = {}): Promise<MessengerConversation[]> {
     const signed = signRequest(wallet, opts.folder ? { folder: opts.folder } : {});
     try {
-      const data = await this.rc.post<{ conversations: MessengerConversation[] }>(
+      const data = await this.rc.post<{ conversations: Partial<MessengerConversation>[] }>(
         "/v2/messenger/conversations/list", signed
       );
-      return data.conversations ?? [];
+      return (data.conversations ?? []).map(normalizeConversation);
     } catch { return []; }
   }
 
