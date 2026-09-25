@@ -119,6 +119,11 @@ const Bridge = () => {
   // the first announced provider, else the legacy evmProvider.
   const preferredDetail = discovered.find((d) => d.info.rdns === ROUGECHAIN_RDNS);
   const selectedDetail = discovered.find((d) => d.info.rdns === selectedRdns) ?? preferredDetail ?? discovered[0];
+  // Qwalla's dApp browser injects window.ethereum with `isQwalla` and does not announce via EIP-6963:
+  // name it explicitly instead of falling back to the generic "Base wallet" label.
+  const legacyEth = typeof window !== "undefined" ? (window as unknown as { ethereum?: { isQwalla?: boolean; isRougeChain?: boolean; isCoinbaseWallet?: boolean; isMetaMask?: boolean } }).ethereum : undefined;
+  const legacyWalletName = legacyEth?.isQwalla ? "Qwalla Wallet" : legacyEth?.isRougeChain ? "RougeChain Wallet" : legacyEth?.isCoinbaseWallet ? "Coinbase Wallet" : legacyEth?.isMetaMask ? "MetaMask" : null;
+  const connectWalletName = selectedDetail?.info.name ?? legacyWalletName ?? t("bridge.form.baseWallet");
   const evmProvider = (selectedDetail?.provider
     ?? (window as unknown as { ethereum?: EIP1193Provider }).ethereum) as EIP1193Provider | undefined;
 
@@ -1107,8 +1112,8 @@ const Bridge = () => {
               {direction === "deposit" && !evmAddress ? (
                 <Button onClick={connectEvm} variant="outline" className="w-full gap-2 h-12 whitespace-nowrap text-sm">
                   <Wallet className="w-4 h-4 shrink-0" />
-                  <span className="hidden sm:inline">{t("bridge.form.connectWalletWithChain", { wallet: selectedDetail?.info.name ?? t("bridge.form.baseWallet"), chain: chainLabel })}</span>
-                  <span className="sm:hidden">{t("bridge.form.connectWallet", { wallet: selectedDetail?.info.name ?? t("bridge.form.baseWallet") })}</span>
+                  <span className="hidden sm:inline">{t("bridge.form.connectWalletWithChain", { wallet: connectWalletName, chain: chainLabel })}</span>
+                  <span className="sm:hidden">{t("bridge.form.connectWallet", { wallet: connectWalletName })}</span>
                 </Button>
               ) : (
                 <Button

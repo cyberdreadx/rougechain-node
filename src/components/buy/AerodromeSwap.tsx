@@ -60,6 +60,8 @@ export default function AerodromeSwap() {
   }, []);
   const legacy = (typeof window !== "undefined" ? (window as unknown as { ethereum?: EIP1193Provider }).ethereum : undefined);
   const provider: EIP1193Provider | undefined = (wallets.find((w) => w.info.rdns === rdns) ?? wallets[0])?.provider ?? legacy;
+  const legacyFlags = legacy as unknown as { isQwalla?: boolean; isRougeChain?: boolean; isCoinbaseWallet?: boolean; isMetaMask?: boolean } | undefined;
+  const walletName = (wallets.find((w) => w.info.rdns === rdns) ?? wallets[0])?.info.name ?? (legacyFlags?.isQwalla ? "Qwalla Wallet" : legacyFlags?.isRougeChain ? "RougeChain Wallet" : legacyFlags?.isCoinbaseWallet ? "Coinbase Wallet" : legacyFlags?.isMetaMask ? "MetaMask" : null);
 
   // quote: router.getAmountsOut for the typed amount; price impact vs the pool's mid price (XRGE/USDC reserves)
   useEffect(() => {
@@ -154,7 +156,7 @@ export default function AerodromeSwap() {
         <div className="flex flex-wrap gap-1 text-xs">{wallets.map((w) => <button key={w.info.rdns} onClick={() => setRdns(w.info.rdns)} className={`flex items-center gap-1 px-2 py-1 rounded border ${(rdns ?? wallets[0].info.rdns) === w.info.rdns ? "border-primary" : "border-border"}`}><img src={w.info.icon} alt="" className="w-4 h-4 rounded" />{w.info.name}</button>)}</div>
       )}
       {!account ? (
-        <Button className="w-full gap-2" onClick={connect}><Wallet className="w-4 h-4" /> {t("buy.swap.connect")}</Button>
+        <Button className="w-full gap-2" onClick={connect}><Wallet className="w-4 h-4" /> {walletName ? t("buy.swap.connectNamed", { wallet: walletName }) : t("buy.swap.connect")}</Button>
       ) : (
         <Button className="w-full gap-2" disabled={!quote || busy !== "" || insufficient || (quote?.impact ?? 0) > 0.5} onClick={swap}>
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}

@@ -701,7 +701,8 @@
       "quoteFailed": "No se pudo obtener la cotización",
       "done": "Intercambio confirmado: XRGE está en tu cartera",
       "reverted": "El intercambio se revirtió en la cadena",
-      "failed": "El intercambio falló"
+      "failed": "El intercambio falló",
+      "connectNamed": "Conectar {{wallet}}"
     }
   }
 }

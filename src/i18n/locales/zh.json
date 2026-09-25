@@ -701,7 +701,8 @@
       "quoteFailed": "无法获取报价",
       "done": "兑换已确认，XRGE 已到账",
       "reverted": "兑换在链上被回滚",
-      "failed": "兑换失败"
+      "failed": "兑换失败",
+      "connectNamed": "连接 {{wallet}}"
     }
   }
 }

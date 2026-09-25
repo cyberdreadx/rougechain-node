@@ -701,7 +701,8 @@
       "quoteFailed": "Could not fetch a quote",
       "done": "Swap confirmed — XRGE is in your wallet",
       "reverted": "The swap reverted on chain",
-      "failed": "Swap failed"
+      "failed": "Swap failed",
+      "connectNamed": "Connect {{wallet}}"
     }
   }
 }
