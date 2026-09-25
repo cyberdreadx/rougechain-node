@@ -10,6 +10,7 @@ import type { Conversation, WalletWithPrivateKeys, Message, Wallet, MessageType 
 import { getBotReply, getMessages, sendMessage, deleteMessage, isDemoBot, loadDemoBotWallet, registerWalletOnNode, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, isWalletBlocked, blockWallet, unblockWallet, keyFingerprint, checkTofu } from "@/lib/pqc-messenger";
 import { playNotificationSound, loadNotificationSettings } from "@/lib/notifications";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
+import { subscribeNewMessage, isMessengerLive } from "@/hooks/use-blockchain-ws";
 import ChatPayment, { PaymentBubble, parsePaymentMessage, encodePaymentMessage, parseRequestMessage, encodeRequestMessage, PaymentRequestBubble } from "./ChatPayment";
 import type { PaymentMessageData, RequestMessageData } from "./ChatPayment";
 import { ReactionPicker, ReactionBadges, aggregateReactions, isSystemMessage, encodeReactionMessage } from "./ChatReactions";
@@ -570,11 +571,19 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
     setNewMessageIds(new Set());
     loadMessages(true);
 
+    // Instant refresh on this wallet's private new_message event for THIS
+    // conversation (socket owned by the Messenger page). Poll every 3 s only while
+    // that stream isn't live; otherwise a 15 s safety net.
+    const unsubscribe = subscribeNewMessage((ev) => {
+      if (ev.conversation_id === conversation.id) loadMessages(false);
+    });
+    let ticks = 0;
     const interval = setInterval(() => {
-      loadMessages(false);
+      ticks++;
+      if (!isMessengerLive() || ticks % 5 === 0) loadMessages(false);
     }, 3000);
 
-    return () => clearInterval(interval);
+    return () => { unsubscribe(); clearInterval(interval); };
   }, [conversation.id]);
 
   // Track previous message count to detect new messages
