@@ -114,63 +114,32 @@ GET /api/tx/:hash
 
 ### Response
 
-`txId`, `blockHeight`, `blockHash` and `blockTime` are top-level (not inside `tx`). The nested
-`tx` is the stored `TxV1` exactly as it was signed and accepted, in **snake_case**; `receipt` is
-the execution receipt (present once the block is applied; `null` only for a transaction that is
-known but not yet executed). The example below is a real mainnet transfer
-(`3c1b71bc…`, block 110); unused `payload` fields are returned as `null` and omitted here.
+`txId`, `blockHeight`, `blockHash`, and `blockTime` are top-level (not inside `tx`). The
+nested `tx` (a `TxV1`) is snake_case, and `receipt` carries the execution receipt when
+present.
 
 ```json
 {
   "success": true,
-  "txId": "3c1b71bc59557f9b4d1191bc299e1bd2d8b6ad4058147efebe70d0f6c07daae1",
-  "blockHeight": 110,
-  "blockHash": "7ee2afd4eaebdcd4…",
-  "blockTime": 1790297628272,
+  "txId": "abc123...",
+  "blockHeight": 42,
+  "blockHash": "xyz...",
+  "blockTime": 1706745600000,
   "tx": {
     "version": 1,
     "tx_type": "transfer",
-    "from_pub_key": "df255dbd…",
-    "nonce": 4,
+    "from_pub_key": "abc...",
+    "nonce": 1234567890,
     "payload": {
-      "to_pub_key_hex": "rouge1cd3mkuu6p89nm6uakpcchfmkvhj8x2z0xfx33gag9t5kma2s8fcs4m9mda",
-      "amount": 50,
-      "token_name": "XRGE"
+      "to_pub_key_hex": "def...",
+      "amount": 100
     },
-    "fee": 0.001,
-    "sig": "…",
-    "signed_payload": "{…}"
+    "fee": 0.1,
+    "sig": "ghi..."
   },
-  "receipt": {
-    "tx_hash": "3c1b71bc…",
-    "block_height": 110,
-    "block_hash": "7ee2afd4eaebdcd4…",
-    "index": 0,
-    "tx_type": "transfer",
-    "from": "df255dbd…",
-    "status": "Success",
-    "fee_paid": 0.001,
-    "timestamp": 1790297628272,
-    "logs": [
-      { "event_type": "transfer", "data": { "amount": 50, "to": "rouge1cd3mkuu…", "token": "XRGE" } }
-    ]
-  }
+  "receipt": null
 }
 ```
-
-### Field notes
-
-- **`tx.payload.to_pub_key_hex` holds the recipient exactly as it was submitted** — either a
-  `rouge1…` address (as in the example) or a hex public key. The name is historical; treat it as
-  "recipient", not as a guarantee of a hex key. To convert either form to the other, call
-  [`GET /api/resolve/:input`](wallet.md#resolve-address--public-key) (auto-detects the format
-  and returns `address`, `publicKey` and `balance`).
-- `receipt.logs[].data.to` carries the same recipient value; `receipt.status` is `"Success"` or
-  `{"Failed": "<reason>"}`.
-- `signed_payload` is the exact JSON the sender signed (V2 transactions); consensus binds the
-  executed fields to it, so `tx.*` never differs from what was signed.
-- **Stability:** the `tx` and `receipt` field names are the serialized `TxV1` / `TxReceipt`
-  types and are stable; any change would ship as a new versioned endpoint, not as a rename.
 
 ---
 

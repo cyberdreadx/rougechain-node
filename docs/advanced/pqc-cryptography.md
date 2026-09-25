@@ -180,10 +180,6 @@ curl https://testnet.rougechain.io/api/v2/rollup/batch/1
 
 ## Bridge Verification (STARK Bridge)
 
-> This section covers **deposit verification** on the RougeChain side. Releases on Base are still
-> authorized with classical keys in production. The ML-DSA-65 on-chain authorization for XRGE (V3)
-> is built but not activated — see [Bridge Security Model](../bridge/security-model.md).
-
 Deposits from Base are cryptographically verified before minting:
 
 1. **EVM Receipt Verification** — tx status, recipient, sender, confirmations
@@ -196,7 +192,6 @@ Deposits from Base are cryptographically verified before minting:
 - [x] zk-STARK Phase 2: shielded transactions on-chain
 - [x] zk-STARK Phase 3: ZK-rollup layer
 - [x] STARK bridge deposit verification
-- [ ] V3 XRGE bridge with on-chain ML-DSA-65 authorization — built, audit pending, **not activated** ([status](../status.md))
 - [ ] Fully trustless STARK bridge (Base light client)
 - [ ] SLH-DSA (SPHINCS+) as alternative signature scheme
 - [ ] Hybrid classical+PQC mode

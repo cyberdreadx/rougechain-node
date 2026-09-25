@@ -237,7 +237,7 @@ All CLI flags can also be set via environment variables:
 | `QV_CORS_ORIGINS` | — | localhost only | Comma-separated allowed CORS origins |
 | `QV_API_KEYS` | `--api-keys` | — | Comma-separated API keys for authenticated access |
 | `QV_BRIDGE_CUSTODY_ADDRESS` | `--bridge-custody-address` | — | EVM custody address (enables bridge) |
-| `QV_BASE_SEPOLIA_RPC` | `--base-sepolia-rpc` | `https://sepolia.base.org` | Base RPC URL used for bridge verification. The name is historical: on mainnet nodes set it to a **Base mainnet** RPC (chain id `8453`) |
+| `QV_BASE_SEPOLIA_RPC` | `--base-sepolia-rpc` | `https://sepolia.base.org` | Base Sepolia RPC URL |
 
 Common CLI-only flags:
 

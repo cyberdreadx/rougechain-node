@@ -1,6 +1,6 @@
 # Browser Extensions
 
-RougeChain provides browser extensions that serve as quantum-resistant wallets, similar to how MetaMask works for Ethereum — but using post-quantum cryptography.
+RougeChain provides browser extensions that serve as quantum-safe wallets, similar to how MetaMask works for Ethereum — but using post-quantum cryptography.
 
 ## Available Extensions
 

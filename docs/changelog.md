@@ -4,16 +4,6 @@ All notable changes to RougeChain.
 
 ---
 
-## Docs status sync — 2026-09-21
-
-- Added [Status & Roadmap](status.md), [Security Overview](security.md), [Finality](staking/finality.md),
-  [Bridge Security Model](bridge/security-model.md), [V3 Post-Quantum XRGE Bridge](bridge/v3-xrge-bridge.md)
-  and [Authority Rotation](bridge/authority-rotation.md).
-- Clarified what is live (mainnet, hardened R1 bridge for XRGE / qETH / qUSDC) versus built but
-  **not activated** (FINALITY_V2, V3 XRGE bridge with ML-DSA-65 authorization).
-- Corrected stale claims: Base Sepolia → Base mainnet, qUSDC "planned" → live, auto-refund → disabled
-  in production, generic BFT finality wording.
-
 ## Security Hardening — 2026-08-19
 
 ### Security Hardening

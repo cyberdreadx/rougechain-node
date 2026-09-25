@@ -129,8 +129,6 @@ Resolve between compact `rouge1…` bech32 addresses and full hex public keys.
 GET /api/resolve/:input
 ```
 
-<a id="resolve-address--public-key"></a>
-
 Input can be either a `rouge1…` address or a hex public key. The endpoint auto-detects the format.
 
 ### Response
