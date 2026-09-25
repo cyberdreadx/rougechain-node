@@ -4,6 +4,14 @@ All notable changes to RougeChain.
 
 ---
 
+## Messenger — deterministic threads and recoverable delete — 2026-09-25
+
+Node release `59478e6` (binary sha256 `9a93d68b…`, non-consensus; installed on the primary 2026-09-25).
+
+- **1:1 conversations now have a deterministic id** (`dm_…`, derived from the two participants' canonical wallet ids), and creating one that already exists returns it with `existing: true` instead of a duplicate thread. Groups are unchanged.
+- **Deleting a conversation is now per participant and recoverable**: it moves to your trash for 30 days (`conversations/list` with `folder: "trash"`), `conversations/restore` brings it back, `purge: true` waives your window; the thread is removed for good only once every participant has deleted it. Message delete works the same way for the sender (`messages/restore`).
+- Details: [Messenger API](api-reference/messenger.md). Addresses public issue rougechain-node #73.
+
 ## Docs status sync — 2026-09-21
 
 - Added [Status & Roadmap](status.md), [Security Overview](security.md), [Finality](staking/finality.md),
