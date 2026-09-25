@@ -20,12 +20,15 @@ import {
     blockWallet,
     unblockWallet,
     getBlockedWalletIds,
+    buildSignedRequest,
     type Conversation,
     type Message,
     type MessageType,
     type Wallet,
     type WalletWithPrivateKeys,
 } from "../../lib/pqc-messenger";
+import { invalidate } from "../../lib/api-cache";
+import { subscribeNewMessage, isMessengerWsConnected, setMessengerAuthSigner } from "../../lib/messenger-ws";
 
 interface Props {
     wallet: UnifiedWallet;
@@ -81,8 +84,20 @@ export default function MessengerTab({ wallet }: Props) {
         doRegister();
         loadConversations();
         loadContacts();
-        const interval = setInterval(loadConversations, 5000);
-        return () => clearInterval(interval);
+        // Real-time: authenticate the socket as this wallet, then refetch the list on
+        // each private new_message event (routing metadata only, never content).
+        setMessengerAuthSigner(() =>
+            buildSignedRequest({ action: "messenger_ws_subscribe" }, messengerWallet.signingPrivateKey, messengerWallet.signingPublicKey));
+        const unsubscribe = subscribeNewMessage(() => {
+            invalidate("messengerConversations");
+            loadConversations();
+        });
+        // Safety-net poll: slow while the socket is up, fast if it isn't.
+        const interval = setInterval(() => {
+            if (!isMessengerWsConnected()) loadConversations();
+        }, 3000);
+        const slow = setInterval(loadConversations, 20000);
+        return () => { unsubscribe(); setMessengerAuthSigner(null); clearInterval(interval); clearInterval(slow); };
     }, []);
 
     if (selected) {
@@ -367,8 +382,17 @@ function ChatView({
 
     useEffect(() => {
         loadMessages();
-        const interval = setInterval(loadMessages, 3000);
-        return () => clearInterval(interval);
+        // Instant refresh when the node says THIS conversation got a message.
+        const unsubscribe = subscribeNewMessage((hint) => {
+            if (hint.conversation_id !== conversation.id) return;
+            invalidate("messengerMessages", conversation.id);
+            loadMessages();
+        });
+        const fast = setInterval(() => {
+            if (!isMessengerWsConnected()) loadMessages();
+        }, 3000);
+        const slow = setInterval(loadMessages, 10000);
+        return () => { unsubscribe(); clearInterval(fast); clearInterval(slow); };
     }, [conversation.id]);
 
     useEffect(() => {
