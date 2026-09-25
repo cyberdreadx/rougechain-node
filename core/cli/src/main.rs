@@ -861,7 +861,7 @@ fn main() {
             let key = match resolve_key(&dir, &node_keys) { Some(k) => k, None => { eprintln!("No keys found. Run: rougechain key-gen"); return; } };
             let parts: Vec<Value> = participants.split(',').map(|s| Value::String(s.trim().to_string())).collect();
             let mut payload = serde_json::Map::new();
-            payload.insert("participants".to_string(), Value::Array(parts));
+            payload.insert("participantIds".to_string(), Value::Array(parts)); // the v2 endpoint reads `participantIds`
             match build_signed_request(&key, payload).and_then(|req| submit_signed(rpc, "/api/v2/messenger/conversations", req)) {
                 Ok(v) => {
                     if let Some(id) = v.get("conversationId").and_then(|i| i.as_str()) {
