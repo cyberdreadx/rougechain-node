@@ -139,6 +139,12 @@ export async function releaseName(wallet: WalletWithPrivateKeys, name: string): 
 
 // --- Multi-recipient CEK encryption ---
 
+/** Copy a Uint8Array view into its own ArrayBuffer (see pqc-messenger.ts: @noble's
+ *  ML-KEM shared secret is a 32-byte view of a 64-byte buffer; `.buffer` fed HKDF 64 bytes). */
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 async function encryptForMultipleRecipients(
     plaintext: string,
     recipientEncPubKeys: string[],
@@ -159,7 +165,7 @@ async function encryptForMultipleRecipients(
     for (const encPubKey of allKeys) {
         if (!encPubKey) continue;
         const { cipherText, sharedSecret } = ml_kem768.encapsulate(hexToBytes(encPubKey));
-        const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret.buffer as ArrayBuffer, "HKDF", false, ["deriveKey"]);
+        const keyMaterial = await crypto.subtle.importKey("raw", toArrayBuffer(sharedSecret), "HKDF", false, ["deriveKey"]);
         const wrapKey = await crypto.subtle.deriveKey(
             { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("pqc-cek-wrap") },
             keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt"],
@@ -188,7 +194,7 @@ async function decryptMailContent(
         if (!myWrappedKey) throw new Error("No wrapped key for this recipient");
         const privKeyBytes = hexToBytes(recipientEncPrivKey);
         const sharedSecret = ml_kem768.decapsulate(hexToBytes(myWrappedKey.kemCipherText), privKeyBytes);
-        const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret.buffer as ArrayBuffer, "HKDF", false, ["deriveKey"]);
+        const keyMaterial = await crypto.subtle.importKey("raw", toArrayBuffer(sharedSecret), "HKDF", false, ["deriveKey"]);
         const unwrapKey = await crypto.subtle.deriveKey(
             { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("pqc-cek-wrap") },
             keyMaterial, { name: "AES-GCM", length: 256 }, false, ["decrypt"],
