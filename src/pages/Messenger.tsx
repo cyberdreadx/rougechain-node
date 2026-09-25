@@ -13,7 +13,7 @@ import PrivacySettings from "@/components/messenger/PrivacySettings";
 import SwapWidget from "@/components/messenger/SwapWidget";
 import WalletBackup from "@/components/wallet/WalletBackup";
 import type { Conversation, Wallet, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
-import { getConversations, getWallets, saveWalletLocally, registerWalletOnNode, getBlockedWalletIds, getPrivacySettings, resolveMessagingWallet, exportMessengerIdentity, importMessengerIdentity } from "@/lib/pqc-messenger";
+import { buildSignedRequest, getConversations, getWallets, saveWalletLocally, registerWalletOnNode, getBlockedWalletIds, getPrivacySettings, resolveMessagingWallet, exportMessengerIdentity, importMessengerIdentity } from "@/lib/pqc-messenger";
 import {
   UnifiedWallet,
   VaultSettings,
@@ -36,7 +36,7 @@ import {
   type ConversationActivity,
 } from "@/lib/notifications";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
-import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
+import { useBlockchainWs, setMessengerAuthSigner } from "@/hooks/use-blockchain-ws";
 
 const Messenger = () => {
   const [wallet, setWallet] = useState<UnifiedWallet | null>(null);
@@ -62,13 +62,12 @@ const Messenger = () => {
   const importIdentityRef = useRef<HTMLInputElement>(null);
   const { display: walletRougeAddr } = useRougeAddress(wallet?.signingPublicKey);
 
-  // Real-time: the node broadcasts a `new_message` routing hint (conversation id
-  // only, no content) whenever a message is stored. Reload the sidebar on it.
+  // Real-time: the node sends this wallet's private `new_message` events (routing
+  // metadata only, never content) once the socket is authenticated below.
   const loadConversationsRef = useRef<() => Promise<void> | void>(() => {});
-  const { connectionType: wsConnectionType } = useBlockchainWs({
+  const { messengerLive: wsConnected } = useBlockchainWs({
     onNewMessage: () => { loadConversationsRef.current(); },
   });
-  const wsConnected = wsConnectionType === "websocket";
 
   // Load wallet from localStorage on mount — retry for extension auto-connect
   useEffect(() => {
@@ -239,6 +238,15 @@ const Messenger = () => {
   // an extension wallet (no local signing key) falls back to a device-local
   // messenger key so messaging works without the extension holding the key.
   const [messengerWallet, setMessengerWallet] = useState<WalletWithPrivateKeys | null>(null);
+  // Authenticate the socket as the RESOLVED messaging identity (the key that owns
+  // the conversations), re-signed on every reconnect.
+  useEffect(() => {
+    const mw = messengerWallet;
+    if (!mw?.signingPrivateKey || !mw.signingPublicKey) { setMessengerAuthSigner(null); return; }
+    setMessengerAuthSigner(() =>
+      buildSignedRequest({ action: "messenger_ws_subscribe" }, mw.signingPrivateKey, mw.signingPublicKey));
+    return () => setMessengerAuthSigner(null);
+  }, [messengerWallet]);
   useEffect(() => {
     let cancelled = false;
     if (!wallet) { setMessengerWallet(null); return; }
