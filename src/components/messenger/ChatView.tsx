@@ -10,6 +10,7 @@ import type { Conversation, WalletWithPrivateKeys, Message, Wallet, MessageType 
 import { getBotReply, getMessages, sendMessage, deleteMessage, isDemoBot, loadDemoBotWallet, registerWalletOnNode, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, isWalletBlocked, blockWallet, unblockWallet, keyFingerprint, checkTofu } from "@/lib/pqc-messenger";
 import { playNotificationSound, loadNotificationSettings } from "@/lib/notifications";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
+import { subscribeNewMessage } from "@/hooks/use-blockchain-ws";
 import ChatPayment, { PaymentBubble, parsePaymentMessage, encodePaymentMessage, parseRequestMessage, encodeRequestMessage, PaymentRequestBubble } from "./ChatPayment";
 import type { PaymentMessageData, RequestMessageData } from "./ChatPayment";
 import { ReactionPicker, ReactionBadges, aggregateReactions, isSystemMessage, encodeReactionMessage } from "./ChatReactions";
@@ -570,11 +571,17 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
     setNewMessageIds(new Set());
     loadMessages(true);
 
+    // Instant refresh on the node's new_message hint for THIS conversation
+    // (delivered over the WebSocket owned by the Messenger page); the interval
+    // below is only a safety net for a dropped socket.
+    const unsubscribe = subscribeNewMessage((ev) => {
+      if (ev.conversation_id === conversation.id) loadMessages(false);
+    });
     const interval = setInterval(() => {
       loadMessages(false);
-    }, 3000);
+    }, 10000);
 
-    return () => clearInterval(interval);
+    return () => { unsubscribe(); clearInterval(interval); };
   }, [conversation.id]);
 
   // Track previous message count to detect new messages

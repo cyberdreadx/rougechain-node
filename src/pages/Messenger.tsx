@@ -36,6 +36,7 @@ import {
   type ConversationActivity,
 } from "@/lib/notifications";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
+import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 
 const Messenger = () => {
   const [wallet, setWallet] = useState<UnifiedWallet | null>(null);
@@ -60,6 +61,14 @@ const Messenger = () => {
   const allWalletsRef = useRef<Wallet[]>([]);
   const importIdentityRef = useRef<HTMLInputElement>(null);
   const { display: walletRougeAddr } = useRougeAddress(wallet?.signingPublicKey);
+
+  // Real-time: the node broadcasts a `new_message` routing hint (conversation id
+  // only, no content) whenever a message is stored. Reload the sidebar on it.
+  const loadConversationsRef = useRef<() => Promise<void> | void>(() => {});
+  const { connectionType: wsConnectionType } = useBlockchainWs({
+    onNewMessage: () => { loadConversationsRef.current(); },
+  });
+  const wsConnected = wsConnectionType === "websocket";
 
   // Load wallet from localStorage on mount — retry for extension auto-connect
   useEffect(() => {
@@ -105,12 +114,15 @@ const Messenger = () => {
       requestNotificationPermission().catch(() => {});
       loadConversations();
       loadContacts();
+      // Fallback poll only. With the node's WebSocket connected, new_message hints
+      // trigger an immediate reload (see useBlockchainWs below), so poll slowly;
+      // without it, poll fast so messaging still feels live.
       const interval = setInterval(() => {
         loadConversations();
-      }, 5000);
+      }, wsConnected ? 20000 : 3000);
       return () => clearInterval(interval);
     }
-  }, [wallet]);
+  }, [wallet, wsConnected]);
 
   useEffect(() => {
     setVaultSettings(getVaultSettings());
@@ -190,6 +202,8 @@ const Messenger = () => {
       console.error("Failed to load conversations:", error);
     }
   };
+
+  loadConversationsRef.current = loadConversations;
 
   const loadContacts = async () => {
     try {

@@ -25,12 +25,31 @@ export interface WsStatsEvent {
   mempool_size: number;
 }
 
-export type WsEvent = WsNewBlockEvent | WsNewTransactionEvent | WsStatsEvent;
+/** Messenger routing hint: a new encrypted message was stored in this conversation.
+ *  Carries no content and no sender — clients refetch the conversation. */
+export interface WsNewMessageEvent {
+  type: "new_message";
+  conversation_id: string;
+  message_id: string;
+  created_at: string;
+}
+
+export type WsEvent = WsNewBlockEvent | WsNewTransactionEvent | WsStatsEvent | WsNewMessageEvent;
+
+// Module-level fan-out so components that don't own the socket (e.g. an open chat)
+// can react to new_message hints without opening a second WebSocket.
+type NewMessageListener = (event: WsNewMessageEvent) => void;
+const newMessageListeners = new Set<NewMessageListener>();
+export function subscribeNewMessage(listener: NewMessageListener): () => void {
+  newMessageListeners.add(listener);
+  return () => { newMessageListeners.delete(listener); };
+}
 
 interface UseBlockchainWsOptions {
   onNewBlock?: (event: WsNewBlockEvent) => void;
   onNewTransaction?: (event: WsNewTransactionEvent) => void;
   onStats?: (event: WsStatsEvent) => void;
+  onNewMessage?: (event: WsNewMessageEvent) => void;
   fallbackPollInterval?: number;
 }
 
@@ -58,9 +77,11 @@ export function useBlockchainWs(options: UseBlockchainWsOptions = {}): UseBlockc
   const onNewBlockRef = useRef(options.onNewBlock);
   const onNewTransactionRef = useRef(options.onNewTransaction);
   const onStatsRef = useRef(options.onStats);
+  const onNewMessageRef = useRef(options.onNewMessage);
   onNewBlockRef.current = options.onNewBlock;
   onNewTransactionRef.current = options.onNewTransaction;
   onStatsRef.current = options.onStats;
+  onNewMessageRef.current = options.onNewMessage;
 
   const getWsUrl = useCallback(() => {
     const apiBase = getCoreApiBaseUrl();
@@ -164,6 +185,12 @@ export function useBlockchainWs(options: UseBlockchainWsOptions = {}): UseBlockc
               lastHeightRef.current = data.block_height;
               setLastBlockHeight(data.block_height);
               onStatsRef.current?.(data);
+              break;
+            case "new_message":
+              onNewMessageRef.current?.(data);
+              for (const l of newMessageListeners) {
+                try { l(data); } catch { /* listener error must not kill the socket */ }
+              }
               break;
           }
         } catch {
