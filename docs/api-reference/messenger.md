@@ -319,6 +319,29 @@ they did; a conversation in your `trash` folder has your id in it.
 
 ---
 
+## Real-time Events (WebSocket)
+
+New messages are pushed over `wss://api.rougechain.io/api/ws` so clients don't need to poll. Message events are **private**. The node sends them only to sockets that proved they own a participant's signing key.
+
+**1. Authenticate** by sending a signed request, the same format as the v2 REST endpoints, with `action` set to `messenger_ws_subscribe`:
+
+```json
+{ "auth": { "payload": { "action": "messenger_ws_subscribe", "from": "<signing pubkey>", "timestamp": 1790000000000, "nonce": "<random hex>" },
+            "signature": "<ML-DSA-65 signature over the sorted-key JSON payload>",
+            "public_key": "<signing pubkey>" } }
+```
+
+The node replies `{"type":"subscribed","topics":["messenger"]}` or `{"type":"auth_error","error":"..."}`. Nonces are single-use and timestamps must be within 5 minutes, so re-sign on every reconnect. One socket can authenticate up to 8 identities.
+
+**2. Receive** an event for every message stored in a conversation you belong to, including your own sends:
+
+```json
+{ "type": "new_message", "conversation_id": "dm_…", "message_id": "…", "created_at": "2026-09-25T18:40:00Z",
+  "sender_wallet_id": "<sender signing pubkey>", "participant_ids": ["<signing pubkey>", "…"] }
+```
+
+Events never contain message content. Refetch the conversation with `POST /api/v2/messenger/messages/list`. With the SDK (1.8.0+): `const stop = rc.messenger.subscribe(wallet, (ev) => refresh(ev.conversation_id))`. Unauthenticated sockets never receive message events, and `inbox:*` topics cannot be joined with a plain `subscribe`. Public events (`new_block`, `new_transaction`, `stats`) are unchanged. Keep a slow fallback poll for when the socket is down.
+
 ## Media Messages
 
 The messenger supports image and video attachments. Media is encrypted and sent as base64 within the message payload.

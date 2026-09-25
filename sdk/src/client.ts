@@ -74,6 +74,8 @@ import type {
   SendMailParams,
   MessengerWallet,
   MessengerConversation,
+  MessengerFolder,
+  MessengerNewMessageEvent,
   MessengerMessage,
   PriceSnapshot,
   ShieldParams,
@@ -1143,8 +1145,12 @@ class MessengerClient {
     return this.rc.submitTx("/v2/messenger/wallets/register", signed);
   }
 
-  async getConversations(wallet: WalletKeys): Promise<MessengerConversation[]> {
-    const signed = signRequest(wallet, {});
+  /**
+   * List your conversations. `folder`: "inbox" (default), "trash" (conversations you
+   * deleted, recoverable for 30 days) or "all".
+   */
+  async getConversations(wallet: WalletKeys, opts: { folder?: MessengerFolder } = {}): Promise<MessengerConversation[]> {
+    const signed = signRequest(wallet, opts.folder ? { folder: opts.folder } : {});
     try {
       const data = await this.rc.post<{ conversations: MessengerConversation[] }>(
         "/v2/messenger/conversations/list", signed
@@ -1225,9 +1231,78 @@ class MessengerClient {
     return this.rc.submitTx("/v2/messenger/messages/delete", signed);
   }
 
-  async deleteConversation(wallet: WalletKeys, conversationId: string): Promise<ApiResponse> {
-    const signed = signRequest(wallet, { conversationId });
+  /**
+   * Delete a conversation for YOU only. It moves to your trash and can be restored for
+   * 30 days; `purge: true` skips the recovery window. The thread is removed for good
+   * only once every participant has deleted it.
+   */
+  async deleteConversation(wallet: WalletKeys, conversationId: string, opts: { purge?: boolean } = {}): Promise<ApiResponse> {
+    const signed = signRequest(wallet, opts.purge ? { conversationId, purge: true } : { conversationId });
     return this.rc.submitTx("/v2/messenger/conversations/delete", signed);
+  }
+
+  /** Restore a conversation from your trash. */
+  async restoreConversation(wallet: WalletKeys, conversationId: string): Promise<ApiResponse> {
+    const signed = signRequest(wallet, { conversationId });
+    return this.rc.submitTx("/v2/messenger/conversations/restore", signed);
+  }
+
+  /** Restore a message you deleted (sender only, within the recovery window). */
+  async restoreMessage(wallet: WalletKeys, messageId: string, conversationId: string): Promise<ApiResponse> {
+    const signed = signRequest(wallet, { messageId, conversationId });
+    return this.rc.submitTx("/v2/messenger/messages/restore", signed);
+  }
+
+  /**
+   * Build the signed `{ auth }` frame that subscribes a WebSocket to this wallet's
+   * private `new_message` events. Nonces are single-use: build a new one per connect.
+   */
+  realtimeAuth(wallet: WalletKeys): { auth: SignedTransaction } {
+    return { auth: signRequest(wallet, { action: "messenger_ws_subscribe" }) };
+  }
+
+  /**
+   * Receive this wallet's new-message events in real time. Events carry routing data
+   * only (conversation/message ids, sender + participant signing keys), never content;
+   * fetch the message with `getMessages`. Reconnects and re-authenticates with backoff.
+   * Returns a function that stops the subscription.
+   *
+   * @example
+   * const stop = rc.messenger.subscribe(wallet, (ev) => refresh(ev.conversation_id));
+   */
+  subscribe(
+    wallet: WalletKeys,
+    onMessage: (event: MessengerNewMessageEvent) => void,
+    opts: { onStatus?: (live: boolean, error?: string) => void } = {},
+  ): () => void {
+    const url = this.rc.baseUrl.replace(/^http/, "ws") + "/ws";
+    let ws: WebSocket | null = null;
+    let stopped = false;
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const open = () => {
+      if (stopped) return;
+      ws = new WebSocket(url);
+      ws.onopen = () => { attempt = 0; ws?.send(JSON.stringify(this.realtimeAuth(wallet))); };
+      ws.onmessage = (e) => {
+        let d: { type?: string; topics?: string[]; error?: string };
+        try { d = JSON.parse(String(e.data)); } catch { return; }
+        if (d.type === "subscribed") opts.onStatus?.(true);
+        else if (d.type === "auth_error") opts.onStatus?.(false, d.error);
+        else if (d.type === "new_message") onMessage(d as unknown as MessengerNewMessageEvent);
+      };
+      ws.onclose = () => {
+        opts.onStatus?.(false);
+        if (stopped) return;
+        timer = setTimeout(open, Math.min(1000 * 2 ** attempt++, 30000));
+      };
+    };
+    open();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      ws?.close();
+    };
   }
 
   async markRead(wallet: WalletKeys, messageId: string, conversationId: string): Promise<ApiResponse> {

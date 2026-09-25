@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.8.0
+
+### Added
+- `messenger.subscribe(wallet, onMessage, { onStatus })`: real-time new-message events over the node WebSocket. The socket authenticates with a signed `messenger_ws_subscribe` request, so the node sends each wallet only its own events. Events carry routing data (conversation/message ids, sender + participant signing keys), never content. Reconnects and re-authenticates automatically.
+- `messenger.realtimeAuth(wallet)`: the signed `{ auth }` frame, for apps that manage their own socket.
+- `messenger.restoreConversation(wallet, conversationId)` and `messenger.restoreMessage(wallet, messageId, conversationId)`.
+- `messenger.getConversations(wallet, { folder })`: `"inbox"` (default), `"trash"` or `"all"`.
+- `messenger.deleteConversation(wallet, conversationId, { purge })`: delete is per participant and recoverable for 30 days unless `purge: true`.
+- Types `MessengerFolder`, `MessengerNewMessageEvent`.
+
+Pairs with node 9eea813 (private WebSocket events) and 59478e6 (recoverable delete).
+
 ## 1.7.0
 
 ### Added

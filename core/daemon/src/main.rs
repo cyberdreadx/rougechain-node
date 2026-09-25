@@ -1495,44 +1495,58 @@ async fn handle_ws_connection(socket: WebSocket, state: AppState) {
     let (mut sender, mut receiver) = socket.split();
     let broadcaster = state.ws_broadcaster.clone();
 
+    // Public topic filter (empty = receive every PUBLIC event, the legacy default).
     let subscriptions: Arc<tokio::sync::RwLock<HashSet<String>>> = Arc::new(tokio::sync::RwLock::new(HashSet::new()));
+    // Private messenger inboxes this connection has proven (signed) ownership of.
+    let inboxes: Arc<tokio::sync::RwLock<HashSet<String>>> = Arc::new(tokio::sync::RwLock::new(HashSet::new()));
+    // Direct replies to THIS connection (initial stats, auth results).
+    let (direct_tx, mut direct_rx) = tokio::sync::mpsc::channel::<String>(16);
 
     let mut rx = broadcaster.subscribe();
 
-    let height = state.node.get_tip_height().unwrap_or(0);
-    let peer_count = state.peer_manager.peer_count().await;
-    broadcaster.broadcast_stats(height, peer_count, 0);
+    // Initial stats go to the new client only (previously broadcast to everyone on
+    // every connect — O(n^2) traffic during a reconnect storm).
+    {
+        let height = state.node.get_tip_height().unwrap_or(0);
+        let peer_count = state.peer_manager.peer_count().await;
+        if let Some(f) = crate::websocket::WsBroadcaster::frame(&crate::websocket::WsEvent::Stats {
+            block_height: height, peer_count, mempool_size: 0,
+        }) {
+            let _ = direct_tx.try_send(f.json.clone());
+        }
+    }
 
     let subs_clone = subscriptions.clone();
+    let inbox_clone = inboxes.clone();
     let send_task = tokio::spawn(async move {
         let mut ping_interval = interval(Duration::from_secs(30));
         loop {
             tokio::select! {
                 result = rx.recv() => {
                     match result {
-                        Ok(msg) => {
-                            let should_send = {
+                        Ok(frame) => {
+                            let should_send = if frame.private {
+                                let mine = inbox_clone.read().await;
+                                !mine.is_empty() && frame.topics.iter().any(|t| mine.contains(t))
+                            } else {
                                 let subs = subs_clone.read().await;
-                                if subs.is_empty() {
-                                    true
-                                } else if let Ok(event) = serde_json::from_str::<serde_json::Value>(&msg) {
-                                    if let Ok(ws_event) = serde_json::from_value::<crate::websocket::WsEvent>(event) {
-                                        let event_topics = ws_event.topics();
-                                        event_topics.iter().any(|t| subs.contains(t))
-                                    } else {
-                                        true
-                                    }
-                                } else {
-                                    true
-                                }
+                                subs.is_empty() || frame.topics.iter().any(|t| subs.contains(t))
                             };
-                            if should_send {
-                                if sender.send(Message::Text(msg)).await.is_err() {
-                                    break;
-                                }
+                            if should_send && sender.send(Message::Text(frame.json.clone())).await.is_err() {
+                                break;
                             }
                         }
-                        Err(_) => break,
+                        // Slow client: skip what it missed instead of dropping it.
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                direct = direct_rx.recv() => {
+                    match direct {
+                        Some(text) => {
+                            if sender.send(Message::Text(text)).await.is_err() { break; }
+                        }
+                        None => break,
                     }
                 }
                 _ = ping_interval.tick() => {
@@ -1555,7 +1569,10 @@ async fn handle_ws_connection(socket: WebSocket, state: AppState) {
                                 let mut subs = subscriptions.write().await;
                                 for topic in topics {
                                     if let Some(t) = topic.as_str() {
-                                        subs.insert(t.to_string());
+                                        // Private inboxes are only granted via signed "auth".
+                                        if !t.starts_with("inbox:") && subs.len() < 64 {
+                                            subs.insert(t.to_string());
+                                        }
                                     }
                                 }
                                 drop(subs);
@@ -1567,6 +1584,11 @@ async fn handle_ws_connection(socket: WebSocket, state: AppState) {
                                         subs.remove(t);
                                     }
                                 }
+                            }
+                            // {"auth": <signed request with payload.action = "messenger_ws_subscribe">}
+                            if let Some(auth) = cmd.get("auth") {
+                                let reply = ws_messenger_auth(&state, auth, &inboxes).await;
+                                let _ = direct_tx.try_send(reply.to_string());
                             }
                         }
                     }
@@ -1584,6 +1606,60 @@ async fn handle_ws_connection(socket: WebSocket, state: AppState) {
 
     broadcaster.client_disconnected().await;
     send_task.abort();
+}
+
+/// Verify a signed messenger subscription and grant this connection the caller's
+/// private inbox. Same signed-request rules as the v2 REST endpoints (ML-DSA-65
+/// signature, ±5 min timestamp, single-use nonce) plus a WS-specific action tag so
+/// no other signed request can be replayed as a subscription.
+async fn ws_messenger_auth(
+    state: &AppState,
+    auth: &serde_json::Value,
+    inboxes: &tokio::sync::RwLock<std::collections::HashSet<String>>,
+) -> serde_json::Value {
+    let req: SignedTransactionRequest = match serde_json::from_value(auth.clone()) {
+        Ok(r) => r,
+        Err(_) => return serde_json::json!({ "type": "auth_error", "error": "malformed auth" }),
+    };
+    if req.payload.get("action").and_then(|v| v.as_str()) != Some("messenger_ws_subscribe") {
+        return serde_json::json!({ "type": "auth_error", "error": "payload.action must be messenger_ws_subscribe" });
+    }
+    let authed_key = match verify_signed_request(&req, &state.replay_nonces).await {
+        Ok(k) => k,
+        Err(e) => return serde_json::json!({ "type": "auth_error", "error": e }),
+    };
+    let mut set = inboxes.write().await;
+    let topic = crate::websocket::inbox_topic(&authed_key);
+    if !set.contains(&topic) && set.len() >= crate::websocket::MAX_INBOXES_PER_CONNECTION {
+        return serde_json::json!({ "type": "auth_error", "error": "too many identities on one connection" });
+    }
+    set.insert(topic);
+    serde_json::json!({ "type": "subscribed", "topics": ["messenger"] })
+}
+
+/// Resolve a conversation's participant ids (wallet UUIDs or signing keys) to
+/// signing public keys — the identity WS inboxes are keyed by. One wallet scan.
+fn messenger_participant_signing_keys(
+    node: &std::sync::Arc<crate::L1Node>,
+    conversation_id: &str,
+) -> Vec<String> {
+    let pids = node.get_conversation_participants(conversation_id);
+    if pids.is_empty() {
+        return vec![];
+    }
+    let wallets = node.list_wallets().unwrap_or_default();
+    let mut out: Vec<String> = Vec::with_capacity(pids.len());
+    for pid in pids {
+        let key = wallets.iter()
+            .find(|w| w.id == pid || w.signing_public_key == pid)
+            .map(|w| w.signing_public_key.clone())
+            .filter(|k| !k.is_empty())
+            .unwrap_or(pid);
+        if !out.contains(&key) {
+            out.push(key);
+        }
+    }
+    out
 }
 
 #[derive(Serialize)]
@@ -4297,6 +4373,14 @@ async fn send_messenger_message(
         deleted_at: None,
     };
     let message = node.send_message(message).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    {
+        let keys = messenger_participant_signing_keys(&state.node, &message.conversation_id);
+        let sender_key = state.node.list_wallets().unwrap_or_default().into_iter()
+            .find(|w| w.id == message.sender_wallet_id || w.signing_public_key == message.sender_wallet_id)
+            .map(|w| w.signing_public_key)
+            .unwrap_or_else(|| message.sender_wallet_id.clone());
+        state.ws_broadcaster.broadcast_new_message(&message.conversation_id, &message.id, &message.created_at, &sender_key, keys);
+    }
     let recipients: Vec<String> = state.node.get_conversation_participants(&message.conversation_id)
         .into_iter().filter(|p| *p != message.sender_wallet_id).collect();
     state.push.notify_to(recipients, "New message", "You received a new encrypted message", serde_json::json!({ "type": "message", "conversationId": message.conversation_id }));
@@ -5308,6 +5392,11 @@ async fn send_message_signed(
         deleted_at: None,
     };
     let message = state.node.send_message(message).map_err(|e| signed_internal(&e))?;
+    // Real-time, private: only the participants' authenticated sockets receive this.
+    state.ws_broadcaster.broadcast_new_message(
+        &message.conversation_id, &message.id, &message.created_at, &authed_key,
+        messenger_participant_signing_keys(&state.node, &message.conversation_id),
+    );
     // Notify every other participant (recipient pubkeys == push-store keys). authed_key is the sender.
     let recipients: Vec<String> = state.node.get_conversation_participants(&message.conversation_id)
         .into_iter().filter(|p| p != &authed_key).collect();

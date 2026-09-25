@@ -202,12 +202,26 @@ All operations use ML-DSA-65 signed requests with nonce-based anti-replay protec
 ```typescript
 await rc.messenger.getWallets();
 await rc.messenger.registerWallet(wallet, { id, displayName, signingPublicKey, encryptionPublicKey });
-await rc.messenger.getConversations(wallet);
+await rc.messenger.getConversations(wallet);                      // inbox
+await rc.messenger.getConversations(wallet, { folder: "trash" });  // 1.8.0+
 await rc.messenger.createConversation(wallet, [pubKeyA, pubKeyB]);
 await rc.messenger.getMessages(wallet, conversationId);
 await rc.messenger.sendMessage(wallet, conversationId, encryptedContent, { selfDestruct: true, destructAfterSeconds: 30 });
-await rc.messenger.deleteMessage(wallet, messageId, conversationId);
-await rc.messenger.deleteConversation(wallet, conversationId);
+await rc.messenger.deleteMessage(wallet, messageId, conversationId);           // recoverable 30 days
+await rc.messenger.restoreMessage(wallet, messageId, conversationId);          // 1.8.0+
+await rc.messenger.deleteConversation(wallet, conversationId);                 // for you only, 30-day trash
+await rc.messenger.deleteConversation(wallet, conversationId, { purge: true }); // 1.8.0+, no recovery
+await rc.messenger.restoreConversation(wallet, conversationId);                // 1.8.0+
+```
+
+Real-time (1.8.0+): the node pushes a private `new_message` event to each participant's authenticated socket. Events carry ids and signing keys only, never content.
+
+```typescript
+const stop = rc.messenger.subscribe(wallet, (ev) => {
+  // ev.conversation_id, ev.message_id, ev.sender_wallet_id, ev.participant_ids
+  refresh(ev.conversation_id);
+}, { onStatus: (live) => console.log(live ? "live" : "reconnecting") });
+// later: stop();
 ```
 
 ### Social (`rc.social`)
