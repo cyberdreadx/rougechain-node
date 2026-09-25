@@ -50,6 +50,7 @@ interface EIP1193Provider {
 interface EIP6963ProviderInfo { uuid: string; name: string; icon: string; rdns: string }
 interface EIP6963Detail { info: EIP6963ProviderInfo; provider: EIP1193Provider }
 const ROUGECHAIN_RDNS = "io.rougechain.wallet";
+const QWALLA_RDNS = "app.qwalla.wallet"; // announced by Qwalla's dApp browser (EIP-6963)
 
 const ASSETS: { id: BridgeAsset; label: string; icon: string; l1Label: string }[] = [
   { id: "ETH", label: "ETH", icon: "Ξ", l1Label: "qETH" },
@@ -117,7 +118,7 @@ const Bridge = () => {
 
   // Prefer the RougeChain wallet when present; otherwise the user's choice, else
   // the first announced provider, else the legacy evmProvider.
-  const preferredDetail = discovered.find((d) => d.info.rdns === ROUGECHAIN_RDNS);
+  const preferredDetail = discovered.find((d) => d.info.rdns === ROUGECHAIN_RDNS) ?? discovered.find((d) => d.info.rdns === QWALLA_RDNS);
   const selectedDetail = discovered.find((d) => d.info.rdns === selectedRdns) ?? preferredDetail ?? discovered[0];
   // Qwalla's dApp browser injects window.ethereum with `isQwalla` and does not announce via EIP-6963:
   // name it explicitly instead of falling back to the generic "Base wallet" label.

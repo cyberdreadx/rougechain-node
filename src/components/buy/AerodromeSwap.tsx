@@ -59,9 +59,10 @@ export default function AerodromeSwap() {
     return () => window.removeEventListener("eip6963:announceProvider", onAnnounce as EventListener);
   }, []);
   const legacy = (typeof window !== "undefined" ? (window as unknown as { ethereum?: EIP1193Provider }).ethereum : undefined);
-  const provider: EIP1193Provider | undefined = (wallets.find((w) => w.info.rdns === rdns) ?? wallets[0])?.provider ?? legacy;
+  const preferred = wallets.find((w) => w.info.rdns === "io.rougechain.wallet") ?? wallets.find((w) => w.info.rdns === "app.qwalla.wallet");
+  const provider: EIP1193Provider | undefined = (wallets.find((w) => w.info.rdns === rdns) ?? preferred ?? wallets[0])?.provider ?? legacy;
   const legacyFlags = legacy as unknown as { isQwalla?: boolean; isRougeChain?: boolean; isCoinbaseWallet?: boolean; isMetaMask?: boolean } | undefined;
-  const walletName = (wallets.find((w) => w.info.rdns === rdns) ?? wallets[0])?.info.name ?? (legacyFlags?.isQwalla ? "Qwalla Wallet" : legacyFlags?.isRougeChain ? "RougeChain Wallet" : legacyFlags?.isCoinbaseWallet ? "Coinbase Wallet" : legacyFlags?.isMetaMask ? "MetaMask" : null);
+  const walletName = (wallets.find((w) => w.info.rdns === rdns) ?? preferred ?? wallets[0])?.info.name ?? (legacyFlags?.isQwalla ? "Qwalla Wallet" : legacyFlags?.isRougeChain ? "RougeChain Wallet" : legacyFlags?.isCoinbaseWallet ? "Coinbase Wallet" : legacyFlags?.isMetaMask ? "MetaMask" : null);
 
   // quote: router.getAmountsOut for the typed amount; price impact vs the pool's mid price (XRGE/USDC reserves)
   useEffect(() => {
