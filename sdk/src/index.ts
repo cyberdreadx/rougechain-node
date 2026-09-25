@@ -96,6 +96,8 @@ export type {
   SendMailParams,
   MessengerWallet,
   MessengerConversation,
+  MessengerFolder,
+  MessengerNewMessageEvent,
   MessengerMessage,
   ShieldParams,
   ShieldedTransferParams,
