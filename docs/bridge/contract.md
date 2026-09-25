@@ -9,7 +9,7 @@ The `RougeBridge.sol` contract is a multi-asset bridge contract deployed on Base
 - **Timelock** — Large withdrawals require a delay period before execution
 - **Guardian role** — Separate from owner; can pause but cannot withdraw
 - **Replay protection** — Processed L1 transaction IDs are tracked to prevent double-releases
-- **Owner = multisig** — Deploy with a Gnosis Safe as owner for production
+- **Ownership** — The RougeBridge owner is currently a single operator key, not a multisig; that key also performs releases. The guardian role is held by a 2-of-3 Safe multisig, which can pause the bridge and cancel queued large releases. Other protections include the 24-hour timelock on large releases and daemon-side controls. Migrating ownership to multisig control is a planned security improvement.
 
 ## Key Functions
 
@@ -64,15 +64,12 @@ function setLargeWithdrawalThreshold(uint256) external;  // Owner
 
 ## Deployment
 
-The XRGE bridge is live on **Base mainnet** (chain ID 8453) as `BridgeVaultV2` at `0x7BB10752E99e8872d7D2DE5D92bfd43cd935Cd2D`. Its owner is a **Gnosis Safe multisig (2-of-3)** — no single key can move or drain the vault. Routine releases are signed by a *separate* hot relayer key that may only call `release()` within on-chain per-transaction and rolling daily caps and only while unpaused; the multisig alone can rotate that key, change the caps, pause, or (behind a 48-hour timelock) emergency-withdraw. The ETH/USDC custody contract is at `0x0c09C764AdC024497729cd452ECfeE8869d35d83`. Base Sepolia (chain ID 84532) is used for testing.
+The XRGE bridge is live on **Base mainnet** (chain ID 8453) as `BridgeVaultV2` at `0x7BB10752E99e8872d7D2DE5D92bfd43cd935Cd2D`. Its owner is a **Gnosis Safe multisig (2-of-3)** — no single key can move or drain the vault. Routine releases are signed by a *separate* hot relayer key that may only call `release()` within on-chain per-transaction and rolling daily caps and only while unpaused; the multisig alone can rotate that key, change the caps, pause, or (behind a 48-hour timelock) emergency-withdraw. The ETH/USDC custody contract is at `0x0c09C764AdC024497729cd452ECfeE8869d35d83`. Base Sepolia (chain ID 84532) is used only for testing.
+
+> `BridgeVaultV3` (post-quantum XRGE vault) is **not deployed** on Base mainnet. See [V3 Post-Quantum XRGE Bridge](v3-xrge-bridge.md).
 
 > **Migration note:** the previous single-owner XRGE vault (`0xb3f5…bFAb5`) is being retired in favor of `BridgeVaultV2`; do not deposit to the old address.
 
 ## Daemon Withdraw Guardrails
 
-Independent of the on-chain contract, the RougeChain daemon enforces its own withdraw
-guardrails via environment variables:
-
-- `QV_BRIDGE_WITHDRAW_PAUSED` — emergency kill-switch; blocks all withdrawals when `true`
-- `QV_BRIDGE_MAX_WITHDRAW_UNITS` — per-transaction withdrawal cap (0/unset = no cap)
-- `QV_BRIDGE_MIN_CONFIRMATIONS` — required Base confirmation depth for deposit claims (default 6)
+Independent of the on-chain contracts, the RougeChain daemon enforces its own withdraw controls (an operator pause, a per-transaction cap, and a required Base confirmation depth for deposit claims, default 6). Operator configuration is documented in the repository's [`scripts/README.md`](https://github.com/cyberdreadx/rougechain-node/blob/main/scripts/README.md).

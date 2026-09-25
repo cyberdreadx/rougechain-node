@@ -106,3 +106,44 @@ Every 60 polls:
   secret. It is gitignored; commit only `bridge-relayer.env.example`.
 - Run on a trusted machine with access to both the node API and Base RPC.
 - Keep only the liquidity you need hot; hold excess in cold storage.
+
+## Daemon withdraw guardrails (EVM + BTC)
+
+- `QV_BRIDGE_WITHDRAW_PAUSED` — emergency kill-switch; blocks all withdrawals when `true`
+- `QV_BRIDGE_MAX_WITHDRAW_UNITS` — per-transaction withdrawal cap (0/unset = no cap)
+- `QV_BRIDGE_MIN_CONFIRMATIONS` — required Base confirmation depth for deposit claims (default 6)
+
+## BTC ⇄ qBTC relayer (operator notes)
+
+_Moved from the public docs site (docs/bridge/btc-bridge.md)._
+
+### Deploy
+
+#### Daemon env
+| Var | Meaning |
+|---|---|
+| `QV_BRIDGE_BTC_CUSTODY` | Custody BTC address to watch (set to the relayer's derived address). Empty = BTC bridge disabled. |
+| `QV_BRIDGE_BTC_NETWORK` | `mainnet` (default) or `testnet`. |
+| `QV_BRIDGE_BTC_MIN_CONFIRMATIONS` | Confirmations before honoring a deposit/payout (default 2). |
+| `QV_BTC_ESPLORA_PRIMARY` / `QV_BTC_ESPLORA_SECONDARY` | Override the two Esplora bases (network-aware defaults otherwise). |
+| `QV_BTC_ALLOW_SINGLE_PROVIDER` | `true` to honor a deposit on the primary alone if the secondary is down (default false = safer). |
+| `BRIDGE_RELAYER_SECRET` | Shared secret; the relayer sends it to fulfill payouts. |
+
+#### Relayer
+Copy `btc-bridge-relayer.env.example` → `btc-bridge-relayer.env`, fill in `BRIDGE_BTC_CUSTODY_WIF`
+and `BRIDGE_RELAYER_SECRET`, then `npm run relayer:btc`. It prints the custody address it derives —
+set the daemon's `QV_BRIDGE_BTC_CUSTODY` to that exact address, and fund it.
+
+#### Go-live checklist
+1. **Testnet first.** `QV_BRIDGE_BTC_NETWORK=testnet` on both daemon and relayer. Run a full
+   deposit + withdraw round-trip. The relayer stays in **dry-run** (`BTC_RELAYER_LIVE` unset) until
+   you've watched it build a correct payout.
+2. Set `BTC_MAX_WITHDRAW_SATS` to a sane per-payout ceiling.
+3. Flip `BTC_RELAYER_LIVE=true` only after the testnet round-trip looks right.
+4. On mainnet, keep the custody key cold for the deposit-only period if you want; the hot key is
+   only needed once you enable withdrawals. Run the relayer as a singleton (two against one wallet
+   can double-spend UTXOs). Keep `BRIDGE_DATA_DIR` persistent (the idempotency state lives there).
+
+#### Emergency stop
+`QV_BRIDGE_BTC_CUSTODY` unset disables new deposits; `QV_BRIDGE_WITHDRAW_PAUSED=true` on the daemon
+halts all withdrawals (shared kill switch); stop the relayer process to halt payouts.

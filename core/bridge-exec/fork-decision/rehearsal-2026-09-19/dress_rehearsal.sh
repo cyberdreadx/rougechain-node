@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Option-B fork DRESS REHEARSAL — ISOLATED. Never touches ~/.quantum-vault/mainnet, /srv/rougechain,
+# Option-B fork DRESS REHEARSAL — ISOLATED. Never touches ~/.quantum-vault/mainnet, the live build dir,
 # ports 4100/5100, systemd units, or the production relayer. Everything lives under $R.
 set -uo pipefail
-S=/tmp/claude-1006/-home-cyberdreadx/2c6473bd-cc4d-415d-b0f1-29e0f30b42b2/scratchpad
-BIN=/home/cyberdreadx/quantum-vault-r1-candidate/core/target/debug/quantum-vault-daemon
-CLI=/home/cyberdreadx/quantum-vault-r1-candidate/core/target/debug/rougechain
+S="${REHEARSAL_SCRATCH:-$(mktemp -d)}"   # scratch dir (placeholder; override with REHEARSAL_SCRATCH)
+BIN="${DAEMON_BIN:-$(cd "$(dirname "$0")/../../.." && pwd)/target/debug/quantum-vault-daemon}"
+CLI="${CLI_BIN:-$(cd "$(dirname "$0")/../../.." && pwd)/target/debug/rougechain}"
 GEN=$S/genesis-mainnet.json
 R=$S/rehearsal; rm -rf $R; mkdir -p $R
 COMMON="--genesis $GEN --chain-id rougechain-mainnet-1"

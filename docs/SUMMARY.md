@@ -1,6 +1,8 @@
 # Summary
 
 [Welcome](README.md)
+[Status & Roadmap](status.md)
+[Security Overview](security.md)
 
 ---
 
@@ -19,6 +21,7 @@
 - [Docker](running-a-node/docker.md)
 - [Configuration](running-a-node/configuration.md)
 - [Mining](running-a-node/mining.md)
+- [Mandatory upgrade (2026-09)](running-a-node/mandatory-upgrade-2026-09.md)
 
 # P2P Networking
 
@@ -33,13 +36,18 @@
 - [Becoming a Validator](staking/becoming-validator.md)
 - [Adding a Validator to a Live Chain](staking/adding-a-validator.md)
 - [Staking Rewards](staking/rewards.md)
+- [Finality](staking/finality.md)
 
 # Bridge
 
-- [Overview](bridge/README.md)
+- [Bridge Overview](bridge/README.md)
+- [XRGE Bridge](bridge/xrge-bridge.md)
 - [ETH Bridge (qETH)](bridge/eth-bridge.md)
 - [USDC Bridge (qUSDC)](bridge/usdc-bridge.md)
-- [XRGE Bridge](bridge/xrge-bridge.md)
+- [Bitcoin Bridge](bridge/btc-bridge.md)
+- [Bridge Security Model](bridge/security-model.md)
+- [V3 Post-Quantum XRGE Bridge (not activated)](bridge/v3-xrge-bridge.md)
+- [Authority Rotation (V3)](bridge/authority-rotation.md)
 - [RougeBridge Contract](bridge/contract.md)
 - [Bridge Relayer](bridge/relayer.md)
 
