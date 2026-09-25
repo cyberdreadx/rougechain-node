@@ -6792,6 +6792,32 @@ impl L1Node {
     pub fn delete_conversation(&self, conversation_id: &str) -> Result<(), String> {
         self.messenger_store.delete_conversation(conversation_id)
     }
+    // ── messenger: deterministic 1:1 ids + recoverable delete (rougechain-node #73) ──
+    pub fn create_or_get_conversation(&self, created_by: &str, participant_ids: Vec<String>, name: Option<String>, is_group: bool) -> Result<(Conversation, bool), String> {
+        self.messenger_store.create_or_get_conversation(created_by, participant_ids, name, is_group)
+    }
+    pub fn list_conversations_with_activity_in(&self, wallet_id: &str, extra_keys: &[&str], folder: quantum_vault_storage::messenger_store::Folder) -> Result<Vec<serde_json::Value>, String> {
+        self.messenger_store.list_conversations_with_activity_in(wallet_id, extra_keys, folder)
+    }
+    pub fn conversation_has_participant(&self, conversation_id: &str, wallet_id: &str, extra_keys: &[&str]) -> Result<bool, String> {
+        self.messenger_store.conversation_has_participant(conversation_id, wallet_id, extra_keys)
+    }
+    pub fn soft_delete_conversation(&self, conversation_id: &str, wallet_id: &str, extra_keys: &[&str], purge: bool) -> Result<Conversation, String> {
+        self.messenger_store.soft_delete_conversation(conversation_id, wallet_id, extra_keys, purge)
+    }
+    pub fn restore_conversation(&self, conversation_id: &str, wallet_id: &str, extra_keys: &[&str]) -> Result<Conversation, String> {
+        self.messenger_store.restore_conversation(conversation_id, wallet_id, extra_keys)
+    }
+    pub fn list_messages_in_folder(&self, conversation_id: &str, folder: quantum_vault_storage::messenger_store::Folder) -> Result<Vec<MessengerMessage>, String> {
+        self.messenger_store.list_messages_in_folder(conversation_id, folder)
+    }
+    pub fn restore_message(&self, message_id: &str) -> Result<MessengerMessage, String> {
+        self.messenger_store.restore_message(message_id)
+    }
+    pub fn messenger_canonical_participant(&self, pid: &str) -> String { self.messenger_store.canonical_participant(pid) }
+    pub fn sweep_soft_deleted_messenger(&self) -> Result<(usize, usize), String> {
+        self.messenger_store.sweep_soft_deleted(chrono::Utc::now())
+    }
 
     pub fn delete_message(&self, message_id: &str) -> Result<(), String> {
         self.messenger_store.delete_message(message_id)

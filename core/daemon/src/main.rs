@@ -609,6 +609,12 @@ async fn main() -> Result<(), String> {
                     }
                     _ => {}
                 }
+                // soft-deleted conversations/messages past the 30-day retention window
+                match cleanup_node.sweep_soft_deleted_messenger() {
+                    Ok((c, m)) if c > 0 || m > 0 => eprintln!("[messenger] purged {} conversation(s) and {} message(s) past soft-delete retention", c, m),
+                    Err(e) => eprintln!("[messenger] soft-delete sweep error: {}", e),
+                    _ => {}
+                }
             }
         });
     }
@@ -875,10 +881,12 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/messenger/conversations/update", post(update_conversation_signed))
         .route("/api/v2/messenger/conversations/participants", post(add_conversation_participants_signed))
         .route("/api/v2/messenger/conversations/delete", post(delete_conversation_signed))
+        .route("/api/v2/messenger/conversations/restore", post(restore_conversation_signed))
         .route("/api/v2/messenger/messages/list", post(get_messages_signed))
         .route("/api/v2/messenger/messages", post(send_message_signed))
         .route("/api/v2/messenger/messages/read", post(mark_message_read_signed))
         .route("/api/v2/messenger/messages/delete", post(delete_message_signed))
+        .route("/api/v2/messenger/messages/restore", post(restore_message_signed))
         // Quantum Bot AI proxy
         .route("/api/bot/reply", post(bot_reply))
         // Name registry (resolve/reverse stay public, register/release require signatures)
@@ -4286,6 +4294,7 @@ async fn send_messenger_message(
         read_at: None,
         message_type: body.get("messageType").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
         spoiler: body.get("spoiler").and_then(|v| v.as_bool()).unwrap_or(false),
+        deleted_at: None,
     };
     let message = node.send_message(message).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let recipients: Vec<String> = state.node.get_conversation_participants(&message.conversation_id)
@@ -5103,9 +5112,11 @@ async fn get_conversations_signed(
         w.encryption_public_key.as_str(),
     ]).unwrap_or_default();
 
-    let conversations = state.node.list_conversations_with_activity(wallet_id, &extra_keys)
+    // `folder`: "inbox" (default) | "trash" (soft-deleted by me, still recoverable) | "all"
+    let folder = quantum_vault_storage::messenger_store::Folder::parse(body.payload.get("folder").and_then(|v| v.as_str()));
+    let conversations = state.node.list_conversations_with_activity_in(wallet_id, &extra_keys, folder)
         .map_err(|e| signed_internal(&e))?;
-    Ok(Json(serde_json::json!({ "success": true, "conversations": conversations })))
+    Ok(Json(serde_json::json!({ "success": true, "conversations": conversations, "folder": match folder { quantum_vault_storage::messenger_store::Folder::Trash => "trash", quantum_vault_storage::messenger_store::Folder::All => "all", _ => "inbox" } })))
 }
 
 async fn create_conversation_signed(
@@ -5134,9 +5145,10 @@ async fn create_conversation_signed(
 
     let name = p.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
     let is_group = p.get("isGroup").and_then(|v| v.as_bool()).unwrap_or(false);
-    let conversation = state.node.create_conversation(&wallet.id, participant_ids, name, is_group)
+    // 1:1 threads have a deterministic id and creation is an upsert (`existing: true` when the pair already has one)
+    let (conversation, existing) = state.node.create_or_get_conversation(&wallet.id, participant_ids, name, is_group)
         .map_err(|e| signed_internal(&e))?;
-    Ok(Json(serde_json::json!({ "success": true, "conversation": conversation })))
+    Ok(Json(serde_json::json!({ "success": true, "conversation": conversation, "conversationId": conversation.id, "existing": existing })))
 }
 
 /// Rename (or clear the name of) a conversation. Any existing participant may rename.
@@ -5293,6 +5305,7 @@ async fn send_message_signed(
         read_at: None,
         message_type: p.get("messageType").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
         spoiler: p.get("spoiler").and_then(|v| v.as_bool()).unwrap_or(false),
+        deleted_at: None,
     };
     let message = state.node.send_message(message).map_err(|e| signed_internal(&e))?;
     // Notify every other participant (recipient pubkeys == push-store keys). authed_key is the sender.
@@ -5310,13 +5323,57 @@ async fn delete_conversation_signed(
     let p = &body.payload;
 
     let conversation_id = p.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default();
-    if !is_conversation_participant(&state.node, conversation_id, &authed_key) {
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key);
+    let wallet_id = wallet.as_ref().map(|w| w.id.clone()).unwrap_or_else(|| authed_key.clone());
+    let extra: Vec<&str> = wallet.as_ref().map(|w| vec![w.signing_public_key.as_str(), w.encryption_public_key.as_str()]).unwrap_or_default();
+    if !state.node.conversation_has_participant(conversation_id, &wallet_id, &extra).unwrap_or(false) {
         return Err(signed_err("Not a participant in this conversation"));
     }
-
-    state.node.delete_conversation(conversation_id)
+    // Soft delete for the CALLER only (recoverable via /conversations/restore for 30 days). `purge: true`
+    // skips the caller's retention window; the thread is hard-removed only once every participant deleted it.
+    let purge = p.get("purge").and_then(|v| v.as_bool()).unwrap_or(false);
+    let conv = state.node.soft_delete_conversation(conversation_id, &wallet_id, &extra, purge)
         .map_err(|e| signed_internal(&e))?;
-    Ok(Json(serde_json::json!({ "success": true })))
+    Ok(Json(serde_json::json!({ "success": true, "conversationId": conv.id, "softDeleted": true, "purge": purge, "recoverableUntil": if purge { None } else { conv.deleted_by.get(&state.node.messenger_canonical_participant(&wallet_id)).and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok()).map(|t| (t + chrono::Duration::seconds(quantum_vault_storage::messenger_store::SOFT_DELETE_RETENTION_SECS)).to_rfc3339()) } })))
+}
+
+/// Restore a conversation the caller soft-deleted (only the caller's view changes).
+async fn restore_conversation_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
+    let conversation_id = body.payload.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default();
+    if conversation_id.is_empty() { return Err(signed_bad("conversationId is required")); }
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key);
+    let wallet_id = wallet.as_ref().map(|w| w.id.clone()).unwrap_or_else(|| authed_key.clone());
+    let extra: Vec<&str> = wallet.as_ref().map(|w| vec![w.signing_public_key.as_str(), w.encryption_public_key.as_str()]).unwrap_or_default();
+    if !state.node.conversation_has_participant(conversation_id, &wallet_id, &extra).unwrap_or(false) {
+        return Err(signed_err("Not a participant in this conversation"));
+    }
+    let conv = state.node.restore_conversation(conversation_id, &wallet_id, &extra).map_err(|e| signed_bad(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "conversation": conv })))
+}
+
+/// Restore a message the caller (its sender) soft-deleted.
+async fn restore_message_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let message_id = p.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
+    let conversation_id = p.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default();
+    if message_id.is_empty() || conversation_id.is_empty() { return Err(signed_bad("conversationId and messageId are required")); }
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key).ok_or_else(|| signed_err("Wallet not registered"))?;
+    let msgs = state.node.list_messages_in_folder(conversation_id, quantum_vault_storage::messenger_store::Folder::Trash).map_err(|e| signed_internal(&e))?;
+    match msgs.iter().find(|m| m.id == message_id) {
+        Some(m) if m.sender_wallet_id == wallet.id => {}
+        Some(_) => return Err(signed_err("Only the sender can restore a message")),
+        None => return Err(signed_bad("Message is not in the trash of this conversation")),
+    }
+    let msg = state.node.restore_message(message_id).map_err(|e| signed_bad(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "message": msg })))
 }
 
 async fn delete_message_signed(
@@ -5343,7 +5400,7 @@ async fn delete_message_signed(
 
     state.node.delete_message(message_id)
         .map_err(|e| signed_internal(&e))?;
-    Ok(Json(serde_json::json!({ "success": true })))
+    Ok(Json(serde_json::json!({ "success": true, "softDeleted": true, "restoreEndpoint": "/api/v2/messenger/messages/restore" })))
 }
 
 async fn mark_message_read_signed(
