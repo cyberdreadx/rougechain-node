@@ -363,13 +363,23 @@ export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKey
     if (data.success === false) throw new Error(data.error || "Registration failed");
 }
 
+/**
+ * Copy a Uint8Array view into its own ArrayBuffer. @noble returns the ML-KEM shared
+ * secret as a 32-byte *view* of a 64-byte scratch buffer; passing `.buffer` to
+ * WebCrypto fed the whole 64 bytes to HKDF, so every AES key derived here was
+ * wrong (undecryptable by the site, Qwalla, and even this extension itself).
+ */
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 async function kemEncryptPlaintext(
     plaintext: string,
     encryptionPublicKey: Uint8Array
 ): Promise<{ kemCipherText: string; iv: string; encryptedContent: string }> {
     const { cipherText, sharedSecret } = ml_kem768.encapsulate(encryptionPublicKey);
 
-    const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret.buffer as ArrayBuffer, "HKDF", false, ["deriveKey"]);
+    const keyMaterial = await crypto.subtle.importKey("raw", toArrayBuffer(sharedSecret), "HKDF", false, ["deriveKey"]);
     const aesKey = await crypto.subtle.deriveKey(
         { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("pqc-msg") },
         keyMaterial,
@@ -436,7 +446,7 @@ async function kemDecryptContent(
 ): Promise<string> {
     const sharedSecret = ml_kem768.decapsulate(hexToBytes(kemCipherTextHex), encryptionPrivateKey);
 
-    const keyMaterial = await crypto.subtle.importKey("raw", sharedSecret.buffer as ArrayBuffer, "HKDF", false, ["deriveKey"]);
+    const keyMaterial = await crypto.subtle.importKey("raw", toArrayBuffer(sharedSecret), "HKDF", false, ["deriveKey"]);
     const aesKey = await crypto.subtle.deriveKey(
         { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("pqc-msg") },
         keyMaterial,
@@ -446,9 +456,9 @@ async function kemDecryptContent(
     );
 
     const decrypted = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: hexToBytes(ivHex).buffer as ArrayBuffer },
+        { name: "AES-GCM", iv: toArrayBuffer(hexToBytes(ivHex)) },
         aesKey,
-        hexToBytes(encryptedContentHex).buffer as ArrayBuffer
+        toArrayBuffer(hexToBytes(encryptedContentHex))
     );
 
     return new TextDecoder().decode(decrypted);
