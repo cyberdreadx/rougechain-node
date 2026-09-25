@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#
+# Blocks a commit if staged changes look like they contain a secret.
+# Mirrors the manual scan that used to be run by hand before every commit.
+#
+# Enable (once per clone):   git config core.hooksPath infra/git-hooks
+# Bypass in a real emergency: git commit --no-verify   (avoid; you own the risk)
+
+set -euo pipefail
+
+# Patterns for known live secrets + generic credential shapes.
+# Keep matches narrow so field names / docs don't false-positive:
+#  - PRIVATE_KEY only when assigned a 0x… value
+#  - secret_key_hex only when followed (within a few chars) by real key material
+#    (16+ hex), so prose/JSON that merely names the field is allowed.
+PATTERNS='PRIVATE_KEY=0x[0-9a-fA-F]{16,}|bridge-secret-2026|secret_key_hex.{0,6}[0-9a-fA-F]{16,}|BRIDGE_CUSTODY_PRIVATE_KEY=.+|BRIDGE_RELAYER_SECRET=.+'
+
+# Only scan added/changed lines in the staged diff. Exclude this hooks dir itself —
+# it necessarily contains the patterns above, and hook changes are always reviewed.
+hits="$(git diff --cached --unified=0 -- . ':(exclude)infra/git-hooks/' \
+  | grep -E '^\+' | grep -vE '^\+\+\+' | grep -EnI "$PATTERNS" || true)"
+
+if [ -n "$hits" ]; then
+  echo "✖ pre-commit: possible secret in staged changes — commit blocked:" >&2
+  echo "$hits" | sed 's/^/    /' >&2
+  echo "" >&2
+  echo "  If this is a real secret: unstage it and keep it in a gitignored .env." >&2
+  echo "  If it is a false positive: git commit --no-verify (and tighten the pattern)." >&2
+  exit 1
+fi
+
+# Belt-and-suspenders: never allow the live relayer env file itself to be committed.
+if git diff --cached --name-only | grep -qE '(^|/)bridge-relayer\.env$'; then
+  echo "✖ pre-commit: bridge-relayer.env is staged — this holds the live custody key. Blocked." >&2
+  echo "  Commit only the sanitized bridge-relayer.env.example." >&2
+  exit 1
+fi
+
+exit 0

@@ -2,15 +2,15 @@
 
 The bridge relayer is an off-chain process that connects RougeChain L1 with Base. It
 fulfills withdrawals (L1 → Base), watches for deposits to auto-claim (Base → L1), and
-can refund withdrawals that cannot be released (disabled in production).
+refunds withdrawals that cannot be released.
 
 > For the full configuration table and operational notes, see
-> [`scripts/README.md`](https://github.com/cyberdreadx/rougechain-node/blob/main/scripts/README.md).
+> [`scripts/README.md`](https://github.com/cyberdreadx/quantum-vault/blob/main/scripts/README.md).
 
 ## How It Works
 
-1. Polls the node for pending ETH, USDC and XRGE withdrawals and releases the corresponding asset on Base
-2. Marks each release fulfilled; on repeated failure, reports it. Auto-refund exists but is **disabled in production** (`AUTO_REFUND=false`)
+1. Polls the node for pending ETH and XRGE withdrawals and releases the corresponding asset on Base
+2. Marks each release fulfilled; on repeated failure, reports it and **auto-refunds** the owner on L1
 3. **Deposit watcher:** scans the bridge contracts for deposit events and auto-claims them on L1
 4. Alerts (console + optional webhook) on repeated failures
 
@@ -26,12 +26,15 @@ BRIDGE_RELAYER_SECRET="your-secret"  # Shared secret for API authentication
 BASE_CHAIN="mainnet"
 BASE_RPC_URL="https://mainnet.base.org"   # NOTE: var name is BASE_RPC_URL
 ROUGE_BRIDGE_ADDRESS="0x..."         # RougeBridge contract address
-XRGE_BRIDGE_VAULT="0x..."            # BridgeVaultV2 contract address
-AUTO_REFUND="false"                  # Production setting: failed withdrawals are handled manually
+XRGE_BRIDGE_VAULT="0x..."            # BridgeVault contract address
+AUTO_REFUND="true"                   # Auto-refund failed withdrawals
 DEPOSIT_WATCHER="true"               # Auto-claim deposits
 # ALERT_WEBHOOK_URL=                 # Optional Slack/Discord webhook
 
-# Run as a singleton under a process supervisor — never run two relayers against one wallet
+# Production: systemd (replaces the old pm2 process — never run both)
+sudo systemctl restart bridge-relayer.service
+
+# Local
 npx tsx scripts/bridge-relayer.ts
 ```
 
@@ -57,13 +60,16 @@ export BRIDGE_RELAYER_SECRET="your-secret"
 
 ## Daemon Withdraw Guardrails
 
-Independent of the on-chain contracts, the RougeChain daemon enforces its own withdraw controls (an operator pause, a per-transaction cap, and a required Base confirmation depth for deposit claims, default 6). Operator configuration is documented in the repository's [`scripts/README.md`](https://github.com/cyberdreadx/rougechain-node/blob/main/scripts/README.md).
+Beyond the relayer config, the RougeChain daemon enforces withdraw guardrails via
+environment variables:
+
+- `QV_BRIDGE_WITHDRAW_PAUSED` — emergency kill-switch; blocks all withdrawals when `true`
+- `QV_BRIDGE_MAX_WITHDRAW_UNITS` — per-transaction withdrawal cap (0/unset = no cap)
+- `QV_BRIDGE_MIN_CONFIRMATIONS` — required Base confirmation depth for deposit claims (default 6)
 
 ## Security Considerations
 
-- The relayer signs Base transactions with a **classical ECDSA key**. This is the R1 production design; the V3 XRGE bridge (not activated) removes this key from XRGE authorization
-
 - The relayer's EVM private key should be stored securely (not in code)
 - Use a dedicated wallet with limited funds for the relayer
-- The RougeBridge owner is currently a single operator key, not a multisig; that key also performs releases. The guardian role is held by a 2-of-3 Safe multisig, which can pause the bridge and cancel queued large releases. Other protections include the 24-hour timelock on large releases and daemon-side controls. Migrating ownership to multisig control is a planned security improvement.
+- For production, the RougeBridge contract owner should be a multisig
 - The `BRIDGE_RELAYER_SECRET` should be a strong random string

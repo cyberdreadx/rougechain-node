@@ -2,9 +2,6 @@
 
 Bridge ETH from Base mainnet to RougeChain as **qETH**, and back.
 
-> **Status: LIVE (hardened R1 bridge), tested end-to-end.** qETH uses classical Base-side
-> authorization and is **outside the scope of the V3 post-quantum XRGE bridge**.
-
 ## Deposit (ETH → qETH)
 
 ### Step 1: Send ETH to the Bridge
@@ -31,8 +28,7 @@ EVM tx hash, sign the claim message with your EVM wallet, and click **Claim**.
 
 ### Conversion Rate
 
-1 ETH = 1,000,000 qETH units (6 decimal precision). Deposit amounts should be multiples of
-0.000001 ETH (1e12 wei); smaller remainders cannot be represented on L1.
+1 ETH = 1,000,000 qETH units (6 decimal precision)
 
 For example, depositing 0.01 ETH gives you 10,000 qETH units.
 
@@ -48,9 +44,9 @@ The transaction is signed client-side (your private key never leaves the browser
 - qETH is burned on RougeChain
 - A pending withdrawal is created
 - The bridge relayer picks it up and sends ETH to your EVM address
-- Release status (`pending` / `failed` / `refunded`) shows on the Bridge page. Automatic
-  refunds are **disabled in production**; a release that can't be completed is handled by the
-  operators.
+- Release status (`pending` / `failed` / `refunded`) shows on the Bridge page. If the
+  relayer can't complete the release after repeated attempts, your qETH is automatically
+  **refunded** back to your RougeChain wallet.
 
 A 0.1 XRGE fee is charged for the withdrawal transaction.
 

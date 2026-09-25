@@ -283,3 +283,21 @@ Blocks 96–99 produced deliberately (one transfer each); both nodes identical a
 | Observation | blocks 101–106 produced normally; primary and node #2 identical hash + state root after every block |
 
 Node #2 remains non-mining. `/api/blocks/import` and `/api/peers/register` remain 403 at nginx.
+
+### 14.1 Post-activation observation window (closed 2026-09-25 01:46 UTC)
+
+Blocks **107–128** (22 blocks after the deliberate 101–106) verified block-by-block on the primary and node #2:
+
+| Check | Result |
+|---|---|
+| Hash, state root and proposer identical on both nodes for every block 107–128 | yes, 22/22 |
+| Proposer of every block == designated proposer (`8ccf7878…`) | yes |
+| Transactions | 22 (20 `transfer`, 2 `bridge_mint` auto-claimed from real Base deposits) from 5 senders; 0 duplicate (sender, nonce) pairs |
+| Traffic origin | 107–110 organic (incl. the two bridge mints); 111–128 a defined workload approved by the owner (three wallets, transfers between them and the operator, integer amounts/fees; social posts turned out to be off-chain and produced no blocks) |
+| Node #2 `missedBlocks` | 41 before the window, 41 after (legacy rule would have auto-slashed at 50) |
+| Slash / jail | none; `21e0ed0a` unchanged (11 missed, jailedUntil 89) |
+| Daemon log 01:40–01:46 | 18 `Mined block` lines, 0 rejected/replay/uniqueness/equivocation/high-severity lines |
+| Observation logger | 0 ALERT lines; relayer active throughout |
+| Tip at close | 128, finalized 128, state root `dddaed4b…` on both nodes |
+
+Known and accepted: Release 1 has no fallback proposer, so a primary outage halts block production until it returns (Release 2).

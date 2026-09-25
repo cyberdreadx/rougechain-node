@@ -131,8 +131,4 @@ All validator operations use **ML-DSA-65** signatures:
 - Stake/unstake transactions are signed
 - Signatures are verified by all nodes
 
-Block production and staking are therefore signed with quantum-resistant keys.
-
-> **Finality:** the finality indicator live today is informational. Verified BFT finality
-> (FINALITY_V2 — verified ML-DSA-65 votes, recomputed quorum, anti-equivocation journals) is built
-> and tested but **not activated**. See [Finality](finality.md).
+This ensures quantum-resistant security for the entire consensus process.

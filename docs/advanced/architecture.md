@@ -55,7 +55,7 @@ The backend is a single Rust binary (`quantum-vault-daemon`) that includes:
 | **Mail Server** | Stores encrypted mail, name registry |
 | **P2P Layer** | Peer discovery, block/tx propagation |
 | **AMM/DEX** | Liquidity pools, swap execution, price calculation |
-| **Bridge** | R1 production bridge to Base mainnet (XRGE, qETH, qUSDC); separate Bitcoin bridge. V3 post-quantum XRGE bridge code is present but not activated |
+| **Bridge** | qETH bridge from Base Sepolia |
 
 ### Frontend (React + TypeScript)
 
@@ -179,7 +179,7 @@ The npm package `@rougechain/sdk` provides a programmatic interface for interact
 |-----------|---------------|
 | **Keys never leave client** | All signing/encryption happens in-browser |
 | **Server is untrusted** | Server only stores encrypted data |
-| **Quantum-resistant L1** | NIST-approved PQC algorithms for L1 signatures and messaging. Base-side bridge custody is classical today — see [Security Overview](../security.md) |
+| **Quantum-resistant** | NIST-approved PQC algorithms throughout |
 | **BIP-39 mnemonics** | Wallets derive from a 24-word BIP-39 mnemonic (256-bit entropy); the mnemonic is the primary backup. Keys are also encrypted at rest with AES-256-GCM (PBKDF2, 600k iterations) |
 | **Signed v2 writes** | `/api/v2` writes require an ML-DSA-65 signature over a canonical payload; legacy v1 write endpoints return `410 Gone` in production |
 | **Dual encryption** | Messages encrypted for both sender and recipient |
