@@ -20,6 +20,7 @@ import {
     blockWallet,
     unblockWallet,
     getBlockedWalletIds,
+    buildSignedRequest,
     type Conversation,
     type Message,
     type MessageType,
@@ -27,7 +28,7 @@ import {
     type WalletWithPrivateKeys,
 } from "../../lib/pqc-messenger";
 import { invalidate } from "../../lib/api-cache";
-import { subscribeNewMessage, isMessengerWsConnected } from "../../lib/messenger-ws";
+import { subscribeNewMessage, isMessengerWsConnected, setMessengerAuthSigner } from "../../lib/messenger-ws";
 
 interface Props {
     wallet: UnifiedWallet;
@@ -83,7 +84,10 @@ export default function MessengerTab({ wallet }: Props) {
         doRegister();
         loadConversations();
         loadContacts();
-        // Real-time: refetch the list on the node's new_message hint (no content in it).
+        // Real-time: authenticate the socket as this wallet, then refetch the list on
+        // each private new_message event (routing metadata only, never content).
+        setMessengerAuthSigner(() =>
+            buildSignedRequest({ action: "messenger_ws_subscribe" }, messengerWallet.signingPrivateKey, messengerWallet.signingPublicKey));
         const unsubscribe = subscribeNewMessage(() => {
             invalidate("messengerConversations");
             loadConversations();
@@ -93,7 +97,7 @@ export default function MessengerTab({ wallet }: Props) {
             if (!isMessengerWsConnected()) loadConversations();
         }, 3000);
         const slow = setInterval(loadConversations, 20000);
-        return () => { unsubscribe(); clearInterval(interval); clearInterval(slow); };
+        return () => { unsubscribe(); setMessengerAuthSigner(null); clearInterval(interval); clearInterval(slow); };
     }, []);
 
     if (selected) {
