@@ -1,73 +1,72 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* PQC Quantum Wallet Design System */
+/* RougeChain design system — shared with rougecoin.io.
+   Colours come from the XRGE mark: hot red into violet on near-black. */
 
 @layer base {
   :root {
-    --background: 220 20% 4%;
-    --foreground: 180 100% 95%;
+    --background: 250 33% 4%;          /* #07060c */
+    --foreground: 260 41% 93%;         /* #ece8f5 */
 
-    --card: 220 25% 8%;
-    --card-foreground: 180 100% 95%;
+    --card: 260 30% 7%;                /* #100d18 panel */
+    --card-foreground: 260 41% 93%;
 
-    --popover: 220 25% 10%;
-    --popover-foreground: 180 100% 95%;
+    --popover: 253 31% 10%;            /* #161222 panel-2 */
+    --popover-foreground: 260 41% 93%;
 
-    --primary: 175 85% 50%;
-    --primary-foreground: 220 20% 4%;
+    --primary: 331 75% 51%;            /* #e0247f magenta */
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 220 30% 15%;
-    --secondary-foreground: 180 100% 90%;
+    --secondary: 253 31% 10%;
+    --secondary-foreground: 260 41% 93%;
 
-    --muted: 220 25% 12%;
-    --muted-foreground: 200 15% 55%;
+    --muted: 253 31% 10%;
+    --muted-foreground: 255 14% 64%;   /* #9d96b2 */
 
-    --accent: 280 80% 60%;
+    --accent: 262 87% 60%;             /* #7b3ff2 violet */
     --accent-foreground: 0 0% 100%;
 
-    --destructive: 0 75% 55%;
+    --destructive: 349 100% 59%;       /* #ff2d55 red */
     --destructive-foreground: 0 0% 100%;
 
-    --success: 150 80% 45%;
-    --success-foreground: 220 20% 4%;
+    --success: 166 86% 57%;            /* #35f0c4 live */
+    --success-foreground: 250 33% 4%;
 
-    --warning: 45 100% 55%;
-    --warning-foreground: 220 20% 4%;
+    --warning: 42 100% 58%;
+    --warning-foreground: 250 33% 4%;
 
-    --border: 220 30% 18%;
-    --input: 220 30% 15%;
-    --ring: 175 85% 50%;
+    --border: 254 14% 13%;             /* hairline: text at 10% on bg */
+    --input: 255 12% 21%;              /* stronger line */
+    --ring: 166 86% 57%;               /* focus = live, as on rougecoin.io */
 
-    --radius: 0.75rem;
+    --radius: 0.5rem;
 
-    /* Custom quantum wallet tokens */
-    --quantum-glow: 175 85% 50%;
-    --quantum-pulse: 280 80% 60%;
-    --circuit-line: 220 30% 20%;
-    --hologram: 175 100% 70%;
+    --quantum-glow: 331 75% 51%;
+    --quantum-pulse: 262 87% 60%;
+    --circuit-line: 254 14% 13%;
+    --hologram: 166 86% 57%;
 
-    /* Gradients */
-    --gradient-quantum: linear-gradient(135deg, hsl(175 85% 50%), hsl(200 90% 45%), hsl(280 80% 60%));
-    --gradient-card: linear-gradient(180deg, hsl(220 25% 10%), hsl(220 25% 6%));
-    --gradient-glow: radial-gradient(circle at center, hsl(175 85% 50% / 0.15), transparent 70%);
+    /* XRGE gradient: red -> magenta -> violet */
+    --gradient-quantum: linear-gradient(100deg, hsl(349 100% 59%), hsl(331 75% 51%) 45%, hsl(262 87% 60%));
+    --gradient-card: linear-gradient(180deg, hsl(260 30% 8%), hsl(260 30% 6%));
+    --gradient-glow: radial-gradient(circle at center, hsl(331 75% 51% / 0.15), transparent 70%);
 
-    /* Shadows */
-    --shadow-quantum: 0 0 30px hsl(175 85% 50% / 0.3), 0 0 60px hsl(175 85% 50% / 0.1);
-    --shadow-card: 0 4px 20px hsl(0 0% 0% / 0.4), 0 0 1px hsl(175 85% 50% / 0.2);
-    --shadow-button: 0 0 20px hsl(175 85% 50% / 0.4);
+    --shadow-quantum: 0 0 0 1px hsl(349 100% 59% / 0.4), 0 8px 30px hsl(331 75% 51% / 0.35);
+    --shadow-card: 0 4px 20px hsl(0 0% 0% / 0.45);
+    --shadow-button: 0 0 0 1px hsl(349 100% 59% / 0.4), 0 8px 30px hsl(331 75% 51% / 0.35);
 
-    --sidebar-background: 220 25% 6%;
-    --sidebar-foreground: 180 100% 95%;
-    --sidebar-primary: 175 85% 50%;
-    --sidebar-primary-foreground: 220 20% 4%;
-    --sidebar-accent: 220 30% 15%;
-    --sidebar-accent-foreground: 180 100% 90%;
-    --sidebar-border: 220 30% 18%;
-    --sidebar-ring: 175 85% 50%;
+    --sidebar-background: 250 33% 4%;
+    --sidebar-foreground: 260 41% 93%;
+    --sidebar-primary: 331 75% 51%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 253 31% 10%;
+    --sidebar-accent-foreground: 260 41% 93%;
+    --sidebar-border: 254 14% 13%;
+    --sidebar-ring: 166 86% 57%;
   }
 }
 
@@ -84,11 +83,21 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3 {
+    letter-spacing: -0.02em;
   }
 
   .font-mono {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 3px;
   }
 }
 
@@ -109,10 +118,40 @@
   }
 
   .circuit-bg {
-    background-image: 
-      linear-gradient(hsl(var(--circuit-line)) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(var(--circuit-line)) 1px, transparent 1px);
-    background-size: 40px 40px;
+    background-image:
+      linear-gradient(hsl(var(--foreground) / 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--foreground) / 0.08) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: linear-gradient(to bottom, #000 10%, transparent 70%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 10%, transparent 70%);
+  }
+
+  /* rougecoin.io hero glow: violet + red light behind the grid */
+  .hero-glow {
+    background:
+      radial-gradient(40% 50% at 78% 38%, hsl(262 87% 60% / 0.30), transparent 70%),
+      radial-gradient(35% 45% at 64% 60%, hsl(349 100% 59% / 0.22), transparent 70%);
+  }
+
+  .bg-gradient-xrge {
+    background-image: var(--gradient-quantum);
+  }
+
+  /* Mono, uppercase, tracked label — section kicker / eyebrow */
+  .kicker {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 0.8125rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background: hsl(var(--success));
+    box-shadow: 0 0 0 0 hsl(var(--success) / 0.6);
+    animation: live-pulse 2s infinite;
   }
 
   .hologram-shimmer {
@@ -122,11 +161,20 @@
 
 @keyframes pulse-glow {
   0%, 100% {
-    box-shadow: 0 0 20px hsl(175 85% 50% / 0.3), 0 0 40px hsl(175 85% 50% / 0.1);
+    box-shadow: 0 0 20px hsl(331 75% 51% / 0.3), 0 0 40px hsl(331 75% 51% / 0.1);
   }
   50% {
-    box-shadow: 0 0 30px hsl(175 85% 50% / 0.5), 0 0 60px hsl(175 85% 50% / 0.2);
+    box-shadow: 0 0 30px hsl(331 75% 51% / 0.5), 0 0 60px hsl(331 75% 51% / 0.2);
   }
+}
+
+@keyframes live-pulse {
+  70% { box-shadow: 0 0 0 10px hsl(166 86% 57% / 0); }
+  100% { box-shadow: 0 0 0 0 hsl(166 86% 57% / 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot, .glow-pulse { animation: none; }
 }
 
 @keyframes shimmer {
@@ -181,13 +229,13 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(175 85% 50% / 0.25);
+  background: hsl(331 75% 51% / 0.3);
   border-radius: 999px;
   transition: background 0.2s;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(175 85% 50% / 0.5);
+  background: hsl(331 75% 51% / 0.55);
 }
 
 ::-webkit-scrollbar-corner {
@@ -197,5 +245,5 @@
 /* Firefox */
 * {
   scrollbar-width: thin;
-  scrollbar-color: hsl(175 85% 50% / 0.25) transparent;
+  scrollbar-color: hsl(331 75% 51% / 0.3) transparent;
 }
