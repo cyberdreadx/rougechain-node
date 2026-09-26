@@ -1,6 +1,7 @@
 import { MapPin, CheckCircle2, Circle, ExternalLink, Hash } from "lucide-react";
-import type { RegenProject } from "@/lib/regenerate";
-import { REGEN_CATEGORIES, REGEN_STATUS_LABEL } from "@/lib/regenerate";
+import { Link } from "react-router-dom";
+import type { RegenProject, TreasuryLedger } from "@/lib/regenerate";
+import { REGEN_CATEGORIES, REGEN_STATUS_LABEL, verifiedFunding, txUrl } from "@/lib/regenerate";
 
 const STATUS_STYLES: Record<RegenProject["status"], string> = {
   proposed: "text-muted-foreground border-border bg-muted/40",
@@ -17,10 +18,16 @@ const CATEGORY_LABEL = Object.fromEntries(REGEN_CATEGORIES.map((c) => [c.key, c.
  * RegenProject holds, so real on-chain/API data can be dropped in unchanged.
  * Fields with no data yet (funding, evidence, tx) render honest "pending" states.
  */
-export default function ProjectCard({ project }: { project: RegenProject }) {
+export default function ProjectCard({ project, ledger }: { project: RegenProject; ledger: TreasuryLedger | null }) {
   const {
-    name, location, category, requestedXrge, status, description, milestones, evidenceUrl, txHash,
+    name, location, category, requestedXrge, description, milestones, evidenceUrl,
   } = project;
+  // Funding is only what the chain shows leaving the treasury for this project.
+  const funding = verifiedFunding(project, ledger);
+  const status: RegenProject["status"] =
+    project.status === "proposed" || project.status === "reviewing"
+      ? (funding.txs.length > 0 ? "funded" : project.status)
+      : (funding.txs.length > 0 ? project.status : "reviewing");
 
   return (
     <article className="flex flex-col h-full rounded-2xl border border-border bg-card p-5 hover:border-success/40 transition-colors">
@@ -72,12 +79,17 @@ export default function ProjectCard({ project }: { project: RegenProject }) {
         ) : (
           <span className="text-muted-foreground/70">Evidence: pending</span>
         )}
-        {txHash ? (
-          <a href={`/tx/${txHash}`} className="flex items-center gap-1 text-primary hover:underline font-mono">
-            <Hash className="w-3 h-3" aria-hidden="true" />{txHash.slice(0, 10)}…
-          </a>
+        {funding.txs.length > 0 ? (
+          <>
+            <span className="text-success font-medium">{funding.xrge.toLocaleString()} XRGE funded on-chain</span>
+            {funding.txs.map((t) => (
+              <Link key={t.txId} to={txUrl(t.txId)} className="flex items-center gap-1 text-primary hover:underline font-mono">
+                <Hash className="w-3 h-3" aria-hidden="true" />{t.txId.slice(0, 10)}…
+              </Link>
+            ))}
+          </>
         ) : (
-          <span className="text-muted-foreground/70">Funding tx: pending</span>
+          <span className="text-muted-foreground/70">Funding: none yet</span>
         )}
       </footer>
     </article>
