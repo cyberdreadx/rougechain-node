@@ -84,6 +84,17 @@ export function Footer() {
             <ul className="space-y-2">
               <li>
                 <a
+                  href="https://rougecoin.io"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-muted-foreground hover:text-red-400 flex items-center gap-1.5 transition-colors"
+                >
+                  rougecoin.io (XRGE home)
+                  <ExternalLink className="w-3 h-3 opacity-50" />
+                </a>
+              </li>
+              <li>
+                <a
                   href="https://aerodrome.finance/swap?from=0x833589fcd6edb6e08f4c7c32d4f71b54bda02913&to=0x147120faec9277ec02d957584cfcd92b56a24317&chain0=8453&chain1=8453"
                   target="_blank"
                   rel="noopener noreferrer"

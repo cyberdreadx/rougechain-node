@@ -25,6 +25,8 @@ import ss5 from "@/assets/screenshot_5_create.png";
 // Base-mainnet XRGE ERC-20 (for buy/trade links). Native XRGE lives on RougeChain L1.
 const XRGE_BASE_ADDRESS = "0x147120faEC9277ec02d957584CFCD92B56A24317";
 const AERODROME_BUY = `https://aerodrome.finance/swap?from=0x833589fcd6edb6e08f4c7c32d4f71b54bda02913&to=${XRGE_BASE_ADDRESS}&chain0=8453&chain1=8453`;
+// XRGE's own site: what it is, where to buy it, both networks.
+const ROUGECOIN_SITE = "https://rougecoin.io";
 const DEXSCREENER = `https://dexscreener.com/base/${XRGE_BASE_ADDRESS}`;
 // GeckoTerminal pool (XRGE/USDC on Base) — more reliable chart embed than DexScreener.
 const GECKOTERMINAL_POOL = "https://www.geckoterminal.com/base/pools/0x059e10d26c64a63d04e1814f46305210eddc447d";
@@ -456,6 +458,9 @@ const XrgeSection = () => {
         <Link to="/bridge">
           <Button variant="outline" size="sm" className="gap-2"><Cable className="w-4 h-4" /> Bridge to RougeChain</Button>
         </Link>
+        <a href={ROUGECOIN_SITE} target="_blank" rel="noopener noreferrer" className="text-sm text-accent hover:text-accent/80 flex items-center gap-1">
+          More on XRGE at rougecoin.io <ArrowRight className="w-3.5 h-3.5" />
+        </a>
       </div>
 
       {/* Secondary: price chart */}
