@@ -346,7 +346,8 @@
     "buy": {
       "title": "Comprar XRGE",
       "subtitle": "Cambia ETH o USDC por XRGE en Base, aquí mismo, a través del pool de Aerodrome. Tu cartera firma; nunca custodiamos tus fondos.",
-      "details": "dirección del contrato, pasos y otras formas de comprar"
+      "details": "dirección del contrato, pasos y otras formas de comprar",
+      "aboutXrge": "Sobre XRGE en RougeCoin.io"
     }
   },
   "footer": {

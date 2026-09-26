@@ -346,7 +346,8 @@
     "buy": {
       "title": "Buy XRGE",
       "subtitle": "Swap ETH or USDC for XRGE on Base, right here, through the Aerodrome pool. Your wallet signs; we never hold your funds.",
-      "details": "contract address, steps and other ways to buy"
+      "details": "contract address, steps and other ways to buy",
+      "aboutXrge": "About XRGE at RougeCoin.io"
     }
   },
   "footer": {
