@@ -999,7 +999,7 @@ The RougeChain browser extension (Manifest V3, version 1.3.1) provides:
 
 - **Wallet management** with password-encrypted storage (PBKDF2 + AES-256-GCM).
 - **Five integrated tabs:** Wallet, Tokens, NFTs, Chat (messenger), and Settings.
-- **Encrypted backups:** wallet export produces a password-encrypted `.pqcbackup` file (PBKDF2 with 600,000 iterations + AES-256-GCM) that the web wallet and the Qwalla mobile app can import.
+- **Encrypted backups:** wallet export produces a password-encrypted `.pqcbackup` file (PBKDF2 with 600,000 iterations + AES-256-GCM) that the web wallet and Qwalla can import.
 - **Real-time messenger** notifications over the node's authenticated WebSocket (Section 8.8).
 - **Smart API caching** with TTL-based deduplication to minimize network overhead.
 
@@ -1079,7 +1079,7 @@ The `rougechain` CLI signs transactions locally with ML-DSA-65 and supports key 
 ### 10.8 Applications
 
 - **rougechain.io** -- web wallet, explorer, DEX, bridges, messenger and mail, a swap for buying XRGE on Base, and a network status page. The interface is available in English, Spanish, Chinese and Japanese.
-- **Qwalla** -- mobile wallet (iOS, built with Expo/React Native) with tokens, messenger, mail and push notifications.
+- **Qwalla** -- a wallet suite built from one Expo/React Native codebase: the **iOS app** (App Store), the **web app** at qwalla.io, **desktop apps** for macOS and Windows, and **Qwalla Browser**, a standalone desktop browser for on-chain apps. All share the same tokens, messenger, mail and dApp access; the iOS app adds push notifications.
 - **rougee.app (qRougee)** -- a decentralized music dApp that connects to the browser extension through the `window.rougechain` provider.
 - **rougecoin.io** -- information site for XRGE, linked from rougechain.io.
 
