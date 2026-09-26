@@ -725,7 +725,7 @@ const Wallet = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
@@ -734,7 +734,7 @@ const Wallet = () => {
   if (showSeedReveal) {
     const words = newMnemonic.split(" ");
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <div className="max-w-md mx-auto px-4 py-12">
           <Card className="border-border">
             <CardHeader className="text-center">
@@ -802,7 +802,7 @@ const Wallet = () => {
 
   if (showPasswordSetup) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <div className="max-w-md mx-auto px-4 py-12">
           <Card className="border-border">
             <CardHeader className="text-center">
@@ -857,7 +857,7 @@ const Wallet = () => {
   if (isLocked) {
     const meta = getLockedWalletMetadata();
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <div className="max-w-md mx-auto px-4 py-12">
           <Card className="border-border">
             <CardHeader>
@@ -889,7 +889,7 @@ const Wallet = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       {/* Action Bar */}
       <div className="sticky top-0 z-40 bg-background/80 backdrop-blur-sm border-b border-border">
         <div className="max-w-lg mx-auto px-4 py-2 flex items-center justify-between">

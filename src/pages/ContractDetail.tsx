@@ -199,7 +199,7 @@ const ContractDetail = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
@@ -207,7 +207,7 @@ const ContractDetail = () => {
 
   if (notFound || !contract) {
     return (
-      <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background relative overflow-x-hidden">
+      <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen relative overflow-x-hidden">
         <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
         <main className="relative z-10 max-w-6xl mx-auto px-4 py-10">
           <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="mb-6">
@@ -232,7 +232,7 @@ const ContractDetail = () => {
   const stateEntries = Object.entries(state);
 
   return (
-    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background relative overflow-x-hidden">
+    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen relative overflow-x-hidden">
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
 

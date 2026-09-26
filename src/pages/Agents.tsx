@@ -266,7 +266,7 @@ const Agents = () => {
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <div className="max-w-5xl mx-auto px-6 py-12 sm:py-16">
         <motion.div
           initial={{ opacity: 0, y: 20 }}

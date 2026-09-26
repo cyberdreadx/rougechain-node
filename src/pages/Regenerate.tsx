@@ -79,7 +79,7 @@ export default function Regenerate() {
   const fmt = (n: number | null, suffix = "") => (n == null ? null : `${n.toLocaleString()}${suffix}`);
 
   return (
-    <div className="min-h-screen bg-background relative">
+    <div className="min-h-screen relative">
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-[820px] h-[520px] rounded-full bg-success/5 blur-3xl" />
         <div className="absolute top-1/2 -right-32 w-[420px] h-[420px] rounded-full bg-accent/5 blur-3xl" />

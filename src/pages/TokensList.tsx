@@ -127,7 +127,7 @@ const TokensList = () => {
   }, [query, tokens]);
 
   return (
-    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background relative overflow-x-hidden">
+    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen relative overflow-x-hidden">
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 right-0 w-full max-w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />

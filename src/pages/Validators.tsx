@@ -115,7 +115,7 @@ export default function Validators() {
   const signingPrivateKey = wallet?.signingPrivateKey;
 
   return (
-    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background text-foreground relative overflow-x-hidden">
+    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen text-foreground relative overflow-x-hidden">
       
       {/* Background Effects */}
       <div className="fixed inset-0 pointer-events-none">

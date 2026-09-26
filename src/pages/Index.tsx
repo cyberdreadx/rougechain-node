@@ -673,51 +673,52 @@ const Index = () => {
     el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
   }, [hash]);
   return (
-    <div className="min-h-screen bg-background relative">
-      <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[800px] h-[600px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
+    <div className="min-h-screen relative overflow-hidden">
+      {/* rougecoin.io hero backdrop: violet + red light behind a fading 48px grid */}
+      <div className="absolute inset-x-0 top-0 h-[720px] hero-glow pointer-events-none" aria-hidden="true" />
+      <div className="absolute inset-x-0 top-0 h-[720px] circuit-bg pointer-events-none" aria-hidden="true" />
 
-      <main className="relative z-10 max-w-4xl mx-auto px-4 py-10">
+      <main className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 pt-12 md:pt-20 pb-10">
 
-        {/* 1 · Hero — compact, primary actions above the fold */}
-        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-10">
-          <div className="flex items-center justify-center gap-2 mb-5">
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/15 text-primary text-xs font-bold font-mono border border-primary/30">
-              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" /> {t("home.hero.badge")}
-            </span>
-          </div>
+        {/* 1 · Hero — primary actions above the fold */}
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="relative mb-14 md:mb-20 flex flex-col md:flex-row md:items-center gap-8 md:gap-12">
+          <img
+            src={xrgeLogo}
+            alt=""
+            className="order-first md:order-last w-20 md:w-56 lg:w-64 shrink-0 rounded-full drop-shadow-[0_0_60px_hsl(331_75%_51%/0.55)]"
+          />
 
-          <div className="mx-auto mb-5 w-16 h-16 rounded-full overflow-hidden border-2 border-primary/20 shadow-[0_0_24px_rgba(0,200,200,0.15)]">
-            <img src={xrgeLogo} alt="RougeChain" className="w-full h-full object-cover rounded-full" />
-          </div>
+          <div className="min-w-0 flex-1">
+            <p className="kicker inline-flex items-center gap-2.5 text-success mb-5">
+              <span className="live-dot" /> {t("home.hero.badge")}
+            </p>
 
-          <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-4 text-balance">
-            <Trans i18nKey="home.hero.title" components={{ grad: <span className="text-gradient-quantum" /> }} />
-          </h1>
+            <h1 className="text-[2.5rem] leading-[1.06] sm:text-5xl md:text-6xl font-bold text-foreground mb-6 text-balance">
+              <Trans i18nKey="home.hero.title" components={{ grad: <span className="text-gradient-quantum" /> }} />
+            </h1>
 
-          <p className="text-base text-muted-foreground max-w-xl mx-auto mb-7">
-            {t("home.hero.subtitle")}
-          </p>
+            <p className="text-lg md:text-xl text-muted-foreground max-w-xl mb-8">
+              {t("home.hero.subtitle")}
+            </p>
 
-          {/* Two primary actions */}
-          <div className="flex items-center justify-center gap-3 flex-wrap mb-4">
-            <Button size="lg" className="gap-2" onClick={scrollTo("ecosystem")}>
-              <Boxes className="w-5 h-5" /> {t("home.hero.exploreEcosystem")}
-            </Button>
-            <Button size="lg" variant="outline" className="gap-2 border-accent/60 text-accent hover:bg-accent/10" onClick={scrollTo("buy-xrge")}>
-              <Coins className="w-5 h-5" /> {t("home.hero.buyXrge")}
-            </Button>
-            <a href={`${DOCS}/getting-started/quick-start`} target="_blank" rel="noopener noreferrer">
-              <Button size="lg" variant="outline" className="gap-2 border-primary/50 text-primary hover:bg-primary/10">
-                <Code className="w-5 h-5" /> {t("home.hero.buildOn")}
+            <div className="flex flex-wrap gap-3 mb-5">
+              <Button size="lg" className="gap-2 h-12 px-6 text-base w-full sm:w-auto" onClick={scrollTo("ecosystem")}>
+                <Boxes className="w-5 h-5" /> {t("home.hero.exploreEcosystem")}
               </Button>
-            </a>
-          </div>
+              <Button size="lg" variant="outline" className="gap-2 h-12 px-6 text-base w-full sm:w-auto" onClick={scrollTo("buy-xrge")}>
+                <Coins className="w-5 h-5" /> {t("home.hero.buyXrge")}
+              </Button>
+              <a href={`${DOCS}/getting-started/quick-start`} target="_blank" rel="noopener noreferrer" className="w-full sm:w-auto">
+                <Button size="lg" variant="outline" className="gap-2 h-12 px-6 text-base w-full sm:w-auto">
+                  <Code className="w-5 h-5" /> {t("home.hero.buildOn")}
+                </Button>
+              </a>
+            </div>
 
-          {/* Secondary links */}
-          <div className="flex items-center justify-center gap-x-5 gap-y-2 flex-wrap text-sm">
-            <a href="/RougeChain-Whitepaper.pdf" target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground flex items-center gap-1">{t("home.hero.whitepaper")} <ExternalLink className="w-3.5 h-3.5" /></a>
-            <Link to="/blockchain" className="text-muted-foreground hover:text-foreground flex items-center gap-1">{t("home.hero.explorer")} <ArrowRight className="w-3.5 h-3.5" /></Link>
+            <div className="flex items-center gap-x-5 gap-y-2 flex-wrap font-mono text-sm">
+              <a href="/RougeChain-Whitepaper.pdf" target="_blank" rel="noopener noreferrer" className="text-foreground border-b border-primary hover:text-destructive flex items-center gap-1">{t("home.hero.whitepaper")} <ExternalLink className="w-3.5 h-3.5" /></a>
+              <Link to="/blockchain" className="text-foreground border-b border-primary hover:text-destructive flex items-center gap-1">{t("home.hero.explorer")} <ArrowRight className="w-3.5 h-3.5" /></Link>
+            </div>
           </div>
         </motion.div>
 

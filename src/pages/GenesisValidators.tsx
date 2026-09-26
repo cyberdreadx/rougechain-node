@@ -67,7 +67,7 @@ const STEPS = [
 
 export default function GenesisValidators() {
   return (
-    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background text-foreground relative overflow-x-hidden">
+    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen text-foreground relative overflow-x-hidden">
       <div className="container mx-auto max-w-5xl px-4 py-10 md:py-14 space-y-14">
 
         {/* Hero */}

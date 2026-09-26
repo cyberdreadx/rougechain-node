@@ -278,7 +278,7 @@ const CollectionsList = () => {
   }, []);
 
   return (
-    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background relative overflow-x-hidden">
+    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen relative overflow-x-hidden">
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 right-0 w-full max-w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />
@@ -447,7 +447,7 @@ const CollectionDetail = ({ collectionId }: { collectionId: string }) => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
@@ -455,7 +455,7 @@ const CollectionDetail = ({ collectionId }: { collectionId: string }) => {
 
   if (!collection) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <ImageIcon className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
           <p className="text-muted-foreground">Collection not found</p>
@@ -468,7 +468,7 @@ const CollectionDetail = ({ collectionId }: { collectionId: string }) => {
   }
 
   return (
-    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background relative overflow-x-hidden">
+    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen relative overflow-x-hidden">
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 right-0 w-full max-w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />

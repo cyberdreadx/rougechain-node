@@ -329,7 +329,7 @@ const Pools = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen flex flex-col">
       <div className="container max-w-4xl mx-auto px-4 py-8 flex-grow">
         <motion.div
           initial={{ opacity: 0, y: 20 }}

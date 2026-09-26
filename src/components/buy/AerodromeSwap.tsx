@@ -132,7 +132,7 @@ export default function AerodromeSwap() {
         <div className="flex items-center justify-between text-xs text-muted-foreground"><span>{t("buy.swap.youPay")}</span>{balances && <span>{payWith === "ETH" ? `${Number(formatUnits(balances.eth, 18)).toFixed(5)} ETH` : `${fmt(Number(formatUnits(balances.usdc, 6)), 2)} USDC`}</span>}</div>
         <div className="flex items-center gap-2">
           <Input inputMode="decimal" placeholder="0.0" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} className="text-lg font-mono border-0 bg-transparent px-0 focus-visible:ring-0" />
-          <div className="flex rounded-lg border border-border overflow-hidden text-xs">
+          <div className="flex shrink-0 rounded-lg border border-border overflow-hidden text-xs">
             {(["ETH", "USDC"] as const).map((k) => <button key={k} onClick={() => { setPayWith(k); setQuote(null); }} className={`px-3 py-1.5 ${payWith === k ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{k}</button>)}
           </div>
         </div>
