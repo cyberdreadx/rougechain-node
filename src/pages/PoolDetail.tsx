@@ -212,7 +212,7 @@ const PoolDetail = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     );
@@ -220,7 +220,7 @@ const PoolDetail = () => {
 
   if (!pool) {
     return (
-      <div className="min-h-screen bg-background p-6">
+      <div className="min-h-screen p-6">
         <div className="max-w-6xl mx-auto">
           <Link to="/pools">
             <Button variant="ghost" className="mb-4">
@@ -238,7 +238,7 @@ const PoolDetail = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background p-3 sm:p-6">
+    <div className="min-h-screen p-3 sm:p-6">
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">

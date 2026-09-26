@@ -64,7 +64,7 @@ const WalletSetup = ({ onWalletCreated, onWalletImported }: WalletSetupProps) =>
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="min-h-screen flex items-center justify-center p-4">
       {/* Background effects */}
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />

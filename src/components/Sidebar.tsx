@@ -443,7 +443,7 @@ export function Sidebar({ children }: SidebarProps) {
   return (
     <div className="flex min-h-screen w-full overflow-x-hidden">
       {/* Mobile Header */}
-      <div className="fixed top-0 left-0 right-0 z-50 md:hidden bg-background border-b border-border px-4 py-3 flex items-center gap-3">
+      <div className="fixed top-0 left-0 right-0 z-50 md:hidden glass-bar border-b border-border px-4 py-3 flex items-center gap-3">
         <button 
           onClick={() => setMobileOpen(true)}
           className="p-2 rounded-lg hover:bg-muted"
@@ -476,14 +476,14 @@ export function Sidebar({ children }: SidebarProps) {
       {/* Mobile Sidebar Overlay */}
       {mobileOpen && (
         <div 
-          className="fixed inset-0 z-50 bg-black/50 md:hidden"
+          className="fixed inset-0 z-50 bg-black/45 backdrop-blur-sm md:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
 
       {/* Mobile Sidebar */}
       <aside className={cn(
-        "fixed left-0 top-0 z-50 h-screen w-60 bg-background border-r border-border flex flex-col transition-transform duration-300 md:hidden",
+        "fixed left-0 top-0 z-50 h-screen w-60 glass-strong border-r border-border flex flex-col transition-transform duration-300 md:hidden",
         mobileOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <SidebarContent isMobile />
@@ -492,7 +492,7 @@ export function Sidebar({ children }: SidebarProps) {
       {/* Desktop Sidebar */}
       <aside 
         className={cn(
-          "fixed left-0 top-0 z-40 h-screen bg-background border-r border-border flex-col transition-all duration-300 ease-in-out hidden md:flex",
+          "fixed left-0 top-0 z-40 h-screen glass-bar border-r border-border flex-col transition-all duration-300 ease-in-out hidden md:flex",
           expanded ? "w-52" : "w-16"
         )}
         onMouseEnter={() => setExpanded(true)}

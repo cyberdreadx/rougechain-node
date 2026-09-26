@@ -39,11 +39,11 @@
     --warning: 42 100% 58%;
     --warning-foreground: 250 33% 4%;
 
-    --border: 254 14% 13%;             /* hairline: text at 10% on bg */
+    --border: 255 16% 17%;             /* hairline, reads on glass */
     --input: 255 12% 21%;              /* stronger line */
     --ring: 166 86% 57%;               /* focus = live, as on rougecoin.io */
 
-    --radius: 0.5rem;
+    --radius: 1rem;                    /* iOS-style continuous corners */
 
     --quantum-glow: 331 75% 51%;
     --quantum-pulse: 262 87% 60%;
@@ -246,4 +246,79 @@
 * {
   scrollbar-width: thin;
   scrollbar-color: hsl(331 75% 51% / 0.3) transparent;
+}
+
+/* ─── Glass (iOS-style) ───────────────────────────────────────────
+   Unlayered on purpose: these come after Tailwind's utilities, so they
+   refine the colour utilities every panel already uses. Panels become
+   translucent, blur + saturate whatever is behind them, and the ambient
+   glow on <body> gives the glass something to refract. */
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(42% 46% at 84% 6%, hsl(262 87% 60% / 0.30), transparent 70%),
+    radial-gradient(38% 44% at 10% 34%, hsl(331 75% 51% / 0.22), transparent 70%),
+    radial-gradient(44% 50% at 72% 94%, hsl(349 100% 59% / 0.18), transparent 70%),
+    radial-gradient(30% 36% at 40% 62%, hsl(262 87% 60% / 0.12), transparent 70%);
+}
+
+.bg-card {
+  background-color: hsl(var(--card) / 0.5);
+}
+/* iOS sheen: a faint light edge across the top of plain glass panels */
+.bg-card:not([class*="bg-gradient"]):not([class*="bg-[image"]),
+[class*="bg-card/"]:not([class*="bg-gradient"]):not([class*="bg-[image"]) {
+  background-image: linear-gradient(180deg, hsl(0 0% 100% / 0.05), hsl(0 0% 100% / 0) 38%);
+}
+.bg-popover {
+  background-color: hsl(var(--popover) / 0.72);
+}
+.bg-card,
+.bg-popover,
+[class*="bg-card/"],
+[class*="bg-popover/"] {
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  backdrop-filter: blur(22px) saturate(170%);
+}
+[class*="bg-background/"] {
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+}
+
+/* Explicit glass surfaces for shells, sheets and dialogs */
+.glass {
+  background-color: hsl(var(--card) / 0.55);
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  backdrop-filter: blur(22px) saturate(170%);
+  box-shadow: inset 0 1px 0 0 hsl(0 0% 100% / 0.06), 0 10px 40px hsl(0 0% 0% / 0.35);
+}
+.glass-strong {
+  background-color: hsl(var(--popover) / 0.78);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  backdrop-filter: blur(32px) saturate(180%);
+  box-shadow: inset 0 1px 0 0 hsl(0 0% 100% / 0.08), 0 24px 70px hsl(0 0% 0% / 0.55);
+}
+.glass-bar {
+  background-color: hsl(var(--background) / 0.62);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  backdrop-filter: blur(24px) saturate(170%);
+}
+
+/* Browsers without backdrop-filter: fall back to near-opaque panels */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .bg-card { background-color: hsl(var(--card) / 0.94); }
+  .bg-popover, .glass-strong { background-color: hsl(var(--popover) / 0.97); }
+  .glass { background-color: hsl(var(--card) / 0.94); }
+  .glass-bar { background-color: hsl(var(--background) / 0.95); }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .bg-card, .glass { background-color: hsl(var(--card)); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .bg-popover, .glass-strong { background-color: hsl(var(--popover)); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .glass-bar { background-color: hsl(var(--background)); backdrop-filter: none; -webkit-backdrop-filter: none; }
 }

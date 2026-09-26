@@ -673,7 +673,7 @@ const Index = () => {
     el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
   }, [hash]);
   return (
-    <div className="min-h-screen bg-background relative overflow-hidden">
+    <div className="min-h-screen relative overflow-hidden">
       {/* rougecoin.io hero backdrop: violet + red light behind a fading 48px grid */}
       <div className="absolute inset-x-0 top-0 h-[720px] hero-glow pointer-events-none" aria-hidden="true" />
       <div className="absolute inset-x-0 top-0 h-[720px] circuit-bg pointer-events-none" aria-hidden="true" />
