@@ -114,7 +114,7 @@ export function MainNav() {
             
             {/* External Docs Link */}
             <a
-              href="https://ai-integrations.gitbook.io/rougechain-post-quantum/"
+              href="https://docs.rougechain.io/"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap text-muted-foreground hover:text-foreground hover:bg-muted"

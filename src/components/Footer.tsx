@@ -43,7 +43,7 @@ export function Footer() {
             <ul className="space-y-2">
               <li>
                 <a
-                  href="https://ai-integrations.gitbook.io/rougechain-post-quantum/"
+                  href="https://docs.rougechain.io/"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm text-muted-foreground hover:text-red-400 flex items-center gap-1.5 transition-colors"
