@@ -1,4 +1,4 @@
-import { Github, ExternalLink, BookOpen, Shield, Puzzle } from "lucide-react";
+import { Github, ExternalLink, BookOpen, Shield, Puzzle, Coins } from "lucide-react";
 
 // X (formerly Twitter) logo
 const XLogo = ({ className }: { className?: string }) => (
@@ -43,7 +43,7 @@ export function Footer() {
             <ul className="space-y-2">
               <li>
                 <a
-                  href="https://ai-integrations.gitbook.io/rougechain-post-quantum/"
+                  href="https://docs.rougechain.io/"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm text-muted-foreground hover:text-red-400 flex items-center gap-1.5 transition-colors"
@@ -74,6 +74,18 @@ export function Footer() {
                 >
                   <Puzzle className="w-3.5 h-3.5" />
                   {t("footer.chromeExtension")}
+                  <ExternalLink className="w-3 h-3 opacity-50" />
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://rougecoin.io"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-muted-foreground hover:text-red-400 flex items-center gap-1.5 transition-colors"
+                >
+                  <Coins className="w-3.5 h-3.5" />
+                  RougeCoin.io
                   <ExternalLink className="w-3 h-3 opacity-50" />
                 </a>
               </li>

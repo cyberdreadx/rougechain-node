@@ -346,7 +346,8 @@
     "buy": {
       "title": "购买 XRGE",
       "subtitle": "在这里直接通过 Aerodrome 资金池，用 ETH 或 USDC 在 Base 上兑换 XRGE。由您的钱包签名，我们不会持有您的资金。",
-      "details": "合约地址、步骤及其他购买方式"
+      "details": "合约地址、步骤及其他购买方式",
+      "aboutXrge": "在 RougeCoin.io 了解 XRGE"
     }
   },
   "footer": {

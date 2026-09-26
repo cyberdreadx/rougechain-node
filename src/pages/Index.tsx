@@ -733,7 +733,7 @@ const Index = () => {
             </Suspense>
           </div>
           <p className="text-center text-xs text-muted-foreground mt-3">
-            <span className="font-mono">XRGE · Base · {XRGE_BASE_ADDRESS.slice(0, 8)}…{XRGE_BASE_ADDRESS.slice(-6)}</span> · <Link to="/buy" className="text-primary hover:underline">{t("home.buy.details")}</Link>
+            <span className="font-mono">XRGE · Base · {XRGE_BASE_ADDRESS.slice(0, 8)}…{XRGE_BASE_ADDRESS.slice(-6)}</span> · <Link to="/buy" className="text-primary hover:underline">{t("home.buy.details")}</Link> · <a href="https://rougecoin.io" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{t("home.buy.aboutXrge")}</a>
           </p>
         </motion.section>
 
