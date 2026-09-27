@@ -1,0 +1,70 @@
+# GAME_READY: making RougeChain a contract and game platform
+
+Branch `feat/game-ready-phase0`, based on the deployed line (`9eea813` + Regenerate votes `bf60840`).
+**Phase 0 implemented. Activation not scheduled: `GAME_READY_ACTIVATION_HEIGHT = None`.**
+
+## Why Phase 0 comes first
+
+Contract calls were not authenticated. `POST /api/v2/contract/call` took an unsigned `caller` field
+from the request body, simulated the call, then **signed a `contract_call` transaction with the
+node's own key**, carrying the claimed caller in `payload.to_pub_key_hex`. Block execution passed that
+field to the contract as `host_get_caller`. So a contract could not know who was calling it: if a
+contract held value and let its owner withdraw, anyone could claim to be the owner. The node operator
+also paid every call's fee. Deployment worked the same way (unsigned `deployer`).
+
+Exposure today: none. Mainnet has never carried a contract transaction (blocks 0–135 checked), and
+nginx returns 403 for `/api/v2/contract/deploy` and `/api/v2/contract/call`. Contracts must not hold
+value until GAME_READY is active.
+
+Two VM defects are fixed alongside: contracts could not read their call arguments (the runtime took
+`_args_json` and dropped it), and a module that did not export `memory` made every host function
+`panic!` inside block execution.
+
+## Phase 0 — what this branch changes
+
+| Area | Change |
+|---|---|
+| Consensus rule | `game_ready_tx_rule(tx, height)` in `node.rs`, checked at block import, mempool admission and block production. **From activation:** a `contract_call` / `contract_deploy` must carry a signed payload (player-signed `/api/v2/*` format or the CLI envelope). Node-signed contract txs are invalid. **Before activation:** the player-signed `/api/v2/*` contract format is refused, exactly as nodes without this code refuse it (their `v2_binding` has no contract types), so pre-activation validity is unchanged. |
+| Signed-payload binding | `v2_binding::derive_v2_fields` gains `contract_call` (`contractAddr`, `method`, `args`, `gasLimit` → fee = gasLimit × 0.000001 XRGE) and `contract_deploy` (`wasm`; flat 10 XRGE fee; address = first 20 bytes of sha256("rougechain/contract/v2" ‖ from ‖ signed nonce ‖ sha256(wasm)), so nobody else can claim or pre-empt it). |
+| Execution | From activation the caller / deployer the contract sees is `tx.from_pub_key` (the verified signer), never the unsigned field; the signer pays the fee. Bytecode that fails deployment validation is not installed (on every node alike; the fee is still charged). |
+| API | `POST /api/v2/contract/execute` (signed call: dry-run first, refuses a call that would fail or exceed its gas limit) and `POST /api/v2/contract/publish` (signed deploy: validates bytecode, returns the derived address). From activation, `/api/v2/contract/call` becomes a preview (dry run, `submitted: false`) and `/api/v2/contract/deploy` returns 410. |
+| VM | `host_get_args_len() → i32` and `host_read_args(buf_ptr, buf_len) → i32`: the call's arguments as JSON (`{}` when none). `validate_contract_wasm` (size, compiles, exports `memory`). A module without exported `memory` now fails the call cleanly (no state change) instead of panicking the node. |
+
+### Tests
+
+* VM: `contract_reads_its_call_arguments`, `module_without_exported_memory_fails_cleanly_and_is_rejected_for_deploy` (11 VM tests pass).
+* Node (`game_ready_tests`): binding derivation (fee from gas, address bound to deployer and nonce);
+  before activation a player-signed deploy block is refused like old nodes; after activation the
+  contract records the verified signer as its caller and the signer pays deploy + gas; a node-signed
+  call claiming another caller is invalid at import and in the mempool; undeployable bytecode is
+  installed nowhere. Full daemon suite: 164 passed / 0 failed / 1 ignored, including the canonical
+  mainnet replay 0→95.
+
+### Not in Phase 0
+
+* The browser extension signs only the transaction types it knows; one-tap game moves need it to sign
+  `contract_call` (Phase 4).
+* SDK helpers for `execute` / `publish` and the `rc.game` wrapper (Phase 4).
+* The `erc20_template` example and the smart-contract docs still describe the old ABI (Phase 1).
+
+## Later phases (from the scope review)
+
+| Phase | Content | Size |
+|---|---|---|
+| 1 | Live contract events (per-contract websocket feed, paged events, events in receipts); fix `erc20_template` + docs | S–M |
+| 2 | Contracts hold and move native tokens and NFTs (host functions checked after execution like XRGE custody); contracts own collections and mint to players; mintable tokens with an enforced max supply (and fix SDK `mintTokens`); NFTs + contract storage in the state root | L |
+| 3 | Randomness: recent block hash + commit-reveal helper now; validator VRF / beacon after FINALITY_V2 and proposer rotation | S now, L later |
+| 4 | Contract txs in block order; lazy storage loading + storage fee; extension signs any tx type; `rc.game` SDK + example game contract on testnet | M each |
+
+Recommendation: bundle the governance transaction types (for Regenerate votes on-chain) into the same
+activation height, so one coordinated upgrade covers both.
+
+## Activation procedure
+
+1. Choose N a few blocks ahead; set `GAME_READY_ACTIVATION_HEIGHT = Some(N)`; rebuild reproducibly.
+2. Run the full suite plus the canonical replay; publish to `rougechain-node`; announce to outside validators.
+3. Install on every node before N (same pattern as `TX_INTEGRITY_FORK.md`).
+4. After N: open `/api/v2/contract/execute` and `/api/v2/contract/publish` at nginx (keep
+   `/api/v2/contract/deploy` blocked; `/api/v2/contract/call` may be opened as a preview).
+5. Verify on mainnet: a node-signed contract tx is refused; a player-signed deploy installs at the
+   predicted address; a call records the signer as caller and debits the signer's fee.

@@ -348,18 +348,60 @@ impl WasmRuntime {
         self.run_wasm(&wasm_bytes, method, args_json, env, DEFAULT_FUEL_LIMIT)
     }
 
+    /// Validate bytecode for deployment: non-empty, within the size limit, compiles, and
+    /// exports its linear memory as `memory` (every host function reads and writes contract
+    /// memory through that export; without it a host call cannot work).
+    pub fn validate_contract_wasm(&self, wasm_bytes: &[u8]) -> Result<(), String> {
+        if wasm_bytes.is_empty() {
+            return Err("Empty WASM module".into());
+        }
+        if wasm_bytes.len() > MAX_WASM_SIZE {
+            return Err(format!("WASM too large: {} bytes (max {})", wasm_bytes.len(), MAX_WASM_SIZE));
+        }
+        let module = Module::new(&self.engine, wasm_bytes).map_err(|e| format!("Invalid WASM: {}", e))?;
+        if !exports_memory(&module) {
+            return Err("contract must export its memory as \"memory\"".into());
+        }
+        Ok(())
+    }
+
     /// Core WASM execution
     fn run_wasm(
         &self,
         wasm_bytes: &[u8],
         method: &str,
-        _args_json: &serde_json::Value,
-        env: HostEnv,
+        args_json: &serde_json::Value,
+        mut env: HostEnv,
         fuel_limit: u64,
     ) -> Result<ContractCallResult, String> {
         // Compile
         let module = Module::new(&self.engine, wasm_bytes)
             .map_err(|e| format!("WASM compilation: {}", e))?;
+
+        // A module without an exported `memory` cannot service any host call; fail the call
+        // cleanly (deterministic, no state changes) instead of letting a host function panic
+        // inside block execution.
+        if !exports_memory(&module) {
+            return Ok(ContractCallResult {
+                success: false,
+                return_data: None,
+                gas_used: 0,
+                events: Vec::new(),
+                error: Some("contract does not export its memory as \"memory\"".into()),
+                storage_writes: None,
+                storage_deletes: None,
+                balance_deltas: None,
+                pending_calls: None,
+                cross_call_results: None,
+            });
+        }
+
+        // Arguments the contract can read via host_get_args_len / host_read_args.
+        env.args = if args_json.is_null() {
+            b"{}".to_vec()
+        } else {
+            serde_json::to_vec(args_json).map_err(|e| format!("args: {}", e))?
+        };
 
         // Link host functions
         let mut linker = Linker::new(&self.engine);
@@ -457,6 +499,11 @@ impl WasmRuntime {
             }
         }
     }
+}
+
+/// Whether the module exports a linear memory named `memory`.
+fn exports_memory(module: &Module) -> bool {
+    module.exports().any(|e| e.name() == "memory" && matches!(e.ty(), wasmi::ExternType::Memory(_)))
 }
 
 impl Default for WasmRuntime {
