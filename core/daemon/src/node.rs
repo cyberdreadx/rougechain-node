@@ -121,7 +121,7 @@ thread_local! {
 /// From this height votes/proofs follow FINALITY_V2 (verified ML-DSA votes, recomputed quorum,
 /// no producer self-finalization). Not part of block validity ⇒ a coordinated validator
 /// software upgrade, not a state fork.
-pub const FINALITY_V2_ACTIVATION_HEIGHT: Option<u64> = None;
+pub const FINALITY_V2_ACTIVATION_HEIGHT: Option<u64> = Some(150);
 #[cfg(test)]
 thread_local! {
     pub(crate) static TEST_FINALITY_V2_ACTIVATION: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
@@ -221,7 +221,7 @@ pub fn proposer_selection_active(height: u64) -> bool {
 /// field anyone could fill in — become invalid. Before this height, the `/api/v2/*` player-signed
 /// contract format is rejected, exactly as nodes without this code reject it, so activating is a
 /// coordinated upgrade like the others. `None` = not scheduled.
-pub const GAME_READY_ACTIVATION_HEIGHT: Option<u64> = None;
+pub const GAME_READY_ACTIVATION_HEIGHT: Option<u64> = Some(150);
 #[cfg(test)]
 thread_local! {
     static TEST_GAME_READY_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
