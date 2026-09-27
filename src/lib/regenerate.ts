@@ -1,26 +1,28 @@
 /**
  * Data layer for RougeChain Regenerate.
  *
- * Presentation (components/pages) is kept deliberately separate from data so these
- * values can later be sourced from RougeChain RPC / the REST API / on-chain
- * contracts. To go live, replace the bodies of `getTreasuryStats` and
- * `getProjects` with real fetches — the UI needs no changes.
+ * The treasury is a dedicated, public RougeChain wallet (REGEN_TREASURY_ADDRESS).
+ * Everything the dashboard shows is read from the chain: balance, donations in,
+ * grants out, and each project's funding (a project is "funded" only when one of
+ * its listed grant transactions is found leaving the treasury on-chain).
  *
- * IMPORTANT: no fabricated metrics. Anything not yet real is `null` and renders as
- * "Coming Soon". The seed projects below are clearly-labelled *illustrative
- * proposals* (status "proposed") — none are presented as funded, and none carry a
- * funding tx or evidence link until those actually exist.
+ * IMPORTANT: no fabricated metrics. Until the address is set, figures render as
+ * "not live yet". The seed projects below are clearly-labelled illustrative
+ * proposals; none carry funding until real grant transactions exist.
  */
 
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 
 /**
- * The regeneration treasury's on-chain address. Set this to the rouge1 address
- * (or public-key hex) that holds the Regenerate treasury and the dashboard's
- * "Treasury Balance" tile goes live automatically. Left empty → the tile stays
- * "Coming Soon" (no fabricated numbers).
+ * The Regenerate treasury: a dedicated, publicly listed RougeChain wallet. Paste its
+ * rouge1… address here and the page goes live: balance, donations, grants and each
+ * project's funding are all read from the chain (nothing is typed in by hand).
+ * Leave empty until the wallet exists; the page then says so instead of showing numbers.
  */
 export const REGEN_TREASURY_ADDRESS = "";
+
+/** Explorer link for a transaction id. */
+export const txUrl = (txId: string) => `/tx/${txId}`;
 
 export type RegenCategoryKey = "ecology" | "infrastructure" | "technology" | "art";
 
@@ -56,8 +58,33 @@ export interface RegenProject {
   milestones: Milestone[];
   /** Proof / evidence of completed work — only set once it exists. */
   evidenceUrl?: string;
-  /** On-chain funding transaction hash — only set once funding is deployed. */
-  txHash?: string;
+  /**
+   * Transaction ids of the grant payments for this project. A payment only counts if
+   * it is found on-chain as an XRGE transfer OUT of the treasury; the amount shown is
+   * the on-chain amount, never a number typed here.
+   */
+  fundingTxIds?: string[];
+}
+
+/** One XRGE movement in or out of the treasury, as recorded on-chain. */
+export interface TreasuryTx {
+  txId: string;
+  direction: "in" | "out";
+  amountXrge: number;
+  /** The other side: sender for donations, recipient for grants. */
+  counterparty: string;
+  blockHeight: number;
+  /** Unix ms. */
+  time: number;
+}
+
+export interface TreasuryLedger {
+  address: string;
+  balanceXrge: number;
+  receivedXrge: number;
+  deployedXrge: number;
+  /** Newest first. */
+  txs: TreasuryTx[];
 }
 
 export interface TreasuryStats {
@@ -75,39 +102,90 @@ const EMPTY_TREASURY: TreasuryStats = {
   activeTerritories: null,
 };
 
+const round = (n: number) => Math.round(n * 1e6) / 1e6;
+
 /**
- * Treasury figures.
+ * Read the treasury wallet straight from the chain: balance plus every XRGE transfer
+ * in (donations) and out (grants). Returns null when no treasury address is set or
+ * the node can't be reached — callers then show "not live yet", never guessed numbers.
  *
- * - `balanceXrge` is read LIVE from the chain when `REGEN_TREASURY_ADDRESS` is set
- *   (via the core API `/balance/<addr>`); otherwise it stays `null` → "Coming Soon".
- * - The remaining fields (projects funded, total deployed, active territories) need
- *   an indexer/contract that doesn't exist yet, so they stay `null` — never faked.
- *   Populate them here once that data source is available.
+ * Note: the node's address-history endpoint scans the most recent 500 blocks. Blocks
+ * are only produced when there are transactions, so that covers a long history today;
+ * move this to an indexer if the chain gets busy.
  */
-export async function getTreasuryStats(): Promise<TreasuryStats> {
-  if (!REGEN_TREASURY_ADDRESS) return EMPTY_TREASURY;
+export async function getTreasuryLedger(): Promise<TreasuryLedger | null> {
+  const address = REGEN_TREASURY_ADDRESS.trim();
+  if (!address) return null;
+  const base = getCoreApiBaseUrl();
+  if (!base) return null;
+  const opts = { headers: getCoreApiHeaders(), signal: AbortSignal.timeout(10000) };
   try {
-    const base = getCoreApiBaseUrl();
-    if (!base) return EMPTY_TREASURY;
-    const res = await fetch(`${base}/balance/${REGEN_TREASURY_ADDRESS}`, {
-      headers: getCoreApiHeaders(),
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return EMPTY_TREASURY;
-    const data = await res.json();
-    const bal = typeof data?.balance === "number" ? data.balance : null;
-    return { ...EMPTY_TREASURY, balanceXrge: bal };
+    const [balRes, txRes] = await Promise.all([
+      fetch(`${base}/balance/${encodeURIComponent(address)}`, opts),
+      fetch(`${base}/address/${encodeURIComponent(address)}/transactions?limit=500`, opts),
+    ]);
+    if (!balRes.ok || !txRes.ok) return null;
+    const bal = await balRes.json();
+    const hist = await txRes.json();
+    const txs: TreasuryTx[] = [];
+    for (const t of (hist?.transactions ?? []) as Array<Record<string, any>>) {
+      const tx = t?.tx ?? {};
+      const p = tx.payload ?? {};
+      if (tx.tx_type !== "transfer") continue;
+      const token = p.token_name ?? p.token_symbol ?? "XRGE";
+      if (token !== "XRGE") continue;
+      const amount = Number(p.amount);
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      const out = t.direction === "out";
+      txs.push({
+        txId: String(t.txId ?? ""),
+        direction: out ? "out" : "in",
+        amountXrge: amount,
+        counterparty: String(out ? p.to_pub_key_hex ?? "" : tx.from_pub_key ?? ""),
+        blockHeight: Number(t.blockHeight ?? 0),
+        time: Number(t.blockTime ?? 0),
+      });
+    }
+    txs.sort((a, b) => b.blockHeight - a.blockHeight || b.time - a.time);
+    const sum = (d: "in" | "out") => round(txs.filter((x) => x.direction === d).reduce((a, x) => a + x.amountXrge, 0));
+    return {
+      address,
+      balanceXrge: typeof bal?.balance === "number" ? bal.balance : 0,
+      receivedXrge: sum("in"),
+      deployedXrge: sum("out"),
+      txs,
+    };
   } catch {
-    return EMPTY_TREASURY;
+    return null;
   }
 }
 
+/** On-chain grant payments for a project: only its listed txs that really left the treasury. */
+export function verifiedFunding(project: RegenProject, ledger: TreasuryLedger | null): { xrge: number; txs: TreasuryTx[] } {
+  if (!ledger || !project.fundingTxIds?.length) return { xrge: 0, txs: [] };
+  const wanted = new Set(project.fundingTxIds);
+  const txs = ledger.txs.filter((t) => t.direction === "out" && wanted.has(t.txId));
+  return { xrge: round(txs.reduce((a, t) => a + t.amountXrge, 0)), txs };
+}
+
 /**
- * Whether any project has real, on-chain funding yet. Used by the UI to avoid
- * implying impact that hasn't happened.
+ * Dashboard figures, all derived from the on-chain ledger. `null` (shown as "not live
+ * yet") until the treasury address is set and readable.
  */
-export function hasFundedProjects(projects: RegenProject[]): boolean {
-  return projects.some((p) => p.status === "funded" || p.status === "in_progress" || p.status === "completed" || !!p.txHash);
+export function getTreasuryStats(ledger: TreasuryLedger | null, projects: RegenProject[]): TreasuryStats {
+  if (!ledger) return EMPTY_TREASURY;
+  const funded = projects.filter((p) => verifiedFunding(p, ledger).txs.length > 0);
+  return {
+    balanceXrge: ledger.balanceXrge,
+    projectsFunded: funded.length,
+    totalDeployedXrge: ledger.deployedXrge,
+    activeTerritories: new Set(funded.map((p) => p.location)).size,
+  };
+}
+
+/** Whether any project has verified on-chain funding. */
+export function hasFundedProjects(projects: RegenProject[], ledger: TreasuryLedger | null): boolean {
+  return projects.some((p) => verifiedFunding(p, ledger).txs.length > 0);
 }
 
 /**
