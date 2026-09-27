@@ -114,6 +114,24 @@ thread_local! {
     /// persistence (after the store was mutated), 3 append_block (after everything).
     static TEST_PRODUCER_FAULT: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
 }
+// ── Track A Step 2.2 upgrade gates ───────────────────────────────────────────────────────────
+// Compiled consensus/protocol constants. `None` = NOT SCHEDULED: the node behaves exactly as
+// before at every height. They are constants (never env/config) so two validators can never
+// disagree about them; choosing a value is a coordinated release, not an operator setting.
+/// From this height votes/proofs follow FINALITY_V2 (verified ML-DSA votes, recomputed quorum,
+/// no producer self-finalization). Not part of block validity ⇒ a coordinated validator
+/// software upgrade, not a state fork.
+pub const FINALITY_V2_ACTIVATION_HEIGHT: Option<u64> = None;
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TEST_FINALITY_V2_ACTIVATION: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+#[inline]
+pub(crate) fn finality_v2_active(height: u64) -> bool {
+    #[cfg(test)]
+    { if let Some(h) = TEST_FINALITY_V2_ACTIVATION.with(|c| c.get()) { return height >= h; } }
+    matches!(FINALITY_V2_ACTIVATION_HEIGHT, Some(h) if height >= h)
+}
 #[inline]
 fn state_root_activation_height() -> u64 {
     #[cfg(test)]
@@ -399,6 +417,8 @@ pub struct L1Node {
     pub unbonding_queue: Arc<Mutex<Vec<UnbondingEntry>>>,
     /// Persisted finality proofs (height -> proof JSON)
     finality_db: sled::Tree,
+    /// FINALITY_V2: immutable per-height validator-set snapshots (derived; never consensus state)
+    validator_sets_db: sled::Tree,
     /// Notify handle: wake the miner immediately when a tx enters mempool
     mine_notify: Arc<tokio::sync::Notify>,
     /// Running total of XRGE currently in the shielded privacy pool
@@ -465,11 +485,12 @@ impl L1Node {
                 .map_err(|e| format!("open fee DB: {}", e))?;
             let fee_db = fee_sled.open_tree("eip1559")
                 .map_err(|e| format!("open fee tree: {}", e))?;
-            let finality_db_tree = {
-                sled::open(opts.data_dir.join("finality-db"))
-                    .map_err(|e| format!("finality-db: {}", e))?
-                    .open_tree("finality")
-                    .map_err(|e| format!("finality tree: {}", e))?
+            let (finality_db_tree, validator_sets_tree) = {
+                let fdb = sled::open(opts.data_dir.join("finality-db"))
+                    .map_err(|e| format!("finality-db: {}", e))?;
+                (fdb.open_tree("finality").map_err(|e| format!("finality tree: {}", e))?,
+                 // FINALITY_V2 derived state: height → eligible validator set applicable to it
+                 fdb.open_tree("validator_sets_v2").map_err(|e| format!("validator sets tree: {}", e))?)
             };
             let snapshot_db = sled::open(opts.data_dir.join("snapshot-db"))
                 .map_err(|e| format!("snapshot-db: {}", e))?
@@ -520,6 +541,7 @@ impl L1Node {
             },
             unbonding_queue: Arc::new(Mutex::new(Vec::new())),
             finality_db: finality_db_tree,
+            validator_sets_db: validator_sets_tree,
             mine_notify: Arc::new(tokio::sync::Notify::new()),
             shielded_supply: Arc::new(Mutex::new(0.0)),
             mined_tx_hashes: Arc::new(Mutex::new(HashSet::new())),
@@ -648,6 +670,7 @@ impl L1Node {
         let finalized = persisted_finalized.min(tip.height);
         *self.finalized_height.lock().map_err(|_| "finality lock")? = finalized;
         eprintln!("[bft] Finalized height: {} (tip: {})", finalized, tip.height);
+        if let Err(e) = self.record_validator_set_for(tip.height + 1) { eprintln!("[bft] validator-set snapshot: {}", e); }
         Ok(())
     }
 
@@ -2488,13 +2511,88 @@ impl L1Node {
     }
 
     pub fn submit_vote(&self, vote: VoteMessage) -> Result<(), String> {
+        if finality_v2_active(vote.height) { return self.submit_vote_v2(vote).map(|_| ()); }
         self.votes.lock().map_err(|_| "votes lock")?.push(vote);
         Ok(())
+    }
+
+    // ── FINALITY_V2 (Track A Step 2.2) ───────────────────────────────────────────────────────
+    /// Record (immutably) the eligible validator set applicable to `height` = validator state
+    /// after block `height - 1`. Only possible while the tip is exactly `height - 1`.
+    fn record_validator_set_for(&self, height: u64) -> Result<(), String> {
+        if !finality_v2_active(height) { return Ok(()); }
+        let key = height.to_be_bytes();
+        if self.validator_sets_db.contains_key(key).map_err(|e| e.to_string())? { return Ok(()); }
+        if self.store.get_tip()?.height + 1 != height { return Err(format!("validator set for {height} can only be recorded at tip {}", height - 1)); }
+        let snap = quantum_vault_finality::ValidatorSetSnapshot::new(height, self.get_validator_stakes()?);
+        self.validator_sets_db.insert(key, snap.to_bytes()).map_err(|e| e.to_string())?;
+        self.validator_sets_db.flush().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    pub fn validator_set_for(&self, height: u64) -> Result<Option<quantum_vault_finality::ValidatorSetSnapshot>, String> {
+        Ok(self.validator_sets_db.get(height.to_be_bytes()).map_err(|e| e.to_string())?.and_then(|v| quantum_vault_finality::ValidatorSetSnapshot::from_bytes(&v)))
+    }
+    /// Run `f` with the verification context for `height`: OUR stored block + the recorded set.
+    fn with_vote_context<T>(&self, height: u64, f: impl FnOnce(&quantum_vault_finality::VoteContext) -> Result<T, String>) -> Result<T, String> {
+        let block = self.store.get_block(height)?.ok_or_else(|| format!("no accepted block at height {height}"))?;
+        let set = self.validator_set_for(height)?.ok_or_else(|| format!("no validator-set snapshot for height {height}"))?;
+        f(&quantum_vault_finality::VoteContext { chain_id: &self.opts.chain.chain_id, height, stored_block_hash: &block.hash, validators: &set })
+    }
+    /// Verified vote intake. `Ok(true)` = newly recorded, `Ok(false)` = duplicate (no effect).
+    pub fn submit_vote_v2(&self, vote: VoteMessage) -> Result<bool, String> {
+        let height = vote.height;
+        self.with_vote_context(height, |ctx| quantum_vault_finality::validate_vote(&vote, ctx).map_err(|e| format!("vote rejected: {:?}", e)))?;
+        {
+            let mut votes = self.votes.lock().map_err(|_| "votes lock")?;
+            if votes.iter().any(|v| v.height == height && v.vote_type == vote.vote_type && v.voter_pub_key == vote.voter_pub_key) { return Ok(false); }
+            votes.push(vote);
+        }
+        self.try_finalize_block(height);
+        Ok(true)
+    }
+    /// Accept a finality proof produced elsewhere — only after full standalone verification.
+    pub fn import_finality_proof(&self, proof: &quantum_vault_types::FinalityProof) -> Result<(), String> {
+        if !finality_v2_active(proof.height) { return Err("FINALITY_V2 is not active at that height".to_string()); }
+        self.with_vote_context(proof.height, |ctx| quantum_vault_finality::verify_finality_proof(proof, ctx).map(|_| ()).map_err(|e| format!("proof rejected: {:?}", e)))?;
+        self.persist_verified_finality(proof)
+    }
+    fn persist_verified_finality(&self, proof: &quantum_vault_types::FinalityProof) -> Result<(), String> {
+        let json = serde_json::to_vec(proof).map_err(|e| e.to_string())?;
+        self.finality_db.insert(proof.height.to_be_bytes(), json).map_err(|e| e.to_string())?;
+        self.finality_db.flush().map_err(|e| e.to_string())?;
+        let mut fh = self.finalized_height.lock().map_err(|_| "finality lock")?;
+        if proof.height > *fh { *fh = proof.height; }
+        Ok(())
+    }
+    fn auto_vote_v2(&self, block: &BlockV1) {
+        let height = block.header.height;
+        let keys = match self.keys.lock() { Ok(k) => k.clone(), Err(_) => return };
+        // A node votes ONLY as itself, and only if its own key is an eligible validator.
+        match self.validator_set_for(height) { Ok(Some(set)) if set.stake_of(&keys.public_key_hex).is_some() => {}, _ => return }
+        for ty in [quantum_vault_finality::PREVOTE, quantum_vault_finality::PRECOMMIT] {
+            let msg = quantum_vault_finality::vote_signing_message(&self.opts.chain.chain_id, ty, height, quantum_vault_finality::ONLY_ROUND, &block.hash);
+            if let Ok(signature) = pqc_sign(&keys.secret_key_hex, &msg) {
+                let _ = self.submit_vote_v2(VoteMessage { vote_type: ty.to_string(), height, round: quantum_vault_finality::ONLY_ROUND, block_hash: block.hash.clone(), voter_pub_key: keys.public_key_hex.clone(), signature });
+            }
+        }
+    }
+    fn try_finalize_block_v2(&self, height: u64) {
+        let votes: Vec<VoteMessage> = match self.votes.lock() { Ok(v) => v.iter().filter(|v| v.height == height).cloned().collect(), Err(_) => return };
+        let res = self.with_vote_context(height, |ctx| {
+            let mut book = quantum_vault_finality::VoteBook::new(height);
+            for v in votes { let _ = book.submit(v, ctx); } // re-validated; invalid entries cannot count
+            book.build_proof(ctx, chrono::Utc::now().timestamp_millis() as u64).map_err(|e| format!("{:?}", e))
+        });
+        if let Ok(Some(proof)) = res { if let Err(e) = self.persist_verified_finality(&proof) { eprintln!("[bft] could not persist finality proof {}: {}", height, e); } }
     }
 
     /// Automatically submit prevote + precommit for a finalized block.
     /// Uses the highest-staked validator key as the voter (node key != validator key).
     pub fn auto_vote_for_block(&self, block: &BlockV1) {
+        // FINALITY_V2: snapshot the set for the NEXT height while the tip is this block, then vote
+        // as ourselves with a verified, typed, chain-bound signature.
+        if let Err(e) = self.record_validator_set_for(block.header.height + 1) { eprintln!("[bft] validator-set snapshot: {}", e); }
+        if finality_v2_active(block.header.height) { return self.auto_vote_v2(block); }
         let voter_key = if let Ok(validators) = self.validator_store.list_validators() {
             validators.iter().max_by_key(|(_, v)| v.stake).map(|(k, _)| k.clone())
         } else {
@@ -2538,6 +2636,7 @@ impl L1Node {
     /// Attempt to finalize a block if 2/3+ stake has precommitted.
     /// Only advances finalized_height if quorum is met.
     fn try_finalize_block(&self, height: u64) {
+        if finality_v2_active(height) { return self.try_finalize_block_v2(height); }
         match self.generate_finality_proof(height) {
             Ok(Some(proof)) => {
                 // Persist the finality proof
@@ -2870,7 +2969,10 @@ impl L1Node {
                 mined.clear();
             }
         }
-        *self.finalized_height.lock().map_err(|_| "finality lock")? = block.header.height;
+        // FINALITY_V2: producing a block is not evidence of finality — only a verified quorum is.
+        if !finality_v2_active(block.header.height) {
+            *self.finalized_height.lock().map_err(|_| "finality lock")? = block.header.height;
+        }
         // Note: finalized_height set here as proposer (single-validator mode).
         // In multi-validator mode, try_finalize_block (called by auto_vote_for_block)
         // handles finalization via vote quorum verification.
@@ -10600,3 +10702,4 @@ mod game_ready_tests {
         assert!(e.node.contract_store.as_ref().unwrap().get_contract(&addr).unwrap().is_none());
     }
 }
+
