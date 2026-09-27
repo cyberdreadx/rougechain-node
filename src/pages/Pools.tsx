@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Droplets, TrendingUp, Loader2, Info, Minus, BarChart3, ArrowDownUp, Shield, Search } from "lucide-react";
+import { Plus, Droplets, TrendingUp, Loader2, Info, Minus, BarChart3, ArrowDownUp, Shield, Search, Coins } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TokenIcon } from "@/components/ui/token-icon";
 import { Input } from "@/components/ui/input";
@@ -31,6 +31,7 @@ import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
 import SwapWidget from "@/components/messenger/SwapWidget";
 import { formatTokenAmount, humanToRaw, rawToHuman } from "@/hooks/use-eth-price";
 import { useTokenMetadata } from "@/hooks/use-token-metadata";
+import { canCollect, computeLpEarnings, type LpEarnings, type LpPoolEvent } from "@/lib/lp-earnings";
 
 interface Pool {
   pool_id: string;
@@ -73,6 +74,10 @@ const Pools = () => {
   // Remove liquidity dialog
   const [showRemoveLiquidity, setShowRemoveLiquidity] = useState(false);
   const [removeAmount, setRemoveAmount] = useState("");
+
+  // Uncollected swap fees per pool (null = history can't explain the position)
+  const [earnings, setEarnings] = useState<Record<string, LpEarnings | null>>({});
+  const [collectPool, setCollectPool] = useState<Pool | null>(null);
   
   // Swap widget
   const [showSwapWidget, setShowSwapWidget] = useState(false);
@@ -137,6 +142,7 @@ const Pools = () => {
       }
       
       // Fetch pools
+      let fetchedPools: Pool[] = [];
       try {
         const poolsRes = await fetch(`${baseUrl}/pools`, {
           headers: getCoreApiHeaders(),
@@ -144,7 +150,8 @@ const Pools = () => {
         
         if (poolsRes.ok) {
           const data = await poolsRes.json();
-          setPools(data.pools || []);
+          fetchedPools = data.pools || [];
+          setPools(fetchedPools);
           
           // Also add tokens from pools
           (data.pools || []).forEach((pool: Pool) => {
@@ -164,6 +171,28 @@ const Pools = () => {
       
       // Set LP balances from API
       setLpBalances(userLpBalances);
+
+      // Work out uncollected fees for every pool the wallet provides liquidity to
+      if (wallet) {
+        const held = fetchedPools.filter((p) => (userLpBalances[p.pool_id] || 0) > 0);
+        const entries = await Promise.all(held.map(async (p) => {
+          try {
+            const res = await fetch(`${baseUrl}/pool/${encodeURIComponent(p.pool_id)}/events?limit=5000`, {
+              headers: getCoreApiHeaders(),
+            });
+            if (!res.ok) return [p.pool_id, null] as const;
+            const data = await res.json();
+            return [p.pool_id, computeLpEarnings(
+              (data.events || []) as LpPoolEvent[], p, [wallet.publicKey], userLpBalances[p.pool_id],
+            )] as const;
+          } catch {
+            return [p.pool_id, null] as const;
+          }
+        }));
+        setEarnings(Object.fromEntries(entries));
+      } else {
+        setEarnings({});
+      }
     } catch (e) {
       console.error("Failed to fetch pools:", e);
     } finally {
@@ -286,6 +315,31 @@ const Pools = () => {
       }
     } catch (e) {
       toast.error("Failed to remove liquidity");
+      console.error(e);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Collect fees: remove exactly the LP tokens that fees have added, leaving the deposit in place
+  const handleCollectFees = async () => {
+    const pool = collectPool;
+    const earned = pool ? earnings[pool.pool_id] : null;
+    if (!wallet || !pool || !canCollect(earned)) return;
+    setActionLoading(true);
+    try {
+      const result = await secureRemoveLiquidity(wallet.publicKey, wallet.privateKey, pool.pool_id, earned.lpToCollect);
+      if (result.success) {
+        toast.success("Fees collected", {
+          description: `${formatNumber(earned.earnedA, pool.token_a)} ${pool.token_a} + ${formatNumber(earned.earnedB, pool.token_b)} ${pool.token_b} sent to your wallet`,
+        });
+        setCollectPool(null);
+        fetchData();
+      } else {
+        toast.error(result.error || "Couldn't collect fees");
+      }
+    } catch (e) {
+      toast.error("Couldn't collect fees");
       console.error(e);
     } finally {
       setActionLoading(false);
@@ -504,6 +558,34 @@ const Pools = () => {
                         <p className="font-mono font-medium break-all">{formatNumber(lpBalances[pool.pool_id] || 0)}</p>
                       </div>
                     </div>
+
+                    {wallet && (lpBalances[pool.pool_id] || 0) > 0 && (() => {
+                      const earned = earnings[pool.pool_id];
+                      return (
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
+                          <div className="min-w-0">
+                            <p className="text-muted-foreground text-xs">Uncollected fees</p>
+                            {earned === undefined ? (
+                              <p className="text-muted-foreground">Calculating…</p>
+                            ) : earned === null ? (
+                              <p className="text-muted-foreground">Unavailable for this position</p>
+                            ) : (
+                              <p className="font-mono font-medium break-all">
+                                {formatNumber(earned.earnedA, pool.token_a)} {pool.token_a} + {formatNumber(earned.earnedB, pool.token_b)} {pool.token_b}
+                              </p>
+                            )}
+                          </div>
+                          <Button
+                            size="sm"
+                            onClick={() => setCollectPool(pool)}
+                            disabled={!canCollect(earned)}
+                          >
+                            <Coins className="w-3 h-3 mr-1" />
+                            Collect fees
+                          </Button>
+                        </div>
+                      );
+                    })()}
                     
                     <div className="flex flex-wrap gap-2 mt-4">
                       <Link to={`/pool/${pool.pool_id}`}>
@@ -673,6 +755,44 @@ const Pools = () => {
             </DialogContent>
           </Dialog>
 
+          {/* Collect Fees Dialog */}
+          <Dialog open={!!collectPool} onOpenChange={(open) => { if (!open) setCollectPool(null); }}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Collect fees from {collectPool?.pool_id}</DialogTitle>
+              </DialogHeader>
+              {collectPool && canCollect(earnings[collectPool.pool_id]) && (() => {
+                const earned = earnings[collectPool.pool_id]!;
+                return (
+                  <div className="space-y-4 py-4 text-sm">
+                    <div className="bg-muted/50 rounded-lg p-3">
+                      <p className="text-muted-foreground mb-2">You will receive:</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div><span className="font-medium">{formatNumber(earned.earnedA, collectPool.token_a)}</span> {collectPool.token_a}</div>
+                        <div><span className="font-medium">{formatNumber(earned.earnedB, collectPool.token_b)}</span> {collectPool.token_b}</div>
+                      </div>
+                    </div>
+                    <p className="text-muted-foreground">
+                      Swap fees have grown your position by {(earned.growth * 100).toFixed(4)}% since you deposited.
+                      Collecting withdraws {formatNumber(earned.lpToCollect)} LP — just that growth — and your deposit
+                      stays in the pool earning. If the price has moved, the token mix you get back follows the pool's
+                      current ratio.
+                    </p>
+                  </div>
+                );
+              })()}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setCollectPool(null)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleCollectFees} disabled={actionLoading}>
+                  {actionLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                  Collect fees
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
           {/* Info Section */}
           <Card className="bg-muted/30">
             <CardContent className="pt-4">
@@ -682,7 +802,8 @@ const Pools = () => {
                   <p className="font-medium text-foreground mb-1">Earn from every swap</p>
                   <p>
                     Liquidity providers earn 0.3% on all trades proportional to their share of the pool.
-                    Fees are automatically compounded into the pool.
+                    Fees are automatically compounded into the pool — use Collect fees to withdraw just your
+                    earnings and keep your deposit in place.
                   </p>
                 </div>
               </div>
