@@ -264,6 +264,24 @@ daemon 170/0/2 ignored, finality 23, storage 13, VM 11.
 On mainnet today the primary holds 84 % of stake, so its own vote finalizes each block immediately: 2a adds
 real finality without adding latency or a new dependency on node #2.
 
+### Devnet rehearsal (2026-09-27)
+
+Throwaway build with `FINALITY_V2_ACTIVATION_HEIGHT = Some(3)`; two local nodes, validators A 60,000 and B
+40,000 (quorum 66,667 — neither finalizes alone); only A mines; votes and proofs travel over the real HTTP
+peer layer.
+
+| Step | Observed |
+|---|---|
+| Blocks 1–3 (below / at activation) | produced, no certificate in the header |
+| Blocks 4–7 | each carries its parent's certificate: 2 votes, 100,000 / 100,000 stake; `finalized_height` = tip on both nodes; proofs verified and imported in both directions |
+| B stopped, 3 transactions sent | A sealed block 8 on the final block 7, then stopped: 8 never finalizes (60,000 < quorum), transactions stay queued, no fork |
+| B restarted | B synced 8, voted; 8 final; A sealed 9 with the queued transactions; both nodes final at 9 |
+
+Found and fixed during the rehearsal: the producer logged "waiting for the commit certificate" on every
+miner tick (67 lines in under a minute); it now logs once per height. (A first attempt failed only because
+the rehearsal genesis had `genesis_time: 0`, which makes each node stamp its own genesis; mainnet's genesis
+time is fixed.)
+
 ### Activation procedure
 
 1. Export mainnet history to the current tip and run the full-history test with `QV_REPLAY_FIXTURE`.

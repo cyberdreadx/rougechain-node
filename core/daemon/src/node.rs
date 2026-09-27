@@ -3100,7 +3100,12 @@ impl L1Node {
             if self.parent_commit_required(next) && self.get_persisted_finality_proof(tip.height)?.is_none() {
                 if let Ok(Some(tip_block)) = self.store.get_block(tip.height) { self.auto_vote_for_block(&tip_block); }
                 if self.get_persisted_finality_proof(tip.height)?.is_none() {
-                    eprintln!("[miner] waiting for the commit certificate of block {} before sealing {}", tip.height, next);
+                    // Logged once per height: the miner loop retries every tick, and a stall (a
+                    // validator offline) must not flood the journal.
+                    static LAST_WAIT_LOGGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+                    if LAST_WAIT_LOGGED.swap(tip.height, std::sync::atomic::Ordering::Relaxed) != tip.height {
+                        eprintln!("[miner] waiting for the commit certificate of block {} before sealing {} (needs ⅔ of stake to vote)", tip.height, next);
+                    }
                     return Ok(None);
                 }
             }
