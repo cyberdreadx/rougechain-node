@@ -7,7 +7,7 @@ fn tx(ty: &str, from: &str, amount: Option<u64>, target: Option<&str>) -> TxV1 {
     TxV1 { version: 1, tx_type: ty.into(), from_pub_key: from.into(), nonce: 0, payload: TxPayload { amount, target_pub_key: target.map(|s| s.to_string()), ..Default::default() }, fee: 0.0, sig: String::new(), signed_payload: None }
 }
 fn block(h: u64, proposer: &str, txs: Vec<TxV1>) -> BlockV1 {
-    BlockV1 { version: 1, header: BlockHeaderV1 { version: 1, chain_id: "t".into(), height: h, time: 0, prev_hash: String::new(), tx_hash: String::new(), proposer_pub_key: proposer.into(), state_root: None }, txs, proposer_sig: String::new(), hash: String::new() }
+    BlockV1 { version: 1, header: BlockHeaderV1 { version: 1, chain_id: "t".into(), height: h, time: 0, prev_hash: String::new(), tx_hash: String::new(), proposer_pub_key: proposer.into(), state_root: None , parent_commit: None}, txs, proposer_sig: String::new(), hash: String::new() }
 }
 fn base() -> ValidatorReplay { ValidatorReplay::new(0, vec![("a".to_string(), VState { stake: 1000, ..Default::default() }), ("b".to_string(), VState { stake: 100, ..Default::default() })]) }
 const OK: &dyn Fn(u64, usize, &TxV1) -> Option<bool> = &|_, _, _| Some(true);
@@ -50,4 +50,25 @@ fn unknown_outcome_non_contiguous_blocks_and_missing_history_fail_closed() {
     // a FAILED stake changes nothing
     let mut r = base(); r.apply_block(&block(1, "a", vec![tx("stake", "c", Some(5), None)]), &|_, _, _| Some(false)).unwrap();
     assert!(!r.state().contains_key("c"));
+}
+
+/// Proposer selection Release 1 froze missed-block accounting from its activation height; the
+/// replay must too, or it slashes validators the live chain never slashed (seen on mainnet
+/// history 0..=137: node #2 at 41 missed blocks would be auto-slashed at 50).
+#[test]
+fn missed_block_accounting_is_frozen_from_the_given_height() {
+    use quantum_vault_finality::validator_replay::{ValidatorReplay, VState};
+    use quantum_vault_types::{BlockHeaderV1, BlockV1};
+    let blk = |h: u64| BlockV1 { version: 1, header: BlockHeaderV1 { version: 1, chain_id: "t".into(), height: h, time: h, prev_hash: String::new(),
+        tx_hash: String::new(), proposer_pub_key: "P".into(), state_root: None, parent_commit: None }, txs: vec![], proposer_sig: String::new(), hash: String::new() };
+    let base = vec![("P".to_string(), VState { stake: 100, ..Default::default() }), ("Q".to_string(), VState { stake: 10, missed_blocks: 41, ..Default::default() })];
+    let none = |_: u64, _: usize, _: &quantum_vault_types::TxV1| Some(true);
+    // unfrozen: Q reaches 50 missed and is auto-slashed 10%
+    let mut legacy = ValidatorReplay::new(0, base.clone());
+    for h in 1..=20 { legacy.apply_block(&blk(h), &none).unwrap(); }
+    assert_eq!(legacy.state()["Q"].stake, 9);
+    // frozen from 1: nothing changes
+    let mut frozen = ValidatorReplay::new(0, base).with_missed_block_freeze(Some(1));
+    for h in 1..=20 { frozen.apply_block(&blk(h), &none).unwrap(); }
+    assert_eq!(frozen.state()["Q"], VState { stake: 10, missed_blocks: 41, ..Default::default() });
 }

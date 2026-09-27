@@ -225,3 +225,51 @@ evidence is Release 3, as scoped.
    the primary's stake to them.
 3. Approve the admission hardening in §4 (10,000 XRGE consensus minimum; 100-block activation delay).
 4. Independent review of §3 before implementation (recommended: the same auditor as the bridge, as an add-on).
+
+## 10. Release 2a — implementation record (2026-09-27)
+
+Branch `consensus/release-2a-finality`. **Implemented, not scheduled** (`FINALITY_V2_ACTIVATION_HEIGHT = None`).
+
+What was done:
+
+* `core/finality` ported verbatim from the bridge audit candidate `a7bf119`; node wiring ported from the
+  bridge commits `91333d3`, `5fde71b`, `84e75a4`, `b646584` (node parts only — the V3 recipient rule and
+  all bridge code were dropped): per-height validator-set snapshots with history provenance, verified vote
+  intake, durable signing journal, auto-vote on production and import, proof persistence and pull-based
+  distribution, vote gossip.
+* **New consensus rule** `check_parent_commit` (import) with a producer guard: from `F + 1` a block must
+  carry `header.parent_commit`, a FINALITY_V2 proof for exactly its parent that verifies against the
+  parent's validator set (quorum recomputed from signatures). Before that the field must be absent (old
+  nodes could not even reproduce the hash). A verified certificate is persisted, so importing block `H`
+  finalizes `H-1` locally. The producer does not seal `H` until it holds a verified certificate for `H-1`
+  (it re-casts its own vote and waits; transactions stay queued).
+* `BlockHeaderV1.parent_commit: Option<FinalityProof>` with the `state_root` backward-compatibility pattern
+  (omitted when `None`, so every existing header hashes identically).
+
+**Bug found and fixed while verifying against mainnet:** the ported validator-set replay (used by every node
+to check its stored snapshot before trusting votes) predated Release 1 and still applied missed-block
+auto-slashing after height 100. Replaying mainnet 0..=137 it derived node #2 at 9,000 while the chain holds
+10,000 — after activation every node would have refused its own validator set and **no block could ever be
+finalized**. `ValidatorReplay::with_missed_block_freeze` now mirrors the Release 1 freeze; the node passes
+`PROPOSER_SELECTION_ACTIVATION_HEIGHT`.
+
+Tests: `release_2a_tests` (7): blocks extend only final parents and carry a real ⅔ certificate (3 validators
+40/35/25 + follower, votes relayed); producer waits below quorum and seals once votes arrive; import rejects
+missing, wrong-parent, forged (under-quorum claiming quorum) and tampered certificates without storing
+anything; certificates refused before activation; mainnet 0..95 replays identically with 2a scheduled above
+it; history-derived validator set equals live state at 96 and — on the pinned full export
+`tests/fixtures/mainnet-blocks-0-137.jsonl` (0..95 byte-identical to the older fixture) — at 138. Suites:
+daemon 170/0/2 ignored, finality 23, storage 13, VM 11.
+
+On mainnet today the primary holds 84 % of stake, so its own vote finalizes each block immediately: 2a adds
+real finality without adding latency or a new dependency on node #2.
+
+### Activation procedure
+
+1. Export mainnet history to the current tip and run the full-history test with `QV_REPLAY_FIXTURE`.
+2. Choose `F` a few blocks ahead; set `FINALITY_V2_ACTIVATION_HEIGHT = Some(F)` (and, as agreed, the
+   GAME_READY / governance heights to the same value); reproducible build; publish to `rougechain-node`.
+3. Install on **every** node before block `F - 1` (each node records the validator set for `F` when it
+   accepts `F - 1`). Validators need vote gossip between them: primary ↔ node #2 are already peered.
+4. After `F`: confirm `finalized_height` tracks the tip on both nodes, that block `F + 1` carries a
+   certificate, and that a block without one is refused.

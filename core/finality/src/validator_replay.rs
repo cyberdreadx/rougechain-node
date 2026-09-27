@@ -15,6 +15,8 @@
 //!   then, per block: proposer (stake > 0) resets missed_blocks; every other non-jailed staked
 //!     validator gets missed_blocks += 1 and at 50 is auto-slashed (stake/10, min 1) and jailed
 //!     until height + 20.
+//!   from the proposer-selection activation height (if set) that per-block missed-block
+//!     accounting is FROZEN: no counter changes, no auto-slash, no auto-jail (Release 1, amendment 1).
 //!   eligible for height H  ⇔  after block H-1: stake > 0 and jailed_until <= H-1.
 use crate::ValidatorSetSnapshot;
 use quantum_vault_types::BlockV1;
@@ -42,11 +44,13 @@ pub enum ReplayError {
 pub type OutcomeFn<'a> = &'a dyn Fn(u64, usize, &quantum_vault_types::TxV1) -> Option<bool>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ValidatorReplay { height: u64, vals: BTreeMap<String, VState> }
+pub struct ValidatorReplay { height: u64, vals: BTreeMap<String, VState>, missed_frozen_from: Option<u64> }
 
 impl ValidatorReplay {
     /// `base_height` = the height whose POST-state `entries` describe (0 = genesis).
-    pub fn new(base_height: u64, entries: impl IntoIterator<Item = (String, VState)>) -> Self { Self { height: base_height, vals: entries.into_iter().collect() } }
+    pub fn new(base_height: u64, entries: impl IntoIterator<Item = (String, VState)>) -> Self { Self { height: base_height, vals: entries.into_iter().collect(), missed_frozen_from: None } }
+    /// Mirror the node's missed-block freeze from `height` (proposer selection Release 1).
+    pub fn with_missed_block_freeze(mut self, height: Option<u64>) -> Self { self.missed_frozen_from = height; self }
     pub fn height(&self) -> u64 { self.height }
     pub fn state(&self) -> &BTreeMap<String, VState> { &self.vals }
 
@@ -80,6 +84,7 @@ impl ValidatorReplay {
                 _ => {}
             }
         }
+        if matches!(self.missed_frozen_from, Some(f) if h >= f) { self.height = h; return Ok(()); }
         let proposer = &block.header.proposer_pub_key;
         for (k, st) in self.vals.iter_mut() {
             if st.stake == 0 { continue; }

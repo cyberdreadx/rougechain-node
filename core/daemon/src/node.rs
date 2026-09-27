@@ -1142,6 +1142,10 @@ impl L1Node {
         if proposer_selection_active(block.header.height) {
             self.check_designated_proposer(&block)?;
         }
+        // Release 2a: a block may only extend a FINAL parent (commit certificate required from the
+        // FINALITY_V2 activation), and carries no certificate before it. Checked before any state
+        // is touched, like the rules above.
+        self.check_parent_commit(&block)?;
 
         // Apply state BEFORE storing to disk (atomic: don't store blocks we can't apply)
         //
@@ -2655,6 +2659,42 @@ impl L1Node {
         finality_v2_active(height)
     }
 
+    /// Release 2a: does a block at `height` have to carry its parent's commit certificate?
+    /// Yes exactly when FINALITY_V2 is active for the parent (so votes/proofs exist for it).
+    #[inline]
+    pub fn parent_commit_required(&self, height: u64) -> bool {
+        height >= 1 && self.v2_active(height - 1)
+    }
+
+    /// Release 2a consensus rule. From activation, `header.parent_commit` must be a FINALITY_V2 proof
+    /// for exactly the parent (`height - 1`, `prev_hash`) that verifies against the validator set
+    /// applicable to the parent — quorum recomputed from verified signatures, nothing claimed is
+    /// trusted. Before activation the field must be absent, exactly as nodes without Release 2a
+    /// require (they could not even reproduce the block hash). A verified certificate is persisted,
+    /// so importing a block also finalizes its parent locally.
+    fn check_parent_commit(&self, block: &BlockV1) -> Result<(), String> {
+        let h = block.header.height;
+        let cert = block.header.parent_commit.as_ref();
+        if !self.parent_commit_required(h) {
+            if cert.is_some() {
+                return Err(format!("block {h} rejected: carries a parent commit certificate before Release 2a"));
+            }
+            return Ok(());
+        }
+        let cert = cert.ok_or_else(|| format!("block {h} rejected: missing the commit certificate of its parent {}", h - 1))?;
+        if cert.height != h - 1 || cert.block_hash != block.header.prev_hash {
+            return Err(format!("block {h} rejected: commit certificate is for {} / {}, not the parent {} / {}",
+                cert.height, &cert.block_hash[..16.min(cert.block_hash.len())], h - 1, &block.header.prev_hash[..16.min(block.header.prev_hash.len())]));
+        }
+        if cert.precommit_votes.len() > quantum_vault_finality::MAX_PROOF_VOTES {
+            return Err(format!("block {h} rejected: commit certificate has too many votes"));
+        }
+        self.with_vote_context(h - 1, |ctx| quantum_vault_finality::verify_finality_proof(cert, ctx)
+            .map(|_| ()).map_err(|e| format!("block {h} rejected: parent commit certificate invalid: {e:?}")))?;
+        if !self.has_verified_finality_proof(h - 1) { self.persist_verified_finality(cert)?; }
+        Ok(())
+    }
+
     pub fn drain_vote_outbox(&self) -> Vec<VoteMessage> { self.vote_outbox.lock().map(|mut o| o.drain(..).collect()).unwrap_or_default() }
     pub fn is_height_verified_final(&self, height: u64) -> bool { self.has_verified_finality_proof(height) }
 
@@ -2710,7 +2750,9 @@ impl L1Node {
         use quantum_vault_finality::validator_replay::ValidatorReplay;
         let mut guard = self.validator_replay.lock().map_err(|_| "validator replay lock")?;
         let (base_h, base) = self.validator_replay_base();
-        if !matches!(guard.as_ref(), Some(r) if r.height() + 1 <= height) { *guard = Some(ValidatorReplay::new(base_h, base)); }
+        if !matches!(guard.as_ref(), Some(r) if r.height() + 1 <= height) {
+            *guard = Some(ValidatorReplay::new(base_h, base).with_missed_block_freeze(proposer_selection_activation_height()));
+        }
         let replay = guard.as_mut().unwrap();
         let outcome = |_h: u64, _i: usize, tx: &TxV1| -> Option<bool> { self.get_receipt(&compute_single_tx_hash(tx)).ok().flatten().map(|rc| matches!(rc.status, TxStatus::Success)) };
         let res = replay.derive_for(height, &|h| self.store.get_block(h), &outcome).map_err(|e| format!("validator replay: {:?}", e));
@@ -3053,6 +3095,15 @@ impl L1Node {
             if let Some(recorded) = self.pending_proposal(next, &tip.hash)? {
                 return self.replay_recorded_proposal(recorded).map(Some);
             }
+            // Release 2a: only extend a FINAL parent. If the certificate for the tip isn't known yet,
+            // (re)cast our own vote for it and wait; transactions stay queued.
+            if self.parent_commit_required(next) && self.get_persisted_finality_proof(tip.height)?.is_none() {
+                if let Ok(Some(tip_block)) = self.store.get_block(tip.height) { self.auto_vote_for_block(&tip_block); }
+                if self.get_persisted_finality_proof(tip.height)?.is_none() {
+                    eprintln!("[miner] waiting for the commit certificate of block {} before sealing {}", tip.height, next);
+                    return Ok(None);
+                }
+            }
             if proposer_selection_active(next) {
                 let me = self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone();
                 match self.designated_proposer(next)? {
@@ -3120,7 +3171,13 @@ impl L1Node {
             tx_hash: tx_hash.clone(),
             proposer_pub_key: proposer_pub_key.clone(),
             state_root: None,
+            parent_commit: if self.parent_commit_required(height) { self.get_persisted_finality_proof(tip.height)? } else { None },
         };
+        if self.parent_commit_required(height) && prelim_header.parent_commit.is_none() {
+            // the tip changed or the certificate vanished between the guard and here: requeue
+            if let Ok(mut mp) = self.mempool.lock() { for (id, tx) in requeue { mp.insert(id, tx); } }
+            return Ok(None);
+        }
         let prelim_block = BlockV1 {
             version: 1,
             header: prelim_header.clone(),
@@ -8721,7 +8778,7 @@ mod bridge_r1_daemon_tests {
         BlockV1 {
             version: 1,
             header: BlockHeaderV1 { version: 1, chain_id: "test".into(), height: tip.height + 1, time: 1,
-                prev_hash: tip.hash, tx_hash: compute_tx_hash(&txs), proposer_pub_key: String::new(), state_root: None },
+                prev_hash: tip.hash, tx_hash: compute_tx_hash(&txs), proposer_pub_key: String::new(), state_root: None , parent_commit: None},
             txs, proposer_sig: String::new(), hash: String::new(),
         }
     }
@@ -8730,7 +8787,8 @@ mod bridge_r1_daemon_tests {
         let tip = node.store.get_tip().unwrap();
         let header = BlockHeaderV1 { version: 1, chain_id: "test".into(), height: tip.height + 1,
             time, prev_hash: tip.hash,
-            tx_hash: compute_tx_hash(&txs), proposer_pub_key: proposer_pub.to_string(), state_root };
+            tx_hash: compute_tx_hash(&txs), proposer_pub_key: proposer_pub.to_string(), state_root,
+            parent_commit: if node.parent_commit_required(tip.height + 1) { node.get_persisted_finality_proof(tip.height).unwrap() } else { None } };
         let hb = encode_header_v1(&header);
         let sig = pqc_sign(proposer_sk, &hb).unwrap();
         let hash = compute_block_hash(&hb, &sig);
@@ -9473,7 +9531,7 @@ mod fork_integration_tests {
     fn seal(node: &L1Node, p: &Keys, txs: Vec<TxV1>, root: Option<String>, time: u64) -> BlockV1 {
         let tip = node.store.get_tip().unwrap();
         let header = BlockHeaderV1 { version: 1, chain_id: node.opts.chain.chain_id.clone(), height: tip.height + 1, time, prev_hash: tip.hash,
-            tx_hash: compute_tx_hash(&txs), proposer_pub_key: p.0.clone(), state_root: root };
+            tx_hash: compute_tx_hash(&txs), proposer_pub_key: p.0.clone(), state_root: root , parent_commit: None};
         let hb = encode_header_v1(&header); let sig = pqc_sign(&p.1, &hb).unwrap(); let hash = compute_block_hash(&hb, &sig);
         BlockV1 { version: 1, header, txs, proposer_sig: sig, hash }
     }
@@ -9980,7 +10038,7 @@ mod peer_sync_tests {
     fn seal(node: &L1Node, p: &Keys, txs: Vec<TxV1>, root: Option<String>, time: u64) -> BlockV1 {
         let tip = node.store.get_tip().unwrap();
         let header = BlockHeaderV1 { version: 1, chain_id: node.opts.chain.chain_id.clone(), height: tip.height + 1, time, prev_hash: tip.hash,
-            tx_hash: compute_tx_hash(&txs), proposer_pub_key: p.0.clone(), state_root: root };
+            tx_hash: compute_tx_hash(&txs), proposer_pub_key: p.0.clone(), state_root: root , parent_commit: None};
         let hb = encode_header_v1(&header); let sig = pqc_sign(&p.1, &hb).unwrap(); let hash = compute_block_hash(&hb, &sig);
         BlockV1 { version: 1, header, txs, proposer_sig: sig, hash }
     }
@@ -10933,3 +10991,204 @@ mod game_ready_tests {
     }
 }
 
+
+/// Proposer selection Release 2a — a block may only extend a FINAL parent (FINALITY_V2 commit
+/// certificate in `header.parent_commit`). See PROPOSER_SELECTION_RELEASE2_DESIGN.md §6.
+#[cfg(test)]
+mod release_2a_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{fund_xrge, signed, TmpDir};
+    use quantum_vault_crypto::{pqc_keygen, pqc_sign};
+    use quantum_vault_finality::validator_replay::VState;
+    use quantum_vault_storage::validator_store::ValidatorState;
+
+    fn open_node(dir: &std::path::Path) -> L1Node {
+        let n = L1Node::new(NodeOptions { data_dir: dir.to_path_buf(),
+            chain: ChainConfig { chain_id: "test".to_string(), genesis_time: 0, block_time_ms: 1000 }, mine: false,
+            bridge_withdraw_store: None, bridge_authority_keys: Vec::new(), genesis_allocations: Vec::new(), genesis_validators: Vec::new() }).expect("node");
+        n.init().expect("init"); n
+    }
+    fn me(n: &L1Node) -> PQKeypair { n.keys.lock().unwrap().clone() }
+    fn stake(n: &L1Node, pk: &str, s: u128) {
+        n.validator_store.set_validator(pk, &ValidatorState { stake: s, slash_count: 0, jailed_until: 0, entropy_contributions: 0,
+            blocks_proposed: 0, name: None, missed_blocks: 0, total_slashed: 0 }).unwrap();
+    }
+
+    /// Three validators (40 / 35 / 25 — nobody reaches ⅔ alone) + a non-voting follower.
+    struct Net { _dirs: Vec<TmpDir>, nodes: Vec<L1Node>, user: PQKeypair, nonce: std::cell::Cell<u64> }
+    fn net(finality_from: Option<u64>) -> Net {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(u64::MAX)));   // state root not under test
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(finality_from));   // read by every node at construction
+        let dirs: Vec<TmpDir> = (0..4).map(|_| TmpDir::new()).collect();
+        let nodes: Vec<L1Node> = dirs.iter().map(|d| open_node(&d.0)).collect();
+        let stakes: Vec<(String, u128)> = [40u128, 35, 25].iter().enumerate().map(|(i, s)| (me(&nodes[i]).public_key_hex, *s)).collect();
+        TEST_VALIDATOR_REPLAY_BASE.with(|c| *c.borrow_mut() = Some((0, stakes.iter().map(|(k, s)| (k.clone(), VState { stake: *s, ..Default::default() })).collect())));
+        let user = pqc_keygen();
+        for n in &nodes {
+            for (k, s) in &stakes { stake(n, k, *s); }
+            fund_xrge(n, &user.public_key_hex, 1_000.0);
+            n.validator_sets_db.clear().unwrap();
+            n.record_validator_set_for(1).unwrap();
+        }
+        Net { _dirs: dirs, nodes, user, nonce: std::cell::Cell::new(1) }
+    }
+    impl Net {
+        fn queue_tx(&self, n: &L1Node) {
+            let k = self.nonce.get(); self.nonce.set(k + 1);
+            let tx = signed(TxV1 { version: 1, tx_type: "transfer".into(), from_pub_key: self.user.public_key_hex.clone(), nonce: k,
+                payload: TxPayload { to_pub_key_hex: Some(format!("bob{k}")), amount: Some(1), ..Default::default() },
+                fee: 0.1, sig: String::new(), signed_payload: None }, &self.user.secret_key_hex);
+            n.mempool.lock().unwrap().insert(format!("t{k}"), tx);
+        }
+        /// validator 0 produces; everyone else imports its block
+        fn produce(&self) -> Option<BlockV1> {
+            self.queue_tx(&self.nodes[0]);
+            let b = self.nodes[0].mine_pending().unwrap()?;
+            for n in &self.nodes[1..] { n.import_block(b.clone()).expect("peer imports the block"); }
+            Some(b)
+        }
+        /// deliver every node's queued votes to every other node (the gossip layer's job)
+        fn relay_votes(&self) {
+            for _ in 0..2 {
+                let batches: Vec<Vec<VoteMessage>> = self.nodes.iter().map(|n| n.drain_vote_outbox()).collect();
+                for (i, batch) in batches.iter().enumerate() {
+                    for (j, n) in self.nodes.iter().enumerate() { if i != j { for v in batch { let _ = n.receive_gossiped_vote(v.clone()); } } }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn blocks_extend_only_final_parents_and_carry_their_certificate() {
+        let net = net(Some(1));
+        let b1 = net.produce().expect("block 1 (no parent certificate needed for the first finality height)");
+        assert!(b1.header.parent_commit.is_none());
+        net.relay_votes();
+        for n in &net.nodes { assert!(n.is_height_verified_final(1), "every node holds a verified certificate for 1"); }
+
+        let b2 = net.produce().expect("block 2 extends the final block 1");
+        let cert = b2.header.parent_commit.as_ref().expect("block 2 carries block 1's certificate");
+        assert_eq!((cert.height, cert.block_hash.as_str()), (1, b1.hash.as_str()));
+        assert!(cert.voting_stake * 3 > cert.total_stake * 2, "certificate is a real ⅔ quorum");
+        for n in &net.nodes { assert_eq!(n.tip_height().unwrap(), 2); }
+    }
+
+    #[test]
+    fn producer_waits_until_its_parent_is_final() {
+        let net = net(Some(1));
+        net.produce().expect("block 1");
+        // No vote relay: the producer alone has 40 of 100 stake — below quorum — so it must NOT seal 2.
+        net.queue_tx(&net.nodes[0]);
+        assert!(net.nodes[0].mine_pending().unwrap().is_none(), "waits for the certificate");
+        assert_eq!(net.nodes[0].tip_height().unwrap(), 1);
+        assert!(!net.nodes[0].mempool.lock().unwrap().is_empty(), "transactions stay queued");
+        // Votes arrive → quorum → the producer seals, carrying the certificate.
+        net.relay_votes();
+        let b2 = net.nodes[0].mine_pending().unwrap().expect("seals once the parent is final");
+        assert!(b2.header.parent_commit.is_some());
+    }
+
+    #[test]
+    fn import_rejects_missing_wrong_and_forged_certificates() {
+        let net = net(Some(1));
+        let b1 = net.produce().expect("block 1");
+        net.relay_votes();
+        let a = &net.nodes[0];
+        let good = a.get_persisted_finality_proof(1).unwrap().unwrap();
+        // Fresh follower that has block 1 but not its certificate.
+        let d = TmpDir::new(); let f = open_node(&d.0);
+        let (proposer, _) = (me(a), ());
+        for (k, s) in [(me(&net.nodes[0]).public_key_hex, 40u128), (me(&net.nodes[1]).public_key_hex, 35), (me(&net.nodes[2]).public_key_hex, 25)] { stake(&f, &k, s); }
+        fund_xrge(&f, &net.user.public_key_hex, 1_000.0); f.validator_sets_db.clear().unwrap(); f.record_validator_set_for(1).unwrap();
+        f.import_block(b1.clone()).unwrap();
+
+        let seal = |parent_commit: Option<quantum_vault_types::FinalityProof>| -> BlockV1 {
+            let header = BlockHeaderV1 { version: 1, chain_id: "test".into(), height: 2, time: 2, prev_hash: b1.hash.clone(),
+                tx_hash: compute_tx_hash(&[]), proposer_pub_key: proposer.public_key_hex.clone(), state_root: None, parent_commit };
+            let hb = encode_header_v1(&header);
+            let sig = pqc_sign(&proposer.secret_key_hex, &hb).unwrap();
+            BlockV1 { version: 1, hash: compute_block_hash(&hb, &sig), header, txs: vec![], proposer_sig: sig }
+        };
+        let err = f.import_block(seal(None)).unwrap_err();
+        assert!(err.contains("missing the commit certificate"), "{err}");
+
+        let mut wrong = good.clone(); wrong.block_hash = "ab".repeat(32);
+        assert!(f.import_block(seal(Some(wrong))).unwrap_err().contains("not the parent"));
+
+        // Forged: the 40-stake vote alone, but the certificate CLAIMS a quorum.
+        let mut forged = good.clone();
+        forged.precommit_votes.retain(|v| v.voter_pub_key == proposer.public_key_hex);
+        let err = f.import_block(seal(Some(forged))).unwrap_err();
+        assert!(err.contains("certificate invalid"), "{err}");
+
+        // A tampered signature on an otherwise-quorate certificate.
+        let mut tampered = good.clone();
+        tampered.precommit_votes[0].signature = format!("00{}", &tampered.precommit_votes[0].signature[2..]);
+        assert!(f.import_block(seal(Some(tampered))).unwrap_err().contains("certificate invalid"));
+
+        assert_eq!(f.tip_height().unwrap(), 1, "no rejected block was stored");
+        f.import_block(seal(Some(good))).expect("the genuine certificate is accepted");
+        assert!(f.is_height_verified_final(1), "importing block 2 finalized block 1 on the follower");
+    }
+
+    #[test]
+    fn before_activation_a_certificate_is_not_allowed_and_nothing_changes() {
+        let net = net(None);
+        let b1 = net.produce().expect("legacy block 1");
+        assert!(b1.header.parent_commit.is_none());
+        let b2 = net.produce().expect("legacy block 2 needs no certificate");
+        assert!(b2.header.parent_commit.is_none());
+        // A block that carries a certificate before activation is refused (old nodes couldn't hash it).
+        let p = me(&net.nodes[0]);
+        let fake = quantum_vault_types::FinalityProof { height: 2, block_hash: b2.hash.clone(), total_stake: 1, voting_stake: 1, quorum_threshold: 1, precommit_votes: vec![], created_at: 0 };
+        let header = BlockHeaderV1 { version: 1, chain_id: "test".into(), height: 3, time: 3, prev_hash: b2.hash.clone(),
+            tx_hash: compute_tx_hash(&[]), proposer_pub_key: p.public_key_hex.clone(), state_root: None, parent_commit: Some(fake) };
+        let hb = encode_header_v1(&header); let sig = pqc_sign(&p.secret_key_hex, &hb).unwrap();
+        let blk = BlockV1 { version: 1, hash: compute_block_hash(&hb, &sig), header, txs: vec![], proposer_sig: sig };
+        assert!(net.nodes[1].import_block(blk).unwrap_err().contains("before Release 2a"));
+    }
+
+    /// After activation every node re-derives each height's validator set from history and refuses
+    /// to verify votes against a stored set that differs. That derivation must reproduce mainnet's
+    /// real validator state — including the outside validator's slash at 69 and the missed-block
+    /// freeze from 100 — or finality would stall on day one.
+    #[test]
+    fn validator_set_rebuilt_from_mainnet_history_matches_the_live_state() {
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(None));
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-95.jsonl");
+        let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node_from(fixture);
+        assert!(fail.is_none(), "{fail:?}");
+        assert_eq!(ok, 95);
+        let live = quantum_vault_finality::ValidatorSetSnapshot::new(96, n.get_validator_stakes().unwrap());
+        let derived = n.derive_validator_set_from_history(96).expect("history replay");
+        assert_eq!(derived, live, "history-derived validator set for 96 equals the node's own state");
+        assert!(live.entries().len() >= 2, "a real multi-validator set: {:?}", live.entries().keys().map(|k| &k[..8]).collect::<Vec<_>>());
+    }
+
+    /// Replay mainnet history 0..=137 (pinned fixture; override with QV_REPLAY_FIXTURE to check a
+    /// newer export before scheduling activation) and require the history-derived validator set at
+    /// tip+1 to equal the node's own state. This caught the missed-block-freeze divergence.
+    #[test]
+    fn full_mainnet_history_replays_and_validator_set_matches_at_tip() {
+        let fixture = std::env::var("QV_REPLAY_FIXTURE").unwrap_or_else(|_|
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-137.jsonl").to_string());
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(None));
+        let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node_from(&fixture);
+        assert!(fail.is_none(), "replay failed: {fail:?}");
+        let live = quantum_vault_finality::ValidatorSetSnapshot::new(ok + 1, n.get_validator_stakes().unwrap());
+        let derived = n.derive_validator_set_from_history(ok + 1).expect("history replay");
+        eprintln!("replayed 0..={ok}; validator set at {}: {:?}", ok + 1, live.entries().iter().map(|(k, s)| (&k[..8], *s)).collect::<Vec<_>>());
+        assert_eq!(derived, live);
+    }
+
+    #[test]
+    fn mainnet_history_replays_identically_with_release_2a_scheduled_above_it() {
+        let snap = |n: &L1Node| (n.get_state_root().unwrap(), n.get_all_blocks().unwrap().iter().map(|b| b.hash.clone()).collect::<Vec<_>>());
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(None));
+        let base = { let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node(); assert!(fail.is_none(), "{fail:?}"); (ok, snap(&n)) };
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(Some(10_000)));
+        let gated = { let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node(); assert!(fail.is_none(), "{fail:?}"); (ok, snap(&n)) };
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(None));
+        assert_eq!(base, gated, "identical tip, state root and every block hash");
+    }
+}
