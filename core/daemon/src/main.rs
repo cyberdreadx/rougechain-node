@@ -20,6 +20,7 @@ mod push;
 mod fork;
 mod fork_tables;
 mod v2_binding;
+mod regen_votes;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -233,6 +234,8 @@ struct AppState {
     groq_api_key: Option<String>,
     /// Fire-and-forget Expo push dispatcher (transfer / message / mail notifications)
     push: push::PushDispatcher,
+    /// RougeChain Regenerate community votes (node-hosted, off-consensus).
+    regen_votes: Arc<quantum_vault_storage::regen_vote_store::RegenVoteStore>,
 }
 
 #[derive(Clone)]
@@ -464,6 +467,10 @@ async fn main() -> Result<(), String> {
     let btc_deposit_store = Arc::new(
         BtcDepositStore::new(&data_dir_clone).map_err(|e| format!("btc deposit store: {}", e))?
     );
+    let regen_votes = Arc::new(
+        quantum_vault_storage::regen_vote_store::RegenVoteStore::new(std::path::Path::new(&data_dir_clone))
+            .map_err(|e| format!("regen vote store: {}", e))?
+    );
     // Expo push dispatcher — enabled by default; QV_PUSH_ENABLED=0/false turns it off. When
     // enabled it spawns one background task that POSTs to Expo; call sites only enqueue.
     let push_dispatcher = {
@@ -520,6 +527,7 @@ async fn main() -> Result<(), String> {
         replay_nonces: Arc::new(RwLock::new(HashMap::new())),
         groq_api_key: args.groq_api_key.clone(),
         push: push_dispatcher,
+        regen_votes,
     };
 
     // BTC HD deposit watcher: poll each assigned deposit address, two-provider-verify incoming
@@ -884,6 +892,15 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/messenger/conversations/restore", post(restore_conversation_signed))
         .route("/api/v2/messenger/messages/list", post(get_messages_signed))
         .route("/api/v2/messenger/messages", post(send_message_signed))
+        // RougeChain Regenerate community votes (node-hosted, off-consensus)
+        .route("/api/regen/config", get(regen_votes::get_config))
+        .route("/api/regen/proposals", get(regen_votes::list_proposals))
+        .route("/api/regen/proposals/:id", get(regen_votes::get_proposal))
+        .route("/api/regen/proposals/:id/weight/:who", get(regen_votes::get_weight))
+        .route("/api/v2/regen/proposals", post(regen_votes::create_proposal))
+        .route("/api/v2/regen/votes", post(regen_votes::cast_vote))
+        .route("/api/v2/regen/proposals/payout", post(regen_votes::record_payout))
+        .route("/api/v2/regen/proposals/cancel", post(regen_votes::cancel_proposal))
         .route("/api/v2/messenger/messages/read", post(mark_message_read_signed))
         .route("/api/v2/messenger/messages/delete", post(delete_message_signed))
         .route("/api/v2/messenger/messages/restore", post(restore_message_signed))
@@ -2770,11 +2787,19 @@ async fn get_address_transactions(
     let node = &state.node;
     let limit_blocks = 500; // Scan recent blocks instead of entire chain
     let blocks = node.get_recent_blocks(limit_blocks).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Match on canonical rouge1 addresses: senders are recorded as public keys and
+    // recipients as either form, so comparing raw strings missed every outgoing tx when
+    // the caller asked by rouge1 address (and incoming ones addressed by pubkey).
+    let canon = |k: &str| -> String {
+        if quantum_vault_crypto::is_rouge_address(k) { k.to_string() }
+        else { quantum_vault_crypto::pub_key_to_address(k).unwrap_or_else(|_| k.to_string()) }
+    };
+    let me = canon(&public_key);
     let mut items: Vec<serde_json::Value> = Vec::new();
     for block in &blocks {
         for tx in &block.txs {
-            let is_sender = tx.from_pub_key == public_key;
-            let is_recipient = tx.payload.to_pub_key_hex.as_deref() == Some(&public_key);
+            let is_sender = tx.from_pub_key == public_key || canon(&tx.from_pub_key) == me;
+            let is_recipient = tx.payload.to_pub_key_hex.as_deref().map(|to| to == public_key || canon(to) == me).unwrap_or(false);
             if is_sender || is_recipient {
                 let tx_id = quantum_vault_crypto::bytes_to_hex(
                     &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),

@@ -1128,6 +1128,12 @@ impl L1Node {
         Ok(())
     }
 
+    /// Read-only copy of every native XRGE balance (canonical address -> quanta), for
+    /// off-consensus features that need a point-in-time view (Regenerate vote snapshots).
+    pub fn xrge_balances_snapshot(&self) -> Result<HashMap<String, u128>, String> {
+        Ok(self.balances.lock().map_err(|_| "balance lock")?.clone())
+    }
+
     pub fn get_balance(&self, public_key: &str) -> Result<f64, String> {
         let balances = self.balances.lock().map_err(|_| "balance lock")?;
         Ok(quanta_to_display(*balances.get(&canon_addr(public_key)).unwrap_or(&0)))
