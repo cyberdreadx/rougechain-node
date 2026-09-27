@@ -1059,6 +1059,9 @@ fn build_http_router(state: AppState) -> Router {
         // WASM contract endpoints
         .route("/api/v2/contract/deploy", post(contract_deploy))
         .route("/api/v2/contract/call", post(contract_call))
+        // GAME_READY: player-signed contract calls and deployments
+        .route("/api/v2/contract/execute", post(contract_execute_signed))
+        .route("/api/v2/contract/publish", post(contract_publish_signed))
         .route("/api/contract/:addr", get(contract_get))
         .route("/api/contract/:addr/state", get(contract_state))
         .route("/api/contract/:addr/events", get(contract_events))
@@ -9797,10 +9800,120 @@ async fn v2_token_mint(
 // ─── WASM Smart Contract Handlers ─────────────────────────────────────────────
 
 /// Deploy a new WASM smart contract
+fn gr_err(msg: impl std::fmt::Display) -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": msg.to_string() })))
+}
+
+/// POST /api/v2/contract/execute — a player-signed contract call (GAME_READY). The signer is the
+/// caller the contract sees (`host_get_caller`) and pays `gasLimit × CONTRACT_GAS_PRICE_XRGE`.
+/// The call is dry-run first so an obviously failing call is refused before it costs a fee.
+async fn contract_execute_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let tip = state.node.get_tip_height().unwrap_or(0);
+    if !node::game_ready_active(tip + 1) {
+        return Err(gr_err("player-signed contract calls are not active yet (GAME_READY)"));
+    }
+    let signed_payload = verify_signed_tx(&body).await.map_err(gr_err)?;
+    let p = &body.payload;
+    let contract_addr = p.get("contractAddr").and_then(|v| v.as_str()).unwrap_or_default();
+    let method = p.get("method").and_then(|v| v.as_str()).unwrap_or_default();
+    if contract_addr.is_empty() || method.is_empty() {
+        return Err(gr_err("contractAddr and method are required"));
+    }
+    let gas = p.get("gasLimit").and_then(|v| v.as_u64()).unwrap_or(quantum_vault_vm::DEFAULT_FUEL_LIMIT);
+    if gas == 0 || gas > quantum_vault_vm::DEFAULT_FUEL_LIMIT {
+        return Err(gr_err(format!("gasLimit must be between 1 and {}", quantum_vault_vm::DEFAULT_FUEL_LIMIT)));
+    }
+    let fee = gas as f64 * crate::v2_binding::CONTRACT_GAS_PRICE_XRGE;
+    let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < fee {
+        return Err(gr_err(format!("insufficient XRGE for the gas fee: have {:.6}, need {:.6}", bal, fee)));
+    }
+    let args = p.get("args").cloned().unwrap_or(serde_json::Value::Null);
+    let block_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let preview = state.wasm_runtime.query_contract(
+        &state.contract_store, contract_addr, method, &args, &body.public_key,
+        state.node.native_balances_quanta(), tip + 1, block_time,
+    ).map_err(gr_err)?;
+    if !preview.success {
+        return Err(gr_err(format!("call would fail: {}", preview.error.unwrap_or_default())));
+    }
+    if preview.gas_used > gas {
+        return Err(gr_err(format!("gasLimit {} is below the {} gas this call needs", gas, preview.gas_used)));
+    }
+    if let Err(e) = check_signed_nonce(&state.node, &body.public_key, &body.payload) {
+        return Err(gr_err(e));
+    }
+    let tx = crate::v2_binding::build_v2_tx("contract_call", body.public_key.clone(),
+        state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload)
+        .map_err(gr_err)?;
+    let tx_id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
+    let tx_clone = tx.clone();
+    state.node.add_tx_to_mempool_verified(tx).map_err(gr_err)?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "txId": tx_id,
+        "fee": fee,
+        "preview": { "returnData": preview.return_data, "gasUsed": preview.gas_used, "events": preview.events },
+    })))
+}
+
+/// POST /api/v2/contract/publish — a player-signed deployment (GAME_READY). The signer is the
+/// deployer; the address is derived from the signed payload (`v2_binding::contract_address_v2`),
+/// so it is known before the block and nobody else can claim it. Installed when mined.
+async fn contract_publish_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !node::game_ready_active(state.node.get_tip_height().unwrap_or(0) + 1) {
+        return Err(gr_err("player-signed contract deployment is not active yet (GAME_READY)"));
+    }
+    let signed_payload = verify_signed_tx(&body).await.map_err(gr_err)?;
+    let p = &body.payload;
+    if p.get("from").and_then(|v| v.as_str()) != Some(body.public_key.as_str()) {
+        return Err(gr_err("payload.from must be the signing public key"));
+    }
+    if p.get("nonce").and_then(|v| v.as_str()).map_or(true, |n| n.len() < 8) {
+        return Err(gr_err("payload.nonce is required"));
+    }
+    let wasm_b64 = p.get("wasm").and_then(|v| v.as_str()).unwrap_or_default();
+    let wasm = {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.decode(wasm_b64).map_err(|_| gr_err("wasm must be base64"))?
+    };
+    state.wasm_runtime.validate_contract_wasm(&wasm).map_err(gr_err)?;
+    let fee = crate::v2_binding::CONTRACT_DEPLOY_FEE_XRGE;
+    if state.node.get_balance(&body.public_key).unwrap_or(0.0) < fee {
+        return Err(gr_err(format!("deploying costs {} XRGE", fee)));
+    }
+    let tx = crate::v2_binding::build_v2_tx("contract_deploy", body.public_key.clone(),
+        state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload)
+        .map_err(gr_err)?;
+    let address = tx.payload.contract_addr.clone().unwrap_or_default();
+    if state.contract_store.get_contract(&address).ok().flatten().is_some() {
+        return Err(gr_err("a contract already exists at that address; sign with a new nonce"));
+    }
+    let tx_id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
+    let tx_clone = tx.clone();
+    state.node.add_tx_to_mempool_verified(tx).map_err(gr_err)?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
+    Ok(Json(serde_json::json!({ "success": true, "txId": tx_id, "address": address, "fee": fee })))
+}
+
 async fn contract_deploy(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // GAME_READY: node-signed deployments are invalid from activation; deployers sign their own
+    // via POST /api/v2/contract/publish.
+    if node::game_ready_active(state.node.get_tip_height().unwrap_or(0) + 1) {
+        return Err(StatusCode::GONE);
+    }
     let wasm_base64 = body.get("wasm")
         .and_then(|v| v.as_str())
         .ok_or(StatusCode::BAD_REQUEST)?;
@@ -9904,7 +10017,10 @@ async fn contract_call(
         Ok(result) => {
             // Submit on-chain transaction so it appears in the tx feed and is
             // re-executed deterministically (carrying the args, P3-5).
-            if let Ok(tx) = state.node.submit_contract_call_tx(
+            // GAME_READY: from activation this endpoint is a preview (dry run) only — the caller
+            // signs the real call via POST /api/v2/contract/execute.
+            let preview_only = node::game_ready_active(block_height + 1);
+            if preview_only {} else if let Ok(tx) = state.node.submit_contract_call_tx(
                 caller,
                 contract_addr,
                 method,
@@ -9929,6 +10045,7 @@ async fn contract_call(
                 "gasUsed": result.gas_used,
                 "events": result.events,
                 "error": result.error,
+                "submitted": !preview_only,
             })))
         },
         Err(e) => Ok(Json(serde_json::json!({

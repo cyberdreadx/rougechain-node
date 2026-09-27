@@ -189,6 +189,58 @@ pub fn proposer_selection_active(height: u64) -> bool {
     matches!(proposer_selection_activation_height(), Some(a) if height >= a)
 }
 
+/// GAME_READY, Phase 0 (see `GAME_READY_SCOPE.md`): contract transactions become player-signed.
+/// From this height on a `contract_call` / `contract_deploy` is valid only if the CALLER signed
+/// it (a signed payload bound by `v2_binding`); the signer is the caller / deployer the contract
+/// sees and pays the fee. Node-signed contract transactions — whose "caller" was an unsigned
+/// field anyone could fill in — become invalid. Before this height, the `/api/v2/*` player-signed
+/// contract format is rejected, exactly as nodes without this code reject it, so activating is a
+/// coordinated upgrade like the others. `None` = not scheduled.
+pub const GAME_READY_ACTIVATION_HEIGHT: Option<u64> = None;
+#[cfg(test)]
+thread_local! {
+    static TEST_GAME_READY_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[inline]
+fn game_ready_activation_height() -> Option<u64> {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_GAME_READY_OVERRIDE.with(|c| c.get()) { return h; }
+    }
+    GAME_READY_ACTIVATION_HEIGHT
+}
+#[inline]
+pub fn game_ready_active(height: u64) -> bool {
+    matches!(game_ready_activation_height(), Some(a) if height >= a)
+}
+
+/// Whether `tx` is a contract transaction in the player-signed `/api/v2/*` format (a signed
+/// payload that is not a CLI envelope).
+fn is_player_signed_contract_tx(tx: &TxV1) -> bool {
+    matches!(tx.tx_type.as_str(), "contract_call" | "contract_deploy")
+        && tx.signed_payload.as_deref()
+            .and_then(|sp| serde_json::from_str::<serde_json::Value>(sp).ok())
+            .map(|p| !crate::v2_binding::is_cli_envelope(&p))
+            .unwrap_or(false)
+}
+
+/// The GAME_READY transaction rule for a block at `height` (consensus from activation; also
+/// applied by the mempool and the producer so neither ever holds a tx a block would reject).
+pub fn game_ready_tx_rule(tx: &TxV1, height: u64) -> Result<(), String> {
+    if !matches!(tx.tx_type.as_str(), "contract_call" | "contract_deploy") {
+        return Ok(());
+    }
+    if game_ready_active(height) {
+        if tx.signed_payload.is_none() {
+            return Err(format!("{} must be signed by its caller from height {}", tx.tx_type,
+                game_ready_activation_height().unwrap_or_default()));
+        }
+    } else if is_player_signed_contract_tx(tx) {
+        return Err(format!("player-signed {} is not active before GAME_READY", tx.tx_type));
+    }
+    Ok(())
+}
+
 /// Height after which a P2P-imported block's proposer MUST be a staked validator
 /// (`stake > 0`) in the on-chain validator set, or the block is rejected on
 /// `import_block`. Blocks at or below this height skip *only that* check — a
@@ -1004,6 +1056,12 @@ impl L1Node {
         // C1: transaction uniqueness (consensus rule from TX_UNIQUENESS_ACTIVATION_HEIGHT).
         if tx_uniqueness_rule_active(block.header.height) {
             self.check_block_tx_uniqueness(&block)?;
+        }
+        // GAME_READY: contract transactions must be caller-signed from activation, and the
+        // player-signed format is refused before it (same outcome as pre-GAME_READY nodes).
+        for (i, tx) in block.txs.iter().enumerate() {
+            game_ready_tx_rule(tx, block.header.height)
+                .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
         }
         // Proposer selection (consensus rule from PROPOSER_SELECTION_ACTIVATION_HEIGHT): judged
         // against the validator state after H-1 = the store as it is right now, before any
@@ -1878,6 +1936,8 @@ impl L1Node {
         // V2 binding (node-local, always on): the executable fields must be the canonical
         // derivation of the signed payload, or an outsider could re-point a signed intent.
         crate::v2_binding::verify_v2_binding(&tx)?;
+        let next_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
+        game_ready_tx_rule(&tx, next_height)?;
         let identity = quantum_vault_types::tx_identity(&tx);
         if let Some(h) = self.tx_included_at(&identity) {
             return Err(format!("transaction {} already included in block {}", &identity[..16], h));
@@ -2701,8 +2761,11 @@ impl L1Node {
         verified_set.clear();
         drop(verified_set);
         // C1: never include a tx the chain already accepted (replay), whatever its nonce says.
+        // GAME_READY: never include a contract tx the next block's rule would reject.
+        let producing_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
         let verified_entries: Vec<(String, TxV1)> = verified_entries.into_iter()
             .filter(|(_, tx)| !self.tx_already_included(&quantum_vault_types::tx_identity(tx)))
+            .filter(|(_, tx)| game_ready_tx_rule(tx, producing_height).is_ok())
             .collect();
         if verified_entries.is_empty() {
             return Ok(None);
@@ -4109,7 +4172,10 @@ impl L1Node {
             for tx in &block.txs {
                 match tx.tx_type.as_str() {
                     "contract_deploy" => {
-                        let deployer = tx.payload.to_pub_key_hex.as_deref().unwrap_or(&tx.from_pub_key);
+                        // GAME_READY: the deployer is whoever signed; before it, the legacy field.
+                        let game_ready = game_ready_active(block.header.height);
+                        let deployer = if game_ready { tx.from_pub_key.as_str() }
+                            else { tx.payload.to_pub_key_hex.as_deref().unwrap_or(&tx.from_pub_key) };
                         let contract_addr = match tx.payload.contract_addr.as_deref() {
                             Some(a) => a,
                             None => { eprintln!("[node] Skipping contract_deploy: no contract_addr"); continue; }
@@ -4136,6 +4202,15 @@ impl L1Node {
                                             use base64::Engine as _;
                                             match base64::engine::general_purpose::STANDARD.decode(wasm_b64) {
                                                 Ok(wasm_bytes) => {
+                                                    // GAME_READY: bytecode that fails deployment validation
+                                                    // (e.g. no exported memory) is not installed — on every
+                                                    // node alike; the deploy fee is still charged.
+                                                    if game_ready {
+                                                        if let Err(e) = rt.validate_contract_wasm(&wasm_bytes) {
+                                                            eprintln!("[node] contract_deploy {} not installed: {}", &contract_addr[..16.min(contract_addr.len())], e);
+                                                            continue;
+                                                        }
+                                                    }
                                                     match rt.install_contract(cs, contract_addr, deployer, &wasm_bytes, block.header.height) {
                                                         Ok(()) => eprintln!("[node] Block import: installed contract {} from tx bytecode", &contract_addr[..16.min(contract_addr.len())]),
                                                         Err(e) => eprintln!("[node] Block import: contract install failed: {} (non-fatal pre-activation)", e),
@@ -4153,7 +4228,10 @@ impl L1Node {
                         eprintln!("[node] Processed contract_deploy tx: deployer={}... addr={}", &deployer[..16.min(deployer.len())], &contract_addr[..16.min(contract_addr.len())]);
                     }
                     "contract_call" => {
-                        let caller = tx.payload.to_pub_key_hex.as_deref().unwrap_or(&tx.from_pub_key);
+                        // GAME_READY: the caller is whoever signed the tx. Before it, the legacy
+                        // (unsigned) field — which is why contracts must not hold value pre-activation.
+                        let caller = if game_ready_active(block.header.height) { tx.from_pub_key.as_str() }
+                            else { tx.payload.to_pub_key_hex.as_deref().unwrap_or(&tx.from_pub_key) };
                         let contract_addr = match tx.payload.contract_addr.as_deref() {
                             Some(a) => a,
                             None => { eprintln!("[node] Skipping contract_call: no contract_addr"); continue; }
@@ -10369,5 +10447,156 @@ mod proposer_selection_tests {
         // below activation the same node still seals (legacy)
         TEST_PROPOSER_SELECTION_OVERRIDE.with(|c| c.set(Some(Some(50))));
         assert!(node.mine_pending().unwrap().is_some());
+    }
+}
+
+/// GAME_READY Phase 0 — player-signed contract transactions (see GAME_READY_ACTIVATION_HEIGHT).
+#[cfg(test)]
+mod game_ready_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, sealed_block};
+    use crate::v2_binding::{build_v2_tx, contract_address_v2, derive_v2_fields, CONTRACT_DEPLOY_FEE_XRGE};
+    use quantum_vault_crypto::{pqc_keygen, pqc_sign};
+    use quantum_vault_types::encode_tx_for_signing;
+    use quantum_vault_vm::{ContractStore, WasmRuntime};
+    use serde_json::{json, Value};
+
+    /// Records the caller it sees under storage key "caller".
+    const WAT_WHOAMI: &str = r#"
+    (module
+      (import "env" "host_get_caller"    (func $gc (param i32 i32) (result i32)))
+      (import "env" "host_storage_write" (func $sw (param i32 i32 i32 i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0) "caller")
+      (func (export "whoami") (local $n i32)
+        (local.set $n (call $gc (i32.const 64) (i32.const 8192)))
+        (call $sw (i32.const 0) (i32.const 6) (i32.const 64) (local.get $n))))
+    "#;
+
+    struct Env { _d: super::bridge_r1_daemon_tests::TmpDir, _cs: super::bridge_r1_daemon_tests::TmpDir, node: L1Node, proposer: PQKeypair, player: PQKeypair }
+
+    fn setup(activation: Option<u64>) -> Env {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(u64::MAX))); // state root not under test
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(Some(1)))); // binding enforced at import
+        TEST_GAME_READY_OVERRIDE.with(|c| c.set(Some(activation)));
+        let (d, mut node, _store) = node_with_store();
+        let cs = super::bridge_r1_daemon_tests::TmpDir::new();
+        node.set_contract_store(std::sync::Arc::new(ContractStore::new(&cs.0).unwrap()));
+        node.set_wasm_runtime(std::sync::Arc::new(WasmRuntime::new().unwrap()));
+        let proposer = pqc_keygen();
+        let player = pqc_keygen();
+        fund_xrge(&node, &player.public_key_hex, 1_000.0);
+        Env { _d: d, _cs: cs, node, proposer, player }
+    }
+
+    fn v2(kp: &PQKeypair, ty: &str, payload: &Value, nonce: u64) -> TxV1 {
+        let sp = serde_json::to_string(payload).unwrap();
+        let sig = pqc_sign(&kp.secret_key_hex, sp.as_bytes()).unwrap();
+        build_v2_tx(ty, kp.public_key_hex.clone(), nonce, payload, sig, sp).unwrap()
+    }
+
+    fn import(e: &Env, txs: Vec<TxV1>) -> Result<(), String> {
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        e.node.import_block(sealed_block(&e.node, &e.proposer.public_key_hex, &e.proposer.secret_key_hex, txs, None, t))
+    }
+
+    fn wasm_b64() -> (Vec<u8>, String) {
+        use base64::Engine as _;
+        let wasm = wat::parse_str(WAT_WHOAMI).unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&wasm);
+        (wasm, b64)
+    }
+
+    fn deploy_payload(from: &str, b64: &str) -> Value {
+        json!({ "from": from, "nonce": "0123456789abcdef", "wasm": b64, "timestamp": 1 })
+    }
+
+    fn bal(e: &Env, pk: &str) -> f64 { e.node.get_balance(pk).unwrap() }
+
+    #[test]
+    fn binding_derives_fee_from_gas_and_address_from_the_signed_payload() {
+        let (p, fee) = derive_v2_fields("contract_call", &json!({ "contractAddr": "c1", "method": "m", "args": { "x": 1 }, "gasLimit": 250_000 })).unwrap();
+        assert_eq!(p.contract_addr.as_deref(), Some("c1"));
+        assert_eq!(p.contract_method.as_deref(), Some("m"));
+        assert_eq!(p.contract_args, Some(json!({ "x": 1 })));
+        assert_eq!(p.contract_gas_limit, Some(250_000));
+        assert!((fee - 0.25).abs() < 1e-12, "fee = gas x 0.000001");
+        assert_eq!(p.to_pub_key_hex, None, "no unsigned 'caller' field is carried");
+
+        let (wasm, b64) = wasm_b64();
+        let (d, fee) = derive_v2_fields("contract_deploy", &json!({ "from": "alice", "nonce": "n1n1n1n1", "wasm": b64 })).unwrap();
+        assert_eq!(fee, CONTRACT_DEPLOY_FEE_XRGE);
+        assert_eq!(d.contract_addr, Some(contract_address_v2("alice", "n1n1n1n1", &wasm)));
+        assert_ne!(contract_address_v2("alice", "n1n1n1n1", &wasm), contract_address_v2("mallory", "n1n1n1n1", &wasm), "deployer is bound");
+        assert_ne!(contract_address_v2("alice", "n1n1n1n1", &wasm), contract_address_v2("alice", "n2n2n2n2", &wasm), "nonce is bound");
+    }
+
+    #[test]
+    fn before_activation_player_signed_contract_txs_are_refused_like_old_nodes() {
+        let e = setup(None);
+        let (_, b64) = wasm_b64();
+        let tx = v2(&e.player, "contract_deploy", &deploy_payload(&e.player.public_key_hex, &b64), 1);
+        let err = import(&e, vec![tx]).unwrap_err();
+        assert!(err.contains("not active before GAME_READY"), "{err}");
+        assert_eq!(e.node.tip_height().unwrap(), 0);
+    }
+
+    #[test]
+    fn after_activation_the_contract_sees_the_signer_and_the_signer_pays() {
+        let e = setup(Some(1));
+        let pk = e.player.public_key_hex.clone();
+        let (wasm, b64) = wasm_b64();
+
+        let deploy = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        assert_eq!(addr, contract_address_v2(&pk, "0123456789abcdef", &wasm));
+        import(&e, vec![deploy]).expect("player-signed deploy accepted");
+        let cs = e.node.contract_store.as_ref().unwrap();
+        assert!(cs.get_contract(&addr).unwrap().is_some(), "installed at the derived address");
+        assert_eq!(cs.get_contract(&addr).unwrap().unwrap().deployer, pk, "deployer is the signer");
+        assert!((bal(&e, &pk) - (1_000.0 - CONTRACT_DEPLOY_FEE_XRGE)).abs() < 1e-9, "signer paid the deploy fee");
+
+        let call = v2(&e.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": "whoami", "gasLimit": 100_000, "timestamp": 2, "nonce": "aaaaaaaabbbbbbbb" }), 2);
+        import(&e, vec![call]).expect("player-signed call accepted");
+        let state = cs.load_all_state(&addr).unwrap();
+        assert_eq!(state.get(b"caller".as_slice()).map(|v| String::from_utf8_lossy(v).to_string()), Some(pk.clone()),
+            "the contract saw the verified signer as its caller");
+        assert!((bal(&e, &pk) - (1_000.0 - CONTRACT_DEPLOY_FEE_XRGE - 0.1)).abs() < 1e-9, "signer paid gasLimit x price");
+    }
+
+    #[test]
+    fn after_activation_a_node_signed_call_claiming_another_caller_is_invalid() {
+        let e = setup(Some(1));
+        let victim = pqc_keygen();
+        // The old shape: signed by whoever (here the proposer), with an UNSIGNED 'caller' field.
+        let mut tx = TxV1 {
+            version: 1, tx_type: "contract_call".into(), from_pub_key: e.proposer.public_key_hex.clone(), nonce: 1,
+            payload: TxPayload {
+                contract_addr: Some("c0ffee00000000000000000000000000000000ab".into()),
+                contract_method: Some("withdraw".into()),
+                to_pub_key_hex: Some(victim.public_key_hex.clone()),
+                contract_gas_limit: Some(1000),
+                ..Default::default()
+            },
+            fee: 0.001, sig: String::new(), signed_payload: None,
+        };
+        tx.sig = pqc_sign(&e.proposer.secret_key_hex, &encode_tx_for_signing(&tx)).unwrap();
+        let err = import(&e, vec![tx.clone()]).unwrap_err();
+        assert!(err.contains("must be signed by its caller"), "{err}");
+        // The mempool refuses it too, so the producer never builds such a block.
+        assert!(e.node.add_tx_to_mempool_verified(tx).unwrap_err().contains("must be signed by its caller"));
+    }
+
+    #[test]
+    fn after_activation_undeployable_bytecode_is_not_installed_anywhere() {
+        let e = setup(Some(1));
+        use base64::Engine as _;
+        let wasm = wat::parse_str(r#"(module (memory 1) (func (export "run")))"#).unwrap(); // no exported memory
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&wasm);
+        let pk = e.player.public_key_hex.clone();
+        let deploy = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        import(&e, vec![deploy]).expect("block is valid; the deploy just installs nothing");
+        assert!(e.node.contract_store.as_ref().unwrap().get_contract(&addr).unwrap().is_none());
     }
 }

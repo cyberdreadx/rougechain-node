@@ -38,6 +38,9 @@ pub struct HostEnv {
     pub cross_call_results: Vec<(bool, Vec<u8>)>,
     /// Current call depth (0 = top-level)
     pub call_depth: u32,
+    /// The call's arguments as canonical JSON bytes, readable by the contract through
+    /// `host_get_args_len` / `host_read_args`. Empty object (`{}`) when none were given.
+    pub args: Vec<u8>,
 }
 
 impl HostEnv {
@@ -65,6 +68,7 @@ impl HostEnv {
             pending_calls: Vec::new(),
             cross_call_results: Vec::new(),
             call_depth: 0,
+            args: b"{}".to_vec(),
         }
     }
 }
@@ -118,6 +122,27 @@ pub fn register_host_functions(linker: &mut Linker<HostEnv>) -> Result<(), Strin
             if addr_bytes.len() > buf_len as usize { return -1; }
             mem.write(&mut caller, buf_ptr as usize, &addr_bytes).map_err(|_| ()).ok();
             addr_bytes.len() as i32
+        }
+    ).map_err(|e| e.to_string())?;
+
+    // ── host_get_args_len() → i32 ──
+    // Length in bytes of the call's JSON arguments (see HostEnv::args).
+    linker.func_wrap("env", "host_get_args_len",
+        |caller: Caller<'_, HostEnv>| -> i32 {
+            caller.data().args.len().min(i32::MAX as usize) as i32
+        }
+    ).map_err(|e| e.to_string())?;
+
+    // ── host_read_args(buf_ptr, buf_len) → i32 ──
+    // Copies the call's JSON arguments into contract memory. Returns the number of bytes
+    // written, or -1 if the buffer is too small (call host_get_args_len first).
+    linker.func_wrap("env", "host_read_args",
+        |mut caller: Caller<'_, HostEnv>, buf_ptr: u32, buf_len: u32| -> i32 {
+            let mem = get_memory(&caller);
+            let args = caller.data().args.clone();
+            if args.len() > buf_len as usize { return -1; }
+            if mem.write(&mut caller, buf_ptr as usize, &args).is_err() { return -1; }
+            args.len() as i32
         }
     ).map_err(|e| e.to_string())?;
 
