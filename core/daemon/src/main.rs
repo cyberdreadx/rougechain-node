@@ -206,6 +206,8 @@ struct AppState {
     faucet_whitelist: Vec<String>,
     faucet_enabled: bool,
     peer_manager: Arc<peer::PeerManager>,
+    /// operator-configured peer URLs (source of the FINALITY_V2 vote-ingress allowlist)
+    configured_peer_urls: Vec<String>,
     ws_broadcaster: Arc<WsBroadcaster>,
     bridge_custody_address: Option<String>,
     base_sepolia_rpc: String,
@@ -512,6 +514,7 @@ async fn main() -> Result<(), String> {
         faucet_whitelist: parse_whitelist(args.faucet_whitelist),
         faucet_enabled: args.faucet_enabled,
         peer_manager: peer_manager.clone(),
+        configured_peer_urls: initial_peers.clone(),
         ws_broadcaster: ws_broadcaster.clone(),
         bridge_custody_address: args.bridge_custody_address.clone(),
         base_sepolia_rpc: args.base_sepolia_rpc.clone(),
@@ -1121,7 +1124,7 @@ fn build_http_router(state: AppState) -> Router {
         })
         .with_state(state.clone())
         // Track A Step 2.4: FINALITY_V2 gossip intake + verified proof serving (own body limit + verification budget)
-        .merge(finality_net::finality_router(state.node.clone()))
+        .merge(finality_net::finality_router_with(state.node.clone(), finality_net::IngressPolicy::from_env_and_peers(&state.configured_peer_urls)))
 }
 
 async fn auth_middleware<B>(

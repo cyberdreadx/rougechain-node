@@ -30,21 +30,84 @@ pub const MAX_TRACKED_DELIVERIES: usize = 4096;
 /// Own unfinalized votes are re-derived (journal-idempotent) and re-offered every N ticks.
 pub const REBROADCAST_EVERY_TICKS: u64 = 15;
 
-struct Bucket { tokens: f64, last: Instant }
-#[derive(Clone)]
-pub struct FinalityNetState { node: Arc<L1Node>, bucket: Arc<Mutex<Bucket>> }
+/// Step 3 hardening — vote INGRESS POLICY. Cryptographic validation stays authoritative; this only
+/// decides who may spend how much of the node's signature-verification budget:
+///   * configured peers (IP allowlist) draw from a RESERVED share of the global budget;
+///   * everybody else shares the small anonymous remainder AND is limited per source IP;
+///   * `allowlist_only` closes the endpoint to non-peers entirely (403).
+/// Anonymous internet traffic can therefore never consume the validators' verification budget.
+#[derive(Debug, Clone)]
+pub struct IngressPolicy {
+    pub allowlist: Vec<std::net::IpAddr>,
+    pub allowlist_only: bool,
+    /// share of `VERIFY_BUDGET_PER_SEC` available to non-allowlisted senders (0.0..=1.0)
+    pub anonymous_share: f64,
+    pub per_ip_per_sec: f64,
+    pub per_ip_burst: f64,
+    /// honour the LAST `X-Forwarded-For` hop only when the TCP peer is loopback (local reverse proxy)
+    pub trust_loopback_proxy: bool,
+}
+impl Default for IngressPolicy {
+    fn default() -> Self { Self { allowlist: Vec::new(), allowlist_only: false, anonymous_share: 0.25, per_ip_per_sec: 20.0, per_ip_burst: 128.0, trust_loopback_proxy: true } }
+}
+impl IngressPolicy {
+    /// `QV_FINALITY_PEER_IPS` (comma-separated IPs) + every configured peer URL whose host is an IP
+    /// literal (no DNS is performed); `QV_FINALITY_ALLOWLIST_ONLY=true` closes anonymous intake.
+    pub fn from_env_and_peers(peer_urls: &[String]) -> Self {
+        let mut p = Self::default();
+        let mut add = |s: &str| { if let Ok(ip) = s.trim().trim_matches(|c| c == '[' || c == ']').parse::<std::net::IpAddr>() { if !p.allowlist.contains(&ip) { p.allowlist.push(ip); } } };
+        if let Ok(v) = std::env::var("QV_FINALITY_PEER_IPS") { for part in v.split(',') { add(part); } }
+        for u in peer_urls { if let Some(rest) = u.split("://").nth(1) { let host_port = rest.split('/').next().unwrap_or("");
+            let host = if host_port.starts_with('[') { host_port.split(']').next().unwrap_or("") } else { host_port.rsplit_once(':').map(|(h, _)| h).unwrap_or(host_port) }; add(host); } }
+        p.allowlist_only = std::env::var("QV_FINALITY_ALLOWLIST_ONLY").map(|v| v == "true" || v == "1").unwrap_or(false);
+        p
+    }
+}
+pub const MAX_TRACKED_SOURCE_IPS: usize = 4096;
 
-fn take_tokens(b: &Mutex<Bucket>, n: usize) -> bool {
-    let Ok(mut b) = b.lock() else { return false };
-    let now = Instant::now();
-    b.tokens = (b.tokens + now.duration_since(b.last).as_secs_f64() * VERIFY_BUDGET_PER_SEC).min(VERIFY_BUDGET_PER_SEC * 2.0);
-    b.last = now;
-    if b.tokens >= n as f64 { b.tokens -= n as f64; true } else { false }
+struct Bucket { tokens: f64, last: Instant, rate: f64, burst: f64 }
+impl Bucket {
+    fn new(rate: f64, burst: f64) -> Self { Self { tokens: burst, last: Instant::now(), rate, burst } }
+    fn take(&mut self, n: usize) -> bool {
+        let now = Instant::now();
+        self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * self.rate).min(self.burst);
+        self.last = now;
+        if self.tokens >= n as f64 { self.tokens -= n as f64; true } else { false }
+    }
+}
+struct Limits { peers: Bucket, anonymous: Bucket, per_ip: HashMap<std::net::IpAddr, Bucket> }
+#[derive(Clone)]
+pub struct FinalityNetState { node: Arc<L1Node>, policy: Arc<IngressPolicy>, limits: Arc<Mutex<Limits>> }
+
+#[derive(Debug, PartialEq, Eq)]
+enum Admission { Ok, Forbidden, Throttled }
+fn admit(st: &FinalityNetState, ip: std::net::IpAddr, n: usize) -> Admission {
+    let Ok(mut l) = st.limits.lock() else { return Admission::Throttled };
+    if st.policy.allowlist.contains(&ip) { return if l.peers.take(n) { Admission::Ok } else { Admission::Throttled }; }
+    if st.policy.allowlist_only { return Admission::Forbidden; }
+    if !l.per_ip.contains_key(&ip) {
+        if l.per_ip.len() >= MAX_TRACKED_SOURCE_IPS { let cutoff = Instant::now() - Duration::from_secs(60); l.per_ip.retain(|_, b| b.last > cutoff); }
+        if l.per_ip.len() >= MAX_TRACKED_SOURCE_IPS { return Admission::Throttled; } // table full of ACTIVE sources: new anonymous sources wait
+        let (r, b) = (st.policy.per_ip_per_sec, st.policy.per_ip_burst);
+        l.per_ip.insert(ip, Bucket::new(r, b));
+    }
+    if !l.per_ip.get_mut(&ip).map(|b| b.take(n)).unwrap_or(false) { return Admission::Throttled; }
+    if l.anonymous.take(n) { Admission::Ok } else { Admission::Throttled }
+}
+fn client_ip(policy: &IngressPolicy, socket: Option<std::net::SocketAddr>, headers: &axum::http::HeaderMap) -> std::net::IpAddr {
+    let sock = socket.map(|s| s.ip()).unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    if policy.trust_loopback_proxy && sock.is_loopback() {
+        if let Some(last) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()).and_then(|v| v.rsplit(',').next()) { if let Ok(ip) = last.trim().parse() { return ip; } }
+    }
+    sock
 }
 
 /// Routes (no `AppState`): `POST /api/finality/votes`, `GET /api/finality/:height`.
-pub fn finality_router(node: Arc<L1Node>) -> Router {
-    let st = FinalityNetState { node, bucket: Arc::new(Mutex::new(Bucket { tokens: VERIFY_BUDGET_PER_SEC * 2.0, last: Instant::now() })) };
+pub fn finality_router(node: Arc<L1Node>) -> Router { finality_router_with(node, IngressPolicy::default()) }
+pub fn finality_router_with(node: Arc<L1Node>, policy: IngressPolicy) -> Router {
+    let anon = VERIFY_BUDGET_PER_SEC * policy.anonymous_share.clamp(0.0, 1.0);
+    let peers = VERIFY_BUDGET_PER_SEC - anon;
+    let st = FinalityNetState { node, policy: Arc::new(policy), limits: Arc::new(Mutex::new(Limits { peers: Bucket::new(peers, peers * 2.0), anonymous: Bucket::new(anon, anon * 2.0), per_ip: HashMap::new() })) };
     Router::new()
         .route("/api/finality/votes", post(receive_votes))
         .route("/api/finality/:height", get(get_finality_proof))
@@ -53,10 +116,14 @@ pub fn finality_router(node: Arc<L1Node>) -> Router {
 }
 
 /// Untrusted vote intake. Per-vote status: accepted | duplicate | not_ready | rejected.
-async fn receive_votes(State(st): State<FinalityNetState>, Json(votes): Json<Vec<VoteMessage>>) -> (axum::http::StatusCode, Json<serde_json::Value>) {
+async fn receive_votes(State(st): State<FinalityNetState>, conn: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>, headers: axum::http::HeaderMap, Json(votes): Json<Vec<VoteMessage>>) -> (axum::http::StatusCode, Json<serde_json::Value>) {
     use axum::http::StatusCode;
     if votes.is_empty() || votes.len() > MAX_VOTES_PER_REQUEST { return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": "1..=64 votes per request" }))); }
-    if !take_tokens(&st.bucket, votes.len()) { return (StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({ "success": false, "error": "vote verification budget exhausted" }))); }
+    match admit(&st, client_ip(&st.policy, conn.map(|c| c.0), &headers), votes.len()) {
+        Admission::Ok => {}
+        Admission::Forbidden => return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "success": false, "error": "vote intake is restricted to configured peers" }))),
+        Admission::Throttled => return (StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({ "success": false, "error": "vote verification budget exhausted" }))),
+    }
     let node = st.node.clone();
     let statuses = tokio::task::spawn_blocking(move || votes.into_iter().map(|v| match node.receive_gossiped_vote(v) {
         VoteIntake::Accepted => "accepted", VoteIntake::Duplicate => "duplicate", VoteIntake::NotReady => "not_ready", VoteIntake::Rejected => "rejected" }).collect::<Vec<_>>()).await.unwrap_or_default();
