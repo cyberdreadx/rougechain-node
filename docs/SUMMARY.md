@@ -82,6 +82,7 @@
 - [Staking](api-reference/staking.md)
 - [Peers](api-reference/peers.md)
 - [Messenger](api-reference/messenger.md)
+- [Regenerate Votes](api-reference/regenerate.md)
 - [Mail](api-reference/mail.md)
 - [Push Notifications](api-reference/push-notifications.md)
 - [Bridge](api-reference/bridge.md)

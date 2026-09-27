@@ -9,6 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import ProjectCard from "@/components/regenerate/ProjectCard";
 import ProposalForm from "@/components/regenerate/ProposalForm";
+import CommunityVotes from "@/components/regenerate/CommunityVotes";
 import {
   REGEN_CATEGORIES, REGEN_TREASURY_ADDRESS, getTreasuryLedger, getTreasuryStats, getProjects, hasFundedProjects, txUrl,
   type RegenCategoryKey, type TreasuryLedger,
@@ -283,6 +284,9 @@ export default function Regenerate() {
             </ol>
           </div>
         </motion.section>
+
+        {/* Community votes (renders nothing until the node serves them) */}
+        <CommunityVotes />
 
         {/* Projects */}
         <motion.section {...fadeUp} id="projects" className="mb-24 scroll-mt-20">
