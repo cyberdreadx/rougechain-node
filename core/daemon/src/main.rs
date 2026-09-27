@@ -135,6 +135,12 @@ struct Args {
     /// Never runs automatically. Exits after migrating.
     #[arg(long)]
     migrate_canonical_ledger: bool,
+    /// Track A Step 2.3 — READ-ONLY FINALITY_V2 preflight: proves the node-keys.json public key is
+    /// the validator identity this node would vote as, that it has eligible stake in the set
+    /// derived from accepted history, and that the signing journal is intact. Prints PUBLIC data
+    /// only (never key material) and exits. Run with the daemon stopped (exclusive data dir).
+    #[arg(long)]
+    finality_v2_preflight: bool,
     /// Read-only operator diagnostic: print canonical digests of this node's consensus state
     /// (loads/recovers state exactly as a normal start would) and exit.
     #[arg(long)]
@@ -407,6 +413,11 @@ async fn main() -> Result<(), String> {
     if args.print_state_digest {
         let d = node.state_digest()?;
         println!("{}", serde_json::to_string_pretty(&d).map_err(|e| e.to_string())?);
+        return Ok(());
+    }
+    if args.finality_v2_preflight {
+        let report = node.finality_v2_preflight()?;
+        println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
         return Ok(());
     }
     if args.migrate_canonical_ledger {
@@ -1772,6 +1783,14 @@ async fn get_finality_proof(
     Path(height): Path<u64>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let node = &state.node;
+    // FINALITY_V2 heights: serve ONLY a persisted, locally verified proof (peers re-verify it anyway).
+    if crate::node::finality_v2_active(height) {
+        return Ok(Json(match node.get_persisted_finality_proof(height) {
+            Ok(Some(proof)) => serde_json::json!({ "success": true, "proof": proof }),
+            Ok(None) => serde_json::json!({ "success": false, "error": format!("No finality proof available for height {}", height) }),
+            Err(e) => serde_json::json!({ "success": false, "error": e }),
+        }));
+    }
     match node.generate_finality_proof(height) {
         Ok(Some(proof)) => Ok(Json(serde_json::json!({
             "success": true,
