@@ -1,0 +1,11 @@
+[package]
+name = "quantum-vault-finality"
+version = "0.1.0"
+edition = "2021"
+description = "Track A Step 2.2 — FINALITY_V2: verified BFT vote rules and a standalone finality-proof verifier. Pure library: no I/O, no clock, no node state."
+
+[dependencies]
+quantum-vault-types = { path = "../types" }
+quantum-vault-crypto = { path = "../crypto" }
+sha2 = "0.10"
+hex = "0.4"

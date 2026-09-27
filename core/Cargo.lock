@@ -2038,6 +2038,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantum-vault-finality"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "quantum-vault-crypto",
+ "quantum-vault-types",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "quantum-vault-p2p"
 version = "0.1.0"
 dependencies = [
