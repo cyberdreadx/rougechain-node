@@ -345,6 +345,15 @@ type TokenBalanceKey = (String, String);
 /// the SAME decision that debits the economic ledger (inside `apply_balance_tx_inner`, against a
 /// sequential in-block validator shadow); `apply_validator_block` consumes ONLY these results.
 /// A failed/no-op stake or unstake therefore can never change validator state.
+/// Outcome of UNTRUSTED (gossiped) vote intake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoteIntake { Accepted, Duplicate, /// we do not have that block / its validator set yet — the sender may retry
+    NotReady, Rejected }
+/// Bound on votes waiting to be offered to peers.
+pub const FINALITY_V2_MAX_OUTBOX: usize = 4096;
+/// How many recent unfinalized heights a validator re-offers its own (journal-idempotent) votes for.
+pub const FINALITY_V2_RESIGN_HEIGHTS: u64 = 8;
+
 /// Result of the read-only FINALITY_V2 preflight. Contains PUBLIC data only.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FinalityV2Preflight {
@@ -445,6 +454,14 @@ pub struct L1Node {
     validator_replay: Arc<Mutex<Option<quantum_vault_finality::validator_replay::ValidatorReplay>>>,
     /// FINALITY_V2: heights whose persisted proof has been verified by THIS process (bounded)
     verified_final: Arc<Mutex<std::collections::BTreeSet<u64>>>,
+    /// FINALITY_V2: newly recorded valid votes (own or relayed) waiting to be offered to peers
+    vote_outbox: Arc<Mutex<std::collections::VecDeque<VoteMessage>>>,
+    /// Test-only, PER-NODE copies of the thread-local gates, captured at construction, so a node
+    /// behaves the same on server / blocking-pool threads of a real-networking devnet test.
+    #[cfg(test)]
+    test_v2_gate: Option<u64>,
+    #[cfg(test)]
+    pub(crate) test_replay_base: Arc<Mutex<Option<(u64, Vec<(String, quantum_vault_finality::validator_replay::VState)>)>>>,
     /// Notify handle: wake the miner immediately when a tx enters mempool
     mine_notify: Arc<tokio::sync::Notify>,
     /// Running total of XRGE currently in the shielded privacy pool
@@ -570,6 +587,11 @@ impl L1Node {
             validator_sets_db: validator_sets_tree,
             validator_replay: Arc::new(Mutex::new(None)),
             verified_final: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
+            vote_outbox: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            #[cfg(test)]
+            test_v2_gate: TEST_FINALITY_V2_ACTIVATION.with(|c| c.get()),
+            #[cfg(test)]
+            test_replay_base: Arc::new(Mutex::new(None)), // set explicitly by multi-threaded devnet tests; else the thread-local applies
             mine_notify: Arc::new(tokio::sync::Notify::new()),
             shielded_supply: Arc::new(Mutex::new(0.0)),
             mined_tx_hashes: Arc::new(Mutex::new(HashSet::new())),
@@ -2539,7 +2561,7 @@ impl L1Node {
     }
 
     pub fn submit_vote(&self, vote: VoteMessage) -> Result<(), String> {
-        if finality_v2_active(vote.height) { return self.submit_vote_v2(vote).map(|_| ()); }
+        if self.v2_active(vote.height) { return self.submit_vote_v2(vote).map(|_| ()); }
         self.votes.lock().map_err(|_| "votes lock")?.push(vote);
         Ok(())
     }
@@ -2548,7 +2570,7 @@ impl L1Node {
     /// Record (immutably) the eligible validator set applicable to `height` = validator state
     /// after block `height - 1`. Only possible while the tip is exactly `height - 1`.
     fn record_validator_set_for(&self, height: u64) -> Result<(), String> {
-        if !finality_v2_active(height) { return Ok(()); }
+        if !self.v2_active(height) { return Ok(()); }
         let key = height.to_be_bytes();
         if self.validator_sets_db.contains_key(key).map_err(|e| e.to_string())? { return Ok(()); }
         if self.store.get_tip()?.height + 1 != height { return Err(format!("validator set for {height} can only be recorded at tip {}", height - 1)); }
@@ -2575,20 +2597,25 @@ impl L1Node {
         if tip - height > FINALITY_V2_VOTE_WINDOW { return Err(format!("vote rejected: height {height} is outside the {FINALITY_V2_VOTE_WINDOW}-block vote window")); }
         if vote.signature.len() > 8192 || vote.voter_pub_key.len() > 8192 || vote.block_hash.len() != 64 || vote.vote_type.len() > 16 { return Err("vote rejected: malformed".to_string()); }
         if self.has_verified_finality_proof(height) { return Ok(false); } // already final: nothing to add
+        // a slot that already holds a VALID vote needs no second signature verification
+        if self.votes.lock().map_err(|_| "votes lock")?.iter().any(|v| v.height == height && v.vote_type == vote.vote_type && v.voter_pub_key == vote.voter_pub_key) { return Ok(false); }
         self.with_vote_context(height, |ctx| quantum_vault_finality::validate_vote(&vote, ctx).map_err(|e| format!("vote rejected: {:?}", e)))?;
         {
             let mut votes = self.votes.lock().map_err(|_| "votes lock")?;
             if votes.iter().any(|v| v.height == height && v.vote_type == vote.vote_type && v.voter_pub_key == vote.voter_pub_key) { return Ok(false); }
             // retained state ≤ window × validators × 2: drop everything outside the window
-            votes.retain(|v| !finality_v2_active(v.height) || tip - v.height.min(tip) <= FINALITY_V2_VOTE_WINDOW);
-            votes.push(vote);
+            votes.retain(|v| !self.v2_active(v.height) || tip - v.height.min(tip) <= FINALITY_V2_VOTE_WINDOW);
+            votes.push(vote.clone());
         }
+        // first acceptance ⇒ offer it to peers (own votes and relayed ones alike; a duplicate is
+        // never re-queued, so relaying terminates)
+        if let Ok(mut out) = self.vote_outbox.lock() { if out.len() >= FINALITY_V2_MAX_OUTBOX { out.pop_front(); } out.push_back(vote); }
         self.try_finalize_block(height);
         Ok(true)
     }
     /// Accept a finality proof produced elsewhere — only after full standalone verification.
     pub fn import_finality_proof(&self, proof: &quantum_vault_types::FinalityProof) -> Result<(), String> {
-        if !finality_v2_active(proof.height) { return Err("FINALITY_V2 is not active at that height".to_string()); }
+        if !self.v2_active(proof.height) { return Err("FINALITY_V2 is not active at that height".to_string()); }
         if self.has_verified_finality_proof(proof.height) { return Ok(()); } // duplicate: ignored, nothing rewritten
         if proof.precommit_votes.len() > quantum_vault_finality::MAX_PROOF_VOTES { return Err("proof rejected: too many votes".to_string()); }
         self.with_vote_context(proof.height, |ctx| quantum_vault_finality::verify_finality_proof(proof, ctx).map(|_| ()).map_err(|e| format!("proof rejected: {:?}", e)))?;
@@ -2620,6 +2647,43 @@ impl L1Node {
         if let Ok(mut s) = self.verified_final.lock() { s.insert(height); while s.len() > 1024 { let first = *s.iter().next().unwrap(); s.remove(&first); } }
     }
 
+    /// Is FINALITY_V2 active at `height` FOR THIS NODE (compiled constant; per-node test override).
+    #[inline]
+    pub fn v2_active(&self, height: u64) -> bool {
+        #[cfg(test)]
+        { if let Some(g) = self.test_v2_gate { return height >= g; } }
+        finality_v2_active(height)
+    }
+
+    pub fn drain_vote_outbox(&self) -> Vec<VoteMessage> { self.vote_outbox.lock().map(|mut o| o.drain(..).collect()).unwrap_or_default() }
+    pub fn is_height_verified_final(&self, height: u64) -> bool { self.has_verified_finality_proof(height) }
+
+    /// UNTRUSTED intake used by peer gossip. FINALITY_V2 only — a gossiped vote can never reach
+    /// the legacy unverified path, whatever height it claims.
+    pub fn receive_gossiped_vote(&self, vote: VoteMessage) -> VoteIntake {
+        if !self.v2_active(vote.height) { return VoteIntake::Rejected; }
+        let tip = match self.store.get_tip() { Ok(t) => t.height, Err(_) => return VoteIntake::NotReady };
+        if vote.height > tip { return if vote.height - tip <= 2 { VoteIntake::NotReady } else { VoteIntake::Rejected }; }
+        match self.submit_vote_v2(vote) { Ok(true) => VoteIntake::Accepted, Ok(false) => VoteIntake::Duplicate, Err(_) => VoteIntake::Rejected }
+    }
+
+    /// Re-derive this validator's own votes for the newest unfinalized heights. Signing goes
+    /// through the journal, so this can only ever reproduce the vote already locked for a slot.
+    pub fn resign_recent_votes(&self) -> Vec<VoteMessage> {
+        let mut out = Vec::new();
+        let Ok(tip) = self.store.get_tip().map(|t| t.height) else { return out };
+        let mut h = tip;
+        while h >= 1 && tip - h < FINALITY_V2_RESIGN_HEIGHTS {
+            if !self.v2_active(h) || self.has_verified_finality_proof(h) { break; }
+            if let Ok(Some(block)) = self.store.get_block(h) {
+                self.auto_vote_v2(&block); // verified eligibility → journal → sign → local intake
+                if let (Ok(keys), Ok(votes)) = (self.keys.lock(), self.votes.lock()) { out.extend(votes.iter().filter(|v| v.height == h && v.voter_pub_key == keys.public_key_hex).cloned()); }
+            }
+            h -= 1;
+        }
+        out
+    }
+
     fn signing_journal(&self) -> Result<quantum_vault_finality::journal::SigningJournal, String> {
         quantum_vault_finality::journal::SigningJournal::open(self.opts.data_dir.join("finality-signing-journal")).map_err(|e| format!("{:?}", e))
     }
@@ -2629,7 +2693,10 @@ impl L1Node {
     fn validator_replay_base(&self) -> (u64, Vec<(String, quantum_vault_finality::validator_replay::VState)>) {
         use quantum_vault_finality::validator_replay::VState;
         #[cfg(test)]
-        { if let Some(b) = TEST_VALIDATOR_REPLAY_BASE.with(|c| c.borrow().clone()) { return b; } }
+        {
+            if let Some(b) = self.test_replay_base.lock().ok().and_then(|g| g.clone()) { return b; }
+            if let Some(b) = TEST_VALIDATOR_REPLAY_BASE.with(|c| c.borrow().clone()) { return b; }
+        }
         if self.fork_applies() {
             return (crate::fork::FORK_HEIGHT - 1, crate::fork_tables::CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1.iter()
                 .map(|(k, stake, sc, j, m, _ts)| (k.to_string(), VState { stake: *stake, slash_count: *sc, jailed_until: *j, missed_blocks: *m })).collect());
@@ -2666,7 +2733,7 @@ impl L1Node {
         self.validator_sets_db.clear().map_err(|e| e.to_string())?;
         let mut n = 0;
         for h in 1..=tip + 1 {
-            if !finality_v2_active(h) { continue; }
+            if !self.v2_active(h) { continue; }
             if h - 1 < self.validator_replay_base().0 { continue; }
             let snap = self.derive_validator_set_from_history(h)?;
             self.validator_sets_db.insert(h.to_be_bytes(), snap.to_bytes()).map_err(|e| e.to_string())?; n += 1;
@@ -2677,7 +2744,7 @@ impl L1Node {
 
     /// A persisted (hence locally VERIFIED) FINALITY_V2 proof — the only thing served to peers.
     pub fn get_persisted_finality_proof(&self, height: u64) -> Result<Option<quantum_vault_types::FinalityProof>, String> {
-        if !finality_v2_active(height) || !self.has_verified_finality_proof(height) { return Ok(None); }
+        if !self.v2_active(height) || !self.has_verified_finality_proof(height) { return Ok(None); }
         Ok(self.finality_db.get(height.to_be_bytes()).map_err(|e| e.to_string())?.and_then(|v| serde_json::from_slice(&v).ok()))
     }
 
@@ -2689,7 +2756,7 @@ impl L1Node {
         let (mut imported, mut rejected, mut asked) = (0, 0, 0);
         let mut h = tip;
         while h >= 1 && asked < FINALITY_V2_MAX_PROOF_REQUESTS_PER_PASS {
-            if !finality_v2_active(h) || self.has_verified_finality_proof(h) { break; } // everything below is covered or legacy
+            if !self.v2_active(h) || self.has_verified_finality_proof(h) { break; } // everything below is covered or legacy
             asked += 1;
             if let Ok(Some(proof)) = fetch(h) {
                 if proof.height != h { rejected += 1; }
@@ -2723,7 +2790,13 @@ impl L1Node {
         let height = block.header.height;
         let keys = match self.keys.lock() { Ok(k) => k.clone(), Err(_) => return };
         // A node votes ONLY as itself, and only if its own key is an eligible validator.
-        match self.validator_set_for(height) { Ok(Some(set)) if set.stake_of(&keys.public_key_hex).is_some() => {}, _ => return }
+        // Eligibility is decided on the PROVENANCE-VERIFIED set (stored snapshot == deterministic replay
+        // of accepted history) — a corrupt or edited snapshot can neither make us vote nor silence us silently.
+        match self.verified_validator_set_for(height) {
+            Ok(set) if set.stake_of(&keys.public_key_hex).is_some() => {}
+            Ok(_) => return, // follower / jailed / unstaked: never originates a vote
+            Err(e) => { eprintln!("[bft] NOT voting at height {}: {}", height, e); return; }
+        }
         // Durable anti-double-sign journal FIRST, signature second. No journal ⇒ no vote.
         let journal = match self.signing_journal() { Ok(j) => j, Err(e) => { eprintln!("[bft] signing journal unavailable — NOT voting: {}", e); return; } };
         for ty in [quantum_vault_finality::PREVOTE, quantum_vault_finality::PRECOMMIT] {
@@ -2749,7 +2822,7 @@ impl L1Node {
         // FINALITY_V2: snapshot the set for the NEXT height while the tip is this block, then vote
         // as ourselves with a verified, typed, chain-bound signature.
         if let Err(e) = self.record_validator_set_for(block.header.height + 1) { eprintln!("[bft] validator-set snapshot: {}", e); }
-        if finality_v2_active(block.header.height) { return self.auto_vote_v2(block); }
+        if self.v2_active(block.header.height) { return self.auto_vote_v2(block); }
         let voter_key = if let Ok(validators) = self.validator_store.list_validators() {
             validators.iter().max_by_key(|(_, v)| v.stake).map(|(k, _)| k.clone())
         } else {
@@ -2793,7 +2866,7 @@ impl L1Node {
     /// Attempt to finalize a block if 2/3+ stake has precommitted.
     /// Only advances finalized_height if quorum is met.
     fn try_finalize_block(&self, height: u64) {
-        if finality_v2_active(height) { return self.try_finalize_block_v2(height); }
+        if self.v2_active(height) { return self.try_finalize_block_v2(height); }
         match self.generate_finality_proof(height) {
             Ok(Some(proof)) => {
                 // Persist the finality proof
@@ -3127,7 +3200,7 @@ impl L1Node {
             }
         }
         // FINALITY_V2: producing a block is not evidence of finality — only a verified quorum is.
-        if !finality_v2_active(block.header.height) {
+        if !self.v2_active(block.header.height) {
             *self.finalized_height.lock().map_err(|_| "finality lock")? = block.header.height;
         }
         // Note: finalized_height set here as proposer (single-validator mode).

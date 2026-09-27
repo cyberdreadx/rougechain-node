@@ -7,6 +7,7 @@ mod grpc;
 mod nft_store;
 mod pool_events;
 mod node;
+mod finality_net;
 mod peer;
 mod rouge_bridge_deposit;
 mod pool_store;
@@ -603,6 +604,11 @@ async fn main() -> Result<(), String> {
 
     eprintln!("[core-daemon] WebSocket broadcaster initialized");
 
+    // FINALITY_V2 vote propagation (inert while the gate is unscheduled)
+    {
+        let (gossip_node, pm) = (node.clone(), peer_manager.clone());
+        tokio::spawn(async move { finality_net::run_vote_gossip(pm, gossip_node).await; });
+    }
     // Start peer sync
     {
         let peer_node = node.clone();
@@ -845,7 +851,6 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/orders/:order_id", get(get_order_by_id))
         .route("/api/stats", get(get_stats))
         .route("/api/fee", get(get_fee_info))
-        .route("/api/finality/:height", get(get_finality_proof))
         .route("/api/burn-address", get(get_burn_address))
         .route("/api/burned", get(get_burned_tokens))
         .route("/api/price/xrge", get(get_xrge_price))
@@ -1114,7 +1119,9 @@ fn build_http_router(state: AppState) -> Router {
                 ])),
             }
         })
-        .with_state(state)
+        .with_state(state.clone())
+        // Track A Step 2.4: FINALITY_V2 gossip intake + verified proof serving (own body limit + verification budget)
+        .merge(finality_net::finality_router(state.node.clone()))
 }
 
 async fn auth_middleware<B>(
@@ -1776,35 +1783,6 @@ async fn get_burned_tokens(State(state): State<AppState>) -> Result<Json<BurnedT
         burned,
         total_xrge_burned: total_xrge,
     }))
-}
-
-async fn get_finality_proof(
-    State(state): State<AppState>,
-    Path(height): Path<u64>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let node = &state.node;
-    // FINALITY_V2 heights: serve ONLY a persisted, locally verified proof (peers re-verify it anyway).
-    if crate::node::finality_v2_active(height) {
-        return Ok(Json(match node.get_persisted_finality_proof(height) {
-            Ok(Some(proof)) => serde_json::json!({ "success": true, "proof": proof }),
-            Ok(None) => serde_json::json!({ "success": false, "error": format!("No finality proof available for height {}", height) }),
-            Err(e) => serde_json::json!({ "success": false, "error": e }),
-        }));
-    }
-    match node.generate_finality_proof(height) {
-        Ok(Some(proof)) => Ok(Json(serde_json::json!({
-            "success": true,
-            "proof": proof
-        }))),
-        Ok(None) => Ok(Json(serde_json::json!({
-            "success": false,
-            "error": format!("No finality proof available for height {}", height)
-        }))),
-        Err(e) => Ok(Json(serde_json::json!({
-            "success": false,
-            "error": e
-        }))),
-    }
 }
 
 async fn get_fee_info(State(state): State<AppState>) -> Json<serde_json::Value> {

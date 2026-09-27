@@ -276,15 +276,15 @@ async fn sync_from_peer(peer_url: &str, node: &L1Node) -> Result<u64, String> {
 /// source only: heights are chosen locally, responses are size-bounded, and every proof goes
 /// through the full local `verify_finality_proof` before it is persisted.
 const MAX_FINALITY_PROOF_BYTES: usize = 4 * 1024 * 1024;
-async fn pull_finality_from_peer(peer_url: &str, node: &L1Node) {
+pub(crate) async fn pull_finality_from_peer(peer_url: &str, node: &L1Node) {
     let tip = match node.get_tip_height() { Ok(t) => t, Err(_) => return };
-    if !crate::node::finality_v2_active(tip) { return; }
+    if !node.v2_active(tip) { return; }
     // fetch first (async), verify after (sync) — never more than the per-pass request bound
     let mut fetched: std::collections::HashMap<u64, quantum_vault_types::FinalityProof> = std::collections::HashMap::new();
     let client = reqwest::Client::new();
     let mut h = tip;
     for _ in 0..crate::node::FINALITY_V2_MAX_PROOF_REQUESTS_PER_PASS {
-        if h == 0 || !crate::node::finality_v2_active(h) || matches!(node.get_persisted_finality_proof(h), Ok(Some(_))) { break; }
+        if h == 0 || !node.v2_active(h) || matches!(node.get_persisted_finality_proof(h), Ok(Some(_))) { break; }
         if let Ok(resp) = client.get(format!("{}/finality/{}", peer_url, h)).timeout(Duration::from_secs(5)).send().await {
             if let Ok(bytes) = resp.bytes().await {
                 if bytes.len() <= MAX_FINALITY_PROOF_BYTES {
