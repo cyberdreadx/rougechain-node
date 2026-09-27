@@ -19,7 +19,7 @@ import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
  * project's funding are all read from the chain (nothing is typed in by hand).
  * Leave empty until the wallet exists; the page then says so instead of showing numbers.
  */
-export const REGEN_TREASURY_ADDRESS = "";
+export const REGEN_TREASURY_ADDRESS = "rouge1yly4449sgnfe8cth6jytyl0qsxxuj8txq0ycnh35cf3cu8n2jm5sz0c0pf";
 
 /** Explorer link for a transaction id. */
 export const txUrl = (txId: string) => `/tx/${txId}`;
