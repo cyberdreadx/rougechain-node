@@ -3438,12 +3438,21 @@ struct PoolEventsResponse {
     events: Vec<PoolEvent>,
 }
 
+#[derive(Deserialize)]
+struct PoolEventsQuery {
+    limit: Option<usize>,
+}
+
+/// Most recent events first. `?limit=` (default 100, max 5000) lets wallets replay a pool's
+/// history, e.g. to work out an LP's uncollected fees.
 async fn get_pool_events(
     State(state): State<AppState>,
     Path(pool_id): Path<String>,
+    Query(q): Query<PoolEventsQuery>,
 ) -> Result<Json<PoolEventsResponse>, StatusCode> {
     let node = &state.node;
-    let events = node.get_pool_events(&pool_id, 100)
+    let limit = q.limit.unwrap_or(100).clamp(1, 5000);
+    let events = node.get_pool_events(&pool_id, limit)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(PoolEventsResponse { success: true, events }))
 }
