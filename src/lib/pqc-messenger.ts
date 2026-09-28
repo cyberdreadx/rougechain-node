@@ -2,6 +2,8 @@ import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { applyEnvelopes, type EnvelopeData, type EnvelopeReaction } from "@/lib/messenger-envelope";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
+import { encryptAndSignV2, decryptV2Package, isV2Package, verifyPackageSignature } from "@/lib/messenger-crypto-v2";
+import { blockWalletKeys, getBlockedList, unblockWalletKeys } from "@/lib/messenger-prefs";
 import { fitsAvatarLimit, getStoredAvatar, isSafeAvatarUrl, normalizeAvatarField, setStoredAvatar } from "@/lib/avatar";
 
 export interface Wallet {
@@ -30,7 +32,11 @@ export interface Message {
   selfDestruct: boolean;
   destructAfterSeconds?: number;
   readAt?: string;
+  /** Node's is_read flag (a recipient opened it); drives read receipts with readAt. */
+  isRead?: boolean;
   createdAt: string;
+  /** The sender's signing key when resolved (blocked filtering / avatars in groups). */
+  senderSigningPublicKey?: string;
   // Decrypted content (client-side only)
   plaintext?: string;
   /** Reactions other clients (Qwalla) attached to this message, as emoji. */
@@ -71,7 +77,6 @@ const WALLET_STORAGE_KEY = "pqc_messenger_wallet";
 const DEMO_BOT_STORAGE_KEY = "pqc_demo_bot_wallet";
 const SENT_MESSAGES_KEY = "pqc_sent_messages";
 const PRIVACY_SETTINGS_KEY = "pqc_privacy_settings";
-const BLOCKED_WALLETS_KEY = "pqc_blocked_wallets";
 const TOFU_STORE_KEY = "pqc_tofu_fingerprints";
 const MESSENGER_API_PREFIX = "/messenger";
 
@@ -79,7 +84,7 @@ const MESSENGER_API_PREFIX = "/messenger";
 
 export async function keyFingerprint(publicKeyHex: string): Promise<string> {
   if (!publicKeyHex) return "";
-  const hash = await crypto.subtle.digest("SHA-256", hexToBytes(publicKeyHex));
+  const hash = await crypto.subtle.digest("SHA-256", new Uint8Array(hexToBytes(publicKeyHex)));
   const hex = bytesToHex(new Uint8Array(hash));
   return hex.substring(0, 32).replace(/(.{4})/g, "$1 ").trim().toUpperCase();
 }
@@ -138,23 +143,17 @@ export async function checkTofu(wallet: Wallet): Promise<{
 
 // --- Block list helpers ---
 
+// Stored under "pqc_blocked_wallets"; see messenger-prefs.ts (Qwalla-compatible block list).
 export function getBlockedWalletIds(): string[] {
-  try {
-    const raw = localStorage.getItem(BLOCKED_WALLETS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+  return getBlockedList();
 }
 
 export function blockWallet(walletId: string): void {
-  const list = new Set(getBlockedWalletIds());
-  list.add(walletId);
-  localStorage.setItem(BLOCKED_WALLETS_KEY, JSON.stringify([...list]));
+  blockWalletKeys([walletId]);
 }
 
 export function unblockWallet(walletId: string): void {
-  const list = new Set(getBlockedWalletIds());
-  list.delete(walletId);
-  localStorage.setItem(BLOCKED_WALLETS_KEY, JSON.stringify([...list]));
+  unblockWalletKeys([walletId]);
 }
 
 export function isWalletBlocked(walletId: string): boolean {
@@ -1031,6 +1030,97 @@ export async function deleteConversation(wallet: WalletWithPrivateKeys, conversa
   if (!response.ok) throw new Error(`Failed to delete conversation: ${response.status}`);
 }
 
+/** POST a signed messenger request; throws with the node's error text on failure. */
+async function postSigned(path: string, payload: Record<string, unknown>, wallet: WalletWithPrivateKeys): Promise<Record<string, unknown>> {
+  const apiBase = getMessengerApiBase();
+  if (!apiBase) throw new Error("Node API is not configured");
+  const response = await fetch(`${apiBase}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
+    body: JSON.stringify(buildSignedRequest(payload, wallet.signingPrivateKey, wallet.signingPublicKey)),
+  });
+  const data = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!response.ok || data?.success === false) {
+    throw new Error(String(data?.error ?? `Request failed (${response.status})`));
+  }
+  return data ?? {};
+}
+
+/** Qwalla/node cap on conversation members (creator included). */
+export const MAX_GROUP_MEMBERS = 50;
+
+/**
+ * Create a group chat (Qwalla app/(tabs)/messenger/new-group.tsx): participants are signing
+ * public keys, the creator first, `isGroup: true`, optional name. Needs 2+ other members.
+ */
+export async function createGroupConversation(
+  wallet: WalletWithPrivateKeys,
+  memberSigningKeys: string[],
+  name?: string,
+): Promise<Conversation> {
+  const members = [...new Set(memberSigningKeys.filter((k) => k && k !== wallet.signingPublicKey))];
+  if (members.length < 2) throw new Error("Pick at least 2 members");
+  if (members.length + 1 > MAX_GROUP_MEMBERS) throw new Error(`Maximum ${MAX_GROUP_MEMBERS} participants`);
+  const payload: Record<string, unknown> = { participantIds: [wallet.signingPublicKey, ...members], isGroup: true };
+  const trimmed = name?.trim();
+  if (trimmed) payload.name = trimmed;
+  let data: Record<string, unknown>;
+  try {
+    data = await postSigned("/v2/messenger/conversations", payload, wallet);
+  } catch (e) {
+    if (!/not registered/i.test(String(e))) throw e;
+    await registerWalletOnNode(wallet);
+    data = await postSigned("/v2/messenger/conversations", payload, wallet);
+  }
+  const conversation = normalizeConversation(data.conversation);
+  if (!conversation) throw new Error("Conversation response was empty");
+  return withResolvedParticipants(conversation, wallet);
+}
+
+/** Rename a conversation (any participant; empty name clears it; max 100 chars on the node). */
+export async function renameConversation(wallet: WalletWithPrivateKeys, conversationId: string, name: string): Promise<void> {
+  await postSigned("/v2/messenger/conversations/update", { conversationId, name: name.trim() }, wallet);
+}
+
+/** Add members (signing keys) to a conversation; the node enforces the 50-member cap. */
+export async function addConversationParticipants(
+  wallet: WalletWithPrivateKeys,
+  conversationId: string,
+  participantIds: string[],
+): Promise<void> {
+  const ids = [...new Set(participantIds.filter(Boolean))];
+  if (ids.length === 0) return;
+  await postSigned("/v2/messenger/conversations/participants", { conversationId, participantIds: ids }, wallet);
+}
+
+/**
+ * Read receipts: mark incoming messages read on the node (sets read_at, which the sender shows as
+ * "Seen", clears the unread badge and starts self-destruct timers) — Qwalla's markRead per message,
+ * fired concurrently. Failures are ignored.
+ */
+export async function markMessagesRead(wallet: WalletWithPrivateKeys, conversationId: string, messageIds: string[]): Promise<void> {
+  if (messageIds.length === 0) return;
+  await Promise.allSettled(
+    messageIds.map((messageId) => postSigned("/v2/messenger/messages/read", { messageId, conversationId }, wallet)),
+  );
+}
+
+/** Snake/camel conversation record from the node → Conversation (participants unresolved). */
+function normalizeConversation(raw: unknown): Conversation | null {
+  if (!raw || typeof raw !== "object") return null;
+  const c = raw as Record<string, unknown>;
+  const id = String(c.id ?? c.conversationId ?? c.conversation_id ?? "");
+  if (!id) return null;
+  return {
+    id,
+    name: (c.name as string | undefined) ?? undefined,
+    isGroup: Boolean(c.is_group ?? c.isGroup ?? false),
+    createdBy: (c.created_by ?? c.createdBy) as string | undefined,
+    createdAt: String(c.created_at ?? c.createdAt ?? new Date().toISOString()),
+    participantIds: (c.participant_ids ?? c.participantIds ?? []) as string[],
+  };
+}
+
 export async function getConversations(walletId: string, currentWallet?: Wallet | WalletWithPrivateKeys): Promise<Conversation[]> {
   const apiBase = getMessengerApiBase();
   if (!apiBase) return [];
@@ -1140,7 +1230,8 @@ export async function sendMessage(
   conversationId: string,
   plaintext: string,
   senderWallet: WalletWithPrivateKeys,
-  recipientEncryptionPublicKey: string,
+  /** One key (1:1) or every other member's key (a group → Qwalla's v2 wrapped-CEK package). */
+  recipientEncryptionPublicKey: string | string[],
   selfDestruct: boolean = false,
   destructAfterSeconds?: number,
   messageType: MessageType = "text",
@@ -1151,12 +1242,17 @@ export async function sendMessage(
     throw new Error("Node API is not configured");
   }
 
-  const encryptData = await encryptMessage(
-    plaintext,
-    recipientEncryptionPublicKey,
-    senderWallet.signingPrivateKey,
-    senderWallet.encryptionPublicKey
-  );
+  const recipients = (Array.isArray(recipientEncryptionPublicKey) ? recipientEncryptionPublicKey : [recipientEncryptionPublicKey])
+    .filter((k, i, a) => k && a.indexOf(k) === i);
+  if (recipients.length === 0) throw new Error("No recipient encryption key");
+  const encryptData = recipients.length > 1
+    ? await encryptAndSignV2(plaintext, recipients, senderWallet.encryptionPublicKey, senderWallet.signingPrivateKey)
+    : await encryptMessage(
+      plaintext,
+      recipients[0],
+      senderWallet.signingPrivateKey,
+      senderWallet.encryptionPublicKey
+    );
 
   const signed = buildSignedRequest(
     {
@@ -1227,7 +1323,9 @@ export async function sendMessage(
 export async function getMessages(
   conversationId: string,
   recipientWallet: WalletWithPrivateKeys,
-  participants: Wallet[]
+  participants: Wallet[],
+  /** Called with the ids of incoming messages (reactions included) nobody marked read yet. */
+  onUnreadIncoming?: (messageIds: string[]) => void,
 ): Promise<Message[]> {
   const apiBase = getMessengerApiBase();
   if (!apiBase) return [];
@@ -1247,6 +1345,8 @@ export async function getMessages(
   const data = await response.json().catch(() => null);
   const rawMessages = Array.isArray(data?.messages) ? data.messages : [];
   const decryptedMessages: Message[] = [];
+  const unreadIncoming: string[] = [];
+  let directory: Wallet[] | null = null;
 
   for (const raw of rawMessages) {
     // Normalize snake_case from server to camelCase
@@ -1270,10 +1370,10 @@ export async function getMessages(
       p.encryptionPublicKey === msg.senderWalletId
     );
 
-    // If not found in participants, try fetching from server
+    // If not found in participants, try fetching from server (once per load)
     if (!sender && msg.senderWalletId) {
       try {
-        const allWallets = await getWallets();
+        const allWallets = directory ?? (directory = await getWallets());
         sender = allWallets.find(w =>
           w.id === msg.senderWalletId ||
           w.signingPublicKey === msg.senderWalletId ||
@@ -1311,18 +1411,32 @@ export async function getMessages(
       (recipientWallet.signingPublicKey &&
         msg.senderWalletId?.startsWith(recipientWallet.signingPublicKey.substring(0, 20)));
 
-    if (isOwnMessage) {
-      const storedPlaintext = getSentMessage(msg.id);
-      if (storedPlaintext) {
-        plaintext = storedPlaintext;
-        signatureValid = true;
-      } else if (msg.encryptedContent) {
+    if (!isOwnMessage && msg.id && !msg.readAt && !msg.isRead) unreadIncoming.push(msg.id);
+
+    const groupPackage = !!msg.encryptedContent && isV2Package(msg.encryptedContent);
+
+    if (isOwnMessage && getSentMessage(msg.id)) {
+      plaintext = getSentMessage(msg.id)!;
+      signatureValid = true;
+    } else if (groupPackage) {
+      // Group message (Qwalla v2 wrapped-CEK): my encryption key selects my wrapped CEK.
+      try {
+        plaintext = await decryptV2Package(msg.encryptedContent, recipientWallet.encryptionPrivateKey, recipientWallet.encryptionPublicKey);
+        const signer = isOwnMessage ? recipientWallet.signingPublicKey : senderSigningPublicKey;
+        signatureValid = signer ? verifyPackageSignature(msg.encryptedContent, msg.signature, signer) : false;
+      } catch {
+        plaintext = isOwnMessage ? "[Your encrypted message]" : "[Unable to decrypt]";
+        signatureValid = isOwnMessage;
+      }
+    } else if (isOwnMessage) {
+      if (msg.encryptedContent) {
         try {
           const decryptData = await decryptMessage(
             msg.encryptedContent,
             recipientWallet.encryptionPrivateKey,
             recipientWallet.signingPublicKey,
-            msg.signature
+            msg.signature,
+            true, // my own message: open the sender copy (senderKemCipherText)
           );
           plaintext = decryptData.plaintext;
           signatureValid = decryptData.signatureValid;
@@ -1344,19 +1458,8 @@ export async function getMessages(
         );
         plaintext = decryptData.plaintext;
         signatureValid = senderSigningPublicKey ? decryptData.signatureValid : false;
-
-        if (msg.selfDestruct && !msg.readAt) {
-          const readSigned = buildSignedRequest(
-            { messageId: msg.id, conversationId },
-            recipientWallet.signingPrivateKey,
-            recipientWallet.signingPublicKey,
-          );
-          await fetch(`${apiBase}/v2/messenger/messages/read`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
-            body: JSON.stringify(readSigned),
-          });
-        }
+        // Marking read (read receipts + self-destruct timers) is done by the caller via
+        // onUnreadIncoming → markMessagesRead, for every unread incoming message.
       } catch (e) {
         console.error("Decryption error:", e);
       }
@@ -1398,7 +1501,9 @@ export async function getMessages(
       selfDestruct: msg.selfDestruct,
       destructAfterSeconds: msg.destructAfterSeconds,
       readAt: msg.readAt,
+      isRead: msg.isRead,
       createdAt: msg.createdAt,
+      senderSigningPublicKey: isOwnMessage ? recipientWallet.signingPublicKey : senderSigningPublicKey,
       plaintext: mediaInfo?.mediaFileName || displayPlaintext,
       signatureValid,
       senderDisplayName: sender?.displayName || (isOwnMessage ? "You" : "Unknown"),
@@ -1408,6 +1513,8 @@ export async function getMessages(
       spoiler: raw.spoiler ?? false,
     });
   }
+
+  onUnreadIncoming?.(unreadIncoming);
 
   // Filter out expired self-destruct messages client-side
   const now = Date.now();
