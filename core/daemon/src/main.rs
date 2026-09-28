@@ -698,6 +698,7 @@ async fn main() -> Result<(), String> {
                     
                     // Broadcast to WebSocket clients
                     ws_bc.broadcast_new_block(&block);
+                    ws_bc.broadcast_contract_events(miner.contract_events_in_block(&block));
 
                     // Index the block
                     let _ = idx_bc.index_block(&block);
@@ -1085,6 +1086,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/contract/:addr", get(contract_get))
         .route("/api/contract/:addr/state", get(contract_state))
         .route("/api/contract/:addr/events", get(contract_events))
+        .route("/api/contract/:addr/query", post(contract_query))
         .route("/api/contracts", get(contract_list))
         // EIP-1559 fee info
         .route("/api/fee-info", get(fee_info))
@@ -2657,6 +2659,7 @@ async fn import_block(
         Ok(()) => {
             // Broadcast to WebSocket clients
             state.ws_broadcaster.broadcast_new_block(&block_clone);
+            state.ws_broadcaster.broadcast_contract_events(node.contract_events_in_block(&block_clone));
             // Index the block
             let _ = state.indexer.index_block(&block_clone);
             Ok(Json(ImportBlockResponse { success: true, error: None }))
@@ -9855,9 +9858,10 @@ async fn contract_execute_signed(
     }
     let args = p.get("args").cloned().unwrap_or(serde_json::Value::Null);
     let block_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-    let preview = state.wasm_runtime.query_contract(
+    let preview = state.wasm_runtime.query_contract_ext(
         &state.contract_store, contract_addr, method, &args, &body.public_key,
         state.node.native_balances_quanta(), tip + 1, block_time,
+        state.node.game_ext_for_preview(tip + 1),
     ).map_err(gr_err)?;
     if !preview.success {
         return Err(gr_err(format!("call would fail: {}", preview.error.unwrap_or_default())));
@@ -10150,6 +10154,35 @@ async fn contract_state(
     }
 }
 
+/// POST /api/contract/:addr/query — read-only dry run against the live ledger (no signature,
+/// no fee, commits nothing). Body: {method, args?, caller?}.
+async fn contract_query(
+    State(state): State<AppState>,
+    Path(addr): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let method = body.get("method").and_then(|v| v.as_str()).unwrap_or_default();
+    if method.is_empty() {
+        return Err(gr_err("method is required"));
+    }
+    let args = body.get("args").cloned().unwrap_or(serde_json::Value::Null);
+    let caller = body.get("caller").and_then(|v| v.as_str()).unwrap_or("");
+    let height = state.node.get_tip_height().unwrap_or(0) + 1;
+    let block_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let r = state.wasm_runtime.query_contract_ext(
+        &state.contract_store, &addr, method, &args, caller,
+        state.node.native_balances_quanta(), height, block_time,
+        state.node.game_ext_for_preview(height),
+    ).map_err(gr_err)?;
+    Ok(Json(serde_json::json!({
+        "success": r.success,
+        "returnData": r.return_data,
+        "gasUsed": r.gas_used,
+        "events": r.events,
+        "error": r.error,
+    })))
+}
+
 /// Get events for a contract
 async fn contract_events(
     State(state): State<AppState>,
@@ -10158,9 +10191,11 @@ async fn contract_events(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let limit = params.get("limit")
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(50);
-
-    match state.contract_store.get_events(&addr, limit) {
+        .unwrap_or(50)
+        .clamp(1, 1000);
+    let before = params.get("before").and_then(|s| s.parse::<u64>().ok());
+    let tx = params.get("tx").map(|s| s.as_str());
+    match state.contract_store.get_events_page(&addr, limit, before, tx) {
         Ok(events) => Ok(Json(serde_json::json!({
             "success": true,
             "events": events,

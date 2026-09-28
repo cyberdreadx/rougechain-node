@@ -239,6 +239,60 @@ pub fn game_ready_active(height: u64) -> bool {
     matches!(game_ready_activation_height(), Some(a) if height >= a)
 }
 
+/// GAME_READY 2 — contracts hold and move custom tokens and NFTs, create NFT collections and
+/// mint to players, and draw per-transaction randomness (`quantum_vault_vm::game`). From this
+/// height every contract call runs with those host functions linked and with contract-supplied
+/// addresses canonicalised; NFT owner checks compare canonical addresses. Before it, the VM links
+/// exactly the old host functions, so a module importing the new ones fails like on old nodes.
+/// NFT and contract-storage state are not yet in the state root (see GAME_READY_SCOPE.md).
+/// `None` = not scheduled.
+pub const GAME_READY_2_ACTIVATION_HEIGHT: Option<u64> = None;
+#[cfg(test)]
+thread_local! {
+    static TEST_GAME_READY_2_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+pub(crate) fn set_test_game_ready_2(h: Option<u64>) {
+    TEST_GAME_READY_2_OVERRIDE.with(|c| c.set(Some(h)));
+}
+#[inline]
+pub fn game_ready_2_active(height: u64) -> bool {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_GAME_READY_2_OVERRIDE.with(|c| c.get()) {
+            return matches!(h, Some(a) if height >= a);
+        }
+    }
+    matches!(GAME_READY_2_ACTIVATION_HEIGHT, Some(a) if height >= a)
+}
+
+/// Owner check for NFT transactions: exact match, or (from GAME_READY 2) the same canonical
+/// address — so a token a contract minted to a rouge1 address can be moved by its key's owner.
+fn nft_owner_matches(owner: &str, signer: &str, height: u64) -> bool {
+    owner == signer || (game_ready_2_active(height) && canon_addr(owner) == canon_addr(signer))
+}
+
+/// Chain state a contract sees through the GAME_READY 2 host functions.
+struct NodeChainView {
+    tokens: HashMap<TokenBalanceKey, u128>,
+    nfts: NftStore,
+}
+
+impl quantum_vault_vm::ChainView for NodeChainView {
+    fn canon(&self, addr: &str) -> String { canon_addr(addr) }
+    fn token_balance(&self, owner: &str, symbol: &str) -> u128 {
+        *self.tokens.get(&(owner.to_string(), symbol.to_string())).unwrap_or(&0)
+    }
+    fn nft_owner(&self, collection_id: &str, token_id: u64) -> Option<(String, bool)> {
+        self.nfts.get_token(collection_id, token_id).ok().flatten().map(|t| (t.owner, t.locked))
+    }
+    fn nft_collection(&self, collection_id: &str) -> Option<quantum_vault_vm::CollectionView> {
+        self.nfts.get_collection(collection_id).ok().flatten().map(|c| quantum_vault_vm::CollectionView {
+            creator: c.creator, max_supply: c.max_supply, minted: c.minted, frozen: c.frozen,
+        })
+    }
+}
+
 /// Whether `tx` is a contract transaction in the player-signed `/api/v2/*` format (a signed
 /// payload that is not a CLI envelope).
 fn is_player_signed_contract_tx(tx: &TxV1) -> bool {
@@ -429,6 +483,9 @@ pub struct L1Node {
     allowance_store: AllowanceStore,
     nullifier_store: NullifierStore,
     receipt_store: ReceiptStore,
+    /// Outcome of each executed contract_call (tx hash → success, gas, error), taken by
+    /// `generate_receipts` once the block is persisted. Off-consensus bookkeeping.
+    contract_outcomes: Arc<Mutex<HashMap<String, (bool, u64, Option<String>)>>>,
     /// C1: canonical tx hash -> height of the accepted block that included it (see
     /// `TX_UNIQUENESS_ACTIVATION_HEIGHT`). Written only after a block is durable; rebuilt
     /// from the stored chain on every start.
@@ -577,6 +634,7 @@ impl L1Node {
             commitment_store,
             nullifier_store,
             receipt_store,
+            contract_outcomes: Arc::new(Mutex::new(HashMap::new())),
             lock_store,
             multisig_store,
             token_stake_store,
@@ -869,6 +927,21 @@ impl L1Node {
     }
 
     /// Inject the contract store for WASM bytecode access during block import.
+    /// Events that contract calls in `block` emitted (after the block was accepted).
+    pub fn contract_events_in_block(&self, block: &BlockV1) -> Vec<quantum_vault_vm::ContractEvent> {
+        let Some(ref cs) = self.contract_store else { return Vec::new() };
+        let mut out = Vec::new();
+        for tx in block.txs.iter().filter(|t| t.tx_type == "contract_call") {
+            let Some(addr) = tx.payload.contract_addr.as_deref() else { continue };
+            let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
+            if let Ok(mut evs) = cs.get_events_page(addr, 256, Some(block.header.height + 1), Some(&tx_hash)) {
+                evs.reverse(); // emission order
+                out.extend(evs);
+            }
+        }
+        out
+    }
+
     pub fn set_contract_store(&mut self, cs: Arc<ContractStore>) {
         self.contract_store = Some(cs);
     }
@@ -1518,7 +1591,7 @@ impl L1Node {
             };
 
             receipts.push(TxReceipt {
-                tx_hash,
+                tx_hash: tx_hash.clone(),
                 block_height: block.header.height,
                 block_hash: block.hash.clone(),
                 index: index as u32,
@@ -1536,6 +1609,11 @@ impl L1Node {
                         Some(ValidatorExecution::StakeApplied { .. }) | Some(ValidatorExecution::UnstakeApplied { .. }) => TxStatus::Success,
                         Some(ValidatorExecution::Failed(reason)) => TxStatus::Failed(reason.clone()),
                         None => TxStatus::Failed("missing validator execution result".to_string()),
+                    }
+                } else if tx.tx_type == "contract_call" {
+                    match self.contract_outcomes.lock().ok().and_then(|mut o| o.remove(&tx_hash)) {
+                        Some((true, _, _)) | None => TxStatus::Success,
+                        Some((false, _, err)) => TxStatus::Failed(err.unwrap_or_else(|| "contract call failed".to_string())),
                     }
                 } else {
                     TxStatus::Success
@@ -3730,6 +3808,18 @@ impl L1Node {
         self.balances.lock().map(|b| b.clone()).unwrap_or_default()
     }
 
+    /// GAME_READY 2 extension for a read-only preview at `height` (None before activation).
+    /// Randomness in a preview is illustrative only: the real roll uses the mined tx's hash.
+    pub fn game_ext_for_preview(&self, height: u64) -> Option<quantum_vault_vm::GameExt> {
+        if !game_ready_2_active(height) { return None; }
+        let tokens = self.token_balances.lock().map(|t| t.clone()).unwrap_or_default();
+        let tip_hash = self.store.get_tip().map(|t| t.hash).unwrap_or_default();
+        Some(quantum_vault_vm::GameExt {
+            view: Arc::new(NodeChainView { tokens, nfts: self.nft_store.clone() }),
+            seed: quantum_vault_vm::game::random_seed(&tip_hash, "preview"),
+        })
+    }
+
     /// Public accessor for the current ledger state root (display/debugging).
     /// Lets an operator compare nodes at the same height to spot divergence; it
     /// is the same value the block header commits at/after activation.
@@ -4170,7 +4260,8 @@ impl L1Node {
         let touches_amm = has(&|t| matches!(t,
             "create_pool" | "add_liquidity" | "remove_liquidity" | "swap"
             | "place_limit_order" | "cancel_limit_order"));
-        let touches_nft = has(&|t| t.starts_with("nft_"));
+        // Contract calls can create/mint/move NFTs from GAME_READY 2.
+        let touches_nft = has(&|t| t.starts_with("nft_") || t == "contract_call");
         let touches_contract = has(&|t| t.starts_with("contract_"));
 
         let mut handles: Vec<sled::Tree> = Vec::new();
@@ -4406,6 +4497,7 @@ impl L1Node {
                 &mut balances,
                 tx,
                 block.header.time,
+                block.header.height,
             )?;
             let after_nft = balances.values().sum::<u128>();
             let deducted_nft = before_nft.saturating_sub(after_nft);
@@ -4718,7 +4810,11 @@ impl L1Node {
                             // Real call args from the tx payload (P3-2) — not an empty map.
                             let args = tx.payload.contract_args.clone()
                                 .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
-                            match rt.execute_contract(
+                            let game = game_ready_2_active(block.header.height).then(|| quantum_vault_vm::GameExt {
+                                view: Arc::new(NodeChainView { tokens: token_balances.clone(), nfts: self.nft_store.clone() }),
+                                seed: quantum_vault_vm::game::random_seed(&block.header.prev_hash, &tx_hash_str),
+                            });
+                            match rt.execute_contract_ext(
                                 cs,
                                 contract_addr,
                                 method,
@@ -4729,9 +4825,14 @@ impl L1Node {
                                 call_balances,
                                 gas_limit,
                                 &tx_hash_str,
+                                game,
                             ) {
                                 Ok(result) => {
                                     block_fuel_used += result.gas_used;
+                                    if let Ok(mut o) = self.contract_outcomes.lock() {
+                                        if o.len() > 10_000 { o.clear(); } // stale entries from rejected blocks
+                                        o.insert(tx_hash_str.clone(), (result.success, result.gas_used, result.error.clone()));
+                                    }
                                     eprintln!("[node] contract_call {} method={} gas={} success={}",
                                         &contract_addr[..16.min(contract_addr.len())], method, result.gas_used, result.success);
 
@@ -4749,15 +4850,21 @@ impl L1Node {
                                         if did_cross_call {
                                             eprintln!("[node] contract_call {} used cross-calls; XRGE deltas NOT applied (single-hop v1)",
                                                 &contract_addr[..16.min(contract_addr.len())]);
-                                        } else if let Some(ref deltas) = result.balance_deltas {
-                                            // Conservation + overdraft enforced here; an Err
-                                            // means the VM emitted invalid deltas — a genuine
-                                            // invariant break, so fail closed (reject block).
-                                            crate::units::apply_balance_deltas(&mut balances, deltas)
-                                                .map_err(|e| format!(
-                                                    "contract {} balance deltas rejected: {}",
-                                                    contract_addr, e
-                                                ))?;
+                                        } else {
+                                            if let Some(ref deltas) = result.balance_deltas {
+                                                // Conservation + overdraft enforced here; an Err
+                                                // means the VM emitted invalid deltas — a genuine
+                                                // invariant break, so fail closed (reject block).
+                                                crate::units::apply_balance_deltas(&mut balances, deltas)
+                                                    .map_err(|e| format!(
+                                                        "contract {} balance deltas rejected: {}",
+                                                        contract_addr, e
+                                                    ))?;
+                                            }
+                                            if let Some(ref effects) = result.effects {
+                                                self.apply_contract_effects(&mut token_balances, effects, block.header.time)
+                                                    .map_err(|e| format!("contract {} effects rejected: {}", contract_addr, e))?;
+                                            }
                                         }
                                     }
                                 }
@@ -6954,11 +7061,93 @@ impl L1Node {
     }
 
     /// Apply NFT transaction effects during block processing
+    /// Apply a successful contract call's GAME_READY 2 token/NFT effects, in order. The VM
+    /// validated them against the same state, so a failure here is an invariant break and the
+    /// caller rejects the block (like invalid XRGE deltas).
+    fn apply_contract_effects(
+        &self,
+        token_balances: &mut HashMap<TokenBalanceKey, u128>,
+        effects: &[quantum_vault_vm::ChainEffect],
+        block_time: u64,
+    ) -> Result<(), String> {
+        use quantum_vault_vm::ChainEffect as E;
+        for e in effects {
+            match e {
+                E::TokenTransfer { symbol, from, to, amount } => {
+                    let from_key = (canon_addr(from), symbol.clone());
+                    let have = *token_balances.get(&from_key).unwrap_or(&0);
+                    if have < *amount {
+                        return Err(format!("token overdraft: {} has {} {}, moving {}", from, have, symbol, amount));
+                    }
+                    token_balances.insert(from_key, have - amount);
+                    *token_balances.entry((canon_addr(to), symbol.clone())).or_insert(0) += amount;
+                }
+                E::NftCreateCollection { collection_id, symbol, name, creator, max_supply } => {
+                    if self.nft_store.get_collection(collection_id)?.is_some() {
+                        return Err(format!("collection {} already exists", collection_id));
+                    }
+                    self.nft_store.save_collection(&NftCollection {
+                        collection_id: collection_id.clone(),
+                        symbol: symbol.clone(),
+                        name: name.clone(),
+                        creator: creator.clone(),
+                        description: None,
+                        image: None,
+                        max_supply: *max_supply,
+                        minted: 0,
+                        royalty_bps: 0,
+                        royalty_recipient: creator.clone(),
+                        frozen: false,
+                        created_at: block_time,
+                        public_mint: false,
+                        mint_price: None,
+                        token_gate_symbol: None,
+                        token_gate_amount: None,
+                        discount_pct: None,
+                    })?;
+                }
+                E::NftMint { collection_id, token_id, to, name, metadata } => {
+                    let mut col = self.nft_store.get_collection(collection_id)?
+                        .ok_or_else(|| format!("collection {} not found", collection_id))?;
+                    if col.minted + 1 != *token_id {
+                        return Err(format!("mint id {} out of sequence for {}", token_id, collection_id));
+                    }
+                    col.minted = *token_id;
+                    self.nft_store.save_collection(&col)?;
+                    self.nft_store.save_token(&NftToken {
+                        collection_id: collection_id.clone(),
+                        token_id: *token_id,
+                        owner: to.clone(),
+                        creator: col.creator.clone(),
+                        name: name.clone(),
+                        metadata_uri: None,
+                        attributes: metadata.clone(),
+                        locked: false,
+                        minted_at: block_time,
+                        transferred_at: block_time,
+                    })?;
+                }
+                E::NftTransfer { collection_id, token_id, from, to } => {
+                    let mut t = self.nft_store.get_token(collection_id, *token_id)?
+                        .ok_or_else(|| format!("NFT {}:{} not found", collection_id, token_id))?;
+                    if t.owner != *from || t.locked {
+                        return Err(format!("NFT {}:{} moved or locked since the call was checked", collection_id, token_id));
+                    }
+                    t.owner = to.clone();
+                    t.transferred_at = block_time;
+                    self.nft_store.save_token(&t)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn apply_nft_tx_inner(
         &self,
         balances: &mut HashMap<String, u128>,
         tx: &TxV1,
         block_time: u64,
+        block_height: u64,
     ) -> Result<(), String> {
         match tx.tx_type.as_str() {
             "nft_create_collection" => {
@@ -7147,7 +7336,7 @@ impl L1Node {
                     }
                 };
 
-                if token.owner != tx.from_pub_key {
+                if !nft_owner_matches(&token.owner, &tx.from_pub_key, block_height) {
                     eprintln!("[node] Warning: NFT {}:{} not owned by sender, skipping transfer", col_id, token_id);
                     return Ok(());
                 }
@@ -7193,7 +7382,7 @@ impl L1Node {
                 let token_id = tx.payload.nft_token_id.ok_or("missing nft_token_id")?;
 
                 if let Some(token) = self.nft_store.get_token(col_id, token_id)? {
-                    if token.owner != tx.from_pub_key {
+                    if !nft_owner_matches(&token.owner, &tx.from_pub_key, block_height) {
                         eprintln!("[node] Warning: NFT {}:{} not owned by sender, skipping burn", col_id, token_id);
                         return Ok(());
                     }
@@ -7221,7 +7410,7 @@ impl L1Node {
                     None => return Ok(()),
                 };
 
-                if token.owner != tx.from_pub_key {
+                if !nft_owner_matches(&token.owner, &tx.from_pub_key, block_height) {
                     eprintln!("[node] Warning: NFT {}:{} not owned by sender, skipping lock", col_id, token_id);
                     return Ok(());
                 }
@@ -7296,7 +7485,7 @@ impl L1Node {
                         }
                         // Ensure sender has enough balance for fee checks during rebuild
                         *dummy_balances.entry(tx.from_pub_key.clone()).or_insert(0) += xrge_f64_to_quanta(tx.fee + 1.0);
-                        let _ = self.apply_nft_tx_inner(&mut dummy_balances, tx, block.header.time);
+                        let _ = self.apply_nft_tx_inner(&mut dummy_balances, tx, block.header.time, block.header.height);
                     }
                     _ => {}
                 }
@@ -11120,6 +11309,189 @@ mod game_ready_tests {
         assert!(err.contains("must be signed by its caller"), "{err}");
         // The mempool refuses it too, so the producer never builds such a block.
         assert!(e.node.add_tx_to_mempool_verified(tx).unwrap_err().contains("must be signed by its caller"));
+    }
+
+    // ── GAME_READY 2: tokens, NFTs, randomness ────────────────────────────
+    /// `play`: rolls 32 random bytes, creates its own LOOT collection, mints a Sword to the
+    /// caller, pays the caller 5 GOLD from its own tokens and 1 XRGE from its own balance.
+    /// Result codes land in storage: mint (i64 id), xfer, roll (32 bytes), xrge.
+    const WAT_GAME: &str = r#"
+    (module
+      (import "env" "host_get_caller"            (func $gc (param i32 i32) (result i32)))
+      (import "env" "host_storage_write"         (func $sw (param i32 i32 i32 i32)))
+      (import "env" "host_transfer"              (func $xt (param i32 i32 i64) (result i32)))
+      (import "env" "host_token_transfer"        (func $tt (param i32 i32 i32 i32 i64) (result i32)))
+      (import "env" "host_nft_create_collection" (func $cc (param i32 i32 i32 i32 i64 i32 i32) (result i32)))
+      (import "env" "host_nft_mint"              (func $nm (param i32 i32 i32 i32 i32 i32 i32 i32) (result i64)))
+      (import "env" "host_random"                (func $rn (param i32) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0)  "LOOT")
+      (data (i32.const 8)  "Loot")
+      (data (i32.const 16) "GOLD")
+      (data (i32.const 24) "Sword")
+      (data (i32.const 32) "mint")
+      (data (i32.const 40) "xfer")
+      (data (i32.const 48) "roll")
+      (data (i32.const 56) "xrge")
+      (data (i32.const 64) "{\"power\":7}")
+      (func (export "play") (local $n i32) (local $c i32)
+        (local.set $n (call $gc (i32.const 20000) (i32.const 8192)))
+        (local.set $c (call $cc (i32.const 0) (i32.const 4) (i32.const 8) (i32.const 4) (i64.const 0) (i32.const 100) (i32.const 200)))
+        (i64.store (i32.const 300)
+          (call $nm (i32.const 100) (local.get $c) (i32.const 20000) (local.get $n) (i32.const 24) (i32.const 5) (i32.const 64) (i32.const 11)))
+        (call $sw (i32.const 32) (i32.const 4) (i32.const 300) (i32.const 8))
+        (i32.store (i32.const 310) (call $tt (i32.const 16) (i32.const 4) (i32.const 20000) (local.get $n) (i64.const 5)))
+        (call $sw (i32.const 40) (i32.const 4) (i32.const 310) (i32.const 4))
+        (drop (call $rn (i32.const 400)))
+        (call $sw (i32.const 48) (i32.const 4) (i32.const 400) (i32.const 32))
+        (i32.store (i32.const 320) (call $xt (i32.const 20000) (local.get $n) (i64.const 1000000000)))
+        (call $sw (i32.const 56) (i32.const 4) (i32.const 320) (i32.const 4))))
+    "#;
+
+    fn deploy_game(e: &Env) -> String {
+        use base64::Engine as _;
+        let wasm = wat::parse_str(WAT_GAME).unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&wasm);
+        let pk = e.player.public_key_hex.clone();
+        let deploy = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        mine(e, deploy).expect("deploy");
+        // Treasure: 100 GOLD and 10 XRGE sent to the contract earlier.
+        e.node.token_balances.lock().unwrap().insert((addr.clone(), "GOLD".to_string()), 100);
+        fund_xrge(&e.node, &addr, 10.0);
+        addr
+    }
+
+    /// Mine `tx` into a block on the node itself (producer path: applies contract custody and
+    /// commits the post-state root, which these tests enable).
+    fn mine(e: &Env, tx: TxV1) -> Result<String, String> {
+        let hash = compute_single_tx_hash(&tx);
+        e.node.add_tx_to_mempool_verified(tx)?;
+        match e.node.mine_pending()? {
+            Some(b) if !b.txs.is_empty() => Ok(hash),
+            _ => Err("contract_call execution failed: tx not mined".into()),
+        }
+    }
+
+    fn play(e: &Env, addr: &str, nonce: u64, n: &str) -> Result<String, String> {
+        let pk = e.player.public_key_hex.clone();
+        mine(e, v2(&e.player, "contract_call",
+            &json!({ "from": pk, "contractAddr": addr, "method": "play", "gasLimit": 1_000_000, "timestamp": nonce, "nonce": n }), nonce))
+    }
+
+    #[test]
+    fn game_ready_2_contract_mints_nfts_pays_tokens_and_rolls() {
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0))); // custody + state root on
+        set_test_game_ready_2(Some(1));
+        let pk = e.player.public_key_hex.clone();
+        let player = canon_addr(&pk);
+        let addr = deploy_game(&e);
+        let xrge_before = bal(&e, &pk);
+
+        let h = play(&e, &addr, 2, "aaaaaaaabbbbbbbb").expect("game call accepted");
+        assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success));
+
+        let cs = e.node.contract_store.as_ref().unwrap();
+        let st = cs.load_all_state(&addr).unwrap();
+        let get = |k: &str| st.get(k.as_bytes()).cloned().unwrap_or_default();
+        assert_eq!(i64::from_le_bytes(get("mint").try_into().unwrap()), 1, "minted token #1");
+        assert_eq!(i32::from_le_bytes(get("xfer").try_into().unwrap()), 0, "token transfer ok");
+        assert_eq!(i32::from_le_bytes(get("xrge").try_into().unwrap()), 0, "xrge transfer ok");
+        assert_eq!(get("roll").len(), 32);
+        assert!(get("roll").iter().any(|b| *b != 0));
+
+        // Tokens: pubkey the contract passed was canonicalised to the player's ledger entry.
+        let tb = e.node.token_balances.lock().unwrap().clone();
+        assert_eq!(tb.get(&(player.clone(), "GOLD".to_string())), Some(&5));
+        assert_eq!(tb.get(&(addr.clone(), "GOLD".to_string())), Some(&95));
+        assert!(tb.get(&(pk.clone(), "GOLD".to_string())).is_none(), "no split pubkey bucket");
+        // XRGE: 1 XRGE arrived (minus the gas fee paid by the player).
+        assert!((bal(&e, &pk) - (xrge_before + 1.0 - 1.0)).abs() < 1e-9, "paid 1 XRGE, spent 1 XRGE gas");
+
+        // NFTs: the contract owns the collection; the player owns the sword with its attributes.
+        let col_id = crate::nft_store::NftCollection::make_collection_id(&addr, "LOOT");
+        let col = e.node.nft_store.get_collection(&col_id).unwrap().expect("collection");
+        assert_eq!(col.creator, addr);
+        assert_eq!(col.minted, 1);
+        let sword = e.node.nft_store.get_token(&col_id, 1).unwrap().expect("token");
+        assert_eq!(sword.owner, pk);
+        assert_eq!(sword.name, "Sword");
+        assert_eq!(sword.attributes, Some(json!({ "power": 7 })));
+
+        // Second play: collection exists (create returns -1), but minting continues at #2.
+        play(&e, &addr, 3, "ccccccccdddddddd").expect("second call");
+        let st2 = cs.load_all_state(&addr).unwrap();
+        assert_ne!(st2.get(b"roll".as_slice()), st.get(b"roll".as_slice()), "new tx, new roll");
+        assert_eq!(e.node.nft_store.get_collection(&col_id).unwrap().unwrap().minted, 1,
+            "create failed (-1) so the id passed to mint was invalid; nothing minted");
+        assert_eq!(e.node.token_balances.lock().unwrap().get(&(player.clone(), "GOLD".to_string())), Some(&10));
+        // A call that reverts is included (the player pays gas) but its receipt says Failed.
+        let pk2 = e.player.public_key_hex.clone();
+        let h = mine(&e, v2(&e.player, "contract_call",
+            &json!({ "from": pk2, "contractAddr": addr, "method": "missing", "gasLimit": 1_000, "timestamp": 4, "nonce": "eeeeeeeeffffffff" }), 4))
+            .expect("failing call still mined");
+        match e.node.get_receipt(&h).unwrap().unwrap().status {
+            TxStatus::Failed(r) => assert!(r.contains("missing"), "{r}"),
+            s => panic!("expected Failed, got {:?}", s),
+        }
+        set_test_game_ready_2(None);
+    }
+
+    /// The shipped example (contracts/loot_roll) end to end: setup, stock the treasury, 40 rolls.
+    #[test]
+    fn loot_roll_example_pays_prizes_from_its_treasury() {
+        use base64::Engine as _;
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_game_ready_2(Some(1));
+        let wasm = include_bytes!("../../../contracts/loot_roll/loot_roll.wasm");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(wasm);
+        let pk = e.player.public_key_hex.clone();
+        let player = canon_addr(&pk);
+        let deploy = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        mine(&e, deploy).expect("deploy");
+        let call = |method: &str, nonce: u64| {
+            mine(&e, v2(&e.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": method,
+                "gasLimit": 200_000, "timestamp": nonce, "nonce": format!("{:016x}", nonce) }), nonce)).expect(method)
+        };
+        call("setup", 2);
+        e.node.token_balances.lock().unwrap().insert((addr.clone(), "GOLD".to_string()), 1_000);
+        fund_xrge(&e.node, &addr, 100.0);
+
+        let cs = e.node.contract_store.as_ref().unwrap();
+        let mut prizes = std::collections::HashMap::<String, u32>::new();
+        for i in 0..40u64 {
+            let h = call("roll", 3 + i);
+            assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success));
+            let ev = cs.get_events_page(&addr, 1, None, Some(&h)).unwrap();
+            let v: Value = serde_json::from_str(&ev[0].data).unwrap();
+            assert!(v["roll"].as_u64().unwrap() < 100);
+            *prizes.entry(v["prize"].as_str().unwrap().to_string()).or_default() += 1;
+        }
+        let gold = *prizes.get("gold").unwrap_or(&0) as u128;
+        let xrge = *prizes.get("xrge").unwrap_or(&0);
+        let swords = *prizes.get("sword").unwrap_or(&0) as u64;
+        assert!(gold + xrge as u128 + swords as u128 > 0, "40 rolls won something: {:?}", prizes);
+        let tb = e.node.token_balances.lock().unwrap().clone();
+        assert_eq!(tb.get(&(player.clone(), "GOLD".to_string())).copied().unwrap_or(0), gold * 10);
+        assert_eq!(tb.get(&(addr.clone(), "GOLD".to_string())).copied().unwrap_or(0), 1_000 - gold * 10);
+        assert!((e.node.get_balance(&addr).unwrap() - (100.0 - 0.5 * xrge as f64)).abs() < 1e-9);
+        let col_id = crate::nft_store::NftCollection::make_collection_id(&addr, "LOOT");
+        assert_eq!(e.node.nft_store.get_collection(&col_id).unwrap().unwrap().minted, swords);
+        set_test_game_ready_2(None);
+    }
+
+    #[test]
+    fn before_game_ready_2_a_game_contract_cannot_run() {
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_game_ready_2(None);
+        let addr = deploy_game(&e);
+        let err = play(&e, &addr, 2, "aaaaaaaabbbbbbbb").unwrap_err();
+        assert!(err.contains("contract_call execution failed"), "{err}");
+        assert_eq!(e.node.token_balances.lock().unwrap().get(&(addr.clone(), "GOLD".to_string())), Some(&100), "nothing moved");
     }
 
     #[test]

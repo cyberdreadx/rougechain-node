@@ -84,6 +84,14 @@ pub enum WsEvent {
         /// Participants' signing public keys.
         participant_ids: Vec<String>,
     },
+    /// A contract emitted an event in an accepted block. Topics: `contract:<addr>` and `contracts`.
+    ContractEvent {
+        contract_addr: String,
+        topic: String,
+        data: String,
+        block_height: u64,
+        tx_hash: String,
+    },
     /// Subscription confirmation
     Subscribed {
         topics: Vec<String>,
@@ -113,6 +121,9 @@ impl WsEvent {
             }
             WsEvent::NewMessage { participant_ids, .. } => {
                 participant_ids.iter().map(|pk| inbox_topic(pk)).collect()
+            }
+            WsEvent::ContractEvent { contract_addr, .. } => {
+                vec![format!("contract:{}", contract_addr), "contracts".to_string()]
             }
             WsEvent::Subscribed { .. } => vec![], // Always sent to the requesting client
         }
@@ -194,6 +205,19 @@ impl WsBroadcaster {
             tx_count: block.txs.len(),
             timestamp: block.header.time,
         });
+    }
+
+    /// Broadcast the events contracts emitted in an accepted block.
+    pub fn broadcast_contract_events(&self, events: Vec<quantum_vault_vm::ContractEvent>) {
+        for e in events {
+            self.broadcast(WsEvent::ContractEvent {
+                contract_addr: e.contract_addr,
+                topic: e.topic,
+                data: e.data,
+                block_height: e.block_height,
+                tx_hash: e.tx_hash,
+            });
+        }
     }
 
     /// Broadcast a new transaction event

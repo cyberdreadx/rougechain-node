@@ -41,6 +41,9 @@ pub struct HostEnv {
     /// The call's arguments as canonical JSON bytes, readable by the contract through
     /// `host_get_args_len` / `host_read_args`. Empty object (`{}`) when none were given.
     pub args: Vec<u8>,
+    /// GAME_READY 2: token/NFT/randomness host functions and address canonicalisation. `None`
+    /// before activation (and in cross-contract sub-calls), which keeps the old behaviour exactly.
+    pub game: Option<crate::game::GameState>,
 }
 
 impl HostEnv {
@@ -69,6 +72,7 @@ impl HostEnv {
             cross_call_results: Vec::new(),
             call_depth: 0,
             args: b"{}".to_vec(),
+            game: None,
         }
     }
 }
@@ -164,7 +168,8 @@ pub fn register_host_functions(linker: &mut Linker<HostEnv>) -> Result<(), Strin
     linker.func_wrap("env", "host_get_balance",
         |caller: Caller<'_, HostEnv>, addr_ptr: u32, addr_len: u32| -> i64 {
             let mem = get_memory(&caller);
-            let addr = read_string(&caller, &mem, addr_ptr, addr_len);
+            let mut addr = read_string(&caller, &mem, addr_ptr, addr_len);
+            if let Some(g) = caller.data().game.as_ref() { addr = g.canon(&addr); }
             // Quanta as i64; saturate rather than wrap on an implausibly large balance.
             let bal = *caller.data().balances.get(&addr).unwrap_or(&0);
             bal.min(i64::MAX as u128) as i64
@@ -176,7 +181,10 @@ pub fn register_host_functions(linker: &mut Linker<HostEnv>) -> Result<(), Strin
     linker.func_wrap("env", "host_transfer",
         |mut caller: Caller<'_, HostEnv>, to_ptr: u32, to_len: u32, amount: i64| -> i32 {
             let mem = get_memory(&caller);
-            let to_addr = read_string(&caller, &mem, to_ptr, to_len);
+            let mut to_addr = read_string(&caller, &mem, to_ptr, to_len);
+            // GAME_READY 2: pay the recipient's canonical ledger entry even when the contract passes
+            // a public key (which is what host_get_caller returns).
+            if let Some(g) = caller.data().game.as_ref() { to_addr = g.canon(&to_addr); }
             // `amount` is quanta across the i64 boundary; a negative amount is invalid.
             if amount < 0 {
                 return 1;

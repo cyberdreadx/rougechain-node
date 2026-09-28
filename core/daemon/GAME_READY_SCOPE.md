@@ -1,7 +1,8 @@
 # GAME_READY: making RougeChain a contract and game platform
 
 Branch `feat/game-ready-phase0`, based on the deployed line (`9eea813` + Regenerate votes `bf60840`).
-**Phase 0 implemented. Activation not scheduled: `GAME_READY_ACTIVATION_HEIGHT = None`.**
+**Phase 0 ACTIVE on mainnet since block 150. GAME_READY 2 (tokens, NFTs, randomness) implemented;
+activation `GAME_READY_2_ACTIVATION_HEIGHT` — see the release branch.**
 
 ## Why Phase 0 comes first
 
@@ -68,3 +69,42 @@ activation height, so one coordinated upgrade covers both.
    `/api/v2/contract/deploy` blocked; `/api/v2/contract/call` may be opened as a preview).
 5. Verify on mainnet: a node-signed contract tx is refused; a player-signed deploy installs at the
    predicted address; a call records the signer as caller and debits the signer's fee.
+
+## GAME_READY 2 — tokens, NFTs, randomness, live events (branch `feat/game-ready-phase1`)
+
+**Consensus (from `GAME_READY_2_ACTIVATION_HEIGHT`):** every contract call runs with the host
+functions below linked (`quantum_vault_vm::game`); before activation they are not linked, so a
+module importing them fails to instantiate exactly as on older nodes. The VM reads token balances
+and NFTs through a `ChainView` snapshot, keeps a per-call overlay, and returns `ChainEffect`s that
+the node applies in order only when the call succeeds and made no cross-contract calls (single-hop,
+like XRGE). Invalid effects reject the block (fail closed).
+
+| Host function | Result |
+|---|---|
+| `host_token_balance(sym, addr) -> i64` | raw token units (-1 invalid) |
+| `host_token_transfer(sym, to, amount) -> i32` | moves the contract's own tokens; 0 ok, 1 insufficient, 2 invalid |
+| `host_nft_owner(col, id, out, cap) -> i32` | owner bytes written, -1 not found, -2 buffer small |
+| `host_nft_transfer(col, id, to) -> i32` | moves an NFT the contract owns; 0 ok, 1 not the contract's, 2 not found/locked |
+| `host_nft_create_collection(sym, name, max_supply, out, cap) -> i32` | creates `col:<addr[..16]>:<SYM>` owned by the contract; writes the id; -1 exists |
+| `host_nft_mint(col, to, name, meta_json, ...) -> i64` | token id; contract must be the collection creator; -1 not creator, -2 sold out, -3 missing/frozen |
+| `host_random(out) -> i32` | 32 bytes: sha256(sha256("rougechain/rand/v1"‖parent hash‖0‖tx hash) ‖ counter) |
+
+Also from activation: addresses a contract passes (`host_transfer`, `host_get_balance`, token/NFT
+functions) are canonicalised, so paying `host_get_caller()` (a public key) credits the player's
+rouge1 ledger entry; NFT owner checks in `nft_transfer`/`nft_burn`/`nft_lock` compare canonical
+addresses. Randomness is fixed before the tx executes (player can't re-roll a sent tx) but a block
+producer can choose whether to include it — use commit-reveal for high stakes.
+
+**Not in the state root yet:** NFT ownership and contract storage (token balances are). Tracked for
+a later release.
+
+**API (no consensus change):** `POST /api/contract/:addr/query` (read-only dry run), events paging
+`GET /api/contract/:addr/events?limit=&before=&tx=`, WebSocket topic `contract:<addr>` (and
+`contracts`) with `{"type":"contract_event",...}` frames after a block is accepted, contract-call
+receipts report `Failed(error)` when the call reverted.
+
+**Example:** `contracts/loot_roll` (prebuilt `loot_roll.wasm`), exercised end to end by
+`loot_roll_example_pays_prizes_from_its_treasury`.
+
+**Still later:** cross-contract token/NFT/XRGE effects (multi-hop), NFTs + contract storage in the
+state root, validator VRF randomness, lazy storage loading + storage fees.
