@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { isNoteToSelf } from "../../lib/messenger-envelope";
 import {
     ArrowLeft, Send, Lock, Shield, Plus, Loader2,
     MessageCircle, CheckCircle2, XCircle, Timer,
@@ -222,12 +223,12 @@ export default function MessengerTab({ wallet }: Props) {
                         const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
                         const isSelf = (p: any) => myIds.has(p.id) || myIds.has(p.signingPublicKey || "") || myIds.has(p.encryptionPublicKey || "");
                         const hasBot = convo.name === "Quantum Bot" || convo.participants?.some((p: any) => p.id?.startsWith("bot-"));
-                        const isNoteToSelf = !hasBot && (convo.name === "Note to Self" || (convo.participants?.every((p: any) => isSelf(p)) ?? false));
+                        const isNoteToSelfConvo = !hasBot && isNoteToSelf(convo, myIds as Set<string>);
                         let other = convo.participants?.find((p: any) => !isSelf(p));
                         if (!other && wallet.displayName && convo.participants?.length === 2) {
                             other = convo.participants.find((p: any) => p.displayName !== wallet.displayName);
                         }
-                        const displayName = isNoteToSelf
+                        const displayName = isNoteToSelfConvo
                             ? "Note to Self"
                             : (other?.displayName || (convo.name && convo.name !== wallet.displayName ? convo.name : null) || "Unknown");
                         return (
@@ -239,8 +240,8 @@ export default function MessengerTab({ wallet }: Props) {
                                     onClick={() => setSelected(convo)}
                                     className="flex-1 flex items-center gap-2 px-3 py-2.5 text-left min-w-0"
                                 >
-                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${isNoteToSelf ? "bg-amber-500/20" : "bg-primary/20"}`}>
-                                        <MessageCircle className={`w-4 h-4 ${isNoteToSelf ? "text-amber-500" : "text-primary"}`} />
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${isNoteToSelfConvo ? "bg-amber-500/20" : "bg-primary/20"}`}>
+                                        <MessageCircle className={`w-4 h-4 ${isNoteToSelfConvo ? "text-amber-500" : "text-primary"}`} />
                                     </div>
                                     <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-1.5">
@@ -312,10 +313,7 @@ function ChatView({
     const chatIsSelf = (p: any) => chatMyIds.has(p.id) || chatMyIds.has(p.signingPublicKey || "") || chatMyIds.has(p.encryptionPublicKey || "");
 
     const chatHasBot = conversation.name === "Quantum Bot" || conversation.participants?.some((p: any) => p.id?.startsWith("bot-"));
-    const isSelfConversation = !chatHasBot && (
-        conversation.name === "Note to Self" ||
-        (conversation.participants?.every((p: any) => chatIsSelf(p)) ?? false)
-    );
+    const isSelfConversation = !chatHasBot && isNoteToSelf(conversation, chatMyIds as Set<string>);
 
     let participantRecipient = isSelfConversation
         ? { id: wallet.id, displayName: wallet.displayName, signingPublicKey: wallet.signingPublicKey, encryptionPublicKey: wallet.encryptionPublicKey }
@@ -686,6 +684,11 @@ function MessageBubble({ msg, isOwn }: { msg: Message; isOwn: boolean }) {
                     </div>
                 </div>
 
+                {msg.reactions && msg.reactions.length > 0 && (
+                    <div className={`flex gap-0.5 mt-0.5 text-xs ${isOwn ? "justify-end" : ""}`}>
+                        {msg.reactions.map((e, i) => <span key={i}>{e}</span>)}
+                    </div>
+                )}
                 <div className={`flex items-center gap-1 mt-0.5 text-[10px] ${isOwn ? "justify-end" : ""}`}>
                     <span className="opacity-50">{formatTime(msg.createdAt)}</span>
                     {msg.spoiler && <EyeOff className="w-2.5 h-2.5 opacity-50" />}

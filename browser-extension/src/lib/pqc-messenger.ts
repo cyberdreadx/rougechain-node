@@ -2,6 +2,7 @@
  * PQC Messenger — E2E encryption with ML-KEM-768 + ML-DSA-65
  * Adapted from quantum-vault/src/lib/pqc-messenger.ts
  */
+import { applyEnvelopes } from "./messenger-envelope";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
 import { cachedFetch, invalidate } from "./api-cache";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
@@ -33,6 +34,10 @@ export interface Message {
     readAt?: string;
     createdAt: string;
     plaintext?: string;
+    /** Reactions other clients (Qwalla) attached to this message, as emoji. */
+    reactions?: string[];
+    /** Id of the message this one replies to (Qwalla envelopes). */
+    replyTo?: string;
     signatureValid?: boolean;
     senderDisplayName?: string;
     // Media support
@@ -573,7 +578,17 @@ export async function createConversation(
     if (!res.ok) throw new Error(`Failed to create conversation: ${await res.text()}`);
     invalidate("messengerConversations");
     const data = await res.json();
-    return normalizeConversation(data.conversation || data);
+    const conv = normalizeConversation(data.conversation || data);
+    // The create endpoint returns participant ids only; resolve them so the chat knows who it is
+    // talking to (and encrypts for them) instead of treating an empty list as "only me".
+    if ((!conv.participants || conv.participants.length === 0) && conv.participantIds?.length) {
+        const mine = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
+        const wallets = await getWallets().catch(() => [] as Wallet[]);
+        conv.participants = conv.participantIds.map((id: string) =>
+            mine.has(id) ? (wallet as Wallet) : (wallets.find(w => w.id === id || w.signingPublicKey === id || w.encryptionPublicKey === id)
+                ?? ({ id, displayName: "Unknown", signingPublicKey: "", encryptionPublicKey: "" } as Wallet)));
+    }
+    return conv;
 }
 
 export async function getConversations(walletId: string, currentWallet?: Wallet | WalletWithPrivateKeys): Promise<Conversation[]> {
@@ -860,7 +875,7 @@ export async function getMessages(
                 spoiler: (raw as any).spoiler ?? false,
             });
         }
-        return messages;
+        return applyEnvelopes(messages);
     } catch { return []; }
 }
 

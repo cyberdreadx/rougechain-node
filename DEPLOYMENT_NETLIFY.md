@@ -165,3 +165,24 @@ This gives you:
 - ✅ Auto-deployments (GitHub → Netlify)
 - ✅ Free SSL (Netlify)
 - ✅ Easy updates (just push to GitHub)
+
+
+## Testnet website (testnet.rougechain.io)
+
+The testnet site is the same code as rougechain.io, deployed a second time and pinned to testnet.
+Pinned deploys never switch networks in place (a switch reloads onto the other site), so testnet and
+mainnet data can't mix in one browser tab or in local storage.
+
+1. **Netlify → Add new site → Import from GitHub →** `cyberdreadx/quantum-vault`, branch `main`.
+   Build settings come from `netlify.toml`. Name the site **`rougechain-testnet`**
+   (→ `rougechain-testnet.netlify.app`; if you pick another name, change `$testnet_site` in
+   `infra/nginx/testnet.rougechain.io`).
+2. **Environment variables:** copy the main site's variables, then add
+   `VITE_NETWORK_LOCK=testnet`.
+3. **nginx:** `testnet.rougechain.io` keeps `/api/` and `/ws` on the testnet node and passes every
+   other path to that Netlify site (`infra/nginx/testnet.rougechain.io`). DNS doesn't change.
+4. **Optional, once the testnet site is live:** set `VITE_NETWORK_LOCK=mainnet` on the main site, so
+   its network switcher links to testnet.rougechain.io instead of switching in place.
+
+`VITE_MAINNET_SITE_URL` / `VITE_TESTNET_SITE_URL` override the cross-links (defaults:
+`https://rougechain.io`, `https://testnet.rougechain.io`).

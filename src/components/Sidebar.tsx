@@ -27,7 +27,7 @@ import {
   Users,
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
-import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY } from "@/lib/network";
+import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY, switchNetwork } from "@/lib/network";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
@@ -285,10 +285,7 @@ export function Sidebar({ children }: SidebarProps) {
       )}>
         <button
           onClick={() => {
-            const current = getActiveNetwork();
-            const next = current === "mainnet" ? "testnet" : "mainnet";
-            localStorage.setItem(NETWORK_STORAGE_KEY, next);
-            window.location.reload();
+            switchNetwork(getActiveNetwork() === "mainnet" ? "testnet" : "mainnet");
           }}
           className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg bg-card border border-border text-xs hover:border-primary/50 transition-colors cursor-pointer group"
           title="Click to switch network"
@@ -459,10 +456,7 @@ export function Sidebar({ children }: SidebarProps) {
         <LanguageSwitcher compact direction="down" align="right" className="ml-auto" />
         <button
           onClick={() => {
-            const current = getActiveNetwork();
-            const next = current === "mainnet" ? "testnet" : "mainnet";
-            localStorage.setItem(NETWORK_STORAGE_KEY, next);
-            window.location.reload();
+            switchNetwork(getActiveNetwork() === "mainnet" ? "testnet" : "mainnet");
           }}
           className="flex items-center gap-2 px-2 py-1 rounded-full bg-card border border-border text-xs hover:border-primary/50 transition-colors cursor-pointer"
           title={t("nav.switchNetwork")}

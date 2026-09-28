@@ -57,6 +57,13 @@ RougeChain-specific, **not** the EVM/ethers API. In particular there is **no
 `getAddress()` and no `getNetwork()`**; you obtain the user's public key by calling
 `connect()`.
 
+**Which sites get the provider:** from extension **1.6.0**, every `https://` site and
+`http://localhost` / `http://127.0.0.1` — you don't need to ask us to add your domain. The first
+`connect()` from a site opens a "Connect to this site?" prompt; nothing is shared until the user
+approves, and every signature or send is approved separately. Users can review and disconnect sites
+under **Settings → Connected Sites**. Plain `http://` public sites are not supported. (Extension
+1.5.x and earlier injected only on rougechain.io, rougee.app and localhost.)
+
 > ⚠️ **Common mistake:** calling `window.rougechain.getAddress()` throws
 > `e.getAddress is not a function`. That method does not exist — RougeChain is not
 > EVM-compatible. Use `connect()` (below) and read `.publicKey`.
