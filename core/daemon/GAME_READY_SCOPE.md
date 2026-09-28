@@ -135,3 +135,15 @@ is now `roll` (commit) + `settle` (from H+2, expires after 250 blocks). Tests:
 `loot_roll_example_commits_then_settles_from_a_later_block` (every roll recomputed from block H+1's
 hash, the caller and H only — the commit tx is not an input), `host_block_hash_bounds_and_activation`.
 Remaining bias: the single producer could withhold a block; VRF randomness is still planned.
+
+## Payable calls (`PAYABLE_CALLS_ACTIVATION_HEIGHT`)
+
+A `contract_call` may carry a signed `attach: {symbol, amount}` (integer: quanta for XRGE, raw token
+units) → `TxPayload.contract_attach_symbol/amount`. Before activation such a call is invalid. From
+activation the node checks the payer can cover it (else the call isn't executed; gas fee charged),
+credits it to the contract in the balances the call sees (XRGE in the call's balance map, tokens in the
+`ChainView`), and moves it for real only if the call succeeds — so a contract refuses a payment by
+failing the call. `host_get_attached_amount() -> i64`, `host_get_attached_symbol(out, cap) -> i32`;
+sub-calls see no attachment. Execute/query endpoints preview the paid call. `loot_roll`'s `roll` needs
+≥ 0.5 XRGE attached. Test: `payable_calls_move_payment_only_on_success_and_relay_as_json` (two nodes,
+every block relayed as JSON).
