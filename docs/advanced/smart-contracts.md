@@ -55,8 +55,35 @@ Contracts import these from the `env` module:
 | `host_pqc_pubkey_to_address(pk, pklen, out, outlen)` | Derive a `rouge1...` address |
 | `host_pqc_hash_pubkey(pk, pklen, out)` | SHA-256 of a public key |
 
-> **Coming:** native token, NFT and randomness host functions for games are being
-> designed. They are not available yet; this page will document them when they ship.
+### Game functions: tokens, NFTs, randomness (from block 160)
+
+From mainnet block **160** (the GAME_READY 2 upgrade) contracts can also hold and move custom
+tokens and NFTs, run their own NFT collection, and roll dice. A contract only ever moves **its
+own** tokens and NFTs; players stock it by sending tokens/NFTs/XRGE to the contract address.
+
+| Function | Result |
+|----------|--------|
+| `host_token_balance(sym, slen, addr, alen) → i64` | Token balance in the token's raw units (`-1` invalid symbol) |
+| `host_token_transfer(sym, slen, to, tlen, amount) → i32` | Send the contract's tokens: `0` ok, `1` insufficient, `2` invalid |
+| `host_nft_owner(col, clen, id, out, cap) → i32` | Owner written to `out`; `-1` not found, `-2` buffer too small |
+| `host_nft_transfer(col, clen, id, to, tlen) → i32` | Send an NFT the contract owns: `0` ok, `1` not the contract's, `2` not found/locked |
+| `host_nft_create_collection(sym, slen, name, nlen, max_supply, out, cap) → i32` | Create the contract's own collection (`max_supply` 0 = unlimited). Writes the id `col:<first 16 chars of the contract address>:<SYM>`; `-1` if it exists |
+| `host_nft_mint(col, clen, to, tlen, name, nlen, meta, mlen) → i64` | Mint to a player (the contract must be the collection's creator). `meta` is optional JSON attributes. Returns the token id; `-1` not creator, `-2` sold out, `-3` missing/frozen, `-4` invalid |
+| `host_random(out) → i32` | Writes 32 random bytes; every call in a transaction gives new bytes |
+
+Addresses a contract passes are normalised: paying the value `host_get_caller` returns (a public
+key) credits the player's `rouge1…` wallet.
+
+**Randomness:** the bytes are fixed by the parent block hash and the transaction hash, so a player
+cannot re-roll a transaction they already sent. A block producer could still decide whether to
+include a roll, so for high-value outcomes use **commit-reveal** (players commit
+`sha256(secret)` in one call and reveal `secret` in a later one; mix it with `host_random`).
+
+**Limits:** token/NFT/XRGE moves are single-hop — if a call makes cross-contract calls, none of its
+moves are applied. NFT ownership and contract storage aren't in the block state root yet.
+
+A complete example — a loot box paying NFTs, tokens or XRGE — is in
+[`contracts/loot_roll`](https://github.com/cyberdreadx/rougechain-node/tree/main/contracts/loot_roll).
 
 ## Gas Metering & Fees
 
