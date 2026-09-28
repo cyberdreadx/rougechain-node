@@ -256,6 +256,9 @@ const Settings = () => {
           <Row title={t("settings.privacy.discoverable")} hint={t("settings.privacy.discoverableHint")}>
             <Switch checked={discoverable} onCheckedChange={toggleDiscoverable} />
           </Row>
+          <Row title={t("chat.block.title")} hint={t("chat.block.settingsHint")}>
+            <Button size="sm" variant="outline" asChild><Link to="/messenger?panel=blocked">{t("chat.block.manage")}</Link></Button>
+          </Row>
         </Section>
 
         {/* Notifications */}
