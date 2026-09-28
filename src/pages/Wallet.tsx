@@ -24,9 +24,10 @@ import {
 } from "lucide-react";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { useTokenPrices } from "@/hooks/use-token-prices";
-import { useETHPrice, qethToHuman, formatQethForDisplay } from "@/hooks/use-eth-price";
+import { useMajorPrices } from "@/hooks/use-eth-price";
+import { describeAsset } from "@/lib/asset-display";
 import { useTokenMetadata } from "@/hooks/use-token-metadata";
-import { formatUsd, formatTokenPrice } from "@/lib/price-service";
+import { formatUsd } from "@/lib/price-service";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -627,18 +628,17 @@ const Wallet = () => {
   // Get XRGE balance specifically for the main display (native token)
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
   
-  // Calculate total USD value for wallet display (all tokens)
-  const totalUsdValue = balances.reduce((total, b) => {
-    const tokenPrice = tokenPrices[b.symbol];
-    if (tokenPrice) {
-      return total + (b.balance * tokenPrice.priceUsd);
-    }
-    return total;
-  }, 0);
+  const networkLabel = getNetworkLabel(chainIdLabel);
+  const majorPrices = useMajorPrices(60_000);
+  const assetDisplays = balances.map(b => ({
+    b,
+    d: describeAsset(b.symbol, b.balance, { poolPriceUsdPerRaw: tokenPrices[b.symbol]?.priceUsd, majors: majorPrices }),
+  }));
+
+  // Calculate total USD value for wallet display (all priced tokens, same figures as the asset rows)
+  const totalUsdValue = assetDisplays.reduce((total, { d }) => total + (d.usd ?? 0), 0);
   const walletUsdValue = totalUsdValue > 0 ? formatUsd(totalUsdValue) : null;
 
-  const networkLabel = getNetworkLabel(chainIdLabel);
-  const { priceUsd: ethPriceUsd } = useETHPrice(60_000);
 
   const formatLastUpdated = (timestamp: number | null) => {
     if (!timestamp && syncError) return t("wallet.sync.failed");
@@ -652,53 +652,20 @@ const Wallet = () => {
     return t("wallet.sync.hoursAgo", { hours });
   };
 
-  // Convert balances to asset format with USD values (from pools + DexScreener)
-  const assets = balances.map(b => {
-    const isQeth = b.symbol === "qETH";
-    const isQusdc = b.symbol === "qUSDC";
-    // qETH: 1 unit = 10^-6 ETH. qUSDC: 1 unit = 10^-6 USD (6-decimal stablecoin).
-    const displayBalance = isQeth ? qethToHuman(b.balance)
-      : isQusdc ? b.balance / 1_000_000
-      : b.balance;
-    const balanceStr = isQeth ? formatQethForDisplay(b.balance)
-      : isQusdc ? (b.balance / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      : b.balance.toLocaleString();
-
-    const tokenPrice = tokenPrices[b.symbol];
-    let usdValue: string | null = null;
-    if (isQeth && ethPriceUsd !== null) {
-      usdValue = formatUsd(displayBalance * ethPriceUsd);
-    } else if (isQusdc) {
-      usdValue = formatUsd(displayBalance);
-    } else if (tokenPrice) {
-      usdValue = tokenPrice.priceUsd < 0.01
-        ? formatTokenPrice(b.balance * tokenPrice.priceUsd)
-        : formatUsd(b.balance * tokenPrice.priceUsd);
-    }
-
-    const pricePerToken = isQeth && ethPriceUsd !== null
-      ? formatTokenPrice(ethPriceUsd)
-      : isQusdc
-        ? "$1.00"
-        : tokenPrice
-          ? formatTokenPrice(tokenPrice.priceUsd)
-          : null;
-
-    const imageUrl = getTokenImage(b.symbol);
-
-    return {
-      id: b.symbol,
-      name: b.name,
-      symbol: b.symbol,
-      balance: balanceStr,
-      value: isQeth ? `${balanceStr} qETH` : isQusdc ? `${balanceStr} qUSDC` : `${b.balance} ${b.symbol}`,
-      usdValue,
-      pricePerToken,
-      change: 0,
-      icon: b.icon,
-      imageUrl,
-    };
-  });
+  // Convert balances to asset format with USD values (spot for bridged majors, else pools).
+  // Decimals are applied generally (qBTC = 8, qETH/qUSDC = 6, daemon-provided for others).
+  const assets = assetDisplays.map(({ b, d }) => ({
+    id: b.symbol,
+    name: b.name,
+    symbol: b.symbol,
+    balance: d.balance,
+    value: d.value,
+    usdValue: d.usdValue,
+    pricePerToken: d.pricePerToken,
+    change: 0,
+    icon: b.icon,
+    imageUrl: getTokenImage(b.symbol),
+  }));
 
   // Convert transactions to history format
   const txHistory = transactions.map(tx => ({
