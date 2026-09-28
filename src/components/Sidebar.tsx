@@ -25,7 +25,10 @@ import {
   Bot,
   Sprout,
   Users,
+  Settings as SettingsIcon,
 } from "lucide-react";
+import { WalletAvatar } from "@/components/WalletAvatar";
+import { useMyProfile } from "@/hooks/use-my-profile";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY, switchNetwork } from "@/lib/network";
 import { cn } from "@/lib/utils";
@@ -91,6 +94,12 @@ const navGroups: NavGroup[] = [
       { to: "/agents", label: "nav.agents", icon: Bot },
     ],
   },
+  {
+    title: "nav.group.account",
+    items: [
+      { to: "/settings", label: "nav.settings", icon: SettingsIcon },
+    ],
+  },
 ];
 
 function GlobalSearch({ visible }: { visible: boolean }) {
@@ -152,6 +161,7 @@ export function Sidebar({ children }: SidebarProps) {
   const [unreadChats, setUnreadChats] = useState(0);
   const [unreadMail, setUnreadMail] = useState(0);
   const unreadIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const me = useMyProfile();
 
   // Derive wallet address
   useEffect(() => {
@@ -311,7 +321,7 @@ export function Sidebar({ children }: SidebarProps) {
             className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg bg-card border border-border text-xs hover:bg-muted transition-colors cursor-pointer"
             title={walletAddress}
           >
-            <Wallet className="w-3 h-3 flex-shrink-0 text-primary" />
+            <WalletAvatar id={me.signingPublicKey} uri={me.avatar} name={me.displayName} size={18} />
             <span className="font-mono text-foreground/80 truncate">{formatAddress(walletAddress)}</span>
             <span className="ml-auto text-xs text-muted-foreground">{copied ? "✓" : "Copy"}</span>
           </button>
@@ -451,9 +461,14 @@ export function Sidebar({ children }: SidebarProps) {
           <span className="animate-jelly inline-block">
             <img src={xrgeLogo} alt="XRGE" className="w-7 h-7 rounded-full" />
           </span>
-          <span className="font-bold">RougeChain</span>
+          <span className={cn("font-bold", me.signingPublicKey && "hidden min-[400px]:inline")}>RougeChain</span>
         </Link>
         <LanguageSwitcher compact direction="down" align="right" className="ml-auto" />
+        {me.signingPublicKey && (
+          <Link to="/settings" aria-label={t("nav.settings")} className="rounded-full">
+            <WalletAvatar id={me.signingPublicKey} uri={me.avatar} name={me.displayName} size={28} ring />
+          </Link>
+        )}
         <button
           onClick={() => {
             switchNetwork(getActiveNetwork() === "mainnet" ? "testnet" : "mainnet");

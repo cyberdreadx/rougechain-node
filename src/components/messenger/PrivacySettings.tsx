@@ -15,6 +15,7 @@ import {
 } from "@/lib/pqc-messenger";
 import { loadUnifiedWallet, saveUnifiedWallet } from "@/lib/unified-wallet";
 import { toast } from "sonner";
+import { setProfileDisplayName } from "@/lib/profile";
 
 interface PrivacySettingsProps {
   onClose: () => void;
@@ -42,27 +43,16 @@ const PrivacySettings = ({ onClose, onProfileUpdated }: PrivacySettingsProps) =>
     
     setIsSaving(true);
     try {
-      const wallet = loadUnifiedWallet();
-      if (!wallet) throw new Error("No wallet found");
-      
-      // Update local wallet
-      wallet.displayName = displayName.trim();
-      saveUnifiedWallet(wallet);
-      
-      // Re-register with server to update name
-      await registerWalletOnNode({
-        id: wallet.signingPublicKey,
-        displayName: wallet.displayName,
-        signingPublicKey: wallet.signingPublicKey,
-        encryptionPublicKey: wallet.encryptionPublicKey || "",
-      });
-      
+      // Shared with /settings: registers first (so "name taken" keeps the old
+      // name), then saves locally + in the per-key profile store.
+      await setProfileDisplayName(displayName);
+
       setOriginalName(displayName.trim());
       toast.success("Profile updated");
       onProfileUpdated?.();
     } catch (error) {
       console.error("Failed to update profile:", error);
-      toast.error("Failed to update profile");
+      toast.error("Failed to update profile", { description: error instanceof Error ? error.message : undefined });
     } finally {
       setIsSaving(false);
     }

@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import WalletSetup from "@/components/messenger/WalletSetup";
 import type { WalletWithPrivateKeys } from "@/lib/pqc-messenger";
 import { registerWalletOnNode, resolveMessagingWallet } from "@/lib/pqc-messenger";
+import { WalletAvatar } from "@/components/WalletAvatar";
 import {
   getInbox, getSent, getTrash,
   sendMail, moveMail, deleteMail, markMailRead,
@@ -344,9 +345,7 @@ function ThreadMessage({
         onClick={() => setExpanded(true)}
         className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/20 transition-colors text-left border-b border-border/50"
       >
-        <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
-          <AtSign className="w-4 h-4 text-muted-foreground" />
-        </div>
+        <WalletAvatar id={message.fromWalletId} name={message.senderName} size={32} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-muted-foreground truncate">
@@ -363,11 +362,7 @@ function ThreadMessage({
   return (
     <div className={`border-b border-border/50 ${isLatest ? "" : "bg-card/30"}`}>
       <div className="flex items-center gap-3 px-4 py-3">
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-          isLatest ? "bg-primary/20" : "bg-muted"
-        }`}>
-          <AtSign className={`w-4 h-4 ${isLatest ? "text-primary" : "text-muted-foreground"}`} />
-        </div>
+        <WalletAvatar id={message.fromWalletId} name={message.senderName} size={32} ring={isLatest} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className={`text-sm font-medium truncate ${isLatest ? "text-foreground" : "text-muted-foreground"}`}>
@@ -516,9 +511,7 @@ function ReadView({
         ) : (
           <div className="p-4 sm:p-6">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center">
-                <AtSign className="w-5 h-5 text-primary" />
-              </div>
+              <WalletAvatar id={message.fromWalletId} name={message.senderName} size={40} ring />
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-foreground truncate">
                   {message.senderName || "Unknown"}
@@ -1059,11 +1052,13 @@ const MailPage = () => {
                   thread.hasUnread ? "bg-primary/5" : ""
                 }`}
               >
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                  thread.hasUnread ? "bg-primary/20" : "bg-muted"
-                }`}>
-                  <MailIcon className={`w-5 h-5 ${thread.hasUnread ? "text-primary" : "text-muted-foreground"}`} />
-                </div>
+                <WalletAvatar
+                  id={thread.latestItem.message.fromWalletId}
+                  name={thread.latestItem.message.senderName}
+                  size={40}
+                  ring={thread.hasUnread}
+                  className="mt-0.5"
+                />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5 min-w-0">

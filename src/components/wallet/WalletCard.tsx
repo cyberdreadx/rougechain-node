@@ -5,6 +5,9 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { pubkeyToAddress, formatAddress } from "@/lib/address";
 import { MASKED_AMOUNT } from "@/hooks/use-hide-balances";
+import { Link } from "react-router-dom";
+import { WalletAvatar } from "@/components/WalletAvatar";
+import { useMyProfile } from "@/hooks/use-my-profile";
 
 interface WalletCardProps {
   address?: string | null;
@@ -25,6 +28,7 @@ interface WalletCardProps {
 
 const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24h, isConnected = false, onConnect, onImport, onConnectExtension, balancesHidden = false, onToggleBalancesHidden, onDisconnect }: WalletCardProps) => {
   const { t } = useTranslation();
+  const me = useMyProfile();
   const [copied, setCopied] = useState(false);
   const [extensionDetected, setExtensionDetected] = useState(false);
   const [rougeAddress, setRougeAddress] = useState<string | null>(null);
@@ -76,7 +80,17 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
           <Shield className="w-4 h-4 text-primary" />
           <span className="text-xs font-medium text-primary">PQC Protected</span>
         </div>
-        <span className="text-xs text-muted-foreground">CRYSTALS-Dilithium</span>
+        <span className="text-xs text-muted-foreground hidden min-[380px]:inline">CRYSTALS-Dilithium</span>
+        {isConnected && address && (
+          <Link
+            to="/settings"
+            title={t("settings.title")}
+            className="ml-auto flex items-center gap-2 rounded-full pl-1 pr-1 sm:pr-3 py-1 hover:bg-primary/10 transition-colors min-w-0"
+          >
+            <WalletAvatar id={address} uri={me.avatar} name={me.displayName} size={32} ring />
+            <span className="hidden sm:inline text-xs font-medium text-foreground/90 truncate max-w-[8rem]">{me.displayName}</span>
+          </Link>
+        )}
       </div>
 
       {isConnected && address ? (

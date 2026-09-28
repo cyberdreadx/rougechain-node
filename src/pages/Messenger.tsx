@@ -36,6 +36,8 @@ import {
   type ConversationActivity,
 } from "@/lib/notifications";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
+import { setProfileDisplayName } from "@/lib/profile";
+import { setStoredDisplayName } from "@/lib/avatar";
 import { useBlockchainWs, setMessengerAuthSigner } from "@/hooks/use-blockchain-ws";
 
 const Messenger = () => {
@@ -437,20 +439,17 @@ const Messenger = () => {
   const handleNamePromptSave = async () => {
     if (!wallet || !promptName.trim()) return;
     const updated: UnifiedWallet = { ...wallet, displayName: promptName.trim() };
-    saveUnifiedWallet(updated);
-    setWallet(updated);
     setShowNamePrompt(false);
     setPromptName("");
-    // Re-register with updated name
+    // Shared with /settings: register (so the directory has it), then save locally.
     try {
-      await registerWalletOnNode({
-        id: updated.id,
-        displayName: updated.displayName,
-        signingPublicKey: updated.signingPublicKey,
-        encryptionPublicKey: updated.encryptionPublicKey,
-      });
+      await setProfileDisplayName(updated.displayName);
+      setWallet(loadUnifiedWallet() ?? updated);
       toast.success(`Name set to "${updated.displayName}"`);
     } catch {
+      saveUnifiedWallet(updated);
+      setStoredDisplayName(updated.signingPublicKey, updated.displayName);
+      setWallet(updated);
       toast.success(`Name saved locally as "${updated.displayName}"`);
     }
   };
