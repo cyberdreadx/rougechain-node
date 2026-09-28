@@ -29,11 +29,15 @@ import {
   currentContractSigner,
   executeContract,
   fetchContractEvents,
+  formatAttach,
+  maxTotalXrge,
   normAddr,
+  parseAttachInput,
   queryContract,
   receiptError,
   suggestGasLimit,
   waitForTxReceipt,
+  type ContractAttach,
   type ContractEvent,
   type ContractQueryResult,
 } from "@/lib/contracts";
@@ -56,6 +60,7 @@ interface PendingCall {
   method: string;
   args: unknown;
   gasLimit: number;
+  attach: ContractAttach | null;
   preview: ContractQueryResult;
 }
 
@@ -64,6 +69,7 @@ interface Submission {
   method: string;
   gasLimit: number;
   fee: number;
+  attach: ContractAttach | null;
   preview?: { returnData?: unknown; gasUsed?: number };
   status: "pending" | "success" | "failed" | "timeout";
   error?: string | null;
@@ -99,6 +105,9 @@ const ContractDetail = () => {
   const [argsJson, setArgsJson] = useState("{}");
   const [caller, setCaller] = useState("");
   const [gasLimit, setGasLimit] = useState("");
+  const [payEnabled, setPayEnabled] = useState(false);
+  const [paySymbol, setPaySymbol] = useState("XRGE");
+  const [payAmount, setPayAmount] = useState("");
   const [busy, setBusy] = useState<"query" | "preview" | "sign" | null>(null);
   const [queryResult, setQueryResult] = useState<ContractQueryResult | null>(null);
   const [pending, setPending] = useState<PendingCall | null>(null);
@@ -254,6 +263,17 @@ const ContractDetail = () => {
     }
   };
 
+  /** The optional payment from the form: null when off, undefined (after a toast) when invalid. */
+  const parseAttach = (): ContractAttach | null | undefined => {
+    if (!payEnabled) return null;
+    try {
+      return parseAttachInput(paySymbol, payAmount);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+      return undefined;
+    }
+  };
+
   const handleQuery = async () => {
     if (!addr || !method.trim()) {
       toast.error("Please enter a method name");
@@ -261,10 +281,17 @@ const ContractDetail = () => {
     }
     const args = parseArgs();
     if (!args.ok) return;
+    const attach = parseAttach();
+    if (attach === undefined) return;
+    const queryCaller = caller.trim() || signer?.publicKey;
+    if (attach && !queryCaller) {
+      toast.error("Previewing a payment needs a caller: connect a wallet or enter a caller key");
+      return;
+    }
     setBusy("query");
     setQueryResult(null);
     try {
-      const r = await queryContract(addr, method.trim(), args.value, caller.trim() || signer?.publicKey);
+      const r = await queryContract(addr, method.trim(), args.value, queryCaller, attach);
       setQueryResult(r);
       if (!r.success) toast.error(`Query failed: ${r.error || "unknown error"}`);
     } catch (err) {
@@ -286,6 +313,8 @@ const ContractDetail = () => {
     }
     const args = parseArgs();
     if (!args.ok) return;
+    const attach = parseAttach();
+    if (attach === undefined) return;
     let manualGas: number | undefined;
     if (gasLimit.trim()) {
       manualGas = Number(gasLimit);
@@ -298,7 +327,7 @@ const ContractDetail = () => {
     setPending(null);
     setQueryResult(null);
     try {
-      const preview = await queryContract(addr, method.trim(), args.value, signer.publicKey);
+      const preview = await queryContract(addr, method.trim(), args.value, signer.publicKey, attach);
       if (!preview.success) {
         setQueryResult(preview);
         toast.error(`This call would fail: ${preview.error || "unknown error"}`);
@@ -308,7 +337,7 @@ const ContractDetail = () => {
       if (limit < preview.gasUsed) {
         toast.warning(`Gas limit ${limit.toLocaleString()} is below the ${preview.gasUsed.toLocaleString()} gas the call needs; the node will refuse it.`);
       }
-      setPending({ method: method.trim(), args: args.value, gasLimit: limit, preview });
+      setPending({ method: method.trim(), args: args.value, gasLimit: limit, attach, preview });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
@@ -320,7 +349,7 @@ const ContractDetail = () => {
     if (!addr || !pending) return;
     setBusy("sign");
     try {
-      const r = await executeContract(addr, pending.method, pending.args, pending.gasLimit);
+      const r = await executeContract(addr, pending.method, pending.args, pending.gasLimit, pending.attach);
       if (!r.success || !r.txId) {
         toast.error(`Call refused: ${r.error || "unknown error"}`);
         return;
@@ -330,6 +359,7 @@ const ContractDetail = () => {
         method: pending.method,
         gasLimit: pending.gasLimit,
         fee: r.fee ?? contractCallFee(pending.gasLimit),
+        attach: pending.attach,
         preview: r.preview ?? { returnData: pending.preview.returnData, gasUsed: pending.preview.gasUsed },
         status: "pending",
       };
@@ -531,7 +561,8 @@ const ContractDetail = () => {
             <p className="text-xs text-muted-foreground">
               <strong>Query</strong> is a free read-only dry run. <strong>Execute</strong> is a transaction signed by
               your wallet: the contract sees your key as the caller and you pay{" "}
-              <code>gas limit × {"0.000001"} XRGE</code>.
+              <code>gas limit × {"0.000001"} XRGE</code>. A payable method can also take a payment, which moves to the
+              contract only if the call succeeds.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -565,6 +596,50 @@ const ContractDetail = () => {
                 placeholder='{"key": "value"}'
                 className="w-full px-3 py-2 rounded-lg bg-background border border-border text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50 resize-none"
               />
+            </div>
+
+            <div className="rounded-lg border border-border p-3 space-y-3">
+              <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={payEnabled}
+                  onChange={(e) => setPayEnabled(e.target.checked)}
+                  className="accent-primary"
+                />
+                Attach payment
+                <span className="text-xs text-muted-foreground">(payable methods; used by Query and Execute)</span>
+              </label>
+              {payEnabled && (
+                <div className="flex flex-wrap items-end gap-3">
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Symbol</label>
+                    <input
+                      type="text"
+                      value={paySymbol}
+                      onChange={(e) => setPaySymbol(e.target.value)}
+                      placeholder="XRGE"
+                      className="w-28 px-3 py-2 rounded-lg bg-background border border-border text-sm font-mono uppercase focus:outline-none focus:ring-1 focus:ring-primary/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">
+                      {paySymbol.trim().toUpperCase() === "XRGE" ? "Amount (XRGE)" : "Amount (raw token units)"}
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={payAmount}
+                      onChange={(e) => setPayAmount(e.target.value)}
+                      placeholder={paySymbol.trim().toUpperCase() === "XRGE" ? "e.g. 0.5" : "e.g. 100"}
+                      className="w-44 px-3 py-2 rounded-lg bg-background border border-border text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground basis-full">
+                    Paid to the contract only if the call succeeds. If it fails, the payment stays with you, but the gas fee is
+                    still charged.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-wrap items-end gap-3">
@@ -639,6 +714,20 @@ const ContractDetail = () => {
                   <div><p className="text-muted-foreground">Gas limit (signed)</p><span className="font-mono">{pending.gasLimit.toLocaleString()}</span></div>
                   <div><p className="text-muted-foreground">Fee (charged)</p><span className="font-mono">{fmtXrge(contractCallFee(pending.gasLimit))}</span></div>
                 </div>
+                {pending.attach && (
+                  <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-2 text-sm">
+                    <p className="font-semibold text-amber-300">
+                      Pays {formatAttach(pending.attach)} to the contract (only if the call succeeds)
+                    </p>
+                    {pending.attach.symbol === "XRGE" ? (
+                      <p className="text-xs text-muted-foreground">
+                        Max total cost: <span className="font-mono">{maxTotalXrge(pending.gasLimit, pending.attach)} XRGE</span> (gas fee + payment)
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Raw token units, plus the gas fee in XRGE.</p>
+                    )}
+                  </div>
+                )}
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Preview result</p>
                   <code className="text-xs font-mono break-all">{fmtData(pending.preview.returnData)}</code>
@@ -678,6 +767,9 @@ const ContractDetail = () => {
                   {submission.status === "timeout" && <Badge variant="secondary">Not included yet</Badge>}
                   <span className="text-xs text-muted-foreground">
                     {submission.method} · gas limit {submission.gasLimit.toLocaleString()} · fee {fmtXrge(submission.fee)}
+                    {submission.attach && (
+                      <> · payment {formatAttach(submission.attach)}{submission.status === "failed" ? " (returned)" : submission.status === "success" ? " (paid)" : ""}</>
+                    )}
                     {submission.blockHeight != null && <> · block #{submission.blockHeight.toLocaleString()}</>}
                   </span>
                 </div>
