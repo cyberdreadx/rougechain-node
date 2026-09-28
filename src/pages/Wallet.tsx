@@ -288,8 +288,10 @@ const Wallet = () => {
   }, []);
 
   // Fetch token prices (XRGE from DexScreener, others from pool reserves)
-  const { tokenPrices, getTokenValue, xrgeUsdPrice: priceUsd, loading: priceLoading } = useTokenPrices(60_000);
-  const priceChange24h = null; // TODO: Track 24h change for custom tokens
+  const { tokenPrices, getTokenValue, xrgeUsdPrice: priceUsd, xrgePriceChange24h, loading: priceLoading } = useTokenPrices(60_000);
+  // XRGE market 24h change (GeckoTerminal / DexScreener). The sources coerce a missing figure to 0,
+  // so an exact 0 is treated as "unknown" rather than shown as +0.00%. Custom tokens have no 24h data.
+  const priceChange24h = xrgePriceChange24h ? xrgePriceChange24h : null;
   
   // Fetch token metadata (for images, descriptions, etc.)
   const { getTokenImage, getMetadata } = useTokenMetadata(60_000);
@@ -918,7 +920,7 @@ const Wallet = () => {
   return (
     <div className="min-h-screen">
       {/* Action Bar */}
-      <div className="sticky top-0 z-40 bg-background/80 backdrop-blur-sm border-b border-border">
+      <div className="sticky top-0 z-40 bg-background/80 backdrop-blur-sm border-b border-border neon-hairline">
         <div className="max-w-lg mx-auto px-4 py-2 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <NetworkBadge 
@@ -1031,15 +1033,38 @@ const Wallet = () => {
             />
 
 
+            {firstDataLoad ? (
+              <>
+                <AssetListSkeleton />
+                <ActivitySkeleton />
+              </>
+            ) : (
+              <>
+                <AssetList
+                  assets={assets}
+                  emptyActionLabel={emptyAssetActionLabel}
+                  onEmptyAction={handleEmptyAssetAction}
+                  emptyHint={emptyAssetHint}
+                  onAssetClick={(asset) => setSelectedAsset(asset)}
+                />
+                <TransactionHistory
+                  transactions={txHistory}
+                  emptyActionLabel={t("wallet.empty.receiveTokens")}
+                  onEmptyAction={() => setShowReceive(true)}
+                />
+              </>
+            )}
+
+
             {/* Token Supply Info */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
-              className="p-4 rounded-xl bg-card border border-border"
+              className="p-4 rounded-2xl bg-card glass-card border border-border"
             >
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-foreground">{t("wallet.tokenInfo.title")}</h3>
+                <h3 className="hud-label">{t("wallet.tokenInfo.title")}</h3>
                 <Link
                   to="/blockchain"
                   className="text-xs text-primary hover:underline"
@@ -1121,27 +1146,6 @@ const Wallet = () => {
               </div>
             </motion.div>
 
-            {firstDataLoad ? (
-              <>
-                <AssetListSkeleton />
-                <ActivitySkeleton />
-              </>
-            ) : (
-              <>
-                <AssetList
-                  assets={assets}
-                  emptyActionLabel={emptyAssetActionLabel}
-                  onEmptyAction={handleEmptyAssetAction}
-                  emptyHint={emptyAssetHint}
-                  onAssetClick={(asset) => setSelectedAsset(asset)}
-                />
-                <TransactionHistory
-                  transactions={txHistory}
-                  emptyActionLabel={t("wallet.empty.receiveTokens")}
-                  onEmptyAction={() => setShowReceive(true)}
-                />
-              </>
-            )}
             <SecurityStatus />
 
             {/* Chrome Extension Promo */}

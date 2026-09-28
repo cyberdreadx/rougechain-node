@@ -1,19 +1,21 @@
-import { motion } from "framer-motion";
+import { motion, useMotionValue, useSpring, useReducedMotion } from "framer-motion";
 import { Shield, Copy, ExternalLink, Wallet, TrendingUp, TrendingDown, Upload, Puzzle, Eye, EyeOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { pubkeyToAddress, formatAddress } from "@/lib/address";
 import { MASKED_AMOUNT } from "@/hooks/use-hide-balances";
 import { Link } from "react-router-dom";
 import { WalletAvatar } from "@/components/WalletAvatar";
 import { useMyProfile } from "@/hooks/use-my-profile";
+import { tiltFromPointer } from "@/lib/token-visual";
 
 interface WalletCardProps {
   address?: string | null;
   balance?: string | null;
   shieldedBalance?: number;
   usdValue?: string | null;
+  /** XRGE market 24h % change (real data only; hidden when null). */
   priceChange24h?: number | null;
   isConnected?: boolean;
   onConnect?: () => void;
@@ -32,6 +34,29 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
   const [copied, setCopied] = useState(false);
   const [extensionDetected, setExtensionDetected] = useState(false);
   const [rougeAddress, setRougeAddress] = useState<string | null>(null);
+
+  // Subtle pointer tilt (mouse/pen only; off for reduced motion).
+  const reduceMotion = useReducedMotion();
+  const cardRef = useRef<HTMLDivElement>(null);
+  const rx = useMotionValue(0);
+  const ry = useMotionValue(0);
+  const rotateX = useSpring(rx, { stiffness: 180, damping: 18, mass: 0.4 });
+  const rotateY = useSpring(ry, { stiffness: 180, damping: 18, mass: 0.4 });
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (reduceMotion || e.pointerType === "touch" || !cardRef.current) return;
+    const r = cardRef.current.getBoundingClientRect();
+    const px = e.clientX - r.left;
+    const py = e.clientY - r.top;
+    const tilt = tiltFromPointer(px, py, r.width, r.height, 4);
+    rx.set(tilt.rotateX);
+    ry.set(tilt.rotateY);
+    cardRef.current.style.setProperty("--glare-x", `${Math.round((px / r.width) * 100)}%`);
+    cardRef.current.style.setProperty("--glare-y", `${Math.round((py / r.height) * 100)}%`);
+  };
+  const onPointerLeave = () => {
+    rx.set(0);
+    ry.set(0);
+  };
 
   useEffect(() => {
     // Check if the RougeChain Wallet extension is installed
@@ -58,6 +83,8 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
     }
   };
 
+  const hasUsd = !!usdValue && usdValue !== "N/A";
+
   const truncatedAddress = rougeAddress
     ? formatAddress(rougeAddress)
     : address
@@ -65,20 +92,26 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
       : null;
 
   return (
+    <div style={{ perspective: 1200 }}>
     <motion.div
+      ref={cardRef}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
-      className="relative overflow-hidden rounded-2xl bg-card p-6 glow-quantum gradient-ring hud-corners"
+      style={reduceMotion ? undefined : { rotateX, rotateY }}
+      onPointerMove={onPointerMove}
+      onPointerLeave={onPointerLeave}
+      className="wallet-hero relative overflow-hidden rounded-3xl p-5 sm:p-7 glow-quantum gradient-ring hud-corners"
     >
-      {/* Background circuit pattern */}
+      {/* Background circuit pattern + pointer glare */}
       <div className="absolute inset-0 circuit-bg opacity-30" />
+      <div className="wallet-hero__glare" aria-hidden="true" />
       
       {/* Quantum security badge */}
       <div className="relative flex items-center gap-2 mb-6">
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/30">
           <Shield className="w-4 h-4 text-primary" />
-          <span className="text-xs font-medium text-primary">PQC Protected</span>
+          <span className="text-xs font-medium text-primary">{t("visual.hero.pqc")}</span>
         </div>
         <span className="text-xs text-muted-foreground hidden min-[380px]:inline">CRYSTALS-Dilithium</span>
         {isConnected && address && (
@@ -95,10 +128,10 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
 
       {isConnected && address ? (
         <>
-          {/* Balance display */}
+          {/* Portfolio hero: USD total first (when priced), XRGE underneath */}
           <div className="relative mb-6">
-            <div className="flex items-center gap-1.5 mb-1">
-              <p className="hud-label">Total Balance</p>
+            <div className="flex items-center gap-1.5 mb-2">
+              <p className="hud-label">{t("visual.hero.portfolio")}</p>
               {onToggleBalancesHidden && (
                 <button
                   type="button"
@@ -116,37 +149,45 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.2 }}
-              className="text-3xl sm:text-4xl font-bold text-shimmer break-all"
+              className="hero-amount text-shimmer break-all"
             >
-              {balancesHidden ? MASKED_AMOUNT : balance || "0"} XRGE
+              {hasUsd
+                ? (balancesHidden ? `$${MASKED_AMOUNT}` : usdValue)
+                : `${balancesHidden ? MASKED_AMOUNT : balance || "0"} XRGE`}
             </motion.h2>
-            <div className="flex items-center gap-3 mt-1">
-              {usdValue && usdValue !== "N/A" ? (
-                <p className="text-lg text-foreground font-medium">{balancesHidden ? `$${MASKED_AMOUNT}` : usdValue}</p>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-2">
+              {hasUsd ? (
+                <p className="text-base sm:text-lg text-foreground/90 font-medium font-mono break-all">
+                  {balancesHidden ? MASKED_AMOUNT : balance || "0"} <span className="text-muted-foreground">XRGE</span>
+                </p>
               ) : (
-                <p className="text-lg text-muted-foreground">RougeChain</p>
+                <p className="text-sm text-muted-foreground">{t("visual.hero.noPrice")}</p>
               )}
-              {priceChange24h !== null && priceChange24h !== undefined && (
-                <span className={`flex items-center gap-1 text-sm ${priceChange24h >= 0 ? 'text-success' : 'text-destructive'}`}>
-                  {priceChange24h >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-                  {priceChange24h >= 0 ? '+' : ''}{priceChange24h.toFixed(2)}%
+              {priceChange24h !== null && priceChange24h !== undefined && Number.isFinite(priceChange24h) && (
+                <span
+                  className={`hero-chip ${priceChange24h >= 0 ? "text-success" : "text-destructive"}`}
+                  title={t("visual.hero.changeHint")}
+                >
+                  {priceChange24h >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                  {priceChange24h >= 0 ? "+" : ""}{priceChange24h.toFixed(2)}%
+                  <span className="font-mono font-normal opacity-80">{t("visual.hero.xrge24h")}</span>
                 </span>
               )}
             </div>
             {shieldedBalance && shieldedBalance > 0 ? (
-              <div className="flex items-center gap-1.5 mt-1">
+              <div className="flex items-center gap-1.5 mt-2">
                 <Shield className="w-3.5 h-3.5 text-primary" />
                 <span className="text-sm text-primary font-medium">
-                  {balancesHidden ? MASKED_AMOUNT : shieldedBalance.toLocaleString()} XRGE shielded
+                  {balancesHidden ? MASKED_AMOUNT : shieldedBalance.toLocaleString()} XRGE {t("visual.hero.shielded")}
                 </span>
               </div>
             ) : null}
           </div>
 
           {/* Address section */}
-          <div className="relative flex items-center gap-3 p-3 rounded-lg bg-muted/50 border border-border">
+          <div className="relative flex items-center gap-3 p-3 rounded-xl bg-background/40 border border-border/70">
             <div className="flex-1 min-w-0">
-              <p className="text-xs text-muted-foreground mb-0.5">Wallet Address</p>
+              <p className="text-xs text-muted-foreground mb-0.5">{t("visual.hero.address")}</p>
               <p className="font-mono text-sm text-foreground truncate">{truncatedAddress}</p>
               <div className="mt-1 flex items-center gap-3">
                 <button
@@ -154,13 +195,13 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
                   onClick={copyAddress}
                   className="text-xs text-primary hover:underline"
                 >
-                  {copied ? "Copied" : "Copy address"}
+                  {copied ? t("visual.hero.copied") : t("visual.hero.copy")}
                 </button>
                 <a
                   href="/blockchain"
                   className="text-xs text-muted-foreground hover:underline inline-flex items-center gap-1"
                 >
-                  View on chain <ExternalLink className="w-3 h-3" />
+                  {t("visual.hero.viewOnChain")} <ExternalLink className="w-3 h-3" />
                 </a>
                 {onDisconnect && (
                   <button
@@ -176,6 +217,7 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
               variant="ghost"
               size="icon"
               onClick={copyAddress}
+              aria-label={t("visual.hero.copy")}
               className="h-8 w-8 text-muted-foreground hover:text-primary"
             >
               <Copy className="w-4 h-4" />
@@ -189,7 +231,7 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
               exit={{ opacity: 0 }}
               className="absolute bottom-2 right-2 text-xs text-primary"
             >
-              Copied!
+              {t("visual.hero.copied")}
             </motion.p>
           )}
         </>
@@ -240,6 +282,7 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
       <div className="absolute -top-20 -right-20 w-40 h-40 bg-primary/10 rounded-full blur-3xl" />
       <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-accent/10 rounded-full blur-3xl" />
     </motion.div>
+    </div>
   );
 };
 

@@ -4,6 +4,8 @@ import { ArrowUpRight, ArrowDownLeft, RefreshCw, History, Plus, Coins, ExternalL
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { EmptyState } from "@/components/ui/empty-state";
 
 interface Transaction {
   id: string;
@@ -94,6 +96,7 @@ const getTypeLabel = (type: string) => {
 const INITIAL_DISPLAY_COUNT = 5;
 
 const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction }: TransactionHistoryProps) => {
+  const { t } = useTranslation();
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [showAll, setShowAll] = useState(false);
 
@@ -124,10 +127,10 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.3 }}
-      className="bg-card rounded-xl border border-border overflow-hidden"
+      className="bg-card glass-card rounded-2xl border border-border overflow-hidden"
     >
-      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground">Recent Activity</h3>
+      <div className="px-4 py-3 border-b border-border/70 flex items-center justify-between">
+        <h3 className="hud-label">{t("visual.activity.title")}</h3>
         {hasMore && (
           <button 
             className="text-xs text-primary hover:underline"
@@ -139,21 +142,14 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
       </div>
       
       {transactions.length === 0 ? (
-        <div className="py-12 text-center">
-          <History className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
-          <p className="text-sm text-muted-foreground">No transactions yet</p>
-          <p className="text-xs text-muted-foreground/70 mt-1">Your activity will appear here</p>
-          {emptyActionLabel && onEmptyAction && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-4"
-              onClick={onEmptyAction}
-            >
-              {emptyActionLabel}
-            </Button>
-          )}
-        </div>
+        <EmptyState
+          compact
+          icon={History}
+          title={t("visual.activity.emptyTitle")}
+          hint={t("visual.activity.emptyHint")}
+          ctaLabel={emptyActionLabel}
+          onCta={onEmptyAction}
+        />
       ) : (
         <div className="divide-y divide-border">
           {displayedTxs.map((tx, index) => (
@@ -162,7 +158,7 @@ const TransactionHistory = ({ transactions = [], emptyActionLabel, onEmptyAction
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.4 + index * 0.05 }}
-              className="flex items-center justify-between px-4 py-3 hover:bg-secondary/50 transition-colors cursor-pointer"
+              className="flex items-center justify-between px-4 py-3 row-glow cursor-pointer"
               onClick={() => setSelectedTx(tx)}
             >
               <div className="flex items-center gap-3 min-w-0 flex-1">
