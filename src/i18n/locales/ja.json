@@ -1098,5 +1098,90 @@
         "trashHint": "削除したメールはここに移動します。"
       }
     }
+  },
+  "base": {
+    "title": "Base ウォレット",
+    "testnetBadge": "テストネット",
+    "sameAddressHint": "Qwalla と同じリカバリーフレーズなので、Base アドレスも同じです。",
+    "copyAddress": "アドレスをコピー",
+    "copied": "Base アドレスをコピーしました",
+    "viewOnExplorer": "BaseScan で表示",
+    "refresh": "Base の残高を更新",
+    "rpcError": "{{chain}} に接続できません。最後に取得した残高を表示しています。",
+    "send": "送金",
+    "receive": "受け取り",
+    "assets": {
+      "ETH": "イーサ",
+      "XRGE": "RougeCoin",
+      "USDC": "USD Coin"
+    },
+    "noMnemonic": {
+      "title": "このウォレットには Base アカウントがありません",
+      "hint": "Base アドレスはリカバリーフレーズから導出されます。このウォレットは秘密鍵でインポートされたか拡張機能経由で接続されているため、ここでは Base アドレスがありません。Base を使うには、リカバリーフレーズで復元してください（または Qwalla / 拡張機能を使用）。"
+    },
+    "sendDialog": {
+      "title": "{{chain}} で送金",
+      "asset": "資産",
+      "recipient": "送金先アドレス",
+      "amount": "数量",
+      "max": "最大",
+      "balance": "残高: {{amount}} {{symbol}}",
+      "review": "確認へ",
+      "estimating": "手数料を見積もり中…",
+      "invalidAddress": "有効な 0x アドレスではありません（0x + 16進数40文字）。",
+      "badChecksum": "チェックサムが一致しません。アドレスを再確認してください（大文字小文字混在の場合は EIP-55 に一致する必要があります）。",
+      "selfSend": "これはあなた自身の Base アドレスです。",
+      "invalidAmount": "0 より大きい数量を入力してください。",
+      "insufficient": "{{symbol}} が不足しています。",
+      "gasShort": "ネットワーク手数料（約 {{fee}} ETH）を支払う ETH が不足しています。",
+      "tokenGasNote": "Base のネットワーク手数料は ETH で支払われます。",
+      "feeUnavailable": "手数料を見積もれませんでした。この送金は失敗する可能性が高いです。",
+      "confirmTitle": "送金の確認",
+      "from": "送金元",
+      "to": "送金先",
+      "network": "ネットワーク",
+      "networkFee": "最大ネットワーク手数料",
+      "confirm": "署名して送金",
+      "sending": "送金中…",
+      "back": "戻る",
+      "sentTitle": "トランザクションを送信しました",
+      "sentHint": "数秒で {{chain}} 上で承認されます。",
+      "done": "完了",
+      "mainnetWarning": "これは実際の資金を扱う Base メインネットです。取引は取り消せません。アドレスを確認してください。",
+      "testnetWarning": "Base Sepolia テストネット：これらのトークンに価値はありません。",
+      "localSign": "リカバリーフレーズから導出した鍵で、ブラウザ内でローカルに署名します。秘密情報がこのページの外に出ることはありません。"
+    },
+    "receiveDialog": {
+      "title": "{{chain}} で受け取る",
+      "qrAlt": "Base アドレスの QR コード",
+      "addressLabel": "あなたの {{chain}} アドレス",
+      "hint": "このアドレスには {{chain}} ネットワーク上の資産（ETH、XRGE、USDC、その他の Base トークン）のみを送ってください。他のネットワークから送られた資金は失われる可能性があります。",
+      "testnetHint": "これは {{chain}} テストネットのアドレスです。実際の資金を送らないでください。"
+    },
+    "bridge": {
+      "useLocal": "RougeChain の Base ウォレットを使う",
+      "useLocalHint": "リカバリーフレーズから導出した Base アドレスを使用します。MetaMask は不要です。",
+      "connectedLocal": "RougeChain Base ウォレット",
+      "useMyAddress": "自分の Base アドレスを使う",
+      "locked": "先にウォレットページで RougeChain ウォレットのロックを解除してください。"
+    },
+    "approve": {
+      "txTitle": "{{chain}} のトランザクションを承認",
+      "signTitle": "署名リクエストを承認",
+      "action": "操作",
+      "to": "送金先",
+      "value": "金額",
+      "fee": "最大ネットワーク手数料",
+      "message": "メッセージ",
+      "reject": "拒否",
+      "approve": "承認して署名",
+      "actions": {
+        "approve": "ブリッジによるトークンの使用を許可",
+        "transfer": "トークン送金",
+        "deposit": "ブリッジへの入金",
+        "eth": "ETH を送金",
+        "call": "コントラクト呼び出し"
+      }
+    }
   }
 }

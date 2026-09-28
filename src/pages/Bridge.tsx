@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import { motion } from "framer-motion";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { ArrowDownToLine, ArrowUpFromLine, Loader2, Wallet, ArrowRightLeft, Coins, ArrowDown, Copy, Check, Bitcoin, ExternalLink, ChevronDown } from "lucide-react";
 import { toDataURL } from "qrcode";
 import { pubkeyToAddress } from "@/lib/address";
@@ -38,6 +38,11 @@ import { qethToHuman, humanToQeth, formatQethForDisplay, formatTokenAmount } fro
 import { useTranslation, Trans } from "react-i18next";
 import { TokenIcon } from "@/components/ui/token-icon";
 import { EmptyState } from "@/components/ui/empty-state";
+import BaseApprovalDialog from "@/components/wallet/BaseApprovalDialog";
+import { createLocalBaseProvider, type LocalBaseRequest } from "@/lib/base-local-provider";
+import { getBaseChain } from "@/lib/base-wallet";
+import { deriveBaseAddress, hasBaseAccount } from "@/lib/evm-wallet";
+import { useMajorPrices } from "@/hooks/use-eth-price";
 
 type BridgeDirection = "deposit" | "withdraw";
 type BridgeAsset = "ETH" | "USDC" | "XRGE" | "BTC";
@@ -127,7 +132,24 @@ const Bridge = () => {
   const legacyEth = typeof window !== "undefined" ? (window as unknown as { ethereum?: { isQwalla?: boolean; isRougeChain?: boolean; isCoinbaseWallet?: boolean; isMetaMask?: boolean } }).ethereum : undefined;
   const legacyWalletName = legacyEth?.isQwalla ? "Qwalla Wallet" : legacyEth?.isRougeChain ? "RougeChain Wallet" : legacyEth?.isCoinbaseWallet ? "Coinbase Wallet" : legacyEth?.isMetaMask ? "MetaMask" : null;
   const connectWalletName = selectedDetail?.info.name ?? legacyWalletName ?? t("bridge.form.baseWallet");
-  const evmProvider = (selectedDetail?.provider
+  // "Use my RougeChain Base wallet": an EIP-1193 provider backed by the key derived
+  // from the site wallet's recovery phrase. Pinned to the Base chain that matches the
+  // active RougeChain network; every tx/signature needs approval in BaseApprovalDialog.
+  const [useLocalBase, setUseLocalBase] = useState(false);
+  const [localBaseAvailable] = useState(() => hasBaseAccount(loadUnifiedWallet()?.mnemonic));
+  const [pendingApproval, setPendingApproval] = useState<{ req: LocalBaseRequest; resolve: (ok: boolean) => void } | null>(null);
+  const localBaseChain = useMemo(() => getBaseChain(), []);
+  const { eth: ethPriceUsd } = useMajorPrices(60_000);
+  const localProvider = useMemo(() => {
+    if (!useLocalBase) return null;
+    return createLocalBaseProvider({
+      chain: localBaseChain,
+      getMnemonic: () => loadUnifiedWallet()?.mnemonic,
+      confirm: (req) => new Promise<boolean>((resolve) => setPendingApproval({ req, resolve })),
+    });
+  }, [useLocalBase, localBaseChain]);
+  const evmProvider = (localProvider
+    ?? selectedDetail?.provider
     ?? (window as unknown as { ethereum?: EIP1193Provider }).ethereum) as EIP1193Provider | undefined;
 
   useEffect(() => {
@@ -324,6 +346,25 @@ const Bridge = () => {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t("bridge.errors.connectFailed"));
     }
+  };
+
+  const connectLocalBase = () => {
+    if (!isKnownBaseChain(detectedChainId) || networkMismatch || detectedChainId !== localBaseChain.chainId) {
+      toast.error(t("bridge.errors.networkNotConfirmed"));
+      return;
+    }
+    const address = deriveBaseAddress(loadUnifiedWallet()?.mnemonic);
+    if (!address) { toast.error(t("base.bridge.locked")); return; }
+    setUseLocalBase(true);
+    setEvmAddress(address);
+    setEvmTarget(address);
+    toast.success(t("bridge.toasts.connected", { chain: chainLabel }));
+  };
+
+  const fillMyBaseAddress = () => {
+    const address = deriveBaseAddress(loadUnifiedWallet()?.mnemonic);
+    if (!address) { toast.error(t("base.bridge.locked")); return; }
+    setEvmTarget(address);
   };
 
   const getL1Balance = () => {
@@ -1081,6 +1122,11 @@ const Bridge = () => {
                     onChange={(e) => setEvmTarget(e.target.value)}
                     className="font-mono text-sm"
                   />
+                  {!isBtcAsset && localBaseAvailable && (
+                    <button type="button" onClick={fillMyBaseAddress} className="text-xs text-primary hover:underline">
+                      {t("base.bridge.useMyAddress")}
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -1114,11 +1160,22 @@ const Bridge = () => {
 
               {/* Connect wallet / Action button */}
               {direction === "deposit" && !evmAddress ? (
-                <Button onClick={connectEvm} variant="outline" className="w-full gap-2 h-12 whitespace-nowrap text-sm">
-                  <Wallet className="w-4 h-4 shrink-0" />
-                  <span className="hidden sm:inline">{t("bridge.form.connectWalletWithChain", { wallet: connectWalletName, chain: chainLabel })}</span>
-                  <span className="sm:hidden">{t("bridge.form.connectWallet", { wallet: connectWalletName })}</span>
-                </Button>
+                <div className="space-y-2">
+                  <Button onClick={connectEvm} variant="outline" className="w-full gap-2 h-12 whitespace-nowrap text-sm">
+                    <Wallet className="w-4 h-4 shrink-0" />
+                    <span className="hidden sm:inline">{t("bridge.form.connectWalletWithChain", { wallet: connectWalletName, chain: chainLabel })}</span>
+                    <span className="sm:hidden">{t("bridge.form.connectWallet", { wallet: connectWalletName })}</span>
+                  </Button>
+                  {localBaseAvailable && !isBtcAsset && (
+                    <>
+                      <Button onClick={connectLocalBase} variant="outline" className="w-full gap-2 h-12 text-sm border-primary/40 hover:border-primary hover:bg-primary/10">
+                        <Wallet className="w-4 h-4 shrink-0 text-primary" />
+                        <span className="truncate">{t("base.bridge.useLocal")}</span>
+                      </Button>
+                      <p className="text-[11px] text-muted-foreground text-center">{t("base.bridge.useLocalHint")}</p>
+                    </>
+                  )}
+                </div>
               ) : (
                 <Button
                   onClick={direction === "deposit" ? handleDeposit : handleWithdraw}
@@ -1148,6 +1205,7 @@ const Bridge = () => {
               {evmAddress && direction === "deposit" && (
                 <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
                   <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                  {useLocalBase && <span>{t("base.bridge.connectedLocal")} ·</span>}
                   {evmAddress.slice(0, 6)}...{evmAddress.slice(-4)}
                 </div>
               )}
@@ -1212,6 +1270,17 @@ const Bridge = () => {
         )}
 
       </motion.div>
+
+      <AnimatePresence>
+        {pendingApproval && (
+          <BaseApprovalDialog
+            chain={localBaseChain}
+            request={pendingApproval.req}
+            ethPriceUsd={ethPriceUsd}
+            onResolve={(ok) => { pendingApproval.resolve(ok); setPendingApproval(null); }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 };

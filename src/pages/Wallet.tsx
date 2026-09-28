@@ -38,6 +38,7 @@ import { toast } from "sonner";
 import { Link } from "react-router-dom";
 import WalletCard from "@/components/wallet/WalletCard";
 import AssetList from "@/components/wallet/AssetList";
+import BaseWalletCard from "@/components/wallet/BaseWalletCard";
 import TransactionHistory from "@/components/wallet/TransactionHistory";
 import NetworkBadge from "@/components/wallet/NetworkBadge";
 import SecurityStatus from "@/components/wallet/SecurityStatus";
@@ -1047,6 +1048,12 @@ const Wallet = () => {
                   onEmptyAction={handleEmptyAssetAction}
                   emptyHint={emptyAssetHint}
                   onAssetClick={(asset) => setSelectedAsset(asset)}
+                />
+                <BaseWalletCard
+                  mnemonic={wallet.mnemonic}
+                  ethPriceUsd={majorPrices.eth}
+                  xrgePriceUsd={priceUsd}
+                  balancesHidden={balancesHidden}
                 />
                 <TransactionHistory
                   transactions={txHistory}
