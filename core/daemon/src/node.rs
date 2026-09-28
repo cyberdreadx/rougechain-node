@@ -244,7 +244,8 @@ pub fn game_ready_active(height: u64) -> bool {
 /// height every contract call runs with those host functions linked and with contract-supplied
 /// addresses canonicalised; NFT owner checks compare canonical addresses. Before it, the VM links
 /// exactly the old host functions, so a module importing the new ones fails like on old nodes.
-/// NFT and contract-storage state are not yet in the state root (see GAME_READY_SCOPE.md).
+/// From the same height the header state root also commits NFTs and contract code/storage
+/// (`compute_state_root_for_height`, state root v2; see GAME_READY_SCOPE.md).
 /// `None` = not scheduled.
 pub const GAME_READY_2_ACTIVATION_HEIGHT: Option<u64> = Some(160);
 #[cfg(test)]
