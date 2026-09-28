@@ -413,10 +413,31 @@ function requestApproval(
 
 // ─── dApp message handler ────────────────────────────────
 
+/**
+ * The requesting site's origin as Chrome reports it for the sending tab — never a value the page
+ * or the message supplies. Every connection and approval is keyed by this.
+ */
+function trustedOrigin(sender: chrome.runtime.MessageSender): string | null {
+    if (sender.id !== chrome.runtime.id) return null;
+    const raw = sender.origin || sender.url;
+    if (!raw) return null;
+    try {
+        const u = new URL(raw);
+        const local = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+        if (u.protocol !== "https:" && !(u.protocol === "http:" && local)) return null;
+        return u.origin;
+    } catch { return null; }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type !== "rougechain-request") return false;
 
-    const { method, params, origin } = message;
+    const { method, params } = message;
+    const origin = trustedOrigin(sender);
+    if (!origin) {
+        sendResponse({ error: "Requests are only accepted from https sites (or localhost)" });
+        return false;
+    }
 
     (async () => {
         try {
@@ -822,7 +843,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type !== "evm-request") return false;
     (async () => {
         try {
-            const res = await handleEvmRequest(message.method, message.params, message.origin, sender.tab?.id);
+            const origin = trustedOrigin(sender);
+            if (!origin) { sendResponse({ error: { code: 4100, message: "Requests are only accepted from https sites (or localhost)" } }); return; }
+            const res = await handleEvmRequest(message.method, message.params, origin, sender.tab?.id);
             sendResponse(res);
         } catch (err: any) {
             sendResponse({ error: { code: -32603, message: err?.message || "Internal error" } });
