@@ -17,6 +17,7 @@ import {
   sendMail, moveMail, deleteMail, markMailRead,
   registerName, reverseLookup, resolveRecipient,
   MAIL_DOMAIN,
+  MAIL_DOMAIN_ALT,
   type MailItem,
   type MailAttachment,
 } from "@/lib/pqc-mail";
@@ -187,7 +188,7 @@ function ComposeView({
     try {
       const recipientId = await resolveRecipient(to);
       if (!recipientId) {
-        setError(`Could not resolve "${to}". Use a @${MAIL_DOMAIN} address or wallet ID.`);
+        setError(`Could not resolve "${to}". Use a @${MAIL_DOMAIN} / @${MAIL_DOMAIN_ALT} address or wallet ID.`);
         setIsSending(false);
         return;
       }
@@ -218,7 +219,7 @@ function ComposeView({
         <div>
           <label className="text-xs text-muted-foreground uppercase tracking-wider font-medium">To</label>
           <Input
-            placeholder={`alice@${MAIL_DOMAIN} or wallet ID`}
+            placeholder={`alice@${MAIL_DOMAIN}, alice@${MAIL_DOMAIN_ALT} or wallet ID`}
             value={to}
             onChange={e => setTo(e.target.value)}
             className="mt-1"
@@ -784,7 +785,7 @@ const MailPage = () => {
         setMyName(nameInput.trim().toLowerCase());
         setShowNameReg(false);
         setNameInput("");
-        toast.success(`Claimed ${nameInput.trim().toLowerCase()}@${MAIL_DOMAIN}!`);
+        toast.success(`Claimed ${nameInput.trim().toLowerCase()}@${MAIL_DOMAIN} and @${MAIL_DOMAIN_ALT}!`);
       } else {
         setNameError(result.error || "Registration failed");
       }
@@ -933,7 +934,9 @@ const MailPage = () => {
           <div className="flex flex-col min-w-0">
             <span className="text-sm font-medium text-foreground truncate">{wallet.displayName}</span>
             {myName ? (
-              <span className="text-xs text-primary font-mono">{myName}@{MAIL_DOMAIN}</span>
+              <span className="text-xs text-primary font-mono truncate" title={`${myName}@${MAIL_DOMAIN_ALT} works too`}>
+                {myName}@{MAIL_DOMAIN}<span className="text-muted-foreground"> · @{MAIL_DOMAIN_ALT}</span>
+              </span>
             ) : (
               <button
                 className="flex items-center gap-1 text-xs text-muted-foreground font-mono hover:text-foreground transition-colors"
@@ -950,7 +953,7 @@ const MailPage = () => {
         </div>
         <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
           {!myName && (
-            <Button variant="ghost" size="icon" onClick={() => setShowNameReg(!showNameReg)} title="Claim your @rouge.quant address">
+            <Button variant="ghost" size="icon" onClick={() => setShowNameReg(!showNameReg)} title="Claim your @rouge.quant / @qwalla.mail address">
               <AtSign className="w-4 h-4" />
             </Button>
           )}
@@ -981,7 +984,7 @@ const MailPage = () => {
           >
             <div className="px-4 py-3">
               <p className="text-xs text-muted-foreground mb-2">
-                Claim your @{MAIL_DOMAIN} address to receive mail by name instead of wallet ID.
+                Claim a name to receive mail by name instead of wallet ID. One name gives you both addresses: @{MAIL_DOMAIN} and @{MAIL_DOMAIN_ALT}.
               </p>
               <div className="flex items-center gap-2">
                 <Input
@@ -1042,7 +1045,7 @@ const MailPage = () => {
             <p className="text-sm">No mail in {folder}</p>
             {folder === "inbox" && (
               <p className="text-xs mt-1">
-                {myName ? `Your address: ${myName}@${MAIL_DOMAIN}` : "Claim a @rouge.quant address to start receiving mail"}
+                {myName ? `Your addresses: ${myName}@${MAIL_DOMAIN} · ${myName}@${MAIL_DOMAIN_ALT}` : `Claim a name to get your @${MAIL_DOMAIN} and @${MAIL_DOMAIN_ALT} addresses`}
               </p>
             )}
           </div>

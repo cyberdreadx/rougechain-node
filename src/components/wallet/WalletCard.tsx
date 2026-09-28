@@ -1,8 +1,10 @@
 import { motion } from "framer-motion";
-import { Shield, Copy, ExternalLink, Wallet, TrendingUp, TrendingDown, Upload, Puzzle } from "lucide-react";
+import { Shield, Copy, ExternalLink, Wallet, TrendingUp, TrendingDown, Upload, Puzzle, Eye, EyeOff } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { pubkeyToAddress, formatAddress } from "@/lib/address";
+import { MASKED_AMOUNT } from "@/hooks/use-hide-balances";
 
 interface WalletCardProps {
   address?: string | null;
@@ -14,9 +16,15 @@ interface WalletCardProps {
   onConnect?: () => void;
   onImport?: () => void;
   onConnectExtension?: () => void;
+  /** Mask the balance / USD figures (privacy toggle). */
+  balancesHidden?: boolean;
+  onToggleBalancesHidden?: () => void;
+  /** Forget this wallet on this device (shown as a small link, away from the main actions). */
+  onDisconnect?: () => void;
 }
 
-const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24h, isConnected = false, onConnect, onImport, onConnectExtension }: WalletCardProps) => {
+const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24h, isConnected = false, onConnect, onImport, onConnectExtension, balancesHidden = false, onToggleBalancesHidden, onDisconnect }: WalletCardProps) => {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [extensionDetected, setExtensionDetected] = useState(false);
   const [rougeAddress, setRougeAddress] = useState<string | null>(null);
@@ -57,7 +65,7 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
-      className="relative overflow-hidden rounded-2xl bg-card p-6 glow-quantum"
+      className="relative overflow-hidden rounded-2xl bg-card p-6 glow-quantum gradient-ring hud-corners"
     >
       {/* Background circuit pattern */}
       <div className="absolute inset-0 circuit-bg opacity-30" />
@@ -75,18 +83,32 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
         <>
           {/* Balance display */}
           <div className="relative mb-6">
-            <p className="text-sm text-muted-foreground mb-1">Total Balance</p>
+            <div className="flex items-center gap-1.5 mb-1">
+              <p className="hud-label">Total Balance</p>
+              {onToggleBalancesHidden && (
+                <button
+                  type="button"
+                  onClick={onToggleBalancesHidden}
+                  aria-pressed={balancesHidden}
+                  aria-label={balancesHidden ? t("wallet.balance.show") : t("wallet.balance.hide")}
+                  title={balancesHidden ? t("wallet.balance.show") : t("wallet.balance.hide")}
+                  className="p-1 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {balancesHidden ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              )}
+            </div>
             <motion.h2
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.2 }}
-              className="text-3xl sm:text-4xl font-bold text-gradient-quantum break-all"
+              className="text-3xl sm:text-4xl font-bold text-shimmer break-all"
             >
-              {balance || "0"} XRGE
+              {balancesHidden ? MASKED_AMOUNT : balance || "0"} XRGE
             </motion.h2>
             <div className="flex items-center gap-3 mt-1">
               {usdValue && usdValue !== "N/A" ? (
-                <p className="text-lg text-foreground font-medium">{usdValue}</p>
+                <p className="text-lg text-foreground font-medium">{balancesHidden ? `$${MASKED_AMOUNT}` : usdValue}</p>
               ) : (
                 <p className="text-lg text-muted-foreground">RougeChain</p>
               )}
@@ -101,7 +123,7 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
               <div className="flex items-center gap-1.5 mt-1">
                 <Shield className="w-3.5 h-3.5 text-primary" />
                 <span className="text-sm text-primary font-medium">
-                  {shieldedBalance.toLocaleString()} XRGE shielded
+                  {balancesHidden ? MASKED_AMOUNT : shieldedBalance.toLocaleString()} XRGE shielded
                 </span>
               </div>
             ) : null}
@@ -126,6 +148,14 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
                 >
                   View on chain <ExternalLink className="w-3 h-3" />
                 </a>
+                {onDisconnect && (
+                  <button
+                    onClick={onDisconnect}
+                    className="text-xs text-muted-foreground hover:text-destructive transition-colors ml-auto"
+                  >
+                    {t("wallet.actions.disconnect")}
+                  </button>
+                )}
               </div>
             </div>
             <Button

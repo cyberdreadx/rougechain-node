@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { isNoteToSelf } from "@/lib/messenger-envelope";
+import { applyEnvelopes, isNoteToSelf, parseEnvelope, parseTip } from "@/lib/messenger-envelope";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint, Paperclip, Image as ImageIcon, Video, EyeOff, Eye, Ban, Trash2, DollarSign, Search, Reply } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -12,7 +13,7 @@ import { getBotReply, getMessages, sendMessage, deleteMessage, isDemoBot, loadDe
 import { playNotificationSound, loadNotificationSettings } from "@/lib/notifications";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
 import { subscribeNewMessage, isMessengerLive } from "@/hooks/use-blockchain-ws";
-import ChatPayment, { PaymentBubble, parsePaymentMessage, encodePaymentMessage, parseRequestMessage, encodeRequestMessage, PaymentRequestBubble } from "./ChatPayment";
+import ChatPayment, { PaymentBubble, encodePaymentMessage, encodeRequestMessage, PaymentRequestBubble, TipBubble, getPaymentData, getRequestData } from "./ChatPayment";
 import type { PaymentMessageData, RequestMessageData } from "./ChatPayment";
 import { ReactionPicker, ReactionBadges, aggregateReactions, isSystemMessage, encodeReactionMessage } from "./ChatReactions";
 import { QuotedMessage, ReplyComposer, parseReplyMessage, encodeReplyMessage } from "./ChatReply";
@@ -398,8 +399,8 @@ const EncryptionAnimation = ({
 
         {/* Message bubble with animation */}
         <motion.div
-          className={`rounded-2xl px-4 py-2 rounded-br-md overflow-hidden min-w-[120px] break-words ${phase === "plaintext"
-            ? "bg-primary/50 text-primary-foreground"
+          className={`bubble-own px-4 py-2 overflow-hidden min-w-[120px] break-words ${phase === "plaintext"
+            ? "opacity-60"
             : "bg-gradient-to-r from-primary via-accent to-primary bg-[length:200%_100%] text-primary-foreground"
             }`}
           animate={{
@@ -448,7 +449,7 @@ const EncryptionAnimation = ({
 
         {/* Particle effects during encryption */}
         {(phase === "scrambling" || phase === "encrypted") && (
-          <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
+          <div className="absolute inset-0 pointer-events-none overflow-hidden">
             {[...Array(6)].map((_, i) => (
               <motion.div
                 key={i}
@@ -505,6 +506,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
 
   // Aggregate reactions and filter system messages
   const reactionMap = useMemo(() => aggregateReactions(messages, myIds), [messages]);
+  const messagesById = useMemo(() => new Map(messages.map(m => [m.id, m])), [messages]);
   const visibleMessages = useMemo(() =>
     messages.filter(m => !isSystemMessage(m.plaintext))
       .filter(m => !searchQuery || m.plaintext?.toLowerCase().includes(searchQuery.toLowerCase())),
@@ -718,9 +720,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
   const handleSendReply = () => {
     if (!replyingTo || !newMessage.trim()) return;
     const replyText = encodeReplyMessage({
-      type: "reply",
       replyTo: replyingTo.id,
-      replyPreview: (replyingTo.plaintext || "").slice(0, 80),
       text: newMessage.trim(),
     });
     setNewMessage("");
@@ -786,7 +786,8 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
 
       // Add to seen messages so it doesn't trigger animations
       seenMessageIdsRef.current.add(msg.id);
-      setMessages(prev => [...prev, msg]);
+      // applyEnvelopes: show the body of what we just sent, and fold a sent reaction into its target.
+      setMessages(prev => applyEnvelopes([...prev, msg]));
 
       // If recipient is demo bot, get AI response
       if (isRecipientBot) {
@@ -796,7 +797,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
           if (botWallet) {
             try {
               await registerWalletOnNode(botWallet, false);
-              const botResponse = await getBotReply(messageText);
+              const botResponse = await getBotReply(animationText(messageText));
 
               const botMsg = await sendMessage(
                 conversation.id,
@@ -808,7 +809,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
 
               // Mark bot message as new for decryption animation
               setNewMessageIds(prev => new Set([...prev, botMsg.id]));
-              setMessages(prev => [...prev, botMsg]);
+              setMessages(prev => applyEnvelopes([...prev, botMsg]));
             } catch (e) {
               console.error("Bot reply failed:", e);
             }
@@ -925,7 +926,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
       </AnimatePresence>
 
       {/* Messages */}
-      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 space-y-4">
+      <div className="cyber-chat flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 space-y-4">
         {isLoading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -964,10 +965,8 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
                     onReply={() => setReplyingTo(msg)}
                     reactingTo={reactingTo}
                     onToggleReactionPicker={(id) => setReactingTo(reactingTo === id ? null : id)}
-                    onAcceptRequest={msg.plaintext && parseRequestMessage(msg.plaintext) && !isOwn ? () => {
-                      const req = parseRequestMessage(msg.plaintext!);
-                      if (req) setShowPaymentDialog(true);
-                    } : undefined}
+                    quotedPreview={msg.replyTo ? previewText(messagesById.get(msg.replyTo)) : undefined}
+                    onAcceptRequest={getRequestData(msg) && !isOwn ? () => setShowPaymentDialog(true) : undefined}
                     onImageClick={(url) => setLightboxUrl(url)}
                   />
                 </div>
@@ -976,7 +975,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
             {encryptingMessage && (
               <EncryptionAnimation
                 key="encrypting"
-                plaintext={encryptingMessage}
+                plaintext={animationText(encryptingMessage)}
                 onComplete={handleEncryptionComplete}
                 isMedia={encryptingMessageType !== "text"}
               />
@@ -1091,7 +1090,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             placeholder={replyingTo ? "Type your reply..." : stagedMedia ? "Add a caption (optional)..." : "Type a message..."}
-            className="flex-1"
+            className="cyber-input flex-1"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 if (replyingTo) handleSendReply();
@@ -1276,8 +1275,8 @@ const DecryptionAnimation = ({
 
         {/* Message bubble with animation */}
         <motion.div
-          className={`rounded-2xl px-4 py-2 rounded-bl-md overflow-hidden ${phase === "done"
-            ? "bg-muted text-foreground"
+          className={`bubble-peer px-4 py-2 overflow-hidden ${phase === "done"
+            ? ""
             : "bg-gradient-to-r from-accent/80 via-primary/80 to-accent/80 bg-[length:200%_100%] text-foreground"
             }`}
           animate={{
@@ -1324,7 +1323,7 @@ const DecryptionAnimation = ({
 
         {/* Particle effects during decryption */}
         {(phase === "ciphertext" || phase === "decrypting") && (
-          <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
+          <div className="absolute inset-0 pointer-events-none overflow-hidden">
             {[...Array(6)].map((_, i) => (
               <motion.div
                 key={i}
@@ -1353,6 +1352,26 @@ const DecryptionAnimation = ({
   );
 };
 
+/** Readable text of an outgoing plaintext for the encryption animation (envelopes → body / emoji). */
+const animationText = (raw: string): string => {
+  const env = parseEnvelope(raw);
+  return env.kind === "rx" ? env.emoji : env.body;
+};
+
+/** Short quote of a message for a reply; "" when the replied-to message isn't loaded. */
+const previewText = (m: Message | undefined): string => {
+  if (!m) return "";
+  const pay = getPaymentData(m);
+  if (pay) return `💸 ${pay.amount} ${pay.token}`;
+  const req = getRequestData(m);
+  if (req) return `🧾 ${req.amount} ${req.token}`;
+  const tip = parseTip(m.plaintext);
+  if (tip) return `💸 ${tip.amount} ${tip.symbol}`;
+  if (m.mediaUrl) return m.messageType === "video" ? "🎬 Video" : "🖼️ Image";
+  const legacyReply = m.plaintext ? parseReplyMessage(m.plaintext) : null;
+  return (legacyReply?.text ?? m.plaintext ?? "").slice(0, 80);
+};
+
 // Message bubble component
 const MessageBubble = ({
   message,
@@ -1368,6 +1387,7 @@ const MessageBubble = ({
   onToggleReactionPicker,
   onAcceptRequest,
   onImageClick,
+  quotedPreview,
 }: {
   message: Message;
   isOwn: boolean;
@@ -1382,7 +1402,10 @@ const MessageBubble = ({
   onToggleReactionPicker?: (id: string) => void;
   onAcceptRequest?: () => void;
   onImageClick?: (url: string) => void;
+  /** Quote of the message this one replies to (envelope replyTo); "" if it isn't loaded. */
+  quotedPreview?: string;
 }) => {
+  const { t } = useTranslation();
   const [showDecryptAnimation, setShowDecryptAnimation] = useState(isNew && !isOwn);
   const [spoilerRevealed, setSpoilerRevealed] = useState(false);
   const [showActions, setShowActions] = useState(false);
@@ -1402,7 +1425,12 @@ const MessageBubble = ({
 
   // Check for special message types
   const replyData = message.plaintext ? parseReplyMessage(message.plaintext) : null;
-  const requestData = message.plaintext ? parseRequestMessage(message.plaintext) : null;
+  const requestData = getRequestData(message);
+  const quote = replyData
+    ? replyData.replyPreview
+    : message.replyTo !== undefined
+      ? quotedPreview || t("messenger.reply.unavailable")
+      : null;
 
   return (
     <motion.div
@@ -1465,20 +1493,17 @@ const MessageBubble = ({
             e.stopPropagation();
             onToggleReactionPicker?.(message.id);
           }}
-          className={`max-w-[85%] sm:max-w-[80%] rounded-2xl px-4 py-2 cursor-pointer transition-shadow hover:shadow-lg break-words ${isOwn
-            ? "bg-primary text-primary-foreground rounded-br-md hover:shadow-primary/20"
-            : "bg-muted text-foreground rounded-bl-md hover:shadow-accent/20"
-            }`}
+          className={`max-w-[85%] sm:max-w-[80%] px-4 py-2 cursor-pointer break-words ${isOwn ? "bubble-own" : "bubble-peer"}`}
         >
           {!isOwn && (
-            <p className="text-xs font-medium mb-1 opacity-70">
+            <p className="bubble-meta font-medium mb-1 text-[hsl(var(--hologram))]">
               {message.senderDisplayName}
             </p>
           )}
 
           {/* Quoted reply */}
-          {replyData && (
-            <QuotedMessage preview={replyData.replyPreview} isOwn={isOwn} />
+          {quote !== null && (
+            <QuotedMessage preview={quote} isOwn={isOwn} />
           )}
 
           {/* Media or text content */}
@@ -1531,12 +1556,16 @@ const MessageBubble = ({
                   )}
                 </div>
               ) : (() => {
-                const paymentData = message.plaintext ? parsePaymentMessage(message.plaintext) : null;
+                const paymentData = getPaymentData(message);
                 if (paymentData) {
                   return <PaymentBubble payment={paymentData} isOwn={isOwn} />;
                 }
                 if (requestData) {
                   return <PaymentRequestBubble request={requestData} isOwn={isOwn} onAccept={onAcceptRequest} />;
+                }
+                const tip = parseTip(message.plaintext);
+                if (tip) {
+                  return <TipBubble amount={tip.amount} symbol={tip.symbol} isOwn={isOwn} />;
                 }
                 if (replyData) {
                   return (
@@ -1560,17 +1589,12 @@ const MessageBubble = ({
           {reactions && reactions.length > 0 && (
             <ReactionBadges reactions={reactions} onReact={onReact} />
           )}
-          {/* Reactions sent from Qwalla (inside its encrypted envelope) */}
-          {message.reactions && message.reactions.length > 0 && (
-            <div className={`flex gap-1 mt-1 text-sm ${isOwn ? "justify-end" : ""}`}>
-              {message.reactions.map((e, i) => <span key={i}>{e}</span>)}
-            </div>
-          )}
 
-          <div className={`flex items-center gap-1 mt-1 text-xs ${isOwn ? "justify-end" : ""}`}>
-            <span className="opacity-60">
+          <div className={`bubble-meta flex items-center gap-1 mt-1 ${isOwn ? "justify-end" : ""}`}>
+            <span className="opacity-70">
               {formatMessageTime(message.createdAt)}
             </span>
+            <span className="opacity-50">// ML-DSA</span>
             {message.selfDestruct && (
               <Timer className="w-3 h-3 text-destructive" />
             )}
@@ -1580,7 +1604,7 @@ const MessageBubble = ({
               <XCircle className="w-3 h-3 text-destructive" />
             )}
           </div>
-          <p className="text-xs opacity-40 mt-0.5 text-right">Tap for details</p>
+          <p className="bubble-meta opacity-40 mt-0.5 text-right">Tap for details</p>
         </motion.div>
       </div>
     </motion.div>
