@@ -239,7 +239,7 @@ cargo build --release --target wasm32-unknown-unknown
 Deployed contracts are visible in the RougeChain explorer:
 
 - **Contracts Explorer** (`/contracts`) — List all deployed contracts with search/sort
-- **Contract Detail** (`/contract/{addr}`) — Contract info, live state viewer, interactive call UI
+- **Contract Detail** (`/contract/{addr}`) — Contract info, state viewer, free queries, wallet-signed calls (gas/fee preview, tx id, receipt Success/Failed) and a live events feed
 - **Transaction Detail** — Contract txs show: contract address, method, gas used, WASM size
 
 ## SDK
