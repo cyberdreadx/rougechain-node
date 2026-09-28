@@ -4,6 +4,26 @@ All notable changes to RougeChain.
 
 ---
 
+## Finality, game-ready contracts and LP fee collection — 2026-09-28
+
+Node release `dbe0fc0` (binary sha256 `46e29456…`), **mandatory**:
+[upgrade guide](running-a-node/mandatory-upgrade-2026-09-28.md).
+
+- **Verified BFT finality (block 150).** Every block from 151 carries its parent's ≥⅔-stake
+  precommit certificate; nodes reject blocks without one. See [Finality](staking/finality.md).
+- **Player-signed contracts (block 150).** Deploy (`/api/v2/contract/publish`, 10 XRGE) and call
+  (`/api/v2/contract/execute`, `gasLimit × 0.000001` XRGE) are signed by the player, who is the
+  caller the contract sees. Contracts read their arguments.
+- **Game-ready contracts (block 160).** Contracts hold and send custom tokens and NFTs, create their
+  own collection and mint to players, roll `host_random`; moves inside cross-contract calls apply; the
+  state root covers NFTs and contract code and storage. Example: `contracts/loot_roll`.
+- **Contract API.** Free query endpoint, events paging and WebSocket `contract:<addr>` events,
+  `Failed` receipts for reverted calls. SDK **1.9.0** `rc.contracts`, extension **1.4.0** contract
+  signing, MCP server **1.2.0**.
+- **LP fee collection.** Pools shows each position's uncollected fees; **Collect fees** withdraws
+  exactly the fee growth and leaves the deposit (node ledger `GET /api/pool/:id/earnings/:owner`).
+- **Explorer.** Swap amounts are labelled with the input token (1,000 QTEK no longer shows as XRGE).
+
 ## Messenger — deterministic threads and recoverable delete — 2026-09-25
 
 Node release `59478e6` (binary sha256 `9a93d68b…`, non-consensus; installed on the primary 2026-09-25).

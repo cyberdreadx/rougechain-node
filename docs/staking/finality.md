@@ -1,13 +1,23 @@
 # Finality
 
-RougeChain has two finality implementations. **Only the legacy one is active today.**
+RougeChain uses verified BFT finality (FINALITY_V2) **since block 150**.
 
 | | Status |
 |---|---|
-| Legacy finality | Active on mainnet |
-| FINALITY_V2 | **BUILT / NOT ACTIVATED** (`FINALITY_V2_ACTIVATION_HEIGHT = None`) |
+| FINALITY_V2 (Release 2a) | **LIVE** (`FINALITY_V2_ACTIVATION_HEIGHT = Some(150)`) |
+| Legacy finality indicator | Blocks 0–149 only |
 
-## Current (legacy) behavior
+**What mainnet enforces from block 151:** every block header carries `parent_commit`, a finality
+certificate for its parent block — ML-DSA-65 precommits from validators holding more than two thirds
+of total stake, checked against the validator set for that height. A node rejects a block without a
+valid certificate, and a producer waits for its parent's certificate before building on it. Check any
+height with `GET /api/finality/:height`.
+
+**What Release 2a does not include:** a fallback proposer and slashing (Release 2b). If the designated
+proposer is offline, no block is produced until it returns. Stake is still concentrated in few keys, so
+the ⅔ quorum is currently met by the largest validator alone.
+
+## Legacy behavior (blocks 0–149)
 
 Blocks are proposed and signed with ML-DSA-65 by staked validators, and every node validates
 blocks and state independently. The `finalized_height` value and the `/api/finality` and
@@ -19,7 +29,7 @@ Treat legacy "finalized" as a status display, **not** as a BFT guarantee. Nothin
 funds (block validity, the bridge, payouts) depends on it. The production bridge relies on its own
 checks and confirmation depths instead.
 
-## FINALITY_V2 (implemented and tested, not activated)
+## How FINALITY_V2 works
 
 FINALITY_V2 replaces the legacy indicator with verifiable finality:
 
@@ -38,10 +48,7 @@ FINALITY_V2 replaces the legacy indicator with verifiable finality:
 - **Operator preflight.** `--finality-v2-preflight` checks that a node's key is the staked
   validator key before activation.
 
-FINALITY_V2 is a coordinated validator upgrade, tested on multi-node devnets. It is required by
-the [V3 XRGE bridge](../bridge/v3-xrge-bridge.md), which only signs withdrawal roots for blocks
-with verified finality.
-
-**It is not active.** No activation height has been chosen. Validator stake is also currently
-concentrated in few keys, which limits what any BFT finality can guarantee until the validator set
-broadens.
+FINALITY_V2 is a coordinated validator upgrade, tested on multi-node devnets before activation.
+It went live at block 150 (2026-09-28). It is a prerequisite of the
+[V3 XRGE bridge](../bridge/v3-xrge-bridge.md), which only signs withdrawal roots for finalized blocks;
+V3 itself is not activated.

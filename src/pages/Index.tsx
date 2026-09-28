@@ -411,7 +411,7 @@ const DeveloperSection = () => {
   // title / desc are i18n keys under home.dev.links.*
   const links = [
     { icon: Terminal, title: "home.dev.links.quickstart.title", desc: "home.dev.links.quickstart.desc", link: `${DOCS}/getting-started/quick-start` },
-    { icon: FileCode, title: "home.dev.links.example.title", desc: "home.dev.links.example.desc", link: `${GITHUB}/tree/main/contracts/erc20_template` },
+    { icon: FileCode, title: "home.dev.links.example.title", desc: "home.dev.links.example.desc", link: `${GITHUB}/tree/main/contracts/loot_roll` },
     { icon: BookOpen, title: "home.dev.links.sdk.title", desc: "home.dev.links.sdk.desc", link: `${DOCS}/advanced/sdk` },
     { icon: Server, title: "home.dev.links.node.title", desc: "home.dev.links.node.desc", link: `${DOCS}/running-a-node/` },
     { icon: Github, title: "home.dev.links.github.title", desc: "home.dev.links.github.desc", link: GITHUB },

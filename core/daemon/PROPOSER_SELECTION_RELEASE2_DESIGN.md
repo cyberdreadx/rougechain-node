@@ -228,7 +228,7 @@ evidence is Release 3, as scoped.
 
 ## 10. Release 2a — implementation record (2026-09-27)
 
-Branch `consensus/release-2a-finality`. **Implemented, not scheduled** (`FINALITY_V2_ACTIVATION_HEIGHT = None`).
+Branch `consensus/release-2a-finality`. **ACTIVE on mainnet since height 150** (`FINALITY_V2_ACTIVATION_HEIGHT = Some(150)`, release `release/r2a-150`, 2026-09-28). Release 2b (fallback proposer, slashing) is not implemented.
 
 What was done:
 

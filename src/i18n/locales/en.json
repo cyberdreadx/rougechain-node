@@ -96,7 +96,7 @@
       "executeFailed": "Failed to execute swap"
     },
     "info": {
-      "amm": "Swaps use an automated market maker (AMM) with a 0.3% fee. Fees go to liquidity providers.",
+      "amm": "Swaps use an automated market maker (AMM) with a 0.3% fee. Fees go to liquidity providers, who can withdraw their earnings any time with Collect fees on the Pools page.",
       "multiHop": "Multi-hop swaps are supported for better rates through multiple pools."
     }
   },
@@ -179,7 +179,7 @@
         },
         "contracts": {
           "title": "Smart Contracts",
-          "desc": "Deploy WASM contracts"
+          "desc": "WASM contracts & games"
         },
         "tokens": {
           "title": "Tokens",
@@ -263,15 +263,15 @@
     },
     "dev": {
       "title": "Build on RougeChain",
-      "subtitle": "Post-quantum primitives, a typed SDK, WASM contracts and an MCP integration for AI agents.",
+      "subtitle": "Post-quantum primitives, a typed SDK, game-ready WASM contracts (tokens, NFTs, randomness) and an MCP integration for AI agents.",
       "links": {
         "quickstart": {
           "title": "Quickstart",
           "desc": "Run a node & first tx in ~5 min"
         },
         "example": {
-          "title": "Example contract",
-          "desc": "ERC-20 template (WASM)"
+          "title": "Example game contract",
+          "desc": "Loot roll: NFTs, tokens & dice"
         },
         "sdk": {
           "title": "SDK & API docs",
@@ -296,7 +296,7 @@
       "subtitle": "The same token lives in two places. Use the right one for each action.",
       "native": {
         "title": "Native XRGE — on RougeChain",
-        "body": "Pays fees & gas, is staked to run validators, and powers on-chain apps: swaps, contracts, tokens, messenger and mail."
+        "body": "Pays fees & gas, is staked to run validators, and powers on-chain apps: swaps, contracts and games, tokens, NFTs, messenger and mail."
       },
       "base": {
         "title": "XRGE (ERC-20) — on Base",
