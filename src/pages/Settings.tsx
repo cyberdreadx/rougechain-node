@@ -159,6 +159,7 @@ const Settings = () => {
     <div className="min-h-screen">
       <main className="max-w-2xl mx-auto px-4 py-6 sm:py-10 space-y-4">
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mb-2">
+          <p className="hud-label mb-1.5">{t("visual.eyebrow.settings")}</p>
           <h1 className="text-3xl font-bold text-shimmer">{t("settings.title")}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t("settings.subtitle")}</p>
         </motion.div>

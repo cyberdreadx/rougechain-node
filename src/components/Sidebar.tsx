@@ -375,7 +375,7 @@ export function Sidebar({ children }: SidebarProps) {
                   className={cn(
                     "flex items-center gap-3 px-3 py-1 rounded-lg text-[13px] font-medium transition-all duration-200",
                     isActive
-                      ? "bg-primary/10 text-primary"
+                      ? "nav-neon nav-neon-active"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted"
                   )}
                 >
@@ -450,7 +450,7 @@ export function Sidebar({ children }: SidebarProps) {
   return (
     <div className="flex min-h-screen w-full overflow-x-hidden">
       {/* Mobile Header */}
-      <div className="fixed top-0 left-0 right-0 z-50 md:hidden glass-bar border-b border-border px-4 py-3 flex items-center gap-3">
+      <div className="fixed top-0 left-0 right-0 z-50 md:hidden glass-bar border-b border-border neon-hairline px-4 py-3 flex items-center gap-3">
         <button 
           onClick={() => setMobileOpen(true)}
           className="p-2 rounded-lg hover:bg-muted"
@@ -492,7 +492,7 @@ export function Sidebar({ children }: SidebarProps) {
 
       {/* Mobile Sidebar */}
       <aside className={cn(
-        "fixed left-0 top-0 z-50 h-screen w-60 glass-strong border-r border-border flex flex-col transition-transform duration-300 md:hidden",
+        "fixed left-0 top-0 z-50 h-screen w-60 glass-strong border-r border-border neon-hairline neon-hairline-y flex flex-col transition-transform duration-300 md:hidden",
         mobileOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <SidebarContent isMobile />
@@ -501,7 +501,7 @@ export function Sidebar({ children }: SidebarProps) {
       {/* Desktop Sidebar */}
       <aside 
         className={cn(
-          "fixed left-0 top-0 z-40 h-screen glass-bar border-r border-border flex-col transition-all duration-300 ease-in-out hidden md:flex",
+          "fixed left-0 top-0 z-40 h-screen glass-bar border-r border-border neon-hairline neon-hairline-y flex-col transition-all duration-300 ease-in-out hidden md:flex",
           expanded ? "w-52" : "w-16"
         )}
         onMouseEnter={() => setExpanded(true)}
