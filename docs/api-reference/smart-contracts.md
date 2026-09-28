@@ -46,6 +46,7 @@ A state-changing call, included in a block.
 | `method` | string | ✅ | Method name |
 | `args` | any JSON | ❌ | Arguments (`{}` when omitted) |
 | `gasLimit` | number | ✅ | Integer 1 – 10,000,000 |
+| `attach` | object | ❌ | From block PAYABLE_HEIGHT: `{ "symbol": "XRGE" \| "<TOKEN>", "amount": <positive integer> }`. Pays the contract. See below |
 | `timestamp` | number | ✅ | Milliseconds since the epoch |
 | `nonce` | string | ✅ | Random string |
 
@@ -65,6 +66,30 @@ A state-changing call, included in a block.
 > (because state changed in between), it is still included and charged, and its receipt
 > (`GET /api/tx/:txId/receipt`) reports `"status": {"Failed": "<error>"}` instead of `"Success"`.
 
+### Payable calls: `attach` (from block PAYABLE_HEIGHT)
+
+```json
+"attach": { "symbol": "XRGE", "amount": 500000000 }
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `attach.symbol` | string | `"XRGE"` or a token symbol (1–32 letters, digits, `_`, `-`; upper-cased by the node) |
+| `attach.amount` | integer | **Positive JSON integer**: quanta for XRGE (1 XRGE = 1,000,000,000 quanta), raw units for a token. Decimals and strings are rejected |
+
+- `attach` is part of the signed payload.
+- The payment moves to the contract **only if the call succeeds**. If the call fails or traps, the
+  payment stays with the caller, but the gas fee is still charged.
+- The contract reads the payment with `host_get_attached_amount()` and `host_get_attached_symbol(out, cap)`.
+  It refuses a payment by failing the call.
+- The node refuses the request up front if the caller can't cover the gas fee plus an XRGE payment
+  (`"insufficient XRGE for the gas fee and the attached payment: …"`), or the token amount
+  (`"insufficient <SYM> for the attached payment: …"`), or if the dry run with the payment would fail.
+- Before block PAYABLE_HEIGHT, the request fails with
+  `"payable contract calls (attach) are not active yet"`. A malformed `attach` returns
+  `"attach.amount must be a positive integer (quanta for XRGE, raw units for tokens)"` or
+  `"attach.symbol must be a token symbol"`.
+
 ## Query Contract (read-only)
 
 A free dry run against the live state. Nothing is signed, charged or committed.
@@ -75,7 +100,8 @@ A free dry run against the live state. Nothing is signed, charged or committed.
 |-------|------|----------|-------------|
 | `method` | string | ✅ | Method name |
 | `args` | any JSON | ❌ | Arguments |
-| `caller` | string | ❌ | Public key the contract sees as `host_get_caller` |
+| `caller` | string | ❌ | Public key the contract sees as `host_get_caller`. **Required** with `attach` |
+| `attach` | object | ❌ | Preview a paid call: same `{ symbol, amount }` as execute (integer quanta for XRGE, raw token units). The contract sees the payment as it would in a block (from block PAYABLE_HEIGHT; before that, the payment is ignored in the preview) |
 
 **Response:**
 ```json
