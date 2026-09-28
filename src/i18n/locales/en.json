@@ -904,5 +904,90 @@
         "body": "Two things keep you safe, and they are different:\n\n• Recovery phrase restores your wallet and funds — but NOT your chat history.\n• Encrypted backup file (.pqcbackup) restores your wallet, funds AND your messages.\n\nExport a backup in Settings → Security & backup and keep both somewhere safe."
       }
     }
+  },
+  "visual": {
+    "hero": {
+      "pqc": "PQC Protected",
+      "portfolio": "Portfolio value",
+      "noPrice": "USD price unavailable",
+      "changeHint": "XRGE market price change over the last 24 hours",
+      "xrge24h": "XRGE 24h",
+      "shielded": "shielded",
+      "address": "Wallet address",
+      "copy": "Copy address",
+      "copied": "Copied",
+      "viewOnChain": "View on chain"
+    },
+    "assets": {
+      "title": "Tokens",
+      "emptyTitle": "No tokens yet",
+      "emptyHint": "Fund your wallet to get started"
+    },
+    "activity": {
+      "title": "Recent activity",
+      "emptyTitle": "No transactions yet",
+      "emptyHint": "Your activity will appear here"
+    },
+    "eyebrow": {
+      "transactions": "Explorer · Live feed",
+      "nfts": "Explorer · Collectibles",
+      "contracts": "Explorer · WASM contracts",
+      "tokens": "Explorer · Tokens",
+      "pools": "DeFi · Liquidity",
+      "swap": "DeFi · Quantum-safe AMM",
+      "bridge": "Cross-chain",
+      "settings": "Control panel",
+      "mail": "Encrypted mail",
+      "validators": "Staking · Consensus",
+      "blockchain": "Explorer · Network"
+    },
+    "titles": {
+      "validators": "Validators",
+      "blockchain": "Network explorer",
+      "blockchainHint": "Live blocks, peers and chain health"
+    },
+    "empty": {
+      "transactions": {
+        "title": "No transactions yet",
+        "hint": "New transactions will stream in here as blocks land."
+      },
+      "collections": {
+        "title": "No collections yet",
+        "hint": "No NFT collections have been created on the network."
+      },
+      "nfts": {
+        "title": "Nothing minted yet",
+        "hint": "No NFTs have been minted in this collection."
+      },
+      "pools": {
+        "title": "No pools yet",
+        "hint": "Be the first to create a liquidity pool.",
+        "cta": "Create pool"
+      },
+      "poolSearch": {
+        "title": "No matching pools",
+        "hint": "No pools match “{{query}}”."
+      },
+      "tokens": {
+        "title": "No tokens yet",
+        "hint": "No tokens have been created on the network.",
+        "searchTitle": "No matches",
+        "searchHint": "No tokens match your search."
+      },
+      "contracts": {
+        "title": "No contracts found",
+        "hint": "No smart contracts have been deployed yet. Deploy the first one via the API!",
+        "searchHint": "No contracts match your search."
+      },
+      "mail": {
+        "inboxTitle": "Inbox zero",
+        "sentTitle": "Nothing sent yet",
+        "trashTitle": "Trash is empty",
+        "inboxNamed": "Your addresses: {{a}} · {{b}}",
+        "inboxClaim": "Claim a name to get your @{{a}} and @{{b}} addresses",
+        "sentHint": "Mail you send will show up here.",
+        "trashHint": "Deleted mail lands here."
+      }
+    }
   }
 }

@@ -903,5 +903,90 @@
         "body": "有两样东西保护你，而且它们不同：\n\n• 助记词可恢复钱包和资金——但不能恢复聊天记录。\n• 加密备份文件（.pqcbackup）可恢复钱包、资金以及你的消息。\n\n请在 设置 → 安全与备份 中导出备份，并将两者妥善保存。"
       }
     }
+  },
+  "visual": {
+    "hero": {
+      "pqc": "PQC 保护",
+      "portfolio": "资产总值",
+      "noPrice": "暂无美元价格",
+      "changeHint": "XRGE 过去 24 小时的市场价格变化",
+      "xrge24h": "XRGE 24h",
+      "shielded": "已屏蔽",
+      "address": "钱包地址",
+      "copy": "复制地址",
+      "copied": "已复制",
+      "viewOnChain": "在链上查看"
+    },
+    "assets": {
+      "title": "代币",
+      "emptyTitle": "还没有代币",
+      "emptyHint": "为钱包充值即可开始"
+    },
+    "activity": {
+      "title": "最近活动",
+      "emptyTitle": "还没有交易",
+      "emptyHint": "你的活动会显示在这里"
+    },
+    "eyebrow": {
+      "transactions": "浏览器 · 实时",
+      "nfts": "浏览器 · 收藏品",
+      "contracts": "浏览器 · WASM 合约",
+      "tokens": "浏览器 · 代币",
+      "pools": "DeFi · 流动性",
+      "swap": "DeFi · 抗量子 AMM",
+      "bridge": "跨链",
+      "settings": "控制面板",
+      "mail": "加密邮件",
+      "validators": "质押 · 共识",
+      "blockchain": "浏览器 · 网络"
+    },
+    "titles": {
+      "validators": "验证者",
+      "blockchain": "网络浏览器",
+      "blockchainHint": "实时区块、节点与链健康状况"
+    },
+    "empty": {
+      "transactions": {
+        "title": "还没有交易",
+        "hint": "新区块产生后，交易会实时出现在这里。"
+      },
+      "collections": {
+        "title": "还没有合集",
+        "hint": "网络上尚未创建任何 NFT 合集。"
+      },
+      "nfts": {
+        "title": "尚未铸造",
+        "hint": "此合集中还没有铸造任何 NFT。"
+      },
+      "pools": {
+        "title": "还没有资金池",
+        "hint": "成为第一个创建流动性池的人。",
+        "cta": "创建资金池"
+      },
+      "poolSearch": {
+        "title": "没有匹配的资金池",
+        "hint": "没有与“{{query}}”匹配的资金池。"
+      },
+      "tokens": {
+        "title": "还没有代币",
+        "hint": "网络上尚未创建任何代币。",
+        "searchTitle": "没有匹配项",
+        "searchHint": "没有符合搜索条件的代币。"
+      },
+      "contracts": {
+        "title": "未找到合约",
+        "hint": "尚未部署任何智能合约。通过 API 部署第一个吧！",
+        "searchHint": "没有符合搜索条件的合约。"
+      },
+      "mail": {
+        "inboxTitle": "收件箱已清空",
+        "sentTitle": "还没有发送邮件",
+        "trashTitle": "废纸篓是空的",
+        "inboxNamed": "你的地址：{{a}} · {{b}}",
+        "inboxClaim": "认领一个名称以获得 @{{a}} 和 @{{b}} 地址",
+        "sentHint": "你发送的邮件会显示在这里。",
+        "trashHint": "删除的邮件会出现在这里。"
+      }
+    }
   }
 }

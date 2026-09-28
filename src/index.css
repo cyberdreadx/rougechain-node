@@ -583,3 +583,172 @@ body::before {
   .cyber-grid, .cyber-scanbeam, .hud-corners::after, .btn-neon::after { animation: none !important; }
   .cyber-scanbeam { display: none; }
 }
+
+/* ─── Visual polish (batch 3) ───────────────────────────────────────────────
+   Page titles, glass cards, row glow, neon nav, empty states, token rows and the wallet hero.
+   All motion here is decorative and is switched off in the reduced-motion block below. */
+@keyframes hairline-flow { to { background-position: 200% 0; } }
+@keyframes orb-float {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50%      { transform: translate3d(0, -5px, 0); }
+}
+@keyframes orb-glow {
+  0%, 100% { box-shadow: 0 0 22px hsl(331 75% 51% / 0.18), inset 0 0 18px hsl(262 87% 60% / 0.12); }
+  50%      { box-shadow: 0 0 34px hsl(262 87% 60% / 0.30), inset 0 0 22px hsl(166 86% 57% / 0.12); }
+}
+@keyframes hero-sheen {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+
+/* Page title: bold, tight, with a faint magenta halo. Pair with a .hud-label eyebrow. */
+.page-title {
+  font-size: 1.5rem;
+  line-height: 2rem;
+  font-weight: 700;
+  color: hsl(var(--foreground));
+  text-shadow: 0 0 24px hsl(331 75% 51% / 0.25);
+}
+@media (min-width: 640px) { .page-title { font-size: 1.875rem; line-height: 2.25rem; } }
+
+/* Glass card: translucent panel, hairline border, soft border glow on hover. */
+.glass-card {
+  border-color: hsl(var(--border) / 0.7);
+  transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+}
+.glass-card:hover { border-color: hsl(var(--primary) / 0.28); }
+
+/* Hover lift for clickable cards / tiles. */
+.hover-lift { transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease; }
+.hover-lift:hover {
+  transform: translateY(-3px);
+  border-color: hsl(var(--hologram) / 0.45);
+  box-shadow: 0 10px 30px hsl(0 0% 0% / 0.35), 0 0 22px hsl(var(--hologram) / 0.14);
+}
+
+/* Row hover glow for lists and tables: teal edge + a wash from the left. */
+.row-glow { position: relative; transition: background-color 160ms ease, box-shadow 160ms ease; }
+.row-glow:hover {
+  background-image: linear-gradient(90deg, hsl(var(--hologram) / 0.09), hsl(var(--primary) / 0.04) 45%, transparent 85%);
+  box-shadow: inset 2px 0 0 hsl(var(--hologram) / 0.85);
+}
+
+/* Qwalla-style token row. */
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  text-align: left;
+}
+.token-row .token-icon { transition: box-shadow 200ms ease, transform 200ms ease; }
+.token-row:hover .token-icon {
+  transform: scale(1.06);
+  box-shadow: 0 0 0 1.5px hsl(var(--background)), 0 0 0 3px var(--token-accent, hsl(var(--primary))), 0 0 16px var(--token-accent, hsl(var(--primary)));
+}
+.token-row:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: -2px; }
+
+/* Neon active nav item: gradient indicator bar + glow. */
+.nav-neon { position: relative; }
+.nav-neon::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 18%;
+  bottom: 18%;
+  width: 3px;
+  border-radius: 9999px;
+  background: linear-gradient(180deg, hsl(349 100% 59%), hsl(331 75% 51%), hsl(262 87% 60%));
+  box-shadow: 0 0 10px hsl(331 75% 51% / 0.9), 0 0 18px hsl(331 75% 51% / 0.5);
+}
+.nav-neon-active {
+  color: hsl(var(--foreground));
+  background: linear-gradient(90deg, hsl(var(--primary) / 0.20), hsl(var(--accent) / 0.08) 60%, transparent);
+  box-shadow: inset 0 0 0 1px hsl(var(--primary) / 0.22), 0 0 16px hsl(var(--primary) / 0.12);
+}
+.nav-neon-active svg { color: hsl(var(--primary)); filter: drop-shadow(0 0 6px hsl(var(--primary) / 0.7)); }
+
+/* A thin animated brand-gradient line along the bottom (headers) or right edge (sidebar). */
+.neon-hairline { position: relative; }
+.neon-hairline::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, hsl(349 100% 59% / 0.8), hsl(262 87% 60% / 0.8), hsl(166 86% 57% / 0.8), transparent);
+  background-size: 200% 100%;
+  animation: hairline-flow 8s linear infinite;
+  opacity: 0.8;
+}
+.neon-hairline-y::after {
+  left: auto;
+  top: 0;
+  right: -1px;
+  bottom: 0;
+  width: 1px;
+  height: auto;
+  background: linear-gradient(180deg, transparent, hsl(349 100% 59% / 0.6), hsl(262 87% 60% / 0.6), transparent);
+  background-size: 100% 200%;
+  animation: none;
+}
+
+/* Empty-state orb: floats and breathes inside a .gradient-ring. */
+.empty-orb {
+  background: radial-gradient(circle at 30% 25%, hsl(var(--primary) / 0.22), hsl(var(--card) / 0.85) 70%);
+  animation: orb-float 5s ease-in-out infinite, orb-glow 6s ease-in-out infinite;
+}
+.empty-orb__icon { filter: drop-shadow(0 0 8px hsl(var(--primary) / 0.6)); }
+
+/* Wallet hero: layered brand gradient that slowly drifts, plus pointer tilt (set inline). */
+.wallet-hero {
+  background-color: hsl(var(--card) / 0.55);
+  background-image:
+    radial-gradient(120% 90% at 0% 0%, hsl(331 75% 51% / 0.22), transparent 55%),
+    radial-gradient(110% 90% at 100% 100%, hsl(262 87% 60% / 0.22), transparent 55%),
+    linear-gradient(120deg, hsl(349 100% 59% / 0.06), hsl(166 86% 57% / 0.05), hsl(262 87% 60% / 0.06));
+  background-size: 100% 100%, 100% 100%, 300% 300%;
+  animation: hero-sheen 14s ease-in-out infinite;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+.wallet-hero__glare {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: radial-gradient(40% 50% at var(--glare-x, 50%) var(--glare-y, 0%), hsl(0 0% 100% / 0.10), transparent 70%);
+  opacity: 0;
+  transition: opacity 250ms ease;
+}
+.wallet-hero:hover .wallet-hero__glare { opacity: 1; }
+.hero-amount {
+  font-size: clamp(2rem, 9vw, 2.75rem);
+  line-height: 1.05;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.hero-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid currentColor;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neon-hairline::after, .empty-orb, .wallet-hero { animation: none !important; }
+  .hover-lift, .glass-card, .row-glow, .token-row .token-icon { transition: none; }
+  .hover-lift:hover { transform: none; }
+  .token-row:hover .token-icon { transform: none; }
+  .wallet-hero__glare { display: none; }
+}
