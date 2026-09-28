@@ -1099,5 +1099,90 @@
         "trashHint": "Deleted mail lands here."
       }
     }
+  },
+  "base": {
+    "title": "Base wallet",
+    "testnetBadge": "Testnet",
+    "sameAddressHint": "Same recovery phrase as Qwalla — same Base address.",
+    "copyAddress": "Copy address",
+    "copied": "Base address copied",
+    "viewOnExplorer": "View on BaseScan",
+    "refresh": "Refresh Base balances",
+    "rpcError": "Couldn't reach {{chain}} — showing the last known balances.",
+    "send": "Send",
+    "receive": "Receive",
+    "assets": {
+      "ETH": "Ether",
+      "XRGE": "RougeCoin",
+      "USDC": "USD Coin"
+    },
+    "noMnemonic": {
+      "title": "No Base account for this wallet",
+      "hint": "Base addresses are derived from a recovery phrase. This wallet was imported from raw keys or connected through the extension, so it has none here. Recover it from its recovery phrase (or use Qwalla / the extension) to use Base."
+    },
+    "sendDialog": {
+      "title": "Send on {{chain}}",
+      "asset": "Asset",
+      "recipient": "Recipient address",
+      "amount": "Amount",
+      "max": "Max",
+      "balance": "Balance: {{amount}} {{symbol}}",
+      "review": "Review",
+      "estimating": "Estimating fee…",
+      "invalidAddress": "Not a valid 0x address (0x + 40 hex characters).",
+      "badChecksum": "Checksum mismatch — double-check this address (mixed case must match EIP-55).",
+      "selfSend": "That's your own Base address.",
+      "invalidAmount": "Enter an amount greater than zero.",
+      "insufficient": "Not enough {{symbol}}.",
+      "gasShort": "Not enough ETH to pay the network fee (~{{fee}} ETH).",
+      "tokenGasNote": "Network fees on Base are paid in ETH.",
+      "feeUnavailable": "Couldn't estimate the fee — this transfer would probably fail.",
+      "confirmTitle": "Confirm send",
+      "from": "From",
+      "to": "To",
+      "network": "Network",
+      "networkFee": "Max network fee",
+      "confirm": "Sign & send",
+      "sending": "Sending…",
+      "back": "Back",
+      "sentTitle": "Transaction sent",
+      "sentHint": "It will confirm on {{chain}} in a few seconds.",
+      "done": "Done",
+      "mainnetWarning": "This is Base mainnet with real funds. Transactions can't be reversed — check the address.",
+      "testnetWarning": "Base Sepolia testnet — these tokens have no value.",
+      "localSign": "Signed locally in your browser with the key derived from your recovery phrase. Nothing secret leaves this page."
+    },
+    "receiveDialog": {
+      "title": "Receive on {{chain}}",
+      "qrAlt": "Base address QR code",
+      "addressLabel": "Your {{chain}} address",
+      "hint": "Only send assets on the {{chain}} network (ETH, XRGE, USDC and other Base tokens) to this address. Funds sent from another network may be lost.",
+      "testnetHint": "This is a {{chain}} testnet address — don't send real funds to it."
+    },
+    "bridge": {
+      "useLocal": "Use my RougeChain Base wallet",
+      "useLocalHint": "Your Base address from your recovery phrase — no MetaMask needed.",
+      "connectedLocal": "RougeChain Base wallet",
+      "useMyAddress": "Use my Base address",
+      "locked": "Unlock your RougeChain wallet on the Wallet page first."
+    },
+    "approve": {
+      "txTitle": "Approve {{chain}} transaction",
+      "signTitle": "Approve signature request",
+      "action": "Action",
+      "to": "To",
+      "value": "Value",
+      "fee": "Max network fee",
+      "message": "Message",
+      "reject": "Reject",
+      "approve": "Approve & sign",
+      "actions": {
+        "approve": "Allow the bridge to spend your tokens",
+        "transfer": "Token transfer",
+        "deposit": "Bridge deposit",
+        "eth": "Send ETH",
+        "call": "Contract call"
+      }
+    }
   }
 }

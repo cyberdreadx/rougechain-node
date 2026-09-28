@@ -1099,5 +1099,90 @@
         "trashHint": "El correo eliminado llega aquí."
       }
     }
+  },
+  "base": {
+    "title": "Billetera Base",
+    "testnetBadge": "Testnet",
+    "sameAddressHint": "Misma frase de recuperación que Qwalla: misma dirección de Base.",
+    "copyAddress": "Copiar dirección",
+    "copied": "Dirección de Base copiada",
+    "viewOnExplorer": "Ver en BaseScan",
+    "refresh": "Actualizar saldos de Base",
+    "rpcError": "No se pudo conectar con {{chain}}; se muestran los últimos saldos conocidos.",
+    "send": "Enviar",
+    "receive": "Recibir",
+    "assets": {
+      "ETH": "Ether",
+      "XRGE": "RougeCoin",
+      "USDC": "USD Coin"
+    },
+    "noMnemonic": {
+      "title": "Esta billetera no tiene cuenta de Base",
+      "hint": "Las direcciones de Base se derivan de una frase de recuperación. Esta billetera se importó con claves sin frase o se conectó mediante la extensión, así que aquí no tiene ninguna. Recupérala con su frase de recuperación (o usa Qwalla / la extensión) para usar Base."
+    },
+    "sendDialog": {
+      "title": "Enviar en {{chain}}",
+      "asset": "Activo",
+      "recipient": "Dirección del destinatario",
+      "amount": "Cantidad",
+      "max": "Máx",
+      "balance": "Saldo: {{amount}} {{symbol}}",
+      "review": "Revisar",
+      "estimating": "Estimando comisión…",
+      "invalidAddress": "No es una dirección 0x válida (0x + 40 caracteres hexadecimales).",
+      "badChecksum": "La suma de verificación no coincide: revisa la dirección (las mayúsculas/minúsculas deben cumplir EIP-55).",
+      "selfSend": "Es tu propia dirección de Base.",
+      "invalidAmount": "Introduce una cantidad mayor que cero.",
+      "insufficient": "No tienes suficiente {{symbol}}.",
+      "gasShort": "No tienes suficiente ETH para la comisión de red (~{{fee}} ETH).",
+      "tokenGasNote": "Las comisiones de red en Base se pagan en ETH.",
+      "feeUnavailable": "No se pudo estimar la comisión; probablemente esta transferencia fallaría.",
+      "confirmTitle": "Confirmar envío",
+      "from": "Desde",
+      "to": "A",
+      "network": "Red",
+      "networkFee": "Comisión de red máxima",
+      "confirm": "Firmar y enviar",
+      "sending": "Enviando…",
+      "back": "Atrás",
+      "sentTitle": "Transacción enviada",
+      "sentHint": "Se confirmará en {{chain}} en unos segundos.",
+      "done": "Listo",
+      "mainnetWarning": "Esto es Base mainnet con fondos reales. Las transacciones no se pueden revertir: revisa la dirección.",
+      "testnetWarning": "Testnet Base Sepolia: estos tokens no tienen valor.",
+      "localSign": "Se firma localmente en tu navegador con la clave derivada de tu frase de recuperación. Nada secreto sale de esta página."
+    },
+    "receiveDialog": {
+      "title": "Recibir en {{chain}}",
+      "qrAlt": "Código QR de la dirección de Base",
+      "addressLabel": "Tu dirección de {{chain}}",
+      "hint": "Envía a esta dirección solo activos de la red {{chain}} (ETH, XRGE, USDC y otros tokens de Base). Los fondos enviados desde otra red podrían perderse.",
+      "testnetHint": "Esta es una dirección de testnet {{chain}}: no envíes fondos reales."
+    },
+    "bridge": {
+      "useLocal": "Usar mi billetera Base de RougeChain",
+      "useLocalHint": "Tu dirección de Base derivada de tu frase de recuperación, sin MetaMask.",
+      "connectedLocal": "Billetera Base de RougeChain",
+      "useMyAddress": "Usar mi dirección de Base",
+      "locked": "Primero desbloquea tu billetera RougeChain en la página Billetera."
+    },
+    "approve": {
+      "txTitle": "Aprobar transacción en {{chain}}",
+      "signTitle": "Aprobar solicitud de firma",
+      "action": "Acción",
+      "to": "A",
+      "value": "Valor",
+      "fee": "Comisión de red máxima",
+      "message": "Mensaje",
+      "reject": "Rechazar",
+      "approve": "Aprobar y firmar",
+      "actions": {
+        "approve": "Permitir que el puente gaste tus tokens",
+        "transfer": "Transferencia de tokens",
+        "deposit": "Depósito al puente",
+        "eth": "Enviar ETH",
+        "call": "Llamada a contrato"
+      }
+    }
   }
 }

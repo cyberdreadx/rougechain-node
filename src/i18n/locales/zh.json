@@ -1098,5 +1098,90 @@
         "trashHint": "删除的邮件会出现在这里。"
       }
     }
+  },
+  "base": {
+    "title": "Base 钱包",
+    "testnetBadge": "测试网",
+    "sameAddressHint": "与 Qwalla 使用相同的助记词，因此 Base 地址相同。",
+    "copyAddress": "复制地址",
+    "copied": "已复制 Base 地址",
+    "viewOnExplorer": "在 BaseScan 上查看",
+    "refresh": "刷新 Base 余额",
+    "rpcError": "无法连接 {{chain}}，显示的是最近一次获取的余额。",
+    "send": "发送",
+    "receive": "接收",
+    "assets": {
+      "ETH": "以太币",
+      "XRGE": "RougeCoin",
+      "USDC": "USD Coin"
+    },
+    "noMnemonic": {
+      "title": "此钱包没有 Base 账户",
+      "hint": "Base 地址由助记词派生。此钱包是通过私钥导入或经由扩展连接的，因此在这里没有 Base 地址。请使用助记词恢复该钱包（或使用 Qwalla / 扩展）以使用 Base。"
+    },
+    "sendDialog": {
+      "title": "在 {{chain}} 上发送",
+      "asset": "资产",
+      "recipient": "收款地址",
+      "amount": "数量",
+      "max": "最大",
+      "balance": "余额：{{amount}} {{symbol}}",
+      "review": "检查",
+      "estimating": "正在估算手续费…",
+      "invalidAddress": "不是有效的 0x 地址（0x + 40 个十六进制字符）。",
+      "badChecksum": "校验和不匹配，请仔细核对地址（大小写混合时必须符合 EIP-55）。",
+      "selfSend": "这是你自己的 Base 地址。",
+      "invalidAmount": "请输入大于零的数量。",
+      "insufficient": "{{symbol}} 余额不足。",
+      "gasShort": "ETH 不足以支付网络手续费（约 {{fee}} ETH）。",
+      "tokenGasNote": "Base 上的网络手续费以 ETH 支付。",
+      "feeUnavailable": "无法估算手续费，此转账很可能会失败。",
+      "confirmTitle": "确认发送",
+      "from": "发送方",
+      "to": "接收方",
+      "network": "网络",
+      "networkFee": "最高网络手续费",
+      "confirm": "签名并发送",
+      "sending": "发送中…",
+      "back": "返回",
+      "sentTitle": "交易已发送",
+      "sentHint": "几秒钟后将在 {{chain}} 上确认。",
+      "done": "完成",
+      "mainnetWarning": "这是 Base 主网，涉及真实资金。交易无法撤销，请核对地址。",
+      "testnetWarning": "Base Sepolia 测试网：这些代币没有价值。",
+      "localSign": "使用由你的助记词派生的密钥在浏览器本地签名，任何机密信息都不会离开此页面。"
+    },
+    "receiveDialog": {
+      "title": "在 {{chain}} 上接收",
+      "qrAlt": "Base 地址二维码",
+      "addressLabel": "你的 {{chain}} 地址",
+      "hint": "请只向此地址发送 {{chain}} 网络上的资产（ETH、XRGE、USDC 及其他 Base 代币）。从其他网络发送的资金可能会丢失。",
+      "testnetHint": "这是 {{chain}} 测试网地址，请勿发送真实资金。"
+    },
+    "bridge": {
+      "useLocal": "使用我的 RougeChain Base 钱包",
+      "useLocalHint": "使用由助记词派生的 Base 地址，无需 MetaMask。",
+      "connectedLocal": "RougeChain Base 钱包",
+      "useMyAddress": "使用我的 Base 地址",
+      "locked": "请先在钱包页面解锁你的 RougeChain 钱包。"
+    },
+    "approve": {
+      "txTitle": "批准 {{chain}} 交易",
+      "signTitle": "批准签名请求",
+      "action": "操作",
+      "to": "接收方",
+      "value": "金额",
+      "fee": "最高网络手续费",
+      "message": "消息",
+      "reject": "拒绝",
+      "approve": "批准并签名",
+      "actions": {
+        "approve": "允许跨链桥使用你的代币",
+        "transfer": "代币转账",
+        "deposit": "跨链桥存入",
+        "eth": "发送 ETH",
+        "call": "合约调用"
+      }
+    }
   }
 }

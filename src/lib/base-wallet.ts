@@ -298,3 +298,11 @@ export function baseTxUrl(chain: BaseChainInfo, hash: string): string {
 export function baseAddressUrl(chain: BaseChainInfo, address: string): string {
   return `${chain.explorer}/address/${address}`;
 }
+
+/** USD price per whole token on this chain (testnet tokens are valueless → null). */
+export function basePriceUsd(chain: BaseChainInfo, symbol: BaseAssetSymbol, eth: number | null, xrge: number | null): number | null {
+  if (!chain.isMainnet) return null;
+  if (symbol === "ETH") return eth;
+  if (symbol === "XRGE") return xrge;
+  return 1; // USDC
+}
