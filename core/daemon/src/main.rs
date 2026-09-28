@@ -22,6 +22,7 @@ mod fork;
 mod fork_tables;
 mod v2_binding;
 mod regen_votes;
+mod upgrades;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -359,6 +360,11 @@ async fn main() -> Result<(), String> {
             block_time_ms: args.block_time_ms,
         }
     };
+    // Protocol upgrade heights for this network (mainnet / testnet), before any block is applied.
+    let schedule = upgrades::select(&chain.chain_id)?;
+    eprintln!("[upgrades] {} schedule for {}: tx-integrity {:?}, proposer selection {:?}, finality {:?}, GAME_READY {:?}, GAME_READY 2 {:?}, GAME_READY 3 {:?}, payable calls {:?}",
+        schedule.network, chain.chain_id, schedule.tx_uniqueness, schedule.proposer_selection, schedule.finality_v2,
+        schedule.game_ready, schedule.game_ready_2, schedule.game_ready_3, schedule.payable_calls);
     let data_dir_clone = data_dir.clone();
     let bridge_withdraw_store = std::sync::Arc::new(
         BridgeWithdrawStore::new(&data_dir_clone).map_err(|e| format!("bridge withdraw store: {}", e))?
@@ -1728,6 +1734,8 @@ struct StatsResponse {
     /// validator this node derives as designated proposer for it (from canonical validator
     /// state after the current tip). Compare across nodes before/at activation.
     proposer_selection_activation_height: Option<u64>,
+    /// Upgrade heights this node enforces (per network; see `upgrades.rs`).
+    upgrade_schedule: crate::upgrades::UpgradeSchedule,
     designated_proposer_next_height: u64,
     proposer_selection_active_next: bool,
     designated_proposer_next: Option<String>,
@@ -1754,7 +1762,8 @@ async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>,
         base_fee: node.get_base_fee(),
         total_fees_burned: node.get_total_fees_burned(),
         state_root: node.get_state_root().unwrap_or_default(),
-        proposer_selection_activation_height: crate::node::PROPOSER_SELECTION_ACTIVATION_HEIGHT,
+        proposer_selection_activation_height: crate::upgrades::current().proposer_selection,
+        upgrade_schedule: *crate::upgrades::current(),
         designated_proposer_next_height: height + 1,
         proposer_selection_active_next: crate::node::proposer_selection_active(height + 1),
         designated_proposer_next: node.designated_proposer(height + 1).unwrap_or(None),
