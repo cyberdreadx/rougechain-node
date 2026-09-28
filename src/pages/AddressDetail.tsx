@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { txAmountSymbol } from "@/lib/tx-display";
 import { useParams, Link } from "react-router-dom";
 import {
   ArrowLeft,
@@ -252,7 +253,7 @@ const AddressDetail = () => {
   };
 
   const getTxSymbol = (tx: AddressTx): string => {
-    return tx.tx?.payload?.token_symbol || tx.tx?.payload?.tokenSymbol || "XRGE";
+    return txAmountSymbol(tx.tx?.type ?? tx.tx?.tx_type, tx.tx?.payload as Record<string, unknown>);
   };
 
   const tokenBalanceEntries = balanceData

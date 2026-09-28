@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { txAmountSymbol } from "@/lib/tx-display";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import {
   ArrowLeft,
@@ -356,7 +357,7 @@ const BlockDetail = () => {
                     const isFaucet = payload.faucet === true;
                     const from = isFaucet ? "FAUCET" : tx.fromPubKey ?? tx.from_pub_key ?? "";
                     const to = payload.toPubKeyHex ?? payload.to_pub_key_hex ?? payload.target_pub_key ?? "";
-                    const tokenSymbol = payload.token_symbol ?? payload.tokenSymbol ?? "XRGE";
+                    const tokenSymbol = txAmountSymbol(type, payload as Record<string, unknown>);
 
                     return (
                       <div key={entry.txId} className="rounded-lg border border-border bg-background/60 p-3 space-y-2">
@@ -418,7 +419,7 @@ const BlockDetail = () => {
                         const isFaucet = payload.faucet === true;
                         const from = isFaucet ? "FAUCET" : tx.fromPubKey ?? tx.from_pub_key ?? "";
                         const to = payload.toPubKeyHex ?? payload.to_pub_key_hex ?? payload.target_pub_key ?? "";
-                        const tokenSymbol = payload.token_symbol ?? payload.tokenSymbol ?? "XRGE";
+                        const tokenSymbol = txAmountSymbol(type, payload as Record<string, unknown>);
 
                         return (
                           <tr key={entry.txId} className="hover:bg-secondary/40 transition-colors">
