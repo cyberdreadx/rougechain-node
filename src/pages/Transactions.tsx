@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { txAmountSymbol } from "@/lib/tx-display";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Activity, RefreshCw, Copy, Check, Zap, Box, Users, Clock, ChevronLeft, ChevronRight, ExternalLink, ArrowUpRight, ArrowDownLeft, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +13,7 @@ import { toast } from "sonner";
 import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
 import { formatTokenAmount } from "@/hooks/use-eth-price";
 import { RougeAddressLink } from "@/components/RougeAddressLink";
+import { EmptyState } from "@/components/ui/empty-state";
 
 const ITEMS_PER_PAGE = 20;
 
@@ -105,6 +107,7 @@ const labelForType = (type: string) => {
 };
 
 const Transactions = () => {
+  const { t } = useTranslation();
   const [txs, setTxs] = useState<TxItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
@@ -324,8 +327,9 @@ const Transactions = () => {
 
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
           <div className="space-y-2">
+            <p className="hud-label">{t("visual.eyebrow.transactions")}</p>
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              <h1 className="text-xl sm:text-2xl font-bold text-foreground">Transaction Feed</h1>
+              <h1 className="page-title">Transaction Feed</h1>
               <Badge variant="outline">{getNetworkLabel()}</Badge>
               {/* WebSocket connection status */}
               <div className="flex items-center gap-1.5" title={`Connection: ${connectionType}`}>
@@ -383,14 +387,12 @@ const Transactions = () => {
 
             <div className="md:hidden space-y-3">
               {paginatedTxs.length === 0 && !isLoading && (
-                <div className="py-6 text-center text-muted-foreground">
-                  No transactions yet.
-                </div>
+                <EmptyState compact icon={Activity} title={t("visual.empty.transactions.title")} hint={t("visual.empty.transactions.hint")} />
               )}
               {paginatedTxs.map((tx) => (
                 <div
                    key={tx.id}
-                   className="rounded-lg border border-border bg-background/60 p-3 space-y-2 cursor-pointer hover:border-primary/50 transition-colors overflow-hidden"
+                   className="rounded-lg border border-border bg-background/60 p-3 space-y-2 cursor-pointer hover:border-primary/50 row-glow overflow-hidden"
                    onClick={() => setSelectedTx(tx)}
                 >
                   <div className="flex items-center justify-between">
@@ -485,13 +487,13 @@ const Transactions = () => {
                 <tbody className="divide-y divide-border">
                   {paginatedTxs.length === 0 && !isLoading && (
                     <tr>
-                      <td colSpan={8} className="py-6 text-center text-muted-foreground">
-                        No transactions yet.
+                      <td colSpan={8}>
+                        <EmptyState compact icon={Activity} title={t("visual.empty.transactions.title")} hint={t("visual.empty.transactions.hint")} />
                       </td>
                     </tr>
                   )}
                   {paginatedTxs.map((tx) => (
-                    <tr key={tx.id} className="hover:bg-secondary/40 transition-colors cursor-pointer" onClick={() => setSelectedTx(tx)}>
+                    <tr key={tx.id} className="row-glow cursor-pointer" onClick={() => setSelectedTx(tx)}>
                       <td className="py-2 px-2 font-mono">
                         <div className="flex items-center gap-1">
                           <Link

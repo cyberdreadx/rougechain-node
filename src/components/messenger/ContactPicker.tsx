@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, User, MessageSquare, Loader2, Bot, Sparkles, UserPlus, CheckCircle2, AlertCircle, QrCode, StickyNote } from "lucide-react";
+import { X, User, MessageSquare, Loader2, Bot, Sparkles, UserPlus, CheckCircle2, AlertCircle, QrCode, StickyNote, Users } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +17,8 @@ interface ContactPickerProps {
   conversations?: Conversation[];
   onClose: () => void;
   onConversationCreated: (conversation: Conversation) => void;
+  /** Open the new-group dialog (Qwalla's "New group"). */
+  onNewGroup?: () => void;
 }
 
 // Parse rouge1... address, xrge: prefixed address, or raw public key
@@ -42,7 +45,8 @@ const parseAddress = (input: string): { valid: boolean; publicKey: string; error
   return { valid: true, publicKey: rawKey };
 };
 
-const ContactPicker = ({ contacts, wallet, conversations = [], onClose, onConversationCreated }: ContactPickerProps) => {
+const ContactPicker = ({ contacts, wallet, conversations = [], onClose, onConversationCreated, onNewGroup }: ContactPickerProps) => {
+  const { t } = useTranslation();
   const [isCreating, setIsCreating] = useState<string | null>(null);
   const [isCreatingBot, setIsCreatingBot] = useState(false);
   const [isCreatingNoteToSelf, setIsCreatingNoteToSelf] = useState(false);
@@ -281,6 +285,24 @@ const ContactPicker = ({ contacts, wallet, conversations = [], onClose, onConver
             </div>
           </button>
         </div>
+
+        {/* New group */}
+        {onNewGroup && (
+          <div className="px-4 pb-2">
+            <button
+              onClick={onNewGroup}
+              className="w-full p-3 rounded-xl bg-muted/50 border border-border hover:border-primary/50 hover:bg-muted transition-all flex items-center gap-3"
+            >
+              <div className="w-10 h-10 rounded-full bg-accent/20 flex items-center justify-center">
+                <Users className="w-5 h-5 text-accent" />
+              </div>
+              <div className="flex-1 text-left">
+                <p className="font-medium text-foreground">{t("chat.group.new")}</p>
+                <p className="text-xs text-muted-foreground">{t("chat.group.newHint")}</p>
+              </div>
+            </button>
+          </div>
+        )}
 
         {/* Note to Self */}
         <div className="px-4 pb-4">

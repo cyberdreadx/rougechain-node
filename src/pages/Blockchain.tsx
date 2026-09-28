@@ -4,6 +4,8 @@ import { Shield, Blocks, RotateCcw, CheckCircle2, XCircle, Wifi, WifiOff } from 
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/ui/page-header";
 import { RougeAddressLink } from "@/components/RougeAddressLink";
 import PQCInfo from "@/components/blockchain/PQCInfo";
 import { QuantumThreatPanel } from "@/components/blockchain/QuantumThreatPanel";
@@ -37,6 +39,7 @@ interface BlockV1 {
 }
 
 const Blockchain = () => {
+  const { t } = useTranslation();
   const [chain, setChain] = useState<Block[]>([]);
   const [isValidating, setIsValidating] = useState(false);
   const [chainValidity, setChainValidity] = useState<{ valid: boolean; checked: boolean }>({ valid: true, checked: false });
@@ -213,6 +216,12 @@ const Blockchain = () => {
 
       {/* Main content */}
       <main className="relative z-10 max-w-7xl mx-auto px-4 py-6">
+        <PageHeader
+          className="mb-4"
+          eyebrow={t("visual.eyebrow.blockchain")}
+          title={t("visual.titles.blockchain")}
+          description={t("visual.titles.blockchainHint")}
+        />
         {/* Global Network Globe - First thing visible */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}

@@ -8,6 +8,8 @@ import { STAKE_REQUIREMENTS, TIER_BENEFITS, formatStake, ValidatorTier } from "@
 import { loadUnifiedWallet, UnifiedWallet } from "@/lib/unified-wallet";
 import { getWalletBalance } from "@/lib/pqc-wallet";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/ui/page-header";
 
 function RunNodeCta() {
   const [copied, setCopied] = useState(false);
@@ -66,6 +68,7 @@ function RunNodeCta() {
 }
 
 export default function Validators() {
+  const { t } = useTranslation();
   const [wallet, setWallet] = useState<UnifiedWallet | null>(null);
   const [availableBalance, setAvailableBalance] = useState(0);
   const [isLoadingBalance, setIsLoadingBalance] = useState(true);
@@ -125,6 +128,7 @@ export default function Validators() {
 
       {/* Main Content */}
       <main className="container mx-auto max-w-6xl px-4 py-6 md:py-8 relative z-10">
+        <PageHeader className="mb-6" eyebrow={t("visual.eyebrow.validators")} title={t("visual.titles.validators")} />
         {/* Mobile: Wallet balance first */}
         <div className="lg:hidden mb-6">
           <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/30">

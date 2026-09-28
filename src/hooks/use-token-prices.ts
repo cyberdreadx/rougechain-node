@@ -29,7 +29,7 @@ export function useTokenPrices(pollInterval: number = 60_000) {
   const [error, setError] = useState<string | null>(null);
   
   // Get XRGE USD price first
-  const { priceUsd: xrgeUsdPrice } = useXRGEPrice(pollInterval);
+  const { priceUsd: xrgeUsdPrice, priceChange24h: xrgePriceChange24h } = useXRGEPrice(pollInterval);
 
   const fetchPools = useCallback(async () => {
     if (!xrgeUsdPrice) return;
@@ -146,6 +146,8 @@ export function useTokenPrices(pollInterval: number = 60_000) {
     getTokenPrice,
     getTokenValue,
     xrgeUsdPrice,
+    /** XRGE market 24h % change from the price source (null until known). */
+    xrgePriceChange24h,
     loading,
     error,
     refresh: fetchPools,

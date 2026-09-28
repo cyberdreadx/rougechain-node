@@ -904,5 +904,200 @@
         "body": "Two things keep you safe, and they are different:\n\n• Recovery phrase restores your wallet and funds — but NOT your chat history.\n• Encrypted backup file (.pqcbackup) restores your wallet, funds AND your messages.\n\nExport a backup in Settings → Security & backup and keep both somewhere safe."
       }
     }
+  },
+  "chat": {
+    "common": {
+      "anonymous": "Anonymous",
+      "cancel": "Cancel",
+      "close": "Close",
+      "you": "You"
+    },
+    "list": {
+      "title": "Conversations",
+      "deleteConfirm": "Move this conversation to the trash? It can be restored for 30 days."
+    },
+    "menu": {
+      "title": "Conversation options",
+      "search": "Search messages"
+    },
+    "group": {
+      "new": "New group",
+      "newShort": "Group",
+      "newHint": "Encrypted group chat with 2+ people",
+      "info": "Group info",
+      "name": "Group name",
+      "namePlaceholder": "Group name (optional)",
+      "members": "Members",
+      "selected_one": "{{count}} selected",
+      "selected_other": "{{count}} selected",
+      "searchContacts": "Search contacts",
+      "pickTwo": "Pick at least 2 people.",
+      "noContacts": "No contacts found.",
+      "noOneToAdd": "No one else in the directory to add.",
+      "create_one": "Create group ({{count}})",
+      "create_other": "Create group ({{count}})",
+      "creating": "Creating…",
+      "created": "Group created",
+      "createFailed": "Could not create the group",
+      "maxMembers": "A group can have at most {{max}} members.",
+      "untitled_one": "Group ({{count}})",
+      "untitled_other": "Group ({{count}})",
+      "memberCount_one": "{{count}} member",
+      "memberCount_other": "{{count}} members",
+      "rename": "Rename",
+      "renamed": "Renamed to {{name}}",
+      "nameCleared": "Group name cleared",
+      "renameFailed": "Rename failed",
+      "addMembers": "Add members",
+      "addHint": "New members only see messages sent after they join.",
+      "addCount_one": "Add {{count}}",
+      "addCount_other": "Add {{count}}",
+      "added_one": "Added {{count}} member",
+      "added_other": "Added {{count}} members",
+      "addFailed": "Could not add members",
+      "noKeys": "None of the members has an encryption key yet.",
+      "someKeysMissing_one": "{{count}} member has no encryption key and won't be able to read this.",
+      "someKeysMissing_other": "{{count}} members have no encryption key and won't be able to read this.",
+      "e2eNote": "Messages are encrypted separately for every member (ML-KEM-768). Leaving or removing members isn't supported by the network yet."
+    },
+    "requests": {
+      "primary": "Chats",
+      "tab": "Requests",
+      "hint": "People you haven't chatted with. They won't know you've seen their message until you accept.",
+      "wantsToMessage": "Wants to message you",
+      "accept": "Accept",
+      "accepted": "Request accepted",
+      "delete": "Delete",
+      "deleteConfirm": "Delete this message request?",
+      "deleted": "Request deleted",
+      "deleteFailed": "Could not delete the request",
+      "banner": "{{name}} wants to message you. Accept to reply and send read receipts."
+    },
+    "mute": {
+      "label": "Mute",
+      "hint": "No sounds or pop-ups for this chat",
+      "mute": "Mute",
+      "unmute": "Unmute",
+      "muted": "Chat muted",
+      "unmuted": "Chat unmuted"
+    },
+    "block": {
+      "title": "Blocked wallets",
+      "block": "Block",
+      "unblock": "Unblock",
+      "blockedBadge": "Blocked",
+      "blocked": "Blocked {{name}}",
+      "unblocked": "Unblocked {{name}}",
+      "confirm": "Block {{name}}? Their chats and messages will be hidden on this device.",
+      "confirmMember": "Block {{name}}? Their messages will be hidden in every chat on this device.",
+      "emptyTitle": "No one blocked",
+      "emptyBody": "Wallets you block from a chat or a message request show up here.",
+      "hint": "Blocking is stored on this device only; the other person isn't told.",
+      "settingsHint": "Wallets whose messages are hidden on this device",
+      "manage": "Manage"
+    },
+    "gif": {
+      "button": "Send a GIF",
+      "search": "Search GIFs…",
+      "none": "No GIFs found",
+      "unavailable": "GIF service temporarily unavailable",
+      "powered": "Powered by GIPHY"
+    },
+    "media": {
+      "image": "Image",
+      "voice": "Voice message",
+      "loadImage": "Load image from {{host}}"
+    },
+    "receipts": {
+      "sent": "Sent",
+      "delivered": "Delivered",
+      "read": "Read",
+      "seen": "Seen"
+    }
+  },
+  "visual": {
+    "hero": {
+      "pqc": "PQC Protected",
+      "portfolio": "Portfolio value",
+      "noPrice": "USD price unavailable",
+      "changeHint": "XRGE market price change over the last 24 hours",
+      "xrge24h": "XRGE 24h",
+      "shielded": "shielded",
+      "address": "Wallet address",
+      "copy": "Copy address",
+      "copied": "Copied",
+      "viewOnChain": "View on chain"
+    },
+    "assets": {
+      "title": "Tokens",
+      "emptyTitle": "No tokens yet",
+      "emptyHint": "Fund your wallet to get started"
+    },
+    "activity": {
+      "title": "Recent activity",
+      "emptyTitle": "No transactions yet",
+      "emptyHint": "Your activity will appear here"
+    },
+    "eyebrow": {
+      "transactions": "Explorer · Live feed",
+      "nfts": "Explorer · Collectibles",
+      "contracts": "Explorer · WASM contracts",
+      "tokens": "Explorer · Tokens",
+      "pools": "DeFi · Liquidity",
+      "swap": "DeFi · Quantum-safe AMM",
+      "bridge": "Cross-chain",
+      "settings": "Control panel",
+      "mail": "Encrypted mail",
+      "validators": "Staking · Consensus",
+      "blockchain": "Explorer · Network"
+    },
+    "titles": {
+      "validators": "Validators",
+      "blockchain": "Network explorer",
+      "blockchainHint": "Live blocks, peers and chain health"
+    },
+    "empty": {
+      "transactions": {
+        "title": "No transactions yet",
+        "hint": "New transactions will stream in here as blocks land."
+      },
+      "collections": {
+        "title": "No collections yet",
+        "hint": "No NFT collections have been created on the network."
+      },
+      "nfts": {
+        "title": "Nothing minted yet",
+        "hint": "No NFTs have been minted in this collection."
+      },
+      "pools": {
+        "title": "No pools yet",
+        "hint": "Be the first to create a liquidity pool.",
+        "cta": "Create pool"
+      },
+      "poolSearch": {
+        "title": "No matching pools",
+        "hint": "No pools match “{{query}}”."
+      },
+      "tokens": {
+        "title": "No tokens yet",
+        "hint": "No tokens have been created on the network.",
+        "searchTitle": "No matches",
+        "searchHint": "No tokens match your search."
+      },
+      "contracts": {
+        "title": "No contracts found",
+        "hint": "No smart contracts have been deployed yet. Deploy the first one via the API!",
+        "searchHint": "No contracts match your search."
+      },
+      "mail": {
+        "inboxTitle": "Inbox zero",
+        "sentTitle": "Nothing sent yet",
+        "trashTitle": "Trash is empty",
+        "inboxNamed": "Your addresses: {{a}} · {{b}}",
+        "inboxClaim": "Claim a name to get your @{{a}} and @{{b}} addresses",
+        "sentHint": "Mail you send will show up here.",
+        "trashHint": "Deleted mail lands here."
+      }
+    }
   }
 }

@@ -903,5 +903,200 @@
         "body": "あなたを守るものは 2 つあり、役割が違います：\n\n• リカバリーフレーズはウォレットと資金を復元します — ただしチャット履歴は復元されません。\n• 暗号化バックアップファイル（.pqcbackup）はウォレット、資金、そしてメッセージも復元します。\n\n設定 → セキュリティとバックアップ でバックアップを書き出し、両方を安全な場所に保管してください。"
       }
     }
+  },
+  "chat": {
+    "common": {
+      "anonymous": "匿名",
+      "cancel": "キャンセル",
+      "close": "閉じる",
+      "you": "あなた"
+    },
+    "list": {
+      "title": "会話",
+      "deleteConfirm": "この会話をゴミ箱に移動しますか?30日間は復元できます。"
+    },
+    "menu": {
+      "title": "会話のオプション",
+      "search": "メッセージを検索"
+    },
+    "group": {
+      "new": "新しいグループ",
+      "newShort": "グループ",
+      "newHint": "2人以上との暗号化グループチャット",
+      "info": "グループ情報",
+      "name": "グループ名",
+      "namePlaceholder": "グループ名(任意)",
+      "members": "メンバー",
+      "selected_one": "{{count}}人を選択",
+      "selected_other": "{{count}}人を選択",
+      "searchContacts": "連絡先を検索",
+      "pickTwo": "2人以上を選んでください。",
+      "noContacts": "連絡先が見つかりません。",
+      "noOneToAdd": "ディレクトリに追加できる人がいません。",
+      "create_one": "グループを作成({{count}})",
+      "create_other": "グループを作成({{count}})",
+      "creating": "作成中…",
+      "created": "グループを作成しました",
+      "createFailed": "グループを作成できませんでした",
+      "maxMembers": "グループのメンバーは最大{{max}}人です。",
+      "untitled_one": "グループ({{count}})",
+      "untitled_other": "グループ({{count}})",
+      "memberCount_one": "{{count}}人のメンバー",
+      "memberCount_other": "{{count}}人のメンバー",
+      "rename": "名前を変更",
+      "renamed": "{{name}}に名前を変更しました",
+      "nameCleared": "グループ名を消去しました",
+      "renameFailed": "名前を変更できませんでした",
+      "addMembers": "メンバーを追加",
+      "addHint": "新しいメンバーには参加後に送られたメッセージだけが表示されます。",
+      "addCount_one": "{{count}}人を追加",
+      "addCount_other": "{{count}}人を追加",
+      "added_one": "{{count}}人のメンバーを追加しました",
+      "added_other": "{{count}}人のメンバーを追加しました",
+      "addFailed": "メンバーを追加できませんでした",
+      "noKeys": "暗号化キーを持つメンバーがまだいません。",
+      "someKeysMissing_one": "{{count}}人のメンバーは暗号化キーがないため、このメッセージを読めません。",
+      "someKeysMissing_other": "{{count}}人のメンバーは暗号化キーがないため、このメッセージを読めません。",
+      "e2eNote": "メッセージはメンバーごとに個別に暗号化されます(ML-KEM-768)。グループからの退出やメンバーの削除はネットワークがまだ対応していません。"
+    },
+    "requests": {
+      "primary": "チャット",
+      "tab": "リクエスト",
+      "hint": "まだチャットしたことのない相手です。承認するまで、既読になったことは相手に伝わりません。",
+      "wantsToMessage": "メッセージを送りたがっています",
+      "accept": "承認",
+      "accepted": "リクエストを承認しました",
+      "delete": "削除",
+      "deleteConfirm": "このメッセージリクエストを削除しますか?",
+      "deleted": "リクエストを削除しました",
+      "deleteFailed": "リクエストを削除できませんでした",
+      "banner": "{{name}}さんがメッセージを送りたがっています。承認すると返信と既読通知の送信ができます。"
+    },
+    "mute": {
+      "label": "ミュート",
+      "hint": "このチャットの通知音やポップアップを止めます",
+      "mute": "ミュート",
+      "unmute": "ミュート解除",
+      "muted": "チャットをミュートしました",
+      "unmuted": "ミュートを解除しました"
+    },
+    "block": {
+      "title": "ブロック中のウォレット",
+      "block": "ブロック",
+      "unblock": "ブロック解除",
+      "blockedBadge": "ブロック中",
+      "blocked": "{{name}}をブロックしました",
+      "unblocked": "{{name}}のブロックを解除しました",
+      "confirm": "{{name}}をブロックしますか?このデバイスではチャットとメッセージが非表示になります。",
+      "confirmMember": "{{name}}をブロックしますか?このデバイスのすべてのチャットでメッセージが非表示になります。",
+      "emptyTitle": "ブロック中の相手はいません",
+      "emptyBody": "チャットやメッセージリクエストからブロックしたウォレットがここに表示されます。",
+      "hint": "ブロックはこのデバイスにのみ保存され、相手には通知されません。",
+      "settingsHint": "このデバイスでメッセージを非表示にしているウォレット",
+      "manage": "管理"
+    },
+    "gif": {
+      "button": "GIFを送信",
+      "search": "GIFを検索…",
+      "none": "GIFが見つかりません",
+      "unavailable": "GIFサービスは一時的に利用できません",
+      "powered": "Powered by GIPHY"
+    },
+    "media": {
+      "image": "画像",
+      "voice": "ボイスメッセージ",
+      "loadImage": "{{host}}から画像を読み込む"
+    },
+    "receipts": {
+      "sent": "送信済み",
+      "delivered": "配信済み",
+      "read": "既読",
+      "seen": "既読"
+    }
+  },
+  "visual": {
+    "hero": {
+      "pqc": "PQC 保護",
+      "portfolio": "ポートフォリオ評価額",
+      "noPrice": "USD 価格を取得できません",
+      "changeHint": "過去 24 時間の XRGE 市場価格の変動",
+      "xrge24h": "XRGE 24h",
+      "shielded": "シールド済み",
+      "address": "ウォレットアドレス",
+      "copy": "アドレスをコピー",
+      "copied": "コピーしました",
+      "viewOnChain": "チェーンで表示"
+    },
+    "assets": {
+      "title": "トークン",
+      "emptyTitle": "トークンはまだありません",
+      "emptyHint": "ウォレットに入金して始めましょう"
+    },
+    "activity": {
+      "title": "最近のアクティビティ",
+      "emptyTitle": "取引はまだありません",
+      "emptyHint": "アクティビティはここに表示されます"
+    },
+    "eyebrow": {
+      "transactions": "エクスプローラー · ライブ",
+      "nfts": "エクスプローラー · コレクション",
+      "contracts": "エクスプローラー · WASM コントラクト",
+      "tokens": "エクスプローラー · トークン",
+      "pools": "DeFi · 流動性",
+      "swap": "DeFi · 耐量子 AMM",
+      "bridge": "クロスチェーン",
+      "settings": "コントロールパネル",
+      "mail": "暗号化メール",
+      "validators": "ステーキング · コンセンサス",
+      "blockchain": "エクスプローラー · ネットワーク"
+    },
+    "titles": {
+      "validators": "バリデーター",
+      "blockchain": "ネットワークエクスプローラー",
+      "blockchainHint": "ブロック、ピア、チェーンの状態をライブで"
+    },
+    "empty": {
+      "transactions": {
+        "title": "取引はまだありません",
+        "hint": "新しいブロックが生成されると、取引がここに表示されます。"
+      },
+      "collections": {
+        "title": "コレクションはまだありません",
+        "hint": "ネットワーク上に NFT コレクションはまだ作成されていません。"
+      },
+      "nfts": {
+        "title": "まだミントされていません",
+        "hint": "このコレクションでは NFT がまだミントされていません。"
+      },
+      "pools": {
+        "title": "プールはまだありません",
+        "hint": "最初の流動性プールを作成しましょう。",
+        "cta": "プールを作成"
+      },
+      "poolSearch": {
+        "title": "一致するプールはありません",
+        "hint": "「{{query}}」に一致するプールはありません。"
+      },
+      "tokens": {
+        "title": "トークンはまだありません",
+        "hint": "ネットワーク上にトークンはまだ作成されていません。",
+        "searchTitle": "一致なし",
+        "searchHint": "検索に一致するトークンはありません。"
+      },
+      "contracts": {
+        "title": "コントラクトが見つかりません",
+        "hint": "スマートコントラクトはまだデプロイされていません。API から最初の 1 つをデプロイしましょう！",
+        "searchHint": "検索に一致するコントラクトはありません。"
+      },
+      "mail": {
+        "inboxTitle": "受信トレイは空です",
+        "sentTitle": "送信済みメールはありません",
+        "trashTitle": "ゴミ箱は空です",
+        "inboxNamed": "あなたのアドレス：{{a}} · {{b}}",
+        "inboxClaim": "名前を取得すると @{{a}} と @{{b}} のアドレスが使えます",
+        "sentHint": "送信したメールはここに表示されます。",
+        "trashHint": "削除したメールはここに移動します。"
+      }
+    }
   }
 }

@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw, ArrowDownUp, Copy, KeyRound, UserCircle, Bell, BellOff, MoreHorizontal } from "lucide-react";
+import { Shield, Plus, Lock, Key, Settings, Download, RefreshCw, ArrowDownUp, Copy, KeyRound, UserCircle, Bell, BellOff, MoreHorizontal, Users, Ban } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,9 +13,25 @@ import ChatView from "@/components/messenger/ChatView";
 import ContactPicker from "@/components/messenger/ContactPicker";
 import PrivacySettings from "@/components/messenger/PrivacySettings";
 import SwapWidget from "@/components/messenger/SwapWidget";
+import NewGroupDialog from "@/components/messenger/NewGroupDialog";
+import BlockedList from "@/components/messenger/BlockedList";
+import { useMessengerPrefs } from "@/components/messenger/useMessengerPrefs";
+import {
+  acceptChat,
+  acceptChats,
+  blockWalletKeys,
+  classifyConversation,
+  getAcceptedChats,
+  getBlockedList,
+  getMutedConversations,
+  migrateExistingChats,
+  notifiableActivity,
+  otherMembers,
+  walletKeys,
+} from "@/lib/messenger-prefs";
 import WalletBackup from "@/components/wallet/WalletBackup";
 import type { Conversation, Wallet, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
-import { buildSignedRequest, getConversations, getWallets, saveWalletLocally, registerWalletOnNode, getBlockedWalletIds, getPrivacySettings, resolveMessagingWallet, exportMessengerIdentity, importMessengerIdentity } from "@/lib/pqc-messenger";
+import { buildSignedRequest, getConversations, getWallets, saveWalletLocally, registerWalletOnNode, deleteConversation, getPrivacySettings, resolveMessagingWallet, exportMessengerIdentity, importMessengerIdentity } from "@/lib/pqc-messenger";
 import {
   UnifiedWallet,
   VaultSettings,
@@ -49,6 +67,11 @@ const Messenger = () => {
   const [showPrivacySettings, setShowPrivacySettings] = useState(false);
   const [showWalletBackup, setShowWalletBackup] = useState(false);
   const [showSwapWidget, setShowSwapWidget] = useState(false);
+  const [showNewGroup, setShowNewGroup] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [showBlocked, setShowBlocked] = useState(() => searchParams.get("panel") === "blocked");
+  const { t } = useTranslation();
+  const prefs = useMessengerPrefs();
   const [isLoading, setIsLoading] = useState(true);
   const [isReregistering, setIsReregistering] = useState(false);
   const [isRegeneratingKeys, setIsRegeneratingKeys] = useState(false);
@@ -144,7 +167,7 @@ const Messenger = () => {
     if (!messengerWallet) return;
     try {
       const convs = await getConversations(messengerWallet.id, messengerWallet);
-      const blocked = new Set(getBlockedWalletIds());
+      const blocked = new Set(getBlockedList());
       const myIds = new Set([messengerWallet.id, messengerWallet.signingPublicKey, messengerWallet.encryptionPublicKey].filter(Boolean));
       const myWalletData = {
         id: messengerWallet.id,
@@ -167,11 +190,18 @@ const Messenger = () => {
             return p;
           });
         }
-        const hasBlockedParticipant = conv.participants?.some(p =>
-          blocked.has(p.id) || blocked.has(p.signingPublicKey) || blocked.has(p.encryptionPublicKey)
-        ) || conv.participantIds?.some(id => blocked.has(id));
-        if (!hasBlockedParticipant) filtered.push(conv);
+        filtered.push(conv);
       }
+
+      // Message requests (Qwalla): grandfather every existing chat the first time, then auto-accept
+      // chats I started or wrote in. 1:1 chats whose only other member is blocked are hidden;
+      // groups stay (a blocked member's messages are hidden inside the chat).
+      if (filtered.length > 0) migrateExistingChats(filtered.map(c => c.id));
+      acceptChats(filtered.filter(c => (c.createdBy && myIds.has(c.createdBy)) || (c.lastSenderId && myIds.has(c.lastSenderId))).map(c => c.id));
+      const accepted = new Set(getAcceptedChats());
+      const visible = filtered.filter(c => classifyConversation(c, { myIds, accepted, blocked }) !== "hidden");
+      filtered.length = 0;
+      filtered.push(...visible);
 
       // Detect new messages and fire notifications
       const activity: ConversationActivity[] = filtered.map(c => ({
@@ -181,8 +211,11 @@ const Messenger = () => {
         lastMessagePreview: c.lastMessagePreview,
         unreadCount: c.unreadCount,
       }));
+      // Muted chats and blocked senders never alert (their snapshot entries are dropped, so
+      // unmuting later doesn't replay old activity).
+      const senderKeysOf = (id: string) => walletKeys(allWalletsRef.current.find(w => walletKeys(w).includes(id)));
       activitySnapshotRef.current = detectNewActivity(
-        activity,
+        notifiableActivity(activity, new Set(getMutedConversations()), blocked, senderKeysOf),
         activitySnapshotRef.current,
         myIds,
         resolveDisplayName,
@@ -199,6 +232,15 @@ const Messenger = () => {
       });
 
       setConversations(filtered);
+      // Keep the open chat's record fresh (group renamed / members added).
+      setSelectedConversation(prev => {
+        if (!prev) return prev;
+        const fresh = filtered.find(c => c.id === prev.id);
+        if (!fresh) return prev;
+        const same = fresh.name === prev.name && (fresh.participantIds ?? []).join() === (prev.participantIds ?? []).join()
+          && (fresh.participants ?? []).map(p => p.encryptionPublicKey).join() === (prev.participants ?? []).map(p => p.encryptionPublicKey).join();
+        return same ? prev : fresh;
+      });
     } catch (error) {
       console.error("Failed to load conversations:", error);
     }
@@ -210,7 +252,7 @@ const Messenger = () => {
     try {
       const wallets = await getWallets();
       allWalletsRef.current = wallets;
-      const blocked = new Set(getBlockedWalletIds());
+      const blocked = new Set(getBlockedList());
       const filtered = wallets.filter(w =>
         w.id !== messengerWallet?.id &&
         w.id !== messengerWallet?.signingPublicKey &&
@@ -268,6 +310,60 @@ const Messenger = () => {
     loadContacts();
   }, [messengerWallet]);
 
+  // Primary vs Requests split (re-evaluated whenever accept / block lists change).
+  const myIdSet = useMemo(
+    () => new Set([messengerWallet?.id, messengerWallet?.signingPublicKey, messengerWallet?.encryptionPublicKey, wallet?.id, wallet?.signingPublicKey].filter((x): x is string => !!x)),
+    [messengerWallet, wallet],
+  );
+  const { primaryConversations, requestConversations } = useMemo(() => {
+    const primary: Conversation[] = [];
+    const requests: Conversation[] = [];
+    for (const c of conversations) {
+      const cls = classifyConversation(c, { myIds: myIdSet, accepted: prefs.accepted, blocked: prefs.blocked });
+      if (cls === "request") requests.push(c);
+      else if (cls === "primary") primary.push(c);
+    }
+    return { primaryConversations: primary, requestConversations: requests };
+  }, [conversations, myIdSet, prefs]);
+  const selectedIsRequest = !!selectedConversation && requestConversations.some(c => c.id === selectedConversation.id);
+
+  const handleAcceptRequest = (c: Conversation) => {
+    acceptChat(c.id);
+    toast.success(t("chat.requests.accepted"));
+  };
+  const handleBlockRequest = (c: Conversation) => {
+    const other = otherMembers(c, myIdSet)[0];
+    const name = other?.displayName || t("chat.common.anonymous");
+    if (!other || !confirm(t("chat.block.confirm", { name }))) return;
+    blockWalletKeys(walletKeys(other));
+    if (selectedConversation?.id === c.id) setSelectedConversation(null);
+    toast.success(t("chat.block.blocked", { name }));
+  };
+  const handleDeleteRequest = async (c: Conversation) => {
+    if (!messengerWallet) return;
+    if (!confirm(t("chat.requests.deleteConfirm"))) return;
+    try {
+      // Per-participant soft delete on the node (recoverable for 30 days; the sender isn't told).
+      await deleteConversation(messengerWallet, c.id);
+      setConversations(prev => prev.filter(x => x.id !== c.id));
+      if (selectedConversation?.id === c.id) setSelectedConversation(null);
+      toast.success(t("chat.requests.deleted"));
+    } catch {
+      toast.error(t("chat.requests.deleteFailed"));
+    }
+  };
+
+  const closeBlocked = () => {
+    setShowBlocked(false);
+    if (searchParams.get("panel")) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("panel");
+      setSearchParams(next, { replace: true });
+    }
+    loadConversations();
+    loadContacts();
+  };
+
   const handleWalletCreated = (newWallet: WalletWithPrivateKeys) => {
     const unified = fromMessengerWallet(newWallet);
     saveUnifiedWallet(unified);
@@ -285,8 +381,11 @@ const Messenger = () => {
     setConversations(prev =>
       prev.some(c => c.id === conversation.id) ? prev : [...prev, conversation]
     );
+    // Chats I start are never message requests (Qwalla new.tsx acceptChat).
+    acceptChat(conversation.id);
     setSelectedConversation(conversation);
     setShowContactPicker(false);
+    setShowNewGroup(false);
   };
 
   // Export/import the messaging identity — lets extension users (whose messaging
@@ -544,6 +643,9 @@ const Messenger = () => {
             <Button variant="ghost" size="icon" onClick={() => setShowWalletBackup(true)} title="Backup Wallet">
               <Download className="w-4 h-4" />
             </Button>
+            <Button variant="ghost" size="icon" onClick={() => setShowBlocked(true)} title={t("chat.block.title")}>
+              <Ban className="w-4 h-4" />
+            </Button>
             <Button variant="ghost" size="icon" onClick={() => setShowPrivacySettings(true)} title="Privacy Settings">
               <Settings className="w-4 h-4" />
             </Button>
@@ -572,6 +674,12 @@ const Messenger = () => {
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => importIdentityRef.current?.click()}>
                 <KeyRound className="w-4 h-4 mr-2" /> Import messaging ID
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowNewGroup(true)} disabled={!messengerWallet}>
+                <Users className="w-4 h-4 mr-2" /> {t("chat.group.new")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowBlocked(true)}>
+                <Ban className="w-4 h-4 mr-2" /> {t("chat.block.title")}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowPrivacySettings(true)}>
                 <Settings className="w-4 h-4 mr-2" /> Privacy settings
@@ -617,6 +725,16 @@ const Messenger = () => {
             <Plus className="w-4 h-4" />
           </Button>
           <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowNewGroup(true)}
+            className="hidden sm:flex"
+            disabled={!messengerWallet}
+          >
+            <Users className="w-4 h-4 mr-1" />
+            {t("chat.group.newShort")}
+          </Button>
+          <Button
             variant="outline"
             size="sm"
             onClick={() => setShowContactPicker(true)}
@@ -633,9 +751,14 @@ const Messenger = () => {
         {/* Conversation list */}
         <div className={`w-full sm:w-80 border-r border-border ${selectedConversation ? 'hidden sm:block' : ''}`}>
           <ConversationList
-            conversations={conversations}
+            conversations={primaryConversations}
+            requests={requestConversations}
+            onAcceptRequest={handleAcceptRequest}
+            onDeleteRequest={handleDeleteRequest}
+            onBlockRequest={handleBlockRequest}
+            muted={prefs.muted}
             selectedId={selectedConversation?.id}
-            wallet={messengerWallet ?? wallet}
+            wallet={(messengerWallet ?? wallet) as WalletWithPrivateKeys}
             currentWalletId={messengerWallet?.id ?? wallet.id}
             currentWalletKeys={[messengerWallet?.signingPublicKey ?? wallet.signingPublicKey, messengerWallet?.encryptionPublicKey ?? wallet.encryptionPublicKey]}
             currentWalletName={messengerWallet?.displayName ?? wallet.displayName}
@@ -655,6 +778,10 @@ const Messenger = () => {
             <ChatView
               conversation={selectedConversation}
               wallet={messengerWallet}
+              contacts={contacts}
+              onConversationChanged={() => loadConversations()}
+              isRequest={selectedIsRequest}
+              onAccepted={() => toast.success(t("chat.requests.accepted"))}
               onBack={() => setSelectedConversation(null)}
               onBlocked={() => {
                 setSelectedConversation(null);
@@ -683,8 +810,26 @@ const Messenger = () => {
             conversations={conversations}
             onClose={() => setShowContactPicker(false)}
             onConversationCreated={handleConversationCreated}
+            onNewGroup={() => { setShowContactPicker(false); setShowNewGroup(true); }}
           />
         )}
+      </AnimatePresence>
+
+      {/* New group */}
+      <AnimatePresence>
+        {showNewGroup && messengerWallet && (
+          <NewGroupDialog
+            contacts={contacts}
+            wallet={messengerWallet}
+            onClose={() => setShowNewGroup(false)}
+            onCreated={(conv) => { handleConversationCreated(conv); loadConversations(); }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Blocked wallets */}
+      <AnimatePresence>
+        {showBlocked && <BlockedList onClose={closeBlocked} />}
       </AnimatePresence>
 
       {/* Privacy settings modal */}

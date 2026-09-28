@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { EmptyState } from "@/components/ui/empty-state";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Droplets, TrendingUp, Loader2, Info, Minus, BarChart3, ArrowDownUp, Shield, Search, Coins } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -51,6 +53,7 @@ interface Token {
 }
 
 const Pools = () => {
+  const { t } = useTranslation();
   const { getTokenImage } = useTokenMetadata();
   const [pools, setPools] = useState<Pool[]>([]);
   const [tokens, setTokens] = useState<Token[]>([]);
@@ -404,8 +407,9 @@ const Pools = () => {
         >
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="min-w-0">
+              <p className="hud-label mb-1.5">{t("visual.eyebrow.pools")}</p>
               <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-bold">Liquidity Pools</h1>
+                <h1 className="page-title">Liquidity Pools</h1>
                 <div className="flex items-center gap-1 text-xs text-green-500 bg-green-500/10 px-2 py-0.5 rounded-full whitespace-nowrap">
                   <Shield className="w-3 h-3" />
                   <span>Secure</span>
@@ -517,23 +521,23 @@ const Pools = () => {
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
             </div>
           ) : pools.length === 0 ? (
-            <Card className="bg-muted/30">
-              <CardContent className="py-12 text-center">
-                <Droplets className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-lg font-medium mb-2">No Pools Yet</h3>
-                <p className="text-muted-foreground mb-4">
-                  Be the first to create a liquidity pool
-                </p>
-                <Button onClick={() => setShowCreatePool(true)} disabled={!wallet}>
-                  <Plus className="w-4 h-4 mr-2" />
-                  Create Pool
-                </Button>
-              </CardContent>
+            <Card className="glass-card">
+              <EmptyState
+                icon={Droplets}
+                title={t("visual.empty.pools.title")}
+                hint={t("visual.empty.pools.hint")}
+                action={
+                  <Button onClick={() => setShowCreatePool(true)} disabled={!wallet} className="btn-neon">
+                    <Plus className="w-4 h-4 mr-2" />
+                    {t("visual.empty.pools.cta")}
+                  </Button>
+                }
+              />
             </Card>
           ) : (
             <div className="space-y-4">
               {sortedPools.map((pool) => (
-                <Card key={pool.pool_id} className="bg-card/50 backdrop-blur border-primary/20">
+                <Card key={pool.pool_id} className="bg-card/50 backdrop-blur border-primary/20 glass-card hover-lift">
                   <CardHeader className="pb-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-3 min-w-0">
@@ -645,7 +649,7 @@ const Pools = () => {
                 </div>
               )}
               {poolSearch && sortedPools.length === 0 && (
-                <p className="text-center text-muted-foreground text-sm py-4">No pools match "{poolSearch}"</p>
+                <EmptyState compact icon={Search} title={t("visual.empty.poolSearch.title")} hint={t("visual.empty.poolSearch.hint", { query: poolSearch })} />
               )}
             </div>
           )}
