@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Check } from "lucide-react";
-import { NETWORK_STORAGE_KEY } from "@/lib/network";
+import { getActiveNetwork, getNetworkLock, switchNetwork } from "@/lib/network";
 
 export type NetworkType = "testnet" | "mainnet";
 
@@ -40,21 +40,19 @@ const NetworkBadge = ({ isConnected = true, blockNumber, onNetworkChange }: Netw
   const [showDropdown, setShowDropdown] = useState(false);
   const [currentNetwork, setCurrentNetwork] = useState<NetworkType>("mainnet");
 
-  // Load saved network preference
+  // Load the active network (a pinned deploy always reports its own).
   useEffect(() => {
-    const saved = localStorage.getItem(NETWORK_STORAGE_KEY) as NetworkType | null;
-    if (saved === "mainnet" || saved === "testnet") {
-      setCurrentNetwork(saved);
-    } else {
-      setCurrentNetwork("mainnet");
-      localStorage.setItem(NETWORK_STORAGE_KEY, "mainnet");
-    }
+    setCurrentNetwork(getActiveNetwork());
   }, []);
 
   const handleNetworkChange = (networkId: NetworkType) => {
-    setCurrentNetwork(networkId);
-    localStorage.setItem(NETWORK_STORAGE_KEY, networkId);
     setShowDropdown(false);
+    if (getNetworkLock()) {
+      switchNetwork(networkId); // navigates to the other network's site
+      return;
+    }
+    setCurrentNetwork(networkId);
+    switchNetwork(networkId);
     onNetworkChange?.(networkId);
   };
 

@@ -54,7 +54,18 @@ server {
     if ($request_method = OPTIONS) { return 204; }
   }
 
+  # Everything that isn't the API is the testnet website: the same site code deployed a second time
+  # on Netlify with VITE_NETWORK_LOCK=testnet (auto-deploys from main). Resolved at request time so
+  # Netlify IP changes are picked up.
   location / {
-    return 404;
+    resolver 1.1.1.1 8.8.8.8 valid=300s ipv6=off;
+    set $testnet_site rougechain-testnet.netlify.app;
+    proxy_pass https://$testnet_site;
+    proxy_ssl_server_name on;
+    proxy_ssl_name $testnet_site;
+    proxy_set_header Host $testnet_site;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Real-IP $remote_addr;
   }
 }
