@@ -639,6 +639,10 @@
     "notifications": {
       "received": "{{from}} から {{amount}} {{symbol}} を受け取りました",
       "receivedTitle": "送金を受け取りました"
+    },
+    "balance": {
+      "hide": "残高を隠す",
+      "show": "残高を表示"
     }
   },
   "status": {

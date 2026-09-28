@@ -639,6 +639,10 @@
     "notifications": {
       "received": "收到来自 {{from}} 的 {{amount}} {{symbol}}",
       "receivedTitle": "已收到转账"
+    },
+    "balance": {
+      "hide": "隐藏余额",
+      "show": "显示余额"
     }
   },
   "status": {

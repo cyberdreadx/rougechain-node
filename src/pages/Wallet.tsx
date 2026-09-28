@@ -27,6 +27,7 @@ import { useRougeAddress } from "@/hooks/useRougeAddress";
 import { useIncomingTransferNotifications } from "@/hooks/use-incoming-transfer-notifications";
 import { useTokenPrices } from "@/hooks/use-token-prices";
 import { useMajorPrices } from "@/hooks/use-eth-price";
+import { useHideBalances, MASKED_AMOUNT } from "@/hooks/use-hide-balances";
 import { describeAsset } from "@/lib/asset-display";
 import { useTokenMetadata } from "@/hooks/use-token-metadata";
 import { formatUsd } from "@/lib/price-service";
@@ -659,6 +660,7 @@ const Wallet = () => {
   
   const networkLabel = getNetworkLabel(chainIdLabel);
   const majorPrices = useMajorPrices(60_000);
+  const { hidden: balancesHidden, toggle: toggleBalancesHidden } = useHideBalances();
   const assetDisplays = balances.map(b => ({
     b,
     d: describeAsset(b.symbol, b.balance, { poolPriceUsdPerRaw: tokenPrices[b.symbol]?.priceUsd, majors: majorPrices }),
@@ -687,9 +689,9 @@ const Wallet = () => {
     id: b.symbol,
     name: b.name,
     symbol: b.symbol,
-    balance: d.balance,
-    value: d.value,
-    usdValue: d.usdValue,
+    balance: balancesHidden ? MASKED_AMOUNT : d.balance,
+    value: balancesHidden ? `${MASKED_AMOUNT} ${b.symbol}` : d.value,
+    usdValue: balancesHidden ? (d.usdValue ? `$${MASKED_AMOUNT}` : null) : d.usdValue,
     pricePerToken: d.pricePerToken,
     change: 0,
     icon: b.icon,
@@ -700,7 +702,7 @@ const Wallet = () => {
   const txHistory = transactions.map(tx => ({
     id: tx.id,
     type: tx.type,
-    amount: tx.amount,
+    amount: balancesHidden ? MASKED_AMOUNT : tx.amount,
     symbol: tx.symbol,
     address: tx.address,
     timeLabel: tx.timeLabel,
@@ -711,7 +713,8 @@ const Wallet = () => {
     fee: tx.fee,
     from: tx.from,
     to: tx.to,
-    memo: tx.memo,
+    // Swap / LP / bridge memos spell out amounts ("Swap 5 XRGE for …").
+    memo: balancesHidden && tx.memo ? MASKED_AMOUNT : tx.memo,
   }));
 
   const emptyAssetActionLabel = isMainnet ? t("wallet.empty.receiveTokens") : t("wallet.empty.claimFaucet");
@@ -978,6 +981,8 @@ const Wallet = () => {
               usdValue={walletUsdValue}
               priceChange24h={priceChange24h}
               isConnected={true}
+              balancesHidden={balancesHidden}
+              onToggleBalancesHidden={toggleBalancesHidden}
             />
 
             {/* Action Buttons */}

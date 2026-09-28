@@ -639,6 +639,10 @@
     "notifications": {
       "received": "Received {{amount}} {{symbol}} from {{from}}",
       "receivedTitle": "Transfer received"
+    },
+    "balance": {
+      "hide": "Hide balances",
+      "show": "Show balances"
     }
   },
   "status": {
