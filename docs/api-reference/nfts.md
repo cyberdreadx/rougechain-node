@@ -56,7 +56,7 @@ POST /api/v2/nft/collection/create
 **Fee:** 50 XRGE
 
 - `royaltyBps` — royalty in basis points (`500` = 5%).
-- `royaltyRecipient` — *(optional)* wallet that receives secondary-sale royalties. **Defaults to the creator** when omitted, and is fixed at creation. Must be a normal wallet address — ⚠️ **never a contract address** (funds sent to a contract are permanently lost).
+- `royaltyRecipient` — *(optional)* wallet that receives secondary-sale royalties. **Defaults to the creator** when omitted, and is fixed at creation. A wallet address or a deployed contract address (for example a royalty-splitter contract, which pays collaborators on-chain). ⚠️ The address is not validated: royalties sent to a mistyped address, or to a contract with no way to pay XRGE out, cannot be recovered.
 
 ### Mint NFT
 

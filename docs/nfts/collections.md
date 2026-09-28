@@ -22,13 +22,16 @@ Set a `royaltyBps` (basis points — `500` = 5%, `1000` = 10%) when creating a c
 
 - **When it's paid:** on an `nft_transfer` that declares a `salePrice > 0`. The royalty is `salePrice × royaltyBps / 10000`, in XRGE.
 - **Who pays:** the **sender** (the current owner initiating the transfer). It is deducted from their XRGE balance *on top of* the 1 XRGE transfer fee.
-- **Who receives:** the collection's `royaltyRecipient`. If you didn't set one, this is the **creator**. If you set one at creation, it is that wallet. The recipient is fixed at creation and cannot be changed afterward.
+- **Who receives:** the collection's `royaltyRecipient`. If you didn't set one, this is the **creator**. If you set one at creation, it is that address — a wallet or a contract. The recipient is fixed at creation and cannot be changed afterward.
 
-### Routing royalties to another wallet
+### Routing royalties to another wallet or a contract
 
-Pass `royaltyRecipient` at creation to send royalties somewhere other than the creator — for example a shared payout wallet or a treasury. Splitting between multiple collaborators is done **off-chain by the receiving app** after the royalty lands in that wallet.
+Pass `royaltyRecipient` at creation to send royalties somewhere other than the creator:
 
-> ⚠️ **Never set `royaltyRecipient` to a smart-contract address.** Contracts cannot spend XRGE credited to them (contract balances are not persisted back to the ledger, and a contract address is a hash with no private key). Any royalty sent to a contract address is **permanently lost.** Use a normal wallet address only.
+- **A wallet** — for example a shared payout wallet or a treasury. Anything the wallet's owner does with the royalty afterwards (such as splitting it) happens off-chain.
+- **A contract** — for trustless on-chain splits. Since mainnet block 18 contracts hold XRGE and pay it out with their own code, so a royalty-splitter contract (see [`contracts/royalty_splitter`](https://github.com/cyberdreadx/rougechain-node/tree/main/contracts/royalty_splitter) and [Contract XRGE custody](../advanced/contract-xrge-custody.md)) can receive royalties and fan them out to collaborators by fixed shares. Deploy the contract first and use its address.
+
+> ⚠️ **The node does not check the recipient address.** Royalties sent to a mistyped address, or to a contract that has no way to pay XRGE out, cannot be recovered — only a contract's own code can move its XRGE. Double-check the address, and only use contracts whose payout function you have tested.
 
 > **Note on enforcement:** `salePrice` is self-declared in the transfer payload — there is no on-chain marketplace escrow. A transfer sent with no `salePrice` (or `0`) pays no royalty. Royalties are honored by marketplaces/apps that populate `salePrice`, not enforced against every possible transfer.
 
