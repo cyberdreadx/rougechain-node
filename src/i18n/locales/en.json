@@ -525,7 +525,8 @@
       "invalidBtcAddress": "Enter a valid Bitcoin address",
       "invalidQbtcAmount": "Enter a valid qBTC amount",
       "invalidEvmAddress": "Enter a valid EVM address",
-      "withdrawFailed": "Withdrawal failed"
+      "withdrawFailed": "Withdrawal failed",
+      "btcWithdrawPaused": "BTC withdrawals are paused while the Bitcoin payout service is being launched. Your qBTC is safe; deposits and other withdrawals work normally."
     }
   },
   "wallet": {

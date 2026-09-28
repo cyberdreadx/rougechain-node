@@ -525,7 +525,8 @@
       "invalidBtcAddress": "Ingresa una dirección de Bitcoin válida",
       "invalidQbtcAmount": "Ingresa un monto de qBTC válido",
       "invalidEvmAddress": "Ingresa una dirección EVM válida",
-      "withdrawFailed": "El retiro falló"
+      "withdrawFailed": "El retiro falló",
+      "btcWithdrawPaused": "Los retiros de BTC están en pausa mientras se lanza el servicio de pagos de Bitcoin. Tus qBTC están seguros; los depósitos y otros retiros funcionan con normalidad."
     }
   },
   "wallet": {
