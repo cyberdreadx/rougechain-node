@@ -20,9 +20,9 @@ contract state.
 | Item | Value |
 |---|---|
 | Binary | `quantum-vault-daemon` |
-| sha256 | `718200bca08ff7f147d7a83ccaef4440b1c805bbd3f48266b9f90d614327d8de` (supersedes `5e5ca98c…` and `46e29456…`: exact JSON float parsing, required to import block 177) |
-| Size | 28,021,264 bytes |
-| Source commit | `653874b`, branch `fix/commit-settle-randomness` |
+| sha256 | `cc1aee1983e39a61a22995b85dba9e5d7c4f8ef2c3b0c9b7c4dd7cd7f86947bc` (block-190 payable-calls release; supersedes `718200bc…`, `5e5ca98c…` and `46e29456…`) |
+| Size | 28,031,064 bytes |
+| Source commit | `cc6f9c3`, branch `feat/payable-calls` (merged to main as #153) |
 | Toolchain | rustc 1.94.0 (4a4ef493e 2026-03-02), cargo 1.94.0 (85eff7c80 2026-01-15), `x86_64-unknown-linux-gnu` |
 
 This exact binary runs on both operator nodes. It was built twice from clean and the two builds were
