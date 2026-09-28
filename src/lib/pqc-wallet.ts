@@ -100,6 +100,293 @@ export function parseBlockTransaction(block: Block): Transaction | null {
   }
 }
 
+type NodeBlockV1 = {
+  version: 1;
+  header: {
+    height: number;
+    time: number;
+    prevHash?: string;
+    prev_hash?: string;
+    proposerPubKey?: string;
+    proposer_pub_key?: string;
+  };
+  txs: Array<{
+    version: 1;
+    type?: string;
+    tx_type?: string;
+    fromPubKey?: string;
+    from_pub_key?: string;
+    nonce: number;
+    payload: Record<string, unknown>;
+    fee: number;
+    sig: string;
+  }>;
+  proposerSig?: string;
+  proposer_sig?: string;
+  hash: string;
+};
+
+/** Wallet-relevant transactions in node blocks (as returned by `/api/blocks` or `/api/block/:h`). */
+export function parseNodeBlocks(blocks: NodeBlockV1[]): { tx: Transaction; block: Block }[] {
+  const transactions: { tx: Transaction; block: Block }[] = [];
+
+  for (const blockV1 of blocks) {
+    const header = blockV1.header;
+    const prevHash = header.prevHash ?? header.prev_hash ?? "";
+    const proposerPubKey = header.proposerPubKey ?? header.proposer_pub_key ?? "";
+    const proposerSig = blockV1.proposerSig ?? blockV1.proposer_sig ?? "";
+    for (const txV1 of blockV1.txs) {
+      const txType = txV1.type ?? txV1.tx_type;
+      const fromPubKey = txV1.fromPubKey ?? txV1.from_pub_key ?? "";
+      
+      if (txType === "transfer") {
+        const payload = txV1.payload as { 
+          toPubKeyHex?: string; 
+          to_pub_key_hex?: string; 
+          amount?: number; 
+          faucet?: boolean;
+          token_symbol?: string;
+          tokenSymbol?: string;
+        };
+        const isFaucet = payload.faucet === true;
+        // Check for token symbol - if present, this is a token transfer
+        const tokenSymbol = payload.token_symbol || payload.tokenSymbol;
+        const tx: Transaction = {
+          type: isFaucet ? "mint" : "transfer",
+          from: isFaucet ? "FAUCET" : fromPubKey,
+          to: payload.toPubKeyHex || payload.to_pub_key_hex || "",
+          amount: payload.amount || 0,
+          symbol: tokenSymbol || "XRGE", // Use token symbol if present, otherwise XRGE
+          timestamp: blockV1.header.time,
+          memo: isFaucet ? "Faucet" : (tokenSymbol ? `${tokenSymbol} transfer` : undefined),
+          fee: txV1.fee,
+          feeRecipient: proposerPubKey,
+        };
+
+        const block: Block = {
+          index: blockV1.header.height,
+          timestamp: blockV1.header.time,
+          data: JSON.stringify(tx),
+          previousHash: prevHash,
+          hash: blockV1.hash,
+          nonce: 0,
+          signature: proposerSig,
+          signerPublicKey: proposerPubKey,
+        };
+
+        transactions.push({ tx, block });
+      } else if (txType === "create_token") {
+        try {
+          const p = txV1.payload;
+          const tokenName = (p.token_name || p.tokenName || "Unknown Token") as string;
+          const tokenSymbol = (p.token_symbol || p.tokenSymbol || "TOKEN") as string;
+          const tokenDecimals = (p.token_decimals ?? p.tokenDecimals ?? 18) as number;
+          const totalSupply = (p.token_total_supply || p.tokenTotalSupply || p.amount || 0) as number;
+          const safeFromPubKey = fromPubKey || "";
+          const tokenAddress = safeFromPubKey.length >= 16 
+            ? `token:${safeFromPubKey.slice(0, 16)}:${tokenSymbol.toLowerCase()}`
+            : `token:unknown:${tokenSymbol.toLowerCase()}`;
+          
+          const tx: Transaction = {
+            type: "create_token",
+            from: fromPubKey,
+            to: fromPubKey,
+            amount: totalSupply,
+            symbol: tokenSymbol,
+            timestamp: blockV1.header.time,
+            memo: `Created ${tokenName} (${tokenSymbol})`,
+            fee: txV1.fee,
+            feeRecipient: proposerPubKey,
+            tokenData: {
+              name: tokenName,
+              symbol: tokenSymbol,
+              decimals: tokenDecimals,
+              totalSupply: totalSupply,
+              tokenAddress: tokenAddress,
+              creatorAddress: fromPubKey,
+            },
+          };
+
+          const block: Block = {
+            index: blockV1.header.height,
+            timestamp: blockV1.header.time,
+            data: JSON.stringify(tx),
+            previousHash: prevHash,
+            hash: blockV1.hash,
+            nonce: 0,
+            signature: proposerSig,
+            signerPublicKey: proposerPubKey,
+          };
+
+          transactions.push({ tx, block });
+        } catch (tokenParseError) {
+          console.error("Error parsing create_token tx:", tokenParseError);
+        }
+      } else if (txType === "swap") {
+        const p = txV1.payload;
+        const tokenIn = (p.token_in || p.tokenIn || "") as string;
+        const tokenOut = (p.token_out || p.tokenOut || "") as string;
+        const amountIn = (p.amount_in || p.amountIn || 0) as number;
+
+        const tx: Transaction = {
+          type: "transfer",
+          from: fromPubKey,
+          to: fromPubKey,
+          amount: amountIn,
+          symbol: tokenIn,
+          timestamp: blockV1.header.time,
+          memo: `Swap ${amountIn} ${tokenIn} → ${tokenOut}`,
+          fee: txV1.fee,
+          feeRecipient: proposerPubKey,
+        };
+
+        const block: Block = {
+          index: blockV1.header.height,
+          timestamp: blockV1.header.time,
+          data: JSON.stringify(tx),
+          previousHash: prevHash,
+          hash: blockV1.hash,
+          nonce: 0,
+          signature: proposerSig,
+          signerPublicKey: proposerPubKey,
+        };
+
+        transactions.push({ tx, block });
+      } else if (txType === "stake" || txType === "unstake") {
+        const p = txV1.payload;
+        const amount = (p.amount || 0) as number;
+
+        const tx: Transaction = {
+          type: "transfer",
+          from: fromPubKey,
+          to: fromPubKey,
+          amount: amount,
+          symbol: "XRGE",
+          timestamp: blockV1.header.time,
+          memo: txType === "stake" ? `Staked ${amount} XRGE` : `Unstaked ${amount} XRGE`,
+          fee: txV1.fee,
+          feeRecipient: proposerPubKey,
+        };
+
+        const block: Block = {
+          index: blockV1.header.height,
+          timestamp: blockV1.header.time,
+          data: JSON.stringify(tx),
+          previousHash: prevHash,
+          hash: blockV1.hash,
+          nonce: 0,
+          signature: proposerSig,
+          signerPublicKey: proposerPubKey,
+        };
+
+        transactions.push({ tx, block });
+      } else if (txType === "create_pool" || txType === "add_liquidity" || txType === "remove_liquidity") {
+        const p = txV1.payload;
+        const tokenA = (p.token_a_symbol || p.tokenASymbol || p.token_a || "") as string;
+        const tokenB = (p.token_b_symbol || p.tokenBSymbol || p.token_b || "") as string;
+        const label = txType === "create_pool" ? "Created pool" : txType === "add_liquidity" ? "Added liquidity" : "Removed liquidity";
+
+        const tx: Transaction = {
+          type: "transfer",
+          from: fromPubKey,
+          to: fromPubKey,
+          amount: 0,
+          symbol: "XRGE",
+          timestamp: blockV1.header.time,
+          memo: `${label}: ${tokenA}/${tokenB}`,
+          fee: txV1.fee,
+          feeRecipient: proposerPubKey,
+        };
+
+        const block: Block = {
+          index: blockV1.header.height,
+          timestamp: blockV1.header.time,
+          data: JSON.stringify(tx),
+          previousHash: prevHash,
+          hash: blockV1.hash,
+          nonce: 0,
+          signature: proposerSig,
+          signerPublicKey: proposerPubKey,
+        };
+
+        transactions.push({ tx, block });
+      } else if (txType?.startsWith("nft_")) {
+        const p = txV1.payload;
+        const colId = (p.nft_collection_id || p.nftCollectionId || "") as string;
+        const tokenId = (p.nft_token_id || p.nftTokenId || "") as string;
+        const labels: Record<string, string> = {
+          nft_create_collection: "Created NFT collection",
+          nft_mint: "Minted NFT",
+          nft_batch_mint: "Batch minted NFTs",
+          nft_transfer: "NFT transfer",
+          nft_burn: "Burned NFT",
+          nft_lock: "Locked/Unlocked NFT",
+          nft_freeze_collection: "Froze collection",
+        };
+
+        const tx: Transaction = {
+          type: "transfer",
+          from: fromPubKey,
+          to: (p.to_pub_key_hex || p.toPubKeyHex || fromPubKey) as string,
+          amount: txV1.fee,
+          symbol: "XRGE",
+          timestamp: blockV1.header.time,
+          memo: `${labels[txType || ""] || txType}${colId ? ` (${(colId as string).slice(0, 12)}...)` : ""}${tokenId ? ` #${tokenId}` : ""}`,
+          fee: txV1.fee,
+          feeRecipient: proposerPubKey,
+        };
+
+        const block: Block = {
+          index: blockV1.header.height,
+          timestamp: blockV1.header.time,
+          data: JSON.stringify(tx),
+          previousHash: prevHash,
+          hash: blockV1.hash,
+          nonce: 0,
+          signature: proposerSig,
+          signerPublicKey: proposerPubKey,
+        };
+
+        transactions.push({ tx, block });
+      } else if (txType === "bridge_mint" || txType === "bridge_withdraw") {
+        const p = txV1.payload;
+        const amount = (p.amount || 0) as number;
+        const tokenSymbol = (p.token_symbol || p.tokenSymbol || "qETH") as string;
+        const isQethToken = tokenSymbol === "qETH";
+        const displayAmount = isQethToken ? amount / 1_000_000 : amount;
+        const displayStr = isQethToken ? displayAmount.toFixed(6).replace(/\.?0+$/, '') : displayAmount.toLocaleString();
+
+        const tx: Transaction = {
+          type: "transfer",
+          from: txType === "bridge_mint" ? "BRIDGE" : fromPubKey,
+          to: txType === "bridge_mint" ? ((p.to_pub_key_hex || p.toPubKeyHex || "") as string) : "BRIDGE",
+          amount: amount,
+          symbol: tokenSymbol,
+          timestamp: blockV1.header.time,
+          memo: txType === "bridge_mint" ? `Bridge deposit: ${displayStr} ${tokenSymbol}` : `Bridge withdrawal: ${displayStr} ${tokenSymbol}`,
+          fee: txV1.fee,
+          feeRecipient: proposerPubKey,
+        };
+
+        const block: Block = {
+          index: blockV1.header.height,
+          timestamp: blockV1.header.time,
+          data: JSON.stringify(tx),
+          previousHash: prevHash,
+          hash: blockV1.hash,
+          nonce: 0,
+          signature: proposerSig,
+          signerPublicKey: proposerPubKey,
+        };
+
+        transactions.push({ tx, block });
+      }
+    }
+  }
+
+  return transactions;
+}
+
 // Get all transactions from the chain
 // Now supports both node API (for public deployment) and local Supabase (for dev)
 export async function getAllTransactions(): Promise<{ tx: Transaction; block: Block }[]> {
@@ -113,287 +400,8 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
       headers: getCoreApiHeaders(),
     });
     if (res.ok) {
-      const data = await res.json() as { blocks: Array<{
-        version: 1;
-        header: {
-          height: number;
-          time: number;
-          prevHash?: string;
-          prev_hash?: string;
-          proposerPubKey?: string;
-          proposer_pub_key?: string;
-        };
-        txs: Array<{
-          version: 1;
-          type?: string;
-          tx_type?: string;
-          fromPubKey?: string;
-          from_pub_key?: string;
-          nonce: number;
-          payload: Record<string, unknown>;
-          fee: number;
-          sig: string;
-        }>;
-        proposerSig?: string;
-        proposer_sig?: string;
-        hash: string;
-      }> };
-
-      const transactions: { tx: Transaction; block: Block }[] = [];
-
-      for (const blockV1 of data.blocks) {
-        const header = blockV1.header;
-        const prevHash = header.prevHash ?? header.prev_hash ?? "";
-        const proposerPubKey = header.proposerPubKey ?? header.proposer_pub_key ?? "";
-        const proposerSig = blockV1.proposerSig ?? blockV1.proposer_sig ?? "";
-        for (const txV1 of blockV1.txs) {
-          const txType = txV1.type ?? txV1.tx_type;
-          const fromPubKey = txV1.fromPubKey ?? txV1.from_pub_key ?? "";
-          
-          if (txType === "transfer") {
-            const payload = txV1.payload as { 
-              toPubKeyHex?: string; 
-              to_pub_key_hex?: string; 
-              amount?: number; 
-              faucet?: boolean;
-              token_symbol?: string;
-              tokenSymbol?: string;
-            };
-            const isFaucet = payload.faucet === true;
-            // Check for token symbol - if present, this is a token transfer
-            const tokenSymbol = payload.token_symbol || payload.tokenSymbol;
-            const tx: Transaction = {
-              type: isFaucet ? "mint" : "transfer",
-              from: isFaucet ? "FAUCET" : fromPubKey,
-              to: payload.toPubKeyHex || payload.to_pub_key_hex || "",
-              amount: payload.amount || 0,
-              symbol: tokenSymbol || "XRGE", // Use token symbol if present, otherwise XRGE
-              timestamp: blockV1.header.time,
-              memo: isFaucet ? "Faucet" : (tokenSymbol ? `${tokenSymbol} transfer` : undefined),
-              fee: txV1.fee,
-              feeRecipient: proposerPubKey,
-            };
-
-            const block: Block = {
-              index: blockV1.header.height,
-              timestamp: blockV1.header.time,
-              data: JSON.stringify(tx),
-              previousHash: prevHash,
-              hash: blockV1.hash,
-              nonce: 0,
-              signature: proposerSig,
-              signerPublicKey: proposerPubKey,
-            };
-
-            transactions.push({ tx, block });
-          } else if (txType === "create_token") {
-            try {
-              const p = txV1.payload;
-              const tokenName = (p.token_name || p.tokenName || "Unknown Token") as string;
-              const tokenSymbol = (p.token_symbol || p.tokenSymbol || "TOKEN") as string;
-              const tokenDecimals = (p.token_decimals ?? p.tokenDecimals ?? 18) as number;
-              const totalSupply = (p.token_total_supply || p.tokenTotalSupply || p.amount || 0) as number;
-              const safeFromPubKey = fromPubKey || "";
-              const tokenAddress = safeFromPubKey.length >= 16 
-                ? `token:${safeFromPubKey.slice(0, 16)}:${tokenSymbol.toLowerCase()}`
-                : `token:unknown:${tokenSymbol.toLowerCase()}`;
-              
-              const tx: Transaction = {
-                type: "create_token",
-                from: fromPubKey,
-                to: fromPubKey,
-                amount: totalSupply,
-                symbol: tokenSymbol,
-                timestamp: blockV1.header.time,
-                memo: `Created ${tokenName} (${tokenSymbol})`,
-                fee: txV1.fee,
-                feeRecipient: proposerPubKey,
-                tokenData: {
-                  name: tokenName,
-                  symbol: tokenSymbol,
-                  decimals: tokenDecimals,
-                  totalSupply: totalSupply,
-                  tokenAddress: tokenAddress,
-                  creatorAddress: fromPubKey,
-                },
-              };
-
-              const block: Block = {
-                index: blockV1.header.height,
-                timestamp: blockV1.header.time,
-                data: JSON.stringify(tx),
-                previousHash: prevHash,
-                hash: blockV1.hash,
-                nonce: 0,
-                signature: proposerSig,
-                signerPublicKey: proposerPubKey,
-              };
-
-              transactions.push({ tx, block });
-            } catch (tokenParseError) {
-              console.error("Error parsing create_token tx:", tokenParseError);
-            }
-          } else if (txType === "swap") {
-            const p = txV1.payload;
-            const tokenIn = (p.token_in || p.tokenIn || "") as string;
-            const tokenOut = (p.token_out || p.tokenOut || "") as string;
-            const amountIn = (p.amount_in || p.amountIn || 0) as number;
-
-            const tx: Transaction = {
-              type: "transfer",
-              from: fromPubKey,
-              to: fromPubKey,
-              amount: amountIn,
-              symbol: tokenIn,
-              timestamp: blockV1.header.time,
-              memo: `Swap ${amountIn} ${tokenIn} → ${tokenOut}`,
-              fee: txV1.fee,
-              feeRecipient: proposerPubKey,
-            };
-
-            const block: Block = {
-              index: blockV1.header.height,
-              timestamp: blockV1.header.time,
-              data: JSON.stringify(tx),
-              previousHash: prevHash,
-              hash: blockV1.hash,
-              nonce: 0,
-              signature: proposerSig,
-              signerPublicKey: proposerPubKey,
-            };
-
-            transactions.push({ tx, block });
-          } else if (txType === "stake" || txType === "unstake") {
-            const p = txV1.payload;
-            const amount = (p.amount || 0) as number;
-
-            const tx: Transaction = {
-              type: "transfer",
-              from: fromPubKey,
-              to: fromPubKey,
-              amount: amount,
-              symbol: "XRGE",
-              timestamp: blockV1.header.time,
-              memo: txType === "stake" ? `Staked ${amount} XRGE` : `Unstaked ${amount} XRGE`,
-              fee: txV1.fee,
-              feeRecipient: proposerPubKey,
-            };
-
-            const block: Block = {
-              index: blockV1.header.height,
-              timestamp: blockV1.header.time,
-              data: JSON.stringify(tx),
-              previousHash: prevHash,
-              hash: blockV1.hash,
-              nonce: 0,
-              signature: proposerSig,
-              signerPublicKey: proposerPubKey,
-            };
-
-            transactions.push({ tx, block });
-          } else if (txType === "create_pool" || txType === "add_liquidity" || txType === "remove_liquidity") {
-            const p = txV1.payload;
-            const tokenA = (p.token_a_symbol || p.tokenASymbol || p.token_a || "") as string;
-            const tokenB = (p.token_b_symbol || p.tokenBSymbol || p.token_b || "") as string;
-            const label = txType === "create_pool" ? "Created pool" : txType === "add_liquidity" ? "Added liquidity" : "Removed liquidity";
-
-            const tx: Transaction = {
-              type: "transfer",
-              from: fromPubKey,
-              to: fromPubKey,
-              amount: 0,
-              symbol: "XRGE",
-              timestamp: blockV1.header.time,
-              memo: `${label}: ${tokenA}/${tokenB}`,
-              fee: txV1.fee,
-              feeRecipient: proposerPubKey,
-            };
-
-            const block: Block = {
-              index: blockV1.header.height,
-              timestamp: blockV1.header.time,
-              data: JSON.stringify(tx),
-              previousHash: prevHash,
-              hash: blockV1.hash,
-              nonce: 0,
-              signature: proposerSig,
-              signerPublicKey: proposerPubKey,
-            };
-
-            transactions.push({ tx, block });
-          } else if (txType?.startsWith("nft_")) {
-            const p = txV1.payload;
-            const colId = (p.nft_collection_id || p.nftCollectionId || "") as string;
-            const tokenId = (p.nft_token_id || p.nftTokenId || "") as string;
-            const labels: Record<string, string> = {
-              nft_create_collection: "Created NFT collection",
-              nft_mint: "Minted NFT",
-              nft_batch_mint: "Batch minted NFTs",
-              nft_transfer: "NFT transfer",
-              nft_burn: "Burned NFT",
-              nft_lock: "Locked/Unlocked NFT",
-              nft_freeze_collection: "Froze collection",
-            };
-
-            const tx: Transaction = {
-              type: "transfer",
-              from: fromPubKey,
-              to: (p.to_pub_key_hex || p.toPubKeyHex || fromPubKey) as string,
-              amount: txV1.fee,
-              symbol: "XRGE",
-              timestamp: blockV1.header.time,
-              memo: `${labels[txType || ""] || txType}${colId ? ` (${(colId as string).slice(0, 12)}...)` : ""}${tokenId ? ` #${tokenId}` : ""}`,
-              fee: txV1.fee,
-              feeRecipient: proposerPubKey,
-            };
-
-            const block: Block = {
-              index: blockV1.header.height,
-              timestamp: blockV1.header.time,
-              data: JSON.stringify(tx),
-              previousHash: prevHash,
-              hash: blockV1.hash,
-              nonce: 0,
-              signature: proposerSig,
-              signerPublicKey: proposerPubKey,
-            };
-
-            transactions.push({ tx, block });
-          } else if (txType === "bridge_mint" || txType === "bridge_withdraw") {
-            const p = txV1.payload;
-            const amount = (p.amount || 0) as number;
-            const tokenSymbol = (p.token_symbol || p.tokenSymbol || "qETH") as string;
-            const isQethToken = tokenSymbol === "qETH";
-            const displayAmount = isQethToken ? amount / 1_000_000 : amount;
-            const displayStr = isQethToken ? displayAmount.toFixed(6).replace(/\.?0+$/, '') : displayAmount.toLocaleString();
-
-            const tx: Transaction = {
-              type: "transfer",
-              from: txType === "bridge_mint" ? "BRIDGE" : fromPubKey,
-              to: txType === "bridge_mint" ? ((p.to_pub_key_hex || p.toPubKeyHex || "") as string) : "BRIDGE",
-              amount: amount,
-              symbol: tokenSymbol,
-              timestamp: blockV1.header.time,
-              memo: txType === "bridge_mint" ? `Bridge deposit: ${displayStr} ${tokenSymbol}` : `Bridge withdrawal: ${displayStr} ${tokenSymbol}`,
-              fee: txV1.fee,
-              feeRecipient: proposerPubKey,
-            };
-
-            const block: Block = {
-              index: blockV1.header.height,
-              timestamp: blockV1.header.time,
-              data: JSON.stringify(tx),
-              previousHash: prevHash,
-              hash: blockV1.hash,
-              nonce: 0,
-              signature: proposerSig,
-              signerPublicKey: proposerPubKey,
-            };
-
-            transactions.push({ tx, block });
-          }
-        }
-      }
+      const data = await res.json() as { blocks: NodeBlockV1[] };
+      const transactions = parseNodeBlocks(data.blocks);
 
       // Debug logging (only in development)
       if (import.meta.env.DEV) {
@@ -588,7 +596,40 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
 
 // Get transaction history for a wallet
 export async function getWalletTransactions(publicKey: string, aliases: string[] = []): Promise<WalletTransaction[]> {
-  const transactions = await getAllTransactions();
+  return toWalletTransactions(await getAllTransactions(), publicKey, aliases);
+}
+
+/**
+ * The wallet's transactions in blocks `fromHeight..=toHeight`, one `/api/block/:h` request per
+ * block — cheap enough to run on every new block (used for app-wide incoming-transfer toasts).
+ */
+export async function getWalletTransactionsInBlocks(
+  fromHeight: number,
+  toHeight: number,
+  publicKey: string,
+  aliases: string[] = [],
+): Promise<WalletTransaction[]> {
+  const base = getCoreApiBaseUrl();
+  if (!base || toHeight < fromHeight) return [];
+  const heights = Array.from({ length: toHeight - fromHeight + 1 }, (_, i) => fromHeight + i);
+  const blocks = await Promise.all(heights.map(async (h) => {
+    try {
+      const res = await fetch(`${base}/block/${h}`, { headers: getCoreApiHeaders(), signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return null;
+      const data = await res.json() as { success?: boolean; block?: NodeBlockV1 };
+      return data.block ?? null;
+    } catch {
+      return null;
+    }
+  }));
+  return toWalletTransactions(parseNodeBlocks(blocks.filter((b): b is NodeBlockV1 => !!b)), publicKey, aliases);
+}
+
+function toWalletTransactions(
+  transactions: { tx: Transaction; block: Block }[],
+  publicKey: string,
+  aliases: string[],
+): WalletTransaction[] {
   const walletTxs: WalletTransaction[] = [];
   // A transfer's recipient is stored as submitted: the public key OR its rouge1 address.
   const aliasSet = new Set(aliases.map((a) => a.toLowerCase()));

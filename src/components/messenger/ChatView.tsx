@@ -399,8 +399,8 @@ const EncryptionAnimation = ({
 
         {/* Message bubble with animation */}
         <motion.div
-          className={`rounded-2xl px-4 py-2 rounded-br-md overflow-hidden min-w-[120px] break-words ${phase === "plaintext"
-            ? "bg-primary/50 text-primary-foreground"
+          className={`bubble-own px-4 py-2 overflow-hidden min-w-[120px] break-words ${phase === "plaintext"
+            ? "opacity-60"
             : "bg-gradient-to-r from-primary via-accent to-primary bg-[length:200%_100%] text-primary-foreground"
             }`}
           animate={{
@@ -449,7 +449,7 @@ const EncryptionAnimation = ({
 
         {/* Particle effects during encryption */}
         {(phase === "scrambling" || phase === "encrypted") && (
-          <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
+          <div className="absolute inset-0 pointer-events-none overflow-hidden">
             {[...Array(6)].map((_, i) => (
               <motion.div
                 key={i}
@@ -926,7 +926,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
       </AnimatePresence>
 
       {/* Messages */}
-      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 space-y-4">
+      <div className="cyber-chat flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 space-y-4">
         {isLoading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -1090,7 +1090,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             placeholder={replyingTo ? "Type your reply..." : stagedMedia ? "Add a caption (optional)..." : "Type a message..."}
-            className="flex-1"
+            className="cyber-input flex-1"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 if (replyingTo) handleSendReply();
@@ -1275,8 +1275,8 @@ const DecryptionAnimation = ({
 
         {/* Message bubble with animation */}
         <motion.div
-          className={`rounded-2xl px-4 py-2 rounded-bl-md overflow-hidden ${phase === "done"
-            ? "bg-muted text-foreground"
+          className={`bubble-peer px-4 py-2 overflow-hidden ${phase === "done"
+            ? ""
             : "bg-gradient-to-r from-accent/80 via-primary/80 to-accent/80 bg-[length:200%_100%] text-foreground"
             }`}
           animate={{
@@ -1323,7 +1323,7 @@ const DecryptionAnimation = ({
 
         {/* Particle effects during decryption */}
         {(phase === "ciphertext" || phase === "decrypting") && (
-          <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
+          <div className="absolute inset-0 pointer-events-none overflow-hidden">
             {[...Array(6)].map((_, i) => (
               <motion.div
                 key={i}
@@ -1493,13 +1493,10 @@ const MessageBubble = ({
             e.stopPropagation();
             onToggleReactionPicker?.(message.id);
           }}
-          className={`max-w-[85%] sm:max-w-[80%] rounded-2xl px-4 py-2 cursor-pointer transition-shadow hover:shadow-lg break-words ${isOwn
-            ? "bg-primary text-primary-foreground rounded-br-md hover:shadow-primary/20"
-            : "bg-muted text-foreground rounded-bl-md hover:shadow-accent/20"
-            }`}
+          className={`max-w-[85%] sm:max-w-[80%] px-4 py-2 cursor-pointer break-words ${isOwn ? "bubble-own" : "bubble-peer"}`}
         >
           {!isOwn && (
-            <p className="text-xs font-medium mb-1 opacity-70">
+            <p className="bubble-meta font-medium mb-1 text-[hsl(var(--hologram))]">
               {message.senderDisplayName}
             </p>
           )}
@@ -1593,10 +1590,11 @@ const MessageBubble = ({
             <ReactionBadges reactions={reactions} onReact={onReact} />
           )}
 
-          <div className={`flex items-center gap-1 mt-1 text-xs ${isOwn ? "justify-end" : ""}`}>
-            <span className="opacity-60">
+          <div className={`bubble-meta flex items-center gap-1 mt-1 ${isOwn ? "justify-end" : ""}`}>
+            <span className="opacity-70">
               {formatMessageTime(message.createdAt)}
             </span>
+            <span className="opacity-50">// ML-DSA</span>
             {message.selfDestruct && (
               <Timer className="w-3 h-3 text-destructive" />
             )}
@@ -1606,7 +1604,7 @@ const MessageBubble = ({
               <XCircle className="w-3 h-3 text-destructive" />
             )}
           </div>
-          <p className="text-xs opacity-40 mt-0.5 text-right">Tap for details</p>
+          <p className="bubble-meta opacity-40 mt-0.5 text-right">Tap for details</p>
         </motion.div>
       </div>
     </motion.div>

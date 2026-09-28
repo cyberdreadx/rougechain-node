@@ -429,7 +429,7 @@ body::before {
   transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease;
   cursor: pointer;
 }
-.action-tile:hover:not(:disabled) { transform: translateY(-3px); border-color: hsl(var(--primary) / 0.55); background: hsl(var(--card) / 0.8); }
+.action-tile:hover:not(:disabled) { transform: translateY(-3px); border-color: hsl(var(--hologram) / 0.6); background: hsl(var(--card) / 0.8); box-shadow: 0 0 18px hsl(var(--hologram) / 0.18); }
 .action-tile:active:not(:disabled) { transform: translateY(0) scale(0.97); }
 .action-tile:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 2px; }
 .action-tile:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -447,4 +447,139 @@ body::before {
 @media (prefers-reduced-motion: reduce) {
   .aurora-blob, .gradient-ring::before, .text-shimmer, .action-chip { animation: none !important; }
   .action-tile { transition: none; }
+}
+
+/* ─── Cyber layer ───────────────────────────────────────────────────────────
+   HUD grid, scanlines, neon edges and chamfered chat bubbles. Kept faint on purpose:
+   the aurora carries the colour, this adds texture. Stops for prefers-reduced-motion. */
+@keyframes grid-drift { to { transform: translate3d(0, 48px, 0); } }
+@keyframes scan-sweep { from { transform: translate3d(0, -30vh, 0); } to { transform: translate3d(0, 130vh, 0); } }
+@keyframes btn-sheen { 0%, 55% { left: -60%; } 100% { left: 130%; } }
+@keyframes neon-flicker {
+  0%, 91%, 94%, 100% { opacity: 1; }
+  92% { opacity: 0.45; }
+  93% { opacity: 0.9; }
+  97% { opacity: 0.7; }
+}
+
+/* Backdrop layers (rendered by AuroraBackdrop). The grid fades out toward the top. */
+.cyber-grid {
+  position: absolute;
+  inset: -48px 0 0 0;
+  background-image:
+    linear-gradient(hsl(var(--hologram) / 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--hologram) / 0.07) 1px, transparent 1px);
+  background-size: 48px 48px;
+  -webkit-mask-image: linear-gradient(to top, #000 0%, transparent 65%);
+  mask-image: linear-gradient(to top, #000 0%, transparent 65%);
+  animation: grid-drift 7s linear infinite;
+}
+.cyber-scanlines {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(to bottom, hsl(0 0% 100% / 0.022) 0 1px, transparent 1px 3px);
+}
+.cyber-scanbeam {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 24vh;
+  background: linear-gradient(to bottom, transparent, hsl(var(--hologram) / 0.045) 50%, transparent);
+  animation: scan-sweep 11s linear infinite;
+}
+
+/* HUD corner brackets. Put on a position:relative element. */
+.hud-corners { position: relative; }
+.hud-corners::after {
+  --hud-c: hsl(var(--hologram) / 0.75);
+  --hud-l: 14px;
+  --hud-w: 1.5px;
+  content: "";
+  position: absolute;
+  inset: 9px;
+  pointer-events: none;
+  z-index: 2;
+  background:
+    linear-gradient(var(--hud-c), var(--hud-c)) top left / var(--hud-l) var(--hud-w) no-repeat,
+    linear-gradient(var(--hud-c), var(--hud-c)) top left / var(--hud-w) var(--hud-l) no-repeat,
+    linear-gradient(var(--hud-c), var(--hud-c)) top right / var(--hud-l) var(--hud-w) no-repeat,
+    linear-gradient(var(--hud-c), var(--hud-c)) top right / var(--hud-w) var(--hud-l) no-repeat,
+    linear-gradient(var(--hud-c), var(--hud-c)) bottom left / var(--hud-l) var(--hud-w) no-repeat,
+    linear-gradient(var(--hud-c), var(--hud-c)) bottom left / var(--hud-w) var(--hud-l) no-repeat,
+    linear-gradient(var(--hud-c), var(--hud-c)) bottom right / var(--hud-l) var(--hud-w) no-repeat,
+    linear-gradient(var(--hud-c), var(--hud-c)) bottom right / var(--hud-w) var(--hud-l) no-repeat;
+  animation: neon-flicker 7s linear infinite;
+}
+
+/* Terminal-style label: mono, caps, tracked, in the "live" teal. */
+.hud-label {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: hsl(var(--hologram));
+  text-shadow: 0 0 10px hsl(var(--hologram) / 0.45);
+}
+.hud-label::before { content: "▍"; margin-right: 0.35em; opacity: 0.8; }
+
+/* A light sweep across the primary button, on a loop. */
+.btn-neon { position: relative; overflow: hidden; }
+.btn-neon::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -60%;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, hsl(0 0% 100% / 0.32), transparent);
+  transform: skewX(-20deg);
+  animation: btn-sheen 5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Chat */
+.cyber-chat {
+  background-image:
+    repeating-linear-gradient(to bottom, hsl(0 0% 100% / 0.018) 0 1px, transparent 1px 4px),
+    linear-gradient(hsl(var(--hologram) / 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--hologram) / 0.035) 1px, transparent 1px);
+  background-size: auto, 32px 32px, 32px 32px;
+}
+.bubble-own,
+.bubble-peer {
+  --cut: 11px;
+  border-radius: 0;
+  transition: filter 150ms ease;
+}
+.bubble-own {
+  color: #fff;
+  background: linear-gradient(120deg, hsl(349 100% 59%), hsl(331 75% 51%) 45%, hsl(262 87% 60%));
+  box-shadow: inset 0 0 0 1px hsl(0 0% 100% / 0.16), inset 0 -12px 24px hsl(262 87% 40% / 0.35);
+  clip-path: polygon(var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut));
+}
+.bubble-peer {
+  color: hsl(var(--foreground));
+  background: linear-gradient(135deg, hsl(var(--hologram) / 0.10), hsl(var(--card) / 0.92) 40%);
+  box-shadow: inset 2px 0 0 hsl(var(--hologram)), inset 0 0 0 1px hsl(var(--hologram) / 0.22);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, var(--cut) 100%, 0 calc(100% - var(--cut)));
+}
+.bubble-own:hover, .bubble-peer:hover { filter: brightness(1.12) saturate(1.1); }
+.bubble-meta {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.cyber-input:focus-visible {
+  border-color: hsl(var(--hologram) / 0.7);
+  box-shadow: 0 0 0 1px hsl(var(--hologram) / 0.5), 0 0 20px hsl(var(--hologram) / 0.22);
+  --tw-ring-shadow: 0 0 #0000;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cyber-grid, .cyber-scanbeam, .hud-corners::after, .btn-neon::after { animation: none !important; }
+  .cyber-scanbeam { display: none; }
 }
