@@ -36,7 +36,8 @@ export interface TransactionPayload {
   | "nft_create_collection" | "nft_mint" | "nft_batch_mint" | "nft_transfer" | "nft_burn" | "nft_lock" | "nft_freeze_collection"
   | "bridge_withdraw"
   | "approve" | "transfer_from"
-  | "shield" | "shielded_transfer" | "unshield";
+  | "shield" | "shielded_transfer" | "unshield"
+  | "contract_call" | "contract_deploy";
   from: string;
   to?: string;
   amount?: number;
@@ -91,6 +92,13 @@ export interface TransactionPayload {
   // Allowance fields (approve/transferFrom)
   spender?: string;
   owner?: string;
+  // Player-signed contracts (POST /api/v2/contract/execute | publish)
+  contractAddr?: string;
+  method?: string;
+  args?: unknown;
+  gasLimit?: number;
+  /** base64 WASM (contract_deploy) */
+  wasm?: string;
 }
 
 /**
