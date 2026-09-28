@@ -954,6 +954,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/pools", get(get_pools))
         .route("/api/pool/:pool_id", get(get_pool))
         .route("/api/pool/:pool_id/events", get(get_pool_events))
+        .route("/api/pool/:pool_id/earnings/:owner", get(get_pool_earnings))
         .route("/api/pool/:pool_id/prices", get(get_pool_price_history))
         .route("/api/pool/:pool_id/stats", get(get_pool_stats))
         .route("/api/pool/create", post(create_pool))
@@ -3436,6 +3437,18 @@ async fn execute_swap(
 struct PoolEventsResponse {
     success: bool,
     events: Vec<PoolEvent>,
+}
+
+/// Uncollected swap fees for one LP position (`owner` = public key or rouge1 address).
+async fn get_pool_earnings(
+    State(state): State<AppState>,
+    Path((pool_id, owner)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.node.get_lp_earnings(&pool_id, &owner) {
+        Ok(Some(e)) => Ok(Json(serde_json::json!({ "success": true, "earnings": e }))),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 #[derive(Deserialize)]
