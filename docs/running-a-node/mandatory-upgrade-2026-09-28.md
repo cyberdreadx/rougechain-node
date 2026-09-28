@@ -19,9 +19,9 @@ contract state.
 | Item | Value |
 |---|---|
 | Binary | `quantum-vault-daemon` |
-| sha256 | `5e5ca98cd6a4b7f6847f83772124328ab210b2012f6e992aa9592e6937619f7b` (block-170 release; the block-160 build was `46e29456…`) |
-| Size | 27,934,368 bytes |
-| Source commit | `2cbc239`, branch `fix/commit-settle-randomness` |
+| sha256 | `718200bca08ff7f147d7a83ccaef4440b1c805bbd3f48266b9f90d614327d8de` (supersedes `5e5ca98c…` and `46e29456…`: exact JSON float parsing, required to import block 177) |
+| Size | 28,021,264 bytes |
+| Source commit | `653874b`, branch `fix/commit-settle-randomness` |
 | Toolchain | rustc 1.94.0 (4a4ef493e 2026-03-02), cargo 1.94.0 (85eff7c80 2026-01-15), `x86_64-unknown-linux-gnu` |
 
 This exact binary runs on both operator nodes. It was built twice from clean and the two builds were
@@ -35,6 +35,12 @@ byte-identical.
   at the same height
 
 ## What changed
+
+**Exact JSON number parsing (required to follow block 177).** A contract call's fee is
+`gasLimit × 0.000001`; for about 18% of gas limits that number prints with many digits (block 177:
+`0.0018369999999999999`) and the previous build's JSON parser read it back one unit off, so nodes that
+receive blocks over the network rejected block 177. This build parses numbers exactly. It changes no
+rule and needs no activation height.
 
 **Finality (≥ 150).** Validators sign ML-DSA-65 precommits; a block is final once signers holding more
 than two thirds of stake have signed it. From block 151 every block header carries `parent_commit`, the
