@@ -11,7 +11,7 @@ tonic-prost = "0.14"
 tonic-reflection = "0.14"
 prost = "0.14"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }  # exact f64 parsing: consensus fields (fees) must survive JSON between nodes
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 axum = { version = "0.6", features = ["headers", "ws"] }

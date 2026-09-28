@@ -8,6 +8,7 @@
 | Verified BFT finality — Release 2a | `FINALITY_V2_ACTIVATION_HEIGHT` | **150** |
 | Player-signed contract calls and deployments (GAME_READY) | `GAME_READY_ACTIVATION_HEIGHT` | **150** |
 | Game-ready contracts: tokens, NFTs, randomness, multi-hop moves, state root v2 (GAME_READY 2) | `GAME_READY_2_ACTIVATION_HEIGHT` | **160** |
+| Grind-proof rolls: `host_block_hash` (GAME_READY 3) | `GAME_READY_3_ACTIVATION_HEIGHT` | **170** — upgrade before block 170 |
 
 A node without them cannot follow mainnet past block 150: from block 151 every block carries its
 parent's finality certificate, and from block 160 the header's state root also commits NFTs and
@@ -18,9 +19,9 @@ contract state.
 | Item | Value |
 |---|---|
 | Binary | `quantum-vault-daemon` |
-| sha256 | `46e29456c928d05ab1ff60d11d5b691519370a7477c60c512a240a9469b53add` |
-| Size | 27,924,800 bytes |
-| Source commit | `dbe0fc0`, branch `release/gr2-160` (merged to main) |
+| sha256 | `718200bca08ff7f147d7a83ccaef4440b1c805bbd3f48266b9f90d614327d8de` (supersedes `5e5ca98c…` and `46e29456…`: exact JSON float parsing, required to import block 177) |
+| Size | 28,021,264 bytes |
+| Source commit | `653874b`, branch `fix/commit-settle-randomness` |
 | Toolchain | rustc 1.94.0 (4a4ef493e 2026-03-02), cargo 1.94.0 (85eff7c80 2026-01-15), `x86_64-unknown-linux-gnu` |
 
 This exact binary runs on both operator nodes. It was built twice from clean and the two builds were
@@ -34,6 +35,12 @@ byte-identical.
   at the same height
 
 ## What changed
+
+**Exact JSON number parsing (required to follow block 177).** A contract call's fee is
+`gasLimit × 0.000001`; for about 18% of gas limits that number prints with many digits (block 177:
+`0.0018369999999999999`) and the previous build's JSON parser read it back one unit off, so nodes that
+receive blocks over the network rejected block 177. This build parses numbers exactly. It changes no
+rule and needs no activation height.
 
 **Finality (≥ 150).** Validators sign ML-DSA-65 precommits; a block is final once signers holding more
 than two thirds of stake have signed it. From block 151 every block header carries `parent_commit`, the

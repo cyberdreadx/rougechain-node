@@ -4,6 +4,22 @@ All notable changes to RougeChain.
 
 ---
 
+## Node fix: exact JSON number parsing — 2026-09-28
+
+- Contract-call fees (`gasLimit × 0.000001`) could print with more digits than the previous JSON parser
+  read back exactly, so peers rejected mainnet block 177 while the producer accepted it. Nodes now parse
+  numbers exactly (binary `718200bc…`); every node must run it to follow the chain past block 176.
+
+## Grind-proof contract randomness (block 170) — 2026-09-28
+
+- **Security fix.** One-step `host_random` rolls could be ground: the seed is fixed by the parent block
+  (public) and the transaction (chosen by the sender), so a player could sign many variants offline
+  and send only a winner. The earlier docs wrongly implied this was safe. No contracts were deployed.
+- **`host_block_hash(height)` from block 170** (GAME_READY 3): the hash of a finished block up to 256
+  back. Games commit, then settle from the hash of the next block. `contracts/loot_roll` now uses
+  `roll` + `settle`. Mandatory node upgrade before block 170 — see the
+  [upgrade guide](running-a-node/mandatory-upgrade-2026-09-28.md).
+
 ## Finality, game-ready contracts and LP fee collection — 2026-09-28
 
 Node release `dbe0fc0` (binary sha256 `46e29456…`), **mandatory**:
