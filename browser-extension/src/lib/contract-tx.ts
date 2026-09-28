@@ -3,8 +3,8 @@
  *
  * dApps ask the extension to sign `contract_call` / `contract_deploy` payloads (node GAME_READY:
  * POST /api/v2/contract/execute and /api/v2/contract/publish). This module validates those
- * payloads and derives what the approval popup shows: method, args, gas limit and max fee for a
- * call; WASM size, predicted address and fee for a deployment.
+ * payloads and derives what the approval popup shows: method, args, gas limit, max fee and any
+ * attached payment (payable calls) for a call; WASM size, predicted address and fee for a deployment.
  */
 
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -28,6 +28,14 @@ export interface ContractCallDetails {
     /** True when the payload has no gasLimit and the node default (10M) applies. */
     gasLimitDefaulted: boolean;
     maxFeeXrge: number;
+    /**
+     * Payable call: what the signed payload pays the contract (moved only if the call succeeds).
+     * `amount` is the signed integer (quanta for XRGE, raw units for tokens); `display` is the
+     * exact human amount (XRGE formatted from quanta).
+     */
+    attach?: { symbol: string; amount: number; display: string };
+    /** Exact max total XRGE cost: max gas fee + an XRGE payment (decimal string). */
+    maxTotalXrge: string;
 }
 
 export interface ContractDeployDetails {
@@ -40,6 +48,36 @@ export interface ContractDeployDetails {
 }
 
 export type ContractTxDetails = ContractCallDetails | ContractDeployDetails;
+
+/** Quanta per XRGE. */
+export const QUANTA_PER_XRGE = 1_000_000_000n;
+/** Quanta charged per unit of gas (0.000001 XRGE). */
+const QUANTA_PER_GAS = 1_000n;
+
+/** Exact XRGE decimal string for integer quanta, e.g. 500000000n -> "0.5". */
+export function formatQuanta(quanta: bigint): string {
+    const whole = quanta / QUANTA_PER_XRGE;
+    const frac = (quanta % QUANTA_PER_XRGE).toString().padStart(9, "0").replace(/0+$/, "");
+    return `${whole.toLocaleString("en-US")}${frac ? `.${frac}` : ""}`;
+}
+
+/**
+ * Validate a payable-call attachment the way the node's `parse_attach` does: a token symbol
+ * (1-32 letters, digits, `_` or `-`; upper-cased) and a positive integer JSON number. The extension
+ * also requires a safe integer, since a larger number cannot be shown or re-serialized exactly.
+ */
+export function parseAttach(v: unknown): { attach: { symbol: string; amount: number } | null } | { error: string } {
+    if (v === undefined || v === null) return { attach: null };
+    if (typeof v !== "object" || Array.isArray(v)) return { error: "attach must be { symbol, amount }" };
+    const a = v as Record<string, unknown>;
+    const symbol = typeof a.symbol === "string" ? a.symbol.trim().toUpperCase() : "";
+    if (!/^[A-Z0-9_-]{1,32}$/.test(symbol)) return { error: "attach.symbol must be a token symbol" };
+    const amount = a.amount;
+    if (typeof amount !== "number" || !Number.isSafeInteger(amount) || amount <= 0) {
+        return { error: "attach.amount must be a positive integer (quanta for XRGE, raw units for tokens)" };
+    }
+    return { attach: { symbol, amount } };
+}
 
 export function isContractTxType(t: unknown): t is ContractTxType {
     return t === "contract_call" || t === "contract_deploy";
@@ -106,6 +144,11 @@ export function analyzeContractPayload(
         try { pretty = args === null ? "{}" : JSON.stringify(args, null, 2); } catch { return { error: "args must be JSON" }; }
         const argsBytes = new TextEncoder().encode(JSON.stringify(args ?? {})).length;
         const argsTruncated = pretty.length > ARGS_DISPLAY_LIMIT;
+        const att = parseAttach(payload.attach);
+        if ("error" in att) return { error: att.error };
+        const a = att.attach;
+        const payXrgeQuanta = a && a.symbol === "XRGE" ? BigInt(a.amount) : 0n;
+        const maxTotalQuanta = BigInt(gasLimit) * QUANTA_PER_GAS + payXrgeQuanta;
         return {
             details: {
                 kind: "contract_call",
@@ -117,6 +160,14 @@ export function analyzeContractPayload(
                 gasLimit,
                 gasLimitDefaulted: g === undefined,
                 maxFeeXrge: gasLimit * CONTRACT_GAS_PRICE_XRGE,
+                ...(a ? {
+                    attach: {
+                        symbol: a.symbol,
+                        amount: a.amount,
+                        display: a.symbol === "XRGE" ? formatQuanta(BigInt(a.amount)) : a.amount.toLocaleString("en-US"),
+                    },
+                } : {}),
+                maxTotalXrge: formatQuanta(maxTotalQuanta),
             },
         };
     }

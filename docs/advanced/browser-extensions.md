@@ -142,6 +142,21 @@ const { txId, preview } = await window.rougechain.sendTransaction({
 Size the gas limit from a free query (`POST /api/contract/<addr>/query`) first. See
 [WASM Smart Contracts](smart-contracts.md).
 
+**Payable calls (v1.5.0+; the node accepts them from block PAYABLE_HEIGHT).** A
+`contract_call` may carry `attach: { symbol, amount }`. `amount` is a positive integer JSON
+number: quanta for XRGE (1 XRGE = 1,000,000,000 quanta), raw units for tokens. The approval
+view shows "Pays *amount* *SYMBOL* to the contract (only if the call succeeds)", with XRGE
+formatted from quanta. For XRGE it also shows the max total cost, which is the gas fee plus the
+payment. A non-integer, zero, negative or unsafe (> 2^53 − 1) amount is refused before the
+approval opens.
+
+```javascript
+await window.rougechain.sendTransaction({
+  type: "contract_call", contractAddr, method: "roll", args: {}, gasLimit: 50000,
+  attach: { symbol: "XRGE", amount: 500000000 },   // 0.5 XRGE, in quanta
+});
+```
+
 Authenticity: the genuine provider also sets a non-enumerable
 `Symbol.for("rougechain:authentic")` to `true`, so a dApp can guard against a page
 that pre-defines a fake `window.rougechain`:
