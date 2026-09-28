@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import QuickActions from "@/components/wallet/QuickActions";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Loader2, 
   RefreshCw, 
-  Unlink,
   Droplets,
   Send,
   Download,
@@ -983,117 +983,26 @@ const Wallet = () => {
               isConnected={true}
               balancesHidden={balancesHidden}
               onToggleBalancesHidden={toggleBalancesHidden}
+              onDisconnect={disconnectWallet}
             />}
 
-            {/* Action Buttons */}
+            {/* Quick actions */}
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">{t("wallet.actions.title")}</h3>
             </div>
-            <div className={`grid gap-2 ${isMainnet ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-4 sm:grid-cols-8'}`}>
-              <Button
-                variant="outline"
-                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                onClick={() => setShowSend(true)}
-                disabled={balances.length === 0}
-              >
-                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                  <Send className="w-4 h-4 text-primary" />
-                </div>
-                <span className="text-xs">{t("wallet.actions.send")}</span>
-              </Button>
-              
-              <Button
-                variant="outline"
-                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                onClick={() => setShowReceive(true)}
-              >
-                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                  <Download className="w-4 h-4 text-success" />
-                </div>
-                <span className="text-xs">{t("wallet.actions.receive")}</span>
-              </Button>
-              
-              {/* Only show faucets on testnet */}
-              {!isMainnet && (
-                <Button
-                  variant="outline"
-                  className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                  onClick={claimFromFaucet}
-                  disabled={minting}
-                >
-                  <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                    {minting ? (
-                      <Loader2 className="w-4 h-4 text-accent animate-spin" />
-                    ) : (
-                      <Droplets className="w-4 h-4 text-accent" />
-                    )}
-                  </div>
-                  <span className="text-xs">XRGE</span>
-                </Button>
-              )}
-              {!isMainnet && (
-                <Button
-                  variant="outline"
-                  className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                  onClick={() => claimBridgeFaucet("qUSDC")}
-                  disabled={minting}
-                >
-                  <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                    {minting ? (
-                      <Loader2 className="w-4 h-4 text-green-500 animate-spin" />
-                    ) : (
-                      <DollarSign className="w-4 h-4 text-green-500" />
-                    )}
-                  </div>
-                  <span className="text-xs">qUSDC</span>
-                </Button>
-              )}
-
-              <Button
-                variant="outline"
-                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                onClick={() => setShowCreateToken(true)}
-              >
-                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                  <Plus className="w-4 h-4 text-primary" />
-                </div>
-                <span className="text-xs">{t("wallet.actions.create")}</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                onClick={() => setShowShield(true)}
-                disabled={xrgeBalance <= 1}
-              >
-                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                  <Shield className="w-4 h-4 text-primary" />
-                </div>
-                <span className="text-xs">{t("wallet.actions.shield")}</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                onClick={() => setShowUnshield(true)}
-              >
-                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                  <ShieldOff className="w-4 h-4 text-accent" />
-                </div>
-                <span className="text-xs">{t("wallet.actions.unshield")}</span>
-              </Button>
-              
-              <Button
-                variant="outline"
-                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                onClick={disconnectWallet}
-              >
-                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                  <Unlink className="w-4 h-4 text-destructive" />
-                </div>
-                <span className="text-xs">{t("wallet.actions.disconnect")}</span>
-              </Button>
-            </div>
+            <QuickActions
+              actions={[
+                { key: "send", label: t("wallet.actions.send"), icon: Send, tone: "magenta", onClick: () => setShowSend(true), disabled: balances.length === 0 },
+                { key: "receive", label: t("wallet.actions.receive"), icon: Download, tone: "teal", onClick: () => setShowReceive(true) },
+                ...(!isMainnet ? [
+                  { key: "faucet", label: "Get XRGE", title: "Testnet XRGE faucet", icon: Droplets, tone: "cyan" as const, onClick: claimFromFaucet, loading: minting },
+                  { key: "faucet-qusdc", label: "Get qUSDC", title: "Testnet qUSDC faucet", icon: DollarSign, tone: "green" as const, onClick: () => claimBridgeFaucet("qUSDC"), loading: minting },
+                ] : []),
+                { key: "create", label: t("wallet.actions.create"), icon: Plus, tone: "violet", onClick: () => setShowCreateToken(true) },
+                { key: "shield", label: t("wallet.actions.shield"), icon: Shield, tone: "amber", onClick: () => setShowShield(true), disabled: xrgeBalance <= 1 },
+                { key: "unshield", label: t("wallet.actions.unshield"), icon: ShieldOff, tone: "purple", onClick: () => setShowUnshield(true) },
+              ]}
+            />
 
 
             {/* Token Supply Info */}
