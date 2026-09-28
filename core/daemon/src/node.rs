@@ -267,6 +267,31 @@ pub fn game_ready_2_active(height: u64) -> bool {
     matches!(GAME_READY_2_ACTIVATION_HEIGHT, Some(a) if height >= a)
 }
 
+/// GAME_READY 3 — `host_block_hash(height)`: contracts can read the hash of a finished block up
+/// to 256 back, so games can commit in one call and settle from a block that did not exist yet
+/// when the player committed (the GAME_READY 2 `host_random` seed can be ground by the sender,
+/// who picks which of many signed variants to send). Before this height the function is not
+/// linked, exactly as on older nodes. `None` = not scheduled.
+pub const GAME_READY_3_ACTIVATION_HEIGHT: Option<u64> = Some(170);
+#[cfg(test)]
+thread_local! {
+    static TEST_GAME_READY_3_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+pub(crate) fn set_test_game_ready_3(h: Option<u64>) {
+    TEST_GAME_READY_3_OVERRIDE.with(|c| c.set(Some(h)));
+}
+#[inline]
+pub fn game_ready_3_active(height: u64) -> bool {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_GAME_READY_3_OVERRIDE.with(|c| c.get()) {
+            return matches!(h, Some(a) if height >= a);
+        }
+    }
+    matches!(GAME_READY_3_ACTIVATION_HEIGHT, Some(a) if height >= a)
+}
+
 /// Owner check for NFT transactions: exact match, or (from GAME_READY 2) the same canonical
 /// address — so a token a contract minted to a rouge1 address can be moved by its key's owner.
 fn nft_owner_matches(owner: &str, signer: &str, height: u64) -> bool {
@@ -277,6 +302,7 @@ fn nft_owner_matches(owner: &str, signer: &str, height: u64) -> bool {
 struct NodeChainView {
     tokens: HashMap<TokenBalanceKey, u128>,
     nfts: NftStore,
+    blocks: ChainStore,
 }
 
 impl quantum_vault_vm::ChainView for NodeChainView {
@@ -291,6 +317,9 @@ impl quantum_vault_vm::ChainView for NodeChainView {
         self.nfts.get_collection(collection_id).ok().flatten().map(|c| quantum_vault_vm::CollectionView {
             creator: c.creator, max_supply: c.max_supply, minted: c.minted, frozen: c.frozen,
         })
+    }
+    fn block_hash(&self, height: u64) -> Option<String> {
+        self.blocks.get_block(height).ok().flatten().map(|b| b.hash)
     }
 }
 
@@ -3816,8 +3845,9 @@ impl L1Node {
         let tokens = self.token_balances.lock().map(|t| t.clone()).unwrap_or_default();
         let tip_hash = self.store.get_tip().map(|t| t.hash).unwrap_or_default();
         Some(quantum_vault_vm::GameExt {
-            view: Arc::new(NodeChainView { tokens, nfts: self.nft_store.clone() }),
+            view: Arc::new(NodeChainView { tokens, nfts: self.nft_store.clone(), blocks: self.store.clone() }),
             seed: quantum_vault_vm::game::random_seed(&tip_hash, "preview"),
+            block_hashes: game_ready_3_active(height),
         })
     }
 
@@ -4827,8 +4857,9 @@ impl L1Node {
                             let args = tx.payload.contract_args.clone()
                                 .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
                             let game = game_ready_2_active(block.header.height).then(|| quantum_vault_vm::GameExt {
-                                view: Arc::new(NodeChainView { tokens: token_balances.clone(), nfts: self.nft_store.clone() }),
+                                view: Arc::new(NodeChainView { tokens: token_balances.clone(), nfts: self.nft_store.clone(), blocks: self.store.clone() }),
                                 seed: quantum_vault_vm::game::random_seed(&block.header.prev_hash, &tx_hash_str),
+                                block_hashes: game_ready_3_active(block.header.height),
                             });
                             match rt.execute_contract_ext(
                                 cs,
@@ -11455,13 +11486,17 @@ mod game_ready_tests {
         set_test_game_ready_2(None);
     }
 
-    /// The shipped example (contracts/loot_roll) end to end: setup, stock the treasury, 40 rolls.
+    /// The shipped example (contracts/loot_roll): commit, settle too early, settle — 20 rounds. Every
+    /// roll is recomputed here from the hash of block H+1, the caller and H only: the commit
+    /// transaction is not an input, so grinding it (signing many variants) changes nothing.
     #[test]
-    fn loot_roll_example_pays_prizes_from_its_treasury() {
+    fn loot_roll_example_commits_then_settles_from_a_later_block() {
         use base64::Engine as _;
+        use sha2::{Digest, Sha256};
         let e = setup(Some(1));
         TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
         set_test_game_ready_2(Some(1));
+        set_test_game_ready_3(Some(1));
         let wasm = include_bytes!("../../../contracts/loot_roll/loot_roll.wasm");
         let b64 = base64::engine::general_purpose::STANDARD.encode(wasm);
         let pk = e.player.public_key_hex.clone();
@@ -11469,28 +11504,48 @@ mod game_ready_tests {
         let deploy = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
         let addr = deploy.payload.contract_addr.clone().unwrap();
         mine(&e, deploy).expect("deploy");
-        let call = |method: &str, nonce: u64| {
-            mine(&e, v2(&e.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": method,
-                "gasLimit": 200_000, "timestamp": nonce, "nonce": format!("{:016x}", nonce) }), nonce)).expect(method)
+        let mut acct = 1u64;
+        let mut call = |method: &str| -> (String, u64) {
+            acct += 1;
+            let h = mine(&e, v2(&e.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": method,
+                "gasLimit": 300_000, "timestamp": acct, "nonce": format!("{:016x}", acct) }), acct)).expect(method);
+            assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success), "{method}");
+            (h, e.node.tip_height().unwrap())
         };
-        call("setup", 2);
+        call("setup");
         e.node.token_balances.lock().unwrap().insert((addr.clone(), "GOLD".to_string()), 1_000);
         fund_xrge(&e.node, &addr, 100.0);
 
         let cs = e.node.contract_store.as_ref().unwrap();
+        let event = |h: &str| -> (String, Value) {
+            let ev = cs.get_events_page(&addr, 1, None, Some(h)).unwrap();
+            (ev[0].topic.clone(), serde_json::from_str(&ev[0].data).unwrap())
+        };
         let mut prizes = std::collections::HashMap::<String, u32>::new();
-        for i in 0..40u64 {
-            let h = call("roll", 3 + i);
-            assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success));
-            let ev = cs.get_events_page(&addr, 1, None, Some(&h)).unwrap();
-            let v: Value = serde_json::from_str(&ev[0].data).unwrap();
-            assert!(v["roll"].as_u64().unwrap() < 100);
+        for _ in 0..20 {
+            let (h1, commit_height) = call("roll");
+            assert_eq!(event(&h1), ("committed".to_string(), json!({ "height": commit_height })));
+            let (h2, _) = call("settle"); // block H+1: its hash doesn't exist until now
+            assert_eq!(event(&h2).1, json!({ "error": "too_early" }));
+            let (h3, _) = call("settle"); // block H+2
+            let (topic, v) = event(&h3);
+            assert_eq!(topic, "roll");
+            let next = e.node.get_block(commit_height + 1).unwrap().unwrap();
+            let mut seed = hex::decode(&next.hash).unwrap();
+            seed.extend_from_slice(pk.as_bytes());
+            seed.extend_from_slice(&(commit_height as i64).to_be_bytes());
+            let r = Sha256::digest(&seed);
+            assert_eq!(v["roll"].as_u64().unwrap(), (u16::from_be_bytes([r[0], r[1]]) % 100) as u64,
+                "roll = f(hash of block H+1, caller, H) — independent of the commit tx");
             *prizes.entry(v["prize"].as_str().unwrap().to_string()).or_default() += 1;
         }
+        // A settle with no open roll is refused cleanly.
+        let (h, _) = call("settle");
+        assert_eq!(event(&h).1, json!({ "error": "no_roll" }));
+
         let gold = *prizes.get("gold").unwrap_or(&0) as u128;
         let xrge = *prizes.get("xrge").unwrap_or(&0);
         let swords = *prizes.get("sword").unwrap_or(&0) as u64;
-        assert!(gold + xrge as u128 + swords as u128 > 0, "40 rolls won something: {:?}", prizes);
         let tb = e.node.token_balances.lock().unwrap().clone();
         assert_eq!(tb.get(&(player.clone(), "GOLD".to_string())).copied().unwrap_or(0), gold * 10);
         assert_eq!(tb.get(&(addr.clone(), "GOLD".to_string())).copied().unwrap_or(0), 1_000 - gold * 10);
@@ -11498,6 +11553,48 @@ mod game_ready_tests {
         let col_id = crate::nft_store::NftCollection::make_collection_id(&addr, "LOOT");
         assert_eq!(e.node.nft_store.get_collection(&col_id).unwrap().unwrap().minted, swords);
         set_test_game_ready_2(None);
+        set_test_game_ready_3(None);
+    }
+
+    /// `host_block_hash` only serves finished blocks within 256, and isn't linked before GAME_READY 3.
+    #[test]
+    fn host_block_hash_bounds_and_activation() {
+        const WAT: &str = r#"
+        (module
+          (import "env" "host_block_hash"       (func $bh (param i64 i32) (result i32)))
+          (import "env" "host_get_block_height" (func $h (result i64)))
+          (import "env" "host_storage_write"    (func $sw (param i32 i32 i32 i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "cur")
+          (data (i32.const 4) "prev")
+          (data (i32.const 12) "hash")
+          (func (export "probe")
+            (i32.store (i32.const 100) (call $bh (call $h) (i32.const 200)))
+            (call $sw (i32.const 0) (i32.const 3) (i32.const 100) (i32.const 4))
+            (i32.store (i32.const 104) (call $bh (i64.sub (call $h) (i64.const 1)) (i32.const 300)))
+            (call $sw (i32.const 4) (i32.const 4) (i32.const 104) (i32.const 4))
+            (call $sw (i32.const 12) (i32.const 4) (i32.const 300) (i32.const 32))))
+        "#;
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_game_ready_2(Some(1));
+        set_test_game_ready_3(None);
+        let pk = e.player.public_key_hex.clone();
+        let addr = deploy_wat(&e, WAT, 1);
+        let probe = |n: u64| v2(&e.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": "probe",
+            "gasLimit": 100_000, "timestamp": n, "nonce": format!("{:016x}", n) }), n);
+        assert!(mine(&e, probe(2)).is_err(), "not linked before GAME_READY 3");
+        set_test_game_ready_3(Some(1));
+        let h = mine(&e, probe(3)).expect("probe");
+        assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success));
+        let st = e.node.contract_store.as_ref().unwrap().load_all_state(&addr).unwrap();
+        let get = |k: &str| st.get(k.as_bytes()).cloned().unwrap();
+        assert_eq!(i32::from_le_bytes(get("cur").try_into().unwrap()), -1, "the executing block has no hash yet");
+        assert_eq!(i32::from_le_bytes(get("prev").try_into().unwrap()), 32);
+        let tip = e.node.tip_height().unwrap();
+        assert_eq!(hex::encode(get("hash")), e.node.get_block(tip - 1).unwrap().unwrap().hash);
+        set_test_game_ready_2(None);
+        set_test_game_ready_3(None);
     }
 
     /// Bank: `give` pays its caller 3 GOLD and 1 XRGE from the bank's own balances.

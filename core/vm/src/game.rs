@@ -29,6 +29,8 @@ pub trait ChainView: Send + Sync {
     /// Current owner (as stored) and locked flag of an NFT.
     fn nft_owner(&self, collection_id: &str, token_id: u64) -> Option<(String, bool)>;
     fn nft_collection(&self, collection_id: &str) -> Option<CollectionView>;
+    /// Hash (hex) of an already-accepted block, for `host_block_hash` (GAME_READY 3).
+    fn block_hash(&self, _height: u64) -> Option<String> { None }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,7 +46,10 @@ pub struct CollectionView {
 pub struct GameExt {
     pub view: Arc<dyn ChainView>,
     /// sha256("rougechain/rand/v1" ‖ parent block hash ‖ tx hash): fixed before the tx executes.
+    /// The SENDER can grind it (vary the tx, keep a winning one) — never use it alone for value.
     pub seed: [u8; 32],
+    /// GAME_READY 3: link `host_block_hash` (hashes of recent past blocks, for commit-then-settle).
+    pub block_hashes: bool,
 }
 
 /// A token or NFT operation a successful call performed, for the node to apply.
@@ -349,6 +354,7 @@ impl ChainView for OverlayView {
     fn nft_collection(&self, collection_id: &str) -> Option<CollectionView> {
         self.collections.get(collection_id).cloned().or_else(|| self.base.nft_collection(collection_id))
     }
+    fn block_hash(&self, height: u64) -> Option<String> { self.base.block_hash(height) }
 }
 
 /// Seed for the `index`-th sub-call made from a call with `seed`.
@@ -358,4 +364,31 @@ pub fn sub_call_seed(seed: &[u8; 32], index: usize) -> [u8; 32] {
     h.update(seed);
     h.update((index as u64).to_be_bytes());
     h.finalize().into()
+}
+
+/// How far back `host_block_hash` can look.
+pub const BLOCK_HASH_WINDOW: u64 = 256;
+
+/// GAME_READY 3: `host_block_hash(height, out_ptr) -> i32` writes the 32-byte hash of block
+/// `height` and returns 32, or -1 unless `height` is a finished block (below the executing block)
+/// at most `BLOCK_HASH_WINDOW` blocks back.
+///
+/// This is the grind-proof randomness source: a game records the height in a first call and settles
+/// in a later call from the hash of a block that did not exist yet when the player committed. That
+/// hash covers the producer's ML-DSA signature and the validators' finality signatures, which the
+/// player can't predict or choose.
+pub fn register_block_hash_function(linker: &mut Linker<HostEnv>) -> Result<(), String> {
+    linker.func_wrap("env", "host_block_hash",
+        |mut caller: Caller<'_, HostEnv>, height: i64, op: u32| -> i32 {
+            let current = caller.data().block_height;
+            if height < 0 || height as u64 >= current || current - height as u64 > BLOCK_HASH_WINDOW {
+                return -1;
+            }
+            let Some(g) = caller.data().game.as_ref() else { return -99 };
+            let Some(bytes) = g.ext.view.block_hash(height as u64).and_then(|h| hex::decode(h).ok()) else { return -1 };
+            if bytes.len() != 32 { return -1; }
+            write(&mut caller, op, 32, &bytes)
+        }
+    ).map_err(|e| e.to_string())?;
+    Ok(())
 }

@@ -97,8 +97,8 @@ activation, a call that made cross-contract calls still applies no XRGE moves, a
 Also from activation: addresses a contract passes (`host_transfer`, `host_get_balance`, token/NFT
 functions) are canonicalised, so paying `host_get_caller()` (a public key) credits the player's
 rouge1 ledger entry; NFT owner checks in `nft_transfer`/`nft_burn`/`nft_lock` compare canonical
-addresses. Randomness is fixed before the tx executes (player can't re-roll a sent tx) but a block
-producer can choose whether to include it — use commit-reveal for high stakes.
+addresses. **`host_random` is sender-grindable** (the parent hash is public and the sender picks among
+many signed variants of the tx) — see GAME_READY 3 below; never use it alone for value.
 
 **State root v2:** from activation the header's state root is
 `sha256("rougechain.stateroot.v2" ‖ balance root ‖ NFT collections (id, creator, minted, max,
@@ -122,3 +122,16 @@ agrees; a tampered NFT makes its next import fail), `loot_roll_example_pays_priz
 
 **Still later:** validator VRF randomness (needs Release 2b's multi-validator set), lazy storage
 loading + storage fees, incremental (Merkle) state root.
+
+## GAME_READY 3 — grind-proof rolls (`GAME_READY_3_ACTIVATION_HEIGHT = Some(170)`)
+
+Review finding (2026-09-28): `host_random`'s seed `sha256(tag ‖ parent hash ‖ tx hash)` is known to
+the sender before sending and the sender controls the tx bytes, so a one-step roll can be ground
+offline. Fix: `host_block_hash(height, out) -> i32` (32 bytes of a finished block within 256; `-1` for
+the executing block, future or older heights; linked only from activation). Games commit (record H)
+and settle from `host_block_hash(H+1)`: block H+1's hash covers the producer's ML-DSA signature and
+the `parent_commit` finality signatures, which the player can't predict or choose. `contracts/loot_roll`
+is now `roll` (commit) + `settle` (from H+2, expires after 250 blocks). Tests:
+`loot_roll_example_commits_then_settles_from_a_later_block` (every roll recomputed from block H+1's
+hash, the caller and H only — the commit tx is not an input), `host_block_hash_bounds_and_activation`.
+Remaining bias: the single producer could withhold a block; VRF randomness is still planned.

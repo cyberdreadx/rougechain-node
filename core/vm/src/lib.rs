@@ -260,6 +260,7 @@ impl WasmRuntime {
                         game_ext.as_ref().map(|g| GameExt {
                             view: std::sync::Arc::new(game::OverlayView::new(g.view.clone(), &merged_effects)),
                             seed: game::sub_call_seed(&g.seed, sub_index),
+                            block_hashes: g.block_hashes,
                         }),
                     ) {
                         Ok(sub_result) => {
@@ -470,6 +471,9 @@ impl WasmRuntime {
         host::register_host_functions(&mut linker)?;
         if env.game.is_some() {
             game::register_game_functions(&mut linker)?;
+            if env.game.as_ref().map_or(false, |g| g.ext.block_hashes) {
+                game::register_block_hash_function(&mut linker)?;
+            }
         }
 
         // Create store with fuel

@@ -8,6 +8,7 @@
 | Verified BFT finality — Release 2a | `FINALITY_V2_ACTIVATION_HEIGHT` | **150** |
 | Player-signed contract calls and deployments (GAME_READY) | `GAME_READY_ACTIVATION_HEIGHT` | **150** |
 | Game-ready contracts: tokens, NFTs, randomness, multi-hop moves, state root v2 (GAME_READY 2) | `GAME_READY_2_ACTIVATION_HEIGHT` | **160** |
+| Grind-proof rolls: `host_block_hash` (GAME_READY 3) | `GAME_READY_3_ACTIVATION_HEIGHT` | **170** — upgrade before block 170 |
 
 A node without them cannot follow mainnet past block 150: from block 151 every block carries its
 parent's finality certificate, and from block 160 the header's state root also commits NFTs and
@@ -18,9 +19,9 @@ contract state.
 | Item | Value |
 |---|---|
 | Binary | `quantum-vault-daemon` |
-| sha256 | `46e29456c928d05ab1ff60d11d5b691519370a7477c60c512a240a9469b53add` |
-| Size | 27,924,800 bytes |
-| Source commit | `dbe0fc0`, branch `release/gr2-160` (merged to main) |
+| sha256 | `5e5ca98cd6a4b7f6847f83772124328ab210b2012f6e992aa9592e6937619f7b` (block-170 release; the block-160 build was `46e29456…`) |
+| Size | 27,934,368 bytes |
+| Source commit | `2cbc239`, branch `fix/commit-settle-randomness` |
 | Toolchain | rustc 1.94.0 (4a4ef493e 2026-03-02), cargo 1.94.0 (85eff7c80 2026-01-15), `x86_64-unknown-linux-gnu` |
 
 This exact binary runs on both operator nodes. It was built twice from clean and the two builds were

@@ -70,15 +70,24 @@ own** tokens and NFTs; players stock it by sending tokens/NFTs/XRGE to the contr
 | `host_nft_transfer(col, clen, id, to, tlen) → i32` | Send an NFT the contract owns: `0` ok, `1` not the contract's, `2` not found/locked |
 | `host_nft_create_collection(sym, slen, name, nlen, max_supply, out, cap) → i32` | Create the contract's own collection (`max_supply` 0 = unlimited). Writes the id `col:<first 16 chars of the contract address>:<SYM>`; `-1` if it exists |
 | `host_nft_mint(col, clen, to, tlen, name, nlen, meta, mlen) → i64` | Mint to a player (the contract must be the collection's creator). `meta` is optional JSON attributes. Returns the token id; `-1` not creator, `-2` sold out, `-3` missing/frozen, `-4` invalid |
-| `host_random(out) → i32` | Writes 32 random bytes; every call in a transaction gives new bytes |
+| `host_random(out) → i32` | 32 pseudo-random bytes per call. **The sender can grind it** — see below |
+| `host_block_hash(height, out) → i32` | From block **170**: the 32-byte hash of a finished block up to 256 back; `-1` otherwise. Use it to settle rolls |
 
 Addresses a contract passes are normalised: paying the value `host_get_caller` returns (a public
 key) credits the player's `rouge1…` wallet.
 
-**Randomness:** the bytes are fixed by the parent block hash and the transaction hash, so a player
-cannot re-roll a transaction they already sent. A block producer could still decide whether to
-include a roll, so for high-value outcomes use **commit-reveal** (players commit
-`sha256(secret)` in one call and reveal `secret` in a later one; mix it with `host_random`).
+**Randomness — use commit-then-settle for anything of value.** `host_random` is fixed by the parent
+block hash and the transaction hash. The parent hash is public before a player sends, and the player
+controls their transaction's bytes, so a player can sign many variants of a one-step roll offline,
+compute each result, and send only a winner. **Never let `host_random` alone decide a prize.**
+
+From block **170**, `host_block_hash(height, out) → i32` returns the 32-byte hash of a finished block
+up to 256 blocks back (`-1` for the current block, a future block, or anything older). Games commit in
+one call (record the block height `H`) and settle in a later call from `host_block_hash(H + 1)` mixed
+with the player and `H`. That block did not exist when the player committed, and its hash covers the
+producer's signature and the validators' finality signatures, so the player can't choose it. The
+single block producer could still bias a result by withholding a block — acceptable at game stakes;
+validator VRF randomness is planned.
 
 **Cross-contract calls and the state root (from block 160):** token/NFT/XRGE moves made inside
 cross-contract calls **are** applied. Each sub-call sees the moves made before it; a failed

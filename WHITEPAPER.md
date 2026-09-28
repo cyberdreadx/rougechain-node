@@ -1,6 +1,6 @@
 # RougeChain: A Post-Quantum Layer 1 Blockchain
 
-**Version 2.1 -- 28 September 2026**
+**Version 2.2 -- 28 September 2026**
 
 > **RougeChain is a post-quantum Layer 1 blockchain where every signature, every transaction, and every encrypted message is secured by NIST-approved lattice cryptography — not as a future upgrade, but as the foundation.**
 
@@ -13,6 +13,13 @@ RougeChain is a Layer 1 blockchain built on NIST-standardized post-quantum crypt
 Mainnet (`rougechain-mainnet-1`) is live. Since height 150 every block must carry a verified commit certificate -- precommits from at least two-thirds of stake -- for its parent, so finality is enforced by the protocol rather than reported by the producer. It is still an early-stage network: one validator produces blocks today and there is no fallback proposer, the bridges depend on operator-run relayers, and no external security audit has been completed. Section 11.10 lists these limitations in full.
 
 ---
+
+## Changes in v2.2
+
+- **Contract randomness (3.1.3, 10.5, 11.10):** v2.1 said a player "cannot re-roll a transaction once
+  sent". That was misleading: `host_random` can be ground by the sender, who signs many variants of a
+  transaction offline and sends only a winning one. Height 170 (GAME_READY 3) adds `host_block_hash`,
+  and games settle rolls from the hash of a block created after the player committed.
 
 ## Changes in v2.1
 
@@ -282,7 +289,7 @@ RougeChain supports M-of-N threshold multi-signature wallets at the protocol lay
 
 ### 3.1.3 Protocol Upgrades
 
-Protocol rules change through coordinated hard forks. Each upgrade is activated at a height compiled into the node software, and every validator must run the new release before that height. There is no on-chain upgrade governance yet. Mainnet has activated six upgrades:
+Protocol rules change through coordinated hard forks. Each upgrade is activated at a height compiled into the node software, and every validator must run the new release before that height. There is no on-chain upgrade governance yet. Mainnet has activated seven upgrades:
 
 | Height | Upgrade | What changed |
 |---|---|---|
@@ -292,6 +299,7 @@ Protocol rules change through coordinated hard forks. Each upgrade is activated 
 | 100 | Proposer selection, Release 1 | One designated proposer per height (the largest eligible stake); missed-block accounting frozen; producer proposal journal (Section 3.1). |
 | 150 | FINALITY_V2 (Release 2a) + GAME_READY | Verified finality: from block 151 each header carries `parent_commit`, a verified precommit certificate from at least two-thirds of stake for its parent, and blocks without one are refused (Section 3.1). Contract transactions become player-signed: `contract_deploy` and `contract_call` are valid only when signed by the deployer or caller, who pays the fee, and node-signed contract transactions are invalid. A deployed contract's address is the first 20 bytes of `SHA-256("rougechain/contract/v2" ‖ from ‖ 0 ‖ nonce ‖ 0 ‖ SHA-256(wasm))`. Deployment costs 10 XRGE; a call costs gasLimit × 0.000001 XRGE (Section 10.5). |
 | 160 | GAME_READY 2 | Contracts can hold and move custom tokens and NFTs, create their own NFT collections and mint to players, and draw per-transaction randomness (`host_random`, seeded by the parent block hash and the transaction hash). Addresses a contract supplies are canonicalised, and NFT owner checks compare canonical addresses. Cross-contract (multi-hop) calls have their XRGE, token and NFT moves applied. State root v2 commits to balances plus NFT collections and ownership, contract code hashes and contract storage (Section 2.4). |
+| 170 | GAME_READY 3 | `host_block_hash(height)`: contracts can read the hash of a finished block up to 256 back, so games commit in one call and settle from a block that did not exist when the player committed. Fixes the sender-grinding weakness of one-step `host_random` rolls. |
 
 ### 3.2 Block Structure
 
@@ -1096,7 +1104,7 @@ RougeChain includes a fuel-metered WebAssembly (WASM) smart contract runtime bui
 
 From height 160, addresses a contract passes to these functions are canonicalised -- paying `host_get_caller()`, a public key, credits the player's `rouge1` ledger entry -- and NFT owner checks compare canonical addresses. The VM reads token balances and NFTs from a snapshot, records each accepted operation, and the node applies the operations in order only when the call succeeds; invalid operations make the block invalid.
 
-**Randomness.** `host_random` returns 32 bytes derived from `SHA-256("rougechain/rand/v1" ‖ parent block hash ‖ tx hash)` and a per-call counter, so each call in a transaction gets new bytes and a player cannot re-roll a transaction once sent. The block producer, however, can choose whether to include a transaction, so this randomness is not suitable where the producer has a stake in the outcome; high-value games should use commit-reveal. Validator-generated (VRF) randomness is planned (Section 12).
+**Randomness.** `host_random` returns 32 bytes derived from `SHA-256("rougechain/rand/v1" ‖ parent block hash ‖ tx hash)` and a per-call counter. The sender knows the parent hash before sending and controls the transaction's bytes, so a one-step roll can be ground: the sender signs many variants offline, computes each result with the public VM, and sends only a winner. `host_random` must therefore never decide anything of value on its own. From height 170, `host_block_hash(height)` returns the hash of a finished block up to 256 back; games commit in one call (recording height *H*) and settle in a later call from the hash of block *H*+1 mixed with the player and *H*. That hash covers the producer's ML-DSA-65 signature and the validators' finality signatures, which the player cannot predict or choose. The single block producer could still bias an outcome by withholding a block; validator-generated (VRF) randomness is planned (Section 12). The `loot_roll` example uses this commit-then-settle pattern.
 
 **Cross-Contract Calls.** Contracts can invoke other contracts up to 8 levels deep. Before height 160, when a call made cross-contract calls, none of its XRGE moves were applied (only single-hop calls moved XRGE); earlier versions of this paper wrongly said sub-call balance changes were propagated. From height 160, cross-contract calls are multi-hop: each sub-call sees every move made before it (by its caller and by earlier sub-calls), the XRGE, token and NFT moves of successful sub-calls are merged into the top-level result and applied with it, and a failed sub-call's moves are dropped. Each sub-call draws its own randomness.
 
@@ -1215,7 +1223,7 @@ RougeChain is an early-stage network. As of 28 September 2026:
 
 - **One producing validator.** Three accounts are staked, but only the operator's validator (the largest stake) produces blocks, and under Release 1 it is the designated proposer at every height; the second mainnet node follows the chain without producing blocks. If the producer is offline, the chain stops until it returns.
 - **Finality without liveness.** FINALITY_V2 has been active since height 150, but the operator's validator holds enough stake to finalize each block with its own vote. Release 2b -- a fallback proposer, skip certificates, slashing tied to it, and spreading stake across independently run validators -- is not implemented (Section 3.1).
-- **Contract randomness.** `host_random` is fixed before a transaction executes but the producer can choose whether to include it; validator VRF randomness is planned, not built (Section 10.5).
+- **Contract randomness.** One-step `host_random` rolls can be ground by the sender; games must commit and settle with `host_block_hash` (height 170). The single producer can still bias a settlement by withholding a block; validator VRF randomness is planned, not built (Section 10.5).
 - **Operator authority.** The operator's key authorizes bridge mints, the bridge relayers are operator-run, protocol upgrades are coordinated binary releases without on-chain governance, and most of the XRGE supply is held in operator-controlled protocol accounts.
 - **Bridges are operator-trusted.** RougeBridge (ETH and USDC) is owned by a single hot key. The Bitcoin bridge is paused (Section 6.8).
 - **Post-quantum bridge not deployed.** BridgeVaultV3 is an audit candidate only; its FINALITY_V2 prerequisite is now active, but it awaits an external audit.
@@ -1254,6 +1262,7 @@ RougeChain is an early-stage network. As of 28 September 2026:
 | FINALITY_V2 verified finality (Release 2a: parent commit certificates) | Height 150 |
 | GAME_READY: player-signed contract deployment and calls | Height 150 |
 | GAME_READY 2: contracts hold/move tokens and NFTs, mint NFTs, `host_random`, multi-hop cross-contract moves, state root v2 | Height 160 |
+| GAME_READY 3: `host_block_hash` for commit-then-settle randomness | Height 170 |
 | Contract events over WebSocket, contract query endpoint, `loot_roll` example | |
 | LP fee collection ("Collect fees") | Node-side fee ledger; no protocol fee |
 | Base bridge with BridgeVaultV2 (Safe owner, capped relayer) for XRGE | ETH/USDC still on RougeBridge (hot-key owner) |
