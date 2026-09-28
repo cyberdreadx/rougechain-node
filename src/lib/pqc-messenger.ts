@@ -1,4 +1,5 @@
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
+import { applyEnvelopes } from "@/lib/messenger-envelope";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 
@@ -29,6 +30,10 @@ export interface Message {
   createdAt: string;
   // Decrypted content (client-side only)
   plaintext?: string;
+  /** Reactions other clients (Qwalla) attached to this message, as emoji. */
+  reactions?: string[];
+  /** Id of the message this one replies to (Qwalla envelopes). */
+  replyTo?: string;
   signatureValid?: boolean;
   senderDisplayName?: string;
   // Media support
@@ -928,7 +933,24 @@ export async function createConversation(
   const data = await response.json().catch(() => null);
   const conversation = data?.conversation as Conversation | undefined;
   if (!conversation) throw new Error("Conversation response was empty");
-  return conversation;
+  return withResolvedParticipants(conversation, senderWallet);
+}
+
+/**
+ * The create endpoint returns participant ids, not wallet records. Resolve them so the chat knows
+ * who it is talking to (and encrypts for them) instead of treating an empty list as "only me".
+ */
+async function withResolvedParticipants(conversation: Conversation, me: Wallet): Promise<Conversation> {
+  const raw = conversation as unknown as { participants?: Wallet[]; participantIds?: string[]; participant_ids?: string[] };
+  if (raw.participants && raw.participants.length > 0) return conversation;
+  const ids = raw.participantIds ?? raw.participant_ids ?? [];
+  if (ids.length === 0) return conversation;
+  const mine = new Set([me.id, me.signingPublicKey, me.encryptionPublicKey].filter(Boolean));
+  const wallets = await getWallets().catch(() => [] as Wallet[]);
+  const participants = ids.map((id) =>
+    mine.has(id) ? me : (wallets.find((w) => w.id === id || w.signingPublicKey === id || w.encryptionPublicKey === id)
+      ?? ({ id, displayName: "Unknown", signingPublicKey: "", encryptionPublicKey: "" } as Wallet)));
+  return { ...conversation, participantIds: ids, participants } as Conversation;
 }
 
 export async function deleteMessage(wallet: WalletWithPrivateKeys, messageId: string, conversationId: string): Promise<void> {
@@ -1343,7 +1365,7 @@ export async function getMessages(
 
   // Filter out expired self-destruct messages client-side
   const now = Date.now();
-  return decryptedMessages.filter(m => {
+  return applyEnvelopes(decryptedMessages).filter(m => {
     if (!m.selfDestruct || !m.readAt) return true;
     const readTime = new Date(m.readAt).getTime();
     if (isNaN(readTime)) return true;

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { isNoteToSelf } from "@/lib/messenger-envelope";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint, Paperclip, Image as ImageIcon, Video, EyeOff, Eye, Ban, Trash2, DollarSign, Search, Reply } from "lucide-react";
 import { toast } from "sonner";
@@ -513,12 +514,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
 
   const hasBot = conversation.name === "Quantum Bot" ||
     conversation.participants?.some(p => p.id?.startsWith("bot-"));
-  const isSelfConversation = !hasBot && (
-    conversation.name === "Note to Self" ||
-    (conversation.participants?.every(p =>
-      myIds.has(p.id) || myIds.has(p.signingPublicKey) || myIds.has(p.encryptionPublicKey)
-    ) ?? false)
-  );
+  const isSelfConversation = !hasBot && isNoteToSelf(conversation, myIds);
 
   const recipient = isSelfConversation
     ? { id: wallet.id, displayName: wallet.displayName, signingPublicKey: wallet.signingPublicKey, encryptionPublicKey: wallet.encryptionPublicKey }
@@ -1563,6 +1559,12 @@ const MessageBubble = ({
           {/* Reaction badges */}
           {reactions && reactions.length > 0 && (
             <ReactionBadges reactions={reactions} onReact={onReact} />
+          )}
+          {/* Reactions sent from Qwalla (inside its encrypted envelope) */}
+          {message.reactions && message.reactions.length > 0 && (
+            <div className={`flex gap-1 mt-1 text-sm ${isOwn ? "justify-end" : ""}`}>
+              {message.reactions.map((e, i) => <span key={i}>{e}</span>)}
+            </div>
           )}
 
           <div className={`flex items-center gap-1 mt-1 text-xs ${isOwn ? "justify-end" : ""}`}>
