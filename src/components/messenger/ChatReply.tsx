@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { X, Reply } from "lucide-react";
+import { buildMsgEnvelope } from "@/lib/messenger-envelope";
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -21,8 +22,13 @@ export function parseReplyMessage(text: string): ReplyData | null {
   }
 }
 
-export function encodeReplyMessage(data: ReplyData): string {
-  return `REPLY:${JSON.stringify(data)}`;
+/**
+ * Encode a reply for sending. Uses Qwalla's msg envelope (`"r"` = id of the message replied to),
+ * so Qwalla threads it too; the preview is resolved from the loaded history when rendering.
+ * The legacy `REPLY:` form is only parsed (old history).
+ */
+export function encodeReplyMessage(data: Pick<ReplyData, "replyTo" | "text">): string {
+  return buildMsgEnvelope(data.text, { replyTo: data.replyTo });
 }
 
 // ─── Quoted Message Block (rendered inside message bubble) ────

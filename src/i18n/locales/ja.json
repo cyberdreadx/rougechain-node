@@ -635,6 +635,14 @@
       "extensionNotFoundDesc": "Chromeウェブストアからインストールしてください",
       "extensionNoPublicKey": "拡張機能が公開鍵を返しませんでした",
       "extensionConnectFailed": "拡張機能に接続できませんでした"
+    },
+    "notifications": {
+      "received": "{{from}} から {{amount}} {{symbol}} を受け取りました",
+      "receivedTitle": "送金を受け取りました"
+    },
+    "balance": {
+      "hide": "残高を隠す",
+      "show": "残高を表示"
     }
   },
   "status": {
@@ -704,6 +712,16 @@
       "reverted": "スワップはチェーン上でリバートされました",
       "failed": "スワップに失敗しました",
       "connectNamed": "{{wallet}} を接続"
+    }
+  },
+  "messenger": {
+    "tip": {
+      "label": "チップ",
+      "sent": "チップを送りました",
+      "received": "チップを受け取りました"
+    },
+    "reply": {
+      "unavailable": "元のメッセージは読み込まれていません"
     }
   }
 }

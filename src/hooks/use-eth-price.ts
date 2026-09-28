@@ -1,33 +1,45 @@
 import { useState, useEffect, useCallback } from "react";
 
 const CACHE_TTL = 60_000; // 1 min
-let cachedPrice: number | null = null;
+
+/** Spot USD prices of the bridged majors' underlying assets (qETH tracks ETH, qBTC tracks BTC). */
+export interface MajorPrices {
+  eth: number | null;
+  btc: number | null;
+}
+
+let cachedPrices: MajorPrices = { eth: null, btc: null };
 let cacheTime = 0;
+let inflight: Promise<MajorPrices> | null = null;
 
 /**
- * Fetch ETH price in USD from CoinGecko (for qETH display)
+ * Fetch ETH + BTC prices in USD from CoinGecko in one request (for qETH / qBTC display).
+ * Best-effort: on failure the last cached values are returned (null when never fetched).
  */
-async function fetchETHPrice(): Promise<number | null> {
-  if (cachedPrice !== null && Date.now() - cacheTime < CACHE_TTL) {
-    return cachedPrice;
-  }
-  try {
-    const res = await fetch(
-      "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
-      { signal: AbortSignal.timeout(5000) }
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    const price = data?.ethereum?.usd;
-    if (typeof price === "number") {
-      cachedPrice = price;
+async function fetchMajorPrices(): Promise<MajorPrices> {
+  if (cacheTime > 0 && Date.now() - cacheTime < CACHE_TTL) return cachedPrices;
+  if (inflight) return inflight;
+  inflight = (async () => {
+    try {
+      const res = await fetch(
+        "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,bitcoin&vs_currencies=usd",
+        { signal: AbortSignal.timeout(5000) }
+      );
+      if (!res.ok) return cachedPrices;
+      const data = await res.json();
+      const eth = data?.ethereum?.usd;
+      const btc = data?.bitcoin?.usd;
+      cachedPrices = {
+        eth: typeof eth === "number" && eth > 0 ? eth : cachedPrices.eth,
+        btc: typeof btc === "number" && btc > 0 ? btc : cachedPrices.btc,
+      };
       cacheTime = Date.now();
-      return price;
+    } catch {
+      // Fallback: use cached or null
     }
-  } catch {
-    // Fallback: use cached or null
-  }
-  return cachedPrice;
+    return cachedPrices;
+  })().finally(() => { inflight = null; });
+  return inflight;
 }
 
 /**
@@ -83,12 +95,19 @@ export function l1TokenDecimals(symbol?: string): number {
   return 0;
 }
 
+/** Fixed-point with trailing zeros trimmed — never exponent notation (1 sat → "0.00000001", not "1e-8"). */
+function trimFixed(n: number, digits: number): string {
+  const s = n.toFixed(digits);
+  return s.includes(".") ? s.replace(/\.?0+$/, "") || "0" : s;
+}
+
 export function formatTokenAmount(amount: number, symbol?: string): string {
   if (symbol === "qETH") return formatQethForDisplay(amount);
   if (symbol === "qBTC") {
     // qBTC is 8 decimals: 1 unit = 1 satoshi. Do NOT reuse the 6-dec divisor.
     const human = amount / 1e8;
-    return human > 0 ? parseFloat(human.toFixed(8)).toString() : "0";
+    if (human >= 1) return human.toLocaleString(undefined, { maximumFractionDigits: 8 });
+    return human > 0 ? trimFixed(human, 8) : "0";
   }
   if (symbol === "qUSDC") {
     const human = amount / 1_000_000;
@@ -103,7 +122,7 @@ export function formatTokenAmount(amount: number, symbol?: string): string {
   const dec = l1TokenDecimals(symbol);
   const human = dec > 0 ? amount / 10 ** dec : amount;
   if (human >= 1) return human.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 0 });
-  if (human > 0) return parseFloat(human.toFixed(Math.min(Math.max(dec, 6), 8))).toString();
+  if (human > 0) return trimFixed(human, Math.min(Math.max(dec, 6), 8));
   return "0";
 }
 
@@ -126,12 +145,13 @@ export function humanToRaw(amount: number, symbol?: string): number {
   return d > 0 ? Math.round(amount * 10 ** d) : amount;
 }
 
-export function useETHPrice(pollInterval: number = 60_000) {
-  const [priceUsd, setPriceUsd] = useState<number | null>(cachedPrice);
+/** Poll ETH + BTC USD prices (shared cache, one CoinGecko request). */
+export function useMajorPrices(pollInterval: number = 60_000): MajorPrices & { refresh: () => Promise<void> } {
+  const [prices, setPrices] = useState<MajorPrices>(cachedPrices);
 
   const refresh = useCallback(async () => {
-    const p = await fetchETHPrice();
-    if (p !== null) setPriceUsd(p);
+    const p = await fetchMajorPrices();
+    setPrices((prev) => (prev.eth === p.eth && prev.btc === p.btc ? prev : { ...p }));
   }, []);
 
   useEffect(() => {
@@ -140,5 +160,10 @@ export function useETHPrice(pollInterval: number = 60_000) {
     return () => clearInterval(interval);
   }, [refresh, pollInterval]);
 
-  return { priceUsd, refresh };
+  return { ...prices, refresh };
+}
+
+export function useETHPrice(pollInterval: number = 60_000) {
+  const { eth, refresh } = useMajorPrices(pollInterval);
+  return { priceUsd: eth, refresh };
 }

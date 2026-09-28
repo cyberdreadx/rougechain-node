@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import QuickActions from "@/components/wallet/QuickActions";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Loader2, 
   RefreshCw, 
-  Unlink,
   Droplets,
   Send,
   Download,
@@ -22,11 +22,15 @@ import {
   Copy,
   Check
 } from "lucide-react";
-import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
+import { useBlockchainWs, type WsNewTransactionEvent } from "@/hooks/use-blockchain-ws";
+import { useRougeAddress } from "@/hooks/useRougeAddress";
+import { useIncomingTransferNotifications } from "@/hooks/use-incoming-transfer-notifications";
 import { useTokenPrices } from "@/hooks/use-token-prices";
-import { useETHPrice, qethToHuman, formatQethForDisplay } from "@/hooks/use-eth-price";
+import { useMajorPrices } from "@/hooks/use-eth-price";
+import { useHideBalances, MASKED_AMOUNT } from "@/hooks/use-hide-balances";
+import { describeAsset } from "@/lib/asset-display";
 import { useTokenMetadata } from "@/hooks/use-token-metadata";
-import { formatUsd, formatTokenPrice } from "@/lib/price-service";
+import { formatUsd } from "@/lib/price-service";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,6 +41,7 @@ import AssetList from "@/components/wallet/AssetList";
 import TransactionHistory from "@/components/wallet/TransactionHistory";
 import NetworkBadge from "@/components/wallet/NetworkBadge";
 import SecurityStatus from "@/components/wallet/SecurityStatus";
+import { WalletPageSkeleton, BalanceCardSkeleton, AssetListSkeleton, ActivitySkeleton } from "@/components/wallet/WalletSkeleton";
 import WalletBackup from "@/components/wallet/WalletBackup";
 import { 
   getWalletBalance, 
@@ -107,6 +112,11 @@ const Wallet = () => {
   const [activeNetwork, setActiveNetwork] = useState<"testnet" | "mainnet">(
     (localStorage.getItem(NETWORK_STORAGE_KEY) as "testnet" | "mainnet" | null) || "mainnet"
   );
+  // The 5-second network check below lives in a mount-once effect; read the CURRENT network from
+  // this ref (its closure would otherwise keep the network the page opened on, see "switch
+  // network → balance stuck at 0").
+  const activeNetworkRef = useRef(activeNetwork);
+  useEffect(() => { activeNetworkRef.current = activeNetwork; }, [activeNetwork]);
   const [isLocked, setIsLocked] = useState(false);
   const [unlockPassword, setUnlockPassword] = useState("");
   const [unlocking, setUnlocking] = useState(false);
@@ -182,7 +192,8 @@ const Wallet = () => {
       const savedNetwork = localStorage.getItem(NETWORK_STORAGE_KEY) as "testnet" | "mainnet" | null;
       const nextNetwork = savedNetwork ?? "mainnet";
 
-      if (nextNetwork !== activeNetwork) {
+      if (nextNetwork !== activeNetworkRef.current) {
+        activeNetworkRef.current = nextNetwork;
         setActiveNetwork(nextNetwork);
         const unified = loadUnifiedWallet();
         setWallet(unified);
@@ -284,17 +295,43 @@ const Wallet = () => {
     }
   }, [wallet?.signingPublicKey]);
 
+  // Incoming-transfer toasts. The node publishes NewTransaction frames to `account:<from>` and
+  // `account:<to>` with `to` exactly as submitted (rouge1 address OR public key), so watch both.
+  const { full: rougeAddress } = useRougeAddress(wallet?.signingPublicKey);
+  const { onTxFrame } = useIncomingTransferNotifications({
+    walletKey: wallet ? `${activeNetwork}|${wallet.signingPublicKey}|${rougeAddress ?? ""}` : null,
+    myIds: [wallet?.signingPublicKey, rougeAddress],
+    transactions,
+    loadedAt: lastUpdated,
+  });
+  const refreshRef = useRef<() => void>(() => {});
+  const frameRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (frameRefreshTimer.current) clearTimeout(frameRefreshTimer.current); }, []);
+  const handleNewTransaction = useCallback((frame: WsNewTransactionEvent) => {
+    if (!onTxFrame(frame)) return;
+    // The history is read from blocks: refresh shortly after, once the transfer is mined.
+    if (frameRefreshTimer.current) clearTimeout(frameRefreshTimer.current);
+    frameRefreshTimer.current = setTimeout(() => refreshRef.current(), 1500);
+  }, [onTxFrame]);
+  const wsTopics = wallet
+    ? ["blocks", `account:${wallet.signingPublicKey}`, ...(rougeAddress ? [`account:${rougeAddress}`] : [])]
+    : ["blocks"];
+
   const { isConnected: wsConnected, connectionType: wsConnectionType } = useBlockchainWs({
     onNewBlock: handleNewBlock,
+    onNewTransaction: handleNewTransaction,
+    topics: wsTopics,
     fallbackPollInterval: 15000,
   });
 
-  // Load balance and transactions when wallet is set
+  // Load balance and transactions when the wallet or the network changes (the same wallet has a
+  // different balance on each network).
+  // Also once the rouge1 address resolves: transfers sent to it only show up with it.
   useEffect(() => {
     if (wallet) {
       refreshWalletData();
     }
-  }, [wallet?.signingPublicKey]);
+  }, [wallet?.signingPublicKey, activeNetwork, rougeAddress]);
 
   useEffect(() => {
     const handleActivity = () => setLastActivity(Date.now());
@@ -332,7 +369,7 @@ const Wallet = () => {
     try {
       const [newBalances, newTxs, supply] = await Promise.all([
         getWalletBalance(wallet.signingPublicKey),
-        getWalletTransactions(wallet.signingPublicKey),
+        getWalletTransactions(wallet.signingPublicKey, rougeAddress ? [rougeAddress] : []),
         getCirculatingSupply("XRGE"),
       ]);
       
@@ -349,6 +386,8 @@ const Wallet = () => {
       setRefreshing(false);
     }
   };
+
+  refreshRef.current = () => { void refreshWalletData(); };
 
   const createNewWallet = async () => {
     setLoading(true);
@@ -620,18 +659,18 @@ const Wallet = () => {
   // Get XRGE balance specifically for the main display (native token)
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
   
-  // Calculate total USD value for wallet display (all tokens)
-  const totalUsdValue = balances.reduce((total, b) => {
-    const tokenPrice = tokenPrices[b.symbol];
-    if (tokenPrice) {
-      return total + (b.balance * tokenPrice.priceUsd);
-    }
-    return total;
-  }, 0);
+  const networkLabel = getNetworkLabel(chainIdLabel);
+  const majorPrices = useMajorPrices(60_000);
+  const { hidden: balancesHidden, toggle: toggleBalancesHidden } = useHideBalances();
+  const assetDisplays = balances.map(b => ({
+    b,
+    d: describeAsset(b.symbol, b.balance, { poolPriceUsdPerRaw: tokenPrices[b.symbol]?.priceUsd, majors: majorPrices }),
+  }));
+
+  // Calculate total USD value for wallet display (all priced tokens, same figures as the asset rows)
+  const totalUsdValue = assetDisplays.reduce((total, { d }) => total + (d.usd ?? 0), 0);
   const walletUsdValue = totalUsdValue > 0 ? formatUsd(totalUsdValue) : null;
 
-  const networkLabel = getNetworkLabel(chainIdLabel);
-  const { priceUsd: ethPriceUsd } = useETHPrice(60_000);
 
   const formatLastUpdated = (timestamp: number | null) => {
     if (!timestamp && syncError) return t("wallet.sync.failed");
@@ -645,59 +684,26 @@ const Wallet = () => {
     return t("wallet.sync.hoursAgo", { hours });
   };
 
-  // Convert balances to asset format with USD values (from pools + DexScreener)
-  const assets = balances.map(b => {
-    const isQeth = b.symbol === "qETH";
-    const isQusdc = b.symbol === "qUSDC";
-    // qETH: 1 unit = 10^-6 ETH. qUSDC: 1 unit = 10^-6 USD (6-decimal stablecoin).
-    const displayBalance = isQeth ? qethToHuman(b.balance)
-      : isQusdc ? b.balance / 1_000_000
-      : b.balance;
-    const balanceStr = isQeth ? formatQethForDisplay(b.balance)
-      : isQusdc ? (b.balance / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      : b.balance.toLocaleString();
-
-    const tokenPrice = tokenPrices[b.symbol];
-    let usdValue: string | null = null;
-    if (isQeth && ethPriceUsd !== null) {
-      usdValue = formatUsd(displayBalance * ethPriceUsd);
-    } else if (isQusdc) {
-      usdValue = formatUsd(displayBalance);
-    } else if (tokenPrice) {
-      usdValue = tokenPrice.priceUsd < 0.01
-        ? formatTokenPrice(b.balance * tokenPrice.priceUsd)
-        : formatUsd(b.balance * tokenPrice.priceUsd);
-    }
-
-    const pricePerToken = isQeth && ethPriceUsd !== null
-      ? formatTokenPrice(ethPriceUsd)
-      : isQusdc
-        ? "$1.00"
-        : tokenPrice
-          ? formatTokenPrice(tokenPrice.priceUsd)
-          : null;
-
-    const imageUrl = getTokenImage(b.symbol);
-
-    return {
-      id: b.symbol,
-      name: b.name,
-      symbol: b.symbol,
-      balance: balanceStr,
-      value: isQeth ? `${balanceStr} qETH` : isQusdc ? `${balanceStr} qUSDC` : `${b.balance} ${b.symbol}`,
-      usdValue,
-      pricePerToken,
-      change: 0,
-      icon: b.icon,
-      imageUrl,
-    };
-  });
+  // Convert balances to asset format with USD values (spot for bridged majors, else pools).
+  // Decimals are applied generally (qBTC = 8, qETH/qUSDC = 6, daemon-provided for others).
+  const assets = assetDisplays.map(({ b, d }) => ({
+    id: b.symbol,
+    name: b.name,
+    symbol: b.symbol,
+    balance: balancesHidden ? MASKED_AMOUNT : d.balance,
+    value: balancesHidden ? `${MASKED_AMOUNT} ${b.symbol}` : d.value,
+    usdValue: balancesHidden ? (d.usdValue ? `$${MASKED_AMOUNT}` : null) : d.usdValue,
+    pricePerToken: d.pricePerToken,
+    change: 0,
+    icon: b.icon,
+    imageUrl: getTokenImage(b.symbol),
+  }));
 
   // Convert transactions to history format
   const txHistory = transactions.map(tx => ({
     id: tx.id,
     type: tx.type,
-    amount: tx.amount,
+    amount: balancesHidden ? MASKED_AMOUNT : tx.amount,
     symbol: tx.symbol,
     address: tx.address,
     timeLabel: tx.timeLabel,
@@ -708,7 +714,8 @@ const Wallet = () => {
     fee: tx.fee,
     from: tx.from,
     to: tx.to,
-    memo: tx.memo,
+    // Swap / LP / bridge memos spell out amounts ("Swap 5 XRGE for …").
+    memo: balancesHidden && tx.memo ? MASKED_AMOUNT : tx.memo,
   }));
 
   const emptyAssetActionLabel = isMainnet ? t("wallet.empty.receiveTokens") : t("wallet.empty.claimFaucet");
@@ -724,12 +731,11 @@ const Wallet = () => {
     : t("wallet.empty.faucetHint");
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    return <WalletPageSkeleton />;
   }
+
+  // Wallet known but its balances / history not fetched yet: placeholders, not empty states.
+  const firstDataLoad = !!wallet && lastUpdated === null && !syncError;
 
   if (showSeedReveal) {
     const words = newMnemonic.split(" ");
@@ -968,124 +974,35 @@ const Wallet = () => {
             animate={{ opacity: 1 }}
             className="space-y-6"
           >
-          <WalletCard
+          {firstDataLoad ? <BalanceCardSkeleton /> : <WalletCard
               address={wallet.signingPublicKey}
               balance={xrgeBalance.toLocaleString()}
               shieldedBalance={getShieldedBalance(wallet.signingPublicKey)}
               usdValue={walletUsdValue}
               priceChange24h={priceChange24h}
               isConnected={true}
-            />
+              balancesHidden={balancesHidden}
+              onToggleBalancesHidden={toggleBalancesHidden}
+              onDisconnect={disconnectWallet}
+            />}
 
-            {/* Action Buttons */}
+            {/* Quick actions */}
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">{t("wallet.actions.title")}</h3>
             </div>
-            <div className={`grid gap-2 ${isMainnet ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-4 sm:grid-cols-8'}`}>
-              <Button
-                variant="outline"
-                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                onClick={() => setShowSend(true)}
-                disabled={balances.length === 0}
-              >
-                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                  <Send className="w-4 h-4 text-primary" />
-                </div>
-                <span className="text-xs">{t("wallet.actions.send")}</span>
-              </Button>
-              
-              <Button
-                variant="outline"
-                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                onClick={() => setShowReceive(true)}
-              >
-                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                  <Download className="w-4 h-4 text-success" />
-                </div>
-                <span className="text-xs">{t("wallet.actions.receive")}</span>
-              </Button>
-              
-              {/* Only show faucets on testnet */}
-              {!isMainnet && (
-                <Button
-                  variant="outline"
-                  className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                  onClick={claimFromFaucet}
-                  disabled={minting}
-                >
-                  <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                    {minting ? (
-                      <Loader2 className="w-4 h-4 text-accent animate-spin" />
-                    ) : (
-                      <Droplets className="w-4 h-4 text-accent" />
-                    )}
-                  </div>
-                  <span className="text-xs">XRGE</span>
-                </Button>
-              )}
-              {!isMainnet && (
-                <Button
-                  variant="outline"
-                  className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                  onClick={() => claimBridgeFaucet("qUSDC")}
-                  disabled={minting}
-                >
-                  <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                    {minting ? (
-                      <Loader2 className="w-4 h-4 text-green-500 animate-spin" />
-                    ) : (
-                      <DollarSign className="w-4 h-4 text-green-500" />
-                    )}
-                  </div>
-                  <span className="text-xs">qUSDC</span>
-                </Button>
-              )}
-
-              <Button
-                variant="outline"
-                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                onClick={() => setShowCreateToken(true)}
-              >
-                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                  <Plus className="w-4 h-4 text-primary" />
-                </div>
-                <span className="text-xs">{t("wallet.actions.create")}</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                onClick={() => setShowShield(true)}
-                disabled={xrgeBalance <= 1}
-              >
-                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                  <Shield className="w-4 h-4 text-primary" />
-                </div>
-                <span className="text-xs">{t("wallet.actions.shield")}</span>
-              </Button>
-
-              <Button
-                variant="outline"
-                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                onClick={() => setShowUnshield(true)}
-              >
-                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                  <ShieldOff className="w-4 h-4 text-accent" />
-                </div>
-                <span className="text-xs">{t("wallet.actions.unshield")}</span>
-              </Button>
-              
-              <Button
-                variant="outline"
-                className="flex-col h-auto py-3 gap-1.5 bg-card hover:bg-secondary border-border"
-                onClick={disconnectWallet}
-              >
-                <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-                  <Unlink className="w-4 h-4 text-destructive" />
-                </div>
-                <span className="text-xs">{t("wallet.actions.disconnect")}</span>
-              </Button>
-            </div>
+            <QuickActions
+              actions={[
+                { key: "send", label: t("wallet.actions.send"), icon: Send, tone: "magenta", onClick: () => setShowSend(true), disabled: balances.length === 0 },
+                { key: "receive", label: t("wallet.actions.receive"), icon: Download, tone: "teal", onClick: () => setShowReceive(true) },
+                ...(!isMainnet ? [
+                  { key: "faucet", label: "Get XRGE", title: "Testnet XRGE faucet", icon: Droplets, tone: "cyan" as const, onClick: claimFromFaucet, loading: minting },
+                  { key: "faucet-qusdc", label: "Get qUSDC", title: "Testnet qUSDC faucet", icon: DollarSign, tone: "green" as const, onClick: () => claimBridgeFaucet("qUSDC"), loading: minting },
+                ] : []),
+                { key: "create", label: t("wallet.actions.create"), icon: Plus, tone: "violet", onClick: () => setShowCreateToken(true) },
+                { key: "shield", label: t("wallet.actions.shield"), icon: Shield, tone: "amber", onClick: () => setShowShield(true), disabled: xrgeBalance <= 1 },
+                { key: "unshield", label: t("wallet.actions.unshield"), icon: ShieldOff, tone: "purple", onClick: () => setShowUnshield(true) },
+              ]}
+            />
 
 
             {/* Token Supply Info */}
@@ -1178,18 +1095,27 @@ const Wallet = () => {
               </div>
             </motion.div>
 
-            <AssetList
-              assets={assets}
-              emptyActionLabel={emptyAssetActionLabel}
-              onEmptyAction={handleEmptyAssetAction}
-              emptyHint={emptyAssetHint}
-              onAssetClick={(asset) => setSelectedAsset(asset)}
-            />
-            <TransactionHistory
-              transactions={txHistory}
-              emptyActionLabel={t("wallet.empty.receiveTokens")}
-              onEmptyAction={() => setShowReceive(true)}
-            />
+            {firstDataLoad ? (
+              <>
+                <AssetListSkeleton />
+                <ActivitySkeleton />
+              </>
+            ) : (
+              <>
+                <AssetList
+                  assets={assets}
+                  emptyActionLabel={emptyAssetActionLabel}
+                  onEmptyAction={handleEmptyAssetAction}
+                  emptyHint={emptyAssetHint}
+                  onAssetClick={(asset) => setSelectedAsset(asset)}
+                />
+                <TransactionHistory
+                  transactions={txHistory}
+                  emptyActionLabel={t("wallet.empty.receiveTokens")}
+                  onEmptyAction={() => setShowReceive(true)}
+                />
+              </>
+            )}
             <SecurityStatus />
 
             {/* Chrome Extension Promo */}

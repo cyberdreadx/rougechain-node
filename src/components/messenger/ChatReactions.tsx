@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Message } from "@/lib/pqc-messenger";
+import { buildRxEnvelope } from "@/lib/messenger-envelope";
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -23,11 +24,15 @@ export function parseReactionMessage(text: string): ReactionData | null {
   }
 }
 
+/**
+ * Encode a reaction for sending. Uses Qwalla's envelope (`{"v":1,"k":"rx",...}`) so both
+ * clients understand it; the legacy `REACTION:` form is only parsed (old history).
+ */
 export function encodeReactionMessage(data: ReactionData): string {
-  return `REACTION:${JSON.stringify(data)}`;
+  return buildRxEnvelope(data.messageId, data.emoji);
 }
 
-/** Returns true if a message is a system message (reaction, etc.) that shouldn't be shown as a normal bubble */
+/** Returns true if a message is a legacy system message (reaction) that shouldn't be shown as a normal bubble */
 export function isSystemMessage(text: string | undefined): boolean {
   if (!text) return false;
   return text.startsWith("REACTION:");
@@ -40,22 +45,32 @@ export function aggregateReactions(
 ): Map<string, { emoji: string; count: number; myReaction: boolean }[]> {
   const reactionMap = new Map<string, Map<string, { count: number; senders: Set<string> }>>();
 
-  for (const msg of messages) {
-    const reaction = msg.plaintext ? parseReactionMessage(msg.plaintext) : null;
-    if (!reaction) continue;
-
-    if (!reactionMap.has(reaction.messageId)) {
-      reactionMap.set(reaction.messageId, new Map());
+  const add = (messageId: string, emoji: string, sender: string) => {
+    if (!reactionMap.has(messageId)) {
+      reactionMap.set(messageId, new Map());
     }
-    const emojiMap = reactionMap.get(reaction.messageId)!;
-    if (!emojiMap.has(reaction.emoji)) {
-      emojiMap.set(reaction.emoji, { count: 0, senders: new Set() });
+    const emojiMap = reactionMap.get(messageId)!;
+    if (!emojiMap.has(emoji)) {
+      emojiMap.set(emoji, { count: 0, senders: new Set() });
     }
-    const entry = emojiMap.get(reaction.emoji)!;
+    const entry = emojiMap.get(emoji)!;
     // Only count once per sender per emoji per message
-    if (!entry.senders.has(msg.senderWalletId)) {
+    if (!entry.senders.has(sender)) {
       entry.count++;
-      entry.senders.add(msg.senderWalletId);
+      entry.senders.add(sender);
+    }
+  };
+
+  for (const msg of messages) {
+    // Legacy site reactions: a separate `REACTION:{...}` message in the list.
+    const reaction = msg.plaintext ? parseReactionMessage(msg.plaintext) : null;
+    if (reaction) add(reaction.messageId, reaction.emoji, msg.senderWalletId);
+
+    // Envelope reactions (Qwalla and current site), already attached by applyEnvelopes.
+    if (msg.reactionsFrom?.length) {
+      msg.reactionsFrom.forEach((r, i) => add(msg.id, r.emoji, r.sender ?? `?${i}`));
+    } else if (msg.reactions?.length) {
+      msg.reactions.forEach((emoji, i) => add(msg.id, emoji, `?${i}`));
     }
   }
 
