@@ -246,7 +246,7 @@ pub fn game_ready_active(height: u64) -> bool {
 /// exactly the old host functions, so a module importing the new ones fails like on old nodes.
 /// NFT and contract-storage state are not yet in the state root (see GAME_READY_SCOPE.md).
 /// `None` = not scheduled.
-pub const GAME_READY_2_ACTIVATION_HEIGHT: Option<u64> = None;
+pub const GAME_READY_2_ACTIVATION_HEIGHT: Option<u64> = Some(160);
 #[cfg(test)]
 thread_local! {
     static TEST_GAME_READY_2_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
