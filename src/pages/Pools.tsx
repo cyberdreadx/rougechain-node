@@ -177,6 +177,18 @@ const Pools = () => {
         const held = fetchedPools.filter((p) => (userLpBalances[p.pool_id] || 0) > 0);
         const entries = await Promise.all(held.map(async (p) => {
           try {
+            // Nodes keep a fee ledger per position; ask it first.
+            const direct = await fetch(
+              `${baseUrl}/pool/${encodeURIComponent(p.pool_id)}/earnings/${encodeURIComponent(wallet.publicKey)}`,
+              { headers: getCoreApiHeaders() },
+            );
+            if (direct.ok) {
+              const e = (await direct.json()).earnings;
+              return [p.pool_id, e?.tracked
+                ? { lpToCollect: e.lpToCollect, earnedA: e.earnedA, earnedB: e.earnedB, growth: e.growth }
+                : null] as const;
+            }
+            // Older nodes: replay the pool's recent events in the browser.
             const res = await fetch(`${baseUrl}/pool/${encodeURIComponent(p.pool_id)}/events?limit=5000`, {
               headers: getCoreApiHeaders(),
             });

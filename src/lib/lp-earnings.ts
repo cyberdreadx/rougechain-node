@@ -7,6 +7,9 @@
  * pool's events gives, for a wallet, the share-growth it has paid in ("basis"). Whatever the
  * position is worth above that basis is fee income, and removing exactly that many LP tokens
  * collects it while leaving the original deposit in the pool.
+ *
+ * Nodes with the fee ledger answer this directly (`/api/pool/:id/earnings/:owner`, no history
+ * limit); this replay is the fallback for nodes that don't have it yet.
  */
 
 export interface LpPoolEvent {
