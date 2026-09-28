@@ -611,12 +611,12 @@ body::before {
 }
 @media (min-width: 640px) { .page-title { font-size: 1.875rem; line-height: 2.25rem; } }
 
-/* Glass card: translucent panel, hairline border, soft border glow on hover. */
-.glass-card {
-  border-color: hsl(var(--border) / 0.7);
-  transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+/* Glass card: the translucent panel comes from .bg-card; this adds a soft neon halo on hover.
+   It never sets border-color, so tinted borders (border-primary/30 …) keep their colour. */
+.glass-card { transition: box-shadow 220ms ease, transform 200ms ease; }
+.glass-card:hover {
+  box-shadow: inset 0 1px 0 0 hsl(0 0% 100% / 0.07), 0 10px 40px hsl(0 0% 0% / 0.3), 0 0 0 1px hsl(var(--primary) / 0.16), 0 0 26px hsl(var(--primary) / 0.08);
 }
-.glass-card:hover { border-color: hsl(var(--primary) / 0.28); }
 
 /* Hover lift for clickable cards / tiles. */
 .hover-lift { transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease; }
@@ -669,8 +669,9 @@ body::before {
 }
 .nav-neon-active svg { color: hsl(var(--primary)); filter: drop-shadow(0 0 6px hsl(var(--primary) / 0.7)); }
 
-/* A thin animated brand-gradient line along the bottom (headers) or right edge (sidebar). */
-.neon-hairline { position: relative; }
+/* A thin animated brand-gradient line along the bottom (headers) or right edge (sidebar).
+   Needs a positioned element (sticky/fixed/relative); it doesn't set position itself so it
+   can't override .fixed / .sticky. */
 .neon-hairline::after {
   content: "";
   position: absolute;
