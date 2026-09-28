@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Loader2, 
@@ -107,6 +107,11 @@ const Wallet = () => {
   const [activeNetwork, setActiveNetwork] = useState<"testnet" | "mainnet">(
     (localStorage.getItem(NETWORK_STORAGE_KEY) as "testnet" | "mainnet" | null) || "mainnet"
   );
+  // The 5-second network check below lives in a mount-once effect; read the CURRENT network from
+  // this ref (its closure would otherwise keep the network the page opened on, see "switch
+  // network → balance stuck at 0").
+  const activeNetworkRef = useRef(activeNetwork);
+  useEffect(() => { activeNetworkRef.current = activeNetwork; }, [activeNetwork]);
   const [isLocked, setIsLocked] = useState(false);
   const [unlockPassword, setUnlockPassword] = useState("");
   const [unlocking, setUnlocking] = useState(false);
@@ -182,7 +187,8 @@ const Wallet = () => {
       const savedNetwork = localStorage.getItem(NETWORK_STORAGE_KEY) as "testnet" | "mainnet" | null;
       const nextNetwork = savedNetwork ?? "mainnet";
 
-      if (nextNetwork !== activeNetwork) {
+      if (nextNetwork !== activeNetworkRef.current) {
+        activeNetworkRef.current = nextNetwork;
         setActiveNetwork(nextNetwork);
         const unified = loadUnifiedWallet();
         setWallet(unified);
@@ -289,12 +295,13 @@ const Wallet = () => {
     fallbackPollInterval: 15000,
   });
 
-  // Load balance and transactions when wallet is set
+  // Load balance and transactions when the wallet or the network changes (the same wallet has a
+  // different balance on each network).
   useEffect(() => {
     if (wallet) {
       refreshWalletData();
     }
-  }, [wallet?.signingPublicKey]);
+  }, [wallet?.signingPublicKey, activeNetwork]);
 
   useEffect(() => {
     const handleActivity = () => setLastActivity(Date.now());
