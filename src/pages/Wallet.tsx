@@ -678,7 +678,8 @@ const Wallet = () => {
 
   // Calculate total USD value for wallet display (all priced tokens, same figures as the asset rows)
   const totalUsdValue = assetDisplays.reduce((total, { d }) => total + (d.usd ?? 0), 0);
-  const walletUsdValue = totalUsdValue > 0 ? formatUsd(totalUsdValue) : null;
+  // Show a USD total whenever at least one holding is priced (so an empty wallet reads "$0.00").
+  const walletUsdValue = assetDisplays.some(({ d }) => d.usd !== null) ? formatUsd(totalUsdValue) : null;
 
 
   const formatLastUpdated = (timestamp: number | null) => {

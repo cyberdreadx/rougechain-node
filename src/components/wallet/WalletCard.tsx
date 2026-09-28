@@ -189,7 +189,7 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
             <div className="flex-1 min-w-0">
               <p className="text-xs text-muted-foreground mb-0.5">{t("visual.hero.address")}</p>
               <p className="font-mono text-sm text-foreground truncate">{truncatedAddress}</p>
-              <div className="mt-1 flex items-center gap-3">
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 [&>*]:whitespace-nowrap">
                 <button
                   type="button"
                   onClick={copyAddress}
