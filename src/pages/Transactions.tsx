@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { txAmountSymbol } from "@/lib/tx-display";
 import { Link } from "react-router-dom";
 import { Activity, RefreshCw, Copy, Check, Zap, Box, Users, Clock, ChevronLeft, ChevronRight, ExternalLink, ArrowUpRight, ArrowDownLeft, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -182,7 +183,7 @@ const Transactions = () => {
         const time = entry.blockTime ?? entry.block_time ?? Date.now();
         const txId = entry.txId ?? entry.tx_id ?? "";
         // Extract token symbol (defaults to XRGE for native transfers)
-        const tokenSymbol = payload.token_symbol || payload.tokenSymbol || "XRGE";
+        const tokenSymbol = txAmountSymbol(type, payload as Record<string, unknown>);
         parsed.push({
           id: txId || `${blockHash}:${blockHeight}`,
           type: isFaucet ? "faucet" : type,
