@@ -9289,7 +9289,7 @@ mod bridge_r1_daemon_tests {
         let probe = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![tx.clone()], None, t);
         let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
         let _ = node.apply_balance_block(&probe).unwrap();
-        let correct_root = node.get_state_root().unwrap();
+        let correct_root = node.compute_state_root_for_height(probe.header.height).unwrap();
         node.restore_pre_apply_snapshot(snap).unwrap();
         assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 1000.0, "probe restored");
         assert_eq!(node.get_base_fee_quanta(), base_fee_before, "probe base fee restored");
@@ -9464,7 +9464,7 @@ mod bridge_r1_daemon_tests {
         let probe = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, txs.clone(), None, t);
         let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
         let _ = node.apply_balance_block(&probe).unwrap();
-        let correct_root = node.get_state_root().unwrap();
+        let correct_root = node.compute_state_root_for_height(probe.header.height).unwrap();
         node.restore_pre_apply_snapshot(snap).unwrap();
         assert_eq!(fingerprint(&node, &store, &pks, &hashes), before, "probe fully rolled back");
 
@@ -9698,7 +9698,7 @@ mod bridge_store_hardening_tests {
         let probe = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![tx.clone()], None, t);
         let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
         let _ = node.apply_balance_block(&probe).unwrap();
-        let root = node.get_state_root().unwrap();
+        let root = node.compute_state_root_for_height(probe.header.height).unwrap();
         node.restore_pre_apply_snapshot(snap).unwrap();
         // Make the JSON store unwritable (a realistic persistence failure: EACCES).
         let store_path = d.0.join("bridge_withdrawals.json");
@@ -10100,7 +10100,7 @@ mod validator_atomicity_tests {
         let probe = sealed_block(node, proposer_pub, proposer_sk, txs.clone(), None, t);
         let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
         let _ = node.apply_balance_block(&probe).unwrap();
-        let root = node.get_state_root().unwrap();
+        let root = node.compute_state_root_for_height(probe.header.height).unwrap();
         node.restore_pre_apply_snapshot(snap).unwrap();
         let good = sealed_block(node, proposer_pub, proposer_sk, txs.clone(), Some(root), t);
         node.import_block(good).expect("block accepted");
@@ -10239,7 +10239,7 @@ mod producer_and_unbonding_tests {
         let probe = sealed_block(node, &p.public_key_hex, &p.secret_key_hex, vec![], None, time);
         let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
         let _ = node.apply_balance_block(&probe).unwrap();
-        let root = node.get_state_root().unwrap();
+        let root = node.compute_state_root_for_height(probe.header.height).unwrap();
         node.restore_pre_apply_snapshot(snap).unwrap();
         let b = sealed_block(node, &p.public_key_hex, &p.secret_key_hex, vec![], Some(root), time);
         node.import_block(b.clone()).unwrap(); b
@@ -10363,7 +10363,7 @@ mod producer_and_unbonding_tests {
         let txs = vec![signed(stake_tx(&u.public_key_hex, 100, 1.0, 1), &u.secret_key_hex), signed(unstake_tx(&u.public_key_hex, 40, 1.0, 2), &u.secret_key_hex)];
         let blk = sealed_block(&node, &p.public_key_hex, &p.secret_key_hex, txs, None, 1);
         let exec = node.apply_balance_block(&blk).unwrap();
-        let root = node.get_state_root().unwrap();
+        let root = node.compute_state_root_for_height(blk.header.height).unwrap();
         let (b0, t0, l0) = (node.balances.lock().unwrap().clone(), node.token_balances.lock().unwrap().clone(), node.lp_balances.lock().unwrap().clone());
         let pb = *b0.get(&canon_addr(&p.public_key_hex)).unwrap();
         assert!(pb >= xrge_f64_to_quanta(13.0) && pb < xrge_f64_to_quanta(15.0), "matured release (3 XRGE) credited BEFORE the root (+ proposer fee share): {}", pb);
@@ -10371,7 +10371,7 @@ mod producer_and_unbonding_tests {
         assert_eq!(*node.balances.lock().unwrap(), b0, "balances untouched after the root is sealed");
         assert_eq!(*node.token_balances.lock().unwrap(), t0);
         assert_eq!(*node.lp_balances.lock().unwrap(), l0);
-        assert_eq!(node.get_state_root().unwrap(), root, "root unchanged by the validator phase");
+        assert_eq!(node.compute_state_root_for_height(blk.header.height).unwrap(), root, "root unchanged by the validator phase");
         assert_eq!(node.validator_store.get_validator(&u.public_key_hex).unwrap().unwrap().stake, 60, "validator-store effects applied post-root");
     }
 }
@@ -10396,7 +10396,7 @@ mod peer_sync_tests {
         let probe = seal(node, p, vec![], None, time);
         let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
         let _ = node.apply_balance_block(&probe).unwrap();
-        let r = node.get_state_root().unwrap(); node.restore_pre_apply_snapshot(snap).unwrap(); r
+        let r = node.compute_state_root_for_height(probe.header.height).unwrap(); node.restore_pre_apply_snapshot(snap).unwrap(); r
     }
     /// Mainnet-fixture source at 49 (canonical 48 + one post-fork block) and an empty fresh node.
     fn source_and_fresh() -> (L1Node, TmpDir, L1Node, TmpDir, Keys) {
