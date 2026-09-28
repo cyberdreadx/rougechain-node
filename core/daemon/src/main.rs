@@ -954,6 +954,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/pools", get(get_pools))
         .route("/api/pool/:pool_id", get(get_pool))
         .route("/api/pool/:pool_id/events", get(get_pool_events))
+        .route("/api/pool/:pool_id/earnings/:owner", get(get_pool_earnings))
         .route("/api/pool/:pool_id/prices", get(get_pool_price_history))
         .route("/api/pool/:pool_id/stats", get(get_pool_stats))
         .route("/api/pool/create", post(create_pool))
@@ -3438,12 +3439,33 @@ struct PoolEventsResponse {
     events: Vec<PoolEvent>,
 }
 
+/// Uncollected swap fees for one LP position (`owner` = public key or rouge1 address).
+async fn get_pool_earnings(
+    State(state): State<AppState>,
+    Path((pool_id, owner)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.node.get_lp_earnings(&pool_id, &owner) {
+        Ok(Some(e)) => Ok(Json(serde_json::json!({ "success": true, "earnings": e }))),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+#[derive(Deserialize)]
+struct PoolEventsQuery {
+    limit: Option<usize>,
+}
+
+/// Most recent events first. `?limit=` (default 100, max 5000) lets wallets replay a pool's
+/// history, e.g. to work out an LP's uncollected fees.
 async fn get_pool_events(
     State(state): State<AppState>,
     Path(pool_id): Path<String>,
+    Query(q): Query<PoolEventsQuery>,
 ) -> Result<Json<PoolEventsResponse>, StatusCode> {
     let node = &state.node;
-    let events = node.get_pool_events(&pool_id, 100)
+    let limit = q.limit.unwrap_or(100).clamp(1, 5000);
+    let events = node.get_pool_events(&pool_id, limit)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(PoolEventsResponse { success: true, events }))
 }

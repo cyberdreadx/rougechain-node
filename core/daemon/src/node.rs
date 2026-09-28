@@ -311,6 +311,24 @@ pub const BURN_ADDRESS: &str = "XRGE_BURN_0x000000000000000000000000000000000000
 /// `__staking_rewards__`, and anything that isn't a valid ML-DSA public key —
 /// are not valid pubkeys, so `pub_key_to_address` fails and they pass through
 /// unchanged. A string that is already a `rouge1…` address passes through too.
+/// Response of `GET /api/pool/:pool_id/earnings/:owner`.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LpEarnings {
+    pub pool_id: String,
+    pub token_a: String,
+    pub token_b: String,
+    pub lp_balance: u64,
+    /// False when the fee ledger doesn't match the on-chain LP balance (nothing to collect then).
+    pub tracked: bool,
+    /// LP tokens to remove to take exactly the fees; the deposit stays in the pool.
+    pub lp_to_collect: u64,
+    pub earned_a: u64,
+    pub earned_b: u64,
+    /// Fee growth of the position since deposit (0.004 = +0.4%).
+    pub growth: f64,
+}
+
 fn canon_addr<S: AsRef<str>>(key: S) -> String {
     let key = key.as_ref();
     if quantum_vault_crypto::is_rouge_address(key) {
@@ -484,6 +502,11 @@ impl L1Node {
         let messenger_store = MessengerStore::new(&data_dir_str);
         let pool_store = PoolStore::new(&opts.data_dir)?;
         let pool_event_store = PoolEventStore::new(&opts.data_dir)?;
+        match pool_event_store.rebuild_lp_positions_if_needed(|k| canon_addr(k)) {
+            Ok(0) => {},
+            Ok(n) => eprintln!("[startup] Built LP fee ledger from {} liquidity event(s)", n),
+            Err(e) => eprintln!("[startup] LP fee ledger rebuild failed: {}", e),
+        }
         let token_metadata_store = TokenMetadataStore::new(&data_dir_str)?;
         // Backfill token_id for existing tokens (migration)
         match token_metadata_store.migrate_token_ids() {
@@ -1942,6 +1965,43 @@ impl L1Node {
 
     pub fn list_pools(&self) -> Result<Vec<LiquidityPool>, String> {
         self.pool_store.list_pools()
+    }
+
+    /// Uncollected swap fees for `owner`'s LP position in `pool_id`.
+    pub fn get_lp_earnings(&self, pool_id: &str, owner: &str) -> Result<Option<LpEarnings>, String> {
+        let Some(pool) = self.pool_store.get_pool(pool_id)? else { return Ok(None) };
+        let addr = canon_addr(owner);
+        let lp = {
+            let lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+            (*lp_balances.get(&(addr.clone(), pool_id.to_string())).unwrap_or(&0)).min(u64::MAX as u128) as u64
+        };
+        let pos = self.pool_event_store.get_lp_position(pool_id, &addr)?.unwrap_or_default();
+        let value = crate::pool_events::lp_share_value(pool.reserve_a, pool.reserve_b, pool.total_lp_supply);
+        let tracked = pos.lp == lp && lp > 0 && value.is_some();
+        let (lp_to_collect, growth) = match value {
+            Some(v) if tracked && pos.basis > 0.0 => {
+                let deposit_lp = pos.basis / v; // LP tokens worth the deposit today
+                (((lp as f64) - deposit_lp).floor().max(0.0) as u64, (lp as f64) / deposit_lp - 1.0)
+            }
+            _ => (0, 0.0),
+        };
+        let (earned_a, earned_b) = if lp_to_collect > 0 {
+            crate::amm::calculate_remove_liquidity(lp_to_collect, pool.reserve_a, pool.reserve_b, pool.total_lp_supply)
+                .unwrap_or((0, 0))
+        } else {
+            (0, 0)
+        };
+        Ok(Some(LpEarnings {
+            pool_id: pool_id.to_string(),
+            token_a: pool.token_a.clone(),
+            token_b: pool.token_b.clone(),
+            lp_balance: lp,
+            tracked,
+            lp_to_collect,
+            earned_a,
+            earned_b,
+            growth,
+        }))
     }
 
     pub fn get_pool_events(&self, pool_id: &str, limit: usize) -> Result<Vec<PoolEvent>, String> {
@@ -4969,6 +5029,9 @@ impl L1Node {
                     reserve_b_after: pool.reserve_b,
                 };
                 let _ = self.pool_event_store.save_event(&event);
+                if let Some(v) = crate::pool_events::lp_share_value(pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
+                    let _ = self.pool_event_store.record_lp_change(&pool.pool_id, &canon_addr(&tx.from_pub_key), true, pool.total_lp_supply, v);
+                }
                 
                 // Save price snapshot
                 let price_a_in_b = if pool.reserve_a > 0 { pool.reserve_b as f64 / pool.reserve_a as f64 } else { 0.0 };
@@ -5069,6 +5132,9 @@ impl L1Node {
                     reserve_b_after: pool.reserve_b,
                 };
                 let _ = self.pool_event_store.save_event(&event);
+                if let Some(v) = crate::pool_events::lp_share_value(pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
+                    let _ = self.pool_event_store.record_lp_change(&pool_id, &canon_addr(&tx.from_pub_key), true, lp_amount, v);
+                }
                 
                 // Save price snapshot
                 let price_a_in_b = if pool.reserve_a > 0 { pool.reserve_b as f64 / pool.reserve_a as f64 } else { 0.0 };
@@ -5154,6 +5220,12 @@ impl L1Node {
                     reserve_b_after: pool.reserve_b,
                 };
                 let _ = self.pool_event_store.save_event(&event);
+                let (pre_a, pre_b, pre_s) = (pool.reserve_a + amount_a, pool.reserve_b + amount_b, pool.total_lp_supply + lp_amount);
+                if let Some(v) = crate::pool_events::lp_share_value(pool.reserve_a, pool.reserve_b, pool.total_lp_supply)
+                    .or_else(|| crate::pool_events::lp_share_value(pre_a, pre_b, pre_s))
+                {
+                    let _ = self.pool_event_store.record_lp_change(&pool_id, &canon_addr(&tx.from_pub_key), false, lp_amount, v);
+                }
                 
                 // Save price snapshot
                 let price_a_in_b = if pool.reserve_a > 0 { pool.reserve_b as f64 / pool.reserve_a as f64 } else { 0.0 };
@@ -8716,6 +8788,74 @@ mod live_amm_tests {
         // The over-transfer was refused at the VM host boundary: no XRGE moved.
         assert_eq!(a.get_balance("bob").unwrap(), 0.0, "bob got nothing — overspend refused");
         assert_eq!(a.get_balance(addr).unwrap(), 1.0, "contract balance intact");
+    }
+
+    // ── LP fee ledger: uncollected fees and the Collect fees removal ─────
+    #[test]
+    fn lp_earnings_track_swap_fees_and_collect_leaves_the_deposit() {
+        let (_dir, node) = test_node();
+        let mut bal = HashMap::from([("alice".to_string(), 100_000_000 * Q), ("bob".to_string(), 100_000_000 * Q)]);
+        let mut tok: HashMap<TokenBalanceKey, u128> = HashMap::from([
+            (("alice".to_string(), "QTOK".to_string()), 100_000_000u128),
+            (("bob".to_string(), "QTOK".to_string()), 100_000_000u128),
+        ]);
+        let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
+        let mut h = 1;
+        let mut run = |tx: TxV1, bal: &mut HashMap<String, u128>, tok: &mut HashMap<TokenBalanceKey, u128>, lp: &mut HashMap<TokenBalanceKey, u128>| {
+            h += 1;
+            node.apply_amm_tx_inner(bal, tok, lp, &tx, 1000 + h, h).unwrap();
+            // The earnings API reads the node's committed LP balances.
+            *node.lp_balances.lock().unwrap() = lp.clone();
+        };
+        let swap = |from: &str, tin: &str, tout: &str, amt: u64| amm_tx("swap", from, 0.1, TxPayload {
+            token_a_symbol: Some(tin.to_string()), token_b_symbol: Some(tout.to_string()), amount_a: Some(amt), ..Default::default()
+        });
+        run(amm_tx("create_pool", "alice", 0.1, TxPayload {
+            token_a_symbol: Some("XRGE".to_string()), token_b_symbol: Some("QTOK".to_string()),
+            amount_a: Some(10_000_000), amount_b: Some(10_000_000), ..Default::default()
+        }), &mut bal, &mut tok, &mut lp);
+        // Wallets are sorted into the lp map by canonical address; the fee ledger uses the same key.
+        let alice_lp = |lp: &HashMap<TokenBalanceKey, u128>| lp[&("alice".to_string(), "QTOK-XRGE".to_string())] as u64;
+        let e0 = node.get_lp_earnings("QTOK-XRGE", "alice").unwrap().unwrap();
+        assert!(e0.tracked);
+        assert_eq!(e0.lp_to_collect, 0, "no fees right after depositing");
+
+        // Round-trip trading: price ends near where it started, so all growth is fees.
+        for _ in 0..20 {
+            run(swap("bob", "XRGE", "QTOK", 500_000), &mut bal, &mut tok, &mut lp);
+            run(swap("bob", "QTOK", "XRGE", 500_000), &mut bal, &mut tok, &mut lp);
+        }
+        let e1 = node.get_lp_earnings("QTOK-XRGE", "alice").unwrap().unwrap();
+        assert!(e1.tracked && e1.lp_to_collect > 0 && e1.growth > 0.0);
+        // 40 swaps × 500k × 0.3% ≈ 60k of fees across both sides.
+        assert!(e1.earned_a + e1.earned_b > 50_000 && e1.earned_a + e1.earned_b < 70_000, "{:?}", e1);
+
+        // A second LP who joins now has nothing to collect yet.
+        run(amm_tx("add_liquidity", "bob", 0.1, TxPayload {
+            pool_id: Some("QTOK-XRGE".to_string()), amount_a: Some(1_000_000), amount_b: Some(1_000_000), ..Default::default()
+        }), &mut bal, &mut tok, &mut lp);
+        let bob = node.get_lp_earnings("QTOK-XRGE", "bob").unwrap().unwrap();
+        assert!(bob.tracked && bob.lp_to_collect <= 1, "{:?}", bob);
+
+        // Collect fees = remove exactly lp_to_collect; the payout matches the preview.
+        let e1 = node.get_lp_earnings("QTOK-XRGE", "alice").unwrap().unwrap();
+        let q_before = tok[&("alice".to_string(), "QTOK".to_string())];
+        run(amm_tx("remove_liquidity", "alice", 0.1, TxPayload {
+            pool_id: Some("QTOK-XRGE".to_string()), lp_amount: Some(e1.lp_to_collect), ..Default::default()
+        }), &mut bal, &mut tok, &mut lp);
+        assert_eq!((tok[&("alice".to_string(), "QTOK".to_string())] - q_before) as u64, e1.earned_a);
+        let e2 = node.get_lp_earnings("QTOK-XRGE", "alice").unwrap().unwrap();
+        assert!(e2.tracked);
+        assert!(e2.lp_to_collect <= 1, "nothing left after collecting: {:?}", e2);
+        assert_eq!(e2.lp_balance, alice_lp(&lp));
+
+        // Rebuilding the ledger from events (nodes upgrading from an older build) gives the same answer.
+        let before = node.pool_event_store.get_lp_position("QTOK-XRGE", "alice").unwrap().unwrap();
+        node.pool_event_store.clear_lp_positions_for_test();
+        assert!(node.pool_event_store.rebuild_lp_positions_if_needed(|k| canon_addr(k)).unwrap() > 0);
+        let after = node.pool_event_store.get_lp_position("QTOK-XRGE", "alice").unwrap().unwrap();
+        assert_eq!(after.lp, before.lp);
+        assert!((after.basis - before.basis).abs() / before.basis < 1e-9, "{:?} vs {:?}", before, after);
     }
 }
 
