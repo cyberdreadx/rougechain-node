@@ -1,6 +1,6 @@
 # RougeChain: A Post-Quantum Layer 1 Blockchain
 
-**Version 2.2 -- 28 September 2026**
+**Version 2.3 -- 28 September 2026**
 
 > **RougeChain is a post-quantum Layer 1 blockchain where every signature, every transaction, and every encrypted message is secured by NIST-approved lattice cryptography — not as a future upgrade, but as the foundation.**
 
@@ -13,6 +13,12 @@ RougeChain is a Layer 1 blockchain built on NIST-standardized post-quantum crypt
 Mainnet (`rougechain-mainnet-1`) is live. Since height 150 every block must carry a verified commit certificate -- precommits from at least two-thirds of stake -- for its parent, so finality is enforced by the protocol rather than reported by the producer. It is still an early-stage network: one validator produces blocks today and there is no fallback proposer, the bridges depend on operator-run relayers, and no external security audit has been completed. Section 11.10 lists these limitations in full.
 
 ---
+
+## Changes in v2.3
+
+- **Payable contract calls (3.1.3, 10.5, 12):** from height 190 a contract call can carry a signed
+  payment in XRGE or any token, which moves to the contract only if the call succeeds. This lets games
+  charge entry fees and run shops; the `loot_roll` example now charges 0.5 XRGE per roll.
 
 ## Changes in v2.2
 
@@ -289,7 +295,7 @@ RougeChain supports M-of-N threshold multi-signature wallets at the protocol lay
 
 ### 3.1.3 Protocol Upgrades
 
-Protocol rules change through coordinated hard forks. Each upgrade is activated at a height compiled into the node software, and every validator must run the new release before that height. There is no on-chain upgrade governance yet. Mainnet has activated seven upgrades:
+Protocol rules change through coordinated hard forks. Each upgrade is activated at a height compiled into the node software, and every validator must run the new release before that height. There is no on-chain upgrade governance yet. Mainnet has activated eight upgrades:
 
 | Height | Upgrade | What changed |
 |---|---|---|
@@ -300,6 +306,7 @@ Protocol rules change through coordinated hard forks. Each upgrade is activated 
 | 150 | FINALITY_V2 (Release 2a) + GAME_READY | Verified finality: from block 151 each header carries `parent_commit`, a verified precommit certificate from at least two-thirds of stake for its parent, and blocks without one are refused (Section 3.1). Contract transactions become player-signed: `contract_deploy` and `contract_call` are valid only when signed by the deployer or caller, who pays the fee, and node-signed contract transactions are invalid. A deployed contract's address is the first 20 bytes of `SHA-256("rougechain/contract/v2" ‖ from ‖ 0 ‖ nonce ‖ 0 ‖ SHA-256(wasm))`. Deployment costs 10 XRGE; a call costs gasLimit × 0.000001 XRGE (Section 10.5). |
 | 160 | GAME_READY 2 | Contracts can hold and move custom tokens and NFTs, create their own NFT collections and mint to players, and draw per-transaction randomness (`host_random`, seeded by the parent block hash and the transaction hash). Addresses a contract supplies are canonicalised, and NFT owner checks compare canonical addresses. Cross-contract (multi-hop) calls have their XRGE, token and NFT moves applied. State root v2 commits to balances plus NFT collections and ownership, contract code hashes and contract storage (Section 2.4). |
 | 170 | GAME_READY 3 | `host_block_hash(height)`: contracts can read the hash of a finished block up to 256 back, so games commit in one call and settle from a block that did not exist when the player committed. Fixes the sender-grinding weakness of one-step `host_random` rolls. |
+| 190 | Payable calls | A `contract_call` may carry a signed `attach` (a symbol and an integer amount: quanta for XRGE, raw units for tokens). The payment is credited to the contract for the duration of the call and becomes final only if the call succeeds; a failed call leaves it with the caller. Contracts read it with `host_get_attached_amount` and `host_get_attached_symbol`. Before height 190 a call carrying `attach` is invalid. |
 
 ### 3.2 Block Structure
 
@@ -1106,6 +1113,8 @@ From height 160, addresses a contract passes to these functions are canonicalise
 
 **Randomness.** `host_random` returns 32 bytes derived from `SHA-256("rougechain/rand/v1" ‖ parent block hash ‖ tx hash)` and a per-call counter. The sender knows the parent hash before sending and controls the transaction's bytes, so a one-step roll can be ground: the sender signs many variants offline, computes each result with the public VM, and sends only a winner. `host_random` must therefore never decide anything of value on its own. From height 170, `host_block_hash(height)` returns the hash of a finished block up to 256 back; games commit in one call (recording height *H*) and settle in a later call from the hash of block *H*+1 mixed with the player and *H*. That hash covers the producer's ML-DSA-65 signature and the validators' finality signatures, which the player cannot predict or choose. The single block producer could still bias an outcome by withholding a block; validator-generated (VRF) randomness is planned (Section 12). The `loot_roll` example uses this commit-then-settle pattern.
 
+**Payable Calls.** From height 190 a player can attach a payment to a contract call: `attach: {symbol, amount}` inside the signed payload, with the amount as an integer (quanta for XRGE, raw units for tokens) so it survives JSON relay between nodes exactly. The node checks the caller can cover the gas fee plus the payment, shows the payment to the contract as already credited, and moves it for real only if the call succeeds -- so a contract refuses a payment simply by failing the call, and the player keeps it. `host_get_attached_amount()` and `host_get_attached_symbol()` expose it to the contract; cross-contract sub-calls see no attachment. The endpoints preview a paid call before it is signed, and SDK 1.10, extension 1.5 and MCP server 1.3 support it. The `loot_roll` example charges 0.5 XRGE per roll this way, so its prize treasury cannot be drained by free rolls.
+
 **Cross-Contract Calls.** Contracts can invoke other contracts up to 8 levels deep. Before height 160, when a call made cross-contract calls, none of its XRGE moves were applied (only single-hop calls moved XRGE); earlier versions of this paper wrongly said sub-call balance changes were propagated. From height 160, cross-contract calls are multi-hop: each sub-call sees every move made before it (by its caller and by earlier sub-calls), the XRGE, token and NFT moves of successful sub-calls are merged into the top-level result and applied with it, and a failed sub-call's moves are dropped. Each sub-call draws its own randomness.
 
 **Receipts, Events and Queries.** A contract-call receipt reports `Failed` with the error when the call reverted; a failed call moves no assets. Contract events are delivered live over the node's WebSocket on the topic `contract:<addr>` after a block is accepted, and can be paged with `GET /api/contract/:addr/events`. `POST /api/contract/:addr/query` runs a read-only dry run against the live ledger without a signature or a transaction.
@@ -1263,13 +1272,14 @@ RougeChain is an early-stage network. As of 28 September 2026:
 | GAME_READY: player-signed contract deployment and calls | Height 150 |
 | GAME_READY 2: contracts hold/move tokens and NFTs, mint NFTs, `host_random`, multi-hop cross-contract moves, state root v2 | Height 160 |
 | GAME_READY 3: `host_block_hash` for commit-then-settle randomness | Height 170 |
+| Payable contract calls (`attach`, pay only on success) | Height 190 |
 | Contract events over WebSocket, contract query endpoint, `loot_roll` example | |
 | LP fee collection ("Collect fees") | Node-side fee ledger; no protocol fee |
 | Base bridge with BridgeVaultV2 (Safe owner, capped relayer) for XRGE | ETH/USDC still on RougeBridge (hot-key owner) |
 | BTC ⇄ qBTC bridge | Live 15 September 2026; currently paused |
 | Messenger groups, avatars, deterministic DMs, recoverable delete | |
 | Push notifications | |
-| TypeScript SDK 1.9 (`rc.contracts`), browser extension 1.4 (contract signing), MCP server 1.1 | |
+| TypeScript SDK 1.10 (`rc.contracts`, payable calls), browser extension 1.5 (contract signing with payments), MCP server 1.3 | |
 
 ### 12.2 In Progress
 
