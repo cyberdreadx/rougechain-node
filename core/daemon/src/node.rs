@@ -11556,6 +11556,38 @@ mod game_ready_tests {
         set_test_game_ready_3(None);
     }
 
+    /// Regression (mainnet block 177): a contract call's fee is gasLimit × 0.000001, and for ~18% of gas
+    /// limits that f64 prints as e.g. 0.0018369999999999999, which serde_json's default parser reads
+    /// back one ulp off. The producer never parsed it, so it accepted its own block while peers that
+    /// receive blocks as JSON rejected it (fee binding and tx hash). Exact float parsing fixes it.
+    #[test]
+    fn contract_call_fees_survive_json_between_nodes() {
+        for gas in [1837u64, 5, 19, 1_000_003, 9_999_999] {
+            let fee = gas as f64 * crate::v2_binding::CONTRACT_GAS_PRICE_XRGE;
+            let back: f64 = serde_json::from_str(&serde_json::to_string(&fee).unwrap()).unwrap();
+            assert_eq!(back.to_bits(), fee.to_bits(), "gas {gas}: {fee} must round-trip exactly");
+        }
+        let a = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        let b = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        let pk = a.player.public_key_hex.clone();
+        fund_xrge(&b.node, &pk, 1_000.0);
+        fund_xrge(&a.node, &b.player.public_key_hex, 1_000.0);
+        // Ship every block to b as JSON, the way peers receive them.
+        let relay = |blk: BlockV1| b.node.import_block(serde_json::from_str(&serde_json::to_string(&blk).unwrap()).unwrap());
+        let deploy = v2(&a.player, "contract_deploy", &deploy_payload(&pk, &wasm_b64().1), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        a.node.add_tx_to_mempool_verified(deploy).unwrap();
+        relay(a.node.mine_pending().unwrap().unwrap()).expect("deploy block");
+        let call = v2(&a.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": "whoami",
+            "gasLimit": 1837, "timestamp": 2, "nonce": "aaaaaaaabbbbbbbb" }), 2);
+        assert_eq!(call.fee, 1837.0 * crate::v2_binding::CONTRACT_GAS_PRICE_XRGE);
+        a.node.add_tx_to_mempool_verified(call).unwrap();
+        relay(a.node.mine_pending().unwrap().unwrap()).expect("peer accepts the gas-1837 call block received as JSON");
+        assert_eq!(a.node.get_state_root().unwrap(), b.node.get_state_root().unwrap());
+    }
+
     /// `host_block_hash` only serves finished blocks within 256, and isn't linked before GAME_READY 3.
     #[test]
     fn host_block_hash_bounds_and_activation() {
