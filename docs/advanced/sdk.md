@@ -336,12 +336,17 @@ const r = await rc.contracts.execute(wallet, addr, 'move', { x: 1, y: 2 });
 const r2 = await rc.contracts.execute(wallet, addr, 'move', { x: 3 }, { gasLimit: 80_000 });
 // → { success, txId, fee, gasLimit, preview: { returnData, gasUsed, events } }
 // The node dry-runs first; a call that would fail returns { success: false, error } and costs nothing.
+// The block run is authoritative: a call that reverts there is still included and charged,
+// and its receipt says so.
+const receipt = await rc.contracts.waitForReceipt(r.txId!);
+// receipt.status === "Success", or { Failed: "<error>" } when the call reverted in the block
 
 // Metadata, storage, events, list
 const meta   = await rc.contracts.get(addr);                    // null if none
 const state  = await rc.contracts.state(addr);                  // whole storage
 const one    = await rc.contracts.state(addr, 'score');         // hex key, else UTF-8
 const events = await rc.contracts.events(addr, { limit: 50, before: 12_000 });
+const byTx   = await rc.contracts.events(addr, { tx: r.txId });  // events of one tx
 const all    = await rc.contracts.list();
 
 // Live events after each accepted block (shared socket, auto-reconnect + resubscribe)

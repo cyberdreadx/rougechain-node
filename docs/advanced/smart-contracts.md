@@ -4,7 +4,8 @@ RougeChain includes a built-in WASM smart contract engine powered by `wasmi` —
 
 > **v2 update:** contracts can now custody and move XRGE. `host_transfer` /
 > `host_get_balance` operate in **quanta** (`1 XRGE = 10^9 quanta`), transfers
-> are **single-hop** (a contract moves only its own balance), and moves are
+> are **single-hop until block 160** (a contract moves only its own balance; from block 160
+> moves made inside cross-contract calls are applied too), and moves are
 > enforced conserving and overdraft-free. See
 > [Contract XRGE Custody](contract-xrge-custody.md) for the rules and examples.
 
@@ -42,7 +43,7 @@ Contracts import these from the `env` module:
 | `host_get_block_height()` | Current block height |
 | `host_get_block_time()` | Current block timestamp (seconds) |
 | `host_get_balance(addr, len)` | XRGE balance in **quanta** (`1 XRGE = 10^9 quanta`) |
-| `host_transfer(to, len, amount)` | Send XRGE (quanta) from the **contract's own** balance; single-hop |
+| `host_transfer(to, len, amount)` | Send XRGE (quanta) from the **contract's own** balance (single-hop until block 160) |
 | `host_storage_read(key, klen, val, vlen)` | Read persistent storage |
 | `host_storage_write(key, klen, val, vlen)` | Write persistent storage |
 | `host_storage_delete(key, klen)` | Delete from storage |
@@ -79,8 +80,10 @@ cannot re-roll a transaction they already sent. A block producer could still dec
 include a roll, so for high-value outcomes use **commit-reveal** (players commit
 `sha256(secret)` in one call and reveal `secret` in a later one; mix it with `host_random`).
 
-**Limits:** token/NFT/XRGE moves are single-hop — if a call makes cross-contract calls, none of its
-moves are applied. NFT ownership and contract storage aren't in the block state root yet.
+**Cross-contract calls and the state root (from block 160):** token/NFT/XRGE moves made inside
+cross-contract calls **are** applied. Each sub-call sees the moves made before it; a failed
+sub-call's moves are dropped and the caller continues. The block state root commits NFT
+collections and ownership plus contract code and storage, so every node must agree on them.
 
 A complete example — a loot box paying NFTs, tokens or XRGE — is in
 [`contracts/loot_roll`](https://github.com/cyberdreadx/rougechain-node/tree/main/contracts/loot_roll).
@@ -162,10 +165,11 @@ POST /api/v2/contract/execute
 ```
 
 `gasLimit` must be an integer from 1 to 10,000,000. The `preview` is the node's dry run;
-the authoritative execution happens when the transaction is mined. A receipt
-(`GET /api/tx/{txId}/receipt`) means the transaction was included. Check the contract's
-events or state for the outcome, because a call can still revert in the block if the
-state changed in between.
+the authoritative execution happens when the transaction is mined. Its receipt
+(`GET /api/tx/{txId}/receipt`) reports `"status": "Success"` when the call ran to completion,
+or `"status": {"Failed": "<error>"}` when it reverted in the block (possible if the state
+changed between the dry run and the block). A reverted call is still included and its fee is
+charged; its state changes and events are discarded.
 
 ### Query (read-only, free)
 
@@ -183,6 +187,7 @@ GET /api/contract/{addr}/state                  # full state dump (all keys)
 GET /api/contract/{addr}/state?key=x            # one key (hex, or UTF-8 if not valid hex)
 GET /api/contract/{addr}/events?limit=50        # event log
 GET /api/contract/{addr}/events?before=12345    # older page: events below that block height
+GET /api/contract/{addr}/events?tx=<txhash>     # events emitted by one transaction
 GET /api/contracts                              # list all contracts
 ```
 
@@ -261,6 +266,8 @@ const q = await rc.contracts.query(pub.predictedAddress, 'get_score', { player: 
 // Signed call. Without gasLimit the SDK queries first and signs ceil(gasUsed × 1.5) + 1000.
 const r = await rc.contracts.execute(wallet, pub.predictedAddress, 'move', { x: 1, y: 2 });
 if (!r.success) console.error(r.error);        // e.g. "call would fail: not your turn"
+const receipt = await rc.contracts.waitForReceipt(r.txId!);
+if (receipt.status !== 'Success') console.error('reverted in block:', receipt.status.Failed);
 
 // Live events (one shared socket, reconnects automatically)
 const stop = rc.contracts.subscribe(pub.predictedAddress, (e) => console.log(e.topic, e.data));
@@ -294,9 +301,11 @@ The RougeChain MCP server exposes smart contract operations as tools for AI agen
 | `list_contracts` | List all deployed contracts |
 | `get_contract` | Get contract metadata |
 | `get_contract_state` | Read state (single key or full dump) |
-| `get_contract_events` | Get contract event log |
-| `deploy_contract` | Deploy WASM bytecode (legacy node-signed endpoint — returns 410 on networks with player-signed contracts) |
-| `call_contract` | Dry-run a contract method (legacy endpoint — preview only; it no longer submits) |
+| `get_contract_events` | Stored events (`limit`, `before`, `tx`) |
+| `query_contract` | Free read-only call (`POST /api/contract/:addr/query`) |
+| `publish_contract` | Write mode: sign and publish WASM with the server's wallet (10 XRGE) |
+| `execute_contract` | Write mode: sign a state-changing call with the server's wallet |
+| `get_tx_receipt` | Receipt of a transaction (`Success` or `Failed`) |
 
 ## Security
 
@@ -321,7 +330,7 @@ Contracts can call other contracts using host functions. Calls are queued during
 
 - **Max depth**: 8 nested calls (prevents infinite recursion)
 - **State merging**: storage writes and events from sub-calls are merged atomically
-- **XRGE moves are single-hop (v2)**: a contract moves only *its own* balance — `host_transfer` calls made by a *sub*-contract are **not** applied on-chain. See [Contract XRGE Custody](contract-xrge-custody.md)
+- **XRGE moves**: a contract moves only *its own* balance. Until block 160 moves were single-hop — `host_transfer` calls made by a *sub*-contract were **not** applied on-chain. From block 160 token/NFT/XRGE moves inside sub-calls are applied: each sub-call sees the moves made before it, and a failed sub-call's moves are dropped while the caller continues. See [Contract XRGE Custody](contract-xrge-custody.md)
 - **Gas**: sub-calls consume gas from the parent's remaining budget
 - **Failure**: if a sub-call fails, it returns `-2` from `host_get_call_result`; the parent can handle it gracefully
 

@@ -47,12 +47,16 @@ changes, all-or-nothing:
 
 Break either and the whole call's balance effects are rejected.
 
-## v1 limitation: single-hop
+## v1 limitation: single-hop (until block 160)
 
-XRGE custody is **single-hop** in this release: a contract moves *its own* XRGE.
+Until block 160, XRGE custody is **single-hop**: a contract moves *its own* XRGE.
 Cross-contract XRGE moves (contract A calls contract B, and B pays out) are **not
-applied** — cross-calls still work for compute/storage, but XRGE does not move
+applied** before block 160 — cross-calls still work for compute/storage, but XRGE does not move
 across a hop. Design payout logic so each contract moves only its own balance.
+
+From block 160 (the GAME_READY 2 upgrade), token/NFT/XRGE moves made inside cross-contract calls
+**are** applied: each sub-call sees the moves made before it, and a failed sub-call's moves are
+dropped while the caller continues. A contract still only moves its own balance.
 
 ## Determinism & deployment
 
@@ -89,4 +93,4 @@ conserved exactly, agreed by every node.
 Previously the NFT `royaltyRecipient` **had** to be a wallet — routing royalties
 to a contract address would lock them. With v2 custody that constraint relaxes:
 a splitter contract can receive royalties and fan them to collaborators on-chain
-(single-hop). Off-chain payout wallets are no longer the only safe option.
+(single-hop until block 160). Off-chain payout wallets are no longer the only safe option.
