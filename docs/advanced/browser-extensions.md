@@ -106,10 +106,41 @@ const address = await pubkeyToAddress(publicKey); // rouge1...
 | `isRougeChain` | `boolean` | Property — `true` on the authentic provider. Use it to detect the wallet. |
 | `connect()` | `→ { publicKey, displayName?, encryptionPublicKey? }` | Prompt the user to connect. Returns their public key. This replaces `getAddress()`. |
 | `getBalance()` | `→ { balance, tokens }` | Get the connected wallet's XRGE balance and token balances. |
-| `signTransaction(payload)` | `→ { signature, signedPayload }` | Sign a transaction payload with ML-DSA-65 (key never leaves the wallet). |
-| `sendTransaction(payload)` | `→ { txId }` | Sign **and** broadcast a transaction. |
+| `signTransaction(payload)` | `→ { signature, signedPayload, publicKey, payload }` | Sign a transaction payload with ML-DSA-65 (key never leaves the wallet). `signedPayload` is the exact JSON signed. |
+| `sendTransaction(payload)` | `→ { txId, fee?, address?, preview? }` | Sign **and** broadcast. A transfer by default; `contract_call` / `contract_deploy` payloads go to the contract endpoints. |
 | `on(event, cb)` | `void` | Subscribe to events (e.g. account/connection changes). |
 | `removeListener(event, cb)` | `void` | Remove an event listener. |
+
+#### Smart contract transactions (v1.4.0+)
+
+The extension signs `contract_call` and `contract_deploy` payloads and shows a
+contract-specific approval: the contract address, method, arguments, gas limit and
+maximum fee for a call; the WASM size, predicted contract address and 10 XRGE fee for a
+deployment. Missing `from`, `timestamp` and `nonce` are filled in, and the filled
+payload is returned so you can submit it:
+
+```javascript
+const { payload, signature, publicKey } = await window.rougechain.signTransaction({
+  type: "contract_call",
+  contractAddr: "<40-hex address>",
+  method: "move",
+  args: { x: 1, y: 2 },
+  gasLimit: 50000,          // fee = gasLimit × 0.000001 XRGE
+});
+await fetch("https://api.rougechain.io/api/v2/contract/execute", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ payload, signature, public_key: publicKey }),
+});
+
+// or sign and submit in one step:
+const { txId, preview } = await window.rougechain.sendTransaction({
+  type: "contract_call", contractAddr, method: "move", args: { x: 1 }, gasLimit: 50000,
+});
+```
+
+Size the gas limit from a free query (`POST /api/contract/<addr>/query`) first. See
+[WASM Smart Contracts](smart-contracts.md).
 
 Authenticity: the genuine provider also sets a non-enumerable
 `Symbol.for("rougechain:authentic")` to `true`, so a dApp can guard against a page

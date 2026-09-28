@@ -21,6 +21,7 @@
 - [Docker](running-a-node/docker.md)
 - [Configuration](running-a-node/configuration.md)
 - [Mining](running-a-node/mining.md)
+- [Mandatory upgrade (2026-09-28): finality + game-ready contracts](running-a-node/mandatory-upgrade-2026-09-28.md)
 - [Mandatory upgrade (2026-09)](running-a-node/mandatory-upgrade-2026-09.md)
 
 # P2P Networking
@@ -82,6 +83,7 @@
 - [Staking](api-reference/staking.md)
 - [Peers](api-reference/peers.md)
 - [Messenger](api-reference/messenger.md)
+- [Regenerate Votes](api-reference/regenerate.md)
 - [Mail](api-reference/mail.md)
 - [Push Notifications](api-reference/push-notifications.md)
 - [Bridge](api-reference/bridge.md)

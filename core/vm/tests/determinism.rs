@@ -337,3 +337,65 @@ fn royalty_splitter_distributes_by_weight() {
     let net: i128 = deltas.iter().map(|(_, d)| *d).sum();
     assert_eq!(net, 0, "conserved to the quantum");
 }
+
+// ── Game-ready Phase 0: call inputs + memory export ───────────────────
+
+/// Echoes its call arguments back as the return value (host_get_args_len + host_read_args).
+const WAT_ECHO_ARGS: &str = r#"
+(module
+  (import "env" "host_get_args_len" (func $alen (result i32)))
+  (import "env" "host_read_args"    (func $aread (param i32 i32) (result i32)))
+  (import "env" "host_set_return"   (func $sr (param i32 i32)))
+  (memory (export "memory") 1)
+  (func (export "echo") (local $n i32)
+    (local.set $n (call $alen))
+    (drop (call $aread (i32.const 0) (local.get $n)))
+    (call $sr (i32.const 0) (local.get $n)))
+  (func (export "too_small") (result i32)
+    (call $aread (i32.const 0) (i32.const 1))))
+"#;
+
+/// Calls a host function but does NOT export its memory.
+const WAT_NO_MEMORY: &str = r#"
+(module
+  (import "env" "host_log" (func $log (param i32 i32)))
+  (memory 1)
+  (func (export "run") (call $log (i32.const 0) (i32.const 1))))
+"#;
+
+#[test]
+fn contract_reads_its_call_arguments() {
+    let dir = TempDir::new();
+    let cs = ContractStore::new(dir.path()).unwrap();
+    let rt = WasmRuntime::new().unwrap();
+    let addr = deploy(&rt, &cs, WAT_ECHO_ARGS, "alice", 1);
+    let args = serde_json::json!({ "move": "e2e4", "itemId": 7 });
+    let r = rt.execute_contract(&cs, &addr, "echo", &args, "alice", 42, 1_000, HashMap::new(), 1_000_000, "tx").unwrap();
+    assert!(r.success, "{:?}", r.error);
+    assert_eq!(r.return_data, Some(args), "the contract sees exactly the arguments it was called with");
+
+    // No arguments -> the contract reads an empty object, never garbage.
+    let r = rt.execute_contract(&cs, &addr, "echo", &serde_json::Value::Null, "alice", 42, 1_000, HashMap::new(), 1_000_000, "tx").unwrap();
+    assert_eq!(r.return_data, Some(serde_json::json!({})));
+
+    // A buffer that is too small is reported (-1), not overrun.
+    let q = rt.query_contract(&cs, &addr, "too_small", &serde_json::json!({ "a": 1 }), "alice", HashMap::new(), 42, 1_000).unwrap();
+    assert!(q.success);
+}
+
+#[test]
+fn module_without_exported_memory_fails_cleanly_and_is_rejected_for_deploy() {
+    let rt = WasmRuntime::new().unwrap();
+    let wasm = assemble(WAT_NO_MEMORY);
+    let err = rt.validate_contract_wasm(&wasm).unwrap_err();
+    assert!(err.contains("memory"), "{err}");
+    assert!(rt.validate_contract_wasm(&assemble(WAT_ECHO_ARGS)).is_ok());
+
+    // Even if one were installed by the legacy path, calling it must not panic the host.
+    let dir = TempDir::new();
+    let cs = ContractStore::new(dir.path()).unwrap();
+    rt.install_contract(&cs, "nomem", "alice", &wasm, 1).unwrap();
+    let r = rt.execute_contract(&cs, "nomem", "run", &serde_json::json!({}), "alice", 42, 1_000, HashMap::new(), 1_000_000, "tx").unwrap();
+    assert!(!r.success);
+    assert!(r.error.unwrap().contains("memory"));
+}

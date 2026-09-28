@@ -9,6 +9,7 @@ members = [
   "p2p",
   "daemon",
   "vm",
+  "finality",
   "cli",
   "wasm-prover",
 ]

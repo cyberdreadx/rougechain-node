@@ -101,6 +101,11 @@ export interface SignedTransaction {
   payload: TransactionPayload;
   signature: string;
   public_key: string;
+  /**
+   * Optional hex of the exact bytes that were signed. When present the node verifies the
+   * signature over these bytes (and checks they parse to `payload`) instead of re-serializing.
+   */
+  payload_bytes_hex?: string;
 }
 
 // ===== Blockchain Data =====
@@ -427,11 +432,23 @@ export interface MessengerNewMessageEvent {
 
 export interface MessengerConversation {
   id: string;
+  /** Participant ids exactly as the node returns them (signing keys or wallet UUIDs). */
+  participant_ids: string[];
+  /**
+   * Same list as `participant_ids`. The node never sends this field; the SDK fills it in
+   * so code written against earlier SDK types keeps working.
+   */
   participants: string[];
-  created_at: number;
+  created_by?: string;
+  name?: string | null;
+  is_group?: boolean;
+  /** RFC 3339 timestamp. */
+  created_at: string;
+  /** Canonical wallet id -> time, for each participant who moved the thread to trash. */
+  deleted_by?: Record<string, string>;
   last_message_at?: string;
   last_sender_id?: string;
-  last_message_preview?: string;
+  last_message_preview?: string | null;
   unread_count?: number;
 }
 
@@ -737,22 +754,35 @@ export interface RollupSubmitResult {
 
 // ===== WASM Smart Contracts =====
 
+/** Contract metadata as returned by `GET /api/contract/:addr` and `GET /api/contracts`. */
 export interface ContractMetadata {
+  /** 40-hex-char contract address. */
   address: string;
+  /** Deployer's signing public key. */
   deployer: string;
-  codeHash: string;
-  createdAt: number;
-  wasmSize: number;
+  /** sha256 of the WASM bytecode (hex). */
+  code_hash: string;
+  /** Block height (or time, on legacy deployments) recorded at install. */
+  created_at: number;
+  wasm_size: number;
+  [extra: string]: unknown;
 }
 
+/** An event a contract emitted with `host_emit_event` (node wire format). */
 export interface ContractEvent {
-  contractAddr: string;
+  contract_addr: string;
   topic: string;
   data: string;
-  blockHeight: number;
-  txHash: string;
+  block_height: number;
+  tx_hash: string;
 }
 
+/** WebSocket frame pushed to `contract:<addr>` subscribers once the block is accepted. */
+export interface ContractEventFrame extends ContractEvent {
+  type: "contract_event";
+}
+
+/** Result of a read-only query (`POST /api/contract/:addr/query`) or an execute preview. */
 export interface ContractCallResult {
   success: boolean;
   returnData?: unknown;
@@ -761,6 +791,81 @@ export interface ContractCallResult {
   error?: string;
 }
 
+export type ContractQueryResult = ContractCallResult;
+
+export interface PublishContractOptions {
+  /** Signed nonce that seeds the address (≥ 8 chars). Random if omitted. */
+  nonce?: string;
+}
+
+export interface PublishContractResult {
+  success: boolean;
+  error?: string;
+  txId?: string;
+  /** Address reported by the node. */
+  address?: string;
+  /** Address computed locally from (from, nonce, wasm) — equal to `address` on success. */
+  predictedAddress: string;
+  /** The nonce that was signed (needed to re-derive the address). */
+  nonce: string;
+  /** Fee charged in XRGE (10 XRGE flat). */
+  fee?: number;
+}
+
+export interface ExecuteContractOptions {
+  /**
+   * Gas limit (1..10,000,000). The fee is `gasLimit × 0.000001` XRGE, charged up front.
+   * If omitted, the SDK queries first and uses `ceil(gasUsed × 1.5) + 1000`, capped at 10M.
+   */
+  gasLimit?: number;
+  /** Optional durable replay protection: must equal the account's next nonce. */
+  accountNonce?: number;
+}
+
+export interface ExecuteContractResult {
+  success: boolean;
+  error?: string;
+  txId?: string;
+  /** Fee charged in XRGE (`gasLimit × 0.000001`). */
+  fee?: number;
+  /** The gas limit that was signed. */
+  gasLimit?: number;
+  /** The node's dry run of the call (return data, gas used, events). */
+  preview?: { returnData?: unknown; gasUsed: number; events: ContractEvent[] };
+}
+
+export interface ContractStateValue {
+  key: string;
+  /** Hex of the stored bytes, or null if unset. */
+  value: string | null;
+  /** Lossy UTF-8 view of the stored bytes. */
+  valueUtf8?: string;
+}
+
+export interface ContractEventsQuery {
+  limit?: number;
+  /** Only events from blocks strictly below this height (paging). */
+  before?: number;
+  /** Only events emitted by this transaction (tx hash). */
+  tx?: string;
+}
+
+export type TxReceiptStatus = "Success" | { Failed: string };
+
+export interface TxReceipt {
+  tx_hash: string;
+  block_height: number;
+  block_hash: string;
+  index: number;
+  tx_type: string;
+  from: string;
+  status: TxReceiptStatus;
+  fee_paid: number;
+  logs: { event_type: string; data: unknown }[];
+  timestamp: number;
+}
+
+/** @deprecated Node-signed `/v2/contract/deploy` is disabled since GAME_READY; use `rc.contracts.publish`. */
 export interface DeployContractParams {
   /** Base64-encoded WASM bytecode */
   wasm: string;
@@ -770,6 +875,7 @@ export interface DeployContractParams {
   nonce?: number;
 }
 
+/** @deprecated `/v2/contract/call` is preview-only since GAME_READY; use `rc.contracts.execute` / `query`. */
 export interface CallContractParams {
   /** Contract address (hex) */
   contractAddr: string;

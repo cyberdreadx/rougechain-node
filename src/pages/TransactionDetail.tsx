@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { txAmountSymbol, swapSides } from "@/lib/tx-display";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import {
   ArrowLeft,
@@ -249,7 +250,7 @@ const TransactionDetail = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
@@ -257,7 +258,7 @@ const TransactionDetail = () => {
 
   if (notFound || !txData) {
     return (
-      <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background relative overflow-x-hidden">
+      <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen relative overflow-x-hidden">
         <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
         <main className="relative z-10 max-w-6xl mx-auto px-4 py-10">
           <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="mb-6">
@@ -286,7 +287,8 @@ const TransactionDetail = () => {
   const txType = isFaucet ? "faucet" : rawType;
   const from = isFaucet ? "FAUCET" : tx.fromPubKey ?? tx.from_pub_key ?? "";
   const to = payload.toPubKeyHex ?? payload.to_pub_key_hex ?? payload.target_pub_key ?? "";
-  const tokenSymbol = payload.token_symbol ?? payload.tokenSymbol ?? "XRGE";
+  const tokenSymbol = txAmountSymbol(txType, payload as Record<string, unknown>);
+  const swap = swapSides(payload as Record<string, unknown>);
   const isSwapOrAmm = ["swap", "create_pool", "add_liquidity", "remove_liquidity"].includes(txType);
   const isContract = ["contract_deploy", "contract_call"].includes(txType);
   const contractAddr = payload.contract_addr ?? "";
@@ -294,7 +296,7 @@ const TransactionDetail = () => {
   const gasUsed = txData.receipt?.gas_used ?? payload.contract_gas_limit ?? 0;
 
   return (
-    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background relative overflow-x-hidden">
+    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen relative overflow-x-hidden">
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 right-0 w-full max-w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />
@@ -527,31 +529,31 @@ const TransactionDetail = () => {
             <CardContent className="space-y-4">
               {txType === "swap" && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {payload.token_in && (
+                  {swap.tokenIn && (
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Token In</p>
                       <div className="bg-background rounded border border-border p-2 flex items-center gap-2">
-                        <Link to={`/token/${payload.token_in}`} className="text-sm font-mono text-primary hover:underline">
-                          {payload.token_in}
+                        <Link to={`/token/${swap.tokenIn}`} className="text-sm font-mono text-primary hover:underline">
+                          {swap.tokenIn}
                         </Link>
-                        {payload.amount_in != null && (
+                        {swap.amountIn != null && (
                           <span className="text-xs text-muted-foreground ml-auto">
-                            {formatTokenAmount(payload.amount_in, payload.token_in)}
+                            {formatTokenAmount(swap.amountIn, swap.tokenIn)}
                           </span>
                         )}
                       </div>
                     </div>
                   )}
-                  {payload.token_out && (
+                  {swap.tokenOut && (
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Token Out</p>
                       <div className="bg-background rounded border border-border p-2 flex items-center gap-2">
-                        <Link to={`/token/${payload.token_out}`} className="text-sm font-mono text-primary hover:underline">
-                          {payload.token_out}
+                        <Link to={`/token/${swap.tokenOut}`} className="text-sm font-mono text-primary hover:underline">
+                          {swap.tokenOut}
                         </Link>
-                        {payload.min_amount_out != null && (
+                        {swap.minOut != null && (
                           <span className="text-xs text-muted-foreground ml-auto">
-                            min: {formatTokenAmount(payload.min_amount_out, payload.token_out)}
+                            min: {formatTokenAmount(swap.minOut, swap.tokenOut)}
                           </span>
                         )}
                       </div>

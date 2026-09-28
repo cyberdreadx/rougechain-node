@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { txAmountSymbol } from "@/lib/tx-display";
 import { useParams, Link } from "react-router-dom";
 import {
   ArrowLeft,
@@ -252,7 +253,7 @@ const AddressDetail = () => {
   };
 
   const getTxSymbol = (tx: AddressTx): string => {
-    return tx.tx?.payload?.token_symbol || tx.tx?.payload?.tokenSymbol || "XRGE";
+    return txAmountSymbol(tx.tx?.type ?? tx.tx?.tx_type, tx.tx?.payload as Record<string, unknown>);
   };
 
   const tokenBalanceEntries = balanceData
@@ -276,7 +277,7 @@ const AddressDetail = () => {
   // If rouge1 resolution failed, show fallback
   if (resolveError) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="text-center space-y-4 max-w-md px-6">
           <Wallet className="w-12 h-12 text-primary mx-auto" />
           <h2 className="text-xl font-bold">RougeChain Address</h2>
@@ -299,14 +300,14 @@ const AddressDetail = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen bg-background relative overflow-x-hidden">
+    <div className="min-h-[calc(100dvh-3.5rem)] md:min-h-screen relative overflow-x-hidden">
       <div className="fixed inset-0 circuit-bg opacity-20 pointer-events-none" />
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 right-0 w-full max-w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl pointer-events-none" />

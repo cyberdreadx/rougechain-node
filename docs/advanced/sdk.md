@@ -202,26 +202,12 @@ All operations use ML-DSA-65 signed requests with nonce-based anti-replay protec
 ```typescript
 await rc.messenger.getWallets();
 await rc.messenger.registerWallet(wallet, { id, displayName, signingPublicKey, encryptionPublicKey });
-await rc.messenger.getConversations(wallet);                      // inbox
-await rc.messenger.getConversations(wallet, { folder: "trash" });  // 1.8.0+
+await rc.messenger.getConversations(wallet);
 await rc.messenger.createConversation(wallet, [pubKeyA, pubKeyB]);
 await rc.messenger.getMessages(wallet, conversationId);
 await rc.messenger.sendMessage(wallet, conversationId, encryptedContent, { selfDestruct: true, destructAfterSeconds: 30 });
-await rc.messenger.deleteMessage(wallet, messageId, conversationId);           // recoverable 30 days
-await rc.messenger.restoreMessage(wallet, messageId, conversationId);          // 1.8.0+
-await rc.messenger.deleteConversation(wallet, conversationId);                 // for you only, 30-day trash
-await rc.messenger.deleteConversation(wallet, conversationId, { purge: true }); // 1.8.0+, no recovery
-await rc.messenger.restoreConversation(wallet, conversationId);                // 1.8.0+
-```
-
-Real-time (1.8.0+): the node pushes a private `new_message` event to each participant's authenticated socket. Events carry ids and signing keys only, never content.
-
-```typescript
-const stop = rc.messenger.subscribe(wallet, (ev) => {
-  // ev.conversation_id, ev.message_id, ev.sender_wallet_id, ev.participant_ids
-  refresh(ev.conversation_id);
-}, { onStatus: (live) => console.log(live ? "live" : "reconnecting") });
-// later: stop();
+await rc.messenger.deleteMessage(wallet, messageId, conversationId);
+await rc.messenger.deleteConversation(wallet, conversationId);
 ```
 
 ### Social (`rc.social`)
@@ -325,31 +311,68 @@ const proposals = await rc.get(`/multisig/wallet/${walletId}/proposals`);
 > above only. Do not call `rc.sendTransaction(...)`; that method does not exist.
 > Multi-sig write support is tracked for a future release.
 
-### Smart Contracts (`rc.shielded`)
+### Smart Contracts (`rc.contracts`)
 
-Contract helpers are accessed via the `rc.shielded` sub-client:
+Since 1.9.0. Contract transactions are signed by your wallet: the signer is the caller
+the contract sees and pays the fee. See [WASM Smart Contracts](smart-contracts.md) for
+the host functions and the raw API.
 
 ```typescript
-// Deploy WASM contract
-const deploy = await rc.shielded.deployContract({
-  wasm: base64WasmBytes,
-  deployer: wallet.publicKey,
-});
+// Publish WASM (Uint8Array, ArrayBuffer or base64). Fee: 10 XRGE flat.
+const pub = await rc.contracts.publish(wallet, wasmBytes);
+// → { success, txId, address, predictedAddress, nonce, fee }
+await rc.contracts.waitForReceipt(pub.txId!);        // resolves once the tx is in a block
 
-// Call contract method
-const result = await rc.shielded.callContract({
-  contractAddr: deploy.address,
-  method: 'increment',
-  caller: wallet.publicKey,
-  args: { key: 'value' },
-  gasLimit: 10_000_000,
-});
+// The address is fixed by what you sign; compute it offline:
+rc.contracts.predictContractAddress(wallet.publicKey, pub.nonce, wasmBytes);
 
-// Query contract
-const meta = await rc.shielded.getContract(deploy.address);
-const state = await rc.shielded.getContractState(deploy.address);
-const events = await rc.shielded.getContractEvents(deploy.address);
+// Read-only call (free, no signature)
+const q = await rc.contracts.query(addr, 'get_score', { player: wallet.publicKey });
+// → { success, returnData, gasUsed, events, error? }
+
+// Signed call. Fee = gasLimit × 0.000001 XRGE.
+// Without gasLimit the SDK queries first and signs min(ceil(gasUsed × 1.5) + 1000, 10M).
+const r = await rc.contracts.execute(wallet, addr, 'move', { x: 1, y: 2 });
+const r2 = await rc.contracts.execute(wallet, addr, 'move', { x: 3 }, { gasLimit: 80_000 });
+// → { success, txId, fee, gasLimit, preview: { returnData, gasUsed, events } }
+// The node dry-runs first; a call that would fail returns { success: false, error } and costs nothing.
+// The block run is authoritative: a call that reverts there is still included and charged,
+// and its receipt says so.
+const receipt = await rc.contracts.waitForReceipt(r.txId!);
+// receipt.status === "Success", or { Failed: "<error>" } when the call reverted in the block
+
+// Metadata, storage, events, list
+const meta   = await rc.contracts.get(addr);                    // null if none
+const state  = await rc.contracts.state(addr);                  // whole storage
+const one    = await rc.contracts.state(addr, 'score');         // hex key, else UTF-8
+const events = await rc.contracts.events(addr, { limit: 50, before: 12_000 });
+const byTx   = await rc.contracts.events(addr, { tx: r.txId });  // events of one tx
+const all    = await rc.contracts.list();
+
+// Live events after each accepted block (shared socket, auto-reconnect + resubscribe)
+const stop = rc.contracts.subscribe(addr, (e) => console.log(e.topic, e.data, e.block_height));
+stop();
 ```
+
+**Game helper** — a handle bound to one contract (and optionally a wallet):
+
+```typescript
+const game = rc.contracts.game(addr, wallet);
+const off = game.on('move', (e) => render(JSON.parse(e.data)));  // '*' = every topic
+await game.call('move', { x: 1, y: 2 });          // signed; needs the wallet
+const board = await game.query('board');          // free; caller = wallet key
+const s = await game.state();
+off();
+```
+
+Lower-level builders are exported too: `createSignedContractCall`,
+`createSignedContractPublish`, `predictContractAddress`, `suggestGasLimit`,
+`contractCallFee`. On Node versions without a global `WebSocket`, pass one:
+`new RougeChain(url, { WebSocket: (await import('ws')).default })`.
+
+> The old `rc.shielded.deployContract` / `callContract` helpers used node-signed
+> endpoints that are retired (deploy returns 410; call is a dry run only). They are
+> deprecated; use `rc.contracts`.
 
 ### EIP-1559 Fee Info
 

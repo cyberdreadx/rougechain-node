@@ -26,7 +26,7 @@ const Privacy = () => {
   const lastUpdated = "March 9, 2026";
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <div className="max-w-3xl mx-auto px-6 py-16">
         <div className="mb-12">
           <h1 className="text-4xl font-bold text-white mb-3">Privacy Policy</h1>

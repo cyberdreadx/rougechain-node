@@ -3,13 +3,19 @@
 This page is the single source of truth for **what is live** versus **what is built but not
 activated**. If another page disagrees with this one, this page wins — please open an issue.
 
-_Last reviewed: 2026-09-21._
+_Last reviewed: 2026-09-28._
 
 > RougeChain is post-quantum-secured at the L1 level. The current production XRGE bridge remains
 > on the hardened R1 architecture. A V3 XRGE bridge using ML-DSA-65 post-quantum authorization has
 > been built and is undergoing final rehearsal before production activation.
 
-## ⚠️ Mandatory node upgrade (block 49)
+## ⚠️ Mandatory node upgrade (blocks 150 and 160)
+
+Mainnet activated verified BFT finality and player-signed contracts at **block 150** and game-ready
+contracts (tokens, NFTs, randomness, state root v2) at **block 160**. Every node must run the
+2026-09-28 release: [upgrade guide](running-a-node/mandatory-upgrade-2026-09-28.md).
+
+## Earlier mandatory node upgrade (block 49)
 
 If you run a RougeChain mainnet node or validator, **you must upgrade.** On 2026-09-18 mainnet
 activated a protocol upgrade at **block 49** (bridge security hardening and a fix to validator-stake
@@ -52,6 +58,10 @@ a minute.
 | XRGE bridge (`BridgeVaultV2`) | **TESTED / USABLE** | Deposit, withdrawal and payout paths tested end-to-end on mainnet |
 | qETH bridge (`RougeBridge`) | **TESTED / USABLE** | Same |
 | qUSDC bridge (`RougeBridge`) | **TESTED / USABLE** | Same |
+| Verified BFT finality (FINALITY_V2, Release 2a) | **LIVE since block 150** | Every block carries its parent's ≥⅔-stake certificate; see [Finality](staking/finality.md) |
+| Player-signed contracts (GAME_READY) | **LIVE since block 150** | Deploy and call signed by the player; see [Smart Contracts](advanced/smart-contracts.md) |
+| Game-ready contracts (GAME_READY 2) | **LIVE since block 160** | Tokens, NFTs, collections and minting, randomness, multi-hop moves; state root covers NFTs and contract state |
+| LP fee collection | **LIVE** | "Collect fees" on Pools withdraws only fee earnings |
 
 The production XRGE bridge **still relies on classical (ECDSA / Safe multisig) authorization on the
 Base side.** It is hardened, capped and monitored, but it is not post-quantum on Base.
@@ -68,10 +78,10 @@ Base side.** It is hardened, capped and monitored, but it is not post-quantum on
 | Post-quantum authority rotation + deterministic authority schedule | Built and tested — not in use |
 | Reproducible V3 contract build / audit candidate | Complete |
 | OP-stack deployment rehearsal (local devnet, throwaway keys and token) | Substantially complete |
-| FINALITY_V2 | **BUILT / NOT ACTIVATED** |
+| Consensus Release 2b (fallback proposer, slashing) | Designed — not built |
 
-Both activation constants in the node — `FINALITY_V2_ACTIVATION_HEIGHT` and
-`V3_BRIDGE_ACTIVATION_HEIGHT` — are **`None`**. No activation height has been chosen.
+`FINALITY_V2_ACTIVATION_HEIGHT` is **150** (active). `V3_BRIDGE_ACTIVATION_HEIGHT` is **`None`**: no
+activation height has been chosen for the V3 bridge.
 
 ## Scope of V3
 
@@ -90,7 +100,9 @@ Both activation constants in the node — `FINALITY_V2_ACTIVATION_HEIGHT` and
 | OP-stack rehearsal | 🟡 Substantially complete |
 | External review / audit | ⏳ Pending |
 | Production deployment of V3 | ⏳ Pending |
-| Activation (FINALITY_V2, then V3) | ⏳ Pending |
+| FINALITY_V2 activation | ✅ Live (block 150) |
+| Game-ready contracts (GAME_READY 1 + 2) | ✅ Live (blocks 150, 160) |
+| V3 activation | ⏳ Pending |
 
 Activation will be announced in advance with the exact block heights. Until then, nothing on this
 page in the "not activated" table protects user funds.

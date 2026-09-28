@@ -7,6 +7,13 @@
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { deriveEvmAccount, personalSign, hexToBytes as evmHexToBytes, decodeSignMessage, type EvmAccount } from "../lib/evm-wallet";
 import { rpc, fillSignAndSend, getChain, isSupportedChain, BASE_MAINNET_CHAIN_ID } from "../lib/evm-rpc";
+import {
+    analyzeContractPayload,
+    contractEndpoint,
+    isContractTxType,
+    payloadForDisplay,
+    type ContractTxDetails,
+} from "../lib/contract-tx";
 
 interface ConnectedSite {
     origin: string;
@@ -39,6 +46,42 @@ function sortKeysDeep(obj: unknown): unknown {
 
 function serializePayload(payload: Record<string, unknown>): string {
     return JSON.stringify(sortKeysDeep(payload));
+}
+
+/**
+ * Normalize a dApp signTransaction request. The site's `signViaExtension` sends
+ * `{ payload, serializedHex }` (the exact bytes it will submit as `payload_bytes_hex`); other
+ * dApps send the payload itself. For the envelope, the bytes must be the canonical serialization
+ * of the payload (so the popup shows exactly what is signed) and the payload cannot be changed.
+ * Contract payloads are validated and get approval details; outside the envelope, missing
+ * from/timestamp/nonce are filled in and the filled payload is returned to the dApp.
+ */
+function prepareSignRequest(
+    raw: Record<string, unknown>,
+    signer: string,
+): { error: string } | { payload: Record<string, unknown>; details?: ContractTxDetails } {
+    let payload = raw;
+    const isEnvelope = raw.payload !== null && typeof raw.payload === "object" && !Array.isArray(raw.payload)
+        && typeof raw.serializedHex === "string";
+    if (isEnvelope) {
+        payload = raw.payload as Record<string, unknown>;
+        const expected = bytesToHex(new TextEncoder().encode(serializePayload(payload)));
+        if ((raw.serializedHex as string).toLowerCase() !== expected) {
+            return { error: "serializedHex does not match the payload" };
+        }
+    }
+    if (!isContractTxType(payload.type)) return { payload };
+    if (!isEnvelope) {
+        payload = {
+            ...payload,
+            from: payload.from ?? signer,
+            timestamp: payload.timestamp ?? Date.now(),
+            nonce: payload.nonce ?? crypto.randomUUID(),
+        };
+    }
+    const analyzed = analyzeContractPayload(payload, signer);
+    if ("error" in analyzed) return { error: analyzed.error };
+    return { payload, details: analyzed.details };
 }
 
 function signPayload(payloadJson: string, privateKeyHex: string): string {
@@ -287,14 +330,15 @@ let approvalCounter = 0;
 function requestApproval(
     type: "connect" | "sign" | "send" | "evm-connect" | "evm-personal-sign" | "evm-send",
     origin: string,
-    payload?: Record<string, unknown>
+    payload?: Record<string, unknown>,
+    details?: ContractTxDetails
 ): Promise<boolean> {
     return new Promise((resolve) => {
         const requestId = `${Date.now()}-${++approvalCounter}`;
 
         // Store payload data in session storage for the popup to read
         chrome.storage.session.set({
-            [`approval-${requestId}`]: { payload, origin, type },
+            [`approval-${requestId}`]: { payload: payload && payloadForDisplay(payload, details), details, origin, type },
         });
 
         // Build the popup URL
@@ -450,26 +494,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         return;
                     }
 
-                    const payload = params?.payload;
-                    if (!payload || typeof payload !== "object") {
+                    const rawPayload = params?.payload;
+                    if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) {
                         sendResponse({ error: "Invalid payload" });
+                        return;
+                    }
+                    const prepared = prepareSignRequest(rawPayload as Record<string, unknown>, wallet.publicKey);
+                    if ("error" in prepared) {
+                        sendResponse({ error: prepared.error });
                         return;
                     }
 
                     // Open approval popup for signing
-                    const signApproved = await requestApproval("sign", origin, payload as Record<string, unknown>);
+                    const signApproved = await requestApproval("sign", origin, prepared.payload, prepared.details);
                     if (!signApproved) {
                         sendResponse({ error: "User denied signature request" });
                         return;
                     }
 
-                    const signedPayload = serializePayload(payload as Record<string, unknown>);
+                    const signedPayload = serializePayload(prepared.payload);
                     const signSig = signPayload(signedPayload, wallet.privateKey);
                     sendResponse({
                         result: {
                             signedPayload,
                             signature: signSig,
                             publicKey: wallet.publicKey,
+                            payload: prepared.payload,
                         },
                     });
                     break;
@@ -492,6 +542,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     if (!payload || typeof payload !== "object") {
                         sendResponse({ error: "Invalid payload" });
                         return;
+                    }
+
+                    // Contract calls/deployments go to their own signed endpoints.
+                    if (isContractTxType((payload as Record<string, unknown>).type)) {
+                        const p = payload as Record<string, unknown>;
+                        if (p.from !== undefined && p.from !== wallet.publicKey) {
+                            sendResponse({ error: "payload.from is not this wallet's signing key" });
+                            return;
+                        }
+                        const contractPayload: Record<string, unknown> = {
+                            ...p,
+                            from: wallet.publicKey,
+                            timestamp: Date.now(),
+                            nonce: typeof p.nonce === "string" && p.nonce.length >= 8 ? p.nonce : crypto.randomUUID(),
+                        };
+                        const analyzed = analyzeContractPayload(contractPayload, wallet.publicKey);
+                        if ("error" in analyzed) {
+                            sendResponse({ error: analyzed.error });
+                            return;
+                        }
+                        const ok = await requestApproval("send", origin, contractPayload, analyzed.details);
+                        if (!ok) {
+                            sendResponse({ error: "User denied transaction" });
+                            return;
+                        }
+                        const json = serializePayload(contractPayload);
+                        const res = await fetch(`${await getApiBaseUrl()}${contractEndpoint(contractPayload.type as "contract_call" | "contract_deploy")}`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                payload: contractPayload,
+                                signature: signPayload(json, wallet.privateKey),
+                                public_key: wallet.publicKey,
+                                payload_bytes_hex: bytesToHex(new TextEncoder().encode(json)),
+                            }),
+                        });
+                        const data = await res.json().catch(() => ({ success: false, error: `Node returned ${res.status}` }));
+                        if (data.success) {
+                            sendResponse({ result: { txId: data.txId, fee: data.fee, address: data.address, preview: data.preview } });
+                        } else {
+                            sendResponse({ error: data.error || "Transaction failed" });
+                        }
+                        break;
                     }
 
                     // Open approval popup for transaction

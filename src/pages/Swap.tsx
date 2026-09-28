@@ -24,6 +24,7 @@ import { secureSwap } from "@/lib/secure-api";
 import { formatTokenAmount, isQeth, humanToQeth, qethToHuman, isSixDecimalToken, rawToHuman, humanToRaw } from "@/hooks/use-eth-price";
 import { CyberpunkLoader } from "@/components/ui/cyberpunk-loader";
 import { useTokenMetadata } from "@/hooks/use-token-metadata";
+import { useTranslation } from "react-i18next";
 
 interface Token {
   symbol: string;
@@ -70,6 +71,7 @@ const TokenPicker = ({
   onSelect,
   getTokenImage,
 }: TokenPickerProps) => {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -149,7 +151,7 @@ const TokenPicker = ({
             <span className="font-medium text-sm truncate">{selected}</span>
           </>
         ) : (
-          <span className="text-sm text-muted-foreground">Select</span>
+          <span className="text-sm text-muted-foreground">{t("swap.picker.select")}</span>
         )}
         <ChevronDown className="w-3.5 h-3.5 ml-auto text-muted-foreground flex-shrink-0" />
       </button>
@@ -172,7 +174,7 @@ const TokenPicker = ({
             >
               {/* Header */}
               <div className="flex items-center justify-between p-4 border-b border-border">
-                <h3 className="font-semibold text-foreground">Select Token</h3>
+                <h3 className="font-semibold text-foreground">{t("swap.picker.title")}</h3>
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setOpen(false)}>
                   <X className="w-4 h-4" />
                 </Button>
@@ -186,7 +188,7 @@ const TokenPicker = ({
                     ref={inputRef}
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search by name or paste symbol..."
+                    placeholder={t("swap.picker.searchPlaceholder")}
                     className="pl-9 font-mono text-sm"
                   />
                 </div>
@@ -221,7 +223,7 @@ const TokenPicker = ({
               <div className="max-h-[300px] overflow-y-auto">
                 {filteredList.length === 0 ? (
                   <div className="p-6 text-center text-muted-foreground text-sm">
-                    {search ? `No tokens matching "${search}"` : "No tokens available"}
+                    {search ? t("swap.picker.noMatch", { query: search }) : t("swap.picker.noTokens")}
                   </div>
                 ) : (
                   filteredList.map((symbol) => {
@@ -273,6 +275,7 @@ const TokenPicker = ({
 
 // ─── Swap Page ──────────────────────────────────────────────────
 const Swap = () => {
+  const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const urlToken = searchParams.get("token");
   const urlTokenIn = searchParams.get("tokenIn");
@@ -496,7 +499,7 @@ const Swap = () => {
 
   const executeSwap = async () => {
     if (!wallet || !quote || !amountIn) {
-      toast.error("Please connect wallet and get a quote first");
+      toast.error(t("swap.toasts.connectFirst"));
       return;
     }
     
@@ -516,17 +519,17 @@ const Swap = () => {
       );
       
       if (result.success) {
-        toast.success(`Swap submitted: ${amount} ${tokenIn} → ~${formatTokenAmount(quote.amount_out, tokenOut)} ${tokenOut}`, {
-          description: "Signed securely on your device",
+        toast.success(t("swap.toasts.submitted", { amount, tokenIn, amountOut: formatTokenAmount(quote.amount_out, tokenOut), tokenOut }), {
+          description: t("swap.toasts.signedOnDevice"),
         });
         setAmountIn("");
         setQuote(null);
         fetchTokens();
       } else {
-        toast.error(result.error || "Swap failed");
+        toast.error(result.error || t("swap.toasts.failed"));
       }
     } catch (e) {
-      toast.error("Failed to execute swap");
+      toast.error(t("swap.toasts.executeFailed"));
       console.error(e);
     } finally {
       setLoading(false);
@@ -539,7 +542,7 @@ const Swap = () => {
   if (loading) {
     return (
       <CyberpunkLoader
-        message="Executing Quantum Swap"
+        message={t("swap.loader")}
         tokenIn={tokenIn}
         tokenOut={tokenOut}
       />
@@ -547,7 +550,7 @@ const Swap = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen flex flex-col">
       <div className="container max-w-lg mx-auto px-4 py-8 flex-grow">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -556,10 +559,10 @@ const Swap = () => {
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold">Swap</h1>
+              <h1 className="text-2xl font-bold">{t("swap.title")}</h1>
               <div className="flex items-center gap-1 text-xs text-green-500 bg-green-500/10 px-2 py-0.5 rounded-full">
                 <Shield className="w-3 h-3" />
-                <span>Secure</span>
+                <span>{t("swap.secure")}</span>
               </div>
             </div>
             <Dialog open={showSettings} onOpenChange={setShowSettings}>
@@ -570,11 +573,11 @@ const Swap = () => {
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Swap Settings</DialogTitle>
+                  <DialogTitle>{t("swap.settings.title")}</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div>
-                    <Label>Slippage Tolerance: {slippage}%</Label>
+                    <Label>{t("swap.settings.slippage", { value: slippage })}</Label>
                     <Slider
                       value={[slippage]}
                       onValueChange={([v]) => setSlippage(v)}
@@ -606,8 +609,8 @@ const Swap = () => {
               {/* Token In */}
               <div className="space-y-2">
                 <div className="flex flex-wrap gap-x-2 justify-between text-sm text-muted-foreground">
-                  <span>You pay</span>
-                  <span>Balance: {tokenInData ? formatTokenAmount(tokenInData.balance, tokenIn) : 0}</span>
+                  <span>{t("swap.youPay")}</span>
+                  <span>{t("swap.balance", { balance: tokenInData ? formatTokenAmount(tokenInData.balance, tokenIn) : 0 })}</span>
                 </div>
                 <div className="flex gap-2">
                   <Input
@@ -635,7 +638,7 @@ const Swap = () => {
                     <span />
                   )}
                   {tokenInData && parseFloat(amountIn) > rawToHuman(tokenInData.balance, tokenIn) && (
-                    <p className="text-xs text-destructive">Insufficient balance</p>
+                    <p className="text-xs text-destructive">{t("swap.errors.insufficientBalance")}</p>
                   )}
                 </div>
               </div>
@@ -655,8 +658,8 @@ const Swap = () => {
               {/* Token Out */}
               <div className="space-y-2">
                 <div className="flex flex-wrap gap-x-2 justify-between text-sm text-muted-foreground">
-                  <span>You receive</span>
-                  <span>Balance: {tokenOutData ? formatTokenAmount(tokenOutData.balance, tokenOut) : 0}</span>
+                  <span>{t("swap.youReceive")}</span>
+                  <span>{t("swap.balance", { balance: tokenOutData ? formatTokenAmount(tokenOutData.balance, tokenOut) : 0 })}</span>
                 </div>
                 <div className="flex gap-2">
                   <Input
@@ -686,14 +689,14 @@ const Swap = () => {
               {quoteLoading && (
                 <div className="flex items-center justify-center py-2">
                   <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  <span className="text-sm text-muted-foreground">Getting quote...</span>
+                  <span className="text-sm text-muted-foreground">{t("swap.gettingQuote")}</span>
                 </div>
               )}
 
               {quote && !quoteLoading && (
                 <div className="bg-secondary/50 rounded-lg p-3 space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Rate</span>
+                    <span className="text-muted-foreground">{t("swap.quote.rate")}</span>
                     <span>1 {tokenIn} ≈ {(() => {
                       const humanOut = rawToHuman(quote.amount_out, tokenOut);
                       const humanIn = parseFloat(amountIn);
@@ -701,18 +704,18 @@ const Swap = () => {
                     })()} {tokenOut}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Price Impact</span>
+                    <span className="text-muted-foreground">{t("swap.quote.priceImpact")}</span>
                     <span className={quote.price_impact > 3 ? "text-destructive" : ""}>
                       {quote.price_impact.toFixed(2)}%
                       {quote.price_impact > 3 && <AlertTriangle className="w-3 h-3 inline ml-1" />}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Minimum received</span>
+                    <span className="text-muted-foreground">{t("swap.quote.minReceived")}</span>
                     <span>{formatTokenAmount(Math.floor(quote.amount_out * (1 - slippage / 100)), tokenOut)} {tokenOut}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Route</span>
+                    <span className="text-muted-foreground">{t("swap.quote.route")}</span>
                     <span className="text-xs truncate max-w-[200px] sm:max-w-none">{quote.path.join(" → ")}</span>
                   </div>
                 </div>
@@ -727,18 +730,18 @@ const Swap = () => {
                 {loading ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    Swapping...
+                    {t("swap.button.swapping")}
                   </>
                 ) : !wallet ? (
-                  "Connect Wallet"
+                  t("swap.button.connectWallet")
                 ) : !amountIn ? (
-                  "Enter Amount"
+                  t("swap.button.enterAmount")
                 ) : !quote ? (
-                  "No Route Found"
+                  t("swap.button.noRoute")
                 ) : parseFloat(amountIn) > (tokenInData ? rawToHuman(tokenInData.balance, tokenIn) : 0) ? (
-                  "Insufficient Balance"
+                  t("swap.button.insufficientBalance")
                 ) : (
-                  "Swap"
+                  t("swap.button.swap")
                 )}
               </Button>
             </CardContent>
@@ -751,11 +754,10 @@ const Swap = () => {
                 <Info className="w-5 h-5 text-primary mt-0.5" />
                 <div className="text-sm text-muted-foreground">
                   <p>
-                    Swaps use an automated market maker (AMM) with a 0.3% fee.
-                    Fees go to liquidity providers.
+                    {t("swap.info.amm")}
                   </p>
                   <p className="mt-2">
-                    Multi-hop swaps are supported for better rates through multiple pools.
+                    {t("swap.info.multiHop")}
                   </p>
                 </div>
               </div>

@@ -4,15 +4,16 @@ import { Link } from "react-router-dom";
 import {
   Sprout, Sun, Cpu, Palette, ArrowRight, MessageCircle, MapPin,
   Wallet, FolderCheck, Coins, Globe2, FileText, ListChecks, Camera, BadgeCheck,
+  Copy, Check, ArrowDownLeft, ArrowUpRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ProjectCard from "@/components/regenerate/ProjectCard";
+import ProposalForm from "@/components/regenerate/ProposalForm";
+import CommunityVotes from "@/components/regenerate/CommunityVotes";
 import {
-  REGEN_CATEGORIES, getTreasuryStats, getProjects, hasFundedProjects,
-  type RegenCategoryKey, type TreasuryStats,
+  REGEN_CATEGORIES, REGEN_TREASURY_ADDRESS, getTreasuryLedger, getTreasuryStats, getProjects, hasFundedProjects, txUrl,
+  type RegenCategoryKey, type TreasuryLedger,
 } from "@/lib/regenerate";
-
-const PROPOSE_URL = "https://discord.gg/wZKsHfhXxm";
 
 const CATEGORY_ICON: Record<RegenCategoryKey, typeof Sprout> = {
   ecology: Sprout, infrastructure: Sun, technology: Cpu, art: Palette,
@@ -46,7 +47,7 @@ function TreasuryStat({ icon: Icon, label, value }: { icon: typeof Wallet; label
       </div>
       {value !== null
         ? <p className="text-2xl font-bold text-foreground tabular-nums">{value}</p>
-        : <p className="text-sm font-medium text-muted-foreground/70">Coming&nbsp;Soon</p>}
+        : <p className="text-sm font-medium text-muted-foreground/70">Not live yet</p>}
     </div>
   );
 }
@@ -66,20 +67,23 @@ export default function Regenerate() {
     "RougeChain Regenerate is a regeneration program and treasury on RougeChain, funding transparent, measurable local projects — starting in Tulum, Mexico.",
   );
 
-  const [treasury, setTreasury] = useState<TreasuryStats>({
-    balanceXrge: null, projectsFunded: null, totalDeployedXrge: null, activeTerritories: null,
-  });
+  const [ledger, setLedger] = useState<TreasuryLedger | null>(null);
+  const [copied, setCopied] = useState(false);
   useEffect(() => {
     let active = true;
-    getTreasuryStats().then((t) => { if (active) setTreasury(t); });
+    getTreasuryLedger().then((l) => { if (active) setLedger(l); });
     return () => { active = false; };
   }, []);
   const projects = getProjects();
-  const anyFunded = hasFundedProjects(projects);
-  const fmt = (n: number | null, suffix = "") => (n == null ? null : `${n.toLocaleString()}${suffix}`);
+  const treasury = getTreasuryStats(ledger, projects);
+  const anyFunded = hasFundedProjects(projects, ledger);
+  const fmt = (n: number | null, suffix = "") => (n == null ? null : `${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}${suffix}`);
+  const copyAddress = () => {
+    navigator.clipboard?.writeText(REGEN_TREASURY_ADDRESS).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {});
+  };
 
   return (
-    <div className="min-h-screen bg-background relative">
+    <div className="min-h-screen relative">
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-[820px] h-[520px] rounded-full bg-success/5 blur-3xl" />
         <div className="absolute top-1/2 -right-32 w-[420px] h-[420px] rounded-full bg-accent/5 blur-3xl" />
@@ -111,7 +115,7 @@ export default function Regenerate() {
                 <FolderCheck className="w-5 h-5" aria-hidden="true" /> View Projects
               </Button>
             </a>
-            <a href={PROPOSE_URL} target="_blank" rel="noopener noreferrer">
+            <a href="#propose">
               <Button size="lg" variant="outline" className="gap-2 border-success/50 text-success hover:bg-success/10">
                 <MessageCircle className="w-5 h-5" aria-hidden="true" /> Propose a Project
               </Button>
@@ -176,7 +180,9 @@ export default function Regenerate() {
                 Regeneration should begin somewhere real. RougeChain Regenerate will begin by exploring projects in Tulum,
                 where technology, ecology, culture and rapid development intersect.
               </p>
-              <p className="mt-3 text-sm text-muted-foreground">Exploring projects — nothing funded yet.</p>
+              <p className="mt-3 text-sm text-muted-foreground">
+                {anyFunded ? "Funding live — see the projects below and their on-chain grants." : "Exploring projects — nothing funded yet."}
+              </p>
             </div>
           </div>
         </motion.section>
@@ -185,7 +191,9 @@ export default function Regenerate() {
         <motion.section {...fadeUp} className="mb-24">
           <div className="flex items-baseline justify-between mb-5">
             <h2 className="text-xl font-bold text-foreground">Treasury &amp; Impact</h2>
-            <span className="text-xs text-muted-foreground">Live on-chain values connect here as the treasury goes live</span>
+            <span className="text-xs text-muted-foreground">
+              {ledger ? "Read live from RougeChain" : "Goes live when the treasury address is published"}
+            </span>
           </div>
           <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
             <TreasuryStat icon={Wallet} label="Treasury Balance" value={fmt(treasury.balanceXrge, " XRGE")} />
@@ -193,6 +201,61 @@ export default function Regenerate() {
             <TreasuryStat icon={Coins} label="Total Deployed" value={fmt(treasury.totalDeployedXrge, " XRGE")} />
             <TreasuryStat icon={Globe2} label="Active Territories" value={fmt(treasury.activeTerritories)} />
           </div>
+
+          {REGEN_TREASURY_ADDRESS ? (
+            <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1.4fr]">
+              <div className="rounded-2xl border border-border bg-card p-5">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">Treasury wallet</p>
+                <button
+                  type="button" onClick={copyAddress}
+                  className="w-full text-left rounded-xl border border-foreground/12 bg-foreground/[0.04] px-3 py-2.5 hover:border-success/50 transition-colors"
+                  aria-label="Copy treasury address"
+                >
+                  <code className="block text-xs break-all text-foreground">{REGEN_TREASURY_ADDRESS}</code>
+                  <span className="mt-1.5 inline-flex items-center gap-1 text-xs text-success">
+                    {copied ? <><Check className="w-3.5 h-3.5" aria-hidden="true" /> Copied</> : <><Copy className="w-3.5 h-3.5" aria-hidden="true" /> Copy address</>}
+                  </span>
+                </button>
+                <p className="mt-3 text-sm text-muted-foreground">
+                  Anyone can donate XRGE to this address. Every donation and every grant is public on-chain.
+                </p>
+                {ledger && (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Donations received: <span className="text-foreground tabular-nums">{fmt(ledger.receivedXrge, " XRGE")}</span>
+                  </p>
+                )}
+                <Link to={`/address/${REGEN_TREASURY_ADDRESS}`} className="mt-3 inline-flex items-center gap-1 text-sm text-primary hover:underline">
+                  View in explorer <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
+                </Link>
+              </div>
+              <div className="rounded-2xl border border-border bg-card p-5">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">Recent activity</p>
+                {ledger && ledger.txs.length > 0 ? (
+                  <ul className="divide-y divide-border">
+                    {ledger.txs.slice(0, 8).map((t) => (
+                      <li key={t.txId} className="flex items-center gap-3 py-2 text-sm">
+                        {t.direction === "in"
+                          ? <ArrowDownLeft className="w-4 h-4 text-success shrink-0" aria-label="Donation" />
+                          : <ArrowUpRight className="w-4 h-4 text-primary shrink-0" aria-label="Grant" />}
+                        <span className="text-muted-foreground w-16 shrink-0">{t.direction === "in" ? "Donation" : "Grant"}</span>
+                        <span className="tabular-nums text-foreground">{fmt(t.amountXrge, " XRGE")}</span>
+                        <Link to={txUrl(t.txId)} className="ml-auto font-mono text-xs text-primary hover:underline">
+                          {t.txId.slice(0, 10)}…
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-muted-foreground">{ledger ? "No transactions yet." : "Couldn't reach the node right now."}</p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-muted-foreground">
+              The treasury will be a public RougeChain wallet. Once its address is published here, its balance, donations
+              and grants show up automatically, straight from the chain.
+            </p>
+          )}
         </motion.section>
 
         {/* Proof of Impact — protocol flow */}
@@ -222,6 +285,9 @@ export default function Regenerate() {
           </div>
         </motion.section>
 
+        {/* Community votes (renders nothing until the node serves them) */}
+        <CommunityVotes />
+
         {/* Projects */}
         <motion.section {...fadeUp} id="projects" className="mb-24 scroll-mt-20">
           <h2 className="text-xl font-bold text-foreground mb-1">Projects</h2>
@@ -232,24 +298,22 @@ export default function Regenerate() {
             </p>
           )}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {projects.map((p) => <ProjectCard key={p.id} project={p} />)}
+            {projects.map((p) => <ProjectCard key={p.id} project={p} ledger={ledger} />)}
           </div>
         </motion.section>
 
-        {/* Propose CTA */}
-        <motion.section {...fadeUp} className="mb-8">
-          <div className="rounded-3xl border border-success/25 bg-gradient-to-r from-success/10 via-card to-accent/8 p-8 md:p-10 text-center">
-            <h2 className="text-2xl md:text-3xl font-bold text-foreground text-balance">Have a project for the territory?</h2>
-            <p className="mx-auto mt-3 max-w-xl text-muted-foreground">
-              We're building the first territory in Tulum. If you're working on local ecology, infrastructure, open
-              technology, or community — bring it forward.
-            </p>
-            <div className="mt-7">
-              <a href={PROPOSE_URL} target="_blank" rel="noopener noreferrer">
-                <Button size="lg" className="gap-2 bg-success hover:bg-success/90 text-background font-semibold">
-                  <MessageCircle className="w-5 h-5" aria-hidden="true" /> Propose a Project <ArrowRight className="w-4 h-4" aria-hidden="true" />
-                </Button>
-              </a>
+        {/* Propose — real submission form */}
+        <motion.section {...fadeUp} id="propose" className="mb-8 scroll-mt-20">
+          <div className="rounded-3xl border border-success/25 bg-gradient-to-r from-success/10 via-card to-accent/8 p-6 md:p-10">
+            <div className="text-center mb-8">
+              <h2 className="text-2xl md:text-3xl font-bold text-foreground text-balance">Have a project for the territory?</h2>
+              <p className="mx-auto mt-3 max-w-xl text-muted-foreground">
+                We're building the first territory in Tulum. If you're working on local ecology, infrastructure, open
+                technology, or community, send it in. We review every proposal and reply.
+              </p>
+            </div>
+            <div className="mx-auto max-w-3xl">
+              <ProposalForm />
             </div>
           </div>
         </motion.section>

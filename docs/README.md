@@ -10,8 +10,9 @@ Welcome to **RougeChain** — a post-quantum secure Layer 1 blockchain built wit
 | Consensus Release 1 (tx-integrity @90, proposer selection @100) | **LIVE — mandatory upgrade**, see [Mandatory upgrade](running-a-node/mandatory-upgrade-2026-09.md) |
 | R1 production bridge | **LIVE** |
 | XRGE / qETH / qUSDC bridge paths | **TESTED / USABLE** |
+| Verified BFT finality (FINALITY_V2) | **LIVE since block 150** |
+| Game-ready contracts (tokens, NFTs, randomness) | **LIVE since block 160** — mandatory upgrade, see [2026-09-28 release](running-a-node/mandatory-upgrade-2026-09-28.md) |
 | V3 XRGE bridge | **AUDIT CANDIDATE / NOT ACTIVATED** |
-| FINALITY_V2 | **BUILT / NOT ACTIVATED** |
 
 RougeChain is post-quantum-secured at the L1 level. The current production XRGE bridge remains on
 the hardened R1 architecture, which still relies on classical authorization on the Base side. A V3
@@ -52,7 +53,7 @@ All cryptographic primitives are NIST FIPS 204/203 compliant.
 | **EIP-1559 Dynamic Fees** | Base fee auto-adjusts per block, fee burning for deflationary pressure |
 | **Token Mint Authority** | Ongoing minting for custom tokens with supply cap enforcement |
 | **Validator Slashing** | Slash penalties for misbehavior, unbonding queue with 500-block delay |
-| **Finality** | Legacy finality indicator is live; verified BFT finality (FINALITY_V2) is built but not activated — see [Finality](staking/finality.md) |
+| **Finality** | Verified BFT finality (FINALITY_V2) is live since block 150: every block carries its parent's ≥⅔-stake certificate — see [Finality](staking/finality.md) |
 | **WebSocket Subscriptions** | Topic-based real-time event streaming (blocks, txs, accounts, tokens) |
 | **HD Wallet Derivation** | BIP-44-like PQC key derivation from master seed (HMAC-SHA256) |
 | **Open Source** | [Apache 2.0 licensed](https://github.com/cyberdreadx/rougechain-node) node software |

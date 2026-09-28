@@ -35,6 +35,7 @@ import { signViaExtension, getRougeChainProvider } from "@/lib/extension-bridge"
 import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { getWalletBalance } from "@/lib/pqc-wallet";
 import { qethToHuman, humanToQeth, formatQethForDisplay, formatTokenAmount } from "@/hooks/use-eth-price";
+import { useTranslation, Trans } from "react-i18next";
 
 type BridgeDirection = "deposit" | "withdraw";
 type BridgeAsset = "ETH" | "USDC" | "XRGE" | "BTC";
@@ -49,6 +50,7 @@ interface EIP1193Provider {
 interface EIP6963ProviderInfo { uuid: string; name: string; icon: string; rdns: string }
 interface EIP6963Detail { info: EIP6963ProviderInfo; provider: EIP1193Provider }
 const ROUGECHAIN_RDNS = "io.rougechain.wallet";
+const QWALLA_RDNS = "app.qwalla.wallet"; // announced by Qwalla's dApp browser (EIP-6963)
 
 const ASSETS: { id: BridgeAsset; label: string; icon: string; l1Label: string }[] = [
   { id: "ETH", label: "ETH", icon: "Ξ", l1Label: "qETH" },
@@ -58,6 +60,7 @@ const ASSETS: { id: BridgeAsset; label: string; icon: string; l1Label: string }[
 ];
 
 const Bridge = () => {
+  const { t } = useTranslation();
   const [config, setConfig] = useState<BridgeConfig | null>(null);
   const [xrgeConfig, setXrgeConfig] = useState<XrgeBridgeConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
@@ -115,8 +118,13 @@ const Bridge = () => {
 
   // Prefer the RougeChain wallet when present; otherwise the user's choice, else
   // the first announced provider, else the legacy evmProvider.
-  const preferredDetail = discovered.find((d) => d.info.rdns === ROUGECHAIN_RDNS);
+  const preferredDetail = discovered.find((d) => d.info.rdns === ROUGECHAIN_RDNS) ?? discovered.find((d) => d.info.rdns === QWALLA_RDNS);
   const selectedDetail = discovered.find((d) => d.info.rdns === selectedRdns) ?? preferredDetail ?? discovered[0];
+  // Qwalla's dApp browser injects window.ethereum with `isQwalla` and does not announce via EIP-6963:
+  // name it explicitly instead of falling back to the generic "Base wallet" label.
+  const legacyEth = typeof window !== "undefined" ? (window as unknown as { ethereum?: { isQwalla?: boolean; isRougeChain?: boolean; isCoinbaseWallet?: boolean; isMetaMask?: boolean } }).ethereum : undefined;
+  const legacyWalletName = legacyEth?.isQwalla ? "Qwalla Wallet" : legacyEth?.isRougeChain ? "RougeChain Wallet" : legacyEth?.isCoinbaseWallet ? "Coinbase Wallet" : legacyEth?.isMetaMask ? "MetaMask" : null;
+  const connectWalletName = selectedDetail?.info.name ?? legacyWalletName ?? t("bridge.form.baseWallet");
   const evmProvider = (selectedDetail?.provider
     ?? (window as unknown as { ethereum?: EIP1193Provider }).ethereum) as EIP1193Provider | undefined;
 
@@ -180,7 +188,7 @@ const Bridge = () => {
   const copyText = (value: string, which: "custody" | "recipient" | "deposit", label: string) => {
     navigator.clipboard.writeText(value);
     setCopied(which);
-    toast.success(`${label} copied`);
+    toast.success(t("bridge.toasts.copied", { label }));
     setTimeout(() => setCopied((c) => (c === which ? null : c)), 2000);
   };
 
@@ -199,12 +207,12 @@ const Bridge = () => {
         setBtcDepositAddress(null);
         const err = res.error || "";
         setBtcAddrError(/pool/i.test(err)
-          ? "Setting up your deposit address, try again in a moment."
-          : (err || "Couldn't fetch a deposit address. Try again."));
+          ? t("bridge.btc.addressWarmingUp")
+          : (err || t("bridge.btc.addressFetchFailed")));
       }
     } catch (e) {
       setBtcDepositAddress(null);
-      setBtcAddrError(e instanceof Error ? e.message : "Couldn't fetch a deposit address. Try again.");
+      setBtcAddrError(e instanceof Error ? e.message : t("bridge.btc.addressFetchFailed"));
     } finally {
       setBtcAddrLoading(false);
     }
@@ -292,11 +300,11 @@ const Bridge = () => {
 
   const connectEvm = async () => {
     if (typeof evmProvider === "undefined") {
-      toast.error("Install a Base-compatible wallet (MetaMask, Coinbase Wallet, etc.)");
+      toast.error(t("bridge.errors.installWallet"));
       return;
     }
     if (!isKnownBaseChain(detectedChainId) || networkMismatch) {
-      toast.error("Network not confirmed — bridge disabled to protect your funds");
+      toast.error(t("bridge.errors.networkNotConfirmed"));
       return;
     }
     try {
@@ -310,9 +318,9 @@ const Bridge = () => {
       const accounts = await evmProvider.request({ method: "eth_requestAccounts" }) as string[];
       setEvmAddress(accounts[0]);
       setEvmTarget(accounts[0]);
-      toast.success(`Connected to ${chainLabel}`);
+      toast.success(t("bridge.toasts.connected", { chain: chainLabel }));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to connect");
+      toast.error(e instanceof Error ? e.message : t("bridge.errors.connectFailed"));
     }
   };
 
@@ -370,16 +378,16 @@ const Bridge = () => {
       onProgress?.(attempt + 1);
       await new Promise((r) => setTimeout(r, 6000));
     }
-    return { success: false, error: last || "timed out waiting for Base confirmations" };
+    return { success: false, error: last || t("bridge.errors.baseTimeout") };
   };
 
   // Recover a deposit already sent to custody (e.g. a claim that ran too early).
   const handleClaimExisting = async () => {
     const tx = claimTxHash.trim();
-    if (!/^0x[0-9a-fA-F]{64}$/.test(tx)) { toast.error("Enter a valid Base transaction hash (0x + 64 hex)"); return; }
-    if (!evmAddress) { toast.error("Connect the Base wallet that sent the deposit"); return; }
-    if (!rougechainPubkey) { toast.error("Connect your RougeChain wallet to receive the funds"); return; }
-    if (!evmProvider) { toast.error("No Base wallet provider available"); return; }
+    if (!/^0x[0-9a-fA-F]{64}$/.test(tx)) { toast.error(t("bridge.errors.invalidBaseTxHash")); return; }
+    if (!evmAddress) { toast.error(t("bridge.errors.connectSendingBaseWallet")); return; }
+    if (!rougechainPubkey) { toast.error(t("bridge.errors.connectRougeToReceive")); return; }
+    if (!evmProvider) { toast.error(t("bridge.errors.noBaseProvider")); return; }
     setClaimBusy(true);
     try {
       const recipient = rougechainPubkey;
@@ -389,20 +397,20 @@ const Bridge = () => {
       try {
         sig = await evmProvider.request({ method: "personal_sign", params: [msgHex, evmAddress] }) as string;
       } catch {
-        toast.error("Signature rejected — sign with the Base wallet that sent the deposit");
+        toast.error(t("bridge.errors.signatureRejected"));
         setClaimBusy(false);
         return;
       }
       const claim = await pollBridgeClaim(tx, sig, recipient, claimToken);
       if (claim.success) {
-        toast.success(`Claimed! ${claimToken === "USDC" ? "qUSDC" : "qETH"} minted to your RougeChain wallet.`);
+        toast.success(t("bridge.toasts.claimed", { token: claimToken === "USDC" ? "qUSDC" : "qETH" }));
         setClaimTxHash("");
         setTimeout(() => { refreshBalances(); refreshEvmBalances(); }, 3000);
       } else {
-        toast.error(claim.error || "Claim failed");
+        toast.error(claim.error || t("bridge.errors.claimFailed"));
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Claim failed");
+      toast.error(e instanceof Error ? e.message : t("bridge.errors.claimFailed"));
     } finally {
       setClaimBusy(false);
     }
@@ -424,28 +432,28 @@ const Bridge = () => {
       onProgress?.(attempt + 1);
       await new Promise((r) => setTimeout(r, 6000));
     }
-    return { success: false, error: last || "timed out waiting for Bitcoin confirmations" };
+    return { success: false, error: last || t("bridge.errors.bitcoinTimeout") };
   };
 
   // Claim a BTC deposit by txid: used both for a fresh deposit and to recover an
   // existing one sent earlier (mirrors handleClaimExisting for ETH/USDC).
   const handleBtcClaim = async () => {
     const txid = btcTxid.trim().replace(/^0x/, "");
-    if (!/^[0-9a-fA-F]{64}$/.test(txid)) { toast.error("Enter a valid Bitcoin transaction id (64 hex characters)"); return; }
-    if (!rougechainPubkey) { toast.error("Connect your RougeChain wallet to receive the qBTC"); return; }
+    if (!/^[0-9a-fA-F]{64}$/.test(txid)) { toast.error(t("bridge.errors.invalidBtcTxid")); return; }
+    if (!rougechainPubkey) { toast.error(t("bridge.errors.connectRougeToReceiveQbtc")); return; }
     setBtcClaimBusy(true);
-    setStep("Waiting for Bitcoin confirmations…");
+    setStep(t("bridge.steps.waitingBitcoin"));
     try {
-      const claim = await pollBtcClaim(txid, rougeAddress, (a) => setStep(`Waiting for Bitcoin confirmations… (${a}/30)`));
+      const claim = await pollBtcClaim(txid, rougeAddress, (a) => setStep(t("bridge.steps.waitingBitcoinAttempt", { attempt: a })));
       if (claim.success) {
-        toast.success("Claimed! qBTC minted to your RougeChain wallet.");
+        toast.success(t("bridge.toasts.claimedQbtc"));
         setBtcTxid("");
         setTimeout(() => { refreshBalances(); }, 3000);
       } else {
-        toast.info(`Deposit not confirmed yet — Bitcoin can take a while. Re-paste the txid to claim once it confirms.${claim.error ? ` (${claim.error})` : ""}`);
+        toast.info(`${t("bridge.toasts.btcNotConfirmedYet")}${claim.error ? ` (${claim.error})` : ""}`);
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "BTC claim failed");
+      toast.error(e instanceof Error ? e.message : t("bridge.errors.btcClaimFailed"));
     } finally {
       setBtcClaimBusy(false);
       setStep("");
@@ -453,47 +461,47 @@ const Bridge = () => {
   };
 
   const handleDeposit = async () => {
-    if (!bridgeSafe) { toast.error("Network not confirmed — bridge disabled to protect your funds"); return; }
+    if (!bridgeSafe) { toast.error(t("bridge.errors.networkNotConfirmed")); return; }
     // BTC has no wallet-connect send: the deposit is manual (OP_RETURN) and the
     // "deposit" action is really claiming by the pasted Bitcoin txid.
     if (asset === "BTC") { await handleBtcClaim(); return; }
-    if (!evmAddress) { toast.error("Connect your Base wallet first"); return; }
-    if (!evmProvider) { toast.error("No Base wallet available"); return; }
-    if (!rougechainPubkey) { toast.error("RougeChain wallet not connected"); return; }
+    if (!evmAddress) { toast.error(t("bridge.errors.connectBaseFirst")); return; }
+    if (!evmProvider) { toast.error(t("bridge.errors.noBaseWallet")); return; }
+    if (!rougechainPubkey) { toast.error(t("bridge.errors.rougeNotConnected")); return; }
     const amountNum = parseFloat(amount);
-    if (isNaN(amountNum) || amountNum <= 0) { toast.error("Enter a valid amount"); return; }
+    if (isNaN(amountNum) || amountNum <= 0) { toast.error(t("bridge.errors.invalidAmount")); return; }
 
-    if (asset === "ETH" && amountNum > evmEthBalance) { toast.error("Insufficient ETH balance on Base"); return; }
-    if (asset === "USDC" && amountNum > evmUsdcBalance) { toast.error("Insufficient USDC balance on Base"); return; }
-    if (asset === "XRGE" && amountNum > evmXrgeBalance) { toast.error("Insufficient XRGE balance on Base"); return; }
+    if (asset === "ETH" && amountNum > evmEthBalance) { toast.error(t("bridge.errors.insufficientOnBase", { symbol: "ETH" })); return; }
+    if (asset === "USDC" && amountNum > evmUsdcBalance) { toast.error(t("bridge.errors.insufficientOnBase", { symbol: "USDC" })); return; }
+    if (asset === "XRGE" && amountNum > evmXrgeBalance) { toast.error(t("bridge.errors.insufficientOnBase", { symbol: "XRGE" })); return; }
 
     setProcessing(true);
 
     try {
       if (asset === "XRGE") {
-        if (!xrgeConfig?.vaultAddress || !xrgeConfig?.tokenAddress) { toast.error("XRGE bridge not fully configured"); setProcessing(false); return; }
+        if (!xrgeConfig?.vaultAddress || !xrgeConfig?.tokenAddress) { toast.error(t("bridge.errors.xrgeNotConfigured")); setProcessing(false); return; }
         const tokenAddr = xrgeConfig.tokenAddress;
         const vaultAddr = xrgeConfig.vaultAddress;
         const amountWei = "0x" + (BigInt(Math.floor(amountNum)) * 10n ** 18n).toString(16);
 
-        setStep("Approving XRGE...");
+        setStep(t("bridge.steps.approvingXrge"));
         const approveData = `0x095ea7b3${vaultAddr.slice(2).padStart(64, "0")}${BigInt(amountWei).toString(16).padStart(64, "0")}`;
         const approveTxHash = await evmProvider.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: tokenAddr, data: approveData }] }) as string;
 
-        setStep("Waiting for approval confirmation...");
+        setStep(t("bridge.steps.waitingApproval"));
         for (let i = 0; i < 30; i++) {
           await new Promise(r => setTimeout(r, 2000));
           const receipt = await evmProvider.request({ method: "eth_getTransactionReceipt", params: [approveTxHash] });
           if (receipt) break;
         }
 
-        setStep("Depositing to vault...");
+        setStep(t("bridge.steps.depositingVault"));
         const pubkeyHex = Array.from(new TextEncoder().encode(rougechainPubkey)).map(b => b.toString(16).padStart(2, "0")).join("");
         const paddedPubkey = pubkeyHex.padEnd(Math.ceil(pubkeyHex.length / 64) * 64, "0");
         const depositData = "0xf1215d25" + BigInt(amountWei).toString(16).padStart(64, "0") + (64).toString(16).padStart(64, "0") + rougechainPubkey.length.toString(16).padStart(64, "0") + paddedPubkey;
         const depositTx = await evmProvider.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: vaultAddr, data: depositData, gas: "0x7A120" }] }) as string;
 
-        setStep("Waiting for deposit confirmation...");
+        setStep(t("bridge.steps.waitingDeposit"));
         let depositConfirmed = false;
         for (let i = 0; i < 30; i++) {
           await new Promise(r => setTimeout(r, 2000));
@@ -503,13 +511,13 @@ const Bridge = () => {
             break;
           }
         }
-        if (!depositConfirmed) { toast.error("Deposit transaction failed or timed out on Base"); setProcessing(false); return; }
+        if (!depositConfirmed) { toast.error(t("bridge.errors.depositTxFailed")); setProcessing(false); return; }
 
         // The claim is only honored after a minimum number of Base confirmations,
         // so the first attempt right after the deposit usually reports "pending".
         // Poll (the claim is idempotent via its SHA-256 nullifier) until it lands
         // rather than showing a one-shot "claim pending" false alarm.
-        setStep("Waiting for Base confirmations…");
+        setStep(t("bridge.steps.waitingBase"));
         const claimParams = { evmTxHash: depositTx, evmAddress, amount: (BigInt(Math.floor(amountNum)) * 10n ** 18n).toString(), recipientRougechainPubkey: rougechainPubkey };
         let claimed = false;
         let lastError = "";
@@ -517,23 +525,23 @@ const Bridge = () => {
           const claim = await claimXrgeBridgeDeposit(claimParams);
           if (claim.success) { claimed = true; break; }
           lastError = claim.error || "";
-          setStep(`Waiting for Base confirmations… (${attempt + 1}/30)`);
+          setStep(t("bridge.steps.waitingBaseAttempt", { attempt: attempt + 1 }));
           await new Promise((r) => setTimeout(r, 6000));
         }
         if (claimed) {
-          toast.success(`Bridged ${amountNum} XRGE to RougeChain!`);
+          toast.success(t("bridge.toasts.bridgedXrge", { amount: amountNum }));
           setXrgeL1Balance((prev) => prev + amountNum);
           setEvmXrgeBalance((prev) => prev - amountNum);
         } else {
           // Still not confirmed after ~3 min — the deposit is valid and the node's
           // auto-claim will finish it; nothing more for the user to do.
-          toast.info(`Deposit confirmed on Base — your XRGE will arrive on RougeChain automatically once it finalizes.${lastError ? ` (${lastError})` : ""}`);
+          toast.info(`${t("bridge.toasts.xrgeArrivesAutomatically")}${lastError ? ` (${lastError})` : ""}`);
         }
       } else {
-        if (!config?.custodyAddress) { toast.error("Bridge not configured"); setProcessing(false); return; }
+        if (!config?.custodyAddress) { toast.error(t("bridge.errors.notConfigured")); setProcessing(false); return; }
 
         if (asset === "ETH") {
-          setStep("Sending ETH to bridge...");
+          setStep(t("bridge.steps.sendingToBridge", { symbol: "ETH" }));
           const weiHex = "0x" + (BigInt(Math.round(amountNum * 1e18))).toString(16);
           const txHash = await evmProvider.request({
             method: "eth_sendTransaction",
@@ -541,7 +549,7 @@ const Bridge = () => {
           });
           await new Promise(r => setTimeout(r, 5000));
 
-          setStep("Signing claim...");
+          setStep(t("bridge.steps.signingClaim"));
           const recipient = rougechainPubkey;
           const claimMsg = `RougeChain bridge claim\nTx: ${txHash}\nRecipient: ${recipient}`;
           const msgHex = "0x" + Array.from(new TextEncoder().encode(claimMsg)).map(b => b.toString(16).padStart(2, "0")).join("");
@@ -552,24 +560,24 @@ const Bridge = () => {
             // Smart contract wallets (Base wallet) may not support personal_sign — backend handles this
           }
 
-          setStep("Waiting for Base confirmations…");
-          const claim = await pollBridgeClaim(txHash as string, sig, recipient, "ETH", (a) => setStep(`Waiting for Base confirmations… (${a}/30)`));
+          setStep(t("bridge.steps.waitingBase"));
+          const claim = await pollBridgeClaim(txHash as string, sig, recipient, "ETH", (a) => setStep(t("bridge.steps.waitingBaseAttempt", { attempt: a })));
           if (claim.success) {
-            toast.success(`Bridged ${amountNum} ETH → qETH!`);
+            toast.success(t("bridge.toasts.bridgedEvm", { amount: amountNum, from: "ETH", to: "qETH" }));
             setQethBalance((prev) => prev + humanToQeth(amountNum));
             setEvmEthBalance((prev) => prev - amountNum);
           } else {
-            toast.info(`Deposit sent — qETH arrives once it confirms. If it doesn't, use "Claim an existing deposit" with tx ${(txHash as string).slice(0, 12)}… (${claim.error || ""})`);
+            toast.info(t("bridge.toasts.depositSentPending", { token: "qETH", tx: (txHash as string).slice(0, 12), error: claim.error || "" }));
           }
         } else {
-          setStep("Sending USDC to bridge...");
+          setStep(t("bridge.steps.sendingToBridge", { symbol: "USDC" }));
           const usdcAddr = usdcAddress;
           const usdcAmount = "0x" + (BigInt(Math.round(amountNum * 1e6))).toString(16);
           const transferData = `0xa9059cbb${config.custodyAddress.slice(2).padStart(64, "0")}${BigInt(usdcAmount).toString(16).padStart(64, "0")}`;
           const txHash = await evmProvider.request({ method: "eth_sendTransaction", params: [{ from: evmAddress, to: usdcAddr, data: transferData }] });
           await new Promise(r => setTimeout(r, 5000));
 
-          setStep("Signing claim...");
+          setStep(t("bridge.steps.signingClaim"));
           const recipient = rougechainPubkey;
           const claimMsg = `RougeChain bridge claim\nTx: ${txHash}\nRecipient: ${recipient}`;
           const msgHex = "0x" + Array.from(new TextEncoder().encode(claimMsg)).map(b => b.toString(16).padStart(2, "0")).join("");
@@ -580,21 +588,21 @@ const Bridge = () => {
             // Smart contract wallets may not support personal_sign
           }
 
-          setStep("Waiting for Base confirmations…");
-          const claim = await pollBridgeClaim(txHash as string, sig, recipient, "USDC", (a) => setStep(`Waiting for Base confirmations… (${a}/30)`));
+          setStep(t("bridge.steps.waitingBase"));
+          const claim = await pollBridgeClaim(txHash as string, sig, recipient, "USDC", (a) => setStep(t("bridge.steps.waitingBaseAttempt", { attempt: a })));
           if (claim.success) {
-            toast.success(`Bridged ${amountNum} USDC → qUSDC!`);
+            toast.success(t("bridge.toasts.bridgedEvm", { amount: amountNum, from: "USDC", to: "qUSDC" }));
             setQusdcBalance((prev) => prev + Math.round(amountNum * 1e6));
             setEvmUsdcBalance((prev) => prev - amountNum);
           } else {
-            toast.info(`Deposit sent — qUSDC arrives once it confirms. If it doesn't, use "Claim an existing deposit" with tx ${(txHash as string).slice(0, 12)}… (${claim.error || ""})`);
+            toast.info(t("bridge.toasts.depositSentPending", { token: "qUSDC", tx: (txHash as string).slice(0, 12), error: claim.error || "" }));
           }
         }
       }
       setAmount("");
       setTimeout(() => { refreshBalances(); refreshEvmBalances(); }, 3000);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Bridge deposit failed");
+      toast.error(e instanceof Error ? e.message : t("bridge.errors.depositFailed"));
     } finally {
       setProcessing(false);
       setStep("");
@@ -630,36 +638,36 @@ const Bridge = () => {
   };
 
   const handleWithdraw = async () => {
-    if (!bridgeSafe) { toast.error("Network not confirmed — bridge disabled to protect your funds"); return; }
+    if (!bridgeSafe) { toast.error(t("bridge.errors.networkNotConfirmed")); return; }
     const wallet = loadUnifiedWallet();
     const hasKey = !!wallet?.signingPrivateKey;
     const hasProvider = !!getRougeChainProvider();
-    if (!wallet?.signingPublicKey || (!hasKey && !hasProvider)) { toast.error("Connect your RougeChain wallet first"); return; }
+    if (!wallet?.signingPublicKey || (!hasKey && !hasProvider)) { toast.error(t("bridge.errors.connectRougeFirst")); return; }
     const amountNum = parseFloat(amount);
-    if (isNaN(amountNum) || amountNum <= 0) { toast.error("Enter a valid amount"); return; }
+    if (isNaN(amountNum) || amountNum <= 0) { toast.error(t("bridge.errors.invalidAmount")); return; }
 
     // qBTC withdraws to a Bitcoin address (goes in the evmAddress field verbatim).
     if (asset === "BTC") {
       const btcAddr = evmTarget.trim();
-      if (btcAddr.length < 14) { toast.error("Enter a valid Bitcoin address"); return; }
+      if (btcAddr.length < 14) { toast.error(t("bridge.errors.invalidBtcAddress")); return; }
       const amountUnits = Math.round(amountNum * 1e8); // 1 unit = 1 satoshi
-      if (amountUnits <= 0) { toast.error("Enter a valid qBTC amount"); return; }
-      if (amountUnits > qbtcBalance) { toast.error("Insufficient qBTC balance"); return; }
+      if (amountUnits <= 0) { toast.error(t("bridge.errors.invalidQbtcAmount")); return; }
+      if (amountUnits > qbtcBalance) { toast.error(t("bridge.errors.insufficientBalance", { symbol: "qBTC" })); return; }
       setProcessing(true);
       try {
-        setStep("Submitting withdrawal...");
+        setStep(t("bridge.steps.submittingWithdrawal"));
         const signed = await signBridgeWithdraw(wallet.signingPublicKey, wallet.signingPrivateKey, amountUnits, btcAddr, "qBTC");
         const result = await bridgeWithdraw({ fromPublicKey: wallet.signingPublicKey, amountUnits, evmAddress: btcAddr, tokenSymbol: "qBTC", signature: signed.signature, payload: signed.payload as unknown as Record<string, unknown> });
         if (result.success) {
-          toast.success("Withdrawal queued — the BTC relayer will send BTC to your Bitcoin address.");
+          toast.success(t("bridge.toasts.withdrawQueuedBtc"));
           setQbtcBalance((prev) => prev - amountUnits);
           setAmount("");
           setTimeout(() => { refreshBalances(); }, 3000);
         } else {
-          toast.error(result.error || "Withdrawal failed");
+          toast.error(result.error || t("bridge.errors.withdrawFailed"));
         }
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Withdrawal failed");
+        toast.error(e instanceof Error ? e.message : t("bridge.errors.withdrawFailed"));
       } finally {
         setProcessing(false);
         setStep("");
@@ -668,7 +676,7 @@ const Bridge = () => {
     }
 
     const evm = evmTarget.trim();
-    if (!evm || (evm.startsWith("0x") ? evm.length !== 42 : evm.length !== 40)) { toast.error("Enter a valid EVM address"); return; }
+    if (!evm || (evm.startsWith("0x") ? evm.length !== 42 : evm.length !== 40)) { toast.error(t("bridge.errors.invalidEvmAddress")); return; }
     const evmAddr = evm.startsWith("0x") ? evm : `0x${evm}`;
 
     setProcessing(true);
@@ -676,34 +684,34 @@ const Bridge = () => {
     try {
       let success = false;
       if (asset === "XRGE") {
-        if (amountNum > xrgeL1Balance) { toast.error("Insufficient XRGE balance"); setProcessing(false); return; }
-        setStep("Submitting withdrawal...");
+        if (amountNum > xrgeL1Balance) { toast.error(t("bridge.errors.insufficientBalance", { symbol: "XRGE" })); setProcessing(false); return; }
+        setStep(t("bridge.steps.submittingWithdrawal"));
         const signed = await signBridgeWithdraw(wallet.signingPublicKey, wallet.signingPrivateKey, amountNum, evmAddr, "XRGE");
         const result = await bridgeWithdrawXrge({ fromPublicKey: wallet.signingPublicKey, amount: amountNum, evmAddress: evmAddr, signature: signed.signature, payload: signed.payload as unknown as Record<string, unknown> });
         if (result.success) {
-          toast.success(`Withdrawal submitted! The relayer will release XRGE on Base.`);
+          toast.success(t("bridge.toasts.withdrawSubmittedXrge"));
           setXrgeL1Balance((prev) => prev - amountNum);
           success = true;
         } else {
-          toast.error(result.error || "Withdrawal failed");
+          toast.error(result.error || t("bridge.errors.withdrawFailed"));
         }
       } else {
         const isUsdc = asset === "USDC";
         const amountUnits = isUsdc ? Math.round(amountNum * 1e6) : humanToQeth(amountNum);
         const currentBalance = isUsdc ? qusdcBalance : qethBalance;
         const tokenLabel = isUsdc ? "qUSDC" : "qETH";
-        if (amountUnits > currentBalance) { toast.error(`Insufficient ${tokenLabel} balance`); setProcessing(false); return; }
+        if (amountUnits > currentBalance) { toast.error(t("bridge.errors.insufficientBalance", { symbol: tokenLabel })); setProcessing(false); return; }
 
-        setStep("Submitting withdrawal...");
+        setStep(t("bridge.steps.submittingWithdrawal"));
         const signed = await signBridgeWithdraw(wallet.signingPublicKey, wallet.signingPrivateKey, amountUnits, evmAddr, tokenLabel);
         const result = await bridgeWithdraw({ fromPublicKey: wallet.signingPublicKey, amountUnits, evmAddress: evmAddr, tokenSymbol: tokenLabel, signature: signed.signature, payload: signed.payload as unknown as Record<string, unknown> });
         if (result.success) {
-          toast.success(`Withdrawal submitted! The relayer will send ${asset} to your Base address.`);
+          toast.success(t("bridge.toasts.withdrawSubmittedEvm", { symbol: asset }));
           if (isUsdc) setQusdcBalance((prev) => prev - amountUnits);
           else setQethBalance((prev) => prev - amountUnits);
           success = true;
         } else {
-          toast.error(result.error || "Withdrawal failed");
+          toast.error(result.error || t("bridge.errors.withdrawFailed"));
         }
       }
       setAmount("");
@@ -711,7 +719,7 @@ const Bridge = () => {
         setTimeout(() => { refreshBalances(); refreshEvmBalances(); }, 3000);
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Withdrawal failed");
+      toast.error(e instanceof Error ? e.message : t("bridge.errors.withdrawFailed"));
     } finally {
       setProcessing(false);
       setStep("");
@@ -721,7 +729,7 @@ const Bridge = () => {
   if (configLoading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
-        <DeloreanLoader text="Warming up the flux capacitor..." />
+        <DeloreanLoader text={t("bridge.loader")} />
       </div>
     );
   }
@@ -732,7 +740,7 @@ const Bridge = () => {
         <Card>
           <CardContent className="p-8 text-center">
             <ArrowRightLeft className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
-            <p className="text-muted-foreground">Bridge is not enabled on this node.</p>
+            <p className="text-muted-foreground">{t("bridge.notEnabled")}</p>
           </CardContent>
         </Card>
       </div>
@@ -748,13 +756,12 @@ const Bridge = () => {
         <Card className="border-amber-500/40">
           <CardContent className="p-8 text-center space-y-2">
             <ArrowRightLeft className="w-10 h-10 mx-auto mb-1 text-amber-500" />
-            <p className="font-semibold text-foreground">Network not confirmed</p>
+            <p className="font-semibold text-foreground">{t("bridge.networkUnknown.title")}</p>
             <p className="text-sm text-muted-foreground">
-              This node didn't report a recognized Base chain, so the bridge can't
-              tell whether you're on Base mainnet or a testnet. Bridging is disabled
-              here to protect your funds. Check the node's bridge config
-              (<code className="text-xs">chainId</code> in <code className="text-xs">/bridge/config</code>)
-              and reload.
+              <Trans
+                i18nKey="bridge.networkUnknown.body"
+                components={{ code: <code className="text-xs" /> }}
+              />
             </p>
           </CardContent>
         </Card>
@@ -771,13 +778,22 @@ const Bridge = () => {
         <Card className="border-red-500/50">
           <CardContent className="p-8 text-center space-y-2">
             <ArrowRightLeft className="w-10 h-10 mx-auto mb-1 text-red-500" />
-            <p className="font-semibold text-foreground">Network mismatch — bridge disabled</p>
+            <p className="font-semibold text-foreground">{t("bridge.networkMismatch.title")}</p>
             <p className="text-sm text-muted-foreground">
-              You're on the RougeChain <span className="font-medium capitalize">{activeNetwork}</span> network,
-              but this node's bridge reports <span className="font-medium">{chainLabel}</span> (chain {detectedChainId}).
-              A {activeNetwork} network must not bridge {activeNetwork === "testnet" ? "real mainnet assets" : "testnet assets"},
-              so bridging is disabled to protect your funds. This is a node misconfiguration —
-              its bridge <code className="text-xs">chainId</code>/token must match the {activeNetwork} Base chain.
+              <Trans
+                i18nKey="bridge.networkMismatch.body"
+                values={{
+                  network: activeNetwork,
+                  chainLabel,
+                  chainId: detectedChainId,
+                  assets: activeNetwork === "testnet" ? t("bridge.networkMismatch.realMainnetAssets") : t("bridge.networkMismatch.testnetAssets"),
+                }}
+                components={{
+                  net: <span className="font-medium capitalize" />,
+                  chain: <span className="font-medium" />,
+                  code: <code className="text-xs" />,
+                }}
+              />
             </p>
           </CardContent>
         </Card>
@@ -796,8 +812,8 @@ const Bridge = () => {
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
 
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-foreground">Bridge</h1>
-          <p className="text-sm text-muted-foreground mt-1">Move assets between Base and RougeChain</p>
+          <h1 className="text-2xl font-bold text-foreground">{t("bridge.title")}</h1>
+          <p className="text-sm text-muted-foreground mt-1">{t("bridge.subtitle")}</p>
         </div>
 
         <Card className="border-border/50 overflow-hidden">
@@ -810,14 +826,14 @@ const Bridge = () => {
                 className={`flex items-center justify-center gap-2 py-3.5 text-sm font-medium transition-colors ${direction === "deposit" ? "bg-primary/10 text-primary border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"}`}
               >
                 <ArrowDownToLine className="w-4 h-4" />
-                Deposit
+                {t("bridge.tabs.deposit")}
               </button>
               <button
                 onClick={() => setDirection("withdraw")}
                 className={`flex items-center justify-center gap-2 py-3.5 text-sm font-medium transition-colors ${direction === "withdraw" ? "bg-primary/10 text-primary border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"}`}
               >
                 <ArrowUpFromLine className="w-4 h-4" />
-                Withdraw
+                {t("bridge.tabs.withdraw")}
               </button>
             </div>
 
@@ -825,7 +841,7 @@ const Bridge = () => {
 
               {/* Asset selector — dropdown showing each asset's readable L1 balance */}
               <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Asset</Label>
+                <Label className="text-xs text-muted-foreground">{t("bridge.asset")}</Label>
                 <Select value={asset} onValueChange={(v) => setAsset(v as BridgeAsset)}>
                   <SelectTrigger className="w-full h-12">
                     <SelectValue />
@@ -852,52 +868,52 @@ const Bridge = () => {
                 <div className="space-y-4">
                   {!rougechainPubkey ? (
                     <div className="rounded-xl bg-muted/30 border border-border/50 p-4 text-sm text-muted-foreground text-center">
-                      Connect your RougeChain wallet to get your Bitcoin deposit address.
+                      {t("bridge.btc.connectForAddress")}
                     </div>
                   ) : btcDepositReceived !== null ? (
                     <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-4 space-y-2 text-center">
                       <Check className="w-8 h-8 mx-auto text-emerald-500" />
                       <p className="text-sm font-medium text-foreground">
-                        Received — {formatTokenAmount(btcDepositReceived, "qBTC")} qBTC credited
+                        {t("bridge.btc.received", { amount: formatTokenAmount(btcDepositReceived, "qBTC") })}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Your qBTC is now in your RougeChain wallet.
+                        {t("bridge.btc.nowInWallet")}
                       </p>
                     </div>
                   ) : (
                     <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-3">
-                      <span className="text-sm font-medium text-foreground">Your Bitcoin deposit address</span>
-                      {btcAddrLoading && <DeloreanLoader text="Fetching your deposit address…" />}
+                      <span className="text-sm font-medium text-foreground">{t("bridge.btc.yourDepositAddress")}</span>
+                      {btcAddrLoading && <DeloreanLoader text={t("bridge.btc.fetchingAddress")} />}
                       {!btcAddrLoading && btcAddrError && (
                         <div className="space-y-2">
                           <p className="text-xs text-amber-500">{btcAddrError}</p>
                           <Button variant="outline" size="sm" onClick={loadBtcDepositAddress}>
-                            Try again
+                            {t("bridge.btc.tryAgain")}
                           </Button>
                         </div>
                       )}
                       {!btcAddrLoading && btcDepositAddress && (<>
                         {btcDepositQr && (
                           <div className="flex justify-center">
-                            <img src={btcDepositQr} alt="Bitcoin deposit address QR" className="w-40 h-40 rounded-lg bg-white p-2" />
+                            <img src={btcDepositQr} alt={t("bridge.btc.depositQrAlt")} className="w-40 h-40 rounded-lg bg-white p-2" />
                           </div>
                         )}
                         <div className="flex items-center gap-2 rounded-lg bg-background border border-border px-3 py-2">
                           <code className="text-xs font-mono break-all flex-1 text-foreground">{btcDepositAddress}</code>
                           <button
                             type="button"
-                            onClick={() => copyText(btcDepositAddress, "deposit", "Deposit address")}
+                            onClick={() => copyText(btcDepositAddress, "deposit", t("bridge.btc.depositAddressLabel"))}
                             className="shrink-0 p-1 rounded hover:bg-muted"
-                            title="Copy deposit address"
+                            title={t("bridge.btc.copyDepositAddress")}
                           >
                             {copied === "deposit" ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-muted-foreground" />}
                           </button>
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          Send BTC from any wallet — any amount, no memo or tag needed. Your qBTC will appear automatically once the deposit confirms (~30–60 min on Bitcoin).
+                          {t("bridge.btc.sendFromAnyWallet")}
                         </p>
                         {config?.btcNetwork === "testnet" && (
-                          <p className="text-xs text-amber-500">Testnet — send testnet BTC only.</p>
+                          <p className="text-xs text-amber-500">{t("bridge.btc.testnetOnly")}</p>
                         )}
                       </>)}
                     </div>
@@ -906,38 +922,38 @@ const Bridge = () => {
                   {/* Advanced: legacy OP_RETURN deposit + manual claim by txid */}
                   <Collapsible open={btcAdvancedOpen} onOpenChange={setBtcAdvancedOpen}>
                     <CollapsibleTrigger className="flex items-center justify-between w-full text-xs text-muted-foreground hover:text-foreground transition-colors py-1">
-                      <span>Advanced: deposit with OP_RETURN</span>
+                      <span>{t("bridge.btc.advanced.title")}</span>
                       <ChevronDown className={`w-4 h-4 transition-transform ${btcAdvancedOpen ? "rotate-180" : ""}`} />
                     </CollapsibleTrigger>
                     <CollapsibleContent className="space-y-4 pt-3">
                       <p className="text-xs text-muted-foreground">
-                        For power users, or to recover a manual deposit already sent with an OP_RETURN binding.
+                        {t("bridge.btc.advanced.intro")}
                       </p>
 
                       {/* Step 1: send BTC to custody */}
                       <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-3">
                         <div className="flex items-center gap-2">
                           <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/15 text-primary text-xs font-semibold">1</span>
-                          <span className="text-sm font-medium text-foreground">Send BTC to the custody address</span>
+                          <span className="text-sm font-medium text-foreground">{t("bridge.btc.advanced.step1")}</span>
                         </div>
                         {btcCustodyQr && (
                           <div className="flex justify-center">
-                            <img src={btcCustodyQr} alt="Bitcoin custody address QR" className="w-40 h-40 rounded-lg bg-white p-2" />
+                            <img src={btcCustodyQr} alt={t("bridge.btc.advanced.custodyQrAlt")} className="w-40 h-40 rounded-lg bg-white p-2" />
                           </div>
                         )}
                         <div className="flex items-center gap-2 rounded-lg bg-background border border-border px-3 py-2">
                           <code className="text-xs font-mono break-all flex-1 text-foreground">{config?.btcCustodyAddress ?? "—"}</code>
                           <button
                             type="button"
-                            onClick={() => config?.btcCustodyAddress && copyText(config.btcCustodyAddress, "custody", "Custody address")}
+                            onClick={() => config?.btcCustodyAddress && copyText(config.btcCustodyAddress, "custody", t("bridge.btc.advanced.custodyAddressLabel"))}
                             className="shrink-0 p-1 rounded hover:bg-muted"
-                            title="Copy custody address"
+                            title={t("bridge.btc.advanced.copyCustodyAddress")}
                           >
                             {copied === "custody" ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-muted-foreground" />}
                           </button>
                         </div>
                         {config?.btcNetwork === "testnet" && (
-                          <p className="text-xs text-amber-500">Testnet — send testnet BTC only.</p>
+                          <p className="text-xs text-amber-500">{t("bridge.btc.testnetOnly")}</p>
                         )}
                       </div>
 
@@ -945,25 +961,25 @@ const Bridge = () => {
                       <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-3">
                         <div className="flex items-center gap-2">
                           <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/15 text-primary text-xs font-semibold">2</span>
-                          <span className="text-sm font-medium text-foreground">Add an OP_RETURN with your RougeChain address</span>
+                          <span className="text-sm font-medium text-foreground">{t("bridge.btc.advanced.step2")}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          In the same transaction, paste this into your wallet's OP_RETURN / memo / data field. It binds the deposit to your wallet — without it the funds can't be credited.
+                          {t("bridge.btc.advanced.step2Help")}
                         </p>
                         <div className="flex items-center gap-2 rounded-lg bg-background border border-border px-3 py-2">
-                          <code className="text-xs font-mono break-all flex-1 text-foreground">{rougeAddress || "Connect your RougeChain wallet…"}</code>
+                          <code className="text-xs font-mono break-all flex-1 text-foreground">{rougeAddress || t("bridge.btc.advanced.connectWalletPlaceholder")}</code>
                           <button
                             type="button"
-                            onClick={() => rougeAddress && copyText(rougeAddress, "recipient", "RougeChain address")}
+                            onClick={() => rougeAddress && copyText(rougeAddress, "recipient", t("bridge.btc.advanced.rougeAddressLabel"))}
                             disabled={!rougeAddress}
                             className="shrink-0 p-1 rounded hover:bg-muted disabled:opacity-40"
-                            title="Copy RougeChain address"
+                            title={t("bridge.btc.advanced.copyRougeAddress")}
                           >
                             {copied === "recipient" ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-muted-foreground" />}
                           </button>
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          OP_RETURN is supported by wallets like Sparrow, Electrum, BlueWallet (advanced) and bitcoinjs. Custodial apps (Coinbase, Cash App) usually can't attach one — use an OP_RETURN-capable wallet for this deposit.
+                          {t("bridge.btc.advanced.opReturnWallets")}
                         </p>
                       </div>
 
@@ -971,28 +987,28 @@ const Bridge = () => {
                       <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-3">
                         <div className="flex items-center gap-2">
                           <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/15 text-primary text-xs font-semibold">3</span>
-                          <span className="text-sm font-medium text-foreground">Paste the Bitcoin txid to claim qBTC</span>
+                          <span className="text-sm font-medium text-foreground">{t("bridge.btc.advanced.step3")}</span>
                         </div>
                         <Input
-                          placeholder="Bitcoin transaction id (64 hex characters)"
+                          placeholder={t("bridge.btc.advanced.txidPlaceholder")}
                           value={btcTxid}
                           onChange={(e) => setBtcTxid(e.target.value)}
                           className="font-mono text-xs"
                         />
-                        {btcClaimBusy && <DeloreanLoader text={step || "Waiting for Bitcoin confirmations…"} />}
+                        {btcClaimBusy && <DeloreanLoader text={step || t("bridge.steps.waitingBitcoin")} />}
                         <Button
                           onClick={handleBtcClaim}
                           disabled={btcClaimBusy || !btcTxid.trim() || !rougechainPubkey}
                           className="w-full h-12 text-base gap-2"
                         >
                           {btcClaimBusy ? (
-                            <><Loader2 className="w-4 h-4 animate-spin" /> {step || "Claiming…"}</>
+                            <><Loader2 className="w-4 h-4 animate-spin" /> {step || t("bridge.claim.claiming")}</>
                           ) : (
-                            <><Bitcoin className="w-4 h-4" /> Claim qBTC</>
+                            <><Bitcoin className="w-4 h-4" /> {t("bridge.btc.advanced.claimButton")}</>
                           )}
                         </Button>
                         <p className="text-xs text-muted-foreground text-center">
-                          Verification waits for Bitcoin confirmations, so this can take a while. Claiming is idempotent — safe to re-paste the same txid later.
+                          {t("bridge.btc.advanced.claimHelp")}
                         </p>
                       </div>
                     </CollapsibleContent>
@@ -1006,15 +1022,15 @@ const Bridge = () => {
               {/* From */}
               <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-                  <span className="text-xs text-muted-foreground">From · {fromChain}</span>
+                  <span className="text-xs text-muted-foreground">{t("bridge.form.from", { chain: fromChain })}</span>
                   {direction === "withdraw" && (
-                    <span className="text-xs text-muted-foreground">Balance: {getL1Balance()}</span>
+                    <span className="text-xs text-muted-foreground">{t("bridge.form.balance", { balance: getL1Balance() })}</span>
                   )}
                   {direction === "deposit" && evmAddress && (
                     <span className="text-xs text-muted-foreground">
-                      Balance: {asset === "ETH" ? evmEthBalance.toLocaleString(undefined, { maximumFractionDigits: 6 }) + " ETH"
+                      {t("bridge.form.balance", { balance: asset === "ETH" ? evmEthBalance.toLocaleString(undefined, { maximumFractionDigits: 6 }) + " ETH"
                         : asset === "USDC" ? evmUsdcBalance.toLocaleString(undefined, { maximumFractionDigits: 2 }) + " USDC"
-                        : evmXrgeBalance.toLocaleString(undefined, { maximumFractionDigits: 6 }) + " XRGE"}
+                        : evmXrgeBalance.toLocaleString(undefined, { maximumFractionDigits: 6 }) + " XRGE" })}
                     </span>
                   )}
                 </div>
@@ -1040,7 +1056,7 @@ const Bridge = () => {
               {/* To */}
               <div className="rounded-xl bg-muted/30 border border-border/50 p-4 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">To · {toChain}</span>
+                  <span className="text-xs text-muted-foreground">{t("bridge.form.to", { chain: toChain })}</span>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-xl font-medium text-foreground/80">
@@ -1054,10 +1070,10 @@ const Bridge = () => {
               {direction === "withdraw" && (
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">
-                    {isBtcAsset ? "Receive at (Bitcoin address)" : "Receive at (Base address)"}
+                    {isBtcAsset ? t("bridge.form.receiveAtBitcoin") : t("bridge.form.receiveAtBase")}
                   </Label>
                   <Input
-                    placeholder={isBtcAsset ? (config?.btcNetwork === "testnet" ? "tb1… / testnet address" : "bc1… / Bitcoin address") : "0x..."}
+                    placeholder={isBtcAsset ? (config?.btcNetwork === "testnet" ? t("bridge.form.btcTestnetAddressPlaceholder") : t("bridge.form.btcAddressPlaceholder")) : "0x..."}
                     value={evmTarget}
                     onChange={(e) => setEvmTarget(e.target.value)}
                     className="font-mono text-sm"
@@ -1067,13 +1083,13 @@ const Bridge = () => {
 
               {/* DeLorean loader during processing */}
               {processing && (
-                <DeloreanLoader text={step || "Processing..."} />
+                <DeloreanLoader text={step || t("bridge.processing")} />
               )}
 
               {/* Wallet picker — shown when more than one injected wallet is present */}
               {direction === "deposit" && !evmAddress && discovered.length > 1 && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">Choose a wallet</Label>
+                  <Label className="text-xs text-muted-foreground">{t("bridge.form.chooseWallet")}</Label>
                   <div className="grid grid-cols-2 gap-2">
                     {discovered.map((d) => {
                       const active = (selectedDetail?.info.rdns ?? "") === d.info.rdns;
@@ -1097,8 +1113,8 @@ const Bridge = () => {
               {direction === "deposit" && !evmAddress ? (
                 <Button onClick={connectEvm} variant="outline" className="w-full gap-2 h-12 whitespace-nowrap text-sm">
                   <Wallet className="w-4 h-4 shrink-0" />
-                  <span className="hidden sm:inline">Connect {selectedDetail?.info.name ?? "Base Wallet"} ({chainLabel})</span>
-                  <span className="sm:hidden">Connect {selectedDetail?.info.name ?? "Base Wallet"}</span>
+                  <span className="hidden sm:inline">{t("bridge.form.connectWalletWithChain", { wallet: connectWalletName, chain: chainLabel })}</span>
+                  <span className="sm:hidden">{t("bridge.form.connectWallet", { wallet: connectWalletName })}</span>
                 </Button>
               ) : (
                 <Button
@@ -1109,17 +1125,17 @@ const Bridge = () => {
                   {processing ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      {step || "Processing..."}
+                      {step || t("bridge.processing")}
                     </>
                   ) : direction === "deposit" ? (
                     <>
                       <ArrowDownToLine className="w-4 h-4" />
-                      Bridge {currentAsset.label} to RougeChain
+                      {t("bridge.form.bridgeTo", { asset: currentAsset.label, chain: "RougeChain" })}
                     </>
                   ) : (
                     <>
                       <ArrowUpFromLine className="w-4 h-4" />
-                      Bridge {currentAsset.l1Label} to {isBtcAsset ? "Bitcoin" : "Base"}
+                      {t("bridge.form.bridgeTo", { asset: currentAsset.l1Label, chain: isBtcAsset ? "Bitcoin" : "Base" })}
                     </>
                   )}
                 </Button>
@@ -1137,11 +1153,11 @@ const Bridge = () => {
               <p className="text-xs text-muted-foreground text-center">
                 {direction === "deposit"
                   ? asset === "XRGE"
-                    ? "Approve + deposit in two Base wallet transactions. 1:1 conversion."
-                    : `Send ${asset} via your Base wallet → auto-claim ${currentAsset.l1Label} on RougeChain. 1:1 conversion.`
+                    ? t("bridge.info.depositXrge")
+                    : t("bridge.info.depositEvm", { asset, l1: currentAsset.l1Label })
                   : isBtcAsset
-                    ? "Submit withdrawal → the BTC relayer sends Bitcoin to your address. Confirmation time depends on the Bitcoin network."
-                    : "Submit withdrawal → relayer processes on Base (typically < 2 min)."
+                    ? t("bridge.info.withdrawBtc")
+                    : t("bridge.info.withdrawEvm")
                 }
               </p>
 
@@ -1155,13 +1171,13 @@ const Bridge = () => {
           <CardContent className="p-4 space-y-3">
             <div className="flex items-center gap-2">
               <ArrowDownToLine className="w-4 h-4 text-primary" />
-              <h3 className="text-sm font-semibold text-foreground">Claim an existing deposit</h3>
+              <h3 className="text-sm font-semibold text-foreground">{t("bridge.claim.title")}</h3>
             </div>
             <p className="text-xs text-muted-foreground">
-              Sent ETH or USDC to the bridge but it didn't arrive? Paste the Base transaction hash to claim it — mints to your connected RougeChain wallet. Waits for confirmations automatically.
+              {t("bridge.claim.help")}
             </p>
             <div className="space-y-1.5">
-              <Label className="text-xs">Base transaction hash</Label>
+              <Label className="text-xs">{t("bridge.claim.txHashLabel")}</Label>
               <Input value={claimTxHash} onChange={(e) => setClaimTxHash(e.target.value)} placeholder="0x…" className="font-mono text-xs" />
             </div>
             <div className="flex items-center gap-2">
@@ -1177,7 +1193,7 @@ const Bridge = () => {
               ))}
             </div>
             <Button onClick={handleClaimExisting} disabled={claimBusy || !claimTxHash} className="w-full gap-2">
-              {claimBusy ? (<><Loader2 className="w-4 h-4 animate-spin" /> Claiming…</>) : (<>Claim deposit</>)}
+              {claimBusy ? (<><Loader2 className="w-4 h-4 animate-spin" /> {t("bridge.claim.claiming")}</>) : (<>{t("bridge.claim.button")}</>)}
             </Button>
           </CardContent>
         </Card>
@@ -1200,6 +1216,7 @@ const Bridge = () => {
 // ── Recent Bridge Activity Card ─────────────────────────────────
 
 function BridgeActivityCard({ pubkey }: { pubkey: string }) {
+  const { t } = useTranslation();
   const [history, setHistory] = useState<BridgeHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -1231,13 +1248,13 @@ function BridgeActivityCard({ pubkey }: { pubkey: string }) {
     <Card className="border-border">
       <CardContent className="p-0">
         <div className="px-4 py-3 border-b border-border">
-          <h3 className="text-sm font-semibold text-foreground">Recent Bridge Activity</h3>
+          <h3 className="text-sm font-semibold text-foreground">{t("bridge.activity.title")}</h3>
         </div>
         {history.length === 0 ? (
           <div className="py-8 text-center">
             <ArrowRightLeft className="w-8 h-8 mx-auto mb-2 text-muted-foreground/50" />
-            <p className="text-sm text-muted-foreground">No bridge activity yet</p>
-            <p className="text-xs text-muted-foreground/70 mt-1">Bridge deposits and withdrawals will appear here</p>
+            <p className="text-sm text-muted-foreground">{t("bridge.activity.empty")}</p>
+            <p className="text-xs text-muted-foreground/70 mt-1">{t("bridge.activity.emptyHint")}</p>
           </div>
         ) : (
           <div className="divide-y divide-border">
@@ -1255,7 +1272,7 @@ function BridgeActivityCard({ pubkey }: { pubkey: string }) {
                   </div>
                   <div>
                     <p className="text-sm font-medium text-foreground">
-                      {entry.direction === "deposit" ? "Bridged In" : "Bridged Out"}
+                      {entry.direction === "deposit" ? t("bridge.activity.bridgedIn") : t("bridge.activity.bridgedOut")}
                     </p>
                     <p className="text-xs text-muted-foreground">{entry.timeLabel}</p>
                   </div>
@@ -1266,7 +1283,7 @@ function BridgeActivityCard({ pubkey }: { pubkey: string }) {
                   }`}>
                     {entry.direction === "deposit" ? "+" : "-"}{entry.amount} {entry.symbol}
                   </p>
-                  <p className="text-xs text-muted-foreground capitalize">{entry.status}</p>
+                  <p className="text-xs text-muted-foreground capitalize">{entry.status === "pending" ? t("bridge.activity.statusPending") : entry.status === "completed" ? t("bridge.activity.statusCompleted") : entry.status}</p>
                 </div>
               </div>
             ))}
@@ -1280,6 +1297,7 @@ function BridgeActivityCard({ pubkey }: { pubkey: string }) {
 // ── Pending Withdrawal Status Card ──────────────────────────────
 
 function PendingWithdrawalsCard({ pubkey, btcNetwork }: { pubkey: string; btcNetwork?: "mainnet" | "testnet" }) {
+  const { t } = useTranslation();
   const [withdrawals, setWithdrawals] = useState<PendingWithdrawal[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -1303,10 +1321,10 @@ function PendingWithdrawalsCard({ pubkey, btcNetwork }: { pubkey: string; btcNet
 
   const statusStyle = (status: PendingWithdrawal["status"]): { label: string; cls: string } => {
     switch (status) {
-      case "failed": return { label: "Retrying", cls: "text-amber-500" };
-      case "refunded": return { label: "Refunded", cls: "text-blue-500" };
-      case "fulfilled": return { label: "Released", cls: "text-green-500" };
-      default: return { label: "Pending", cls: "text-muted-foreground" };
+      case "failed": return { label: t("bridge.pending.status.retrying"), cls: "text-amber-500" };
+      case "refunded": return { label: t("bridge.pending.status.refunded"), cls: "text-blue-500" };
+      case "fulfilled": return { label: t("bridge.pending.status.released"), cls: "text-green-500" };
+      default: return { label: t("bridge.pending.status.pending"), cls: "text-muted-foreground" };
     }
   };
 
@@ -1314,7 +1332,7 @@ function PendingWithdrawalsCard({ pubkey, btcNetwork }: { pubkey: string; btcNet
     <Card className="border-border">
       <CardContent className="p-0">
         <div className="px-4 py-3 border-b border-border">
-          <h3 className="text-sm font-semibold text-foreground">Withdrawal Release Status</h3>
+          <h3 className="text-sm font-semibold text-foreground">{t("bridge.pending.title")}</h3>
         </div>
         {loading ? (
           <div className="py-6 text-center">
@@ -1335,7 +1353,7 @@ function PendingWithdrawalsCard({ pubkey, btcNetwork }: { pubkey: string; btcNet
                     </p>
                     {w.status === "failed" && (
                       <p className="text-xs text-amber-500/80 truncate">
-                        {w.attempts} failed attempt{w.attempts === 1 ? "" : "s"}
+                        {t("bridge.pending.failedAttempts", { count: w.attempts })}
                         {w.lastError ? ` — ${w.lastError}` : ""}
                       </p>
                     )}
@@ -1346,7 +1364,7 @@ function PendingWithdrawalsCard({ pubkey, btcNetwork }: { pubkey: string; btcNet
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
                       >
-                        View on mempool.space <ExternalLink className="w-3 h-3" />
+                        {t("bridge.pending.viewOnMempool")} <ExternalLink className="w-3 h-3" />
                       </a>
                     )}
                   </div>

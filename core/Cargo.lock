@@ -2017,6 +2017,7 @@ dependencies = [
  "quantum-vault-bridge-exec",
  "quantum-vault-consensus",
  "quantum-vault-crypto",
+ "quantum-vault-finality",
  "quantum-vault-storage",
  "quantum-vault-types",
  "quantum-vault-vm",
@@ -2035,6 +2036,16 @@ dependencies = [
  "tower-http",
  "uuid",
  "wat",
+]
+
+[[package]]
+name = "quantum-vault-finality"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "quantum-vault-crypto",
+ "quantum-vault-types",
+ "sha2 0.10.9",
 ]
 
 [[package]]

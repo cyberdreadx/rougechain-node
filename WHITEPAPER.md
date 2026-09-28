@@ -1,6 +1,6 @@
 # RougeChain: A Post-Quantum Layer 1 Blockchain
 
-**Version 1.8 -- March 2026**
+**Version 2.1 -- 28 September 2026**
 
 > **RougeChain is a post-quantum Layer 1 blockchain where every signature, every transaction, and every encrypted message is secured by NIST-approved lattice cryptography — not as a future upgrade, but as the foundation.**
 
@@ -8,7 +8,38 @@
 
 ## Abstract
 
-RougeChain is a Layer 1 blockchain built on NIST-standardized post-quantum cryptographic primitives for signatures and encryption, with hash-based systems for proofs and commitments. Every transaction signature, block proposal, validator attestation, and encrypted message on the network uses ML-DSA-65 (FIPS 204) and ML-KEM-768 (FIPS 203), providing NIST Level 3 security -- equivalent to 192-bit classical strength -- against both classical and quantum adversaries. The chain incorporates zk-STARKs for privacy-preserving transaction verification and rollup batch proving, completing a fully quantum-resistant cryptographic stack across signatures, encryption, and zero-knowledge proofs. RougeChain combines a Proof-of-Stake consensus protocol with a full-featured application layer: an automated market maker, cross-chain bridge with cryptographic deposit verification, NFT standard with on-chain royalties, custom token issuance, zk-STARK rollups for throughput scaling, an end-to-end encrypted messenger, and an on-chain social layer with posts, timeline feeds, and cryptographically signed engagement. The result is a quantum-resistant blockchain that is ready for production use today, not as a future migration target.
+RougeChain is a Layer 1 blockchain built on NIST-standardized post-quantum cryptographic primitives for signatures and encryption, with hash-based systems for proofs and commitments. Every transaction signature, block proposal, and encrypted message on the network uses ML-DSA-65 (FIPS 204) and ML-KEM-768 (FIPS 203), providing NIST Level 3 security -- equivalent to 192-bit classical strength -- against both classical and quantum adversaries. The chain incorporates zk-STARKs for shielded transfers and rollup batch proving, so signatures, encryption, and zero-knowledge proofs all rest on quantum-resistant assumptions. RougeChain combines a Proof-of-Stake consensus protocol with an application layer built into the node: an automated market maker, bridges to Base and Bitcoin, an NFT standard with protocol-level royalties, custom token issuance, WASM smart contracts, an end-to-end encrypted messenger and mail system, and a node-hosted social layer with signed posts and engagement.
+
+Mainnet (`rougechain-mainnet-1`) is live. Since height 150 every block must carry a verified commit certificate -- precommits from at least two-thirds of stake -- for its parent, so finality is enforced by the protocol rather than reported by the producer. It is still an early-stage network: one validator produces blocks today and there is no fallback proposer, the bridges depend on operator-run relayers, and no external security audit has been completed. Section 11.10 lists these limitations in full.
+
+---
+
+## Changes in v2.1
+
+Version 2.1 (28 September 2026) records the two protocol upgrades activated after v2.0:
+
+- **Finality (3.1, 3.1.3, 11.5):** FINALITY_V2 is active from height 150 (Release 2a). Every block from 151 carries `parent_commit`, a verified precommit certificate for its parent, and `finalized_height` tracks verified certificates. Release 2b (fallback proposer, slashing, spreading stake across validators) is not done.
+- **Contracts (3.1.3, 10.5):** GAME_READY (height 150) makes contract deployments and calls player-signed. GAME_READY 2 (height 160) lets contracts hold and move custom tokens and NFTs, create NFT collections and mint to players, and draw per-transaction randomness; cross-contract calls now apply their asset moves. Section 10.5 corrects v2.0's statement that sub-call balance changes were already applied.
+- **State root (2.4, 3.2, 3.8):** from height 160 the header state root (v2) also covers NFT collections and ownership, contract code and contract storage.
+- **DEX (5.4):** liquidity providers can withdraw accrued swap fees with "Collect fees", backed by a per-position fee ledger on each node.
+- **Developer ecosystem (10):** SDK 1.9 (`rc.contracts`), browser extension 1.4 (contract signing), contract events over WebSocket, the contract query endpoint and the `loot_roll` example contract.
+- **Limitations and roadmap (11.10, 12):** finality and both GAME_READY releases move to Shipped; the remaining limitations are restated.
+
+---
+
+## Changes Since v1.8
+
+Version 2.0 brings this paper in line with the network as deployed in September 2026:
+
+- **Consensus (3.1, 3.1.3, 11.3-11.5):** documents the four mainnet protocol upgrades (heights 18, 49, 90 and 100), Release 1 proposer selection, the actual block cadence, and the real status of finality and slashing. The QRNG-weighted proposer selection and BFT finality described in v1.8 are not what mainnet runs.
+- **Transactions (3.3):** replay protection by transaction identity and signed-payload binding replaces the per-account nonce description; the transaction-type count is corrected to 44.
+- **Tokenomics (4):** balances are integer quanta (1 XRGE = 10^9 quanta); base-fee bounds and the bridge fee are stated.
+- **Bridges (6, 11.6):** custody contracts and trust assumptions are stated plainly; the Bitcoin bridge is added.
+- **Messenger (8):** real-time delivery events, deterministic direct-message IDs, recoverable delete, group management, avatars, and push notifications.
+- **Social (9):** described as a node-hosted service rather than on-chain state.
+- **Developer ecosystem (10):** current SDK, extension, MCP server, CLI and applications; mainnet routes that are not yet publicly open.
+- **Security (11.10):** new Current Limitations subsection.
+- **Roadmap (12):** split into Shipped, In Progress and Planned; BFT finality and STARK bridge verification are no longer marked complete.
 
 ---
 
@@ -19,9 +50,9 @@ RougeChain is a Layer 1 blockchain built on NIST-standardized post-quantum crypt
 3. [Protocol Architecture](#3-protocol-architecture)
 4. [Tokenomics](#4-tokenomics)
 5. [Decentralized Exchange](#5-decentralized-exchange)
-6. [ETH Bridge](#6-eth-bridge)
+6. [Cross-Chain Bridges](#6-cross-chain-bridges)
 7. [NFT Standard](#7-nft-standard)
-8. [Encrypted Messenger](#8-encrypted-messenger)
+8. [Encrypted Messenger and Mail](#8-encrypted-messenger-and-mail)
 9. [Social Layer](#9-social-layer)
 10. [Developer Ecosystem](#10-developer-ecosystem)
 11. [Security Considerations](#11-security-considerations)
@@ -137,7 +168,6 @@ The verifier only sees the final balances (public inputs). The initial balances 
 | Key exchange | ML-KEM-768 | Yes |
 | Hashing | SHA-256 / Blake3 | Yes |
 | Zero-knowledge proofs | zk-STARKs | Yes |
-| Consensus entropy | ANU QRNG | Yes |
 
 #### Rollup Batch AIR (Phase 3)
 
@@ -162,7 +192,9 @@ sender_before | sender_after | receiver_after | amount | running_hash
 | running_hash | First | pre_state_root |
 | running_hash | Last | post_state_root |
 
-The state root is a SHA-256 Merkle tree computed from the sorted set of all account balances, using domain-separated hashing (`ROUGECHAIN_STATE_V1` for leaf nodes, `ROUGECHAIN_NODE_V1` for internal nodes).
+The rollup's state root is a SHA-256 Merkle tree computed from the sorted set of all account balances, using domain-separated hashing (`ROUGECHAIN_STATE_V1` for leaf nodes, `ROUGECHAIN_NODE_V1` for internal nodes).
+
+This rollup root is separate from the **ledger state root** committed in every block header (Section 3.2). From height 18 the header root is a domain-separated SHA-256 over the sorted native XRGE, token and LP balances. From height 160 (GAME_READY 2) it is **state root v2**: `SHA-256("rougechain.stateroot.v2" ‖ balance root ‖ NFT collections ‖ NFT ownership ‖ contract code hashes ‖ contract storage)`, where NFT collections contribute id, creator, minted count, maximum supply and frozen flag, and tokens contribute collection, id, owner and locked flag. A node that disagrees on any NFT owner or contract storage value therefore computes a different root and rejects the block at import, exactly as for a balance divergence. The root is a flat hash over sorted entries, not yet an incremental Merkle tree.
 
 **Rollup Accumulator.** The daemon includes a `RollupAccumulator` that batches up to 32 transfers (or flushes after 5 seconds), executes them off-chain, computes the state root transition, generates a STARK proof, and self-verifies the proof before including it in the next L1 block. A single rollup proof of ~100 KB can attest to 32 transfer operations, reducing per-transaction amortized proof cost by 32×.
 
@@ -186,47 +218,46 @@ The trade-off is size: ML-DSA-65 signatures and keys are significantly larger th
 
 ### 3.1 Consensus: Proof of Stake
 
-RougeChain uses a Proof-of-Stake consensus mechanism with quantum-weighted proposer selection.
+RougeChain uses a Proof-of-Stake consensus protocol. Any account that stakes at least **10,000 XRGE** becomes a validator; the staking key is the validator's identity, and a node proposes blocks with the key stored in its `node-keys.json`.
 
-**Proposer Selection.** For each block height, a proposer is selected from the active validator set using a deterministic weighted random function seeded by quantum randomness:
+**Block Cadence.** Mainnet genesis sets a **1,000 ms** block slot (`block_time_ms`; the daemon's command-line default of 400 ms applies only to networks without that genesis setting). A block is produced only when the mempool holds at least one transaction -- the chain does not produce empty blocks. Block height therefore tracks network activity rather than wall-clock time (mainnet passed height 160 in late September 2026), and every protocol timer -- unbonding, jailing, missed-block thresholds -- is measured in blocks, not seconds.
+
+**Proposer Selection (Release 1).** From height 100, each height has exactly one designated proposer:
 
 ```
-entropy = ANU_QRNG() || fallback: CSPRNG()
-seed = SHA-256(entropy || prev_block_hash || height)
-index = seed[0..16] mod total_stake
-proposer = validator at cumulative stake index
+eligible(H) = validators in the state after block H-1 with stake > 0 and jailed_until <= H
+proposer(H) = the eligible validator with the largest stake
+              (ties broken by the lowest raw public-key bytes)
 ```
 
-**Quantum Entropy Source.** The entropy for proposer selection is sourced from the [ANU Quantum Random Number Generator](https://qrng.anu.edu.au/) (Australian National University), which derives true randomness from quantum vacuum fluctuations — the inherent uncertainty in the electromagnetic field of a vacuum, measured via homodyne detection of squeezed quantum states of light. This provides provably unpredictable randomness that cannot be reproduced or predicted by any classical or quantum algorithm. If the QRNG API is unavailable (2-second timeout), the node falls back to a local cryptographically secure pseudorandom number generator (CSPRNG). The entropy source (`"quantum"` or `"local"`) is recorded with each proposer selection and visible on the validator dashboard.
+A block signed by any other key is rejected at import before any state is modified, and a node refuses to seal a block for a height at which it is not the designated proposer. The producer records every proposal in a local proposal journal (`proposal-journal-db`) keyed by height and parent hash, so it never signs two different blocks for the same slot. `/api/stats` reports the activation height and the designated proposer for the next height.
 
-The combination of quantum entropy, the previous block hash, and the current height ensures that proposer selection is both unpredictable and deterministic — any node with the same inputs will arrive at the same proposer.
+Release 1 has **no fallback**: if the designated proposer is offline, no blocks are produced until it returns. Release 2 is split in two: Release 2a (verified finality) has been active since height 150, and Release 2b (skip certificates and a deterministic fallback proposer) is planned; see Section 12.
 
-**Voting.** Consensus proceeds in two rounds:
-1. **Prevote** -- Validators sign a prevote for the proposed block.
-2. **Precommit** -- Upon receiving prevotes from a quorum, validators sign a precommit.
+Earlier versions of this paper described a stake-weighted random selection seeded by the ANU Quantum Random Number Generator. That function exists in the codebase, but it was never enforced on mainnet -- before height 100 a block from any staked validator was accepted -- and it is not part of the Release 1 rule.
 
-A block is finalized when precommits representing at least **2/3 + 1** of total stake are collected. Each vote is signed with the validator's ML-DSA-65 key using a domain-separated message (`ROUGECHAIN_VOTE:{height}:{round}:{block_hash}`), preventing cross-chain replay. Finality proofs — containing the validator set, their signatures, and aggregate stake — are persisted to the `finality-db` store. On startup, the node loads the highest persisted finality proof rather than assuming the chain tip is finalized, ensuring consistency across restarts.
+**Finality (FINALITY_V2, active from height 150).** Validators sign prevotes and precommits with their own ML-DSA-65 staking keys over a message that commits to a domain tag (`ROUGECHAIN_FINALITY_VOTE_V2`), the chain ID, the vote type, the height, the round and the block hash. A **finality proof** for a block is a set of such precommits whose stake reaches the quorum `floor(2 × total stake / 3) + 1` of that block's validator set. Nothing in a proof is taken on trust: a node verifies every signature and recomputes the voting stake, total stake and quorum from its own validator-set snapshot for that height. Each validator keeps a durable signing journal, so it can never sign two different blocks for the same slot, and votes and proofs travel between nodes over the peer layer.
 
-**Slashing.** Validators that act maliciously or fail to meet protocol obligations are subject to:
-- **Stake reduction**: 10% of the validator's stake is slashed per violation.
-- **Jailing**: The validator is excluded from proposer selection for 20 blocks.
-- **Auto-slashing**: Validators that miss 50 consecutive block proposals are automatically slashed. The missed-block counter resets upon successful proposal or after a slash event.
-- Repeated offenses accumulate, with the slash count permanently recorded.
+This is **Release 2a** of the Release 2 design. From height 151 every block header carries `parent_commit`, the finality proof for its parent. A node refuses to import a block whose certificate is missing, is for a different parent, falls short of quorum or fails verification, and the producer does not seal a block until it holds a verified certificate for the previous one; importing block H therefore finalizes block H-1. `finalized_height` in the API now tracks the highest height with a verified certificate, rather than a value the producer sets for itself as it did before height 150 (the legacy vote path, which did not verify votes, applies only below height 150).
 
-**Unbonding Period.** When a validator unstakes, their funds are not returned immediately. Instead, the unstake amount enters an **unbonding queue** with a 500-block delay (~200 seconds at the default 400ms block time; configurable via `--block-time-ms`). During the unbonding period:
+What finality does not yet add is liveness. Only one validator produces blocks, and the operator's validator holds a large majority of stake, so its own precommit reaches quorum on its own: a block is finalized as soon as it is produced, without waiting for other validators. **Release 2b** -- rounds, skip certificates, a deterministic fallback proposer, validator-admission hardening, and spreading stake across more independently run validators -- is designed but not implemented; until then an outage of the designated proposer still halts the chain.
+
+**Slashing.** The protocol includes slashing: **10%** of a validator's stake per violation and a **20-block** jail, during which the validator is not eligible to propose. Before height 100, a validator that missed 50 block proposals was slashed automatically; this happened once on mainnet, at height 69. Release 1 **freezes missed-block accounting from height 100**, because with a single designated proposer every other validator would otherwise accumulate misses by design. Slashing based on evidence of misbehavior (for example, signing two blocks at one height) is planned as Release 3 and is not active.
+
+**Unbonding Period.** When a validator unstakes, the amount enters an **unbonding queue** for **500 blocks**. Because blocks are produced only when there are transactions, this is a block count, not a fixed duration; its wall-clock length depends on network activity. During the unbonding period:
 - Funds remain locked and cannot be transferred.
 - The unbonding entry includes the delegator address, amount, and release height.
 - At each new block, the node processes the unbonding queue and releases matured entries to the delegator's balance.
 - This prevents stake-and-run attacks and ensures validators remain accountable for the blocks they participated in.
 
-**Fee Distribution.** Transaction fees follow an EIP-1559-inspired dynamic fee model. The total fee consists of a **base fee** and a **priority fee**. **50%** of the base fee is burned (deflationary); the remaining 50% flows into the distributable tip pool alongside the priority fee. The tip pool is split:
+**Fee Distribution.** Transaction fees follow an EIP-1559-inspired dynamic fee model. The total fee consists of a **base fee** and a **priority fee**. **50%** of the base fee is burned; the remaining 50% flows into the distributable tip pool alongside the priority fee. The tip pool is split:
 - **20%** to the block proposer.
 - **70%** distributed to all active validators, weighted by their stake.
 - **10%** allocated to the on-chain treasury, controlled by governance.
 
-A **minimum tip floor** of 0.1 XRGE per block is enforced. If fees alone do not reach this threshold, the shortfall is drawn from the `__staking_rewards__` genesis allocation (10.8B XRGE), ensuring validators receive a baseline reward even during low-traffic periods. At maximum draw this reserve lasts over 1,300 years.
+A **minimum tip floor** of 0.1 XRGE per block is enforced. If fees alone do not reach this threshold, the shortfall is drawn from the `__staking_rewards__` genesis reserve, so validators receive a baseline reward even when traffic is low.
 
-The base fee adjusts dynamically based on block utilization (±12.5% per block), targeting 50% capacity. This creates a self-regulating fee market that adapts to demand.
+The base fee starts at 0.1 XRGE, adjusts by at most ±12.5% per block toward a target of 10 transactions per block, and never falls below **0.001 XRGE**.
 
 ### 3.1.1 Governance
 
@@ -249,6 +280,19 @@ RougeChain includes an on-chain governance system for protocol parameters and tr
 
 RougeChain supports M-of-N threshold multi-signature wallets at the protocol layer. Multi-sig wallets require M approvals from N designated signers before executing a transaction. All signatures use ML-DSA-65, making RougeChain multi-sig wallets quantum-resistant by default.
 
+### 3.1.3 Protocol Upgrades
+
+Protocol rules change through coordinated hard forks. Each upgrade is activated at a height compiled into the node software, and every validator must run the new release before that height. There is no on-chain upgrade governance yet. Mainnet has activated six upgrades:
+
+| Height | Upgrade | What changed |
+|---|---|---|
+| 18 | v2 ledger | Balances moved from floating-point values to integer quanta (1 XRGE = 10^9 quanta); block headers commit to a SHA-256 state root of the ledger; WASM contracts can hold and move XRGE. |
+| 49 | F49 | The ledger was migrated to its canonical state at height 48, with blocks 18-48 pinned by hash; bridge withdrawal records are created only when the burn actually succeeds; stake is registered only if its debit succeeds; block production commits atomically; matured unbonding is released before the state root is computed; peers sync only through verified block import, never by replacing the chain. |
+| 90 | Transaction integrity | A transaction may be included only once (canonical-identity uniqueness), and V2 transactions must match the payload that was actually signed (Section 3.3). |
+| 100 | Proposer selection, Release 1 | One designated proposer per height (the largest eligible stake); missed-block accounting frozen; producer proposal journal (Section 3.1). |
+| 150 | FINALITY_V2 (Release 2a) + GAME_READY | Verified finality: from block 151 each header carries `parent_commit`, a verified precommit certificate from at least two-thirds of stake for its parent, and blocks without one are refused (Section 3.1). Contract transactions become player-signed: `contract_deploy` and `contract_call` are valid only when signed by the deployer or caller, who pays the fee, and node-signed contract transactions are invalid. A deployed contract's address is the first 20 bytes of `SHA-256("rougechain/contract/v2" ‖ from ‖ 0 ‖ nonce ‖ 0 ‖ SHA-256(wasm))`. Deployment costs 10 XRGE; a call costs gasLimit × 0.000001 XRGE (Section 10.5). |
+| 160 | GAME_READY 2 | Contracts can hold and move custom tokens and NFTs, create their own NFT collections and mint to players, and draw per-transaction randomness (`host_random`, seeded by the parent block hash and the transaction hash). Addresses a contract supplies are canonicalised, and NFT owner checks compare canonical addresses. Cross-contract (multi-hop) calls have their XRGE, token and NFT moves applied. State root v2 commits to balances plus NFT collections and ownership, contract code hashes and contract storage (Section 2.4). |
+
 ### 3.2 Block Structure
 
 Each block consists of a versioned header, a list of transactions, the proposer's ML-DSA-65 signature, and a SHA-256 hash.
@@ -264,6 +308,8 @@ Each block consists of a versioned header, a list of transactions, the proposer'
 | prev_hash | String | SHA-256 hash of the previous block |
 | tx_hash | String | SHA-256 hash of all transactions |
 | proposer_pub_key | String | ML-DSA-65 public key of the proposer |
+| state_root | Option\<String\> | SHA-256 commitment to the balance ledger (present from height 18); from height 160, state root v2 also covers NFTs and contract state |
+| parent_commit | Option\<FinalityProof\> | Verified precommit certificate for the parent block (required from height 151; absent before) |
 
 **BlockV1:**
 
@@ -277,18 +323,18 @@ Each block consists of a versioned header, a list of transactions, the proposer'
 
 ### 3.3 Transaction Model
 
-RougeChain supports over 30 transaction types within a unified transaction structure:
+RougeChain defines 44 transaction types within a unified transaction structure:
 
 **TxV1:**
 
 | Field | Type | Description |
 |---|---|---|
 | version | u32 | Transaction version |
-| tx_type | String | One of the 28 supported types |
+| tx_type | String | One of the 44 transaction types |
 | from_pub_key | String | Sender's ML-DSA-65 public key |
-| nonce | u64 | Replay protection counter |
+| nonce | u64 | Sender counter (replay protection comes from transaction identity; see below) |
 | payload | TxPayload | Type-specific data |
-| fee | f64 | Fee in XRGE |
+| fee | f64 | Fee in decimal XRGE as signed; converted to integer quanta when applied (Section 4.1) |
 | sig | String | ML-DSA-65 signature |
 | signed_payload | Option\<String\> | V2 canonical signed payload |
 
@@ -311,13 +357,13 @@ RougeChain supports over 30 transaction types within a unified transaction struc
 | Contracts | `contract_deploy`, `contract_call` |
 | Orders | `place_limit_order`, `cancel_limit_order` |
 
-> **Note:** The faucet is implemented as a `transfer` transaction with a `faucet: true` flag in the payload, signed by the node operator's key. It is not a separate transaction type.
+> **Note:** The faucet is implemented as a `transfer` transaction with a `faucet: true` flag in the payload, signed by the node operator's key. It is not a separate transaction type, and it is disabled on mainnet.
 
 **Client-Side Signing.** All transactions are signed on the user's device using their ML-DSA-65 private key. The signed transaction is then submitted to any node via the REST API. At no point does a private key leave the client. The v2 transaction endpoints enforce this by design -- they accept only pre-signed payloads and reject empty or invalid signatures.
 
-**V2 Signed Payload Format.** An enhanced signing format serializes the payload as sorted-key JSON before signing, producing a canonical representation that prevents signature malleability.
+**V2 Signed Payload Format.** V2 transactions carry `signed_payload`: the sorted-key JSON that the user actually signed. Since height 90 the node derives the transaction's security-relevant fields (recipient, amount, fee, token, and so on) from that signed payload and rejects any transaction whose top-level fields differ from it, both at API ingress and at block import. Two signed formats are bound this way: the flat format used by the REST API and SDK, and the envelope format used by the CLI. Before height 90 only the signature over `signed_payload` was checked.
 
-**Nonce Deduplication.** Each node maintains a per-account set of recently seen nonces. Duplicate nonces are rejected at both the mempool admission and block import layers, preventing transaction replay even when timestamps collide.
+**Transaction Uniqueness.** Since height 90 every transaction has a canonical identity hash, and a transaction whose identity is already included in an earlier block is rejected at mempool admission, when a block is produced, and at block import. The index of included identities (`tx-seen-db`) is rebuilt from the chain at startup. This replaced an earlier per-account nonce check that was not enforced at block import; the `nonce` field is not required to be sequential.
 
 ### 3.4 Storage
 
@@ -335,17 +381,18 @@ The following stores are maintained independently:
 | Chain | chain-db | Blocks indexed by height |
 | Tx Index | chain-db (tx_index tree) | O(1) transaction hash → block height lookup |
 | State | chain-db (state tree) | Persistent chain state (shielded supply, faucet cooldowns) |
-| Nonce | chain-db (nonce_db tree) | Per-account nonce tracking for replay prevention |
+| Nonce | nonce-db | Per-account nonce tracking |
+| Included Transactions | tx-seen-db | Canonical identities of included transactions (replay protection, from height 90) |
+| Proposal Journal | proposal-journal-db | The producer's signed proposals by height and parent (from height 100) |
 | Validators | validators-db | Stake, slash count, jail status, entropy contributions |
 | Pools | pools-db | AMM liquidity pool state |
 | NFT Collections | nft-collections-db | Collection metadata and configuration |
 | NFT Tokens | nft-tokens-db | Individual token ownership and attributes |
 | Token Metadata | token-metadata-db | Custom token metadata (name, image, socials) |
-| Finality Proofs | finality-db | BFT finality proofs indexed by block height |
+| Finality Records | finality-db | Verified FINALITY_V2 proofs by block height (from height 150; earlier records are legacy and informational) |
 | Event Index | indexer-db | Multi-index event store (by address, type, token, block) |
 | Transaction Receipts | receipts-db | Post-inclusion status, logs, and gas used |
 | Contracts | contracts-db | WASM bytecode, metadata, and contract storage |
-
 | Messenger | messenger-db | Wallets, conversations, messages with participant and conversation-message indexes |
 | Mail | mail-db | Mail messages and per-recipient folder labels |
 | Name Registry | name-registry-db | Bidirectional name↔wallet mappings with atomic registration (compare-and-swap) |
@@ -357,7 +404,7 @@ Additional off-chain stores (JSON-backed) handle bridge claims and withdrawal re
 
 RougeChain includes a built-in event indexer that maintains secondary indexes over all on-chain transactions. The indexer supports paginated queries by:
 - **Address** — all transactions involving a given public key (as sender or recipient)
-- **Transaction type** — filter by any of the 28 protocol transaction types
+- **Transaction type** — filter by protocol transaction type
 - **Token symbol** — activity feed for a specific token
 - **Block height** — all events within a given block
 
@@ -384,6 +431,8 @@ Nodes communicate over HTTP with the following mechanisms:
 **Block Propagation.** When a node produces or imports a new block, it broadcasts asynchronously to all known peers via `POST /api/blocks/import` with a 5-second timeout per peer.
 
 **Transaction Broadcast.** Submitted transactions are propagated to peers via `POST /api/tx/broadcast`.
+
+**Current Mainnet Topology.** Mainnet runs on two nodes: the producing validator and a second node that follows it without producing blocks. On the public mainnet endpoint (`api.rougechain.io`), the unauthenticated peer-write routes `POST /api/blocks/import`, `POST /api/peers/register` and `POST /api/tx/broadcast` are closed at the reverse proxy; other nodes sync by pulling blocks. Node-to-node communication is HTTP polling; a dedicated peer-to-peer transport is not yet implemented.
 
 **Rate Limiting.** The API implements three-tier rate limiting applied to all endpoints:
 - **Tier 1 (Validators):** Elevated throughput for staked validators. Authentication requires three headers: `X-Validator-Key` (public key), `X-Validator-Sig` (ML-DSA-65 signature over the timestamp), and `X-Validator-Ts` (Unix millisecond timestamp). The signature is verified via `pqc_verify`, and the timestamp must be within a 30-second drift window. This prevents spoofing of validator status.
@@ -431,7 +480,9 @@ This is significant but manageable. Modern consumer hardware handles these volum
 
 ### 3.8 Design Philosophy: Vertically Integrated L1
 
-RougeChain intentionally adopts a vertically integrated L1 design, embedding a DEX, NFT standard, bridge, messenger, name service, and mail system directly into the base protocol. RougeChain embeds financial, identity, communication, and privacy primitives directly at the protocol layer to eliminate bootstrap dependency on external applications. A new chain with no dApps has no users, and no users means no dApps -- by shipping core primitives at the protocol level, RougeChain provides a complete, functional network from genesis block one.
+RougeChain intentionally adopts a vertically integrated L1 design, building a DEX, NFT standard, bridges, messenger, name service, mail system and social layer into the node itself. A new chain with no dApps has no users, and no users means no dApps -- by shipping core primitives with the node, RougeChain offers usable applications without waiting for third parties to build them.
+
+These components are not all on-chain. The DEX, NFTs, tokens, staking, governance, shielded transfers, contracts and bridge mints and burns are transactions in blocks. Token, LP and XRGE balances are covered by the state root from height 18; NFT collections and ownership and contract code and storage are covered from height 160 (state root v2, Section 2.4). The messenger, mail, name registry and social layer are **node-hosted services**: every write is authenticated with an ML-DSA-65 signature, but the data is stored by the node in its own databases and is not part of consensus state.
 
 This increases protocol complexity but enables immediate usability without reliance on external smart contract layers or third-party infrastructure. Future iterations may modularize components as the ecosystem matures and developer tooling enables permissionless application deployment.
 
@@ -496,7 +547,7 @@ The 64-row trace performs MSB-first bit decomposition of the input value, provin
 
 ### 4.1 XRGE (RougeCoin)
 
-XRGE is not merely a utility token — it is the economic backbone of a quantum-resistant network. As classical cryptographic systems face an approaching expiration date, XRGE represents a unit of value secured by post-quantum primitives from inception. Every fee paid, every stake deposited, and every trade executed on RougeChain is denominated in a token whose underlying security does not degrade as quantum computing advances.
+XRGE is the native token of RougeChain. Every fee paid, every stake deposited, and every trade executed on RougeChain is denominated in XRGE, and every XRGE transfer is authorized with an ML-DSA-65 signature.
 
 XRGE serves four functions on the network:
 - **Transaction fees.** Every operation on RougeChain requires XRGE, creating baseline demand proportional to network activity.
@@ -508,8 +559,10 @@ XRGE serves four functions on the network:
 |---|---|
 | Name | RougeCoin |
 | Symbol | XRGE |
-| Total Supply | 36,000,000,000 |
-| Smallest Unit | 1 XRGE |
+| Maximum Supply | 36,000,000,000 |
+| Smallest Unit | 1 quantum = 10^-9 XRGE |
+
+**Integer Quanta.** Since the v2 ledger upgrade at height 18 (Section 3.1.3), balances are stored as integers in **quanta**, where 1 XRGE = 1,000,000,000 quanta. Amounts and fees are written in decimal XRGE in signed transactions and are converted to quanta when a transaction is applied, so ledger arithmetic is exact.
 
 ### 4.2 Fee Schedule
 
@@ -530,6 +583,7 @@ All operations on RougeChain require an XRGE fee. The fee schedule is designed t
 | Shield (public → private) | 1 |
 | Shielded transfer | 1 |
 | Unshield (private → public) | 1 |
+| Bridge withdrawal (any asset) | 0.1 (exactly) |
 
 > **Note:** The v2 client-signed API endpoints enforce a minimum fee of **1.0 XRGE** for transfers, swaps, and liquidity operations to discourage spam. The base protocol fees listed above apply at the consensus layer; the API layer may enforce higher minimums.
 
@@ -544,7 +598,7 @@ RougeChain uses an **EIP-1559-inspired dynamic fee model**. Each transaction fee
   - **10%** to the on-chain treasury, governed by protocol governance.
 - A **minimum tip floor** of 0.1 XRGE per block is enforced. When collected fees fall below this threshold, the shortfall is subsidised from the `__staking_rewards__` genesis allocation, guaranteeing validators a baseline return even during low-traffic periods.
 
-The base fee adjusts dynamically based on block utilization. If a block is fuller than the target (50% capacity), the base fee increases by up to 12.5%. If emptier, it decreases by up to 12.5%. This creates a self-regulating fee market.
+The base fee adjusts dynamically based on block utilization. If a block holds more than the target of 10 transactions, the base fee increases by up to 12.5%; if it holds fewer, it decreases by up to 12.5%. The base fee starts at 0.1 XRGE and never falls below a floor of 0.001 XRGE, which is where it stood on mainnet in September 2026.
 
 This model incentivizes block production, passive staking, and treasury accumulation for ecosystem funding.
 
@@ -599,6 +653,9 @@ Liquidity providers deposit paired tokens into a pool and receive LP tokens repr
 - **Minimum liquidity:** The first 1,000 LP tokens are permanently locked to prevent share manipulation.
 - **Adding liquidity:** Amounts must be proportional to existing reserves. LP tokens minted: `min(amount_a / reserve_a, amount_b / reserve_b) * total_lp_supply`.
 - **Removing liquidity:** LP tokens are burned and the proportional share of both reserves is returned.
+- **Collecting fees:** the 0.3% swap fee accrues to liquidity providers inside the pool, and a provider can withdraw what it has earned with **Collect fees** without touching its deposit. Collecting is an ordinary `remove_liquidity` of exactly the LP tokens that represent the position's fee growth; there is no separate fee transaction and no consensus change. To size it, each node keeps an off-consensus fee ledger per LP position: the deposit is recorded as a basis in share-value units, where one LP token is worth `√(reserveA · reserveB) / LP supply` (a value that swap fees raise and adding or removing liquidity does not), and withdrawals are counted against earnings first, so collecting fees leaves the deposit's basis intact. A position's earnings are exposed at `GET /api/pool/:id/earnings/:owner`. The ledger is maintained from pool events (and rebuilt from them once on nodes that predate it) and is not part of the state root; it only informs the client how much to withdraw.
+
+There is no protocol fee: the whole 0.3% stays with liquidity providers.
 
 ### 5.5 Pool Creation
 
@@ -606,9 +663,9 @@ Any user may create a pool by specifying two tokens and initial deposit amounts.
 
 ---
 
-## 6. Cross-Chain Bridge
+## 6. Cross-Chain Bridges
 
-RougeChain provides a **cryptographically verified cross-chain bridge** between Base (Ethereum L2) and RougeChain. The bridge supports both Base Mainnet and Base Sepolia, with automatic network detection. It implements two layers of deposit verification: EVM receipt validation and SHA-256 commitment nullifiers for double-claim prevention.
+RougeChain operates two bridges: one to **Base** (Ethereum L2) for ETH, USDC and XRGE, and one to **Bitcoin** for BTC. Deposits are verified against the source chain before wrapped assets are minted on RougeChain; withdrawals burn the wrapped asset on RougeChain and are paid out on the destination chain by an operator-run relayer. Both bridges rely on operator trust, which Section 6.7 sets out.
 
 ### 6.1 Multi-Network Support
 
@@ -621,76 +678,96 @@ The bridge dynamically selects the correct chain configuration based on the daem
 
 ### 6.2 Bridge In (Base → RougeChain)
 
-1. The user sends ETH, USDC, or XRGE to the bridge custody address (or vault contract) on Base.
-2. The user submits the Base transaction hash to RougeChain's bridge API.
+1. The user sends ETH, USDC, or XRGE to the bridge contracts on Base.
+2. The user submits the Base transaction hash to RougeChain's bridge API, or the node's deposit watcher detects the deposit and claims it automatically.
 3. The RougeChain node performs **two-layer verification**:
-   - **Layer 1 (Receipt Verification):** Queries the Base RPC for the transaction receipt, verifying tx status (`0x1`), recipient matches custody/vault, sender matches the claimed address, and minimum confirmation count is met.
+   - **Layer 1 (Receipt Verification):** Queries the Base RPC for the transaction receipt, verifying tx status (`0x1`), recipient matches the bridge contract, sender matches the claimed address, and the minimum confirmation depth is met (`QV_BRIDGE_MIN_CONFIRMATIONS`, default **6**).
    - **Layer 2 (Commitment Nullifier):** Computes a SHA-256 commitment hash of the deposit (`SHA-256("ROUGECHAIN_BRIDGE_V1" || tx_hash || evm_address || amount)`) and checks it against the nullifier set. Duplicate commitments are rejected.
-4. For XRGE vault deposits, the node additionally verifies the `BridgeDeposit` event in the transaction logs, matching the indexed sender address.
-5. Upon verification, the node creates a `bridge_mint` transaction, minting the wrapped asset to the user's RougeChain address.
+4. For contract deposits, the node additionally verifies the deposit event in the transaction logs, matching the indexed sender address.
+5. Upon verification, the node creates a `bridge_mint` transaction, minting the wrapped asset to the user's RougeChain address. `bridge_mint` is authorized by the node operator's key (Section 6.7).
 
 **Replay protection:** Each deposit commitment hash is stored persistently. A deposit can only be claimed once, even across node restarts.
 
-**EVM Signature Verification.** Bridge claims require an ECDSA signature from the wallet that sent the deposit transaction. The claim message follows a canonical format (`RougeChain bridge claim\nTx: {hash}\nRecipient: {pubkey}`), and the signature is verified via `ecrecover` to ensure the claimant is the original depositor.
+**EVM Signature Verification.** Manual bridge claims require an ECDSA signature from the wallet that sent the deposit transaction. The claim message follows a canonical format (`RougeChain bridge claim\nTx: {hash}\nRecipient: {pubkey}`), and the signature is verified via `ecrecover` to ensure the claimant is the original depositor.
 
 ### 6.3 Multi-Asset Bridge
 
-| Asset | Base Chain | RougeChain Wrapped | Mechanism |
+| Asset | Base Chain | RougeChain Wrapped | Custody Contract |
 |---|---|---|---|
-| ETH | Native ETH | qETH | ETH value in tx |
-| USDC | ERC-20 | qUSDC | ERC-20 Transfer event parsing |
-| XRGE | ERC-20 (Base) | XRGE (L1) | BridgeVault lock/release |
+| ETH | Native ETH | qETH | RougeBridge (`0x0c09C7...35d83`) |
+| USDC | ERC-20 | qUSDC | RougeBridge (`0x0c09C7...35d83`) |
+| XRGE | ERC-20 (Base) | XRGE (L1) | BridgeVaultV2 (`0x7BB107...35Cd2D`) |
 
-For ERC-20 tokens, the bridge parses `Transfer` event logs from the transaction receipt to determine the deposited amount, rather than relying on the transaction's ETH value field.
+For ERC-20 tokens, the bridge parses `Transfer` event logs from the transaction receipt to determine the deposited amount, rather than relying on the transaction's ETH value field. qETH and qUSDC use 6 decimals on RougeChain; USDC is bridged 1:1, and ETH amounts are scaled by 10^12 from its 18 decimals.
 
 ### 6.4 Bridge Out (RougeChain → Base)
 
-1. The user submits a `bridge_withdraw` transaction, burning their wrapped tokens and specifying an EVM withdrawal address.
-2. The withdrawal request is recorded in the `BridgeWithdrawStore` with a unique transaction ID, the target EVM address, the amount, and a timestamp.
-3. The bridge relayer fulfills the withdrawal on Base, then marks it complete via the authenticated API.
+1. The user signs a `bridge_withdraw` request with ML-DSA-65. The signature covers the operation type, amount, fee, token symbol, destination EVM address, sender, timestamp and nonce, and the node executes only these signed values; unsigned request fields must match them or the request is rejected. The fee must be exactly **0.1 XRGE** for every asset.
+2. The node burns the wrapped asset. A withdrawal record is created only if the burn succeeded in an accepted block; a withdrawal whose burn fails produces no payout record.
+3. The relayer pays out on Base: XRGE through BridgeVaultV2 `release()`, qETH through RougeBridge `releaseETH`, and qUSDC through RougeBridge `releaseERC20`. Each payout carries a canonical ID (`keccak256` of the RougeChain withdrawal ID), and the contracts' `processedL1Txs` record prevents a second payout for the same withdrawal.
+4. The node marks the withdrawal fulfilled only after verifying the matching release event on Base at the required confirmation depth.
+
+RougeBridge can hold large withdrawals in an on-chain timelock; a queued withdrawal is fulfilled when the timelock executes. Automatic refunds are disabled: a withdrawal is never refunded while its payout status is paid, queued or ambiguous.
 
 ### 6.5 Hardened Relayer
 
-The bridge relayer (v2) implements production-grade withdrawal processing:
+The bridge relayer implements the following safeguards for withdrawal processing:
 
+- **Payout-state check first:** Before any release, the relayer checks the contract's `processedL1Txs` record and fails closed if the state cannot be read; an already-processed withdrawal is reconciled, never paid again.
+- **Asset routing:** Each wrapped asset has an explicit payout route; unsupported assets are not paid.
 - **Nonce management:** Manual nonce tracking prevents stuck transactions from blocking the queue.
 - **Retry with exponential backoff:** Failed RPC calls are retried up to 3 times (1s → 2s → 4s delays).
 - **Gas estimation:** Uses `estimateGas` with a 10% buffer instead of hardcoded gas limits.
-- **Double-spend protection:** Processed withdrawal IDs are tracked in-memory across poll cycles.
+- **Preflight checks:** On start, the relayer checks chain ID, contract code, ownership, pause state and token configuration.
 - **Graceful shutdown:** SIGTERM/SIGINT handlers wait for in-flight transactions before exiting.
-- **Health logging:** Stats (uptime, fulfilled count, failure count) are logged every 60 poll cycles.
-- **Configurable confirmations:** Withdrawals wait for N block confirmations (default: 2) before marking fulfilled.
+- **Confirmation depth:** Waits for the greater of its own setting and the node's minimum (default 6 confirmations) before asking the node to mark a withdrawal fulfilled.
 
 ### 6.6 Security Model
 
-The bridge operates under a verified custody model with cryptographic deposit verification. Current security layers include:
+The Base bridge uses two custody contracts with different trust properties:
+
+- **BridgeVaultV2 (XRGE).** Roles are split. The owner is a Safe multisig, which alone can change the relayer, adjust caps, pause the vault, or start an emergency withdrawal (subject to a 48-hour timelock). The relayer is a hot key that can only call `release()`, bounded by an on-chain per-transaction cap and a rolling 24-hour limit, and is blocked while the vault is paused. A compromised relayer key can therefore release at most the remaining 24-hour limit before the owner rotates or pauses it.
+- **RougeBridge (ETH and USDC).** The owner is a single hot key held by the operator, and the same key signs releases. A 2-of-3 Safe acts as guardian and can cancel timelocked withdrawals, but below the timelock threshold the owner key can move the contract's funds. Moving RougeBridge ownership to a multisig is pending.
+
+Deposit and withdrawal verification layers:
 
 - **EVM receipt verification** against Base RPC (tx status, recipient, sender, confirmations).
 - **SHA-256 commitment nullifiers** prevent double-claiming deposits.
-- **BridgeDeposit event verification** for XRGE vault deposits (log parsing + sender matching).
-- **ECDSA signature verification** (ecrecover) to authenticate depositors.
+- **Deposit event verification** for contract deposits (log parsing + sender matching).
+- **ECDSA signature verification** (ecrecover) to authenticate depositors on manual claims.
 - **Chain ID validation** to prevent cross-chain replay.
+- **Signed withdrawal intent** (ML-DSA-65) bound to the executed amount, fee, asset and destination.
+- **Burn-gated payout records** and **on-chain payout verification** before fulfillment.
 - **Relayer authentication** via shared secret for withdrawal fulfillment.
-- **Nonce management and retry logic** for reliable withdrawal processing.
-
-Full trust minimization via on-chain STARK bridge proofs (where a STARK proof attests to the validity of Base block headers and deposit inclusion) is architecturally supported and planned as a future upgrade.
 
 ### 6.7 Trust Assumptions
 
-The bridge's trust model is explicit. The following table documents what is verified cryptographically versus what requires operational trust:
+The bridges' trust model is explicit. The following table documents what is verified cryptographically versus what requires operational trust:
 
 | Component | Verification Method | Trust Assumption |
 |---|---|---|
 | Deposit occurred on Base | EVM receipt verification via RPC | Relies on Base RPC endpoint returning honest data |
 | Depositor identity | ECDSA ecrecover of signed claim | Cryptographic — no trust required |
 | Double-claim prevention | SHA-256 commitment nullifier set | Cryptographic — no trust required |
-| XRGE vault deposits | BridgeDeposit event log parsing | Relies on correct contract deployment |
-| Withdrawal fulfillment | Relayer executes on Base | Requires trusted relayer operator |
+| Contract deposits | Deposit event log parsing | Relies on correct contract deployment |
+| Minting on RougeChain | `bridge_mint` signed by the node operator's key | Trusted operator: this key can mint wrapped assets |
+| XRGE custody | BridgeVaultV2: Safe owner, capped hot relayer | Relayer compromise bounded by on-chain caps |
+| ETH/USDC custody | RougeBridge: single hot EOA owner | Trusted operator: owner key compromise could drain the contract |
+| Withdrawal fulfillment | Relayer executes on Base; node verifies the release event | Requires the operator-run relayer to be online and honest |
 | Cross-chain consistency | Chain ID validation | Cryptographic — no trust required |
 
-**Current model:** The bridge operates under a **verified custody model** — deposits are cryptographically verified but withdrawal fulfillment depends on a trusted relayer. This is comparable to early-stage bridges on other L1s (e.g., Polygon PoS bridge, Arbitrum's initial sequencer trust).
+**Current model:** The Base bridge is an **operator-trusted custody bridge**. Deposits are verified against Base before minting, but minting authority, the relayers and the RougeBridge owner key are all held by the operator.
 
-**Target model:** Fully trustless operation via on-chain STARK proofs of Base block headers, removing reliance on the Base RPC endpoint and enabling permissionless withdrawal fulfillment. The long-term goal is complete removal of trusted relayer dependency through on-chain verification of Base state via STARK proofs -- at which point the bridge becomes as trustless as the chain itself.
+**Target model:** The next step is BridgeVaultV3 (Section 12), in which releases on Base require M-of-N ML-DSA-65 authorization of withdrawal data derived from RougeChain, removing the single hot key from the XRGE release path. It depends on FINALITY_V2, which has been active on mainnet since height 150 (Section 3.1); V3 itself has not been deployed and is waiting on an external audit. Fully trustless operation through STARK proofs of Base block headers remains a longer-term goal.
+
+### 6.8 Bitcoin Bridge (BTC ⇄ qBTC)
+
+qBTC is wrapped Bitcoin on RougeChain with 8 decimals (one unit is one satoshi).
+
+- **Deposits.** Each user can request a unique Bitcoin deposit address and pay it from any wallet. Alternatively, a deposit can carry the recipient's RougeChain address in an `OP_RETURN` output. The node verifies each deposit against two independent Esplora providers and a minimum confirmation depth (default 2) before minting qBTC, and each output can be credited only once. The node watches deposit addresses but holds no Bitcoin private key.
+- **Withdrawals.** The user burns qBTC. An operator-run relayer holding the custody key broadcasts the Bitcoin payout, capped per withdrawal, and the node re-verifies the payout on the Bitcoin chain before marking the withdrawal fulfilled.
+
+**Status.** The Bitcoin bridge went live on mainnet on 15 September 2026. The Bitcoin relayer has been stopped since the F49 upgrade (Section 3.1.3), so the Bitcoin bridge is **paused**: qBTC withdrawals submitted now would wait unpaid until it is reopened.
 
 ---
 
@@ -801,7 +878,10 @@ Recipients verify the ML-DSA-65 signature before decryption, ensuring message au
 - **Self-destructing messages** with configurable timers.
 - **Spoiler tags** for content that should be hidden until explicitly revealed.
 - **Media support** for images and video (up to 10 MB), encrypted identically to text.
-- **1-on-1 and group conversations.**
+- **1-on-1 and group conversations.** Direct-message conversations have deterministic IDs (`dm_` followed by a SHA-256 over the two participants' canonical wallet IDs), so both sides always open the same thread and creating a conversation twice returns the existing one.
+- **Group management.** Any participant can rename a group (up to 100 characters) or add members, up to 50 participants. New members can read messages sent after they join; earlier messages were never encrypted to them.
+- **Recoverable delete.** Deleting a conversation or message hides it for the deleting participant only and moves it to a trash folder. It can be restored for 30 days or purged immediately; after 30 days the node removes it.
+- **Avatars.** Messenger profiles can carry an avatar image (up to 256 KB).
 - **Mail folders** — Inbox, Sent, Trash, Starred, Drafts.
 - **Mail threading** — Reply chains via `replyToId`.
 - **Name registry** — Human-readable `@rouge.quant` / `@qwalla.mail` addresses with atomic registration.
@@ -815,11 +895,19 @@ Messenger and mail data is stored off-chain in a sled embedded database. The nod
 
 Private keys are stored in both `sessionStorage` and `localStorage` when no password vault is configured, ensuring PWA and mobile browser sessions survive app restarts. Once the user sets a vault passphrase, plaintext keys are removed from persistent storage and only the encrypted blob (AES-256-GCM with a PBKDF2-derived key, 600,000 iterations) remains in `localStorage`. On unlock, keys are restored to `sessionStorage` for the active session. When the vault is locked or auto-locked, all plaintext key material is cleared from both `sessionStorage` and `localStorage`.
 
+### 8.8 Real-Time Delivery and Push Notifications
+
+**Real-Time Events.** Clients can hold a WebSocket connection to the node and subscribe to their own inbox by sending an ML-DSA-65 signed `messenger_ws_subscribe` request. The node then pushes a `new_message` event -- conversation ID, message ID, timestamp, sender and participant IDs, but no message content -- to that caller's authenticated sockets only; an unauthenticated subscription cannot join another user's inbox topic. The client fetches and decrypts the message as usual.
+
+**Push Notifications.** Mobile clients register an Expo push token with an ML-DSA-65 signed request. The node sends notifications for incoming transfers, messages, mail and group changes through Expo's push service. Because the node cannot read encrypted content, message and mail notifications carry a generic text (for example, "You received a new encrypted message"). Node operators can disable push delivery.
+
 ---
 
 ## 9. Social Layer
 
-RougeChain includes a protocol-native social layer that provides decentralized social primitives — posts, likes, reposts, follows, comments, and play tracking — without requiring a separate protocol, token, or infrastructure deployment.
+RougeChain includes a node-hosted social layer that provides social primitives — posts, likes, reposts, follows, comments, and play tracking — without requiring a separate protocol, token, or infrastructure deployment.
+
+The social layer is **not on-chain**. Posts and engagement are signed with ML-DSA-65 and stored by the node in its `social-db` database; they are not included in blocks and are not covered by the state root. Only tips (Section 9.6) are on-chain transactions.
 
 ### 9.1 Design Rationale
 
@@ -892,7 +980,7 @@ Like counts, repost counts, and follower counts are maintained as atomic counter
 
 ### 9.6 Tips
 
-Tips are not stored in the social layer — they settle directly on L1 as standard XRGE transfer transactions via `rc.transfer()`. This means tips have the same finality guarantees, fee model, and quantum-resistant signing as any other on-chain transfer.
+Tips are not stored in the social layer — they settle directly on L1 as standard XRGE transfer transactions via `rc.transfer()`. This means tips have the same settlement, fee model, and quantum-resistant signing as any other on-chain transfer.
 
 ### 9.7 Security Properties
 
@@ -911,7 +999,7 @@ Tips are not stored in the social layer — they settle directly on L1 as standa
 
 ### 10.1 TypeScript SDK
 
-The `@rougechain/sdk` (v1.0.0) package provides a complete TypeScript SDK for building on RougeChain.
+The `@rougechain/sdk` package (version 1.9 on npm) provides a TypeScript SDK for building on RougeChain.
 
 **Installation:**
 ```
@@ -923,17 +1011,21 @@ npm install @rougechain/sdk
 - Transaction construction and client-side signing
 - Token, NFT, DEX, bridge, and staking operations
 - Social layer (posts, timeline, reposts, likes, follows, comments) via `rc.social`
-- Encrypted mail and messenger via `rc.mail` and `rc.messenger`
-- Balance and state queries
+- Encrypted mail and messenger via `rc.mail` and `rc.messenger`, including real-time subscriptions, group management (`updateConversation`, `addParticipants`), and trash/restore/purge
+- Balance and state queries, including a one-call validator status check (`getValidatorStatus`)
+- Player-signed contract deployment, calls, read-only queries and events via `rc.contracts` (Section 10.5)
 
 **Environment support:** Browser, Node.js, and React Native. The SDK uses `@noble/post-quantum` for all cryptographic operations, with no native dependencies.
 
 ### 10.2 Browser Extension
 
-The RougeChain browser extension (Manifest V3) provides:
+The RougeChain browser extension (Manifest V3, version 1.4) provides:
 
 - **Wallet management** with password-encrypted storage (PBKDF2 + AES-256-GCM).
 - **Five integrated tabs:** Wallet, Tokens, NFTs, Chat (messenger), and Settings.
+- **Encrypted backups:** wallet export produces a password-encrypted `.pqcbackup` file (PBKDF2 with 600,000 iterations + AES-256-GCM) that the web wallet and Qwalla can import.
+- **Real-time messenger** notifications over the node's authenticated WebSocket (Section 8.8).
+- **Contract signing:** dApps can ask the extension to sign contract deployments and calls, which it signs locally after user approval (Section 10.5).
 - **Smart API caching** with TTL-based deduplication to minimize network overhead.
 
 **dApp Provider.** The extension injects `window.rougechain` into web pages, enabling dApps to interact with the user's wallet:
@@ -958,15 +1050,18 @@ Every node exposes a comprehensive HTTP API supporting all chain operations:
 | Wallet | `/api/balance/:pubkey`, `/api/faucet` |
 | Transactions | `/api/tx/submit`, `/api/v2/tx/submit`, `/api/tx/broadcast` |
 | Tokens | `/api/tokens`, `/api/token/create`, `/api/token/metadata` |
-| DEX | `/api/pools`, `/api/swap`, `/api/pool/create` |
+| DEX | `/api/pools`, `/api/swap`, `/api/pool/create`, `/api/pool/:id/earnings/:owner` |
 | NFTs | `/api/nft/collections`, `/api/nft/owner/:pubkey`, `/api/v2/nft/*` |
 | Bridge | `/api/bridge/claim`, `/api/bridge/withdraw` |
+| Contracts | `/api/v2/contract/publish`, `/api/v2/contract/execute`, `/api/contract/:addr/query`, `/api/contract/:addr/events` |
 | Rollup | `/api/v2/rollup/status`, `/api/v2/rollup/submit`, `/api/v2/rollup/batch/:id` |
 | Messenger | `/api/v2/messenger/wallets/register`, `/api/v2/messenger/conversations`, `/api/v2/messenger/messages` |
 | Names | `/api/v2/names/register`, `/api/v2/names/release`, `/api/names/resolve/:name`, `/api/names/reverse/:walletId` |
 | Mail | `/api/v2/mail/send`, `/api/v2/mail/folder`, `/api/v2/mail/message`, `/api/v2/mail/read`, `/api/v2/mail/move`, `/api/v2/mail/delete` |
 | Social | `/api/social/timeline`, `/api/social/post/:id`, `/api/social/user/:pubkey/posts`, `/api/v2/social/post`, `/api/v2/social/like`, `/api/v2/social/repost`, `/api/v2/social/follow`, `/api/v2/social/feed` |
 | P2P | `/api/peers`, `/api/peers/register`, `/api/blocks/import` |
+
+**Mainnet availability.** On the public mainnet endpoint (`api.rougechain.io`), the unauthenticated write routes `POST /api/tx/broadcast`, `POST /api/blocks/import`, `POST /api/peers/register`, `/api/v2/contract/deploy` and `/api/v2/contract/call` are not publicly open. Transactions are submitted through the signed `/api/v2/*` routes.
 
 ### 10.4 gRPC
 
@@ -991,11 +1086,40 @@ RougeChain includes a fuel-metered WebAssembly (WASM) smart contract runtime bui
 2. **Execute** — Call a contract method with fuel metering. State changes are committed atomically on success; rolled back entirely on failure.
 3. **Query** — Read-only contract calls that do not commit state changes.
 
-**Host API.** Contracts interact with chain state through imported host functions: `storage_get`, `storage_set`, `storage_delete`, `emit_event`, `get_balance`, `transfer`, `call_contract`, and `log`.
+**Player-Signed Transactions (GAME_READY, height 150).** A contract deployment or call is valid only if the deployer or caller signed it; the signer is the caller the contract sees (`host_get_caller`) and pays the fee. Node-signed contract transactions -- whose "caller" was an unsigned field -- are invalid from height 150. A deployment costs a flat **10 XRGE**, and a call costs its signed gas limit × **0.000001 XRGE**, paid up front. The contract address is the first 20 bytes of `SHA-256("rougechain/contract/v2" ‖ from ‖ 0 ‖ nonce ‖ 0 ‖ SHA-256(wasm))`, all of which is inside the deployer's signature, so nobody else can claim or pre-empt it. (The address rule in the lifecycle above applies to earlier, node-signed deployments.)
 
-**Cross-Contract Calls.** Contracts can invoke other contracts up to 8 levels deep. Balance deltas and storage writes from sub-calls are propagated and committed atomically with the top-level call.
+**Host API.** Contracts interact with chain state through imported host functions:
 
-**Development Workflow:** Contracts are written in Rust, compiled to WASM via `wasm32-unknown-unknown`, and deployed via the REST API.
+- **Core:** `host_log`, `host_get_caller`, `host_get_self_addr`, `host_get_block_height`, `host_get_block_time`, `host_get_balance`, `host_transfer` (XRGE), `host_storage_read`, `host_storage_write`, `host_storage_delete`, `host_emit_event`, `host_set_return`, `host_call_contract`, `host_get_call_result`, and the ML-DSA-65 helpers `host_pqc_verify`, `host_pqc_pubkey_to_address` and `host_pqc_hash_pubkey`.
+- **Call arguments (GAME_READY, height 150):** `host_get_args_len` and `host_read_args` return the call's JSON arguments.
+- **Assets and randomness (GAME_READY 2, height 160):** `host_token_balance` and `host_token_transfer` (custom tokens the contract holds), `host_nft_owner` and `host_nft_transfer` (NFTs the contract owns), `host_nft_create_collection` (a collection `col:<contract address prefix>:<SYMBOL>` owned by the contract) and `host_nft_mint` (the contract mints from its own collections to players), and `host_random`. Before height 160 these functions are not linked, so a module importing them fails to run.
+
+From height 160, addresses a contract passes to these functions are canonicalised -- paying `host_get_caller()`, a public key, credits the player's `rouge1` ledger entry -- and NFT owner checks compare canonical addresses. The VM reads token balances and NFTs from a snapshot, records each accepted operation, and the node applies the operations in order only when the call succeeds; invalid operations make the block invalid.
+
+**Randomness.** `host_random` returns 32 bytes derived from `SHA-256("rougechain/rand/v1" ‖ parent block hash ‖ tx hash)` and a per-call counter, so each call in a transaction gets new bytes and a player cannot re-roll a transaction once sent. The block producer, however, can choose whether to include a transaction, so this randomness is not suitable where the producer has a stake in the outcome; high-value games should use commit-reveal. Validator-generated (VRF) randomness is planned (Section 12).
+
+**Cross-Contract Calls.** Contracts can invoke other contracts up to 8 levels deep. Before height 160, when a call made cross-contract calls, none of its XRGE moves were applied (only single-hop calls moved XRGE); earlier versions of this paper wrongly said sub-call balance changes were propagated. From height 160, cross-contract calls are multi-hop: each sub-call sees every move made before it (by its caller and by earlier sub-calls), the XRGE, token and NFT moves of successful sub-calls are merged into the top-level result and applied with it, and a failed sub-call's moves are dropped. Each sub-call draws its own randomness.
+
+**Receipts, Events and Queries.** A contract-call receipt reports `Failed` with the error when the call reverted; a failed call moves no assets. Contract events are delivered live over the node's WebSocket on the topic `contract:<addr>` after a block is accepted, and can be paged with `GET /api/contract/:addr/events`. `POST /api/contract/:addr/query` runs a read-only dry run against the live ledger without a signature or a transaction.
+
+**Development Workflow:** Contracts are written in Rust, compiled to WASM via `wasm32-unknown-unknown`, and deployed with a signed transaction. The SDK's `rc.contracts` (version 1.9) and the browser extension (version 1.4) sign deployments and calls. The repository's `loot_roll` example contract pays prizes from its own treasury using token transfers, NFT minting and `host_random`.
+
+**Mainnet Status.** Contracts can hold and move XRGE since height 18, and custom tokens and NFTs since height 160. Signed deployments and calls are submitted through `/api/v2/contract/publish` and `/api/v2/contract/execute`. The older unsigned `/api/v2/contract/deploy` and `/api/v2/contract/call` routes remain closed on the public mainnet endpoint. Storage is loaded eagerly and there is no storage fee yet.
+
+### 10.6 MCP Server
+
+`@rougechain/mcp-server` (version 1.2.0) exposes RougeChain to AI agents over the Model Context Protocol. By default it is read-only (32 tools), including free contract queries (`POST /api/contract/:addr/query`), contract events and transaction receipts. When a wallet is supplied through environment variables, it also registers 31 write tools -- transfers, staking, tokens, DEX, NFTs, names, social, bridge withdrawals, and player-signed contract deployment and calls (`/api/v2/contract/publish` and `/execute`, Section 10.5) -- and signs each one locally with ML-DSA-65; the key never leaves the process. Governance voting and messenger/mail sending are not exposed.
+
+### 10.7 Command-Line Interface
+
+The `rougechain` CLI signs transactions locally with ML-DSA-65 and supports key generation, transfers, staking and messenger operations. For validator operators it can sign directly with a node's `node-keys.json` (`--node-keys`) and provides `rougechain validator-status`, a one-shot check that a key is funded, staked, in the active set and producing blocks.
+
+### 10.8 Applications
+
+- **rougechain.io** -- web wallet, explorer, DEX, bridges, messenger and mail, a swap for buying XRGE on Base, and a network status page. The interface is available in English, Spanish, Chinese and Japanese.
+- **Qwalla** -- a wallet suite built from one Expo/React Native codebase: the **iOS app** (App Store), the **web app** at qwalla.io, **desktop apps** for macOS and Windows, and **Qwalla Browser**, a standalone desktop browser for on-chain apps. All share the same tokens, messenger, mail and dApp access; the iOS app adds push notifications.
+- **rougee.app (qRougee)** -- a decentralized music dApp that connects to the browser extension through the `window.rougechain` provider.
+- **rougecoin.io** -- information site for XRGE, linked from rougechain.io.
 
 ---
 
@@ -1013,7 +1137,7 @@ Legacy API endpoints that previously accepted raw private keys for server-side s
 
 ### 11.3 Validator Accountability
 
-The slashing mechanism penalizes validators for protocol violations by confiscating 10% of their stake and jailing them for 20 blocks. The slash count is permanently recorded, providing a public accountability record. Jailed validators are excluded from proposer selection until their jail period expires.
+Validators stake at least 10,000 XRGE, and the slash count and jail status of each validator are recorded in validator state. Slashing confiscates 10% of stake and jails the validator for 20 blocks, during which it is not eligible to propose. Automatic slashing for missed blocks applied until height 100 and is frozen under Release 1 proposer selection (Section 3.1). Slashing for provable misbehavior, such as equivocation, is planned as Release 3 and is not active; until then, the proposal journal prevents an honest producer from equivocating, but a dishonest one is not penalized automatically.
 
 ### 11.4 Network Resilience
 
@@ -1022,7 +1146,7 @@ The slashing mechanism penalizes validators for protocol violations by confiscat
 - **Block pagination** caps API responses to prevent unbounded data dumps.
 - **Exponential backoff** on peer sync failures prevents cascade overloads.
 - **Adaptive polling** reduces unnecessary network traffic during quiet periods.
-- **Nonce deduplication** prevents transaction replay at both mempool and block import layers.
+- **Transaction-identity uniqueness** (from height 90) prevents a signed transaction from being included twice, at mempool admission, block production and block import.
 
 ### 11.5 Block Import Verification
 
@@ -1031,19 +1155,29 @@ When importing blocks from peers, the node performs the following verification:
 1. **Height continuity** -- The block must extend the current tip by exactly one.
 2. **Hash chain** -- The block's `prev_hash` must match the current tip hash.
 3. **Proposer signature** -- The `proposer_sig` is verified against `proposer_pub_key` using `pqc_verify`, and the block hash is recomputed to ensure integrity.
-4. **Active validator check** -- The `proposer_pub_key` must belong to an actively staked validator.
-5. **Transaction signatures** -- All transactions are verified in parallel (using Rayon) across three signature formats (V2 signed payload, V1 new format, V1 legacy format). If any transaction fails all three verification methods, the entire block is rejected.
+4. **Proposer eligibility** -- Before height 100, the proposer had to be an actively staked validator. From height 100, the proposer must be the designated proposer for that height (Section 3.1); any other block is rejected before state is touched.
+5. **Transaction signatures** -- All transactions are verified in parallel (using Rayon) across three signature formats (V2 signed payload, V1 new format, V1 legacy format). If any transaction fails all three verification methods, the entire block is rejected. From height 90, V2 transactions must also match their signed payload.
+6. **Transaction uniqueness** -- From height 90, a block containing a transaction that is already included in an earlier block is rejected.
+7. **State root** -- From height 18, the node executes the block and rejects it if the resulting ledger state root does not match the header. From height 160 the root is state root v2, which also covers NFT collections and ownership, contract code and contract storage.
+8. **Pinned history** -- Blocks 18-48 must match the hashes pinned by the F49 upgrade.
+9. **Parent commit certificate** -- From height 151, the block must carry `parent_commit`, a FINALITY_V2 proof for exactly its parent; the node verifies every precommit signature and recomputes the quorum from the parent's validator set, and rejects the block without storing anything if the certificate is missing, mismatched or insufficient. A verified certificate is persisted, finalizing the parent.
+10. **Contract signatures** -- From height 150, `contract_deploy` and `contract_call` must be signed by the deployer or caller; node-signed contract transactions are rejected.
 
 ### 11.6 Bridge Security
 
 - **Two-layer deposit verification:** EVM receipt validation (tx status, recipient, sender, confirmations) combined with SHA-256 commitment nullifiers to prevent double-claiming.
-- **BridgeDeposit event verification** for XRGE vault deposits via transaction log parsing.
-- **ECDSA signature verification** (ecrecover) authenticates that the claimant is the original depositor.
+- **Deposit event verification** for contract deposits via transaction log parsing.
+- **ECDSA signature verification** (ecrecover) authenticates that the claimant is the original depositor on manual claims.
 - **Chain ID validation** ensures claims target the correct network (Base Mainnet 8453 or Sepolia 84532).
-- **Confirmation requirements** prevent claims against unconfirmed transactions (configurable, default: 2).
+- **Confirmation requirements** prevent claims against unconfirmed transactions (default: 6 confirmations on Base, 2 on Bitcoin).
 - **Replay protection** via persistent commitment nullifier tracking ensures each deposit can only be claimed once.
-- **Hardened relayer** with nonce management, exponential retry, gas estimation, and graceful shutdown.
+- **Signed withdrawal intent:** the node executes only the ML-DSA-65 signed amount, fee, asset and destination; the fee must be exactly 0.1 XRGE.
+- **Burn-gated payouts:** a payout record exists only if the burn succeeded in an accepted block; the node verifies the payout on the destination chain before marking it fulfilled; automatic refunds are disabled.
+- **On-chain limits:** XRGE releases from BridgeVaultV2 are bounded by per-transaction and 24-hour caps set by a Safe multisig owner.
+- **Hardened relayer** with payout-state checks, explicit asset routing, nonce management, exponential retry, gas estimation, preflight checks and graceful shutdown.
 - **Relayer authentication** via shared secret restricts withdrawal fulfillment to authorized operators.
+
+These measures do not remove operator trust. `bridge_mint` is authorized by the operator's key, the relayers are operator-run, and RougeBridge (ETH and USDC) is owned by a single hot key; see Section 6.7.
 
 ### 11.7 Messenger and Mail Security
 
@@ -1075,41 +1209,88 @@ The zk-STARK proof system provides an additional security dimension: transaction
 - **Transparency.** Unlike zk-SNARKs, STARKs require no trusted setup ceremony. There is no "toxic waste" -- the system's security does not depend on any party honestly destroying secret parameters.
 - **Post-quantum safety.** The proof system's security reduces to the collision resistance of Blake3-256, which is unaffected by Shor's algorithm and only quadratically weakened by Grover's algorithm (to ~128-bit security).
 
+### 11.10 Current Limitations
+
+RougeChain is an early-stage network. As of 28 September 2026:
+
+- **One producing validator.** Three accounts are staked, but only the operator's validator (the largest stake) produces blocks, and under Release 1 it is the designated proposer at every height; the second mainnet node follows the chain without producing blocks. If the producer is offline, the chain stops until it returns.
+- **Finality without liveness.** FINALITY_V2 has been active since height 150, but the operator's validator holds enough stake to finalize each block with its own vote. Release 2b -- a fallback proposer, skip certificates, slashing tied to it, and spreading stake across independently run validators -- is not implemented (Section 3.1).
+- **Contract randomness.** `host_random` is fixed before a transaction executes but the producer can choose whether to include it; validator VRF randomness is planned, not built (Section 10.5).
+- **Operator authority.** The operator's key authorizes bridge mints, the bridge relayers are operator-run, protocol upgrades are coordinated binary releases without on-chain governance, and most of the XRGE supply is held in operator-controlled protocol accounts.
+- **Bridges are operator-trusted.** RougeBridge (ETH and USDC) is owned by a single hot key. The Bitcoin bridge is paused (Section 6.8).
+- **Post-quantum bridge not deployed.** BridgeVaultV3 is an audit candidate only; its FINALITY_V2 prerequisite is now active, but it awaits an external audit.
+- **No external audit.** Security reviews to date have been internal.
+- **Networking.** Nodes communicate by HTTP polling; peer-write routes are closed on the public endpoint, and a peer-to-peer transport is not yet implemented.
+
 ---
 
 ## 12. Roadmap
 
-RougeChain's cryptographic infrastructure is designed to evolve. The following phases are planned:
+### 12.1 Shipped
 
-| Phase | Feature | Status |
-|---|---|---|
-| 1 | zk-STARK balance transfer proofs | ✅ Complete |
-| 2 | Shielded on-chain transactions with nullifier sets | ✅ Complete |
-| 3 | ZK-rollup layer for throughput scaling | ✅ Complete |
-| 3b | STARK bridge deposit verification | ✅ Complete |
-| 4 | WASM smart contract runtime (wasmi, fuel-metered) | ✅ Complete |
-| 4b | WASM-compiled STARK prover for browser | ✅ Complete |
-| 5 | On-chain governance with delegation and treasury | ✅ Complete |
-| 6 | Multi-signature wallets (M-of-N) | ✅ Complete |
-| 7 | Validator auto-slashing and unbonding period | ✅ Complete |
-| 8 | JSON-RPC 2.0 (eth_*/rouge_* dual namespace) | ✅ Complete |
-| 9 | WebSocket real-time event subscriptions | ✅ Complete |
-| 10 | Genesis configuration and mainnet bootstrapping | ✅ Complete |
-| 11 | BFT finality with quorum-based block verification | ✅ Complete |
-| 12 | Event indexer/subgraph (sled-backed, multi-index) | ✅ Complete |
-| 13 | CLI wallet (ML-DSA-65 signed transactions) | ✅ Complete |
-| 14 | Prometheus metrics and Docker containerization | ✅ Complete |
-| 15 | Mail/Messenger/Names security hardening (signed requests, anti-replay, CEK, TOFU, sled) | ✅ Complete |
-| 16 | Social layer (posts, timeline, reposts, likes, follows, comments, tips) | ✅ Complete |
-| -- | Native limit orders (on-chain conditional swaps) | ✅ Complete |
-| -- | Concentrated liquidity (range-based positions) | Planned |
-| -- | Yield farming (LP staking rewards) | Planned |
-| -- | On-chain NFT marketplace | Planned |
-| -- | Fully trustless STARK bridge (Base light client) | Planned |
-| -- | SLH-DSA (SPHINCS+) as alternative signature scheme | Planned |
-| -- | Hybrid classical + PQC mode | Planned |
-| -- | Hardware wallet support | Planned |
-| -- | Threshold signatures for multi-sig | Planned |
+| Feature | Notes |
+|---|---|
+| zk-STARK balance transfer proofs | |
+| Shielded transactions with nullifier sets | |
+| ZK-rollup batch proving | |
+| WASM smart contract runtime (wasmi, fuel-metered) | |
+| WASM-compiled STARK prover for browser | |
+| On-chain governance with delegation and treasury | |
+| Multi-signature wallets (M-of-N) | |
+| Unbonding period and slashing machinery | Missed-block auto-slashing frozen from height 100 |
+| JSON-RPC 2.0 (eth_*/rouge_* dual namespace) | |
+| WebSocket real-time event subscriptions | Including authenticated private messenger events |
+| Genesis configuration and mainnet bootstrapping | `rougechain-mainnet-1` |
+| Event indexer (sled-backed, multi-index) | |
+| CLI wallet (ML-DSA-65 signed transactions) | Including `validator-status` |
+| Prometheus metrics and Docker containerization | |
+| Mail/Messenger/Names security hardening (signed requests, anti-replay, CEK, TOFU, sled) | |
+| Social layer (posts, timeline, reposts, likes, follows, comments, tips) | Node-hosted |
+| Native limit orders | |
+| v2 integer ledger and state root | Height 18 |
+| F49 ledger and bridge-withdrawal hardening | Height 49 |
+| Transaction integrity (identity uniqueness + signed-payload binding) | Height 90 |
+| Proposer selection, Release 1 | Height 100 |
+| FINALITY_V2 verified finality (Release 2a: parent commit certificates) | Height 150 |
+| GAME_READY: player-signed contract deployment and calls | Height 150 |
+| GAME_READY 2: contracts hold/move tokens and NFTs, mint NFTs, `host_random`, multi-hop cross-contract moves, state root v2 | Height 160 |
+| Contract events over WebSocket, contract query endpoint, `loot_roll` example | |
+| LP fee collection ("Collect fees") | Node-side fee ledger; no protocol fee |
+| Base bridge with BridgeVaultV2 (Safe owner, capped relayer) for XRGE | ETH/USDC still on RougeBridge (hot-key owner) |
+| BTC ⇄ qBTC bridge | Live 15 September 2026; currently paused |
+| Messenger groups, avatars, deterministic DMs, recoverable delete | |
+| Push notifications | |
+| TypeScript SDK 1.9 (`rc.contracts`), browser extension 1.4 (contract signing), MCP server 1.1 | |
+
+### 12.2 In Progress
+
+| Feature | Status |
+|---|---|
+| Proposer selection, Release 2b (skip certificates + deterministic fallback proposer, validator-admission hardening) | Designed, not implemented; needs stake spread across more validators to matter |
+| BridgeVaultV3 post-quantum bridge (M-of-N ML-DSA-65 authorization on Base) | Audit candidate frozen and rehearsed on a test network; external audit next; not deployed |
+| External security audit | Not yet started |
+| Decentralization: independent validators and a peer-to-peer transport | One producing validator today |
+| RougeBridge ownership moved to a multisig | Pending |
+| Bitcoin bridge reopening | Paused since the F49 upgrade |
+
+### 12.3 Planned
+
+| Feature |
+|---|
+| Proposer selection, Release 3 (slashing on equivocation evidence) |
+| Validator VRF randomness for contracts (after Release 2b) |
+| Contract storage fees and lazy storage loading; incremental (Merkle) state root |
+| On-chain protocol upgrade governance |
+| Concentrated liquidity (range-based positions) |
+| Yield farming (LP staking rewards) |
+| On-chain NFT marketplace |
+| Fully trustless STARK bridge (Base light client) |
+| SLH-DSA (SPHINCS+) as alternative signature scheme |
+| Hybrid classical + PQC mode |
+| Hardware wallet support |
+| Threshold signatures for multi-sig |
+
+v2.0 removed two items that v1.8 had marked complete: **BFT finality** (the legacy implementation did not verify votes) and **STARK bridge deposit verification** (Base deposits are verified through RPC receipts, not STARK proofs). Verified finality returned to the Shipped list with FINALITY_V2 at height 150; STARK bridge verification remains a planned item.
 
 ---
 

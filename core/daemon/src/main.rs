@@ -7,6 +7,7 @@ mod grpc;
 mod nft_store;
 mod pool_events;
 mod node;
+mod finality_net;
 mod peer;
 mod rouge_bridge_deposit;
 mod pool_store;
@@ -20,6 +21,7 @@ mod push;
 mod fork;
 mod fork_tables;
 mod v2_binding;
+mod regen_votes;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -134,6 +136,12 @@ struct Args {
     /// Never runs automatically. Exits after migrating.
     #[arg(long)]
     migrate_canonical_ledger: bool,
+    /// Track A Step 2.3 — READ-ONLY FINALITY_V2 preflight: proves the node-keys.json public key is
+    /// the validator identity this node would vote as, that it has eligible stake in the set
+    /// derived from accepted history, and that the signing journal is intact. Prints PUBLIC data
+    /// only (never key material) and exits. Run with the daemon stopped (exclusive data dir).
+    #[arg(long)]
+    finality_v2_preflight: bool,
     /// Read-only operator diagnostic: print canonical digests of this node's consensus state
     /// (loads/recovers state exactly as a normal start would) and exit.
     #[arg(long)]
@@ -198,6 +206,8 @@ struct AppState {
     faucet_whitelist: Vec<String>,
     faucet_enabled: bool,
     peer_manager: Arc<peer::PeerManager>,
+    /// operator-configured peer URLs (source of the FINALITY_V2 vote-ingress allowlist)
+    configured_peer_urls: Vec<String>,
     ws_broadcaster: Arc<WsBroadcaster>,
     bridge_custody_address: Option<String>,
     base_sepolia_rpc: String,
@@ -233,6 +243,8 @@ struct AppState {
     groq_api_key: Option<String>,
     /// Fire-and-forget Expo push dispatcher (transfer / message / mail notifications)
     push: push::PushDispatcher,
+    /// RougeChain Regenerate community votes (node-hosted, off-consensus).
+    regen_votes: Arc<quantum_vault_storage::regen_vote_store::RegenVoteStore>,
 }
 
 #[derive(Clone)]
@@ -406,6 +418,11 @@ async fn main() -> Result<(), String> {
         println!("{}", serde_json::to_string_pretty(&d).map_err(|e| e.to_string())?);
         return Ok(());
     }
+    if args.finality_v2_preflight {
+        let report = node.finality_v2_preflight()?;
+        println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
+        return Ok(());
+    }
     if args.migrate_canonical_ledger {
         eprintln!("[fork] OPTION-B canonical-ledger migration requested (F = {})", fork::FORK_HEIGHT);
         let outcome = node.migrate_canonical_ledger(&|n: &L1Node| n.persist_snapshot_atomic(fork::FORK_HEIGHT - 1))?;
@@ -464,6 +481,10 @@ async fn main() -> Result<(), String> {
     let btc_deposit_store = Arc::new(
         BtcDepositStore::new(&data_dir_clone).map_err(|e| format!("btc deposit store: {}", e))?
     );
+    let regen_votes = Arc::new(
+        quantum_vault_storage::regen_vote_store::RegenVoteStore::new(std::path::Path::new(&data_dir_clone))
+            .map_err(|e| format!("regen vote store: {}", e))?
+    );
     // Expo push dispatcher — enabled by default; QV_PUSH_ENABLED=0/false turns it off. When
     // enabled it spawns one background task that POSTs to Expo; call sites only enqueue.
     let push_dispatcher = {
@@ -493,6 +514,7 @@ async fn main() -> Result<(), String> {
         faucet_whitelist: parse_whitelist(args.faucet_whitelist),
         faucet_enabled: args.faucet_enabled,
         peer_manager: peer_manager.clone(),
+        configured_peer_urls: initial_peers.clone(),
         ws_broadcaster: ws_broadcaster.clone(),
         bridge_custody_address: args.bridge_custody_address.clone(),
         base_sepolia_rpc: args.base_sepolia_rpc.clone(),
@@ -520,6 +542,7 @@ async fn main() -> Result<(), String> {
         replay_nonces: Arc::new(RwLock::new(HashMap::new())),
         groq_api_key: args.groq_api_key.clone(),
         push: push_dispatcher,
+        regen_votes,
     };
 
     // BTC HD deposit watcher: poll each assigned deposit address, two-provider-verify incoming
@@ -584,6 +607,11 @@ async fn main() -> Result<(), String> {
 
     eprintln!("[core-daemon] WebSocket broadcaster initialized");
 
+    // FINALITY_V2 vote propagation (inert while the gate is unscheduled)
+    {
+        let (gossip_node, pm) = (node.clone(), peer_manager.clone());
+        tokio::spawn(async move { finality_net::run_vote_gossip(pm, gossip_node).await; });
+    }
     // Start peer sync
     {
         let peer_node = node.clone();
@@ -670,6 +698,7 @@ async fn main() -> Result<(), String> {
                     
                     // Broadcast to WebSocket clients
                     ws_bc.broadcast_new_block(&block);
+                    ws_bc.broadcast_contract_events(miner.contract_events_in_block(&block));
 
                     // Index the block
                     let _ = idx_bc.index_block(&block);
@@ -826,7 +855,6 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/orders/:order_id", get(get_order_by_id))
         .route("/api/stats", get(get_stats))
         .route("/api/fee", get(get_fee_info))
-        .route("/api/finality/:height", get(get_finality_proof))
         .route("/api/burn-address", get(get_burn_address))
         .route("/api/burned", get(get_burned_tokens))
         .route("/api/price/xrge", get(get_xrge_price))
@@ -884,6 +912,15 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/messenger/conversations/restore", post(restore_conversation_signed))
         .route("/api/v2/messenger/messages/list", post(get_messages_signed))
         .route("/api/v2/messenger/messages", post(send_message_signed))
+        // RougeChain Regenerate community votes (node-hosted, off-consensus)
+        .route("/api/regen/config", get(regen_votes::get_config))
+        .route("/api/regen/proposals", get(regen_votes::list_proposals))
+        .route("/api/regen/proposals/:id", get(regen_votes::get_proposal))
+        .route("/api/regen/proposals/:id/weight/:who", get(regen_votes::get_weight))
+        .route("/api/v2/regen/proposals", post(regen_votes::create_proposal))
+        .route("/api/v2/regen/votes", post(regen_votes::cast_vote))
+        .route("/api/v2/regen/proposals/payout", post(regen_votes::record_payout))
+        .route("/api/v2/regen/proposals/cancel", post(regen_votes::cancel_proposal))
         .route("/api/v2/messenger/messages/read", post(mark_message_read_signed))
         .route("/api/v2/messenger/messages/delete", post(delete_message_signed))
         .route("/api/v2/messenger/messages/restore", post(restore_message_signed))
@@ -918,6 +955,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/pools", get(get_pools))
         .route("/api/pool/:pool_id", get(get_pool))
         .route("/api/pool/:pool_id/events", get(get_pool_events))
+        .route("/api/pool/:pool_id/earnings/:owner", get(get_pool_earnings))
         .route("/api/pool/:pool_id/prices", get(get_pool_price_history))
         .route("/api/pool/:pool_id/stats", get(get_pool_stats))
         .route("/api/pool/create", post(create_pool))
@@ -1042,9 +1080,13 @@ fn build_http_router(state: AppState) -> Router {
         // WASM contract endpoints
         .route("/api/v2/contract/deploy", post(contract_deploy))
         .route("/api/v2/contract/call", post(contract_call))
+        // GAME_READY: player-signed contract calls and deployments
+        .route("/api/v2/contract/execute", post(contract_execute_signed))
+        .route("/api/v2/contract/publish", post(contract_publish_signed))
         .route("/api/contract/:addr", get(contract_get))
         .route("/api/contract/:addr/state", get(contract_state))
         .route("/api/contract/:addr/events", get(contract_events))
+        .route("/api/contract/:addr/query", post(contract_query))
         .route("/api/contracts", get(contract_list))
         // EIP-1559 fee info
         .route("/api/fee-info", get(fee_info))
@@ -1083,7 +1125,9 @@ fn build_http_router(state: AppState) -> Router {
                 ])),
             }
         })
-        .with_state(state)
+        .with_state(state.clone())
+        // Track A Step 2.4: FINALITY_V2 gossip intake + verified proof serving (own body limit + verification budget)
+        .merge(finality_net::finality_router_with(state.node.clone(), finality_net::IngressPolicy::from_env_and_peers(&state.configured_peer_urls)))
 }
 
 async fn auth_middleware<B>(
@@ -1745,27 +1789,6 @@ async fn get_burned_tokens(State(state): State<AppState>) -> Result<Json<BurnedT
         burned,
         total_xrge_burned: total_xrge,
     }))
-}
-
-async fn get_finality_proof(
-    State(state): State<AppState>,
-    Path(height): Path<u64>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let node = &state.node;
-    match node.generate_finality_proof(height) {
-        Ok(Some(proof)) => Ok(Json(serde_json::json!({
-            "success": true,
-            "proof": proof
-        }))),
-        Ok(None) => Ok(Json(serde_json::json!({
-            "success": false,
-            "error": format!("No finality proof available for height {}", height)
-        }))),
-        Err(e) => Ok(Json(serde_json::json!({
-            "success": false,
-            "error": e
-        }))),
-    }
 }
 
 async fn get_fee_info(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -2636,6 +2659,7 @@ async fn import_block(
         Ok(()) => {
             // Broadcast to WebSocket clients
             state.ws_broadcaster.broadcast_new_block(&block_clone);
+            state.ws_broadcaster.broadcast_contract_events(node.contract_events_in_block(&block_clone));
             // Index the block
             let _ = state.indexer.index_block(&block_clone);
             Ok(Json(ImportBlockResponse { success: true, error: None }))
@@ -2770,11 +2794,19 @@ async fn get_address_transactions(
     let node = &state.node;
     let limit_blocks = 500; // Scan recent blocks instead of entire chain
     let blocks = node.get_recent_blocks(limit_blocks).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Match on canonical rouge1 addresses: senders are recorded as public keys and
+    // recipients as either form, so comparing raw strings missed every outgoing tx when
+    // the caller asked by rouge1 address (and incoming ones addressed by pubkey).
+    let canon = |k: &str| -> String {
+        if quantum_vault_crypto::is_rouge_address(k) { k.to_string() }
+        else { quantum_vault_crypto::pub_key_to_address(k).unwrap_or_else(|_| k.to_string()) }
+    };
+    let me = canon(&public_key);
     let mut items: Vec<serde_json::Value> = Vec::new();
     for block in &blocks {
         for tx in &block.txs {
-            let is_sender = tx.from_pub_key == public_key;
-            let is_recipient = tx.payload.to_pub_key_hex.as_deref() == Some(&public_key);
+            let is_sender = tx.from_pub_key == public_key || canon(&tx.from_pub_key) == me;
+            let is_recipient = tx.payload.to_pub_key_hex.as_deref().map(|to| to == public_key || canon(to) == me).unwrap_or(false);
             if is_sender || is_recipient {
                 let tx_id = quantum_vault_crypto::bytes_to_hex(
                     &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
@@ -3410,12 +3442,33 @@ struct PoolEventsResponse {
     events: Vec<PoolEvent>,
 }
 
+/// Uncollected swap fees for one LP position (`owner` = public key or rouge1 address).
+async fn get_pool_earnings(
+    State(state): State<AppState>,
+    Path((pool_id, owner)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.node.get_lp_earnings(&pool_id, &owner) {
+        Ok(Some(e)) => Ok(Json(serde_json::json!({ "success": true, "earnings": e }))),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+#[derive(Deserialize)]
+struct PoolEventsQuery {
+    limit: Option<usize>,
+}
+
+/// Most recent events first. `?limit=` (default 100, max 5000) lets wallets replay a pool's
+/// history, e.g. to work out an LP's uncollected fees.
 async fn get_pool_events(
     State(state): State<AppState>,
     Path(pool_id): Path<String>,
+    Query(q): Query<PoolEventsQuery>,
 ) -> Result<Json<PoolEventsResponse>, StatusCode> {
     let node = &state.node;
-    let events = node.get_pool_events(&pool_id, 100)
+    let limit = q.limit.unwrap_or(100).clamp(1, 5000);
+    let events = node.get_pool_events(&pool_id, limit)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(PoolEventsResponse { success: true, events }))
 }
@@ -9772,10 +9825,121 @@ async fn v2_token_mint(
 // ─── WASM Smart Contract Handlers ─────────────────────────────────────────────
 
 /// Deploy a new WASM smart contract
+fn gr_err(msg: impl std::fmt::Display) -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": msg.to_string() })))
+}
+
+/// POST /api/v2/contract/execute — a player-signed contract call (GAME_READY). The signer is the
+/// caller the contract sees (`host_get_caller`) and pays `gasLimit × CONTRACT_GAS_PRICE_XRGE`.
+/// The call is dry-run first so an obviously failing call is refused before it costs a fee.
+async fn contract_execute_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let tip = state.node.get_tip_height().unwrap_or(0);
+    if !node::game_ready_active(tip + 1) {
+        return Err(gr_err("player-signed contract calls are not active yet (GAME_READY)"));
+    }
+    let signed_payload = verify_signed_tx(&body).await.map_err(gr_err)?;
+    let p = &body.payload;
+    let contract_addr = p.get("contractAddr").and_then(|v| v.as_str()).unwrap_or_default();
+    let method = p.get("method").and_then(|v| v.as_str()).unwrap_or_default();
+    if contract_addr.is_empty() || method.is_empty() {
+        return Err(gr_err("contractAddr and method are required"));
+    }
+    let gas = p.get("gasLimit").and_then(|v| v.as_u64()).unwrap_or(quantum_vault_vm::DEFAULT_FUEL_LIMIT);
+    if gas == 0 || gas > quantum_vault_vm::DEFAULT_FUEL_LIMIT {
+        return Err(gr_err(format!("gasLimit must be between 1 and {}", quantum_vault_vm::DEFAULT_FUEL_LIMIT)));
+    }
+    let fee = gas as f64 * crate::v2_binding::CONTRACT_GAS_PRICE_XRGE;
+    let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < fee {
+        return Err(gr_err(format!("insufficient XRGE for the gas fee: have {:.6}, need {:.6}", bal, fee)));
+    }
+    let args = p.get("args").cloned().unwrap_or(serde_json::Value::Null);
+    let block_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let preview = state.wasm_runtime.query_contract_ext(
+        &state.contract_store, contract_addr, method, &args, &body.public_key,
+        state.node.native_balances_quanta(), tip + 1, block_time,
+        state.node.game_ext_for_preview(tip + 1),
+    ).map_err(gr_err)?;
+    if !preview.success {
+        return Err(gr_err(format!("call would fail: {}", preview.error.unwrap_or_default())));
+    }
+    if preview.gas_used > gas {
+        return Err(gr_err(format!("gasLimit {} is below the {} gas this call needs", gas, preview.gas_used)));
+    }
+    if let Err(e) = check_signed_nonce(&state.node, &body.public_key, &body.payload) {
+        return Err(gr_err(e));
+    }
+    let tx = crate::v2_binding::build_v2_tx("contract_call", body.public_key.clone(),
+        state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload)
+        .map_err(gr_err)?;
+    let tx_id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
+    let tx_clone = tx.clone();
+    state.node.add_tx_to_mempool_verified(tx).map_err(gr_err)?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "txId": tx_id,
+        "fee": fee,
+        "preview": { "returnData": preview.return_data, "gasUsed": preview.gas_used, "events": preview.events },
+    })))
+}
+
+/// POST /api/v2/contract/publish — a player-signed deployment (GAME_READY). The signer is the
+/// deployer; the address is derived from the signed payload (`v2_binding::contract_address_v2`),
+/// so it is known before the block and nobody else can claim it. Installed when mined.
+async fn contract_publish_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !node::game_ready_active(state.node.get_tip_height().unwrap_or(0) + 1) {
+        return Err(gr_err("player-signed contract deployment is not active yet (GAME_READY)"));
+    }
+    let signed_payload = verify_signed_tx(&body).await.map_err(gr_err)?;
+    let p = &body.payload;
+    if p.get("from").and_then(|v| v.as_str()) != Some(body.public_key.as_str()) {
+        return Err(gr_err("payload.from must be the signing public key"));
+    }
+    if p.get("nonce").and_then(|v| v.as_str()).map_or(true, |n| n.len() < 8) {
+        return Err(gr_err("payload.nonce is required"));
+    }
+    let wasm_b64 = p.get("wasm").and_then(|v| v.as_str()).unwrap_or_default();
+    let wasm = {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.decode(wasm_b64).map_err(|_| gr_err("wasm must be base64"))?
+    };
+    state.wasm_runtime.validate_contract_wasm(&wasm).map_err(gr_err)?;
+    let fee = crate::v2_binding::CONTRACT_DEPLOY_FEE_XRGE;
+    if state.node.get_balance(&body.public_key).unwrap_or(0.0) < fee {
+        return Err(gr_err(format!("deploying costs {} XRGE", fee)));
+    }
+    let tx = crate::v2_binding::build_v2_tx("contract_deploy", body.public_key.clone(),
+        state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload)
+        .map_err(gr_err)?;
+    let address = tx.payload.contract_addr.clone().unwrap_or_default();
+    if state.contract_store.get_contract(&address).ok().flatten().is_some() {
+        return Err(gr_err("a contract already exists at that address; sign with a new nonce"));
+    }
+    let tx_id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
+    let tx_clone = tx.clone();
+    state.node.add_tx_to_mempool_verified(tx).map_err(gr_err)?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
+    Ok(Json(serde_json::json!({ "success": true, "txId": tx_id, "address": address, "fee": fee })))
+}
+
 async fn contract_deploy(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // GAME_READY: node-signed deployments are invalid from activation; deployers sign their own
+    // via POST /api/v2/contract/publish.
+    if node::game_ready_active(state.node.get_tip_height().unwrap_or(0) + 1) {
+        return Err(StatusCode::GONE);
+    }
     let wasm_base64 = body.get("wasm")
         .and_then(|v| v.as_str())
         .ok_or(StatusCode::BAD_REQUEST)?;
@@ -9879,7 +10043,10 @@ async fn contract_call(
         Ok(result) => {
             // Submit on-chain transaction so it appears in the tx feed and is
             // re-executed deterministically (carrying the args, P3-5).
-            if let Ok(tx) = state.node.submit_contract_call_tx(
+            // GAME_READY: from activation this endpoint is a preview (dry run) only — the caller
+            // signs the real call via POST /api/v2/contract/execute.
+            let preview_only = node::game_ready_active(block_height + 1);
+            if preview_only {} else if let Ok(tx) = state.node.submit_contract_call_tx(
                 caller,
                 contract_addr,
                 method,
@@ -9904,6 +10071,7 @@ async fn contract_call(
                 "gasUsed": result.gas_used,
                 "events": result.events,
                 "error": result.error,
+                "submitted": !preview_only,
             })))
         },
         Err(e) => Ok(Json(serde_json::json!({
@@ -9986,6 +10154,35 @@ async fn contract_state(
     }
 }
 
+/// POST /api/contract/:addr/query — read-only dry run against the live ledger (no signature,
+/// no fee, commits nothing). Body: {method, args?, caller?}.
+async fn contract_query(
+    State(state): State<AppState>,
+    Path(addr): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let method = body.get("method").and_then(|v| v.as_str()).unwrap_or_default();
+    if method.is_empty() {
+        return Err(gr_err("method is required"));
+    }
+    let args = body.get("args").cloned().unwrap_or(serde_json::Value::Null);
+    let caller = body.get("caller").and_then(|v| v.as_str()).unwrap_or("");
+    let height = state.node.get_tip_height().unwrap_or(0) + 1;
+    let block_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let r = state.wasm_runtime.query_contract_ext(
+        &state.contract_store, &addr, method, &args, caller,
+        state.node.native_balances_quanta(), height, block_time,
+        state.node.game_ext_for_preview(height),
+    ).map_err(gr_err)?;
+    Ok(Json(serde_json::json!({
+        "success": r.success,
+        "returnData": r.return_data,
+        "gasUsed": r.gas_used,
+        "events": r.events,
+        "error": r.error,
+    })))
+}
+
 /// Get events for a contract
 async fn contract_events(
     State(state): State<AppState>,
@@ -9994,9 +10191,11 @@ async fn contract_events(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let limit = params.get("limit")
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(50);
-
-    match state.contract_store.get_events(&addr, limit) {
+        .unwrap_or(50)
+        .clamp(1, 1000);
+    let before = params.get("before").and_then(|s| s.parse::<u64>().ok());
+    let tx = params.get("tx").map(|s| s.as_str());
+    match state.contract_store.get_events_page(&addr, limit, before, tx) {
         Ok(events) => Ok(Json(serde_json::json!({
             "success": true,
             "events": events,

@@ -38,6 +38,27 @@ fn str_arr(p: &Value, k: &str) -> Option<Vec<String>> {
     p.get(k).and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
 }
 
+/// XRGE charged per unit of gas on a player-signed contract call (the fee is the signed gas
+/// limit times this price, paid up front by the caller).
+pub const CONTRACT_GAS_PRICE_XRGE: f64 = 0.000001;
+/// Flat fee for a player-signed contract deployment.
+pub const CONTRACT_DEPLOY_FEE_XRGE: f64 = 10.0;
+
+/// Address of a player-signed deployment: the first 20 bytes of
+/// sha256("rougechain/contract/v2" ‖ deployer ‖ signed nonce ‖ sha256(wasm)), hex. Everything in
+/// it is inside the deployer's signature, so nobody else can claim or pre-empt the address.
+pub fn contract_address_v2(deployer: &str, nonce: &str, wasm: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"rougechain/contract/v2");
+    h.update(deployer.as_bytes());
+    h.update([0u8]);
+    h.update(nonce.as_bytes());
+    h.update([0u8]);
+    h.update(Sha256::digest(wasm));
+    hex::encode(&h.finalize()[..20])
+}
+
 /// Sorted pool id, identical to `LiquidityPool::make_pool_id`.
 pub fn make_pool_id(token_a: &str, token_b: &str) -> String {
     if token_a < token_b { format!("{}-{}", token_a, token_b) } else { format!("{}-{}", token_b, token_a) }
@@ -131,6 +152,32 @@ pub fn derive_v2_fields(tx_type: &str, p: &Value) -> Result<(TxPayload, f64), St
         "unshield" => (TxPayload {
             shielded_nullifiers: Some(str_vec(p, "nullifiers")), shielded_value: Some(u(p, "amount")), shielded_proof: Some(s(p, "proof")), ..d
         }, 1.0),
+        // Player-signed contract transactions (GAME_READY). Accepted into blocks only from
+        // `GAME_READY_ACTIVATION_HEIGHT` (see node::game_ready_tx_rule); the signer is the caller
+        // / deployer and pays the fee.
+        "contract_call" => {
+            let gas = opt_u(p, "gasLimit").unwrap_or(quantum_vault_vm::DEFAULT_FUEL_LIMIT);
+            (TxPayload {
+                contract_addr: Some(s(p, "contractAddr")),
+                contract_method: Some(s(p, "method")),
+                contract_args: p.get("args").filter(|v| !v.is_null()).cloned(),
+                contract_gas_limit: Some(gas),
+                ..d
+            }, gas as f64 * CONTRACT_GAS_PRICE_XRGE)
+        }
+        "contract_deploy" => {
+            let wasm_b64 = s(p, "wasm");
+            let wasm = {
+                use base64::Engine as _;
+                base64::engine::general_purpose::STANDARD.decode(&wasm_b64).unwrap_or_default()
+            };
+            (TxPayload {
+                contract_addr: Some(contract_address_v2(&s(p, "from"), &s(p, "nonce"), &wasm)),
+                contract_wasm: Some(wasm_b64),
+                amount: Some(wasm.len() as u64),
+                ..d
+            }, CONTRACT_DEPLOY_FEE_XRGE)
+        }
         other => return Err(format!("'{}' is not a signed-payload transaction type", other)),
     })
 }

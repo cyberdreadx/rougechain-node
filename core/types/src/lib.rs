@@ -209,6 +209,13 @@ pub struct BlockHeaderV1 {
     /// `None`. Populated and verified only at/after the activation height.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_root: Option<String>,
+    /// Proposer selection Release 2a: the FINALITY_V2 commit certificate of the PARENT block
+    /// (≥ ⅔ of eligible stake precommitted `prev_hash`). Same backward-compatibility contract as
+    /// `state_root`: `None` is omitted from the serialized header, so every header without it
+    /// hashes and verifies exactly as before. Required (and only allowed) from the Release 2a
+    /// activation; a block may then only extend a FINAL parent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_commit: Option<FinalityProof>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -388,7 +395,7 @@ mod tests {
             prev_hash: "abc123".to_string(),
             tx_hash: "def456".to_string(),
             proposer_pub_key: "prop789".to_string(),
-            state_root: None,
+            state_root: None, parent_commit: None,
         }
     }
 

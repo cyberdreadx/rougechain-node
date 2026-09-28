@@ -2,7 +2,7 @@
 
 > AI agents can now **read and transact on** a post-quantum blockchain.
 
-The **first MCP-native blockchain integration** — lets AI agents (Claude, ChatGPT, custom agents) read chain state, query tokens, check balances, deploy WASM smart contracts, **and — with a wallet configured — sign and submit real transactions** (transfers, swaps, token/NFT minting, staking, social posts, and more) using the [Model Context Protocol](https://modelcontextprotocol.io/).
+The **first MCP-native blockchain integration** — lets AI agents (Claude, ChatGPT, custom agents) read chain state, query tokens, check balances, query WASM smart contracts, **and — with a wallet configured — sign and submit real transactions** (transfers, swaps, token/NFT minting, staking, social posts, and more) using the [Model Context Protocol](https://modelcontextprotocol.io/).
 
 Every write is signed locally with **ML-DSA-65 (FIPS 204)** via [`@rougechain/sdk`](https://www.npmjs.com/package/@rougechain/sdk) — private keys never leave the server process.
 
@@ -105,6 +105,7 @@ Then point the config at the built file:
 - **Name service:** `register_name`, `release_name`
 - **Social:** `create_post`, `delete_post`, `repost`, `follow`, `like_track`, `comment_on_track`
 - **Bridge:** `bridge_withdraw`
+- **Smart contracts:** `publish_contract` (10 XRGE), `execute_contract` (fee = gasLimit × 0.000001 XRGE) — see below
 
 ---
 
@@ -138,10 +139,26 @@ Then point the config at the built file:
 ### WASM Smart Contracts
 - `list_contracts` — All deployed contracts
 - `get_contract` — Contract metadata
-- `get_contract_state` — Read contract storage
-- `get_contract_events` — Contract event log
-- `deploy_contract` — Deploy WASM bytecode
-- `call_contract` — Execute contract method
+- `get_contract_state` — Read contract storage (one key or all)
+- `get_contract_events` — Stored events, newest first (`limit`, `before` block height, `tx` hash)
+- `query_contract` — Free read-only call (`POST /api/contract/:addr/query`); `caller` defaults to the configured wallet
+- `get_tx_receipt` — Receipt of an included tx: `status` is `"Success"` or `{"Failed": "<error>"}`
+
+Write mode adds two player-signed tools. The configured wallet is the deployer / the caller the
+contract sees (`host_get_caller`) and pays the fee:
+
+- `publish_contract` — `{ wasm (base64), nonce?, wait? }` → `POST /api/v2/contract/publish`.
+  Costs **10 XRGE**. Returns `txId`, `address` and a locally computed `predictedAddress`
+  (`sha256("rougechain/contract/v2" ‖ from ‖ 0 ‖ nonce ‖ 0 ‖ sha256(wasm))[..20]`).
+- `execute_contract` — `{ address, method, args?, gasLimit?, accountNonce?, wait? }` →
+  `POST /api/v2/contract/execute`. Without `gasLimit` the server queries first and signs
+  `ceil(gasUsed × 1.5) + 1000` (max 10,000,000); the fee is `gasLimit × 0.000001` XRGE. The node
+  dry-runs the call and refuses it if it would fail (nothing charged). With `wait: true` the
+  result includes the receipt; a call that reverted in its block is still charged and reports
+  `status: {"Failed": …}`.
+
+The node-signed `/api/v2/contract/deploy` (410 Gone) and `/api/v2/contract/call` (preview only)
+endpoints are retired, so the old `deploy_contract` / `call_contract` tools were removed.
 
 ### Social
 - `get_global_timeline` — Global post timeline (newest first)

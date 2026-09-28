@@ -25,29 +25,33 @@ cargo build --release --target wasm32-unknown-unknown
 
 Output: `target/wasm32-unknown-unknown/release/rougechain_erc20.wasm`
 
-## Deploy
+## Deploy and initialize
 
-The endpoint takes a JSON body with the WASM bytecode base64-encoded in the `wasm`
-field (not a multipart file upload):
+Contract transactions are signed by your wallet (the old node-signed
+`/api/v2/contract/deploy` and `/api/v2/contract/call` endpoints are retired). With
+`@rougechain/sdk` 1.9.0+:
 
-```bash
-curl -X POST https://testnet.rougechain.io/api/v2/contract/deploy \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"wasm\": \"$(base64 -w0 target/wasm32-unknown-unknown/release/rougechain_erc20.wasm)\",
-    \"deployer\": \"your-pubkey\"
-  }"
+```typescript
+import { readFileSync } from "node:fs";
+import { RougeChain, Wallet } from "@rougechain/sdk";
+
+const rc = new RougeChain("https://testnet.rougechain.io/api");
+const wallet = Wallet.fromMnemonic(process.env.MNEMONIC!);
+
+// Publish (10 XRGE). The address is known before the block.
+const wasm = readFileSync("target/wasm32-unknown-unknown/release/rougechain_erc20.wasm");
+const pub = await rc.contracts.publish(wallet, wasm);
+await rc.contracts.waitForReceipt(pub.txId!);
+
+// Initialize (a signed call; the signer is the caller the contract sees)
+const r = await rc.contracts.execute(wallet, pub.predictedAddress, "init", {
+  name: "MyToken", symbol: "MTK", decimals: 18, total_supply: 1000000, owner: wallet.publicKey,
+});
+const receipt = await rc.contracts.waitForReceipt(r.txId!);   // status "Success" or { Failed }
+
+// Read-only (free)
+const bal = await rc.contracts.query(pub.predictedAddress, "balance_of", { account: wallet.publicKey });
 ```
 
-## Initialize
-
-```bash
-curl -X POST https://testnet.rougechain.io/api/v2/contract/call \
-  -H "Content-Type: application/json" \
-  -d '{
-    "contractAddr": "<addr>",
-    "method": "init",
-    "args": {"name": "MyToken", "symbol": "MTK", "decimals": 18, "total_supply": 1000000, "owner": "alice"},
-    "caller": "alice"
-  }'
-```
+The raw endpoints (`POST /api/v2/contract/publish`, `POST /api/v2/contract/execute`,
+`POST /api/contract/:addr/query`) are described in `docs/api-reference/smart-contracts.md`.

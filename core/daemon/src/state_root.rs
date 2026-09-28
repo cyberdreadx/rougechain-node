@@ -200,3 +200,51 @@ mod tests {
     const KNOWN_VECTOR: &str =
         "fcec1f34d515c7bd2b64b1757c511b60b2212b418a0b16e26d6247f3e7ed4ea5";
 }
+
+const TAG_V2: &[u8] = b"rougechain.stateroot.v2";
+const TAG_NFT_COLLECTIONS: &[u8] = b"rougechain.stateroot.v2.nft_collections";
+const TAG_NFT_TOKENS: &[u8] = b"rougechain.stateroot.v2.nft_tokens";
+const TAG_CONTRACT_CODE: &[u8] = b"rougechain.stateroot.v2.contract_code";
+const TAG_CONTRACT_STATE: &[u8] = b"rougechain.stateroot.v2.contract_state";
+
+/// GAME_READY 2 state root: the balance root plus NFT ownership/minting and contract code and
+/// storage, so every node must agree on them too. Inputs are already in sorted key order
+/// (sled iteration); the encoding is explicit and length-prefixed like the balance sections.
+pub fn extend_state_root_v2(
+    balance_root: &str,
+    collections: &[crate::nft_store::NftCollection],
+    tokens: &[crate::nft_store::NftToken],
+    contract_code: &[(Vec<u8>, [u8; 32])],
+    contract_state: &[(Vec<u8>, Vec<u8>)],
+) -> String {
+    let mut h = Sha256::new();
+    h.update(TAG_V2);
+    field(&mut h, balance_root.as_bytes());
+
+    h.update(TAG_NFT_COLLECTIONS);
+    for c in collections {
+        field(&mut h, c.collection_id.as_bytes());
+        field(&mut h, c.creator.as_bytes());
+        h.update(c.minted.to_be_bytes());
+        h.update(c.max_supply.unwrap_or(u64::MAX).to_be_bytes());
+        h.update([c.frozen as u8]);
+    }
+    h.update(TAG_NFT_TOKENS);
+    for t in tokens {
+        field(&mut h, t.collection_id.as_bytes());
+        h.update(t.token_id.to_be_bytes());
+        field(&mut h, t.owner.as_bytes());
+        h.update([t.locked as u8]);
+    }
+    h.update(TAG_CONTRACT_CODE);
+    for (addr, code_hash) in contract_code {
+        field(&mut h, addr);
+        h.update(code_hash);
+    }
+    h.update(TAG_CONTRACT_STATE);
+    for (k, v) in contract_state {
+        field(&mut h, k);
+        field(&mut h, v);
+    }
+    hex::encode(h.finalize())
+}

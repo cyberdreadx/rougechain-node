@@ -1,0 +1,709 @@
+{
+  "common": {
+    "switchLanguage": "Switch to {{language}}",
+    "loading": "Loading…",
+    "error": "Something went wrong",
+    "copy": "Copy",
+    "copied": "Copied",
+    "close": "Close",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "back": "Back",
+    "next": "Next",
+    "learnMore": "Learn more",
+    "viewAll": "View all",
+    "mainnet": "Mainnet",
+    "testnet": "Testnet",
+    "language": "Language"
+  },
+  "nav": {
+    "home": "Home",
+    "regenerate": "Regenerate",
+    "wallet": "Wallet",
+    "swap": "Swap",
+    "bridge": "Bridge",
+    "pools": "Pools",
+    "blockchain": "Blockchain",
+    "txFeed": "Tx Feed",
+    "contracts": "Contracts",
+    "tokens": "Tokens",
+    "nfts": "NFTs",
+    "messenger": "Messenger",
+    "mail": "Mail",
+    "validators": "Validators",
+    "coreNode": "Core Node",
+    "agents": "Agents",
+    "group": {
+      "defi": "DeFi",
+      "explorer": "Explorer",
+      "social": "Social",
+      "network": "Network"
+    },
+    "resources": "Resources",
+    "docs": "Docs",
+    "whitepaper": "Whitepaper",
+    "searchPlaceholder": "Search address / tx / block...",
+    "switchNetwork": "Tap to switch network",
+    "unreadMessages_one": "{{count}} unread message",
+    "unreadMessages_other": "{{count}} unread messages",
+    "unreadEmails_one": "{{count}} unread email",
+    "unreadEmails_other": "{{count}} unread emails",
+    "team": "Team",
+    "status": "Status",
+    "buy": "Buy XRGE"
+  },
+  "swap": {
+    "title": "Swap",
+    "secure": "Secure",
+    "loader": "Executing Quantum Swap",
+    "youPay": "You pay",
+    "youReceive": "You receive",
+    "balance": "Balance: {{balance}}",
+    "gettingQuote": "Getting quote...",
+    "picker": {
+      "select": "Select",
+      "title": "Select Token",
+      "searchPlaceholder": "Search by name or paste symbol...",
+      "noMatch": "No tokens matching \"{{query}}\"",
+      "noTokens": "No tokens available"
+    },
+    "settings": {
+      "title": "Swap Settings",
+      "slippage": "Slippage Tolerance: {{value}}%"
+    },
+    "quote": {
+      "rate": "Rate",
+      "priceImpact": "Price Impact",
+      "minReceived": "Minimum received",
+      "route": "Route"
+    },
+    "errors": {
+      "insufficientBalance": "Insufficient balance"
+    },
+    "button": {
+      "swapping": "Swapping...",
+      "connectWallet": "Connect Wallet",
+      "enterAmount": "Enter Amount",
+      "noRoute": "No Route Found",
+      "insufficientBalance": "Insufficient Balance",
+      "swap": "Swap"
+    },
+    "toasts": {
+      "connectFirst": "Please connect wallet and get a quote first",
+      "submitted": "Swap submitted: {{amount}} {{tokenIn}} → ~{{amountOut}} {{tokenOut}}",
+      "signedOnDevice": "Signed securely on your device",
+      "failed": "Swap failed",
+      "executeFailed": "Failed to execute swap"
+    },
+    "info": {
+      "amm": "Swaps use an automated market maker (AMM) with a 0.3% fee. Fees go to liquidity providers, who can withdraw their earnings any time with Collect fees on the Pools page.",
+      "multiHop": "Multi-hop swaps are supported for better rates through multiple pools."
+    }
+  },
+  "home": {
+    "hero": {
+      "badge": "MAINNET LIVE",
+      "title": "<grad>Post-quantum</grad> from genesis.",
+      "subtitle": "RougeChain is a Layer 1 blockchain built around post-quantum cryptography. Explore wallets, messaging and on-chain applications, or build your own.",
+      "exploreEcosystem": "Explore the ecosystem",
+      "buildOn": "Build on RougeChain",
+      "buyXrge": "Buy XRGE",
+      "whitepaper": "Whitepaper",
+      "explorer": "Explorer"
+    },
+    "network": {
+      "title": "Network status",
+      "fullExplorer": "Full explorer",
+      "checking": "Checking the network…",
+      "unavailable": "Network status is temporarily unavailable — the public node didn’t respond. This doesn’t mean the chain is down; try the <explorer>explorer</explorer>.",
+      "blockHeight": "Block height",
+      "peers": "Peers",
+      "validators": "Validators",
+      "stale": "data may be stale · ",
+      "updatedAgo": "updated {{seconds}}s ago",
+      "singleNode": "This is an early network with only a few public nodes, so low peer counts are expected. Figures above are read live from the public node — see the <explorer>explorer</explorer> for full history."
+    },
+    "brand": {
+      "rougechain": {
+        "tag": "The network",
+        "body": "A Layer 1 blockchain built around post-quantum cryptography — signatures, encryption and hashing use NIST-standardized algorithms."
+      },
+      "xrge": {
+        "tag": "The native token",
+        "body": "Pays transaction fees (from 0.1 XRGE) and gas, and is staked to run validators (10,000 XRGE). Also trades as an ERC-20 on Base — bridge it to use natively."
+      },
+      "qwalla": {
+        "tag": "A wallet for the ecosystem",
+        "body": "A mobile wallet to hold XRGE, send encrypted chat and mail, and open on-chain apps. One of several ways into RougeChain."
+      }
+    },
+    "ecosystem": {
+      "title": "Explore the ecosystem",
+      "subtitle": "Everything RougeChain enables — wallets, trading, building and exploring, all post-quantum.",
+      "showAll": "Show all apps",
+      "showLess": "Show less",
+      "groups": {
+        "use": "Use",
+        "trade": "Trade",
+        "build": "Build",
+        "explore": "Explore & participate"
+      },
+      "items": {
+        "webWallet": {
+          "title": "Web Wallet",
+          "desc": "Post-quantum wallet in the browser"
+        },
+        "qwalla": {
+          "title": "Qwalla",
+          "desc": "Mobile wallet — now on iOS"
+        },
+        "messenger": {
+          "title": "Messenger",
+          "desc": "End-to-end encrypted chat"
+        },
+        "mail": {
+          "title": "Mail",
+          "desc": "On-chain encrypted mail"
+        },
+        "swap": {
+          "title": "Swap",
+          "desc": "On-chain token swaps"
+        },
+        "bridge": {
+          "title": "Bridge",
+          "desc": "Move assets to/from Base"
+        },
+        "pools": {
+          "title": "Pools",
+          "desc": "Provide liquidity"
+        },
+        "contracts": {
+          "title": "Smart Contracts",
+          "desc": "WASM contracts & games"
+        },
+        "tokens": {
+          "title": "Tokens",
+          "desc": "Launch custom tokens"
+        },
+        "nfts": {
+          "title": "NFTs",
+          "desc": "RC-721 collections"
+        },
+        "sdk": {
+          "title": "SDK & Docs",
+          "desc": "@rougechain/sdk"
+        },
+        "mcp": {
+          "title": "MCP Agents",
+          "desc": "AI-native integration"
+        },
+        "explorer": {
+          "title": "Explorer",
+          "desc": "Blocks & transactions"
+        },
+        "validators": {
+          "title": "Validators",
+          "desc": "Stake & secure the chain"
+        },
+        "runNode": {
+          "title": "Run a Node",
+          "desc": "Node setup guide"
+        },
+        "source": {
+          "title": "Source",
+          "desc": "Apache 2.0-licensed on GitHub"
+        }
+      }
+    },
+    "regenerate": {
+      "eyebrow": "RougeChain Regenerate",
+      "title": "Technology should improve the territory it touches.",
+      "body": "A regeneration program & treasury on RougeChain — funding transparent, measurable local projects. First territory: Tulum.",
+      "explore": "Explore Regenerate",
+      "propose": "Propose a Project"
+    },
+    "qwalla": {
+      "badge": "MOBILE",
+      "subtitle": "Post-quantum wallet for iOS",
+      "body": "Hold XRGE, send end-to-end encrypted chat and mail, and open on-chain apps from your phone — secured by ML-DSA-65 signing.",
+      "chips": {
+        "sendReceive": "Send / Receive",
+        "encryptedChats": "Encrypted Chats",
+        "encryptedMail": "Encrypted Mail",
+        "dappBrowser": "dApp Browser"
+      },
+      "visit": "Visit qwalla.io",
+      "download": "Download on the App Store",
+      "note": "Now <hl>live on the App Store</hl> — always back up your recovery phrase.",
+      "screenshotAlt": "Qwalla mobile wallet — balance, quick actions and encrypted apps"
+    },
+    "extension": {
+      "title": "Browser Wallet Extension",
+      "badge": "FREE",
+      "body": "A quantum-safe wallet for Chrome, Edge, Brave, Firefox, Arc and Opera — send XRGE, sign transactions, and use encrypted chat and mail.",
+      "chips": {
+        "signing": "ML-DSA-65 Signing",
+        "messenger": "E2E Messenger",
+        "mail": "PQC Mail",
+        "vault": "Auto-lock Vault"
+      },
+      "add": "Add to browser",
+      "meta": "Manifest V3 · 6 browsers",
+      "screenshotAlt": "Extension screenshot: {{label}}",
+      "prev": "Previous screenshot",
+      "next": "Next screenshot",
+      "goTo": "Go to screenshot {{n}}",
+      "screenshots": {
+        "wallet": "Wallet",
+        "messenger": "Messenger",
+        "mail": "Mail",
+        "tokens": "Tokens",
+        "createToken": "Create Token"
+      }
+    },
+    "dev": {
+      "title": "Build on RougeChain",
+      "subtitle": "Post-quantum primitives, a typed SDK, game-ready WASM contracts (tokens, NFTs, randomness) and an MCP integration for AI agents.",
+      "links": {
+        "quickstart": {
+          "title": "Quickstart",
+          "desc": "Run a node & first tx in ~5 min"
+        },
+        "example": {
+          "title": "Example game contract",
+          "desc": "Loot roll: NFTs, tokens & dice"
+        },
+        "sdk": {
+          "title": "SDK & API docs",
+          "desc": "@rougechain/sdk + REST/gRPC"
+        },
+        "node": {
+          "title": "Run a node / validator",
+          "desc": "Node setup & staking"
+        },
+        "github": {
+          "title": "GitHub",
+          "desc": "cyberdreadx/rougechain-node"
+        },
+        "mcp": {
+          "title": "MCP server",
+          "desc": "@rougechain/mcp-server"
+        }
+      }
+    },
+    "xrge": {
+      "title": "XRGE & the two networks",
+      "subtitle": "The same token lives in two places. Use the right one for each action.",
+      "native": {
+        "title": "Native XRGE — on RougeChain",
+        "body": "Pays fees & gas, is staked to run validators, and powers on-chain apps: swaps, contracts and games, tokens, NFTs, messenger and mail."
+      },
+      "base": {
+        "title": "XRGE (ERC-20) — on Base",
+        "body": "Where you buy or trade XRGE today (e.g. on Aerodrome). <bridge>Bridge</bridge> it to RougeChain to use it natively."
+      },
+      "buyOnBase": "Buy XRGE on Base",
+      "bridgeTo": "Bridge to RougeChain",
+      "price": {
+        "title": "XRGE price",
+        "onBase": "· on Base",
+        "price": "Price",
+        "change24h": "24h",
+        "volume24h": "24h Volume",
+        "liquidity": "Liquidity",
+        "chartTitle": "XRGE Price Chart (Base)"
+      }
+    },
+    "security": {
+      "title": "Security",
+      "algos": {
+        "mldsa": "Digital signatures (formerly Dilithium)",
+        "mlkem": "Key encapsulation (formerly Kyber)",
+        "sha256": "Hashing for blocks & transactions"
+      },
+      "nist": "RougeChain builds on these <hl>NIST-standardized</hl> algorithms. NIST standardizes the primitives — it has not reviewed or certified RougeChain itself.",
+      "audit": "<hl>Audit status:</hl> the protocol and apps have <hl>not yet had an independent third-party security audit</hl>. It’s an early network with only a few public nodes. Use accordingly and keep your own backups.",
+      "report": "Found a vulnerability? Please report it privately via <advisories>GitHub Security Advisories</advisories> rather than a public issue."
+    },
+    "cta": {
+      "badge": "MAINNET IS LIVE",
+      "body": "Open a wallet, bridge assets from Base, or start building on a post-quantum Layer 1.",
+      "openWallet": "Open Wallet",
+      "quickstart": "Quickstart"
+    },
+    "team": {
+      "eyebrow": "THE TEAM",
+      "title": "The people behind RougeChain.",
+      "subtitle": "Building infrastructure for a post-quantum world.",
+      "photoAlt": "Portrait of {{name}}",
+      "social": {
+        "x": "{{name}} on X",
+        "github": "{{name}} on GitHub",
+        "website": "{{name}} — website",
+        "linkedin": "{{name}} on LinkedIn"
+      }
+    },
+    "buy": {
+      "title": "Buy XRGE",
+      "subtitle": "Swap ETH or USDC for XRGE on Base, right here, through the Aerodrome pool. Your wallet signs; we never hold your funds.",
+      "details": "contract address, steps and other ways to buy",
+      "aboutXrge": "About XRGE at RougeCoin.io"
+    }
+  },
+  "footer": {
+    "tagline": "Post-quantum Layer 1 blockchain secured by ML-DSA-65 signatures.",
+    "badge": "MAINNET LIVE",
+    "resources": "Resources",
+    "docs": "Documentation",
+    "chromeExtension": "Chrome Extension",
+    "trade": "Trade XRGE",
+    "security": "Security",
+    "signatures": "ML-DSA-65 Signatures",
+    "keyExchange": "ML-KEM-768 Key Exchange",
+    "version": "RougeChain Mainnet v1.0 • Post-Quantum Secured",
+    "followX": "Follow on X",
+    "joinDiscord": "Join Discord",
+    "viewGithub": "View on GitHub"
+  },
+  "bridge": {
+    "title": "Bridge",
+    "subtitle": "Move assets between Base and RougeChain",
+    "loader": "Warming up the flux capacitor...",
+    "notEnabled": "Bridge is not enabled on this node.",
+    "processing": "Processing...",
+    "asset": "Asset",
+    "tabs": {
+      "deposit": "Deposit",
+      "withdraw": "Withdraw"
+    },
+    "networkUnknown": {
+      "title": "Network not confirmed",
+      "body": "This node didn't report a recognized Base chain, so the bridge can't tell whether you're on Base mainnet or a testnet. Bridging is disabled here to protect your funds. Check the node's bridge config (<code>chainId</code> in <code>/bridge/config</code>) and reload."
+    },
+    "networkMismatch": {
+      "title": "Network mismatch — bridge disabled",
+      "body": "You're on the RougeChain <net>{{network}}</net> network, but this node's bridge reports <chain>{{chainLabel}}</chain> (chain {{chainId}}). A {{network}} network must not bridge {{assets}}, so bridging is disabled to protect your funds. This is a node misconfiguration — its bridge <code>chainId</code>/token must match the {{network}} Base chain.",
+      "realMainnetAssets": "real mainnet assets",
+      "testnetAssets": "testnet assets"
+    },
+    "form": {
+      "from": "From · {{chain}}",
+      "to": "To · {{chain}}",
+      "balance": "Balance: {{balance}}",
+      "receiveAtBitcoin": "Receive at (Bitcoin address)",
+      "receiveAtBase": "Receive at (Base address)",
+      "btcAddressPlaceholder": "bc1… / Bitcoin address",
+      "btcTestnetAddressPlaceholder": "tb1… / testnet address",
+      "chooseWallet": "Choose a wallet",
+      "baseWallet": "Base Wallet",
+      "connectWallet": "Connect {{wallet}}",
+      "connectWalletWithChain": "Connect {{wallet}} ({{chain}})",
+      "bridgeTo": "Bridge {{asset}} to {{chain}}"
+    },
+    "info": {
+      "depositXrge": "Approve + deposit in two Base wallet transactions. 1:1 conversion.",
+      "depositEvm": "Send {{asset}} via your Base wallet → auto-claim {{l1}} on RougeChain. 1:1 conversion.",
+      "withdrawBtc": "Submit withdrawal → the BTC relayer sends Bitcoin to your address. Confirmation time depends on the Bitcoin network.",
+      "withdrawEvm": "Submit withdrawal → relayer processes on Base (typically < 2 min)."
+    },
+    "btc": {
+      "connectForAddress": "Connect your RougeChain wallet to get your Bitcoin deposit address.",
+      "received": "Received — {{amount}} qBTC credited",
+      "nowInWallet": "Your qBTC is now in your RougeChain wallet.",
+      "yourDepositAddress": "Your Bitcoin deposit address",
+      "fetchingAddress": "Fetching your deposit address…",
+      "tryAgain": "Try again",
+      "depositQrAlt": "Bitcoin deposit address QR",
+      "depositAddressLabel": "Deposit address",
+      "copyDepositAddress": "Copy deposit address",
+      "sendFromAnyWallet": "Send BTC from any wallet — any amount, no memo or tag needed. Your qBTC will appear automatically once the deposit confirms (~30–60 min on Bitcoin).",
+      "testnetOnly": "Testnet — send testnet BTC only.",
+      "addressWarmingUp": "Setting up your deposit address, try again in a moment.",
+      "addressFetchFailed": "Couldn't fetch a deposit address. Try again.",
+      "advanced": {
+        "title": "Advanced: deposit with OP_RETURN",
+        "intro": "For power users, or to recover a manual deposit already sent with an OP_RETURN binding.",
+        "step1": "Send BTC to the custody address",
+        "custodyQrAlt": "Bitcoin custody address QR",
+        "custodyAddressLabel": "Custody address",
+        "copyCustodyAddress": "Copy custody address",
+        "step2": "Add an OP_RETURN with your RougeChain address",
+        "step2Help": "In the same transaction, paste this into your wallet's OP_RETURN / memo / data field. It binds the deposit to your wallet — without it the funds can't be credited.",
+        "connectWalletPlaceholder": "Connect your RougeChain wallet…",
+        "rougeAddressLabel": "RougeChain address",
+        "copyRougeAddress": "Copy RougeChain address",
+        "opReturnWallets": "OP_RETURN is supported by wallets like Sparrow, Electrum, BlueWallet (advanced) and bitcoinjs. Custodial apps (Coinbase, Cash App) usually can't attach one — use an OP_RETURN-capable wallet for this deposit.",
+        "step3": "Paste the Bitcoin txid to claim qBTC",
+        "txidPlaceholder": "Bitcoin transaction id (64 hex characters)",
+        "claimButton": "Claim qBTC",
+        "claimHelp": "Verification waits for Bitcoin confirmations, so this can take a while. Claiming is idempotent — safe to re-paste the same txid later."
+      }
+    },
+    "claim": {
+      "title": "Claim an existing deposit",
+      "help": "Sent ETH or USDC to the bridge but it didn't arrive? Paste the Base transaction hash to claim it — mints to your connected RougeChain wallet. Waits for confirmations automatically.",
+      "txHashLabel": "Base transaction hash",
+      "claiming": "Claiming…",
+      "button": "Claim deposit"
+    },
+    "activity": {
+      "title": "Recent Bridge Activity",
+      "empty": "No bridge activity yet",
+      "emptyHint": "Bridge deposits and withdrawals will appear here",
+      "bridgedIn": "Bridged In",
+      "bridgedOut": "Bridged Out",
+      "statusPending": "pending",
+      "statusCompleted": "completed"
+    },
+    "pending": {
+      "title": "Withdrawal Release Status",
+      "failedAttempts_one": "{{count}} failed attempt",
+      "failedAttempts_other": "{{count}} failed attempts",
+      "viewOnMempool": "View on mempool.space",
+      "status": {
+        "retrying": "Retrying",
+        "refunded": "Refunded",
+        "released": "Released",
+        "pending": "Pending"
+      }
+    },
+    "steps": {
+      "approvingXrge": "Approving XRGE...",
+      "waitingApproval": "Waiting for approval confirmation...",
+      "depositingVault": "Depositing to vault...",
+      "waitingDeposit": "Waiting for deposit confirmation...",
+      "waitingBase": "Waiting for Base confirmations…",
+      "waitingBaseAttempt": "Waiting for Base confirmations… ({{attempt}}/30)",
+      "waitingBitcoin": "Waiting for Bitcoin confirmations…",
+      "waitingBitcoinAttempt": "Waiting for Bitcoin confirmations… ({{attempt}}/30)",
+      "sendingToBridge": "Sending {{symbol}} to bridge...",
+      "signingClaim": "Signing claim...",
+      "submittingWithdrawal": "Submitting withdrawal..."
+    },
+    "toasts": {
+      "copied": "{{label}} copied",
+      "connected": "Connected to {{chain}}",
+      "claimed": "Claimed! {{token}} minted to your RougeChain wallet.",
+      "claimedQbtc": "Claimed! qBTC minted to your RougeChain wallet.",
+      "btcNotConfirmedYet": "Deposit not confirmed yet — Bitcoin can take a while. Re-paste the txid to claim once it confirms.",
+      "bridgedXrge": "Bridged {{amount}} XRGE to RougeChain!",
+      "xrgeArrivesAutomatically": "Deposit confirmed on Base — your XRGE will arrive on RougeChain automatically once it finalizes.",
+      "bridgedEvm": "Bridged {{amount}} {{from}} → {{to}}!",
+      "depositSentPending": "Deposit sent — {{token}} arrives once it confirms. If it doesn't, use \"Claim an existing deposit\" with tx {{tx}}… ({{error}})",
+      "withdrawQueuedBtc": "Withdrawal queued — the BTC relayer will send BTC to your Bitcoin address.",
+      "withdrawSubmittedXrge": "Withdrawal submitted! The relayer will release XRGE on Base.",
+      "withdrawSubmittedEvm": "Withdrawal submitted! The relayer will send {{symbol}} to your Base address."
+    },
+    "errors": {
+      "installWallet": "Install a Base-compatible wallet (MetaMask, Coinbase Wallet, etc.)",
+      "networkNotConfirmed": "Network not confirmed — bridge disabled to protect your funds",
+      "connectFailed": "Failed to connect",
+      "baseTimeout": "timed out waiting for Base confirmations",
+      "bitcoinTimeout": "timed out waiting for Bitcoin confirmations",
+      "invalidBaseTxHash": "Enter a valid Base transaction hash (0x + 64 hex)",
+      "connectSendingBaseWallet": "Connect the Base wallet that sent the deposit",
+      "connectRougeToReceive": "Connect your RougeChain wallet to receive the funds",
+      "connectRougeToReceiveQbtc": "Connect your RougeChain wallet to receive the qBTC",
+      "noBaseProvider": "No Base wallet provider available",
+      "signatureRejected": "Signature rejected — sign with the Base wallet that sent the deposit",
+      "claimFailed": "Claim failed",
+      "btcClaimFailed": "BTC claim failed",
+      "invalidBtcTxid": "Enter a valid Bitcoin transaction id (64 hex characters)",
+      "connectBaseFirst": "Connect your Base wallet first",
+      "noBaseWallet": "No Base wallet available",
+      "rougeNotConnected": "RougeChain wallet not connected",
+      "connectRougeFirst": "Connect your RougeChain wallet first",
+      "invalidAmount": "Enter a valid amount",
+      "insufficientOnBase": "Insufficient {{symbol}} balance on Base",
+      "insufficientBalance": "Insufficient {{symbol}} balance",
+      "xrgeNotConfigured": "XRGE bridge not fully configured",
+      "notConfigured": "Bridge not configured",
+      "depositTxFailed": "Deposit transaction failed or timed out on Base",
+      "depositFailed": "Bridge deposit failed",
+      "invalidBtcAddress": "Enter a valid Bitcoin address",
+      "invalidQbtcAmount": "Enter a valid qBTC amount",
+      "invalidEvmAddress": "Enter a valid EVM address",
+      "withdrawFailed": "Withdrawal failed"
+    }
+  },
+  "wallet": {
+    "actions": {
+      "title": "Quick actions",
+      "backupTitle": "Backup Wallet",
+      "send": "Send",
+      "receive": "Receive",
+      "create": "Create",
+      "shield": "Shield",
+      "unshield": "Unshield",
+      "disconnect": "Disconnect"
+    },
+    "sync": {
+      "failed": "Sync failed",
+      "notYet": "Not synced yet",
+      "justNow": "Updated just now",
+      "secondsAgo": "Updated {{seconds}}s ago",
+      "minutesAgo": "Updated {{minutes}}m ago",
+      "hoursAgo": "Updated {{hours}}h ago"
+    },
+    "empty": {
+      "receiveTokens": "Receive tokens",
+      "claimFaucet": "Claim faucet",
+      "shareAddressHint": "Share your address to receive tokens",
+      "faucetHint": "Claim from faucet to get started"
+    },
+    "seedReveal": {
+      "title": "Save Your Recovery Phrase",
+      "intro": "These {{count}} words are the ONLY way to recover this wallet if you lose your device or backup file. Write them down and store them offline.",
+      "warning": "Never share these words. Anyone who has them can take your funds. RougeChain support will never ask for them.",
+      "copied": "Copied",
+      "copyPhrase": "Copy phrase",
+      "confirmSaved": "I have written down my recovery phrase and stored it safely.",
+      "continue": "Continue",
+      "viewLater": "You can view this phrase again later under Backup → Seed Phrase."
+    },
+    "passwordSetup": {
+      "title": "Set a Password",
+      "intro": "Your password encrypts the wallet on this device. You'll need it to unlock your wallet each time.",
+      "createPlaceholder": "Create password (min 6 characters)",
+      "confirmPlaceholder": "Confirm password",
+      "encrypting": "Encrypting...",
+      "submit": "Set Password & Continue",
+      "neverSent": "Your password is never sent anywhere. It encrypts your private keys locally with AES-256-GCM.",
+      "errors": {
+        "tooShort": "Password must be at least 6 characters",
+        "mismatch": "Passwords don't match",
+        "encryptFailed": "Failed to encrypt wallet"
+      }
+    },
+    "locked": {
+      "title": "Wallet Locked",
+      "namedLocked": "{{name}} is locked.",
+      "yourWalletLocked": "Your wallet is locked.",
+      "passwordPlaceholder": "Enter vault password",
+      "enterPassword": "Enter your vault password",
+      "unlocking": "Unlocking...",
+      "unlockButton": "Unlock Wallet",
+      "unlockFailed": "Unlock failed",
+      "unlockFailedDesc": "Invalid password or missing vault data"
+    },
+    "tokenInfo": {
+      "title": "XRGE Token Info",
+      "explorer": "Explorer",
+      "tokenType": "Token Type",
+      "nativeChainToken": "Native Chain Token",
+      "nativeCurrency": "XRGE is the native currency of RougeChain",
+      "name": "Name",
+      "network": "Network",
+      "chainId": "Chain ID",
+      "supplyModel": "Supply Model",
+      "capped": "Capped",
+      "livePrice": "Live Price (Base)",
+      "totalSupply": "Total Supply",
+      "circulating": "Circulating",
+      "remaining": "Remaining",
+      "percentInCirculation": "{{percent}}% in circulation"
+    },
+    "extensionPromo": {
+      "title": "RougeChain Wallet Extension"
+    },
+    "faucet": {
+      "httpFailed": "Faucet failed: {{status}} {{statusText}}",
+      "invalidResponse": "Invalid server response",
+      "requestFailed": "Faucet request failed",
+      "notSuccessful": "Faucet request was not successful",
+      "claimedXrge": "🎉 Claimed 10,000 XRGE!",
+      "claimedAmount": "Claimed {{amount}}!",
+      "balanceUpdates": "Balance will update once the block is mined.",
+      "claimFailed": "Failed to claim tokens",
+      "claimTokenFailed": "Failed to claim {{token}}"
+    },
+    "toasts": {
+      "locked": "Wallet locked",
+      "lockedDesc": "Unlock to continue",
+      "createdSecured": "Wallet created and secured!",
+      "createdSecuredDesc": "Your wallet is encrypted with your password.",
+      "disconnected": "Wallet disconnected",
+      "extensionConnected": "Extension wallet connected!",
+      "unlocked": "Wallet unlocked"
+    },
+    "errors": {
+      "loadFailed": "Failed to load wallet data",
+      "unknown": "Unknown error",
+      "createFailed": "Failed to create wallet",
+      "connectFirst": "Connect your wallet first",
+      "extensionNotFound": "RougeChain Wallet extension not found",
+      "extensionNotFoundDesc": "Install it from the Chrome Web Store",
+      "extensionNoPublicKey": "Extension did not return a public key",
+      "extensionConnectFailed": "Failed to connect extension"
+    }
+  },
+  "status": {
+    "title": "Network status",
+    "subtitle": "Live mainnet figures read from the public node API, plus what is live and what is not.",
+    "autoRefresh": "refreshes every 15 s",
+    "apiError": "Could not reach the API",
+    "height": "Height",
+    "finalized": "Finalized",
+    "validators": "Validators (active / total)",
+    "peers": "Peers",
+    "totalStake": "Total stake",
+    "baseFee": "Base fee",
+    "burned": "Fees burned",
+    "chainId": "Chain ID",
+    "consensusTitle": "Consensus",
+    "stateRoot": "State root",
+    "designatedProposer": "Designated proposer (next block)",
+    "rule": "Rule",
+    "activation": "Activation height",
+    "state": "State",
+    "validatorsTitle": "Validators & node release",
+    "active": "active",
+    "inactive": "inactive",
+    "nodeRelease": "Current node release",
+    "mandatory": "mandatory upgrade",
+    "bridgeTitle": "Bridges",
+    "audits": "Audits",
+    "footer": "What is live versus built-but-not-activated is maintained at",
+    "updated": "Facts updated"
+  },
+  "buy": {
+    "title": "Buy XRGE on Base",
+    "subtitle": "XRGE is the ERC-20 token of RougeChain on Base mainnet. Swap ETH, USDC or tokens from other chains for XRGE right here; the route is priced through the Aerodrome pool. To move XRGE onto RougeChain afterwards, use the bridge.",
+    "contractLabel": "Official XRGE contract (Base, chain id 8453)",
+    "contractNote": "Always check the address before you buy. There is only one XRGE. Verify on",
+    "howTitle": "How it works",
+    "step1": "Connect a wallet that supports Base (Coinbase Wallet, MetaMask, Rabby…).",
+    "step2": "Choose what you pay with. ETH on Base is cheapest; other chains and tokens are routed automatically.",
+    "step3": "Review the quote and confirm in your wallet. You receive XRGE on Base.",
+    "step4": "Optional: bridge XRGE to RougeChain to stake, trade on the on-chain DEX or use the apps.",
+    "altTitle": "Other ways",
+    "aerodrome": "Trade directly on Aerodrome",
+    "bridge": "Bridge XRGE to RougeChain",
+    "disclaimer": "Swaps execute in your own wallet through a third-party router; RougeChain never holds your funds or keys. Prices move with the pool; check slippage before confirming. This is not investment advice.",
+    "swap": {
+      "title": "Buy XRGE on Base",
+      "youPay": "You pay",
+      "youReceive": "You receive",
+      "minReceived": "Min. received",
+      "priceImpact": "Price impact",
+      "route": "Route",
+      "slippage": "Slippage",
+      "connect": "Connect wallet",
+      "swap": "Swap for XRGE",
+      "approving": "Approving USDC…",
+      "swapping": "Swapping…",
+      "insufficient": "Insufficient balance",
+      "impactTooHigh": "Price impact too high",
+      "refresh": "Refresh",
+      "viewTx": "View transaction on Basescan",
+      "noWallet": "No Base-compatible wallet found. Install Coinbase Wallet, MetaMask or Rabby.",
+      "connectFailed": "Could not connect the wallet",
+      "wrongChain": "Switch your wallet to Base (chain 8453)",
+      "quoteFailed": "Could not fetch a quote",
+      "done": "Swap confirmed — XRGE is in your wallet",
+      "reverted": "The swap reverted on chain",
+      "failed": "Swap failed",
+      "connectNamed": "Connect {{wallet}}"
+    }
+  }
+}

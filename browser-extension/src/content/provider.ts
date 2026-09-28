@@ -77,12 +77,25 @@ const rougechain = {
         return sendRequest("getBalance") as Promise<{ balance: number; tokens: Record<string, number> }>;
     },
 
-    async signTransaction(payload: Record<string, unknown>): Promise<{ signature: string; signedPayload: string }> {
-        return sendRequest("signTransaction", { payload }) as Promise<{ signature: string; signedPayload: string }>;
+    /**
+     * Sign a payload after the user approves it. `signedPayload` is the exact JSON that was
+     * signed and `payload` the object it encodes; submit `{ payload, signature, public_key }`.
+     * For `contract_call` / `contract_deploy`, missing `from` / `timestamp` / `nonce` are filled in.
+     */
+    async signTransaction(payload: Record<string, unknown>): Promise<{
+        signature: string; signedPayload: string; publicKey: string; payload: Record<string, unknown>;
+    }> {
+        return sendRequest("signTransaction", { payload }) as Promise<{
+            signature: string; signedPayload: string; publicKey: string; payload: Record<string, unknown>;
+        }>;
     },
 
-    async sendTransaction(payload: Record<string, unknown>): Promise<{ txId: string }> {
-        return sendRequest("sendTransaction", { payload }) as Promise<{ txId: string }>;
+    /**
+     * Sign and submit. A transfer by default; `type: "contract_call"` goes to
+     * /v2/contract/execute and `type: "contract_deploy"` to /v2/contract/publish.
+     */
+    async sendTransaction(payload: Record<string, unknown>): Promise<{ txId: string; fee?: number; address?: string; preview?: unknown }> {
+        return sendRequest("sendTransaction", { payload }) as Promise<{ txId: string; fee?: number; address?: string; preview?: unknown }>;
     },
 
     on(event: string, callback: EventCallback): void {

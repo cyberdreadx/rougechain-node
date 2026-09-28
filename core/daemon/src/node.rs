@@ -114,6 +114,31 @@ thread_local! {
     /// persistence (after the store was mutated), 3 append_block (after everything).
     static TEST_PRODUCER_FAULT: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
 }
+// ── Track A Step 2.2 upgrade gates ───────────────────────────────────────────────────────────
+// Compiled consensus/protocol constants. `None` = NOT SCHEDULED: the node behaves exactly as
+// before at every height. They are constants (never env/config) so two validators can never
+// disagree about them; choosing a value is a coordinated release, not an operator setting.
+/// From this height votes/proofs follow FINALITY_V2 (verified ML-DSA votes, recomputed quorum,
+/// no producer self-finalization). Not part of block validity ⇒ a coordinated validator
+/// software upgrade, not a state fork.
+pub const FINALITY_V2_ACTIVATION_HEIGHT: Option<u64> = Some(150);
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TEST_FINALITY_V2_ACTIVATION: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    /// Test-only: the pinned validator replay base for devnets whose validators are injected
+    /// directly into the store (production uses genesis / the canonical F-1 table).
+    pub(crate) static TEST_VALIDATOR_REPLAY_BASE: std::cell::RefCell<Option<(u64, Vec<(String, quantum_vault_finality::validator_replay::VState)>)>> = const { std::cell::RefCell::new(None) };
+}
+/// FINALITY_V2 vote intake window: votes are only useful for the newest heights.
+pub const FINALITY_V2_VOTE_WINDOW: u64 = 256;
+/// Peer proof distribution: heights WE choose to ask a peer about, per sync pass.
+pub const FINALITY_V2_MAX_PROOF_REQUESTS_PER_PASS: usize = 16;
+#[inline]
+pub(crate) fn finality_v2_active(height: u64) -> bool {
+    #[cfg(test)]
+    { if let Some(h) = TEST_FINALITY_V2_ACTIVATION.with(|c| c.get()) { return height >= h; } }
+    matches!(FINALITY_V2_ACTIVATION_HEIGHT, Some(h) if height >= h)
+}
 #[inline]
 fn state_root_activation_height() -> u64 {
     #[cfg(test)]
@@ -189,6 +214,113 @@ pub fn proposer_selection_active(height: u64) -> bool {
     matches!(proposer_selection_activation_height(), Some(a) if height >= a)
 }
 
+/// GAME_READY, Phase 0 (see `GAME_READY_SCOPE.md`): contract transactions become player-signed.
+/// From this height on a `contract_call` / `contract_deploy` is valid only if the CALLER signed
+/// it (a signed payload bound by `v2_binding`); the signer is the caller / deployer the contract
+/// sees and pays the fee. Node-signed contract transactions — whose "caller" was an unsigned
+/// field anyone could fill in — become invalid. Before this height, the `/api/v2/*` player-signed
+/// contract format is rejected, exactly as nodes without this code reject it, so activating is a
+/// coordinated upgrade like the others. `None` = not scheduled.
+pub const GAME_READY_ACTIVATION_HEIGHT: Option<u64> = Some(150);
+#[cfg(test)]
+thread_local! {
+    static TEST_GAME_READY_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[inline]
+fn game_ready_activation_height() -> Option<u64> {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_GAME_READY_OVERRIDE.with(|c| c.get()) { return h; }
+    }
+    GAME_READY_ACTIVATION_HEIGHT
+}
+#[inline]
+pub fn game_ready_active(height: u64) -> bool {
+    matches!(game_ready_activation_height(), Some(a) if height >= a)
+}
+
+/// GAME_READY 2 — contracts hold and move custom tokens and NFTs, create NFT collections and
+/// mint to players, and draw per-transaction randomness (`quantum_vault_vm::game`). From this
+/// height every contract call runs with those host functions linked and with contract-supplied
+/// addresses canonicalised; NFT owner checks compare canonical addresses. Before it, the VM links
+/// exactly the old host functions, so a module importing the new ones fails like on old nodes.
+/// From the same height the header state root also commits NFTs and contract code/storage
+/// (`compute_state_root_for_height`, state root v2; see GAME_READY_SCOPE.md).
+/// `None` = not scheduled.
+pub const GAME_READY_2_ACTIVATION_HEIGHT: Option<u64> = Some(160);
+#[cfg(test)]
+thread_local! {
+    static TEST_GAME_READY_2_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+pub(crate) fn set_test_game_ready_2(h: Option<u64>) {
+    TEST_GAME_READY_2_OVERRIDE.with(|c| c.set(Some(h)));
+}
+#[inline]
+pub fn game_ready_2_active(height: u64) -> bool {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_GAME_READY_2_OVERRIDE.with(|c| c.get()) {
+            return matches!(h, Some(a) if height >= a);
+        }
+    }
+    matches!(GAME_READY_2_ACTIVATION_HEIGHT, Some(a) if height >= a)
+}
+
+/// Owner check for NFT transactions: exact match, or (from GAME_READY 2) the same canonical
+/// address — so a token a contract minted to a rouge1 address can be moved by its key's owner.
+fn nft_owner_matches(owner: &str, signer: &str, height: u64) -> bool {
+    owner == signer || (game_ready_2_active(height) && canon_addr(owner) == canon_addr(signer))
+}
+
+/// Chain state a contract sees through the GAME_READY 2 host functions.
+struct NodeChainView {
+    tokens: HashMap<TokenBalanceKey, u128>,
+    nfts: NftStore,
+}
+
+impl quantum_vault_vm::ChainView for NodeChainView {
+    fn canon(&self, addr: &str) -> String { canon_addr(addr) }
+    fn token_balance(&self, owner: &str, symbol: &str) -> u128 {
+        *self.tokens.get(&(owner.to_string(), symbol.to_string())).unwrap_or(&0)
+    }
+    fn nft_owner(&self, collection_id: &str, token_id: u64) -> Option<(String, bool)> {
+        self.nfts.get_token(collection_id, token_id).ok().flatten().map(|t| (t.owner, t.locked))
+    }
+    fn nft_collection(&self, collection_id: &str) -> Option<quantum_vault_vm::CollectionView> {
+        self.nfts.get_collection(collection_id).ok().flatten().map(|c| quantum_vault_vm::CollectionView {
+            creator: c.creator, max_supply: c.max_supply, minted: c.minted, frozen: c.frozen,
+        })
+    }
+}
+
+/// Whether `tx` is a contract transaction in the player-signed `/api/v2/*` format (a signed
+/// payload that is not a CLI envelope).
+fn is_player_signed_contract_tx(tx: &TxV1) -> bool {
+    matches!(tx.tx_type.as_str(), "contract_call" | "contract_deploy")
+        && tx.signed_payload.as_deref()
+            .and_then(|sp| serde_json::from_str::<serde_json::Value>(sp).ok())
+            .map(|p| !crate::v2_binding::is_cli_envelope(&p))
+            .unwrap_or(false)
+}
+
+/// The GAME_READY transaction rule for a block at `height` (consensus from activation; also
+/// applied by the mempool and the producer so neither ever holds a tx a block would reject).
+pub fn game_ready_tx_rule(tx: &TxV1, height: u64) -> Result<(), String> {
+    if !matches!(tx.tx_type.as_str(), "contract_call" | "contract_deploy") {
+        return Ok(());
+    }
+    if game_ready_active(height) {
+        if tx.signed_payload.is_none() {
+            return Err(format!("{} must be signed by its caller from height {}", tx.tx_type,
+                game_ready_activation_height().unwrap_or_default()));
+        }
+    } else if is_player_signed_contract_tx(tx) {
+        return Err(format!("player-signed {} is not active before GAME_READY", tx.tx_type));
+    }
+    Ok(())
+}
+
 /// Height after which a P2P-imported block's proposer MUST be a staked validator
 /// (`stake > 0`) in the on-chain validator set, or the block is rejected on
 /// `import_block`. Blocks at or below this height skip *only that* check — a
@@ -234,6 +366,24 @@ pub const BURN_ADDRESS: &str = "XRGE_BURN_0x000000000000000000000000000000000000
 /// `__staking_rewards__`, and anything that isn't a valid ML-DSA public key —
 /// are not valid pubkeys, so `pub_key_to_address` fails and they pass through
 /// unchanged. A string that is already a `rouge1…` address passes through too.
+/// Response of `GET /api/pool/:pool_id/earnings/:owner`.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LpEarnings {
+    pub pool_id: String,
+    pub token_a: String,
+    pub token_b: String,
+    pub lp_balance: u64,
+    /// False when the fee ledger doesn't match the on-chain LP balance (nothing to collect then).
+    pub tracked: bool,
+    /// LP tokens to remove to take exactly the fees; the deposit stays in the pool.
+    pub lp_to_collect: u64,
+    pub earned_a: u64,
+    pub earned_b: u64,
+    /// Fee growth of the position since deposit (0.004 = +0.4%).
+    pub growth: f64,
+}
+
 fn canon_addr<S: AsRef<str>>(key: S) -> String {
     let key = key.as_ref();
     if quantum_vault_crypto::is_rouge_address(key) {
@@ -268,6 +418,30 @@ type TokenBalanceKey = (String, String);
 /// the SAME decision that debits the economic ledger (inside `apply_balance_tx_inner`, against a
 /// sequential in-block validator shadow); `apply_validator_block` consumes ONLY these results.
 /// A failed/no-op stake or unstake therefore can never change validator state.
+/// Outcome of UNTRUSTED (gossiped) vote intake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoteIntake { Accepted, Duplicate, /// we do not have that block / its validator set yet — the sender may retry
+    NotReady, Rejected }
+/// Bound on votes waiting to be offered to peers.
+pub const FINALITY_V2_MAX_OUTBOX: usize = 4096;
+/// How many recent unfinalized heights a validator re-offers its own (journal-idempotent) votes for.
+pub const FINALITY_V2_RESIGN_HEIGHTS: u64 = 8;
+
+/// Result of the read-only FINALITY_V2 preflight. Contains PUBLIC data only.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FinalityV2Preflight {
+    pub applicable_height: u64,
+    /// public key in node-keys.json
+    pub node_pub_key: String,
+    /// identity FINALITY_V2 votes are cast as — always the node's own key, by construction
+    pub votes_as: String,
+    pub eligible_stake: u128, pub total_stake: u128, pub quorum: u128, pub validators: usize,
+    pub store_matches_history: bool,
+    pub journal_entries: Option<usize>,
+    pub ready_to_vote: bool,
+    pub problems: Vec<String>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum ValidatorExecution {
     StakeApplied { validator: String, amount: u128 },
@@ -310,6 +484,9 @@ pub struct L1Node {
     allowance_store: AllowanceStore,
     nullifier_store: NullifierStore,
     receipt_store: ReceiptStore,
+    /// Outcome of each executed contract_call (tx hash → success, gas, error), taken by
+    /// `generate_receipts` once the block is persisted. Off-consensus bookkeeping.
+    contract_outcomes: Arc<Mutex<HashMap<String, (bool, u64, Option<String>)>>>,
     /// C1: canonical tx hash -> height of the accepted block that included it (see
     /// `TX_UNIQUENESS_ACTIVATION_HEIGHT`). Written only after a block is durable; rebuilt
     /// from the stored chain on every start.
@@ -347,6 +524,20 @@ pub struct L1Node {
     pub unbonding_queue: Arc<Mutex<Vec<UnbondingEntry>>>,
     /// Persisted finality proofs (height -> proof JSON)
     finality_db: sled::Tree,
+    /// FINALITY_V2: immutable per-height validator-set snapshots (derived; never consensus state)
+    validator_sets_db: sled::Tree,
+    /// FINALITY_V2: cursor of the deterministic validator replay (provenance check of snapshots)
+    validator_replay: Arc<Mutex<Option<quantum_vault_finality::validator_replay::ValidatorReplay>>>,
+    /// FINALITY_V2: heights whose persisted proof has been verified by THIS process (bounded)
+    verified_final: Arc<Mutex<std::collections::BTreeSet<u64>>>,
+    /// FINALITY_V2: newly recorded valid votes (own or relayed) waiting to be offered to peers
+    vote_outbox: Arc<Mutex<std::collections::VecDeque<VoteMessage>>>,
+    /// Test-only, PER-NODE copies of the thread-local gates, captured at construction, so a node
+    /// behaves the same on server / blocking-pool threads of a real-networking devnet test.
+    #[cfg(test)]
+    test_v2_gate: Option<u64>,
+    #[cfg(test)]
+    pub(crate) test_replay_base: Arc<Mutex<Option<(u64, Vec<(String, quantum_vault_finality::validator_replay::VState)>)>>>,
     /// Notify handle: wake the miner immediately when a tx enters mempool
     mine_notify: Arc<tokio::sync::Notify>,
     /// Running total of XRGE currently in the shielded privacy pool
@@ -369,6 +560,11 @@ impl L1Node {
         let messenger_store = MessengerStore::new(&data_dir_str);
         let pool_store = PoolStore::new(&opts.data_dir)?;
         let pool_event_store = PoolEventStore::new(&opts.data_dir)?;
+        match pool_event_store.rebuild_lp_positions_if_needed(|k| canon_addr(k)) {
+            Ok(0) => {},
+            Ok(n) => eprintln!("[startup] Built LP fee ledger from {} liquidity event(s)", n),
+            Err(e) => eprintln!("[startup] LP fee ledger rebuild failed: {}", e),
+        }
         let token_metadata_store = TokenMetadataStore::new(&data_dir_str)?;
         // Backfill token_id for existing tokens (migration)
         match token_metadata_store.migrate_token_ids() {
@@ -413,11 +609,12 @@ impl L1Node {
                 .map_err(|e| format!("open fee DB: {}", e))?;
             let fee_db = fee_sled.open_tree("eip1559")
                 .map_err(|e| format!("open fee tree: {}", e))?;
-            let finality_db_tree = {
-                sled::open(opts.data_dir.join("finality-db"))
-                    .map_err(|e| format!("finality-db: {}", e))?
-                    .open_tree("finality")
-                    .map_err(|e| format!("finality tree: {}", e))?
+            let (finality_db_tree, validator_sets_tree) = {
+                let fdb = sled::open(opts.data_dir.join("finality-db"))
+                    .map_err(|e| format!("finality-db: {}", e))?;
+                (fdb.open_tree("finality").map_err(|e| format!("finality tree: {}", e))?,
+                 // FINALITY_V2 derived state: height → eligible validator set applicable to it
+                 fdb.open_tree("validator_sets_v2").map_err(|e| format!("validator sets tree: {}", e))?)
             };
             let snapshot_db = sled::open(opts.data_dir.join("snapshot-db"))
                 .map_err(|e| format!("snapshot-db: {}", e))?
@@ -438,6 +635,7 @@ impl L1Node {
             commitment_store,
             nullifier_store,
             receipt_store,
+            contract_outcomes: Arc::new(Mutex::new(HashMap::new())),
             lock_store,
             multisig_store,
             token_stake_store,
@@ -468,6 +666,14 @@ impl L1Node {
             },
             unbonding_queue: Arc::new(Mutex::new(Vec::new())),
             finality_db: finality_db_tree,
+            validator_sets_db: validator_sets_tree,
+            validator_replay: Arc::new(Mutex::new(None)),
+            verified_final: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
+            vote_outbox: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            #[cfg(test)]
+            test_v2_gate: TEST_FINALITY_V2_ACTIVATION.with(|c| c.get()),
+            #[cfg(test)]
+            test_replay_base: Arc::new(Mutex::new(None)), // set explicitly by multi-threaded devnet tests; else the thread-local applies
             mine_notify: Arc::new(tokio::sync::Notify::new()),
             shielded_supply: Arc::new(Mutex::new(0.0)),
             mined_tx_hashes: Arc::new(Mutex::new(HashSet::new())),
@@ -596,6 +802,7 @@ impl L1Node {
         let finalized = persisted_finalized.min(tip.height);
         *self.finalized_height.lock().map_err(|_| "finality lock")? = finalized;
         eprintln!("[bft] Finalized height: {} (tip: {})", finalized, tip.height);
+        if let Err(e) = self.record_validator_set_for(tip.height + 1) { eprintln!("[bft] validator-set snapshot: {}", e); }
         Ok(())
     }
 
@@ -721,6 +928,21 @@ impl L1Node {
     }
 
     /// Inject the contract store for WASM bytecode access during block import.
+    /// Events that contract calls in `block` emitted (after the block was accepted).
+    pub fn contract_events_in_block(&self, block: &BlockV1) -> Vec<quantum_vault_vm::ContractEvent> {
+        let Some(ref cs) = self.contract_store else { return Vec::new() };
+        let mut out = Vec::new();
+        for tx in block.txs.iter().filter(|t| t.tx_type == "contract_call") {
+            let Some(addr) = tx.payload.contract_addr.as_deref() else { continue };
+            let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
+            if let Ok(mut evs) = cs.get_events_page(addr, 256, Some(block.header.height + 1), Some(&tx_hash)) {
+                evs.reverse(); // emission order
+                out.extend(evs);
+            }
+        }
+        out
+    }
+
     pub fn set_contract_store(&mut self, cs: Arc<ContractStore>) {
         self.contract_store = Some(cs);
     }
@@ -1005,12 +1227,22 @@ impl L1Node {
         if tx_uniqueness_rule_active(block.header.height) {
             self.check_block_tx_uniqueness(&block)?;
         }
+        // GAME_READY: contract transactions must be caller-signed from activation, and the
+        // player-signed format is refused before it (same outcome as pre-GAME_READY nodes).
+        for (i, tx) in block.txs.iter().enumerate() {
+            game_ready_tx_rule(tx, block.header.height)
+                .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
+        }
         // Proposer selection (consensus rule from PROPOSER_SELECTION_ACTIVATION_HEIGHT): judged
         // against the validator state after H-1 = the store as it is right now, before any
         // state of this block is applied.
         if proposer_selection_active(block.header.height) {
             self.check_designated_proposer(&block)?;
         }
+        // Release 2a: a block may only extend a FINAL parent (commit certificate required from the
+        // FINALITY_V2 activation), and carries no certificate before it. Checked before any state
+        // is touched, like the rules above.
+        self.check_parent_commit(&block)?;
 
         // Apply state BEFORE storing to disk (atomic: don't store blocks we can't apply)
         //
@@ -1055,7 +1287,7 @@ impl L1Node {
                 }
             }
         } else if verify_root {
-            let computed = match self.compute_current_state_root() {
+            let computed = match self.compute_state_root_for_height(block.header.height) {
                 Ok(c) => c,
                 Err(e) => {
                     let _ = self.restore_pre_apply_snapshot(pre_snapshot);
@@ -1126,6 +1358,12 @@ impl L1Node {
         self.save_balance_snapshot(block.header.height);
         eprintln!("[node] Imported block {} from peer", block.header.height);
         Ok(())
+    }
+
+    /// Read-only copy of every native XRGE balance (canonical address -> quanta), for
+    /// off-consensus features that need a point-in-time view (Regenerate vote snapshots).
+    pub fn xrge_balances_snapshot(&self) -> Result<HashMap<String, u128>, String> {
+        Ok(self.balances.lock().map_err(|_| "balance lock")?.clone())
     }
 
     pub fn get_balance(&self, public_key: &str) -> Result<f64, String> {
@@ -1354,7 +1592,7 @@ impl L1Node {
             };
 
             receipts.push(TxReceipt {
-                tx_hash,
+                tx_hash: tx_hash.clone(),
                 block_height: block.header.height,
                 block_hash: block.hash.clone(),
                 index: index as u32,
@@ -1372,6 +1610,11 @@ impl L1Node {
                         Some(ValidatorExecution::StakeApplied { .. }) | Some(ValidatorExecution::UnstakeApplied { .. }) => TxStatus::Success,
                         Some(ValidatorExecution::Failed(reason)) => TxStatus::Failed(reason.clone()),
                         None => TxStatus::Failed("missing validator execution result".to_string()),
+                    }
+                } else if tx.tx_type == "contract_call" {
+                    match self.contract_outcomes.lock().ok().and_then(|mut o| o.remove(&tx_hash)) {
+                        Some((true, _, _)) | None => TxStatus::Success,
+                        Some((false, _, err)) => TxStatus::Failed(err.unwrap_or_else(|| "contract call failed".to_string())),
                     }
                 } else {
                     TxStatus::Success
@@ -1803,6 +2046,43 @@ impl L1Node {
         self.pool_store.list_pools()
     }
 
+    /// Uncollected swap fees for `owner`'s LP position in `pool_id`.
+    pub fn get_lp_earnings(&self, pool_id: &str, owner: &str) -> Result<Option<LpEarnings>, String> {
+        let Some(pool) = self.pool_store.get_pool(pool_id)? else { return Ok(None) };
+        let addr = canon_addr(owner);
+        let lp = {
+            let lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+            (*lp_balances.get(&(addr.clone(), pool_id.to_string())).unwrap_or(&0)).min(u64::MAX as u128) as u64
+        };
+        let pos = self.pool_event_store.get_lp_position(pool_id, &addr)?.unwrap_or_default();
+        let value = crate::pool_events::lp_share_value(pool.reserve_a, pool.reserve_b, pool.total_lp_supply);
+        let tracked = pos.lp == lp && lp > 0 && value.is_some();
+        let (lp_to_collect, growth) = match value {
+            Some(v) if tracked && pos.basis > 0.0 => {
+                let deposit_lp = pos.basis / v; // LP tokens worth the deposit today
+                (((lp as f64) - deposit_lp).floor().max(0.0) as u64, (lp as f64) / deposit_lp - 1.0)
+            }
+            _ => (0, 0.0),
+        };
+        let (earned_a, earned_b) = if lp_to_collect > 0 {
+            crate::amm::calculate_remove_liquidity(lp_to_collect, pool.reserve_a, pool.reserve_b, pool.total_lp_supply)
+                .unwrap_or((0, 0))
+        } else {
+            (0, 0)
+        };
+        Ok(Some(LpEarnings {
+            pool_id: pool_id.to_string(),
+            token_a: pool.token_a.clone(),
+            token_b: pool.token_b.clone(),
+            lp_balance: lp,
+            tracked,
+            lp_to_collect,
+            earned_a,
+            earned_b,
+            growth,
+        }))
+    }
+
     pub fn get_pool_events(&self, pool_id: &str, limit: usize) -> Result<Vec<PoolEvent>, String> {
         self.pool_event_store.get_pool_events(pool_id, limit)
     }
@@ -1872,6 +2152,8 @@ impl L1Node {
         // V2 binding (node-local, always on): the executable fields must be the canonical
         // derivation of the signed payload, or an outsider could re-point a signed intent.
         crate::v2_binding::verify_v2_binding(&tx)?;
+        let next_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
+        game_ready_tx_rule(&tx, next_height)?;
         let identity = quantum_vault_types::tx_identity(&tx);
         if let Some(h) = self.tx_included_at(&identity) {
             return Err(format!("transaction {} already included in block {}", &identity[..16], h));
@@ -2422,13 +2704,306 @@ impl L1Node {
     }
 
     pub fn submit_vote(&self, vote: VoteMessage) -> Result<(), String> {
+        if self.v2_active(vote.height) { return self.submit_vote_v2(vote).map(|_| ()); }
         self.votes.lock().map_err(|_| "votes lock")?.push(vote);
         Ok(())
+    }
+
+    // ── FINALITY_V2 (Track A Step 2.2) ───────────────────────────────────────────────────────
+    /// Record (immutably) the eligible validator set applicable to `height` = validator state
+    /// after block `height - 1`. Only possible while the tip is exactly `height - 1`.
+    fn record_validator_set_for(&self, height: u64) -> Result<(), String> {
+        if !self.v2_active(height) { return Ok(()); }
+        let key = height.to_be_bytes();
+        if self.validator_sets_db.contains_key(key).map_err(|e| e.to_string())? { return Ok(()); }
+        if self.store.get_tip()?.height + 1 != height { return Err(format!("validator set for {height} can only be recorded at tip {}", height - 1)); }
+        let snap = quantum_vault_finality::ValidatorSetSnapshot::new(height, self.get_validator_stakes()?);
+        self.validator_sets_db.insert(key, snap.to_bytes()).map_err(|e| e.to_string())?;
+        self.validator_sets_db.flush().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    pub fn validator_set_for(&self, height: u64) -> Result<Option<quantum_vault_finality::ValidatorSetSnapshot>, String> {
+        Ok(self.validator_sets_db.get(height.to_be_bytes()).map_err(|e| e.to_string())?.and_then(|v| quantum_vault_finality::ValidatorSetSnapshot::from_bytes(&v)))
+    }
+    /// Run `f` with the verification context for `height`: OUR stored block + the recorded set.
+    fn with_vote_context<T>(&self, height: u64, f: impl FnOnce(&quantum_vault_finality::VoteContext) -> Result<T, String>) -> Result<T, String> {
+        let block = self.store.get_block(height)?.ok_or_else(|| format!("no accepted block at height {height}"))?;
+        let set = self.verified_validator_set_for(height)?; // stored bytes == deterministic replay, or error
+        f(&quantum_vault_finality::VoteContext { chain_id: &self.opts.chain.chain_id, height, stored_block_hash: &block.hash, validators: &set })
+    }
+    /// Verified vote intake. `Ok(true)` = newly recorded, `Ok(false)` = duplicate (no effect).
+    pub fn submit_vote_v2(&self, vote: VoteMessage) -> Result<bool, String> {
+        let height = vote.height;
+        // Bounded intake: cheap checks BEFORE any signature work or storage.
+        let tip = self.store.get_tip()?.height;
+        if height > tip { return Err(format!("vote rejected: height {height} is above the tip {tip}")); }
+        if tip - height > FINALITY_V2_VOTE_WINDOW { return Err(format!("vote rejected: height {height} is outside the {FINALITY_V2_VOTE_WINDOW}-block vote window")); }
+        if vote.signature.len() > 8192 || vote.voter_pub_key.len() > 8192 || vote.block_hash.len() != 64 || vote.vote_type.len() > 16 { return Err("vote rejected: malformed".to_string()); }
+        if self.has_verified_finality_proof(height) { return Ok(false); } // already final: nothing to add
+        // a slot that already holds a VALID vote needs no second signature verification
+        if self.votes.lock().map_err(|_| "votes lock")?.iter().any(|v| v.height == height && v.vote_type == vote.vote_type && v.voter_pub_key == vote.voter_pub_key) { return Ok(false); }
+        self.with_vote_context(height, |ctx| quantum_vault_finality::validate_vote(&vote, ctx).map_err(|e| format!("vote rejected: {:?}", e)))?;
+        {
+            let mut votes = self.votes.lock().map_err(|_| "votes lock")?;
+            if votes.iter().any(|v| v.height == height && v.vote_type == vote.vote_type && v.voter_pub_key == vote.voter_pub_key) { return Ok(false); }
+            // retained state ≤ window × validators × 2: drop everything outside the window
+            votes.retain(|v| !self.v2_active(v.height) || tip - v.height.min(tip) <= FINALITY_V2_VOTE_WINDOW);
+            votes.push(vote.clone());
+        }
+        // first acceptance ⇒ offer it to peers (own votes and relayed ones alike; a duplicate is
+        // never re-queued, so relaying terminates)
+        if let Ok(mut out) = self.vote_outbox.lock() { if out.len() >= FINALITY_V2_MAX_OUTBOX { out.pop_front(); } out.push_back(vote); }
+        self.try_finalize_block(height);
+        Ok(true)
+    }
+    /// Accept a finality proof produced elsewhere — only after full standalone verification.
+    pub fn import_finality_proof(&self, proof: &quantum_vault_types::FinalityProof) -> Result<(), String> {
+        if !self.v2_active(proof.height) { return Err("FINALITY_V2 is not active at that height".to_string()); }
+        if self.has_verified_finality_proof(proof.height) { return Ok(()); } // duplicate: ignored, nothing rewritten
+        if proof.precommit_votes.len() > quantum_vault_finality::MAX_PROOF_VOTES { return Err("proof rejected: too many votes".to_string()); }
+        self.with_vote_context(proof.height, |ctx| quantum_vault_finality::verify_finality_proof(proof, ctx).map(|_| ()).map_err(|e| format!("proof rejected: {:?}", e)))?;
+        self.persist_verified_finality(proof)
+    }
+    fn persist_verified_finality(&self, proof: &quantum_vault_types::FinalityProof) -> Result<(), String> {
+        let json = serde_json::to_vec(proof).map_err(|e| e.to_string())?;
+        self.finality_db.insert(proof.height.to_be_bytes(), json).map_err(|e| e.to_string())?;
+        self.finality_db.flush().map_err(|e| e.to_string())?;
+        { let mut fh = self.finalized_height.lock().map_err(|_| "finality lock")?; if proof.height > *fh { *fh = proof.height; } }
+        self.remember_verified_final(proof.height);
+        // the votes for a finalized height are no longer needed (the journal is untouched)
+        if let Ok(mut votes) = self.votes.lock() { votes.retain(|v| v.height != proof.height); }
+        Ok(())
+    }
+
+    /// Is there a persisted proof for `height` that VERIFIES? The mere presence of a `finality-db`
+    /// entry proves nothing (it may be legacy, corrupt or planted); each height is verified once
+    /// and remembered in a small bounded in-memory set.
+    fn has_verified_finality_proof(&self, height: u64) -> bool {
+        if self.verified_final.lock().map(|s| s.contains(&height)).unwrap_or(false) { return true; }
+        let Ok(Some(raw)) = self.finality_db.get(height.to_be_bytes()) else { return false };
+        let Ok(proof) = serde_json::from_slice::<quantum_vault_types::FinalityProof>(&raw) else { return false };
+        let ok = self.with_vote_context(height, |ctx| quantum_vault_finality::verify_finality_proof(&proof, ctx).map(|_| ()).map_err(|e| format!("{:?}", e))).is_ok();
+        if ok { self.remember_verified_final(height); }
+        ok
+    }
+    fn remember_verified_final(&self, height: u64) {
+        if let Ok(mut s) = self.verified_final.lock() { s.insert(height); while s.len() > 1024 { let first = *s.iter().next().unwrap(); s.remove(&first); } }
+    }
+
+    /// Is FINALITY_V2 active at `height` FOR THIS NODE (compiled constant; per-node test override).
+    #[inline]
+    pub fn v2_active(&self, height: u64) -> bool {
+        #[cfg(test)]
+        { if let Some(g) = self.test_v2_gate { return height >= g; } }
+        finality_v2_active(height)
+    }
+
+    /// Release 2a: does a block at `height` have to carry its parent's commit certificate?
+    /// Yes exactly when FINALITY_V2 is active for the parent (so votes/proofs exist for it).
+    #[inline]
+    pub fn parent_commit_required(&self, height: u64) -> bool {
+        height >= 1 && self.v2_active(height - 1)
+    }
+
+    /// Release 2a consensus rule. From activation, `header.parent_commit` must be a FINALITY_V2 proof
+    /// for exactly the parent (`height - 1`, `prev_hash`) that verifies against the validator set
+    /// applicable to the parent — quorum recomputed from verified signatures, nothing claimed is
+    /// trusted. Before activation the field must be absent, exactly as nodes without Release 2a
+    /// require (they could not even reproduce the block hash). A verified certificate is persisted,
+    /// so importing a block also finalizes its parent locally.
+    fn check_parent_commit(&self, block: &BlockV1) -> Result<(), String> {
+        let h = block.header.height;
+        let cert = block.header.parent_commit.as_ref();
+        if !self.parent_commit_required(h) {
+            if cert.is_some() {
+                return Err(format!("block {h} rejected: carries a parent commit certificate before Release 2a"));
+            }
+            return Ok(());
+        }
+        let cert = cert.ok_or_else(|| format!("block {h} rejected: missing the commit certificate of its parent {}", h - 1))?;
+        if cert.height != h - 1 || cert.block_hash != block.header.prev_hash {
+            return Err(format!("block {h} rejected: commit certificate is for {} / {}, not the parent {} / {}",
+                cert.height, &cert.block_hash[..16.min(cert.block_hash.len())], h - 1, &block.header.prev_hash[..16.min(block.header.prev_hash.len())]));
+        }
+        if cert.precommit_votes.len() > quantum_vault_finality::MAX_PROOF_VOTES {
+            return Err(format!("block {h} rejected: commit certificate has too many votes"));
+        }
+        self.with_vote_context(h - 1, |ctx| quantum_vault_finality::verify_finality_proof(cert, ctx)
+            .map(|_| ()).map_err(|e| format!("block {h} rejected: parent commit certificate invalid: {e:?}")))?;
+        if !self.has_verified_finality_proof(h - 1) { self.persist_verified_finality(cert)?; }
+        Ok(())
+    }
+
+    pub fn drain_vote_outbox(&self) -> Vec<VoteMessage> { self.vote_outbox.lock().map(|mut o| o.drain(..).collect()).unwrap_or_default() }
+    pub fn is_height_verified_final(&self, height: u64) -> bool { self.has_verified_finality_proof(height) }
+
+    /// UNTRUSTED intake used by peer gossip. FINALITY_V2 only — a gossiped vote can never reach
+    /// the legacy unverified path, whatever height it claims.
+    pub fn receive_gossiped_vote(&self, vote: VoteMessage) -> VoteIntake {
+        if !self.v2_active(vote.height) { return VoteIntake::Rejected; }
+        let tip = match self.store.get_tip() { Ok(t) => t.height, Err(_) => return VoteIntake::NotReady };
+        if vote.height > tip { return if vote.height - tip <= 2 { VoteIntake::NotReady } else { VoteIntake::Rejected }; }
+        match self.submit_vote_v2(vote) { Ok(true) => VoteIntake::Accepted, Ok(false) => VoteIntake::Duplicate, Err(_) => VoteIntake::Rejected }
+    }
+
+    /// Re-derive this validator's own votes for the newest unfinalized heights. Signing goes
+    /// through the journal, so this can only ever reproduce the vote already locked for a slot.
+    pub fn resign_recent_votes(&self) -> Vec<VoteMessage> {
+        let mut out = Vec::new();
+        let Ok(tip) = self.store.get_tip().map(|t| t.height) else { return out };
+        let mut h = tip;
+        while h >= 1 && tip - h < FINALITY_V2_RESIGN_HEIGHTS {
+            if !self.v2_active(h) || self.has_verified_finality_proof(h) { break; }
+            if let Ok(Some(block)) = self.store.get_block(h) {
+                self.auto_vote_v2(&block); // verified eligibility → journal → sign → local intake
+                if let (Ok(keys), Ok(votes)) = (self.keys.lock(), self.votes.lock()) { out.extend(votes.iter().filter(|v| v.height == h && v.voter_pub_key == keys.public_key_hex).cloned()); }
+            }
+            h -= 1;
+        }
+        out
+    }
+
+    fn signing_journal(&self) -> Result<quantum_vault_finality::journal::SigningJournal, String> {
+        quantum_vault_finality::journal::SigningJournal::open(self.opts.data_dir.join("finality-signing-journal")).map_err(|e| format!("{:?}", e))
+    }
+
+    /// The pinned base of the validator replay: mainnet = the canonical F-1 table; any other
+    /// chain = its genesis validators.
+    fn validator_replay_base(&self) -> (u64, Vec<(String, quantum_vault_finality::validator_replay::VState)>) {
+        use quantum_vault_finality::validator_replay::VState;
+        #[cfg(test)]
+        {
+            if let Some(b) = self.test_replay_base.lock().ok().and_then(|g| g.clone()) { return b; }
+            if let Some(b) = TEST_VALIDATOR_REPLAY_BASE.with(|c| c.borrow().clone()) { return b; }
+        }
+        if self.fork_applies() {
+            return (crate::fork::FORK_HEIGHT - 1, crate::fork_tables::CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1.iter()
+                .map(|(k, stake, sc, j, m, _ts)| (k.to_string(), VState { stake: *stake, slash_count: *sc, jailed_until: *j, missed_blocks: *m })).collect());
+        }
+        (0, self.opts.genesis_validators.iter().filter(|v| v.stake > 0).map(|v| (v.pub_key.clone(), VState { stake: v.stake as u128, ..Default::default() })).collect())
+    }
+
+    /// Deterministically derive the validator set applicable to `height` from ACCEPTED HISTORY
+    /// (blocks + stake/unstake receipts), never from the validator store.
+    pub fn derive_validator_set_from_history(&self, height: u64) -> Result<quantum_vault_finality::ValidatorSetSnapshot, String> {
+        use quantum_vault_finality::validator_replay::ValidatorReplay;
+        let mut guard = self.validator_replay.lock().map_err(|_| "validator replay lock")?;
+        let (base_h, base) = self.validator_replay_base();
+        if !matches!(guard.as_ref(), Some(r) if r.height() + 1 <= height) {
+            *guard = Some(ValidatorReplay::new(base_h, base).with_missed_block_freeze(proposer_selection_activation_height()));
+        }
+        let replay = guard.as_mut().unwrap();
+        let outcome = |_h: u64, _i: usize, tx: &TxV1| -> Option<bool> { self.get_receipt(&compute_single_tx_hash(tx)).ok().flatten().map(|rc| matches!(rc.status, TxStatus::Success)) };
+        let res = replay.derive_for(height, &|h| self.store.get_block(h), &outcome).map_err(|e| format!("validator replay: {:?}", e));
+        if res.is_err() { *guard = None; }
+        res
+    }
+
+    /// The stored snapshot for `height`, returned ONLY if it is byte-identical to the
+    /// deterministic replay. Missing / malformed / different / history unavailable ⇒ error.
+    pub fn verified_validator_set_for(&self, height: u64) -> Result<quantum_vault_finality::ValidatorSetSnapshot, String> {
+        let stored = self.validator_sets_db.get(height.to_be_bytes()).map_err(|e| e.to_string())?.ok_or_else(|| format!("no validator-set snapshot for height {height}"))?;
+        let derived = self.derive_validator_set_from_history(height)?;
+        if stored.as_ref() != derived.to_bytes().as_slice() { return Err(format!("validator-set snapshot for height {height} does NOT match deterministic replay of accepted history")); }
+        Ok(derived)
+    }
+
+    /// Rebuild every FINALITY_V2 snapshot up to `tip + 1` from history. Returns how many were (re)written.
+    pub fn rebuild_validator_sets_from_history(&self) -> Result<usize, String> {
+        let tip = self.store.get_tip()?.height;
+        self.validator_sets_db.clear().map_err(|e| e.to_string())?;
+        let mut n = 0;
+        for h in 1..=tip + 1 {
+            if !self.v2_active(h) { continue; }
+            if h - 1 < self.validator_replay_base().0 { continue; }
+            let snap = self.derive_validator_set_from_history(h)?;
+            self.validator_sets_db.insert(h.to_be_bytes(), snap.to_bytes()).map_err(|e| e.to_string())?; n += 1;
+        }
+        self.validator_sets_db.flush().map_err(|e| e.to_string())?;
+        Ok(n)
+    }
+
+    /// A persisted (hence locally VERIFIED) FINALITY_V2 proof — the only thing served to peers.
+    pub fn get_persisted_finality_proof(&self, height: u64) -> Result<Option<quantum_vault_types::FinalityProof>, String> {
+        if !self.v2_active(height) || !self.has_verified_finality_proof(height) { return Ok(None); }
+        Ok(self.finality_db.get(height.to_be_bytes()).map_err(|e| e.to_string())?.and_then(|v| serde_json::from_slice(&v).ok()))
+    }
+
+    /// Pull-based proof distribution. WE choose the heights (newest first, bounded); the peer is
+    /// only a byte source. Nothing the peer says about "its finalized height" is ever used.
+    /// Returns (imported, rejected).
+    pub fn pull_finality_proofs(&self, fetch: &dyn Fn(u64) -> Result<Option<quantum_vault_types::FinalityProof>, String>) -> Result<(usize, usize), String> {
+        let tip = self.store.get_tip()?.height;
+        let (mut imported, mut rejected, mut asked) = (0, 0, 0);
+        let mut h = tip;
+        while h >= 1 && asked < FINALITY_V2_MAX_PROOF_REQUESTS_PER_PASS {
+            if !self.v2_active(h) || self.has_verified_finality_proof(h) { break; } // everything below is covered or legacy
+            asked += 1;
+            if let Ok(Some(proof)) = fetch(h) {
+                if proof.height != h { rejected += 1; }
+                else { match self.import_finality_proof(&proof) { Ok(()) => { imported += 1; break; } Err(_) => rejected += 1 } }
+            }
+            h -= 1;
+        }
+        Ok((imported, rejected))
+    }
+
+    /// READ-ONLY preflight before FINALITY_V2 activation. Never exposes secret key material.
+    pub fn finality_v2_preflight(&self) -> Result<FinalityV2Preflight, String> {
+        let tip = self.store.get_tip()?.height;
+        let node_pub_key = self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone();
+        let set = quantum_vault_finality::ValidatorSetSnapshot::new(tip + 1, self.get_validator_stakes()?);
+        let derived = self.derive_validator_set_from_history(tip + 1);
+        let stake = set.stake_of(&node_pub_key).unwrap_or(0);
+        // read-only: do not even create the journal directory
+        let journal_dir = self.opts.data_dir.join("finality-signing-journal");
+        let journal_entries = if journal_dir.exists() { self.signing_journal().and_then(|j| j.verify_all().map_err(|e| format!("{:?}", e))) } else { Ok(0) };
+        let keypair_consistent = self.keys.lock().map(|k| quantum_vault_crypto::pqc_verify_keypair(&k.public_key_hex, &k.secret_key_hex).unwrap_or(false)).unwrap_or(false);
+        let mut problems = Vec::new();
+        if !keypair_consistent { problems.push("node-keys.json: the secret key does not match the public key".to_string()); }
+        if stake == 0 { problems.push("the node key is not an eligible validator (no stake, or jailed): this node will FOLLOW finality but never vote".to_string()); }
+        match &derived { Ok(d) if *d == set => {}, Ok(_) => problems.push("validator store differs from the deterministic replay of accepted history".to_string()), Err(e) => problems.push(format!("validator replay unavailable: {e}")) }
+        if let Err(e) = &journal_entries { problems.push(format!("signing journal: {e}")); }
+        Ok(FinalityV2Preflight { applicable_height: tip + 1, votes_as: node_pub_key.clone(), node_pub_key, eligible_stake: stake, total_stake: set.total_stake().unwrap_or(0), quorum: set.quorum().unwrap_or(0),
+            validators: set.entries().len(), store_matches_history: matches!(&derived, Ok(d) if *d == set), journal_entries: journal_entries.ok(), ready_to_vote: problems.is_empty(), problems })
+    }
+    fn auto_vote_v2(&self, block: &BlockV1) {
+        let height = block.header.height;
+        let keys = match self.keys.lock() { Ok(k) => k.clone(), Err(_) => return };
+        // A node votes ONLY as itself, and only if its own key is an eligible validator.
+        // Eligibility is decided on the PROVENANCE-VERIFIED set (stored snapshot == deterministic replay
+        // of accepted history) — a corrupt or edited snapshot can neither make us vote nor silence us silently.
+        match self.verified_validator_set_for(height) {
+            Ok(set) if set.stake_of(&keys.public_key_hex).is_some() => {}
+            Ok(_) => return, // follower / jailed / unstaked: never originates a vote
+            Err(e) => { eprintln!("[bft] NOT voting at height {}: {}", height, e); return; }
+        }
+        // Durable anti-double-sign journal FIRST, signature second. No journal ⇒ no vote.
+        let journal = match self.signing_journal() { Ok(j) => j, Err(e) => { eprintln!("[bft] signing journal unavailable — NOT voting: {}", e); return; } };
+        for ty in [quantum_vault_finality::PREVOTE, quantum_vault_finality::PRECOMMIT] {
+            match journal.sign_vote(&keys, &self.opts.chain.chain_id, ty, height, quantum_vault_finality::ONLY_ROUND, &block.hash) {
+                Ok(vote) => { let _ = self.submit_vote_v2(vote); }
+                Err(e) => eprintln!("[bft] refusing to sign {} for height {}: {:?}", ty, height, e),
+            }
+        }
+    }
+    fn try_finalize_block_v2(&self, height: u64) {
+        let votes: Vec<VoteMessage> = match self.votes.lock() { Ok(v) => v.iter().filter(|v| v.height == height).cloned().collect(), Err(_) => return };
+        let res = self.with_vote_context(height, |ctx| {
+            let mut book = quantum_vault_finality::VoteBook::new(height);
+            for v in votes { let _ = book.submit(v, ctx); } // re-validated; invalid entries cannot count
+            book.build_proof(ctx, chrono::Utc::now().timestamp_millis() as u64).map_err(|e| format!("{:?}", e))
+        });
+        if let Ok(Some(proof)) = res { if let Err(e) = self.persist_verified_finality(&proof) { eprintln!("[bft] could not persist finality proof {}: {}", height, e); } }
     }
 
     /// Automatically submit prevote + precommit for a finalized block.
     /// Uses the highest-staked validator key as the voter (node key != validator key).
     pub fn auto_vote_for_block(&self, block: &BlockV1) {
+        // FINALITY_V2: snapshot the set for the NEXT height while the tip is this block, then vote
+        // as ourselves with a verified, typed, chain-bound signature.
+        if let Err(e) = self.record_validator_set_for(block.header.height + 1) { eprintln!("[bft] validator-set snapshot: {}", e); }
+        if self.v2_active(block.header.height) { return self.auto_vote_v2(block); }
         let voter_key = if let Ok(validators) = self.validator_store.list_validators() {
             validators.iter().max_by_key(|(_, v)| v.stake).map(|(k, _)| k.clone())
         } else {
@@ -2472,6 +3047,7 @@ impl L1Node {
     /// Attempt to finalize a block if 2/3+ stake has precommitted.
     /// Only advances finalized_height if quorum is met.
     fn try_finalize_block(&self, height: u64) {
+        if self.v2_active(height) { return self.try_finalize_block_v2(height); }
         match self.generate_finality_proof(height) {
             Ok(Some(proof)) => {
                 // Persist the finality proof
@@ -2658,6 +3234,20 @@ impl L1Node {
             if let Some(recorded) = self.pending_proposal(next, &tip.hash)? {
                 return self.replay_recorded_proposal(recorded).map(Some);
             }
+            // Release 2a: only extend a FINAL parent. If the certificate for the tip isn't known yet,
+            // (re)cast our own vote for it and wait; transactions stay queued.
+            if self.parent_commit_required(next) && self.get_persisted_finality_proof(tip.height)?.is_none() {
+                if let Ok(Some(tip_block)) = self.store.get_block(tip.height) { self.auto_vote_for_block(&tip_block); }
+                if self.get_persisted_finality_proof(tip.height)?.is_none() {
+                    // Logged once per height: the miner loop retries every tick, and a stall (a
+                    // validator offline) must not flood the journal.
+                    static LAST_WAIT_LOGGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+                    if LAST_WAIT_LOGGED.swap(tip.height, std::sync::atomic::Ordering::Relaxed) != tip.height {
+                        eprintln!("[miner] waiting for the commit certificate of block {} before sealing {} (needs ⅔ of stake to vote)", tip.height, next);
+                    }
+                    return Ok(None);
+                }
+            }
             if proposer_selection_active(next) {
                 let me = self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone();
                 match self.designated_proposer(next)? {
@@ -2695,8 +3285,11 @@ impl L1Node {
         verified_set.clear();
         drop(verified_set);
         // C1: never include a tx the chain already accepted (replay), whatever its nonce says.
+        // GAME_READY: never include a contract tx the next block's rule would reject.
+        let producing_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
         let verified_entries: Vec<(String, TxV1)> = verified_entries.into_iter()
             .filter(|(_, tx)| !self.tx_already_included(&quantum_vault_types::tx_identity(tx)))
+            .filter(|(_, tx)| game_ready_tx_rule(tx, producing_height).is_ok())
             .collect();
         if verified_entries.is_empty() {
             return Ok(None);
@@ -2722,7 +3315,13 @@ impl L1Node {
             tx_hash: tx_hash.clone(),
             proposer_pub_key: proposer_pub_key.clone(),
             state_root: None,
+            parent_commit: if self.parent_commit_required(height) { self.get_persisted_finality_proof(tip.height)? } else { None },
         };
+        if self.parent_commit_required(height) && prelim_header.parent_commit.is_none() {
+            // the tip changed or the certificate vanished between the guard and here: requeue
+            if let Ok(mut mp) = self.mempool.lock() { for (id, tx) in requeue { mp.insert(id, tx); } }
+            return Ok(None);
+        }
         let prelim_block = BlockV1 {
             version: 1,
             header: prelim_header.clone(),
@@ -2750,7 +3349,7 @@ impl L1Node {
             { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 1 { return Err("injected fault: root computation".into()); } }
             // Stamp the post-state root, gated on the activation height.
             let state_root = if height >= state_root_activation_height() {
-                Some(self.compute_current_state_root()?)
+                Some(self.compute_state_root_for_height(height)?)
             } else {
                 None
             };
@@ -2801,7 +3400,10 @@ impl L1Node {
                 mined.clear();
             }
         }
-        *self.finalized_height.lock().map_err(|_| "finality lock")? = block.header.height;
+        // FINALITY_V2: producing a block is not evidence of finality — only a verified quorum is.
+        if !self.v2_active(block.header.height) {
+            *self.finalized_height.lock().map_err(|_| "finality lock")? = block.header.height;
+        }
         // Note: finalized_height set here as proposer (single-validator mode).
         // In multi-validator mode, try_finalize_block (called by auto_vote_for_block)
         // handles finalization via vote quorum verification.
@@ -3207,6 +3809,18 @@ impl L1Node {
         self.balances.lock().map(|b| b.clone()).unwrap_or_default()
     }
 
+    /// GAME_READY 2 extension for a read-only preview at `height` (None before activation).
+    /// Randomness in a preview is illustrative only: the real roll uses the mined tx's hash.
+    pub fn game_ext_for_preview(&self, height: u64) -> Option<quantum_vault_vm::GameExt> {
+        if !game_ready_2_active(height) { return None; }
+        let tokens = self.token_balances.lock().map(|t| t.clone()).unwrap_or_default();
+        let tip_hash = self.store.get_tip().map(|t| t.hash).unwrap_or_default();
+        Some(quantum_vault_vm::GameExt {
+            view: Arc::new(NodeChainView { tokens, nfts: self.nft_store.clone() }),
+            seed: quantum_vault_vm::game::random_seed(&tip_hash, "preview"),
+        })
+    }
+
     /// Public accessor for the current ledger state root (display/debugging).
     /// Lets an operator compare nodes at the same height to spot divergence; it
     /// is the same value the block header commits at/after activation.
@@ -3479,7 +4093,22 @@ impl L1Node {
     }
 
     pub fn get_state_root(&self) -> Result<String, String> {
-        self.compute_current_state_root()
+        self.compute_state_root_for_height(self.get_tip_height().unwrap_or(0))
+    }
+
+    /// The state root a block at `height` commits: the balance root, extended from GAME_READY 2
+    /// with NFTs and contract code/storage.
+    fn compute_state_root_for_height(&self, height: u64) -> Result<String, String> {
+        let base = self.compute_current_state_root()?;
+        if !game_ready_2_active(height) {
+            return Ok(base);
+        }
+        let (cols, toks) = self.nft_store.commitment_entries()?;
+        let (code, state) = match self.contract_store {
+            Some(ref cs) => cs.commitment_entries()?,
+            None => (Vec::new(), Vec::new()),
+        };
+        Ok(crate::state_root::extend_state_root_v2(&base, &cols, &toks, &code, &state))
     }
 
     /// Clone the three in-memory balance maps. Used by import (P2-5) to take a
@@ -3647,7 +4276,8 @@ impl L1Node {
         let touches_amm = has(&|t| matches!(t,
             "create_pool" | "add_liquidity" | "remove_liquidity" | "swap"
             | "place_limit_order" | "cancel_limit_order"));
-        let touches_nft = has(&|t| t.starts_with("nft_"));
+        // Contract calls can create/mint/move NFTs from GAME_READY 2.
+        let touches_nft = has(&|t| t.starts_with("nft_") || t == "contract_call");
         let touches_contract = has(&|t| t.starts_with("contract_"));
 
         let mut handles: Vec<sled::Tree> = Vec::new();
@@ -3883,6 +4513,7 @@ impl L1Node {
                 &mut balances,
                 tx,
                 block.header.time,
+                block.header.height,
             )?;
             let after_nft = balances.values().sum::<u128>();
             let deducted_nft = before_nft.saturating_sub(after_nft);
@@ -4103,7 +4734,10 @@ impl L1Node {
             for tx in &block.txs {
                 match tx.tx_type.as_str() {
                     "contract_deploy" => {
-                        let deployer = tx.payload.to_pub_key_hex.as_deref().unwrap_or(&tx.from_pub_key);
+                        // GAME_READY: the deployer is whoever signed; before it, the legacy field.
+                        let game_ready = game_ready_active(block.header.height);
+                        let deployer = if game_ready { tx.from_pub_key.as_str() }
+                            else { tx.payload.to_pub_key_hex.as_deref().unwrap_or(&tx.from_pub_key) };
                         let contract_addr = match tx.payload.contract_addr.as_deref() {
                             Some(a) => a,
                             None => { eprintln!("[node] Skipping contract_deploy: no contract_addr"); continue; }
@@ -4130,6 +4764,15 @@ impl L1Node {
                                             use base64::Engine as _;
                                             match base64::engine::general_purpose::STANDARD.decode(wasm_b64) {
                                                 Ok(wasm_bytes) => {
+                                                    // GAME_READY: bytecode that fails deployment validation
+                                                    // (e.g. no exported memory) is not installed — on every
+                                                    // node alike; the deploy fee is still charged.
+                                                    if game_ready {
+                                                        if let Err(e) = rt.validate_contract_wasm(&wasm_bytes) {
+                                                            eprintln!("[node] contract_deploy {} not installed: {}", &contract_addr[..16.min(contract_addr.len())], e);
+                                                            continue;
+                                                        }
+                                                    }
                                                     match rt.install_contract(cs, contract_addr, deployer, &wasm_bytes, block.header.height) {
                                                         Ok(()) => eprintln!("[node] Block import: installed contract {} from tx bytecode", &contract_addr[..16.min(contract_addr.len())]),
                                                         Err(e) => eprintln!("[node] Block import: contract install failed: {} (non-fatal pre-activation)", e),
@@ -4147,7 +4790,10 @@ impl L1Node {
                         eprintln!("[node] Processed contract_deploy tx: deployer={}... addr={}", &deployer[..16.min(deployer.len())], &contract_addr[..16.min(contract_addr.len())]);
                     }
                     "contract_call" => {
-                        let caller = tx.payload.to_pub_key_hex.as_deref().unwrap_or(&tx.from_pub_key);
+                        // GAME_READY: the caller is whoever signed the tx. Before it, the legacy
+                        // (unsigned) field — which is why contracts must not hold value pre-activation.
+                        let caller = if game_ready_active(block.header.height) { tx.from_pub_key.as_str() }
+                            else { tx.payload.to_pub_key_hex.as_deref().unwrap_or(&tx.from_pub_key) };
                         let contract_addr = match tx.payload.contract_addr.as_deref() {
                             Some(a) => a,
                             None => { eprintln!("[node] Skipping contract_call: no contract_addr"); continue; }
@@ -4180,7 +4826,11 @@ impl L1Node {
                             // Real call args from the tx payload (P3-2) — not an empty map.
                             let args = tx.payload.contract_args.clone()
                                 .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
-                            match rt.execute_contract(
+                            let game = game_ready_2_active(block.header.height).then(|| quantum_vault_vm::GameExt {
+                                view: Arc::new(NodeChainView { tokens: token_balances.clone(), nfts: self.nft_store.clone() }),
+                                seed: quantum_vault_vm::game::random_seed(&block.header.prev_hash, &tx_hash_str),
+                            });
+                            match rt.execute_contract_ext(
                                 cs,
                                 contract_addr,
                                 method,
@@ -4191,9 +4841,14 @@ impl L1Node {
                                 call_balances,
                                 gas_limit,
                                 &tx_hash_str,
+                                game,
                             ) {
                                 Ok(result) => {
                                     block_fuel_used += result.gas_used;
+                                    if let Ok(mut o) = self.contract_outcomes.lock() {
+                                        if o.len() > 10_000 { o.clear(); } // stale entries from rejected blocks
+                                        o.insert(tx_hash_str.clone(), (result.success, result.gas_used, result.error.clone()));
+                                    }
                                     eprintln!("[node] contract_call {} method={} gas={} success={}",
                                         &contract_addr[..16.min(contract_addr.len())], method, result.gas_used, result.success);
 
@@ -4208,18 +4863,25 @@ impl L1Node {
                                         // silently move a partial set (documented v1 limit).
                                         let did_cross_call = result.cross_call_results
                                             .as_ref().map_or(false, |v| !v.is_empty());
-                                        if did_cross_call {
+                                        // From GAME_READY 2 the VM merges sub-call moves (multi-hop).
+                                        if did_cross_call && !game_ready_2_active(block.header.height) {
                                             eprintln!("[node] contract_call {} used cross-calls; XRGE deltas NOT applied (single-hop v1)",
                                                 &contract_addr[..16.min(contract_addr.len())]);
-                                        } else if let Some(ref deltas) = result.balance_deltas {
-                                            // Conservation + overdraft enforced here; an Err
-                                            // means the VM emitted invalid deltas — a genuine
-                                            // invariant break, so fail closed (reject block).
-                                            crate::units::apply_balance_deltas(&mut balances, deltas)
-                                                .map_err(|e| format!(
-                                                    "contract {} balance deltas rejected: {}",
-                                                    contract_addr, e
-                                                ))?;
+                                        } else {
+                                            if let Some(ref deltas) = result.balance_deltas {
+                                                // Conservation + overdraft enforced here; an Err
+                                                // means the VM emitted invalid deltas — a genuine
+                                                // invariant break, so fail closed (reject block).
+                                                crate::units::apply_balance_deltas(&mut balances, deltas)
+                                                    .map_err(|e| format!(
+                                                        "contract {} balance deltas rejected: {}",
+                                                        contract_addr, e
+                                                    ))?;
+                                            }
+                                            if let Some(ref effects) = result.effects {
+                                                self.apply_contract_effects(&mut token_balances, effects, block.header.time)
+                                                    .map_err(|e| format!("contract {} effects rejected: {}", contract_addr, e))?;
+                                            }
                                         }
                                     }
                                 }
@@ -4491,6 +5153,9 @@ impl L1Node {
                     reserve_b_after: pool.reserve_b,
                 };
                 let _ = self.pool_event_store.save_event(&event);
+                if let Some(v) = crate::pool_events::lp_share_value(pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
+                    let _ = self.pool_event_store.record_lp_change(&pool.pool_id, &canon_addr(&tx.from_pub_key), true, pool.total_lp_supply, v);
+                }
                 
                 // Save price snapshot
                 let price_a_in_b = if pool.reserve_a > 0 { pool.reserve_b as f64 / pool.reserve_a as f64 } else { 0.0 };
@@ -4591,6 +5256,9 @@ impl L1Node {
                     reserve_b_after: pool.reserve_b,
                 };
                 let _ = self.pool_event_store.save_event(&event);
+                if let Some(v) = crate::pool_events::lp_share_value(pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
+                    let _ = self.pool_event_store.record_lp_change(&pool_id, &canon_addr(&tx.from_pub_key), true, lp_amount, v);
+                }
                 
                 // Save price snapshot
                 let price_a_in_b = if pool.reserve_a > 0 { pool.reserve_b as f64 / pool.reserve_a as f64 } else { 0.0 };
@@ -4676,6 +5344,12 @@ impl L1Node {
                     reserve_b_after: pool.reserve_b,
                 };
                 let _ = self.pool_event_store.save_event(&event);
+                let (pre_a, pre_b, pre_s) = (pool.reserve_a + amount_a, pool.reserve_b + amount_b, pool.total_lp_supply + lp_amount);
+                if let Some(v) = crate::pool_events::lp_share_value(pool.reserve_a, pool.reserve_b, pool.total_lp_supply)
+                    .or_else(|| crate::pool_events::lp_share_value(pre_a, pre_b, pre_s))
+                {
+                    let _ = self.pool_event_store.record_lp_change(&pool_id, &canon_addr(&tx.from_pub_key), false, lp_amount, v);
+                }
                 
                 // Save price snapshot
                 let price_a_in_b = if pool.reserve_a > 0 { pool.reserve_b as f64 / pool.reserve_a as f64 } else { 0.0 };
@@ -6404,11 +7078,93 @@ impl L1Node {
     }
 
     /// Apply NFT transaction effects during block processing
+    /// Apply a successful contract call's GAME_READY 2 token/NFT effects, in order. The VM
+    /// validated them against the same state, so a failure here is an invariant break and the
+    /// caller rejects the block (like invalid XRGE deltas).
+    fn apply_contract_effects(
+        &self,
+        token_balances: &mut HashMap<TokenBalanceKey, u128>,
+        effects: &[quantum_vault_vm::ChainEffect],
+        block_time: u64,
+    ) -> Result<(), String> {
+        use quantum_vault_vm::ChainEffect as E;
+        for e in effects {
+            match e {
+                E::TokenTransfer { symbol, from, to, amount } => {
+                    let from_key = (canon_addr(from), symbol.clone());
+                    let have = *token_balances.get(&from_key).unwrap_or(&0);
+                    if have < *amount {
+                        return Err(format!("token overdraft: {} has {} {}, moving {}", from, have, symbol, amount));
+                    }
+                    token_balances.insert(from_key, have - amount);
+                    *token_balances.entry((canon_addr(to), symbol.clone())).or_insert(0) += amount;
+                }
+                E::NftCreateCollection { collection_id, symbol, name, creator, max_supply } => {
+                    if self.nft_store.get_collection(collection_id)?.is_some() {
+                        return Err(format!("collection {} already exists", collection_id));
+                    }
+                    self.nft_store.save_collection(&NftCollection {
+                        collection_id: collection_id.clone(),
+                        symbol: symbol.clone(),
+                        name: name.clone(),
+                        creator: creator.clone(),
+                        description: None,
+                        image: None,
+                        max_supply: *max_supply,
+                        minted: 0,
+                        royalty_bps: 0,
+                        royalty_recipient: creator.clone(),
+                        frozen: false,
+                        created_at: block_time,
+                        public_mint: false,
+                        mint_price: None,
+                        token_gate_symbol: None,
+                        token_gate_amount: None,
+                        discount_pct: None,
+                    })?;
+                }
+                E::NftMint { collection_id, token_id, to, name, metadata } => {
+                    let mut col = self.nft_store.get_collection(collection_id)?
+                        .ok_or_else(|| format!("collection {} not found", collection_id))?;
+                    if col.minted + 1 != *token_id {
+                        return Err(format!("mint id {} out of sequence for {}", token_id, collection_id));
+                    }
+                    col.minted = *token_id;
+                    self.nft_store.save_collection(&col)?;
+                    self.nft_store.save_token(&NftToken {
+                        collection_id: collection_id.clone(),
+                        token_id: *token_id,
+                        owner: to.clone(),
+                        creator: col.creator.clone(),
+                        name: name.clone(),
+                        metadata_uri: None,
+                        attributes: metadata.clone(),
+                        locked: false,
+                        minted_at: block_time,
+                        transferred_at: block_time,
+                    })?;
+                }
+                E::NftTransfer { collection_id, token_id, from, to } => {
+                    let mut t = self.nft_store.get_token(collection_id, *token_id)?
+                        .ok_or_else(|| format!("NFT {}:{} not found", collection_id, token_id))?;
+                    if t.owner != *from || t.locked {
+                        return Err(format!("NFT {}:{} moved or locked since the call was checked", collection_id, token_id));
+                    }
+                    t.owner = to.clone();
+                    t.transferred_at = block_time;
+                    self.nft_store.save_token(&t)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn apply_nft_tx_inner(
         &self,
         balances: &mut HashMap<String, u128>,
         tx: &TxV1,
         block_time: u64,
+        block_height: u64,
     ) -> Result<(), String> {
         match tx.tx_type.as_str() {
             "nft_create_collection" => {
@@ -6597,7 +7353,7 @@ impl L1Node {
                     }
                 };
 
-                if token.owner != tx.from_pub_key {
+                if !nft_owner_matches(&token.owner, &tx.from_pub_key, block_height) {
                     eprintln!("[node] Warning: NFT {}:{} not owned by sender, skipping transfer", col_id, token_id);
                     return Ok(());
                 }
@@ -6643,7 +7399,7 @@ impl L1Node {
                 let token_id = tx.payload.nft_token_id.ok_or("missing nft_token_id")?;
 
                 if let Some(token) = self.nft_store.get_token(col_id, token_id)? {
-                    if token.owner != tx.from_pub_key {
+                    if !nft_owner_matches(&token.owner, &tx.from_pub_key, block_height) {
                         eprintln!("[node] Warning: NFT {}:{} not owned by sender, skipping burn", col_id, token_id);
                         return Ok(());
                     }
@@ -6671,7 +7427,7 @@ impl L1Node {
                     None => return Ok(()),
                 };
 
-                if token.owner != tx.from_pub_key {
+                if !nft_owner_matches(&token.owner, &tx.from_pub_key, block_height) {
                     eprintln!("[node] Warning: NFT {}:{} not owned by sender, skipping lock", col_id, token_id);
                     return Ok(());
                 }
@@ -6746,7 +7502,7 @@ impl L1Node {
                         }
                         // Ensure sender has enough balance for fee checks during rebuild
                         *dummy_balances.entry(tx.from_pub_key.clone()).or_insert(0) += xrge_f64_to_quanta(tx.fee + 1.0);
-                        let _ = self.apply_nft_tx_inner(&mut dummy_balances, tx, block.header.time);
+                        let _ = self.apply_nft_tx_inner(&mut dummy_balances, tx, block.header.time, block.header.height);
                     }
                     _ => {}
                 }
@@ -8239,6 +8995,74 @@ mod live_amm_tests {
         assert_eq!(a.get_balance("bob").unwrap(), 0.0, "bob got nothing — overspend refused");
         assert_eq!(a.get_balance(addr).unwrap(), 1.0, "contract balance intact");
     }
+
+    // ── LP fee ledger: uncollected fees and the Collect fees removal ─────
+    #[test]
+    fn lp_earnings_track_swap_fees_and_collect_leaves_the_deposit() {
+        let (_dir, node) = test_node();
+        let mut bal = HashMap::from([("alice".to_string(), 100_000_000 * Q), ("bob".to_string(), 100_000_000 * Q)]);
+        let mut tok: HashMap<TokenBalanceKey, u128> = HashMap::from([
+            (("alice".to_string(), "QTOK".to_string()), 100_000_000u128),
+            (("bob".to_string(), "QTOK".to_string()), 100_000_000u128),
+        ]);
+        let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
+        let mut h = 1;
+        let mut run = |tx: TxV1, bal: &mut HashMap<String, u128>, tok: &mut HashMap<TokenBalanceKey, u128>, lp: &mut HashMap<TokenBalanceKey, u128>| {
+            h += 1;
+            node.apply_amm_tx_inner(bal, tok, lp, &tx, 1000 + h, h).unwrap();
+            // The earnings API reads the node's committed LP balances.
+            *node.lp_balances.lock().unwrap() = lp.clone();
+        };
+        let swap = |from: &str, tin: &str, tout: &str, amt: u64| amm_tx("swap", from, 0.1, TxPayload {
+            token_a_symbol: Some(tin.to_string()), token_b_symbol: Some(tout.to_string()), amount_a: Some(amt), ..Default::default()
+        });
+        run(amm_tx("create_pool", "alice", 0.1, TxPayload {
+            token_a_symbol: Some("XRGE".to_string()), token_b_symbol: Some("QTOK".to_string()),
+            amount_a: Some(10_000_000), amount_b: Some(10_000_000), ..Default::default()
+        }), &mut bal, &mut tok, &mut lp);
+        // Wallets are sorted into the lp map by canonical address; the fee ledger uses the same key.
+        let alice_lp = |lp: &HashMap<TokenBalanceKey, u128>| lp[&("alice".to_string(), "QTOK-XRGE".to_string())] as u64;
+        let e0 = node.get_lp_earnings("QTOK-XRGE", "alice").unwrap().unwrap();
+        assert!(e0.tracked);
+        assert_eq!(e0.lp_to_collect, 0, "no fees right after depositing");
+
+        // Round-trip trading: price ends near where it started, so all growth is fees.
+        for _ in 0..20 {
+            run(swap("bob", "XRGE", "QTOK", 500_000), &mut bal, &mut tok, &mut lp);
+            run(swap("bob", "QTOK", "XRGE", 500_000), &mut bal, &mut tok, &mut lp);
+        }
+        let e1 = node.get_lp_earnings("QTOK-XRGE", "alice").unwrap().unwrap();
+        assert!(e1.tracked && e1.lp_to_collect > 0 && e1.growth > 0.0);
+        // 40 swaps × 500k × 0.3% ≈ 60k of fees across both sides.
+        assert!(e1.earned_a + e1.earned_b > 50_000 && e1.earned_a + e1.earned_b < 70_000, "{:?}", e1);
+
+        // A second LP who joins now has nothing to collect yet.
+        run(amm_tx("add_liquidity", "bob", 0.1, TxPayload {
+            pool_id: Some("QTOK-XRGE".to_string()), amount_a: Some(1_000_000), amount_b: Some(1_000_000), ..Default::default()
+        }), &mut bal, &mut tok, &mut lp);
+        let bob = node.get_lp_earnings("QTOK-XRGE", "bob").unwrap().unwrap();
+        assert!(bob.tracked && bob.lp_to_collect <= 1, "{:?}", bob);
+
+        // Collect fees = remove exactly lp_to_collect; the payout matches the preview.
+        let e1 = node.get_lp_earnings("QTOK-XRGE", "alice").unwrap().unwrap();
+        let q_before = tok[&("alice".to_string(), "QTOK".to_string())];
+        run(amm_tx("remove_liquidity", "alice", 0.1, TxPayload {
+            pool_id: Some("QTOK-XRGE".to_string()), lp_amount: Some(e1.lp_to_collect), ..Default::default()
+        }), &mut bal, &mut tok, &mut lp);
+        assert_eq!((tok[&("alice".to_string(), "QTOK".to_string())] - q_before) as u64, e1.earned_a);
+        let e2 = node.get_lp_earnings("QTOK-XRGE", "alice").unwrap().unwrap();
+        assert!(e2.tracked);
+        assert!(e2.lp_to_collect <= 1, "nothing left after collecting: {:?}", e2);
+        assert_eq!(e2.lp_balance, alice_lp(&lp));
+
+        // Rebuilding the ledger from events (nodes upgrading from an older build) gives the same answer.
+        let before = node.pool_event_store.get_lp_position("QTOK-XRGE", "alice").unwrap().unwrap();
+        node.pool_event_store.clear_lp_positions_for_test();
+        assert!(node.pool_event_store.rebuild_lp_positions_if_needed(|k| canon_addr(k)).unwrap() > 0);
+        let after = node.pool_event_store.get_lp_position("QTOK-XRGE", "alice").unwrap().unwrap();
+        assert_eq!(after.lp, before.lp);
+        assert!((after.basis - before.basis).abs() / before.basis < 1e-9, "{:?} vs {:?}", before, after);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -8305,7 +9129,7 @@ mod bridge_r1_daemon_tests {
         BlockV1 {
             version: 1,
             header: BlockHeaderV1 { version: 1, chain_id: "test".into(), height: tip.height + 1, time: 1,
-                prev_hash: tip.hash, tx_hash: compute_tx_hash(&txs), proposer_pub_key: String::new(), state_root: None },
+                prev_hash: tip.hash, tx_hash: compute_tx_hash(&txs), proposer_pub_key: String::new(), state_root: None , parent_commit: None},
             txs, proposer_sig: String::new(), hash: String::new(),
         }
     }
@@ -8314,7 +9138,8 @@ mod bridge_r1_daemon_tests {
         let tip = node.store.get_tip().unwrap();
         let header = BlockHeaderV1 { version: 1, chain_id: "test".into(), height: tip.height + 1,
             time, prev_hash: tip.hash,
-            tx_hash: compute_tx_hash(&txs), proposer_pub_key: proposer_pub.to_string(), state_root };
+            tx_hash: compute_tx_hash(&txs), proposer_pub_key: proposer_pub.to_string(), state_root,
+            parent_commit: if node.parent_commit_required(tip.height + 1) { node.get_persisted_finality_proof(tip.height).unwrap() } else { None } };
         let hb = encode_header_v1(&header);
         let sig = pqc_sign(proposer_sk, &hb).unwrap();
         let hash = compute_block_hash(&hb, &sig);
@@ -8465,7 +9290,7 @@ mod bridge_r1_daemon_tests {
         let probe = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![tx.clone()], None, t);
         let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
         let _ = node.apply_balance_block(&probe).unwrap();
-        let correct_root = node.get_state_root().unwrap();
+        let correct_root = node.compute_state_root_for_height(probe.header.height).unwrap();
         node.restore_pre_apply_snapshot(snap).unwrap();
         assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 1000.0, "probe restored");
         assert_eq!(node.get_base_fee_quanta(), base_fee_before, "probe base fee restored");
@@ -8640,7 +9465,7 @@ mod bridge_r1_daemon_tests {
         let probe = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, txs.clone(), None, t);
         let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
         let _ = node.apply_balance_block(&probe).unwrap();
-        let correct_root = node.get_state_root().unwrap();
+        let correct_root = node.compute_state_root_for_height(probe.header.height).unwrap();
         node.restore_pre_apply_snapshot(snap).unwrap();
         assert_eq!(fingerprint(&node, &store, &pks, &hashes), before, "probe fully rolled back");
 
@@ -8874,7 +9699,7 @@ mod bridge_store_hardening_tests {
         let probe = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![tx.clone()], None, t);
         let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
         let _ = node.apply_balance_block(&probe).unwrap();
-        let root = node.get_state_root().unwrap();
+        let root = node.compute_state_root_for_height(probe.header.height).unwrap();
         node.restore_pre_apply_snapshot(snap).unwrap();
         // Make the JSON store unwritable (a realistic persistence failure: EACCES).
         let store_path = d.0.join("bridge_withdrawals.json");
@@ -9057,7 +9882,7 @@ mod fork_integration_tests {
     fn seal(node: &L1Node, p: &Keys, txs: Vec<TxV1>, root: Option<String>, time: u64) -> BlockV1 {
         let tip = node.store.get_tip().unwrap();
         let header = BlockHeaderV1 { version: 1, chain_id: node.opts.chain.chain_id.clone(), height: tip.height + 1, time, prev_hash: tip.hash,
-            tx_hash: compute_tx_hash(&txs), proposer_pub_key: p.0.clone(), state_root: root };
+            tx_hash: compute_tx_hash(&txs), proposer_pub_key: p.0.clone(), state_root: root , parent_commit: None};
         let hb = encode_header_v1(&header); let sig = pqc_sign(&p.1, &hb).unwrap(); let hash = compute_block_hash(&hb, &sig);
         BlockV1 { version: 1, header, txs, proposer_sig: sig, hash }
     }
@@ -9276,7 +10101,7 @@ mod validator_atomicity_tests {
         let probe = sealed_block(node, proposer_pub, proposer_sk, txs.clone(), None, t);
         let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
         let _ = node.apply_balance_block(&probe).unwrap();
-        let root = node.get_state_root().unwrap();
+        let root = node.compute_state_root_for_height(probe.header.height).unwrap();
         node.restore_pre_apply_snapshot(snap).unwrap();
         let good = sealed_block(node, proposer_pub, proposer_sk, txs.clone(), Some(root), t);
         node.import_block(good).expect("block accepted");
@@ -9415,7 +10240,7 @@ mod producer_and_unbonding_tests {
         let probe = sealed_block(node, &p.public_key_hex, &p.secret_key_hex, vec![], None, time);
         let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
         let _ = node.apply_balance_block(&probe).unwrap();
-        let root = node.get_state_root().unwrap();
+        let root = node.compute_state_root_for_height(probe.header.height).unwrap();
         node.restore_pre_apply_snapshot(snap).unwrap();
         let b = sealed_block(node, &p.public_key_hex, &p.secret_key_hex, vec![], Some(root), time);
         node.import_block(b.clone()).unwrap(); b
@@ -9539,7 +10364,7 @@ mod producer_and_unbonding_tests {
         let txs = vec![signed(stake_tx(&u.public_key_hex, 100, 1.0, 1), &u.secret_key_hex), signed(unstake_tx(&u.public_key_hex, 40, 1.0, 2), &u.secret_key_hex)];
         let blk = sealed_block(&node, &p.public_key_hex, &p.secret_key_hex, txs, None, 1);
         let exec = node.apply_balance_block(&blk).unwrap();
-        let root = node.get_state_root().unwrap();
+        let root = node.compute_state_root_for_height(blk.header.height).unwrap();
         let (b0, t0, l0) = (node.balances.lock().unwrap().clone(), node.token_balances.lock().unwrap().clone(), node.lp_balances.lock().unwrap().clone());
         let pb = *b0.get(&canon_addr(&p.public_key_hex)).unwrap();
         assert!(pb >= xrge_f64_to_quanta(13.0) && pb < xrge_f64_to_quanta(15.0), "matured release (3 XRGE) credited BEFORE the root (+ proposer fee share): {}", pb);
@@ -9547,7 +10372,7 @@ mod producer_and_unbonding_tests {
         assert_eq!(*node.balances.lock().unwrap(), b0, "balances untouched after the root is sealed");
         assert_eq!(*node.token_balances.lock().unwrap(), t0);
         assert_eq!(*node.lp_balances.lock().unwrap(), l0);
-        assert_eq!(node.get_state_root().unwrap(), root, "root unchanged by the validator phase");
+        assert_eq!(node.compute_state_root_for_height(blk.header.height).unwrap(), root, "root unchanged by the validator phase");
         assert_eq!(node.validator_store.get_validator(&u.public_key_hex).unwrap().unwrap().stake, 60, "validator-store effects applied post-root");
     }
 }
@@ -9564,7 +10389,7 @@ mod peer_sync_tests {
     fn seal(node: &L1Node, p: &Keys, txs: Vec<TxV1>, root: Option<String>, time: u64) -> BlockV1 {
         let tip = node.store.get_tip().unwrap();
         let header = BlockHeaderV1 { version: 1, chain_id: node.opts.chain.chain_id.clone(), height: tip.height + 1, time, prev_hash: tip.hash,
-            tx_hash: compute_tx_hash(&txs), proposer_pub_key: p.0.clone(), state_root: root };
+            tx_hash: compute_tx_hash(&txs), proposer_pub_key: p.0.clone(), state_root: root , parent_commit: None};
         let hb = encode_header_v1(&header); let sig = pqc_sign(&p.1, &hb).unwrap(); let hash = compute_block_hash(&hb, &sig);
         BlockV1 { version: 1, header, txs, proposer_sig: sig, hash }
     }
@@ -9572,7 +10397,7 @@ mod peer_sync_tests {
         let probe = seal(node, p, vec![], None, time);
         let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
         let _ = node.apply_balance_block(&probe).unwrap();
-        let r = node.get_state_root().unwrap(); node.restore_pre_apply_snapshot(snap).unwrap(); r
+        let r = node.compute_state_root_for_height(probe.header.height).unwrap(); node.restore_pre_apply_snapshot(snap).unwrap(); r
     }
     /// Mainnet-fixture source at 49 (canonical 48 + one post-fork block) and an empty fresh node.
     fn source_and_fresh() -> (L1Node, TmpDir, L1Node, TmpDir, Keys) {
@@ -10363,5 +11188,651 @@ mod proposer_selection_tests {
         // below activation the same node still seals (legacy)
         TEST_PROPOSER_SELECTION_OVERRIDE.with(|c| c.set(Some(Some(50))));
         assert!(node.mine_pending().unwrap().is_some());
+    }
+}
+
+/// GAME_READY Phase 0 — player-signed contract transactions (see GAME_READY_ACTIVATION_HEIGHT).
+#[cfg(test)]
+mod game_ready_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, sealed_block};
+    use crate::v2_binding::{build_v2_tx, contract_address_v2, derive_v2_fields, CONTRACT_DEPLOY_FEE_XRGE};
+    use quantum_vault_crypto::{pqc_keygen, pqc_sign};
+    use quantum_vault_types::encode_tx_for_signing;
+    use quantum_vault_vm::{ContractStore, WasmRuntime};
+    use serde_json::{json, Value};
+
+    /// Records the caller it sees under storage key "caller".
+    const WAT_WHOAMI: &str = r#"
+    (module
+      (import "env" "host_get_caller"    (func $gc (param i32 i32) (result i32)))
+      (import "env" "host_storage_write" (func $sw (param i32 i32 i32 i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0) "caller")
+      (func (export "whoami") (local $n i32)
+        (local.set $n (call $gc (i32.const 64) (i32.const 8192)))
+        (call $sw (i32.const 0) (i32.const 6) (i32.const 64) (local.get $n))))
+    "#;
+
+    struct Env { _d: super::bridge_r1_daemon_tests::TmpDir, _cs: super::bridge_r1_daemon_tests::TmpDir, node: L1Node, proposer: PQKeypair, player: PQKeypair }
+
+    fn setup(activation: Option<u64>) -> Env {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(u64::MAX))); // state root not under test
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(Some(1)))); // binding enforced at import
+        TEST_GAME_READY_OVERRIDE.with(|c| c.set(Some(activation)));
+        let (d, mut node, _store) = node_with_store();
+        let cs = super::bridge_r1_daemon_tests::TmpDir::new();
+        node.set_contract_store(std::sync::Arc::new(ContractStore::new(&cs.0).unwrap()));
+        node.set_wasm_runtime(std::sync::Arc::new(WasmRuntime::new().unwrap()));
+        let proposer = pqc_keygen();
+        let player = pqc_keygen();
+        fund_xrge(&node, &player.public_key_hex, 1_000.0);
+        Env { _d: d, _cs: cs, node, proposer, player }
+    }
+
+    fn v2(kp: &PQKeypair, ty: &str, payload: &Value, nonce: u64) -> TxV1 {
+        let sp = serde_json::to_string(payload).unwrap();
+        let sig = pqc_sign(&kp.secret_key_hex, sp.as_bytes()).unwrap();
+        build_v2_tx(ty, kp.public_key_hex.clone(), nonce, payload, sig, sp).unwrap()
+    }
+
+    fn import(e: &Env, txs: Vec<TxV1>) -> Result<(), String> {
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        e.node.import_block(sealed_block(&e.node, &e.proposer.public_key_hex, &e.proposer.secret_key_hex, txs, None, t))
+    }
+
+    fn wasm_b64() -> (Vec<u8>, String) {
+        use base64::Engine as _;
+        let wasm = wat::parse_str(WAT_WHOAMI).unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&wasm);
+        (wasm, b64)
+    }
+
+    fn deploy_payload(from: &str, b64: &str) -> Value {
+        json!({ "from": from, "nonce": "0123456789abcdef", "wasm": b64, "timestamp": 1 })
+    }
+
+    fn bal(e: &Env, pk: &str) -> f64 { e.node.get_balance(pk).unwrap() }
+
+    #[test]
+    fn binding_derives_fee_from_gas_and_address_from_the_signed_payload() {
+        let (p, fee) = derive_v2_fields("contract_call", &json!({ "contractAddr": "c1", "method": "m", "args": { "x": 1 }, "gasLimit": 250_000 })).unwrap();
+        assert_eq!(p.contract_addr.as_deref(), Some("c1"));
+        assert_eq!(p.contract_method.as_deref(), Some("m"));
+        assert_eq!(p.contract_args, Some(json!({ "x": 1 })));
+        assert_eq!(p.contract_gas_limit, Some(250_000));
+        assert!((fee - 0.25).abs() < 1e-12, "fee = gas x 0.000001");
+        assert_eq!(p.to_pub_key_hex, None, "no unsigned 'caller' field is carried");
+
+        let (wasm, b64) = wasm_b64();
+        let (d, fee) = derive_v2_fields("contract_deploy", &json!({ "from": "alice", "nonce": "n1n1n1n1", "wasm": b64 })).unwrap();
+        assert_eq!(fee, CONTRACT_DEPLOY_FEE_XRGE);
+        assert_eq!(d.contract_addr, Some(contract_address_v2("alice", "n1n1n1n1", &wasm)));
+        assert_ne!(contract_address_v2("alice", "n1n1n1n1", &wasm), contract_address_v2("mallory", "n1n1n1n1", &wasm), "deployer is bound");
+        assert_ne!(contract_address_v2("alice", "n1n1n1n1", &wasm), contract_address_v2("alice", "n2n2n2n2", &wasm), "nonce is bound");
+    }
+
+    #[test]
+    fn before_activation_player_signed_contract_txs_are_refused_like_old_nodes() {
+        let e = setup(None);
+        let (_, b64) = wasm_b64();
+        let tx = v2(&e.player, "contract_deploy", &deploy_payload(&e.player.public_key_hex, &b64), 1);
+        let err = import(&e, vec![tx]).unwrap_err();
+        assert!(err.contains("not active before GAME_READY"), "{err}");
+        assert_eq!(e.node.tip_height().unwrap(), 0);
+    }
+
+    #[test]
+    fn after_activation_the_contract_sees_the_signer_and_the_signer_pays() {
+        let e = setup(Some(1));
+        let pk = e.player.public_key_hex.clone();
+        let (wasm, b64) = wasm_b64();
+
+        let deploy = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        assert_eq!(addr, contract_address_v2(&pk, "0123456789abcdef", &wasm));
+        import(&e, vec![deploy]).expect("player-signed deploy accepted");
+        let cs = e.node.contract_store.as_ref().unwrap();
+        assert!(cs.get_contract(&addr).unwrap().is_some(), "installed at the derived address");
+        assert_eq!(cs.get_contract(&addr).unwrap().unwrap().deployer, pk, "deployer is the signer");
+        assert!((bal(&e, &pk) - (1_000.0 - CONTRACT_DEPLOY_FEE_XRGE)).abs() < 1e-9, "signer paid the deploy fee");
+
+        let call = v2(&e.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": "whoami", "gasLimit": 100_000, "timestamp": 2, "nonce": "aaaaaaaabbbbbbbb" }), 2);
+        import(&e, vec![call]).expect("player-signed call accepted");
+        let state = cs.load_all_state(&addr).unwrap();
+        assert_eq!(state.get(b"caller".as_slice()).map(|v| String::from_utf8_lossy(v).to_string()), Some(pk.clone()),
+            "the contract saw the verified signer as its caller");
+        assert!((bal(&e, &pk) - (1_000.0 - CONTRACT_DEPLOY_FEE_XRGE - 0.1)).abs() < 1e-9, "signer paid gasLimit x price");
+    }
+
+    #[test]
+    fn after_activation_a_node_signed_call_claiming_another_caller_is_invalid() {
+        let e = setup(Some(1));
+        let victim = pqc_keygen();
+        // The old shape: signed by whoever (here the proposer), with an UNSIGNED 'caller' field.
+        let mut tx = TxV1 {
+            version: 1, tx_type: "contract_call".into(), from_pub_key: e.proposer.public_key_hex.clone(), nonce: 1,
+            payload: TxPayload {
+                contract_addr: Some("c0ffee00000000000000000000000000000000ab".into()),
+                contract_method: Some("withdraw".into()),
+                to_pub_key_hex: Some(victim.public_key_hex.clone()),
+                contract_gas_limit: Some(1000),
+                ..Default::default()
+            },
+            fee: 0.001, sig: String::new(), signed_payload: None,
+        };
+        tx.sig = pqc_sign(&e.proposer.secret_key_hex, &encode_tx_for_signing(&tx)).unwrap();
+        let err = import(&e, vec![tx.clone()]).unwrap_err();
+        assert!(err.contains("must be signed by its caller"), "{err}");
+        // The mempool refuses it too, so the producer never builds such a block.
+        assert!(e.node.add_tx_to_mempool_verified(tx).unwrap_err().contains("must be signed by its caller"));
+    }
+
+    // ── GAME_READY 2: tokens, NFTs, randomness ────────────────────────────
+    /// `play`: rolls 32 random bytes, creates its own LOOT collection, mints a Sword to the
+    /// caller, pays the caller 5 GOLD from its own tokens and 1 XRGE from its own balance.
+    /// Result codes land in storage: mint (i64 id), xfer, roll (32 bytes), xrge.
+    const WAT_GAME: &str = r#"
+    (module
+      (import "env" "host_get_caller"            (func $gc (param i32 i32) (result i32)))
+      (import "env" "host_storage_write"         (func $sw (param i32 i32 i32 i32)))
+      (import "env" "host_transfer"              (func $xt (param i32 i32 i64) (result i32)))
+      (import "env" "host_token_transfer"        (func $tt (param i32 i32 i32 i32 i64) (result i32)))
+      (import "env" "host_nft_create_collection" (func $cc (param i32 i32 i32 i32 i64 i32 i32) (result i32)))
+      (import "env" "host_nft_mint"              (func $nm (param i32 i32 i32 i32 i32 i32 i32 i32) (result i64)))
+      (import "env" "host_random"                (func $rn (param i32) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0)  "LOOT")
+      (data (i32.const 8)  "Loot")
+      (data (i32.const 16) "GOLD")
+      (data (i32.const 24) "Sword")
+      (data (i32.const 32) "mint")
+      (data (i32.const 40) "xfer")
+      (data (i32.const 48) "roll")
+      (data (i32.const 56) "xrge")
+      (data (i32.const 64) "{\"power\":7}")
+      (func (export "play") (local $n i32) (local $c i32)
+        (local.set $n (call $gc (i32.const 20000) (i32.const 8192)))
+        (local.set $c (call $cc (i32.const 0) (i32.const 4) (i32.const 8) (i32.const 4) (i64.const 0) (i32.const 100) (i32.const 200)))
+        (i64.store (i32.const 300)
+          (call $nm (i32.const 100) (local.get $c) (i32.const 20000) (local.get $n) (i32.const 24) (i32.const 5) (i32.const 64) (i32.const 11)))
+        (call $sw (i32.const 32) (i32.const 4) (i32.const 300) (i32.const 8))
+        (i32.store (i32.const 310) (call $tt (i32.const 16) (i32.const 4) (i32.const 20000) (local.get $n) (i64.const 5)))
+        (call $sw (i32.const 40) (i32.const 4) (i32.const 310) (i32.const 4))
+        (drop (call $rn (i32.const 400)))
+        (call $sw (i32.const 48) (i32.const 4) (i32.const 400) (i32.const 32))
+        (i32.store (i32.const 320) (call $xt (i32.const 20000) (local.get $n) (i64.const 1000000000)))
+        (call $sw (i32.const 56) (i32.const 4) (i32.const 320) (i32.const 4))))
+    "#;
+
+    fn deploy_game(e: &Env) -> String {
+        use base64::Engine as _;
+        let wasm = wat::parse_str(WAT_GAME).unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&wasm);
+        let pk = e.player.public_key_hex.clone();
+        let deploy = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        mine(e, deploy).expect("deploy");
+        // Treasure: 100 GOLD and 10 XRGE sent to the contract earlier.
+        e.node.token_balances.lock().unwrap().insert((addr.clone(), "GOLD".to_string()), 100);
+        fund_xrge(&e.node, &addr, 10.0);
+        addr
+    }
+
+    /// Mine `tx` into a block on the node itself (producer path: applies contract custody and
+    /// commits the post-state root, which these tests enable).
+    fn mine(e: &Env, tx: TxV1) -> Result<String, String> {
+        let hash = compute_single_tx_hash(&tx);
+        e.node.add_tx_to_mempool_verified(tx)?;
+        match e.node.mine_pending()? {
+            Some(b) if !b.txs.is_empty() => Ok(hash),
+            _ => Err("contract_call execution failed: tx not mined".into()),
+        }
+    }
+
+    fn play(e: &Env, addr: &str, nonce: u64, n: &str) -> Result<String, String> {
+        let pk = e.player.public_key_hex.clone();
+        mine(e, v2(&e.player, "contract_call",
+            &json!({ "from": pk, "contractAddr": addr, "method": "play", "gasLimit": 1_000_000, "timestamp": nonce, "nonce": n }), nonce))
+    }
+
+    #[test]
+    fn game_ready_2_contract_mints_nfts_pays_tokens_and_rolls() {
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0))); // custody + state root on
+        set_test_game_ready_2(Some(1));
+        let pk = e.player.public_key_hex.clone();
+        let player = canon_addr(&pk);
+        let addr = deploy_game(&e);
+        let xrge_before = bal(&e, &pk);
+
+        let h = play(&e, &addr, 2, "aaaaaaaabbbbbbbb").expect("game call accepted");
+        assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success));
+
+        let cs = e.node.contract_store.as_ref().unwrap();
+        let st = cs.load_all_state(&addr).unwrap();
+        let get = |k: &str| st.get(k.as_bytes()).cloned().unwrap_or_default();
+        assert_eq!(i64::from_le_bytes(get("mint").try_into().unwrap()), 1, "minted token #1");
+        assert_eq!(i32::from_le_bytes(get("xfer").try_into().unwrap()), 0, "token transfer ok");
+        assert_eq!(i32::from_le_bytes(get("xrge").try_into().unwrap()), 0, "xrge transfer ok");
+        assert_eq!(get("roll").len(), 32);
+        assert!(get("roll").iter().any(|b| *b != 0));
+
+        // Tokens: pubkey the contract passed was canonicalised to the player's ledger entry.
+        let tb = e.node.token_balances.lock().unwrap().clone();
+        assert_eq!(tb.get(&(player.clone(), "GOLD".to_string())), Some(&5));
+        assert_eq!(tb.get(&(addr.clone(), "GOLD".to_string())), Some(&95));
+        assert!(tb.get(&(pk.clone(), "GOLD".to_string())).is_none(), "no split pubkey bucket");
+        // XRGE: 1 XRGE arrived (minus the gas fee paid by the player).
+        assert!((bal(&e, &pk) - (xrge_before + 1.0 - 1.0)).abs() < 1e-9, "paid 1 XRGE, spent 1 XRGE gas");
+
+        // NFTs: the contract owns the collection; the player owns the sword with its attributes.
+        let col_id = crate::nft_store::NftCollection::make_collection_id(&addr, "LOOT");
+        let col = e.node.nft_store.get_collection(&col_id).unwrap().expect("collection");
+        assert_eq!(col.creator, addr);
+        assert_eq!(col.minted, 1);
+        let sword = e.node.nft_store.get_token(&col_id, 1).unwrap().expect("token");
+        assert_eq!(sword.owner, pk);
+        assert_eq!(sword.name, "Sword");
+        assert_eq!(sword.attributes, Some(json!({ "power": 7 })));
+
+        // Second play: collection exists (create returns -1), but minting continues at #2.
+        play(&e, &addr, 3, "ccccccccdddddddd").expect("second call");
+        let st2 = cs.load_all_state(&addr).unwrap();
+        assert_ne!(st2.get(b"roll".as_slice()), st.get(b"roll".as_slice()), "new tx, new roll");
+        assert_eq!(e.node.nft_store.get_collection(&col_id).unwrap().unwrap().minted, 1,
+            "create failed (-1) so the id passed to mint was invalid; nothing minted");
+        assert_eq!(e.node.token_balances.lock().unwrap().get(&(player.clone(), "GOLD".to_string())), Some(&10));
+        // A call that reverts is included (the player pays gas) but its receipt says Failed.
+        let pk2 = e.player.public_key_hex.clone();
+        let h = mine(&e, v2(&e.player, "contract_call",
+            &json!({ "from": pk2, "contractAddr": addr, "method": "missing", "gasLimit": 1_000, "timestamp": 4, "nonce": "eeeeeeeeffffffff" }), 4))
+            .expect("failing call still mined");
+        match e.node.get_receipt(&h).unwrap().unwrap().status {
+            TxStatus::Failed(r) => assert!(r.contains("missing"), "{r}"),
+            s => panic!("expected Failed, got {:?}", s),
+        }
+        set_test_game_ready_2(None);
+    }
+
+    /// The shipped example (contracts/loot_roll) end to end: setup, stock the treasury, 40 rolls.
+    #[test]
+    fn loot_roll_example_pays_prizes_from_its_treasury() {
+        use base64::Engine as _;
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_game_ready_2(Some(1));
+        let wasm = include_bytes!("../../../contracts/loot_roll/loot_roll.wasm");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(wasm);
+        let pk = e.player.public_key_hex.clone();
+        let player = canon_addr(&pk);
+        let deploy = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        mine(&e, deploy).expect("deploy");
+        let call = |method: &str, nonce: u64| {
+            mine(&e, v2(&e.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": method,
+                "gasLimit": 200_000, "timestamp": nonce, "nonce": format!("{:016x}", nonce) }), nonce)).expect(method)
+        };
+        call("setup", 2);
+        e.node.token_balances.lock().unwrap().insert((addr.clone(), "GOLD".to_string()), 1_000);
+        fund_xrge(&e.node, &addr, 100.0);
+
+        let cs = e.node.contract_store.as_ref().unwrap();
+        let mut prizes = std::collections::HashMap::<String, u32>::new();
+        for i in 0..40u64 {
+            let h = call("roll", 3 + i);
+            assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success));
+            let ev = cs.get_events_page(&addr, 1, None, Some(&h)).unwrap();
+            let v: Value = serde_json::from_str(&ev[0].data).unwrap();
+            assert!(v["roll"].as_u64().unwrap() < 100);
+            *prizes.entry(v["prize"].as_str().unwrap().to_string()).or_default() += 1;
+        }
+        let gold = *prizes.get("gold").unwrap_or(&0) as u128;
+        let xrge = *prizes.get("xrge").unwrap_or(&0);
+        let swords = *prizes.get("sword").unwrap_or(&0) as u64;
+        assert!(gold + xrge as u128 + swords as u128 > 0, "40 rolls won something: {:?}", prizes);
+        let tb = e.node.token_balances.lock().unwrap().clone();
+        assert_eq!(tb.get(&(player.clone(), "GOLD".to_string())).copied().unwrap_or(0), gold * 10);
+        assert_eq!(tb.get(&(addr.clone(), "GOLD".to_string())).copied().unwrap_or(0), 1_000 - gold * 10);
+        assert!((e.node.get_balance(&addr).unwrap() - (100.0 - 0.5 * xrge as f64)).abs() < 1e-9);
+        let col_id = crate::nft_store::NftCollection::make_collection_id(&addr, "LOOT");
+        assert_eq!(e.node.nft_store.get_collection(&col_id).unwrap().unwrap().minted, swords);
+        set_test_game_ready_2(None);
+    }
+
+    /// Bank: `give` pays its caller 3 GOLD and 1 XRGE from the bank's own balances.
+    const WAT_BANK: &str = r#"
+    (module
+      (import "env" "host_get_caller"     (func $gc (param i32 i32) (result i32)))
+      (import "env" "host_transfer"       (func $xt (param i32 i32 i64) (result i32)))
+      (import "env" "host_token_transfer" (func $tt (param i32 i32 i32 i32 i64) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0) "GOLD")
+      (func (export "give") (local $n i32)
+        (local.set $n (call $gc (i32.const 100) (i32.const 8192)))
+        (drop (call $tt (i32.const 0) (i32.const 4) (i32.const 100) (local.get $n) (i64.const 3)))
+        (drop (call $xt (i32.const 100) (local.get $n) (i64.const 1000000000)))))
+    "#;
+
+    /// Router with the bank's address baked in: `go` calls bank.give twice.
+    fn wat_router(bank: &str) -> String {
+        format!(r#"
+    (module
+      (import "env" "host_call_contract" (func $cc (param i32 i32 i32 i32 i32 i32 i64) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0) "{bank}")
+      (data (i32.const 64) "give")
+      (data (i32.const 72) "{{}}")
+      (func (export "go")
+        (drop (call $cc (i32.const 0) (i32.const 40) (i32.const 64) (i32.const 4) (i32.const 72) (i32.const 2) (i64.const 100000)))
+        (drop (call $cc (i32.const 0) (i32.const 40) (i32.const 64) (i32.const 4) (i32.const 72) (i32.const 2) (i64.const 100000)))))
+    "#)
+    }
+
+    fn deploy_wat(e: &Env, wat_src: &str, acct_nonce: u64) -> String {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(wat::parse_str(wat_src).unwrap());
+        let pk = e.player.public_key_hex.clone();
+        let d = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), acct_nonce);
+        let addr = d.payload.contract_addr.clone().unwrap();
+        mine(e, d).expect("deploy");
+        addr
+    }
+
+    #[test]
+    fn game_ready_2_cross_contract_calls_move_tokens_and_xrge() {
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_game_ready_2(Some(1));
+        let pk = e.player.public_key_hex.clone();
+        let bank = deploy_wat(&e, WAT_BANK, 1);
+        let router = deploy_wat(&e, &wat_router(&bank), 2);
+        e.node.token_balances.lock().unwrap().insert((bank.clone(), "GOLD".to_string()), 100);
+        fund_xrge(&e.node, &bank, 10.0);
+
+        mine(&e, v2(&e.player, "contract_call", &json!({ "from": pk, "contractAddr": router, "method": "go",
+            "gasLimit": 1_000_000, "timestamp": 3, "nonce": "0000000000000003" }), 3)).expect("router call");
+
+        // Both sub-calls applied, the second seeing the first's moves.
+        let tb = e.node.token_balances.lock().unwrap().clone();
+        assert_eq!(tb.get(&(router.clone(), "GOLD".to_string())), Some(&6));
+        assert_eq!(tb.get(&(bank.clone(), "GOLD".to_string())), Some(&94));
+        assert!((e.node.get_balance(&router).unwrap() - 2.0).abs() < 1e-9);
+        assert!((e.node.get_balance(&bank).unwrap() - 8.0).abs() < 1e-9);
+        set_test_game_ready_2(None);
+    }
+
+    /// A second node importing GAME_READY 2 blocks recomputes the extended state root (NFTs +
+    /// contract code/storage) and agrees; a tampered NFT makes the next block's root mismatch.
+    #[test]
+    fn game_ready_2_state_root_covers_nfts_and_contract_storage_across_nodes() {
+        let a = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_game_ready_2(Some(1));
+        let b = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        let pk = a.player.public_key_hex.clone();
+        fund_xrge(&b.node, &pk, 1_000.0);
+        // b's own setup funded a different player; mirror it on a so the ledgers match.
+        fund_xrge(&a.node, &b.player.public_key_hex, 1_000.0);
+
+        let mine_block = |tx: TxV1| -> BlockV1 {
+            a.node.add_tx_to_mempool_verified(tx).unwrap();
+            a.node.mine_pending().unwrap().expect("block")
+        };
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(wat::parse_str(WAT_GAME).unwrap());
+        let deploy = v2(&a.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        b.node.import_block(mine_block(deploy)).expect("b imports deploy");
+        for n in [&a.node, &b.node] {
+            n.token_balances.lock().unwrap().insert((addr.clone(), "GOLD".to_string()), 100);
+            fund_xrge(n, &addr, 10.0);
+        }
+        let call = v2(&a.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": "play",
+            "gasLimit": 1_000_000, "timestamp": 2, "nonce": "aaaaaaaabbbbbbbb" }), 2);
+        let blk = mine_block(call);
+        b.node.import_block(blk.clone()).expect("b imports the game block: extended roots agree");
+        assert_eq!(a.node.get_state_root().unwrap(), b.node.get_state_root().unwrap());
+        assert_eq!(blk.header.state_root.as_deref(), Some(b.node.get_state_root().unwrap().as_str()));
+        let col = crate::nft_store::NftCollection::make_collection_id(&addr, "LOOT");
+        assert_eq!(b.node.nft_store.get_token(&col, 1).unwrap().unwrap().owner, pk);
+
+        // Tamper with an NFT owner on b only: the roots now differ, so b can't follow a's next block.
+        let mut t = b.node.nft_store.get_token(&col, 1).unwrap().unwrap();
+        t.owner = "mallory".into();
+        b.node.nft_store.save_token(&t).unwrap();
+        assert_ne!(a.node.get_state_root().unwrap(), b.node.get_state_root().unwrap());
+        let next = v2(&a.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": "play",
+            "gasLimit": 1_000_000, "timestamp": 3, "nonce": "ccccccccdddddddd" }), 3);
+        let err = b.node.import_block(mine_block(next)).unwrap_err();
+        assert!(err.contains("state root mismatch"), "{err}");
+        set_test_game_ready_2(None);
+    }
+
+    #[test]
+    fn before_game_ready_2_a_game_contract_cannot_run() {
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_game_ready_2(None);
+        let addr = deploy_game(&e);
+        let err = play(&e, &addr, 2, "aaaaaaaabbbbbbbb").unwrap_err();
+        assert!(err.contains("contract_call execution failed"), "{err}");
+        assert_eq!(e.node.token_balances.lock().unwrap().get(&(addr.clone(), "GOLD".to_string())), Some(&100), "nothing moved");
+    }
+
+    #[test]
+    fn after_activation_undeployable_bytecode_is_not_installed_anywhere() {
+        let e = setup(Some(1));
+        use base64::Engine as _;
+        let wasm = wat::parse_str(r#"(module (memory 1) (func (export "run")))"#).unwrap(); // no exported memory
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&wasm);
+        let pk = e.player.public_key_hex.clone();
+        let deploy = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        import(&e, vec![deploy]).expect("block is valid; the deploy just installs nothing");
+        assert!(e.node.contract_store.as_ref().unwrap().get_contract(&addr).unwrap().is_none());
+    }
+}
+
+
+/// Proposer selection Release 2a — a block may only extend a FINAL parent (FINALITY_V2 commit
+/// certificate in `header.parent_commit`). See PROPOSER_SELECTION_RELEASE2_DESIGN.md §6.
+#[cfg(test)]
+mod release_2a_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{fund_xrge, signed, TmpDir};
+    use quantum_vault_crypto::{pqc_keygen, pqc_sign};
+    use quantum_vault_finality::validator_replay::VState;
+    use quantum_vault_storage::validator_store::ValidatorState;
+
+    fn open_node(dir: &std::path::Path) -> L1Node {
+        let n = L1Node::new(NodeOptions { data_dir: dir.to_path_buf(),
+            chain: ChainConfig { chain_id: "test".to_string(), genesis_time: 0, block_time_ms: 1000 }, mine: false,
+            bridge_withdraw_store: None, bridge_authority_keys: Vec::new(), genesis_allocations: Vec::new(), genesis_validators: Vec::new() }).expect("node");
+        n.init().expect("init"); n
+    }
+    fn me(n: &L1Node) -> PQKeypair { n.keys.lock().unwrap().clone() }
+    fn stake(n: &L1Node, pk: &str, s: u128) {
+        n.validator_store.set_validator(pk, &ValidatorState { stake: s, slash_count: 0, jailed_until: 0, entropy_contributions: 0,
+            blocks_proposed: 0, name: None, missed_blocks: 0, total_slashed: 0 }).unwrap();
+    }
+
+    /// Three validators (40 / 35 / 25 — nobody reaches ⅔ alone) + a non-voting follower.
+    struct Net { _dirs: Vec<TmpDir>, nodes: Vec<L1Node>, user: PQKeypair, nonce: std::cell::Cell<u64> }
+    fn net(finality_from: Option<u64>) -> Net {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(u64::MAX)));   // state root not under test
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(finality_from));   // read by every node at construction
+        let dirs: Vec<TmpDir> = (0..4).map(|_| TmpDir::new()).collect();
+        let nodes: Vec<L1Node> = dirs.iter().map(|d| open_node(&d.0)).collect();
+        let stakes: Vec<(String, u128)> = [40u128, 35, 25].iter().enumerate().map(|(i, s)| (me(&nodes[i]).public_key_hex, *s)).collect();
+        TEST_VALIDATOR_REPLAY_BASE.with(|c| *c.borrow_mut() = Some((0, stakes.iter().map(|(k, s)| (k.clone(), VState { stake: *s, ..Default::default() })).collect())));
+        let user = pqc_keygen();
+        for n in &nodes {
+            for (k, s) in &stakes { stake(n, k, *s); }
+            fund_xrge(n, &user.public_key_hex, 1_000.0);
+            n.validator_sets_db.clear().unwrap();
+            n.record_validator_set_for(1).unwrap();
+        }
+        Net { _dirs: dirs, nodes, user, nonce: std::cell::Cell::new(1) }
+    }
+    impl Net {
+        fn queue_tx(&self, n: &L1Node) {
+            let k = self.nonce.get(); self.nonce.set(k + 1);
+            let tx = signed(TxV1 { version: 1, tx_type: "transfer".into(), from_pub_key: self.user.public_key_hex.clone(), nonce: k,
+                payload: TxPayload { to_pub_key_hex: Some(format!("bob{k}")), amount: Some(1), ..Default::default() },
+                fee: 0.1, sig: String::new(), signed_payload: None }, &self.user.secret_key_hex);
+            n.mempool.lock().unwrap().insert(format!("t{k}"), tx);
+        }
+        /// validator 0 produces; everyone else imports its block
+        fn produce(&self) -> Option<BlockV1> {
+            self.queue_tx(&self.nodes[0]);
+            let b = self.nodes[0].mine_pending().unwrap()?;
+            for n in &self.nodes[1..] { n.import_block(b.clone()).expect("peer imports the block"); }
+            Some(b)
+        }
+        /// deliver every node's queued votes to every other node (the gossip layer's job)
+        fn relay_votes(&self) {
+            for _ in 0..2 {
+                let batches: Vec<Vec<VoteMessage>> = self.nodes.iter().map(|n| n.drain_vote_outbox()).collect();
+                for (i, batch) in batches.iter().enumerate() {
+                    for (j, n) in self.nodes.iter().enumerate() { if i != j { for v in batch { let _ = n.receive_gossiped_vote(v.clone()); } } }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn blocks_extend_only_final_parents_and_carry_their_certificate() {
+        let net = net(Some(1));
+        let b1 = net.produce().expect("block 1 (no parent certificate needed for the first finality height)");
+        assert!(b1.header.parent_commit.is_none());
+        net.relay_votes();
+        for n in &net.nodes { assert!(n.is_height_verified_final(1), "every node holds a verified certificate for 1"); }
+
+        let b2 = net.produce().expect("block 2 extends the final block 1");
+        let cert = b2.header.parent_commit.as_ref().expect("block 2 carries block 1's certificate");
+        assert_eq!((cert.height, cert.block_hash.as_str()), (1, b1.hash.as_str()));
+        assert!(cert.voting_stake * 3 > cert.total_stake * 2, "certificate is a real ⅔ quorum");
+        for n in &net.nodes { assert_eq!(n.tip_height().unwrap(), 2); }
+    }
+
+    #[test]
+    fn producer_waits_until_its_parent_is_final() {
+        let net = net(Some(1));
+        net.produce().expect("block 1");
+        // No vote relay: the producer alone has 40 of 100 stake — below quorum — so it must NOT seal 2.
+        net.queue_tx(&net.nodes[0]);
+        assert!(net.nodes[0].mine_pending().unwrap().is_none(), "waits for the certificate");
+        assert_eq!(net.nodes[0].tip_height().unwrap(), 1);
+        assert!(!net.nodes[0].mempool.lock().unwrap().is_empty(), "transactions stay queued");
+        // Votes arrive → quorum → the producer seals, carrying the certificate.
+        net.relay_votes();
+        let b2 = net.nodes[0].mine_pending().unwrap().expect("seals once the parent is final");
+        assert!(b2.header.parent_commit.is_some());
+    }
+
+    #[test]
+    fn import_rejects_missing_wrong_and_forged_certificates() {
+        let net = net(Some(1));
+        let b1 = net.produce().expect("block 1");
+        net.relay_votes();
+        let a = &net.nodes[0];
+        let good = a.get_persisted_finality_proof(1).unwrap().unwrap();
+        // Fresh follower that has block 1 but not its certificate.
+        let d = TmpDir::new(); let f = open_node(&d.0);
+        let (proposer, _) = (me(a), ());
+        for (k, s) in [(me(&net.nodes[0]).public_key_hex, 40u128), (me(&net.nodes[1]).public_key_hex, 35), (me(&net.nodes[2]).public_key_hex, 25)] { stake(&f, &k, s); }
+        fund_xrge(&f, &net.user.public_key_hex, 1_000.0); f.validator_sets_db.clear().unwrap(); f.record_validator_set_for(1).unwrap();
+        f.import_block(b1.clone()).unwrap();
+
+        let seal = |parent_commit: Option<quantum_vault_types::FinalityProof>| -> BlockV1 {
+            let header = BlockHeaderV1 { version: 1, chain_id: "test".into(), height: 2, time: 2, prev_hash: b1.hash.clone(),
+                tx_hash: compute_tx_hash(&[]), proposer_pub_key: proposer.public_key_hex.clone(), state_root: None, parent_commit };
+            let hb = encode_header_v1(&header);
+            let sig = pqc_sign(&proposer.secret_key_hex, &hb).unwrap();
+            BlockV1 { version: 1, hash: compute_block_hash(&hb, &sig), header, txs: vec![], proposer_sig: sig }
+        };
+        let err = f.import_block(seal(None)).unwrap_err();
+        assert!(err.contains("missing the commit certificate"), "{err}");
+
+        let mut wrong = good.clone(); wrong.block_hash = "ab".repeat(32);
+        assert!(f.import_block(seal(Some(wrong))).unwrap_err().contains("not the parent"));
+
+        // Forged: the 40-stake vote alone, but the certificate CLAIMS a quorum.
+        let mut forged = good.clone();
+        forged.precommit_votes.retain(|v| v.voter_pub_key == proposer.public_key_hex);
+        let err = f.import_block(seal(Some(forged))).unwrap_err();
+        assert!(err.contains("certificate invalid"), "{err}");
+
+        // A tampered signature on an otherwise-quorate certificate.
+        let mut tampered = good.clone();
+        tampered.precommit_votes[0].signature = format!("00{}", &tampered.precommit_votes[0].signature[2..]);
+        assert!(f.import_block(seal(Some(tampered))).unwrap_err().contains("certificate invalid"));
+
+        assert_eq!(f.tip_height().unwrap(), 1, "no rejected block was stored");
+        f.import_block(seal(Some(good))).expect("the genuine certificate is accepted");
+        assert!(f.is_height_verified_final(1), "importing block 2 finalized block 1 on the follower");
+    }
+
+    #[test]
+    fn before_activation_a_certificate_is_not_allowed_and_nothing_changes() {
+        let net = net(None);
+        let b1 = net.produce().expect("legacy block 1");
+        assert!(b1.header.parent_commit.is_none());
+        let b2 = net.produce().expect("legacy block 2 needs no certificate");
+        assert!(b2.header.parent_commit.is_none());
+        // A block that carries a certificate before activation is refused (old nodes couldn't hash it).
+        let p = me(&net.nodes[0]);
+        let fake = quantum_vault_types::FinalityProof { height: 2, block_hash: b2.hash.clone(), total_stake: 1, voting_stake: 1, quorum_threshold: 1, precommit_votes: vec![], created_at: 0 };
+        let header = BlockHeaderV1 { version: 1, chain_id: "test".into(), height: 3, time: 3, prev_hash: b2.hash.clone(),
+            tx_hash: compute_tx_hash(&[]), proposer_pub_key: p.public_key_hex.clone(), state_root: None, parent_commit: Some(fake) };
+        let hb = encode_header_v1(&header); let sig = pqc_sign(&p.secret_key_hex, &hb).unwrap();
+        let blk = BlockV1 { version: 1, hash: compute_block_hash(&hb, &sig), header, txs: vec![], proposer_sig: sig };
+        assert!(net.nodes[1].import_block(blk).unwrap_err().contains("before Release 2a"));
+    }
+
+    /// After activation every node re-derives each height's validator set from history and refuses
+    /// to verify votes against a stored set that differs. That derivation must reproduce mainnet's
+    /// real validator state — including the outside validator's slash at 69 and the missed-block
+    /// freeze from 100 — or finality would stall on day one.
+    #[test]
+    fn validator_set_rebuilt_from_mainnet_history_matches_the_live_state() {
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(None));
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-95.jsonl");
+        let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node_from(fixture);
+        assert!(fail.is_none(), "{fail:?}");
+        assert_eq!(ok, 95);
+        let live = quantum_vault_finality::ValidatorSetSnapshot::new(96, n.get_validator_stakes().unwrap());
+        let derived = n.derive_validator_set_from_history(96).expect("history replay");
+        assert_eq!(derived, live, "history-derived validator set for 96 equals the node's own state");
+        assert!(live.entries().len() >= 2, "a real multi-validator set: {:?}", live.entries().keys().map(|k| &k[..8]).collect::<Vec<_>>());
+    }
+
+    /// Replay mainnet history 0..=137 (pinned fixture; override with QV_REPLAY_FIXTURE to check a
+    /// newer export before scheduling activation) and require the history-derived validator set at
+    /// tip+1 to equal the node's own state. This caught the missed-block-freeze divergence.
+    #[test]
+    fn full_mainnet_history_replays_and_validator_set_matches_at_tip() {
+        let fixture = std::env::var("QV_REPLAY_FIXTURE").unwrap_or_else(|_|
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-137.jsonl").to_string());
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(None));
+        let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node_from(&fixture);
+        assert!(fail.is_none(), "replay failed: {fail:?}");
+        let live = quantum_vault_finality::ValidatorSetSnapshot::new(ok + 1, n.get_validator_stakes().unwrap());
+        let derived = n.derive_validator_set_from_history(ok + 1).expect("history replay");
+        eprintln!("replayed 0..={ok}; validator set at {}: {:?}", ok + 1, live.entries().iter().map(|(k, s)| (&k[..8], *s)).collect::<Vec<_>>());
+        assert_eq!(derived, live);
+    }
+
+    #[test]
+    fn mainnet_history_replays_identically_with_release_2a_scheduled_above_it() {
+        let snap = |n: &L1Node| (n.get_state_root().unwrap(), n.get_all_blocks().unwrap().iter().map(|b| b.hash.clone()).collect::<Vec<_>>());
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(None));
+        let base = { let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node(); assert!(fail.is_none(), "{fail:?}"); (ok, snap(&n)) };
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(Some(10_000)));
+        let gated = { let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node(); assert!(fail.is_none(), "{fail:?}"); (ok, snap(&n)) };
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(None));
+        assert_eq!(base, gated, "identical tip, state root and every block hash");
     }
 }

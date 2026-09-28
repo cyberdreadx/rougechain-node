@@ -4,6 +4,7 @@
 //! Used by Parity/Substrate. Contracts written in Rust → compiled to WASM →
 //! deployed on-chain → executed in a fuel-metered sandbox.
 
+pub mod game;
 pub mod host;
 pub mod store;
 
@@ -15,6 +16,7 @@ use wasmi::{Engine, Linker, Module, Store, Config};
 use host::HostEnv;
 pub use host::MAX_CALL_DEPTH;
 pub use store::{ContractStore, ContractMetadata, ContractEvent, ContractCallResult};
+pub use game::{ChainEffect, ChainView, CollectionView, GameExt, GAME_HOST_FUNCTIONS};
 
 /// Default fuel limit per contract call (≈ 10M WASM instructions)
 pub const DEFAULT_FUEL_LIMIT: u64 = 10_000_000;
@@ -135,9 +137,31 @@ impl WasmRuntime {
         gas_limit: u64,
         tx_hash: &str,
     ) -> Result<ContractCallResult, String> {
+        self.execute_contract_ext(
+            contract_store, contract_addr, method, args_json,
+            caller, block_height, block_time, balances, gas_limit, tx_hash, None,
+        )
+    }
+
+    /// `execute_contract` with the GAME_READY 2 extension (token/NFT/randomness host functions).
+    /// Pass `None` before activation.
+    pub fn execute_contract_ext(
+        &self,
+        contract_store: &ContractStore,
+        contract_addr: &str,
+        method: &str,
+        args_json: &serde_json::Value,
+        caller: &str,
+        block_height: u64,
+        block_time: u64,
+        balances: HashMap<String, u128>,
+        gas_limit: u64,
+        tx_hash: &str,
+        game: Option<GameExt>,
+    ) -> Result<ContractCallResult, String> {
         self.execute_contract_inner(
             contract_store, contract_addr, method, args_json,
-            caller, block_height, block_time, balances, gas_limit, tx_hash, 0,
+            caller, block_height, block_time, balances, gas_limit, tx_hash, 0, game,
         )
     }
 
@@ -155,6 +179,7 @@ impl WasmRuntime {
         gas_limit: u64,
         tx_hash: &str,
         call_depth: u32,
+        game: Option<GameExt>,
     ) -> Result<ContractCallResult, String> {
         if call_depth >= MAX_CALL_DEPTH {
             return Ok(ContractCallResult {
@@ -168,6 +193,7 @@ impl WasmRuntime {
                 balance_deltas: None,
                 pending_calls: None,
                 cross_call_results: None,
+                effects: None,
             });
         }
 
@@ -187,6 +213,8 @@ impl WasmRuntime {
             storage_cache,
         );
         env.call_depth = call_depth;
+        let game_ext = game.clone();
+        env.game = game.map(game::GameState::new);
 
         let mut result = self.run_wasm(&wasm_bytes, method, args_json, env, gas_limit)?;
 
@@ -199,6 +227,10 @@ impl WasmRuntime {
                 let mut cross_results: Vec<(bool, Vec<u8>)> = Vec::new();
                 let mut total_sub_gas: u64 = 0;
                 let mut current_balances = balances;
+                // GAME_READY 2: sub-calls run with the game functions too, over a view that
+                // includes every move made so far, and their moves are merged into this result.
+                let mut merged_deltas: Vec<(String, i128)> = result.balance_deltas.clone().unwrap_or_default();
+                let mut merged_effects: Vec<game::ChainEffect> = result.effects.clone().unwrap_or_default();
 
                 // Apply balance deltas from the caller contract first
                 if let Some(ref deltas) = result.balance_deltas {
@@ -208,7 +240,7 @@ impl WasmRuntime {
                     }
                 }
 
-                for pending in pending_calls {
+                for (sub_index, pending) in pending_calls.into_iter().enumerate() {
                     let sub_args: serde_json::Value = serde_json::from_str(&pending.args_json)
                         .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
                     let sub_gas = if pending.gas_limit > 0 { pending.gas_limit } else { gas_limit / 2 };
@@ -225,6 +257,10 @@ impl WasmRuntime {
                         sub_gas,
                         tx_hash,
                         call_depth + 1,
+                        game_ext.as_ref().map(|g| GameExt {
+                            view: std::sync::Arc::new(game::OverlayView::new(g.view.clone(), &merged_effects)),
+                            seed: game::sub_call_seed(&g.seed, sub_index),
+                        }),
                     ) {
                         Ok(sub_result) => {
                             total_sub_gas += sub_result.gas_used;
@@ -248,6 +284,10 @@ impl WasmRuntime {
                                         let entry = current_balances.entry(addr.clone()).or_insert(0);
                                         *entry = (*entry as i128 + delta).max(0) as u128;
                                     }
+                                    merged_deltas.extend(deltas.iter().cloned());
+                                }
+                                if let Some(ref effects) = sub_result.effects {
+                                    merged_effects.extend(effects.iter().cloned());
                                 }
                             }
                         }
@@ -258,6 +298,10 @@ impl WasmRuntime {
                 }
 
                 result.gas_used += total_sub_gas;
+                if game_ext.is_some() {
+                    result.balance_deltas = Some(merged_deltas);
+                    result.effects = Some(merged_effects);
+                }
                 result.events.extend(all_sub_events);
                 result.cross_call_results = Some(cross_results);
 
@@ -329,6 +373,22 @@ impl WasmRuntime {
         block_height: u64,
         block_time: u64,
     ) -> Result<ContractCallResult, String> {
+        self.query_contract_ext(contract_store, contract_addr, method, args_json, caller, balances, block_height, block_time, None)
+    }
+
+    /// Read-only query with the GAME_READY 2 extension.
+    pub fn query_contract_ext(
+        &self,
+        contract_store: &ContractStore,
+        contract_addr: &str,
+        method: &str,
+        args_json: &serde_json::Value,
+        caller: &str,
+        balances: HashMap<String, u128>,
+        block_height: u64,
+        block_time: u64,
+        game: Option<GameExt>,
+    ) -> Result<ContractCallResult, String> {
         let wasm_bytes = contract_store
             .get_wasm(contract_addr)?
             .ok_or_else(|| format!("Contract not found: {}", contract_addr))?;
@@ -336,7 +396,7 @@ impl WasmRuntime {
         // Pre-load existing state for reads
         let storage_cache = contract_store.load_all_state(contract_addr)?;
 
-        let env = HostEnv::new(
+        let mut env = HostEnv::new(
             caller.to_string(),
             contract_addr.to_string(),
             block_height,
@@ -344,8 +404,26 @@ impl WasmRuntime {
             balances,
             storage_cache,
         );
+        env.game = game.map(game::GameState::new);
 
         self.run_wasm(&wasm_bytes, method, args_json, env, DEFAULT_FUEL_LIMIT)
+    }
+
+    /// Validate bytecode for deployment: non-empty, within the size limit, compiles, and
+    /// exports its linear memory as `memory` (every host function reads and writes contract
+    /// memory through that export; without it a host call cannot work).
+    pub fn validate_contract_wasm(&self, wasm_bytes: &[u8]) -> Result<(), String> {
+        if wasm_bytes.is_empty() {
+            return Err("Empty WASM module".into());
+        }
+        if wasm_bytes.len() > MAX_WASM_SIZE {
+            return Err(format!("WASM too large: {} bytes (max {})", wasm_bytes.len(), MAX_WASM_SIZE));
+        }
+        let module = Module::new(&self.engine, wasm_bytes).map_err(|e| format!("Invalid WASM: {}", e))?;
+        if !exports_memory(&module) {
+            return Err("contract must export its memory as \"memory\"".into());
+        }
+        Ok(())
     }
 
     /// Core WASM execution
@@ -353,17 +431,46 @@ impl WasmRuntime {
         &self,
         wasm_bytes: &[u8],
         method: &str,
-        _args_json: &serde_json::Value,
-        env: HostEnv,
+        args_json: &serde_json::Value,
+        mut env: HostEnv,
         fuel_limit: u64,
     ) -> Result<ContractCallResult, String> {
         // Compile
         let module = Module::new(&self.engine, wasm_bytes)
             .map_err(|e| format!("WASM compilation: {}", e))?;
 
+        // A module without an exported `memory` cannot service any host call; fail the call
+        // cleanly (deterministic, no state changes) instead of letting a host function panic
+        // inside block execution.
+        if !exports_memory(&module) {
+            return Ok(ContractCallResult {
+                success: false,
+                return_data: None,
+                gas_used: 0,
+                events: Vec::new(),
+                error: Some("contract does not export its memory as \"memory\"".into()),
+                storage_writes: None,
+                storage_deletes: None,
+                balance_deltas: None,
+                pending_calls: None,
+                cross_call_results: None,
+                effects: None,
+            });
+        }
+
+        // Arguments the contract can read via host_get_args_len / host_read_args.
+        env.args = if args_json.is_null() {
+            b"{}".to_vec()
+        } else {
+            serde_json::to_vec(args_json).map_err(|e| format!("args: {}", e))?
+        };
+
         // Link host functions
         let mut linker = Linker::new(&self.engine);
         host::register_host_functions(&mut linker)?;
+        if env.game.is_some() {
+            game::register_game_functions(&mut linker)?;
+        }
 
         // Create store with fuel
         let mut store = Store::new(&self.engine, env);
@@ -431,6 +538,7 @@ impl WasmRuntime {
                         .collect()),
                     pending_calls: if pending_calls.is_empty() { None } else { Some(pending_calls) },
                     cross_call_results: None,
+                    effects: env.game.as_ref().map(|g| g.effects.clone()),
                 };
 
                 Ok(result)
@@ -453,10 +561,16 @@ impl WasmRuntime {
                     balance_deltas: None,
                     pending_calls: None,
                     cross_call_results: None,
+                    effects: None,
                 })
             }
         }
     }
+}
+
+/// Whether the module exports a linear memory named `memory`.
+fn exports_memory(module: &Module) -> bool {
+    module.exports().any(|e| e.name() == "memory" && matches!(e.ty(), wasmi::ExternType::Memory(_)))
 }
 
 impl Default for WasmRuntime {

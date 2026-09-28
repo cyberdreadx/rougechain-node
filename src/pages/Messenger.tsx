@@ -457,7 +457,7 @@ const Messenger = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
@@ -473,7 +473,7 @@ const Messenger = () => {
     if (isLocked) {
       const meta = getLockedWalletMetadata();
       return (
-        <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <div className="min-h-screen flex items-center justify-center p-4">
           <div className="max-w-md w-full bg-card border border-border rounded-xl p-6 space-y-4">
             <h2 className="text-lg font-semibold">Wallet Locked</h2>
             <p className="text-sm text-muted-foreground">

@@ -1,0 +1,709 @@
+{
+  "common": {
+    "switchLanguage": "切换到 {{language}}",
+    "loading": "加载中…",
+    "error": "出了点问题",
+    "copy": "复制",
+    "copied": "已复制",
+    "close": "关闭",
+    "cancel": "取消",
+    "confirm": "确认",
+    "back": "返回",
+    "next": "下一步",
+    "learnMore": "了解更多",
+    "viewAll": "查看全部",
+    "mainnet": "Mainnet",
+    "testnet": "Testnet",
+    "language": "语言"
+  },
+  "nav": {
+    "home": "首页",
+    "regenerate": "再生计划",
+    "wallet": "钱包",
+    "swap": "Swap",
+    "bridge": "跨链桥",
+    "pools": "流动性池",
+    "blockchain": "区块链",
+    "txFeed": "交易动态",
+    "contracts": "合约",
+    "tokens": "代币",
+    "nfts": "NFT",
+    "messenger": "消息",
+    "mail": "邮件",
+    "validators": "验证者",
+    "coreNode": "核心节点",
+    "agents": "智能体",
+    "group": {
+      "defi": "DeFi",
+      "explorer": "区块浏览器",
+      "social": "社交",
+      "network": "网络"
+    },
+    "resources": "资源",
+    "docs": "文档",
+    "whitepaper": "白皮书",
+    "searchPlaceholder": "搜索地址 / 交易 / 区块...",
+    "switchNetwork": "点击切换网络",
+    "unreadMessages_one": "{{count}} 条未读消息",
+    "unreadMessages_other": "{{count}} 条未读消息",
+    "unreadEmails_one": "{{count}} 封未读邮件",
+    "unreadEmails_other": "{{count}} 封未读邮件",
+    "team": "团队",
+    "status": "网络状态",
+    "buy": "购买 XRGE"
+  },
+  "swap": {
+    "title": "Swap",
+    "secure": "安全",
+    "loader": "正在执行量子兑换",
+    "youPay": "您支付",
+    "youReceive": "您收到",
+    "balance": "余额：{{balance}}",
+    "gettingQuote": "正在获取报价...",
+    "picker": {
+      "select": "选择",
+      "title": "选择代币",
+      "searchPlaceholder": "按名称搜索或粘贴代币符号...",
+      "noMatch": "没有与“{{query}}”匹配的代币",
+      "noTokens": "暂无可用代币"
+    },
+    "settings": {
+      "title": "兑换设置",
+      "slippage": "滑点容差：{{value}}%"
+    },
+    "quote": {
+      "rate": "汇率",
+      "priceImpact": "价格影响",
+      "minReceived": "最少收到",
+      "route": "路径"
+    },
+    "errors": {
+      "insufficientBalance": "余额不足"
+    },
+    "button": {
+      "swapping": "兑换中...",
+      "connectWallet": "连接钱包",
+      "enterAmount": "输入金额",
+      "noRoute": "未找到路径",
+      "insufficientBalance": "余额不足",
+      "swap": "Swap"
+    },
+    "toasts": {
+      "connectFirst": "请先连接钱包并获取报价",
+      "submitted": "兑换已提交：{{amount}} {{tokenIn}} → ~{{amountOut}} {{tokenOut}}",
+      "signedOnDevice": "已在您的设备上安全签名",
+      "failed": "兑换失败",
+      "executeFailed": "无法执行兑换"
+    },
+    "info": {
+      "amm": "兑换通过自动做市商（AMM）完成，手续费为 0.3%。手续费归流动性提供者所有，可随时在资金池页面通过「Collect fees」提取收益。",
+      "multiHop": "支持多跳兑换，可通过多个流动性池获得更优汇率。"
+    }
+  },
+  "home": {
+    "hero": {
+      "badge": "MAINNET 已上线",
+      "title": "<grad>后量子</grad>，自创世起。",
+      "subtitle": "RougeChain 是一条围绕后量子密码学构建的 Layer 1 区块链。探索钱包、消息与链上应用，或构建您自己的应用。",
+      "exploreEcosystem": "探索生态",
+      "buildOn": "在 RougeChain 上构建",
+      "buyXrge": "购买 XRGE",
+      "whitepaper": "白皮书",
+      "explorer": "区块浏览器"
+    },
+    "network": {
+      "title": "网络状态",
+      "fullExplorer": "完整区块浏览器",
+      "checking": "正在检查网络…",
+      "unavailable": "网络状态暂时不可用——公共节点未响应。这并不意味着链已停止运行；请尝试<explorer>区块浏览器</explorer>。",
+      "blockHeight": "区块高度",
+      "peers": "对等节点",
+      "validators": "验证者",
+      "stale": "数据可能已过期 · ",
+      "updatedAgo": "{{seconds}} 秒前更新",
+      "singleNode": "这是一个早期网络，公共节点数量较少，因此对等节点数偏低属正常现象。以上数据实时读取自公共节点，完整历史请查看<explorer>区块浏览器</explorer>。"
+    },
+    "brand": {
+      "rougechain": {
+        "tag": "网络",
+        "body": "一条围绕后量子密码学构建的 Layer 1 区块链——签名、加密与哈希均采用 NIST 标准化算法。"
+      },
+      "xrge": {
+        "tag": "原生代币",
+        "body": "用于支付交易手续费（最低 0.1 XRGE）与燃气费，并可质押以运行验证者（10,000 XRGE）。同时以 ERC-20 形式在 Base 上交易——跨链转移后即可原生使用。"
+      },
+      "qwalla": {
+        "tag": "生态钱包",
+        "body": "一款移动端钱包，可持有 XRGE、发送加密聊天与邮件，并打开链上应用。这是进入 RougeChain 的多种方式之一。"
+      }
+    },
+    "ecosystem": {
+      "title": "探索生态",
+      "subtitle": "RougeChain 带来的一切——钱包、交易、构建与探索，全部基于后量子技术。",
+      "showAll": "显示全部应用",
+      "showLess": "收起",
+      "groups": {
+        "use": "使用",
+        "trade": "交易",
+        "build": "构建",
+        "explore": "探索与参与"
+      },
+      "items": {
+        "webWallet": {
+          "title": "网页钱包",
+          "desc": "浏览器中的后量子钱包"
+        },
+        "qwalla": {
+          "title": "Qwalla",
+          "desc": "移动端钱包——现已登陆 iOS"
+        },
+        "messenger": {
+          "title": "消息",
+          "desc": "端到端加密聊天"
+        },
+        "mail": {
+          "title": "邮件",
+          "desc": "链上加密邮件"
+        },
+        "swap": {
+          "title": "Swap",
+          "desc": "链上代币兑换"
+        },
+        "bridge": {
+          "title": "跨链桥",
+          "desc": "在 Base 与 RougeChain 之间转移资产"
+        },
+        "pools": {
+          "title": "流动性池",
+          "desc": "提供流动性"
+        },
+        "contracts": {
+          "title": "智能合约",
+          "desc": "WASM 合约与游戏"
+        },
+        "tokens": {
+          "title": "代币",
+          "desc": "发行自定义代币"
+        },
+        "nfts": {
+          "title": "NFT",
+          "desc": "RC-721 系列"
+        },
+        "sdk": {
+          "title": "SDK 与文档",
+          "desc": "@rougechain/sdk"
+        },
+        "mcp": {
+          "title": "MCP 智能体",
+          "desc": "AI 原生集成"
+        },
+        "explorer": {
+          "title": "区块浏览器",
+          "desc": "区块与交易"
+        },
+        "validators": {
+          "title": "验证者",
+          "desc": "质押并守护网络"
+        },
+        "runNode": {
+          "title": "运行节点",
+          "desc": "节点搭建指南"
+        },
+        "source": {
+          "title": "源代码",
+          "desc": "以 Apache 2.0 许可证在 GitHub 开源"
+        }
+      }
+    },
+    "regenerate": {
+      "eyebrow": "RougeChain Regenerate",
+      "title": "技术应当改善它所触及的土地。",
+      "body": "RougeChain 上的再生计划与资金库——资助透明、可衡量的本地项目。首个试点地区：图卢姆。",
+      "explore": "探索再生计划",
+      "propose": "提交项目提案"
+    },
+    "qwalla": {
+      "badge": "移动端",
+      "subtitle": "iOS 后量子钱包",
+      "body": "在手机上持有 XRGE、发送端到端加密聊天与邮件、打开链上应用——由 ML-DSA-65 签名保护。",
+      "chips": {
+        "sendReceive": "发送 / 接收",
+        "encryptedChats": "加密聊天",
+        "encryptedMail": "加密邮件",
+        "dappBrowser": "dApp 浏览器"
+      },
+      "visit": "访问 qwalla.io",
+      "download": "在 App Store 下载",
+      "note": "现已<hl>登陆 App Store</hl>——请务必备份您的助记词。",
+      "screenshotAlt": "Qwalla 移动端钱包——余额、快捷操作与加密应用"
+    },
+    "extension": {
+      "title": "浏览器钱包扩展",
+      "badge": "免费",
+      "body": "一款抗量子钱包，支持 Chrome、Edge、Brave、Firefox、Arc 和 Opera——发送 XRGE、签署交易，并使用加密聊天与邮件。",
+      "chips": {
+        "signing": "ML-DSA-65 签名",
+        "messenger": "端到端加密消息",
+        "mail": "PQC 邮件",
+        "vault": "自动锁定保险库"
+      },
+      "add": "添加到浏览器",
+      "meta": "Manifest V3 · 支持 6 款浏览器",
+      "screenshotAlt": "扩展截图：{{label}}",
+      "prev": "上一张截图",
+      "next": "下一张截图",
+      "goTo": "跳转到第 {{n}} 张截图",
+      "screenshots": {
+        "wallet": "钱包",
+        "messenger": "消息",
+        "mail": "邮件",
+        "tokens": "代币",
+        "createToken": "创建代币"
+      }
+    },
+    "dev": {
+      "title": "在 RougeChain 上构建",
+      "subtitle": "后量子密码学原语、类型化 SDK、支持游戏的 WASM 合约（代币、NFT、随机数），以及面向 AI 智能体的 MCP 集成。",
+      "links": {
+        "quickstart": {
+          "title": "快速开始",
+          "desc": "约 5 分钟内运行节点并发送首笔交易"
+        },
+        "example": {
+          "title": "示例游戏合约",
+          "desc": "战利品掷骰：NFT、代币与骰子"
+        },
+        "sdk": {
+          "title": "SDK 与 API 文档",
+          "desc": "@rougechain/sdk + REST/gRPC"
+        },
+        "node": {
+          "title": "运行节点 / 验证者",
+          "desc": "节点搭建与质押"
+        },
+        "github": {
+          "title": "GitHub",
+          "desc": "cyberdreadx/rougechain-node"
+        },
+        "mcp": {
+          "title": "MCP 服务器",
+          "desc": "@rougechain/mcp-server"
+        }
+      }
+    },
+    "xrge": {
+      "title": "XRGE 与两个网络",
+      "subtitle": "同一代币存在于两个地方。请根据操作选择正确的一个。",
+      "native": {
+        "title": "原生 XRGE——在 RougeChain 上",
+        "body": "支付手续费与燃气费，质押以运行验证者，并驱动链上应用：兑换、合约与游戏、代币、NFT、消息与邮件。"
+      },
+      "base": {
+        "title": "XRGE（ERC-20）——在 Base 上",
+        "body": "您目前购买或交易 XRGE 的地方（例如在 Aerodrome 上）。<bridge>跨链转移</bridge>至 RougeChain 即可原生使用。"
+      },
+      "buyOnBase": "在 Base 上购买 XRGE",
+      "bridgeTo": "跨链至 RougeChain",
+      "price": {
+        "title": "XRGE 价格",
+        "onBase": "· Base",
+        "price": "价格",
+        "change24h": "24 小时",
+        "volume24h": "24 小时交易量",
+        "liquidity": "流动性",
+        "chartTitle": "XRGE 价格图表（Base）"
+      }
+    },
+    "security": {
+      "title": "安全",
+      "algos": {
+        "mldsa": "数字签名（原 Dilithium）",
+        "mlkem": "密钥封装（原 Kyber）",
+        "sha256": "区块与交易哈希"
+      },
+      "nist": "RougeChain 基于这些 <hl>NIST 标准化</hl>算法构建。NIST 仅对密码学原语进行标准化——并未审查或认证 RougeChain 本身。",
+      "audit": "<hl>审计状态：</hl>协议与应用<hl>尚未接受独立第三方安全审计</hl>。这是一个公共节点尚少的早期网络。请谨慎使用，并自行保管备份。",
+      "report": "发现漏洞？请通过 <advisories>GitHub Security Advisories</advisories> 私下报告，而不要公开提交 issue。"
+    },
+    "cta": {
+      "badge": "MAINNET 已上线",
+      "body": "开设钱包、从 Base 跨链转移资产，或开始在后量子 Layer 1 上构建。",
+      "openWallet": "打开钱包",
+      "quickstart": "快速开始"
+    },
+    "team": {
+      "eyebrow": "团队",
+      "title": "RougeChain 背后的人。",
+      "subtitle": "为后量子世界构建基础设施。",
+      "photoAlt": "{{name}}的照片",
+      "social": {
+        "x": "{{name}} 的 X",
+        "github": "{{name}} 的 GitHub",
+        "website": "{{name}} 的网站",
+        "linkedin": "{{name}} 的 LinkedIn"
+      }
+    },
+    "buy": {
+      "title": "购买 XRGE",
+      "subtitle": "在这里直接通过 Aerodrome 资金池，用 ETH 或 USDC 在 Base 上兑换 XRGE。由您的钱包签名，我们不会持有您的资金。",
+      "details": "合约地址、步骤及其他购买方式",
+      "aboutXrge": "在 RougeCoin.io 了解 XRGE"
+    }
+  },
+  "footer": {
+    "tagline": "由 ML-DSA-65 签名保护的后量子 Layer 1 区块链。",
+    "badge": "MAINNET 已上线",
+    "resources": "资源",
+    "docs": "文档",
+    "chromeExtension": "Chrome 扩展",
+    "trade": "交易 XRGE",
+    "security": "安全",
+    "signatures": "ML-DSA-65 签名",
+    "keyExchange": "ML-KEM-768 密钥交换",
+    "version": "RougeChain Mainnet v1.0 • 后量子安全防护",
+    "followX": "在 X 上关注",
+    "joinDiscord": "加入 Discord",
+    "viewGithub": "在 GitHub 上查看"
+  },
+  "bridge": {
+    "title": "跨链桥",
+    "subtitle": "在 Base 与 RougeChain 之间转移资产",
+    "loader": "正在预热通量电容器...",
+    "notEnabled": "此节点未启用跨链桥。",
+    "processing": "处理中...",
+    "asset": "资产",
+    "tabs": {
+      "deposit": "存入",
+      "withdraw": "提取"
+    },
+    "networkUnknown": {
+      "title": "网络未确认",
+      "body": "此节点未报告可识别的 Base 链，因此跨链桥无法判断您处于 Base Mainnet 还是 Testnet。为保护您的资金，此处已禁用跨链功能。请检查节点的跨链桥配置（<code>/bridge/config</code> 中的 <code>chainId</code>）并刷新页面。"
+    },
+    "networkMismatch": {
+      "title": "网络不匹配——跨链桥已禁用",
+      "body": "您当前处于 RougeChain <net>{{network}}</net> 网络，但此节点的跨链桥报告的是 <chain>{{chainLabel}}</chain>（链 {{chainId}}）。{{network}} 网络不得跨链转移{{assets}}，因此已禁用跨链功能以保护您的资金。这是节点配置错误——其跨链桥的 <code>chainId</code>/代币必须与 {{network}} 对应的 Base 链一致。",
+      "realMainnetAssets": "真实的 Mainnet 资产",
+      "testnetAssets": "Testnet 资产"
+    },
+    "form": {
+      "from": "从 · {{chain}}",
+      "to": "至 · {{chain}}",
+      "balance": "余额：{{balance}}",
+      "receiveAtBitcoin": "接收地址（比特币地址）",
+      "receiveAtBase": "接收地址（Base 地址）",
+      "btcAddressPlaceholder": "bc1… / 比特币地址",
+      "btcTestnetAddressPlaceholder": "tb1… / Testnet 地址",
+      "chooseWallet": "选择钱包",
+      "baseWallet": "Base 钱包",
+      "connectWallet": "连接 {{wallet}}",
+      "connectWalletWithChain": "连接 {{wallet}}（{{chain}}）",
+      "bridgeTo": "将 {{asset}} 跨链转移至 {{chain}}"
+    },
+    "info": {
+      "depositXrge": "通过 Base 钱包完成两笔交易：授权 + 存入。1:1 兑换。",
+      "depositEvm": "通过您的 Base 钱包发送 {{asset}} → 在 RougeChain 上自动领取 {{l1}}。1:1 兑换。",
+      "withdrawBtc": "提交提取请求 → BTC 中继器将比特币发送至您的地址。确认时间取决于比特币网络。",
+      "withdrawEvm": "提交提取请求 → 中继器在 Base 上处理（通常不到 2 分钟）。"
+    },
+    "btc": {
+      "connectForAddress": "连接您的 RougeChain 钱包以获取比特币存款地址。",
+      "received": "已收到——{{amount}} qBTC 已入账",
+      "nowInWallet": "您的 qBTC 已到达 RougeChain 钱包。",
+      "yourDepositAddress": "您的比特币存款地址",
+      "fetchingAddress": "正在获取您的存款地址…",
+      "tryAgain": "重试",
+      "depositQrAlt": "比特币存款地址二维码",
+      "depositAddressLabel": "存款地址",
+      "copyDepositAddress": "复制存款地址",
+      "sendFromAnyWallet": "从任意钱包发送 BTC——金额不限，无需备注或标签。存款确认后（比特币网络约需 30–60 分钟），您的 qBTC 将自动到账。",
+      "testnetOnly": "Testnet——请仅发送 Testnet BTC。",
+      "addressWarmingUp": "正在为您设置存款地址，请稍后重试。",
+      "addressFetchFailed": "无法获取存款地址。请重试。",
+      "advanced": {
+        "title": "高级：使用 OP_RETURN 存入",
+        "intro": "适用于高级用户，或用于找回已通过 OP_RETURN 绑定发送的手动存款。",
+        "step1": "将 BTC 发送至托管地址",
+        "custodyQrAlt": "比特币托管地址二维码",
+        "custodyAddressLabel": "托管地址",
+        "copyCustodyAddress": "复制托管地址",
+        "step2": "添加包含您 RougeChain 地址的 OP_RETURN",
+        "step2Help": "在同一笔交易中，将此内容粘贴到钱包的 OP_RETURN / 备注 / 数据字段。它会将存款绑定到您的钱包——缺少它，资金将无法入账。",
+        "connectWalletPlaceholder": "连接您的 RougeChain 钱包…",
+        "rougeAddressLabel": "RougeChain 地址",
+        "copyRougeAddress": "复制 RougeChain 地址",
+        "opReturnWallets": "Sparrow、Electrum、BlueWallet（高级模式）和 bitcoinjs 等钱包支持 OP_RETURN。托管类应用（Coinbase、Cash App）通常无法附加 OP_RETURN——请使用支持 OP_RETURN 的钱包完成此次存款。",
+        "step3": "粘贴比特币交易 ID 以领取 qBTC",
+        "txidPlaceholder": "比特币交易 ID（64 位十六进制字符）",
+        "claimButton": "领取 qBTC",
+        "claimHelp": "验证需等待比特币网络确认，可能需要一些时间。领取操作是幂等的——稍后重新粘贴同一交易 ID 也是安全的。"
+      }
+    },
+    "claim": {
+      "title": "领取已有存款",
+      "help": "向跨链桥发送了 ETH 或 USDC 但未到账？粘贴 Base 交易哈希即可领取——将铸造到您已连接的 RougeChain 钱包。系统会自动等待确认。",
+      "txHashLabel": "Base 交易哈希",
+      "claiming": "领取中…",
+      "button": "领取存款"
+    },
+    "activity": {
+      "title": "近期跨链活动",
+      "empty": "暂无跨链活动",
+      "emptyHint": "跨链存入与提取记录将显示在此处",
+      "bridgedIn": "存入",
+      "bridgedOut": "提取",
+      "statusPending": "待处理",
+      "statusCompleted": "已完成"
+    },
+    "pending": {
+      "title": "提取释放状态",
+      "failedAttempts_one": "{{count}} 次失败尝试",
+      "failedAttempts_other": "{{count}} 次失败尝试",
+      "viewOnMempool": "在 mempool.space 上查看",
+      "status": {
+        "retrying": "重试中",
+        "refunded": "已退款",
+        "released": "已释放",
+        "pending": "待处理"
+      }
+    },
+    "steps": {
+      "approvingXrge": "正在授权 XRGE...",
+      "waitingApproval": "等待授权确认...",
+      "depositingVault": "正在存入金库...",
+      "waitingDeposit": "等待存款确认...",
+      "waitingBase": "等待 Base 网络确认…",
+      "waitingBaseAttempt": "等待 Base 网络确认…（{{attempt}}/30）",
+      "waitingBitcoin": "等待比特币网络确认…",
+      "waitingBitcoinAttempt": "等待比特币网络确认…（{{attempt}}/30）",
+      "sendingToBridge": "正在将 {{symbol}} 发送至跨链桥...",
+      "signingClaim": "正在签署领取请求...",
+      "submittingWithdrawal": "正在提交提取请求..."
+    },
+    "toasts": {
+      "copied": "{{label}}已复制",
+      "connected": "已连接到 {{chain}}",
+      "claimed": "领取成功！{{token}} 已铸造到您的 RougeChain 钱包。",
+      "claimedQbtc": "领取成功！qBTC 已铸造到您的 RougeChain 钱包。",
+      "btcNotConfirmedYet": "存款尚未确认——比特币网络可能需要一些时间。确认后请重新粘贴交易 ID 进行领取。",
+      "bridgedXrge": "已将 {{amount}} XRGE 跨链转移至 RougeChain！",
+      "xrgeArrivesAutomatically": "存款已在 Base 上确认——最终确定后，您的 XRGE 将自动到达 RougeChain。",
+      "bridgedEvm": "已跨链转移 {{amount}} {{from}} → {{to}}！",
+      "depositSentPending": "存款已发送——{{token}} 将在确认后到账。如未到账，请使用“领取已有存款”并输入交易 {{tx}}…（{{error}}）",
+      "withdrawQueuedBtc": "提取请求已排队——BTC 中继器将向您的比特币地址发送 BTC。",
+      "withdrawSubmittedXrge": "提取请求已提交！中继器将在 Base 上释放 XRGE。",
+      "withdrawSubmittedEvm": "提取请求已提交！中继器将向您的 Base 地址发送 {{symbol}}。"
+    },
+    "errors": {
+      "installWallet": "请安装兼容 Base 的钱包（MetaMask、Coinbase Wallet 等）",
+      "networkNotConfirmed": "网络未确认——为保护您的资金，跨链桥已禁用",
+      "connectFailed": "连接失败",
+      "baseTimeout": "等待 Base 网络确认超时",
+      "bitcoinTimeout": "等待比特币网络确认超时",
+      "invalidBaseTxHash": "请输入有效的 Base 交易哈希（0x + 64 位十六进制）",
+      "connectSendingBaseWallet": "请连接发送该存款的 Base 钱包",
+      "connectRougeToReceive": "请连接您的 RougeChain 钱包以接收资金",
+      "connectRougeToReceiveQbtc": "请连接您的 RougeChain 钱包以接收 qBTC",
+      "noBaseProvider": "没有可用的 Base 钱包提供方",
+      "signatureRejected": "签名被拒绝——请使用发送该存款的 Base 钱包签名",
+      "claimFailed": "领取失败",
+      "btcClaimFailed": "BTC 领取失败",
+      "invalidBtcTxid": "请输入有效的比特币交易 ID（64 位十六进制字符）",
+      "connectBaseFirst": "请先连接您的 Base 钱包",
+      "noBaseWallet": "没有可用的 Base 钱包",
+      "rougeNotConnected": "RougeChain 钱包未连接",
+      "connectRougeFirst": "请先连接您的 RougeChain 钱包",
+      "invalidAmount": "请输入有效金额",
+      "insufficientOnBase": "Base 上的 {{symbol}} 余额不足",
+      "insufficientBalance": "{{symbol}} 余额不足",
+      "xrgeNotConfigured": "XRGE 跨链桥尚未完成配置",
+      "notConfigured": "跨链桥未配置",
+      "depositTxFailed": "存款交易在 Base 上失败或超时",
+      "depositFailed": "跨链存入失败",
+      "invalidBtcAddress": "请输入有效的比特币地址",
+      "invalidQbtcAmount": "请输入有效的 qBTC 金额",
+      "invalidEvmAddress": "请输入有效的 EVM 地址",
+      "withdrawFailed": "提取失败"
+    }
+  },
+  "wallet": {
+    "actions": {
+      "title": "快捷操作",
+      "backupTitle": "备份钱包",
+      "send": "发送",
+      "receive": "接收",
+      "create": "创建",
+      "shield": "屏蔽",
+      "unshield": "解除屏蔽",
+      "disconnect": "断开连接"
+    },
+    "sync": {
+      "failed": "同步失败",
+      "notYet": "尚未同步",
+      "justNow": "刚刚更新",
+      "secondsAgo": "{{seconds}} 秒前更新",
+      "minutesAgo": "{{minutes}} 分钟前更新",
+      "hoursAgo": "{{hours}} 小时前更新"
+    },
+    "empty": {
+      "receiveTokens": "接收代币",
+      "claimFaucet": "领取水龙头代币",
+      "shareAddressHint": "分享您的地址以接收代币",
+      "faucetHint": "从水龙头领取代币即可开始"
+    },
+    "seedReveal": {
+      "title": "保存您的助记词",
+      "intro": "这 {{count}} 个单词是您在丢失设备或备份文件后恢复此钱包的唯一方式。请抄写下来并离线保存。",
+      "warning": "切勿与任何人分享这些单词。任何持有它们的人都可以转走您的资金。RougeChain 支持团队绝不会向您索要。",
+      "copied": "已复制",
+      "copyPhrase": "复制助记词",
+      "confirmSaved": "我已抄写助记词并妥善保存。",
+      "continue": "继续",
+      "viewLater": "您之后可以在“备份 → 助记词”中再次查看。"
+    },
+    "passwordSetup": {
+      "title": "设置密码",
+      "intro": "您的密码用于在此设备上加密钱包。每次解锁钱包时都需要输入。",
+      "createPlaceholder": "创建密码（至少 6 个字符）",
+      "confirmPlaceholder": "确认密码",
+      "encrypting": "加密中...",
+      "submit": "设置密码并继续",
+      "neverSent": "您的密码不会被发送到任何地方，仅用于在本地通过 AES-256-GCM 加密您的私钥。",
+      "errors": {
+        "tooShort": "密码至少需要 6 个字符",
+        "mismatch": "两次输入的密码不一致",
+        "encryptFailed": "钱包加密失败"
+      }
+    },
+    "locked": {
+      "title": "钱包已锁定",
+      "namedLocked": "{{name}} 已锁定。",
+      "yourWalletLocked": "您的钱包已锁定。",
+      "passwordPlaceholder": "输入保险库密码",
+      "enterPassword": "请输入您的保险库密码",
+      "unlocking": "解锁中...",
+      "unlockButton": "解锁钱包",
+      "unlockFailed": "解锁失败",
+      "unlockFailedDesc": "密码错误或缺少保险库数据"
+    },
+    "tokenInfo": {
+      "title": "XRGE 代币信息",
+      "explorer": "区块浏览器",
+      "tokenType": "代币类型",
+      "nativeChainToken": "链原生代币",
+      "nativeCurrency": "XRGE 是 RougeChain 的原生货币",
+      "name": "名称",
+      "network": "网络",
+      "chainId": "链 ID",
+      "supplyModel": "供应模型",
+      "capped": "有上限",
+      "livePrice": "实时价格（Base）",
+      "totalSupply": "总供应量",
+      "circulating": "流通量",
+      "remaining": "剩余",
+      "percentInCirculation": "{{percent}}% 已流通"
+    },
+    "extensionPromo": {
+      "title": "RougeChain 钱包扩展"
+    },
+    "faucet": {
+      "httpFailed": "水龙头请求失败：{{status}} {{statusText}}",
+      "invalidResponse": "服务器响应无效",
+      "requestFailed": "水龙头请求失败",
+      "notSuccessful": "水龙头请求未成功",
+      "claimedXrge": "🎉 已领取 10,000 XRGE！",
+      "claimedAmount": "已领取 {{amount}}！",
+      "balanceUpdates": "余额将在区块被挖出后更新。",
+      "claimFailed": "代币领取失败",
+      "claimTokenFailed": "领取 {{token}} 失败"
+    },
+    "toasts": {
+      "locked": "钱包已锁定",
+      "lockedDesc": "解锁以继续",
+      "createdSecured": "钱包已创建并加密保护！",
+      "createdSecuredDesc": "您的钱包已使用您的密码加密。",
+      "disconnected": "钱包已断开连接",
+      "extensionConnected": "扩展钱包已连接！",
+      "unlocked": "钱包已解锁"
+    },
+    "errors": {
+      "loadFailed": "无法加载钱包数据",
+      "unknown": "未知错误",
+      "createFailed": "创建钱包失败",
+      "connectFirst": "请先连接您的钱包",
+      "extensionNotFound": "未找到 RougeChain 钱包扩展",
+      "extensionNotFoundDesc": "请从 Chrome 应用商店安装",
+      "extensionNoPublicKey": "扩展未返回公钥",
+      "extensionConnectFailed": "连接扩展失败"
+    }
+  },
+  "status": {
+    "title": "网络状态",
+    "subtitle": "来自公共节点 API 的主网实时数据，以及哪些功能已上线、哪些尚未启用。",
+    "autoRefresh": "每 15 秒刷新",
+    "apiError": "无法连接 API",
+    "height": "区块高度",
+    "finalized": "已最终确认",
+    "validators": "验证者（活跃 / 总数）",
+    "peers": "节点连接数",
+    "totalStake": "总质押",
+    "baseFee": "基础费用",
+    "burned": "已销毁手续费",
+    "chainId": "链 ID",
+    "consensusTitle": "共识",
+    "stateRoot": "状态根",
+    "designatedProposer": "指定提议者（下一区块）",
+    "rule": "规则",
+    "activation": "激活高度",
+    "state": "状态",
+    "validatorsTitle": "验证者与节点版本",
+    "active": "活跃",
+    "inactive": "非活跃",
+    "nodeRelease": "当前节点版本",
+    "mandatory": "强制升级",
+    "bridgeTitle": "跨链桥",
+    "audits": "审计",
+    "footer": "已上线与已构建但未启用的功能列表维护于",
+    "updated": "数据更新日期"
+  },
+  "buy": {
+    "title": "在 Base 上购买 XRGE",
+    "subtitle": "XRGE 是 RougeChain 在 Base 主网上的 ERC-20 代币。在这里直接用 ETH、USDC 或其他链上的代币兑换 XRGE，路由价格来自 Aerodrome 资金池。之后可通过跨链桥将 XRGE 转入 RougeChain。",
+    "contractLabel": "XRGE 官方合约（Base，链 ID 8453）",
+    "contractNote": "购买前务必核对地址。XRGE 只有一个。可在此核验：",
+    "howTitle": "操作步骤",
+    "step1": "连接支持 Base 的钱包（Coinbase Wallet、MetaMask、Rabby 等）。",
+    "step2": "选择支付资产。Base 上的 ETH 手续费最低；其他链和代币会自动路由。",
+    "step3": "查看报价并在钱包中确认，即可在 Base 上收到 XRGE。",
+    "step4": "可选：通过跨链桥把 XRGE 转入 RougeChain，用于质押、链上 DEX 交易或应用。",
+    "altTitle": "其他方式",
+    "aerodrome": "直接在 Aerodrome 交易",
+    "bridge": "将 XRGE 跨链至 RougeChain",
+    "disclaimer": "兑换通过第三方路由在您自己的钱包中执行；RougeChain 不会持有您的资金或密钥。价格随资金池变动，确认前请检查滑点。本页不构成投资建议。",
+    "swap": {
+      "title": "在 Base 上购买 XRGE",
+      "youPay": "支付",
+      "youReceive": "获得",
+      "minReceived": "最少获得",
+      "priceImpact": "价格影响",
+      "route": "路径",
+      "slippage": "滑点",
+      "connect": "连接钱包",
+      "swap": "兑换为 XRGE",
+      "approving": "正在授权 USDC…",
+      "swapping": "正在兑换…",
+      "insufficient": "余额不足",
+      "impactTooHigh": "价格影响过高",
+      "refresh": "刷新",
+      "viewTx": "在 Basescan 查看交易",
+      "noWallet": "未找到支持 Base 的钱包。请安装 Coinbase Wallet、MetaMask 或 Rabby。",
+      "connectFailed": "无法连接钱包",
+      "wrongChain": "请将钱包切换到 Base（链 8453）",
+      "quoteFailed": "无法获取报价",
+      "done": "兑换已确认，XRGE 已到账",
+      "reverted": "兑换在链上被回滚",
+      "failed": "兑换失败",
+      "connectNamed": "连接 {{wallet}}"
+    }
+  }
+}

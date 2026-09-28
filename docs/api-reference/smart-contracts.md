@@ -1,54 +1,86 @@
 # Smart Contracts API
 
-## Deploy Contract
+Since mainnet block 150 every contract transaction is **signed by the player**: the signer of a
+call is the caller the contract sees (`host_get_caller`) and pays the fee; the signer of a
+deployment is the deployer. The old node-signed endpoints are retired:
+`POST /api/v2/contract/deploy` returns **410 Gone** and `POST /api/v2/contract/call` is a dry run
+only (and is not reachable on the public mainnet edge). Use the endpoints below, or
+`rc.contracts` in `@rougechain/sdk` 1.9.0+.
 
-Deploy a WASM smart contract to RougeChain.
+Signed requests use the standard `/api/v2/*` envelope `{ payload, signature, public_key }`:
+`signature` is ML-DSA-65 over the JSON of `payload` with keys sorted, `payload.from` must equal
+`public_key`, and `payload.timestamp` (ms) must be within 5 minutes of the node clock.
 
-**POST** `/api/v2/contract/deploy`
+## Publish (Deploy) Contract
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `wasm` | string | ✅ | Base64-encoded WASM bytecode |
-| `deployer` | string | ✅ | Deployer's public key (hex) |
-| `nonce` | number | ❌ | Nonce for deterministic address (default: 0) |
+**POST** `/api/v2/contract/publish`
+
+| Payload field | Type | Required | Description |
+|---------------|------|----------|-------------|
+| `type` | string | ✅ | `"contract_deploy"` |
+| `from` | string | ✅ | Deployer's signing public key (hex) |
+| `wasm` | string | ✅ | Base64-encoded WASM bytecode (max 1 MiB, must export `memory`) |
+| `nonce` | string | ✅ | Random string, at least 8 characters |
+| `timestamp` | number | ✅ | Milliseconds since the epoch |
+
+**Response:**
+```json
+{ "success": true, "txId": "…", "address": "<40 hex chars>", "fee": 10 }
+```
+
+> Publish fee: **10 XRGE** flat. The contract is installed when the tx is mined. Its address is
+> fixed by the signed fields, so it is known before the block:
+> `hex(sha256("rougechain/contract/v2" ‖ from ‖ 0x00 ‖ nonce ‖ 0x00 ‖ sha256(wasm))[0..20])`.
+
+## Execute (Call) Contract
+
+A state-changing call, included in a block.
+
+**POST** `/api/v2/contract/execute`
+
+| Payload field | Type | Required | Description |
+|---------------|------|----------|-------------|
+| `type` | string | ✅ | `"contract_call"` |
+| `from` | string | ✅ | Caller's signing public key (hex) |
+| `contractAddr` | string | ✅ | Contract address (hex, lower case) |
+| `method` | string | ✅ | Method name |
+| `args` | any JSON | ❌ | Arguments (`{}` when omitted) |
+| `gasLimit` | number | ✅ | Integer 1 – 10,000,000 |
+| `timestamp` | number | ✅ | Milliseconds since the epoch |
+| `nonce` | string | ✅ | Random string |
 
 **Response:**
 ```json
 {
   "success": true,
-  "address": "a1b2c3d4e5f6...",
-  "wasmSize": 12345
+  "txId": "…",
+  "fee": 0.05,
+  "preview": { "returnData": { }, "gasUsed": 31234, "events": [] }
 }
 ```
 
-> Contract deploy fee: `wasmSize × 0.000001` XRGE
+> Call fee: `gasLimit × 0.000001` XRGE (the **signed** limit, charged up front). The node dry-runs
+> the call first and refuses it (`"call would fail: …"`, nothing charged) if it would fail or needs
+> more gas than the limit. The authoritative run happens in the block: if the call reverts there
+> (because state changed in between), it is still included and charged, and its receipt
+> (`GET /api/tx/:txId/receipt`) reports `"status": {"Failed": "<error>"}` instead of `"Success"`.
 
-## Call Contract
+## Query Contract (read-only)
 
-Execute a method on a deployed contract (mutating — creates an on-chain tx).
+A free dry run against the live state. Nothing is signed, charged or committed.
 
-**POST** `/api/v2/contract/call`
+**POST** `/api/contract/:addr/query`
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `contractAddr` | string | ✅ | Contract address (hex) |
-| `method` | string | ✅ | Method name to call |
-| `caller` | string | ❌ | Caller's public key |
-| `args` | object | ❌ | JSON arguments |
-| `gasLimit` | number | ❌ | Max fuel (default: 10,000,000) |
+| `method` | string | ✅ | Method name |
+| `args` | any JSON | ❌ | Arguments |
+| `caller` | string | ❌ | Public key the contract sees as `host_get_caller` |
 
 **Response:**
 ```json
-{
-  "success": true,
-  "returnData": { ... },
-  "gasUsed": 1500,
-  "events": [],
-  "error": null
-}
+{ "success": true, "returnData": { }, "gasUsed": 812, "events": [], "error": null }
 ```
-
-> Contract call fee: `gasUsed × 0.000001` XRGE
 
 ## Get Contract Metadata
 
@@ -105,9 +137,11 @@ Reads a single key from storage.
 
 ## Get Contract Events
 
-**GET** `/api/contract/:addr/events?limit=50`
+**GET** `/api/contract/:addr/events?limit=50&before=<height>&tx=<txhash>`
 
-Returns indexed events emitted by the contract.
+Returns indexed events emitted by the contract, newest first. `limit` is 1–1000 (default 50),
+`before` returns only events from blocks below that height (paging), and `tx` returns only the
+events of one transaction.
 
 ```json
 {
@@ -123,6 +157,16 @@ Returns indexed events emitted by the contract.
   ],
   "count": 1
 }
+```
+
+## Live Events (WebSocket)
+
+Connect to `wss://<node>/api/ws` and send `{ "subscribe": ["contract:<addr>"] }`. After each block
+is accepted you receive one frame per event:
+
+```json
+{ "type": "contract_event", "contract_addr": "…", "topic": "move",
+  "data": "…", "block_height": 1234, "tx_hash": "…" }
 ```
 
 ## List All Contracts

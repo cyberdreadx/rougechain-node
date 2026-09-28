@@ -46,6 +46,9 @@ pub struct ContractCallResult {
     /// Results from cross-contract calls (runtime-only, not serialized)
     #[serde(skip)]
     pub cross_call_results: Option<Vec<(bool, Vec<u8>)>>,
+    /// GAME_READY 2 token/NFT operations, applied by the node in order on success.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effects: Option<Vec<crate::game::ChainEffect>>,
 }
 
 /// Persistent storage for contracts, their state, and events
@@ -78,6 +81,23 @@ impl ContractStore {
     /// Every sled tree this store writes to (rollback snapshot/restore).
     pub fn trees(&self) -> Vec<&sled::Tree> {
         vec![&self.contracts, &self.code, &self.state, &self.events, &self.event_counter]
+    }
+
+    /// For the GAME_READY 2 state root: every contract as (address, sha256(code)) and every
+    /// storage entry as (raw sled key "addr:hexkey", value), both in sled (sorted) key order.
+    pub fn commitment_entries(&self) -> Result<(Vec<(Vec<u8>, [u8; 32])>, Vec<(Vec<u8>, Vec<u8>)>), String> {
+        use sha2::{Digest, Sha256};
+        let mut code = Vec::new();
+        for item in self.code.iter() {
+            let (k, v) = item.map_err(|e| e.to_string())?;
+            code.push((k.to_vec(), Sha256::digest(&v).into()));
+        }
+        let mut state = Vec::new();
+        for item in self.state.iter() {
+            let (k, v) = item.map_err(|e| e.to_string())?;
+            state.push((k.to_vec(), v.to_vec()));
+        }
+        Ok((code, state))
     }
 
     /// Deploy a new contract
@@ -189,6 +209,34 @@ impl ContractStore {
                     break;
                 }
             }
+        }
+        Ok(out)
+    }
+
+    /// Events for a contract, most recent first. `before_height` pages backwards (only events from
+    /// blocks below it); `tx_hash` keeps only the events one transaction emitted.
+    pub fn get_events_page(
+        &self,
+        addr: &str,
+        limit: usize,
+        before_height: Option<u64>,
+        tx_hash: Option<&str>,
+    ) -> Result<Vec<ContractEvent>, String> {
+        let prefix = format!("{}:", addr);
+        let mut out = Vec::new();
+        for item in self.events.scan_prefix(prefix.as_bytes()).rev() {
+            let (_, val) = item.map_err(|e| e.to_string())?;
+            let Ok(ev) = serde_json::from_slice::<ContractEvent>(&val) else { continue };
+            if before_height.map_or(false, |b| ev.block_height >= b) { continue; }
+            if let Some(t) = tx_hash {
+                if ev.tx_hash != t {
+                    // Events are appended in block order, so once we're below the tx's block we're done.
+                    if !out.is_empty() { break; }
+                    continue;
+                }
+            }
+            out.push(ev);
+            if out.len() >= limit { break; }
         }
         Ok(out)
     }

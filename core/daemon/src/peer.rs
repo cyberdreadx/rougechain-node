@@ -267,7 +267,40 @@ async fn sync_from_peer(peer_url: &str, node: &L1Node) -> Result<u64, String> {
             .map_err(|e| format!("Failed to parse block: {}", e))?;
         peer_blocks.push(block);
     }
-    apply_peer_blocks(node, peer_url, peer_blocks)
+    let applied = apply_peer_blocks(node, peer_url, peer_blocks)?;
+    pull_finality_from_peer(peer_url, node).await;
+    Ok(applied)
+}
+
+/// FINALITY_V2 proof distribution (inert while the gate is unscheduled). The peer is a byte
+/// source only: heights are chosen locally, responses are size-bounded, and every proof goes
+/// through the full local `verify_finality_proof` before it is persisted.
+const MAX_FINALITY_PROOF_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) async fn pull_finality_from_peer(peer_url: &str, node: &L1Node) {
+    let tip = match node.get_tip_height() { Ok(t) => t, Err(_) => return };
+    if !node.v2_active(tip) { return; }
+    // fetch first (async), verify after (sync) — never more than the per-pass request bound
+    let mut fetched: std::collections::HashMap<u64, quantum_vault_types::FinalityProof> = std::collections::HashMap::new();
+    let client = reqwest::Client::new();
+    let mut h = tip;
+    for _ in 0..crate::node::FINALITY_V2_MAX_PROOF_REQUESTS_PER_PASS {
+        if h == 0 || !node.v2_active(h) || matches!(node.get_persisted_finality_proof(h), Ok(Some(_))) { break; }
+        if let Ok(resp) = client.get(format!("{}/finality/{}", peer_url, h)).timeout(Duration::from_secs(5)).send().await {
+            if let Ok(bytes) = resp.bytes().await {
+                if bytes.len() <= MAX_FINALITY_PROOF_BYTES {
+                    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                        if let Some(p) = v.get("proof").and_then(|p| serde_json::from_value::<quantum_vault_types::FinalityProof>(p.clone()).ok()) { fetched.insert(h, p); }
+                    }
+                }
+            }
+        }
+        h -= 1;
+    }
+    if fetched.is_empty() { return; }
+    match node.pull_finality_proofs(&|height| Ok(fetched.get(&height).cloned())) {
+        Ok((imported, rejected)) if imported + rejected > 0 => eprintln!("[bft] peer {}: {} finality proof(s) verified+imported, {} rejected", peer_url, imported, rejected),
+        _ => {}
+    }
 }
 
 /// Discover peers from a known peer

@@ -74,8 +74,10 @@ import {
   unlockUnifiedWallet,
   clearUnifiedWallet 
 } from "@/lib/unified-wallet";
+import { useTranslation } from "react-i18next";
 
 const Wallet = () => {
+  const { t } = useTranslation();
   const [wallet, setWallet] = useState<UnifiedWallet | null>(null);
   const [balances, setBalances] = useState<WalletBalance[]>([]);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
@@ -315,8 +317,8 @@ const Wallet = () => {
       autoLockWallet();
       setWallet(null);
       setIsLocked(true);
-      toast.info("Wallet locked", {
-        description: "Unlock to continue",
+      toast.info(t("wallet.toasts.locked"), {
+        description: t("wallet.toasts.lockedDesc"),
       });
     }, minutes * 60 * 1000);
     return () => window.clearTimeout(timeout);
@@ -340,9 +342,9 @@ const Wallet = () => {
       setLastUpdated(Date.now());
     } catch (error) {
       console.error("Failed to refresh wallet data:", error);
-      const message = error instanceof Error ? error.message : "Failed to load wallet data";
+      const message = error instanceof Error ? error.message : t("wallet.errors.loadFailed");
       setSyncError(message);
-      toast.error("Failed to load wallet data");
+      toast.error(t("wallet.errors.loadFailed"));
     } finally {
       setRefreshing(false);
     }
@@ -392,8 +394,8 @@ const Wallet = () => {
       setShowSeedReveal(true);
     } catch (error) {
       console.error("Failed to create wallet:", error);
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      toast.error("Failed to create wallet", {
+      const errorMessage = error instanceof Error ? error.message : t("wallet.errors.unknown");
+      toast.error(t("wallet.errors.createFailed"), {
         description: errorMessage,
       });
     } finally {
@@ -403,11 +405,11 @@ const Wallet = () => {
 
   const handlePasswordSetup = async () => {
     if (setupPassword.length < 6) {
-      setSetupError("Password must be at least 6 characters");
+      setSetupError(t("wallet.passwordSetup.errors.tooShort"));
       return;
     }
     if (setupPassword !== setupConfirm) {
-      setSetupError("Passwords don't match");
+      setSetupError(t("wallet.passwordSetup.errors.mismatch"));
       return;
     }
     setSetupError("");
@@ -417,11 +419,11 @@ const Wallet = () => {
       const w = await unlockUnifiedWallet(setupPassword);
       setWallet(w);
       setShowPasswordSetup(false);
-      toast.success("Wallet created and secured!", {
-        description: "Your wallet is encrypted with your password."
+      toast.success(t("wallet.toasts.createdSecured"), {
+        description: t("wallet.toasts.createdSecuredDesc")
       });
     } catch (err) {
-      setSetupError("Failed to encrypt wallet");
+      setSetupError(t("wallet.passwordSetup.errors.encryptFailed"));
     }
     setSetupBusy(false);
   };
@@ -432,22 +434,22 @@ const Wallet = () => {
     setIsLocked(false);
     setBalances([]);
     setTransactions([]);
-    toast.info("Wallet disconnected");
+    toast.info(t("wallet.toasts.disconnected"));
   };
 
   const connectExtensionWallet = async () => {
     try {
       const provider = (window as any).rougechain;
       if (!provider?.isRougeChain) {
-        toast.error("RougeChain Wallet extension not found", {
-          description: "Install it from the Chrome Web Store",
+        toast.error(t("wallet.errors.extensionNotFound"), {
+          description: t("wallet.errors.extensionNotFoundDesc"),
         });
         return;
       }
       setLoading(true);
       const result = await provider.connect() as { publicKey: string; displayName?: string; encryptionPublicKey?: string };
       if (!result?.publicKey) {
-        throw new Error("Extension did not return a public key");
+        throw new Error(t("wallet.errors.extensionNoPublicKey"));
       }
       const extensionWallet: UnifiedWallet = {
         id: `ext-${Date.now()}`,
@@ -461,13 +463,13 @@ const Wallet = () => {
       };
       saveUnifiedWallet(extensionWallet);
       setWallet(extensionWallet);
-      toast.success("Extension wallet connected!", {
+      toast.success(t("wallet.toasts.extensionConnected"), {
         description: `${result.publicKey.slice(0, 8)}...${result.publicKey.slice(-4)}`,
       });
     } catch (error) {
       console.error("Extension connect failed:", error);
-      const msg = error instanceof Error ? error.message : "Failed to connect extension";
-      toast.error("Failed to connect extension", { description: msg });
+      const msg = error instanceof Error ? error.message : t("wallet.errors.extensionConnectFailed");
+      toast.error(t("wallet.errors.extensionConnectFailed"), { description: msg });
     } finally {
       setLoading(false);
     }
@@ -475,7 +477,7 @@ const Wallet = () => {
 
   const handleUnlock = async () => {
     if (!unlockPassword.trim()) {
-      toast.error("Enter your vault password");
+      toast.error(t("wallet.locked.enterPassword"));
       return;
     }
     setUnlocking(true);
@@ -484,11 +486,11 @@ const Wallet = () => {
       setWallet(unlocked);
       setIsLocked(false);
       setUnlockPassword("");
-      toast.success("Wallet unlocked");
+      toast.success(t("wallet.toasts.unlocked"));
     } catch (error) {
       console.error("Unlock failed:", error);
-      toast.error("Unlock failed", {
-        description: "Invalid password or missing vault data",
+      toast.error(t("wallet.locked.unlockFailed"), {
+        description: t("wallet.locked.unlockFailedDesc"),
       });
     } finally {
       setUnlocking(false);
@@ -511,7 +513,7 @@ const Wallet = () => {
 
   const claimFromFaucet = async () => {
     if (!wallet) {
-      toast.error("Connect your wallet first");
+      toast.error(t("wallet.errors.connectFirst"));
       return;
     }
 
@@ -537,20 +539,20 @@ const Wallet = () => {
           data = rawText ? JSON.parse(rawText) : null;
         } catch {
           if (!res.ok) {
-            throw new Error(`Faucet failed: ${res.status} ${res.statusText}`);
+            throw new Error(t("wallet.faucet.httpFailed", { status: res.status, statusText: res.statusText }));
           }
-          throw new Error("Invalid server response");
+          throw new Error(t("wallet.faucet.invalidResponse"));
         }
 
         if (!res.ok) {
-          const errorMsg = data?.error ?? (data ? JSON.stringify(data) : `Faucet failed: ${res.status} ${res.statusText}`);
+          const errorMsg = data?.error ?? (data ? JSON.stringify(data) : t("wallet.faucet.httpFailed", { status: res.status, statusText: res.statusText }));
           console.error(`[Faucet] API error:`, errorMsg);
-          throw new Error(typeof errorMsg === "string" ? errorMsg : "Faucet request failed");
+          throw new Error(typeof errorMsg === "string" ? errorMsg : t("wallet.faucet.requestFailed"));
         }
 
         if (data.success) {
-          toast.success("🎉 Claimed 10,000 XRGE!", {
-            description: "Balance will update once the block is mined."
+          toast.success(t("wallet.faucet.claimedXrge"), {
+            description: t("wallet.faucet.balanceUpdates")
           });
           // Immediate refresh, then poll (miner runs ~1s)
           await refreshWalletData();
@@ -559,7 +561,7 @@ const Wallet = () => {
             await refreshWalletData();
           }
         } else {
-          const errorMsg = data?.error || "Faucet request was not successful";
+          const errorMsg = data?.error || t("wallet.faucet.notSuccessful");
           console.error(`[Faucet] Request not successful:`, errorMsg);
           throw new Error(errorMsg);
         }
@@ -569,8 +571,8 @@ const Wallet = () => {
       }
     } catch (error) {
       console.error("[Faucet] Final error:", error);
-      const errorMessage = error instanceof Error ? error.message : "Failed to claim tokens";
-      toast.error("Failed to claim tokens", {
+      const errorMessage = error instanceof Error ? error.message : t("wallet.faucet.claimFailed");
+      toast.error(t("wallet.faucet.claimFailed"), {
         description: errorMessage
       });
     } finally {
@@ -580,7 +582,7 @@ const Wallet = () => {
 
   const claimBridgeFaucet = async (token: "qUSDC" | "qETH") => {
     if (!wallet) {
-      toast.error("Connect your wallet first");
+      toast.error(t("wallet.errors.connectFirst"));
       return;
     }
     setMinting(true);
@@ -596,11 +598,11 @@ const Wallet = () => {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data?.error || `Failed to claim ${token}`);
+        throw new Error(data?.error || t("wallet.faucet.claimTokenFailed", { token }));
       }
       const displayAmount = token === "qUSDC" ? "1,000 qUSDC" : "1 qETH";
-      toast.success(`Claimed ${displayAmount}!`, {
-        description: "Balance will update once the block is mined.",
+      toast.success(t("wallet.faucet.claimedAmount", { amount: displayAmount }), {
+        description: t("wallet.faucet.balanceUpdates"),
       });
       await refreshWalletData();
       for (const delayMs of [800, 1600, 2400]) {
@@ -608,8 +610,8 @@ const Wallet = () => {
         await refreshWalletData();
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : `Failed to claim ${token}`;
-      toast.error(`Failed to claim ${token}`, { description: msg });
+      const msg = error instanceof Error ? error.message : t("wallet.faucet.claimTokenFailed", { token });
+      toast.error(t("wallet.faucet.claimTokenFailed", { token }), { description: msg });
     } finally {
       setMinting(false);
     }
@@ -632,15 +634,15 @@ const Wallet = () => {
   const { priceUsd: ethPriceUsd } = useETHPrice(60_000);
 
   const formatLastUpdated = (timestamp: number | null) => {
-    if (!timestamp && syncError) return "Sync failed";
-    if (!timestamp) return "Not synced yet";
+    if (!timestamp && syncError) return t("wallet.sync.failed");
+    if (!timestamp) return t("wallet.sync.notYet");
     const seconds = Math.floor((Date.now() - timestamp) / 1000);
-    if (seconds < 5) return "Updated just now";
-    if (seconds < 60) return `Updated ${seconds}s ago`;
+    if (seconds < 5) return t("wallet.sync.justNow");
+    if (seconds < 60) return t("wallet.sync.secondsAgo", { seconds });
     const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `Updated ${minutes}m ago`;
+    if (minutes < 60) return t("wallet.sync.minutesAgo", { minutes });
     const hours = Math.floor(minutes / 60);
-    return `Updated ${hours}h ago`;
+    return t("wallet.sync.hoursAgo", { hours });
   };
 
   // Convert balances to asset format with USD values (from pools + DexScreener)
@@ -709,7 +711,7 @@ const Wallet = () => {
     memo: tx.memo,
   }));
 
-  const emptyAssetActionLabel = isMainnet ? "Receive tokens" : "Claim faucet";
+  const emptyAssetActionLabel = isMainnet ? t("wallet.empty.receiveTokens") : t("wallet.empty.claimFaucet");
   const handleEmptyAssetAction = () => {
     if (isMainnet) {
       setShowReceive(true);
@@ -718,12 +720,12 @@ const Wallet = () => {
     }
   };
   const emptyAssetHint = isMainnet
-    ? "Share your address to receive tokens"
-    : "Claim from faucet to get started";
+    ? t("wallet.empty.shareAddressHint")
+    : t("wallet.empty.faucetHint");
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
@@ -732,25 +734,23 @@ const Wallet = () => {
   if (showSeedReveal) {
     const words = newMnemonic.split(" ");
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <div className="max-w-md mx-auto px-4 py-12">
           <Card className="border-border">
             <CardHeader className="text-center">
               <div className="mx-auto w-12 h-12 rounded-full bg-warning/10 flex items-center justify-center mb-3">
                 <FileKey2 className="w-6 h-6 text-warning" />
               </div>
-              <CardTitle className="text-xl">Save Your Recovery Phrase</CardTitle>
+              <CardTitle className="text-xl">{t("wallet.seedReveal.title")}</CardTitle>
               <p className="text-sm text-muted-foreground mt-2">
-                These {words.length} words are the ONLY way to recover this wallet if you
-                lose your device or backup file. Write them down and store them offline.
+                {t("wallet.seedReveal.intro", { count: words.length })}
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Never share these words. Anyone who has them can take your funds.
-                  RougeChain support will never ask for them.
+                  {t("wallet.seedReveal.warning")}
                 </p>
               </div>
               <div className="grid grid-cols-3 gap-2">
@@ -772,7 +772,7 @@ const Wallet = () => {
                   } catch { /* clipboard blocked */ }
                 }}
               >
-                {seedRevealCopied ? <><Check className="w-4 h-4 mr-2" /> Copied</> : <><Copy className="w-4 h-4 mr-2" /> Copy phrase</>}
+                {seedRevealCopied ? <><Check className="w-4 h-4 mr-2" /> {t("wallet.seedReveal.copied")}</> : <><Copy className="w-4 h-4 mr-2" /> {t("wallet.seedReveal.copyPhrase")}</>}
               </Button>
               <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
                 <input
@@ -781,17 +781,17 @@ const Wallet = () => {
                   onChange={(e) => setSeedSaved(e.target.checked)}
                   className="mt-0.5"
                 />
-                <span className="text-muted-foreground">I have written down my recovery phrase and stored it safely.</span>
+                <span className="text-muted-foreground">{t("wallet.seedReveal.confirmSaved")}</span>
               </label>
               <Button
                 className="w-full"
                 disabled={!seedSaved}
                 onClick={() => { setShowSeedReveal(false); setShowPasswordSetup(true); }}
               >
-                Continue
+                {t("wallet.seedReveal.continue")}
               </Button>
               <p className="text-xs text-muted-foreground text-center">
-                You can view this phrase again later under Backup → Seed Phrase.
+                {t("wallet.seedReveal.viewLater")}
               </p>
             </CardContent>
           </Card>
@@ -802,29 +802,29 @@ const Wallet = () => {
 
   if (showPasswordSetup) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <div className="max-w-md mx-auto px-4 py-12">
           <Card className="border-border">
             <CardHeader className="text-center">
               <div className="mx-auto w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-3">
                 <Shield className="w-6 h-6 text-primary" />
               </div>
-              <CardTitle className="text-xl">Set a Password</CardTitle>
+              <CardTitle className="text-xl">{t("wallet.passwordSetup.title")}</CardTitle>
               <p className="text-sm text-muted-foreground mt-2">
-                Your password encrypts the wallet on this device. You'll need it to unlock your wallet each time.
+                {t("wallet.passwordSetup.intro")}
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-3">
                 <Input
                   type="password"
-                  placeholder="Create password (min 6 characters)"
+                  placeholder={t("wallet.passwordSetup.createPlaceholder")}
                   value={setupPassword}
                   onChange={(e) => { setSetupPassword(e.target.value); setSetupError(""); }}
                 />
                 <Input
                   type="password"
-                  placeholder="Confirm password"
+                  placeholder={t("wallet.passwordSetup.confirmPlaceholder")}
                   value={setupConfirm}
                   onChange={(e) => { setSetupConfirm(e.target.value); setSetupError(""); }}
                   onKeyDown={(e) => e.key === "Enter" && handlePasswordSetup()}
@@ -839,13 +839,13 @@ const Wallet = () => {
                 disabled={!setupPassword || !setupConfirm || setupBusy}
               >
                 {setupBusy ? (
-                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Encrypting...</>
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t("wallet.passwordSetup.encrypting")}</>
                 ) : (
-                  <><Shield className="w-4 h-4 mr-2" /> Set Password & Continue</>
+                  <><Shield className="w-4 h-4 mr-2" /> {t("wallet.passwordSetup.submit")}</>
                 )}
               </Button>
               <p className="text-xs text-muted-foreground text-center">
-                Your password is never sent anywhere. It encrypts your private keys locally with AES-256-GCM.
+                {t("wallet.passwordSetup.neverSent")}
               </p>
             </CardContent>
           </Card>
@@ -857,15 +857,15 @@ const Wallet = () => {
   if (isLocked) {
     const meta = getLockedWalletMetadata();
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <div className="max-w-md mx-auto px-4 py-12">
           <Card className="border-border">
             <CardHeader>
-              <CardTitle>Wallet Locked</CardTitle>
+              <CardTitle>{t("wallet.locked.title")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                {meta?.displayName ? `${meta.displayName} is locked.` : "Your wallet is locked."}
+                {meta?.displayName ? t("wallet.locked.namedLocked", { name: meta.displayName }) : t("wallet.locked.yourWalletLocked")}
               </p>
               {meta?.signingPublicKey && (
                 <p className="text-xs font-mono text-muted-foreground break-all">
@@ -874,12 +874,12 @@ const Wallet = () => {
               )}
               <Input
                 type="password"
-                placeholder="Enter vault password"
+                placeholder={t("wallet.locked.passwordPlaceholder")}
                 value={unlockPassword}
                 onChange={(e) => setUnlockPassword(e.target.value)}
               />
               <Button className="w-full" onClick={handleUnlock} disabled={unlocking}>
-                {unlocking ? "Unlocking..." : "Unlock Wallet"}
+                {unlocking ? t("wallet.locked.unlocking") : t("wallet.locked.unlockButton")}
               </Button>
             </CardContent>
           </Card>
@@ -889,7 +889,7 @@ const Wallet = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       {/* Action Bar */}
       <div className="sticky top-0 z-40 bg-background/80 backdrop-blur-sm border-b border-border">
         <div className="max-w-lg mx-auto px-4 py-2 flex items-center justify-between">
@@ -911,7 +911,7 @@ const Wallet = () => {
                   size="icon"
                   onClick={() => setShowBackup(true)}
                   className="h-9 w-9"
-                  title="Backup Wallet"
+                  title={t("wallet.actions.backupTitle")}
                 >
                   <FileKey2 className="w-4 h-4" />
                 </Button>
@@ -979,7 +979,7 @@ const Wallet = () => {
 
             {/* Action Buttons */}
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-foreground">Quick actions</h3>
+              <h3 className="text-sm font-semibold text-foreground">{t("wallet.actions.title")}</h3>
             </div>
             <div className={`grid gap-2 ${isMainnet ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-4 sm:grid-cols-8'}`}>
               <Button
@@ -991,7 +991,7 @@ const Wallet = () => {
                 <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
                   <Send className="w-4 h-4 text-primary" />
                 </div>
-                <span className="text-xs">Send</span>
+                <span className="text-xs">{t("wallet.actions.send")}</span>
               </Button>
               
               <Button
@@ -1002,7 +1002,7 @@ const Wallet = () => {
                 <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
                   <Download className="w-4 h-4 text-success" />
                 </div>
-                <span className="text-xs">Receive</span>
+                <span className="text-xs">{t("wallet.actions.receive")}</span>
               </Button>
               
               {/* Only show faucets on testnet */}
@@ -1049,7 +1049,7 @@ const Wallet = () => {
                 <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
                   <Plus className="w-4 h-4 text-primary" />
                 </div>
-                <span className="text-xs">Create</span>
+                <span className="text-xs">{t("wallet.actions.create")}</span>
               </Button>
 
               <Button
@@ -1061,7 +1061,7 @@ const Wallet = () => {
                 <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
                   <Shield className="w-4 h-4 text-primary" />
                 </div>
-                <span className="text-xs">Shield</span>
+                <span className="text-xs">{t("wallet.actions.shield")}</span>
               </Button>
 
               <Button
@@ -1072,7 +1072,7 @@ const Wallet = () => {
                 <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
                   <ShieldOff className="w-4 h-4 text-accent" />
                 </div>
-                <span className="text-xs">Unshield</span>
+                <span className="text-xs">{t("wallet.actions.unshield")}</span>
               </Button>
               
               <Button
@@ -1083,7 +1083,7 @@ const Wallet = () => {
                 <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
                   <Unlink className="w-4 h-4 text-destructive" />
                 </div>
-                <span className="text-xs">Disconnect</span>
+                <span className="text-xs">{t("wallet.actions.disconnect")}</span>
               </Button>
             </div>
 
@@ -1096,42 +1096,42 @@ const Wallet = () => {
               className="p-4 rounded-xl bg-card border border-border"
             >
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-foreground">XRGE Token Info</h3>
-                <Link 
+                <h3 className="text-sm font-semibold text-foreground">{t("wallet.tokenInfo.title")}</h3>
+                <Link
                   to="/blockchain"
                   className="text-xs text-primary hover:underline"
                 >
-                  Explorer ↗
+                  {t("wallet.tokenInfo.explorer")} ↗
                 </Link>
               </div>
-              
+
               {/* Native Token Info */}
               <div className="p-3 rounded-lg bg-secondary/50 border border-border mb-3">
-                <p className="text-xs text-muted-foreground mb-1">Token Type</p>
-                <p className="text-xs font-mono text-foreground">Native Chain Token</p>
-                <p className="text-xs text-muted-foreground mt-1">XRGE is the native currency of RougeChain</p>
+                <p className="text-xs text-muted-foreground mb-1">{t("wallet.tokenInfo.tokenType")}</p>
+                <p className="text-xs font-mono text-foreground">{t("wallet.tokenInfo.nativeChainToken")}</p>
+                <p className="text-xs text-muted-foreground mt-1">{t("wallet.tokenInfo.nativeCurrency")}</p>
               </div>
 
                 <div className="grid grid-cols-2 gap-2 mb-3">
                 <div className="p-2 rounded-lg bg-secondary/30">
-                  <p className="text-xs text-muted-foreground">Name</p>
+                  <p className="text-xs text-muted-foreground">{t("wallet.tokenInfo.name")}</p>
                   <p className="text-xs font-medium text-foreground">{TOKEN_NAME}</p>
                 </div>
                 <div className="p-2 rounded-lg bg-secondary/30">
-                    <p className="text-xs text-muted-foreground">Network</p>
+                    <p className="text-xs text-muted-foreground">{t("wallet.tokenInfo.network")}</p>
                     <p className="text-xs font-medium text-foreground">{networkLabel}</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 mb-3">
                   <div className="p-2 rounded-lg bg-secondary/30">
-                    <p className="text-xs text-muted-foreground">Chain ID</p>
+                    <p className="text-xs text-muted-foreground">{t("wallet.tokenInfo.chainId")}</p>
                     <p className="text-xs font-mono text-foreground">{chainIdLabel}</p>
                   </div>
                   <div className="p-2 rounded-lg bg-secondary/30">
-                    <p className="text-xs text-muted-foreground">Supply Model</p>
+                    <p className="text-xs text-muted-foreground">{t("wallet.tokenInfo.supplyModel")}</p>
                     <p className="text-xs font-medium text-foreground">
-                      {networkLabel === "Mainnet" ? "Capped" : "Testnet"}
+                      {networkLabel === "Mainnet" ? t("wallet.tokenInfo.capped") : t("common.testnet")}
                     </p>
                 </div>
               </div>
@@ -1140,7 +1140,7 @@ const Wallet = () => {
                 {/* Live Price from DexScreener */}
                 {priceUsd !== null && (
                   <div className="flex justify-between items-center p-2 rounded-lg bg-primary/10 border border-primary/20">
-                    <span className="text-xs font-medium text-primary">Live Price (Base)</span>
+                    <span className="text-xs font-medium text-primary">{t("wallet.tokenInfo.livePrice")}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-mono font-bold text-primary">
                         ${priceUsd.toFixed(8)}
@@ -1155,15 +1155,15 @@ const Wallet = () => {
                   </div>
                 )}
                 <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">Total Supply</span>
+                  <span className="text-xs text-muted-foreground">{t("wallet.tokenInfo.totalSupply")}</span>
                   <span className="text-sm font-mono text-foreground">{TOTAL_SUPPLY.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">Circulating</span>
+                  <span className="text-xs text-muted-foreground">{t("wallet.tokenInfo.circulating")}</span>
                   <span className="text-sm font-mono text-foreground">{circulatingSupply.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">Remaining</span>
+                  <span className="text-xs text-muted-foreground">{t("wallet.tokenInfo.remaining")}</span>
                   <span className="text-sm font-mono text-primary">{(TOTAL_SUPPLY - circulatingSupply).toLocaleString()}</span>
                 </div>
                 <div className="mt-3 h-2 bg-secondary rounded-full overflow-hidden">
@@ -1173,7 +1173,7 @@ const Wallet = () => {
                   />
                 </div>
                 <p className="text-xs text-muted-foreground text-center">
-                  {((circulatingSupply / TOTAL_SUPPLY) * 100).toFixed(6)}% in circulation
+                  {t("wallet.tokenInfo.percentInCirculation", { percent: ((circulatingSupply / TOTAL_SUPPLY) * 100).toFixed(6) })}
                 </p>
               </div>
             </motion.div>
@@ -1187,7 +1187,7 @@ const Wallet = () => {
             />
             <TransactionHistory
               transactions={txHistory}
-              emptyActionLabel="Receive tokens"
+              emptyActionLabel={t("wallet.empty.receiveTokens")}
               onEmptyAction={() => setShowReceive(true)}
             />
             <SecurityStatus />
@@ -1206,7 +1206,7 @@ const Wallet = () => {
                 <Puzzle className="w-5 h-5 text-primary" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-foreground">RougeChain Wallet Extension</p>
+                <p className="text-sm font-semibold text-foreground">{t("wallet.extensionPromo.title")}</p>
                 <p className="text-xs text-muted-foreground">Chrome · Edge · Brave · Firefox · Arc · Opera</p>
               </div>
               <ExternalLink className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />

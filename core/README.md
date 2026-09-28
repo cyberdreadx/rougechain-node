@@ -227,8 +227,8 @@ See `PUBLIC_API.md` in the project root for full API documentation.
 | `/api/v2/governance/vote` | Cast governance vote |
 | `/api/v2/shielded/transfer` | Shielded transfer (zk-STARK) |
 | `/api/v2/shielded/unshield` | Unshield (return to public balance) |
-| `/api/v2/contract/deploy` | Deploy WASM smart contract |
-| `/api/v2/contract/call` | Execute WASM contract function |
+| `/api/v2/contract/publish` | Publish (deploy) a WASM contract, player-signed |
+| `/api/v2/contract/execute` | Call a contract method, player-signed |
 | `/api/v2/faucet` | Request testnet tokens |
 | `/api/v2/messenger/wallets/register` | Register messenger wallet (signed) |
 | `/api/v2/messenger/conversations` | Create conversation (signed) |

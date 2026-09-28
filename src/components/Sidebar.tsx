@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { 
   Home, 
   Wallet, 
@@ -24,10 +24,13 @@ import {
   ChevronDown,
   Bot,
   Sprout,
+  Users,
 } from "lucide-react";
 import xrgeLogo from "@/assets/xrge-logo.webp";
 import { getActiveNetwork, getNetworkLabel, getCoreApiBaseUrl, getCoreApiHeaders, NETWORK_STORAGE_KEY } from "@/lib/network";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { pubkeyToAddress, isRougeAddress, formatAddress } from "@/lib/address";
 import { loadUnifiedWallet, toMessengerWallet } from "@/lib/unified-wallet";
 import type { WalletWithPrivateKeys } from "@/lib/pqc-messenger";
@@ -47,47 +50,51 @@ const navGroups: NavGroup[] = [
   {
     title: "",
     items: [
-      { to: "/", label: "Home", icon: Home },
-      { to: "/regenerate", label: "Regenerate", icon: Sprout },
+      { to: "/", label: "nav.home", icon: Home },
+      { to: "/regenerate", label: "nav.regenerate", icon: Sprout },
+      { to: "/#team", label: "nav.team", icon: Users },
     ],
   },
   {
-    title: "DeFi",
+    title: "nav.group.defi",
     items: [
-      { to: "/wallet", label: "Wallet", icon: Wallet },
-      { to: "/swap", label: "Swap", icon: ArrowDownUp },
-      { to: "/bridge", label: "Bridge", icon: Cable },
-      { to: "/pools", label: "Pools", icon: Droplets },
+      { to: "/wallet", label: "nav.wallet", icon: Wallet },
+      { to: "/swap", label: "nav.swap", icon: ArrowDownUp },
+      { to: "/bridge", label: "nav.bridge", icon: Cable },
+      { to: "/pools", label: "nav.pools", icon: Droplets },
     ],
   },
   {
-    title: "Explorer",
+    title: "nav.group.explorer",
     items: [
-      { to: "/blockchain", label: "Blockchain", icon: Globe2 },
-      { to: "/transactions", label: "Tx Feed", icon: Activity },
-      { to: "/contracts", label: "Contracts", icon: FileCode },
-      { to: "/tokens", label: "Tokens", icon: Coins },
-      { to: "/nfts", label: "NFTs", icon: Image },
+      { to: "/blockchain", label: "nav.blockchain", icon: Globe2 },
+      { to: "/transactions", label: "nav.txFeed", icon: Activity },
+      { to: "/contracts", label: "nav.contracts", icon: FileCode },
+      { to: "/tokens", label: "nav.tokens", icon: Coins },
+      { to: "/nfts", label: "nav.nfts", icon: Image },
     ],
   },
   {
-    title: "Social",
+    title: "nav.group.social",
     items: [
-      { to: "/messenger", label: "Messenger", icon: MessageSquare },
-      { to: "/mail", label: "Mail", icon: Mail },
+      { to: "/messenger", label: "nav.messenger", icon: MessageSquare },
+      { to: "/mail", label: "nav.mail", icon: Mail },
     ],
   },
   {
-    title: "Network",
+    title: "nav.group.network",
     items: [
-      { to: "/validators", label: "Validators", icon: Shield },
-      { to: "/node", label: "Core Node", icon: Network },
-      { to: "/agents", label: "Agents", icon: Bot },
+      { to: "/buy", label: "nav.buy", icon: Coins },
+      { to: "/status", label: "nav.status", icon: Activity },
+      { to: "/validators", label: "nav.validators", icon: Shield },
+      { to: "/node", label: "nav.coreNode", icon: Network },
+      { to: "/agents", label: "nav.agents", icon: Bot },
     ],
   },
 ];
 
 function GlobalSearch({ visible }: { visible: boolean }) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
 
@@ -120,7 +127,7 @@ function GlobalSearch({ visible }: { visible: boolean }) {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search address / tx / block..."
+          placeholder={t("nav.searchPlaceholder")}
           className="w-full pl-7 pr-2 py-1.5 rounded-lg bg-card border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
         />
       </form>
@@ -133,6 +140,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({ children }: SidebarProps) {
+  const { t } = useTranslation();
   const location = useLocation();
   const [expanded, setExpanded] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -249,15 +257,17 @@ export function Sidebar({ children }: SidebarProps) {
     <>
       {/* Logo Section */}
       <div className="flex items-center gap-3 p-4 border-b border-border">
-        <span className="flex-shrink-0 animate-jelly inline-block">
-          <img src={xrgeLogo} alt="XRGE" className="w-8 h-8 rounded-full" />
-        </span>
-        <div className={cn(
-          "overflow-hidden transition-all duration-300",
-          (expanded || isMobile) ? "opacity-100 w-auto" : "opacity-0 w-0"
-        )}>
-          <span className="font-bold text-lg whitespace-nowrap">RougeChain</span>
-        </div>
+        <Link to="/" aria-label="RougeChain home" onClick={() => isMobile && setMobileOpen(false)} className="flex items-center gap-3 min-w-0">
+          <span className="flex-shrink-0 animate-jelly inline-block">
+            <img src={xrgeLogo} alt="XRGE" className="w-8 h-8 rounded-full" />
+          </span>
+          <div className={cn(
+            "overflow-hidden transition-all duration-300",
+            (expanded || isMobile) ? "opacity-100 w-auto" : "opacity-0 w-0"
+          )}>
+            <span className="font-bold text-lg whitespace-nowrap">RougeChain</span>
+          </div>
+        </Link>
         {isMobile && (
           <button 
             onClick={() => setMobileOpen(false)}
@@ -328,7 +338,7 @@ export function Sidebar({ children }: SidebarProps) {
                   (expanded || isMobile) ? "opacity-100" : "opacity-0 h-0 pt-0 pb-0 overflow-hidden"
                 )}
               >
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/60">{group.title}</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/60">{t(group.title)}</span>
                 <ChevronDown className={cn(
                   "w-3 h-3 text-muted-foreground/40 transition-transform duration-200",
                   collapsed && "-rotate-90"
@@ -345,10 +355,10 @@ export function Sidebar({ children }: SidebarProps) {
               const badge = item.to === "/messenger" ? unreadChats : item.to === "/mail" ? unreadMail : 0;
               const tooltip =
                 item.to === "/messenger" && badge > 0
-                  ? `${badge} unread message${badge > 1 ? "s" : ""}`
+                  ? t("nav.unreadMessages", { count: badge })
                   : item.to === "/mail" && badge > 0
-                    ? `${badge} unread email${badge > 1 ? "s" : ""}`
-                    : item.label;
+                    ? t("nav.unreadEmails", { count: badge })
+                    : t(item.label);
               return (
                 <NavLink
                   key={item.to}
@@ -374,7 +384,7 @@ export function Sidebar({ children }: SidebarProps) {
                     "whitespace-nowrap overflow-hidden transition-all duration-300 flex items-center gap-2",
                     (expanded || isMobile) ? "opacity-100 w-auto" : "opacity-0 w-0"
                   )}>
-                    {item.label}
+                    {t(item.label)}
                     {badge > 0 && (expanded || isMobile) && (
                       <span className="min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground leading-none px-1">
                         {badge > 99 ? "99+" : badge}
@@ -393,7 +403,7 @@ export function Sidebar({ children }: SidebarProps) {
           "px-3 pt-2 pb-0.5 transition-all duration-300",
           (expanded || isMobile) ? "opacity-100" : "opacity-0 h-0 pt-0 pb-0 overflow-hidden"
         )}>
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/60">Resources</span>
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/60">{t("nav.resources")}</span>
         </div>
         <a
           href="https://docs.rougechain.io"
@@ -406,7 +416,7 @@ export function Sidebar({ children }: SidebarProps) {
             "whitespace-nowrap overflow-hidden transition-all duration-300 flex items-center gap-1",
             (expanded || isMobile) ? "opacity-100 w-auto" : "opacity-0 w-0"
           )}>
-            Docs
+            {t("nav.docs")}
             <ExternalLink className="w-3 h-3 opacity-50" />
           </span>
         </a>
@@ -421,10 +431,11 @@ export function Sidebar({ children }: SidebarProps) {
             "whitespace-nowrap overflow-hidden transition-all duration-300 flex items-center gap-1",
             (expanded || isMobile) ? "opacity-100 w-auto" : "opacity-0 w-0"
           )}>
-            Whitepaper
+            {t("nav.whitepaper")}
             <ExternalLink className="w-3 h-3 opacity-50" />
           </span>
         </a>
+        <LanguageSwitcher compact={!(expanded || isMobile)} className="w-full" />
       </nav>
     </>
   );
@@ -432,17 +443,20 @@ export function Sidebar({ children }: SidebarProps) {
   return (
     <div className="flex min-h-screen w-full overflow-x-hidden">
       {/* Mobile Header */}
-      <div className="fixed top-0 left-0 right-0 z-50 md:hidden bg-background border-b border-border px-4 py-3 flex items-center gap-3">
+      <div className="fixed top-0 left-0 right-0 z-50 md:hidden glass-bar border-b border-border px-4 py-3 flex items-center gap-3">
         <button 
           onClick={() => setMobileOpen(true)}
           className="p-2 rounded-lg hover:bg-muted"
         >
           <Menu className="w-5 h-5" />
         </button>
-        <span className="animate-jelly inline-block">
-          <img src={xrgeLogo} alt="XRGE" className="w-7 h-7 rounded-full" />
-        </span>
-        <span className="font-bold">RougeChain</span>
+        <Link to="/" aria-label="RougeChain home" className="flex items-center gap-2">
+          <span className="animate-jelly inline-block">
+            <img src={xrgeLogo} alt="XRGE" className="w-7 h-7 rounded-full" />
+          </span>
+          <span className="font-bold">RougeChain</span>
+        </Link>
+        <LanguageSwitcher compact direction="down" align="right" className="ml-auto" />
         <button
           onClick={() => {
             const current = getActiveNetwork();
@@ -450,8 +464,8 @@ export function Sidebar({ children }: SidebarProps) {
             localStorage.setItem(NETWORK_STORAGE_KEY, next);
             window.location.reload();
           }}
-          className="ml-auto flex items-center gap-2 px-2 py-1 rounded-full bg-card border border-border text-xs hover:border-primary/50 transition-colors cursor-pointer"
-          title="Tap to switch network"
+          className="flex items-center gap-2 px-2 py-1 rounded-full bg-card border border-border text-xs hover:border-primary/50 transition-colors cursor-pointer"
+          title={t("nav.switchNetwork")}
         >
           <span className={`h-2 w-2 rounded-full ${getActiveNetwork() === "mainnet" ? "bg-success" : "bg-amber-500"}`} />
           <span className="font-medium">{networkLabel}</span>
@@ -462,14 +476,14 @@ export function Sidebar({ children }: SidebarProps) {
       {/* Mobile Sidebar Overlay */}
       {mobileOpen && (
         <div 
-          className="fixed inset-0 z-50 bg-black/50 md:hidden"
+          className="fixed inset-0 z-50 bg-black/45 backdrop-blur-sm md:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
 
       {/* Mobile Sidebar */}
       <aside className={cn(
-        "fixed left-0 top-0 z-50 h-screen w-60 bg-background border-r border-border flex flex-col transition-transform duration-300 md:hidden",
+        "fixed left-0 top-0 z-50 h-screen w-60 glass-strong border-r border-border flex flex-col transition-transform duration-300 md:hidden",
         mobileOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <SidebarContent isMobile />
@@ -478,7 +492,7 @@ export function Sidebar({ children }: SidebarProps) {
       {/* Desktop Sidebar */}
       <aside 
         className={cn(
-          "fixed left-0 top-0 z-40 h-screen bg-background border-r border-border flex-col transition-all duration-300 ease-in-out hidden md:flex",
+          "fixed left-0 top-0 z-40 h-screen glass-bar border-r border-border flex-col transition-all duration-300 ease-in-out hidden md:flex",
           expanded ? "w-52" : "w-16"
         )}
         onMouseEnter={() => setExpanded(true)}

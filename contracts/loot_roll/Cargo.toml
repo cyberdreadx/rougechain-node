@@ -1,0 +1,15 @@
+[package]
+name = "rougechain-loot-roll"
+version = "0.1.0"
+edition = "2021"
+
+# Example RougeChain game contract (GAME_READY 2): a player rolls, and the contract pays a prize
+# from its own treasury — an NFT from its own collection, GOLD tokens, or XRGE.
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
