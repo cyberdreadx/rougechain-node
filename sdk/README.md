@@ -585,7 +585,7 @@ await game.call("move", { x: 1, y: 2 });
 
 Fees: publish 10 XRGE flat; call `gasLimit × 0.000001` XRGE (max gas 10,000,000). `predictContractAddress(from, nonce, wasm)` derives the address offline.
 
-### Payable calls (1.10.0, node from block PAYABLE_HEIGHT)
+### Payable calls (1.10.0, node from block 190)
 
 A call can pay the contract. `amount` is an integer: quanta for XRGE (use `xrgeToQuanta`), raw units for tokens. The payment moves only if the call succeeds. A failing call keeps it with you, but the gas fee is still charged.
 

@@ -297,7 +297,7 @@ pub fn game_ready_3_active(height: u64) -> bool {
 /// the call succeeds; a failed call leaves it with the caller (the gas fee is still charged). The
 /// contract reads it with `host_get_attached_amount` / `host_get_attached_symbol`. Before this height
 /// a call carrying `attach` is invalid. `None` = not scheduled.
-pub const PAYABLE_CALLS_ACTIVATION_HEIGHT: Option<u64> = None;
+pub const PAYABLE_CALLS_ACTIVATION_HEIGHT: Option<u64> = Some(190);
 #[cfg(test)]
 thread_local! {
     static TEST_PAYABLE_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };

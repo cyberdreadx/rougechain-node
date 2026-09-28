@@ -3,7 +3,7 @@
 A player pays **0.5 XRGE** with a `roll` call to commit, then calls `settle` a couple of blocks later;
 the contract decides the roll from the hash of a block that did not exist when the player committed,
 and pays a prize from its own treasury. Entry fees stay in the treasury. Needs payable calls
-(block PAYABLE_HEIGHT), `host_block_hash` (block 170) and the GAME_READY 2 token/NFT functions.
+(block 190), `host_block_hash` (block 170) and the GAME_READY 2 token/NFT functions.
 
 | Method | What it does |
 |---|---|

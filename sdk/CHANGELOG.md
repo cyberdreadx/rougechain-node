@@ -3,7 +3,7 @@
 ## 1.10.0
 
 ### Added
-- Payable contract calls (node payable-calls upgrade, from block PAYABLE_HEIGHT). A signed `contract_call` can pay the contract.
+- Payable contract calls (node payable-calls upgrade, from block 190). A signed `contract_call` can pay the contract.
   - `rc.contracts.execute(wallet, addr, method, args, { gasLimit?, attach?: { symbol, amount } })`. `amount` is an integer: quanta for XRGE (1 XRGE = 1,000,000,000 quanta), raw units for tokens. It accepts a `bigint`, a safe-integer `number` or a digit string. The SDK signs it inside the payload as `"attach": {"symbol": "XRGE", "amount": <JSON integer>}`. The payment moves to the contract only if the call succeeds. A failing or trapping call keeps it with the caller, and the gas fee is still charged. The node refuses the call if the wallet can't cover the gas fee plus an XRGE payment, or the token amount.
   - Gas auto-sizing (no `gasLimit`) now runs the preview query with the attachment, so the contract sees the payment in the dry run.
   - `rc.contracts.query(addr, method, args, caller?, { attach? })` previews a paid call. A `caller` is required when attaching.

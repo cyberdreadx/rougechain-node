@@ -62,6 +62,7 @@ a minute.
 | Player-signed contracts (GAME_READY) | **LIVE since block 150** | Deploy and call signed by the player; see [Smart Contracts](advanced/smart-contracts.md) |
 | Game-ready contracts (GAME_READY 2) | **LIVE since block 160** | Tokens, NFTs, collections and minting, randomness, multi-hop moves; state root covers NFTs and contract state |
 | Grind-proof game rolls (GAME_READY 3, `host_block_hash`) | **Scheduled: block 170** | Commit-then-settle randomness; one-step `host_random` rolls can be ground by the sender |
+| Payable contract calls (`attach`) | **Scheduled: block 190** | Pay XRGE or tokens with a contract call; moves only if the call succeeds |
 | LP fee collection | **LIVE** | "Collect fees" on Pools withdraws only fee earnings |
 
 The production XRGE bridge **still relies on classical (ECDSA / Safe multisig) authorization on the

@@ -142,7 +142,7 @@ const { txId, preview } = await window.rougechain.sendTransaction({
 Size the gas limit from a free query (`POST /api/contract/<addr>/query`) first. See
 [WASM Smart Contracts](smart-contracts.md).
 
-**Payable calls (v1.5.0+; the node accepts them from block PAYABLE_HEIGHT).** A
+**Payable calls (v1.5.0+; the node accepts them from block 190).** A
 `contract_call` may carry `attach: { symbol, amount }`. `amount` is a positive integer JSON
 number: quanta for XRGE (1 XRGE = 1,000,000,000 quanta), raw units for tokens. The approval
 view shows "Pays *amount* *SYMBOL* to the contract (only if the call succeeds)", with XRGE

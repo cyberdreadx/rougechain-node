@@ -366,7 +366,7 @@ off();
 ```
 
 **Payable calls** (SDK 1.10.0; the node accepts them from the payable-calls upgrade, block
-PAYABLE_HEIGHT). A call can pay the contract in XRGE or a token. The amount is an **integer**:
+190). A call can pay the contract in XRGE or a token. The amount is an **integer**:
 quanta for XRGE (1 XRGE = 1,000,000,000 quanta), raw units for tokens. The payment moves only if
 the call succeeds. A failing or trapping call leaves it with you, but the gas fee is still charged.
 

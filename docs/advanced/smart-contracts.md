@@ -72,8 +72,8 @@ own** tokens and NFTs; players stock it by sending tokens/NFTs/XRGE to the contr
 | `host_nft_mint(col, clen, to, tlen, name, nlen, meta, mlen) → i64` | Mint to a player (the contract must be the collection's creator). `meta` is optional JSON attributes. Returns the token id; `-1` not creator, `-2` sold out, `-3` missing/frozen, `-4` invalid |
 | `host_random(out) → i32` | 32 pseudo-random bytes per call. **The sender can grind it** — see below |
 | `host_block_hash(height, out) → i32` | From block **170**: the 32-byte hash of a finished block up to 256 back; `-1` otherwise. Use it to settle rolls |
-| `host_get_attached_amount() → i64` | From block **PAYABLE_HEIGHT**: the payment attached to this call, in quanta for XRGE or raw units for a token; `0` if none (always `0` in a cross-contract sub-call). See [Payable calls](#payable-calls) |
-| `host_get_attached_symbol(out, cap) → i32` | From block **PAYABLE_HEIGHT**: writes the attached symbol (`XRGE` or a token symbol, upper-case). Returns bytes written, `0` if nothing is attached, `-2` if `cap` is too small |
+| `host_get_attached_amount() → i64` | From block **190**: the payment attached to this call, in quanta for XRGE or raw units for a token; `0` if none (always `0` in a cross-contract sub-call). See [Payable calls](#payable-calls) |
+| `host_get_attached_symbol(out, cap) → i32` | From block **190**: writes the attached symbol (`XRGE` or a token symbol, upper-case). Returns bytes written, `0` if nothing is attached, `-2` if `cap` is too small |
 
 Addresses a contract passes are normalised: paying the value `host_get_caller` returns (a public
 key) credits the player's `rouge1…` wallet.
@@ -101,9 +101,9 @@ A complete example — a loot box paying NFTs, tokens or XRGE — is in
 
 <a id="payable-calls"></a>
 
-## Payable calls (from block PAYABLE_HEIGHT)
+## Payable calls (from block 190)
 
-From the payable-calls upgrade (block PAYABLE_HEIGHT), a player can pay a contract in the same signed
+From the payable-calls upgrade (block 190), a player can pay a contract in the same signed
 call, for example an entry fee, a shop purchase or a stake. The signed `contract_call` payload
 carries an optional `attach`:
 
@@ -128,7 +128,7 @@ for any failed call. A cross-contract sub-call sees no attachment.
 **Balance check.** `POST /api/v2/contract/execute` refuses the call before it is broadcast if the
 player can't cover `gas fee + XRGE payment`, or the token amount for a token payment. It also
 refuses the call if the dry run with the payment would fail. In a block, a call whose attachment
-the player can't cover is not executed. Before block PAYABLE_HEIGHT, a call with `attach` is
+the player can't cover is not executed. Before block 190, a call with `attach` is
 invalid.
 
 **Refuse a payment by failing the call.** A contract that doesn't want a payment should trap: wrong
@@ -231,7 +231,7 @@ POST /api/v2/contract/execute
     "method": "my_method",
     "args": { "key": "value" },
     "gasLimit": 50000,
-    "attach": { "symbol": "XRGE", "amount": 500000000 },   // optional, from block PAYABLE_HEIGHT
+    "attach": { "symbol": "XRGE", "amount": 500000000 },   // optional, from block 190
     "timestamp": 1790000000000,
     "nonce": "<random string>"
   },

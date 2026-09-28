@@ -158,7 +158,7 @@ contract sees (`host_get_caller`) and pays the fee:
   result includes the receipt; a call that reverted in its block is still charged and reports
   `status: {"Failed": …}`. Optional `attach` pays the contract (see below).
 
-**Payable calls (1.3.0; the node accepts them from block PAYABLE_HEIGHT).** `execute_contract` and
+**Payable calls (1.3.0; the node accepts them from block 190).** `execute_contract` and
 `query_contract` take an optional `attach`:
 
 | Payment | `attach` | Signed as |
