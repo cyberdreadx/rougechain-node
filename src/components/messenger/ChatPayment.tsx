@@ -10,6 +10,8 @@ import { getNodeApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { BASE_TRANSFER_FEE } from "@/lib/pqc-wallet";
 import { formatTokenAmount, isQeth, humanToQeth, qethToHuman } from "@/hooks/use-eth-price";
 import { useTokenMetadata } from "@/hooks/use-token-metadata";
+import { useTranslation } from "react-i18next";
+import { buildMsgEnvelope, type EnvelopeData } from "@/lib/messenger-envelope";
 
 interface ChatPaymentProps {
   walletPublicKey: string;
@@ -42,10 +44,29 @@ export function parsePaymentMessage(text: string): PaymentMessageData | null {
 }
 
 /**
- * Encode payment data into a message string
+ * Encode payment data for sending: a Qwalla msg envelope whose body is a readable line
+ * (what Qwalla and the extension show) plus a `pay` field the site renders as a card.
+ * The legacy `PAYMENT:` form is only parsed (old history).
  */
 export function encodePaymentMessage(data: PaymentMessageData): string {
-  return `PAYMENT:${JSON.stringify(data)}`;
+  const { type: _type, ...pay } = data;
+  const memo = data.memo ? ` — ${data.memo}` : "";
+  return buildMsgEnvelope(`💸 Sent ${data.amount} ${data.token}${memo}`, { pay });
+}
+
+const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+const optStr = (x: unknown): string | undefined => (typeof x === "string" ? x : undefined);
+
+/** Validate the `pay` field of a msg envelope into payment data, or null. */
+export function paymentFromEnvelope(pay: EnvelopeData | undefined): PaymentMessageData | null {
+  if (!pay || typeof pay.token !== "string" || !isNum(pay.amount)) return null;
+  const status = pay.status === "confirmed" || pay.status === "failed" ? pay.status : "sent";
+  return { type: "payment", token: pay.token, amount: pay.amount, txHash: optStr(pay.txHash), status, memo: optStr(pay.memo) };
+}
+
+/** Payment data of a message: envelope `pay` field (current) or legacy `PAYMENT:` text. */
+export function getPaymentData(message: { plaintext?: string; pay?: EnvelopeData }): PaymentMessageData | null {
+  return paymentFromEnvelope(message.pay) ?? (message.plaintext ? parsePaymentMessage(message.plaintext) : null);
 }
 
 // ─── Payment Compose Dialog ──────────────────────────────────
@@ -341,8 +362,25 @@ export function parseRequestMessage(text: string): RequestMessageData | null {
   }
 }
 
+/**
+ * Encode a payment request for sending: msg envelope with a readable body plus a `req` field.
+ * The legacy `REQUEST:` form is only parsed (old history).
+ */
 export function encodeRequestMessage(data: RequestMessageData): string {
-  return `REQUEST:${JSON.stringify(data)}`;
+  const { type: _type, ...req } = data;
+  const memo = data.memo ? ` — ${data.memo}` : "";
+  return buildMsgEnvelope(`🧾 Requested ${data.amount} ${data.token}${memo}`, { req });
+}
+
+/** Validate the `req` field of a msg envelope into request data, or null. */
+export function requestFromEnvelope(req: EnvelopeData | undefined): RequestMessageData | null {
+  if (!req || typeof req.token !== "string" || !isNum(req.amount)) return null;
+  return { type: "request", token: req.token, amount: req.amount, memo: optStr(req.memo) };
+}
+
+/** Request data of a message: envelope `req` field (current) or legacy `REQUEST:` text. */
+export function getRequestData(message: { plaintext?: string; req?: EnvelopeData }): RequestMessageData | null {
+  return requestFromEnvelope(message.req) ?? (message.plaintext ? parseRequestMessage(message.plaintext) : null);
 }
 
 export const PaymentRequestBubble = ({
@@ -390,6 +428,23 @@ export const PaymentRequestBubble = ({
       <div className="px-4 py-1.5 text-xs flex items-center gap-1 bg-amber-500/10 text-amber-600">
         <DollarSign className="w-3 h-3" />
         <span>Payment Request</span>
+      </div>
+    </div>
+  );
+};
+
+// ─── Qwalla tips ([tip:AMOUNT:SYMBOL]) ────────────────────────
+
+export const TipBubble = ({ amount, symbol, isOwn }: { amount: string; symbol: string; isOwn: boolean }) => {
+  const { t } = useTranslation();
+  return (
+    <div className="flex items-center gap-2 py-0.5">
+      <span className="text-lg leading-none" aria-hidden>💸</span>
+      <div className="min-w-0">
+        <p className="text-sm font-semibold">
+          {t("messenger.tip.label")}: {amount} {symbol}
+        </p>
+        <p className="text-xs opacity-70">{isOwn ? t("messenger.tip.sent") : t("messenger.tip.received")}</p>
       </div>
     </div>
   );

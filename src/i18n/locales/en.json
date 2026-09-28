@@ -635,6 +635,14 @@
       "extensionNotFoundDesc": "Install it from the Chrome Web Store",
       "extensionNoPublicKey": "Extension did not return a public key",
       "extensionConnectFailed": "Failed to connect extension"
+    },
+    "notifications": {
+      "received": "Received {{amount}} {{symbol}} from {{from}}",
+      "receivedTitle": "Transfer received"
+    },
+    "balance": {
+      "hide": "Hide balances",
+      "show": "Show balances"
     }
   },
   "status": {
@@ -704,6 +712,16 @@
       "reverted": "The swap reverted on chain",
       "failed": "Swap failed",
       "connectNamed": "Connect {{wallet}}"
+    }
+  },
+  "messenger": {
+    "tip": {
+      "label": "Tip",
+      "sent": "You sent a tip",
+      "received": "Tip received"
+    },
+    "reply": {
+      "unavailable": "Original message not loaded"
     }
   }
 }

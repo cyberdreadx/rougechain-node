@@ -635,6 +635,14 @@
       "extensionNotFoundDesc": "Instálala desde la Chrome Web Store",
       "extensionNoPublicKey": "La extensión no devolvió una llave pública",
       "extensionConnectFailed": "No se pudo conectar la extensión"
+    },
+    "notifications": {
+      "received": "Recibiste {{amount}} {{symbol}} de {{from}}",
+      "receivedTitle": "Transferencia recibida"
+    },
+    "balance": {
+      "hide": "Ocultar saldos",
+      "show": "Mostrar saldos"
     }
   },
   "status": {
@@ -704,6 +712,16 @@
       "reverted": "El intercambio se revirtió en la cadena",
       "failed": "El intercambio falló",
       "connectNamed": "Conectar {{wallet}}"
+    }
+  },
+  "messenger": {
+    "tip": {
+      "label": "Propina",
+      "sent": "Enviaste una propina",
+      "received": "Propina recibida"
+    },
+    "reply": {
+      "unavailable": "Mensaje original no cargado"
     }
   }
 }

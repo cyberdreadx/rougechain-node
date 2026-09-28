@@ -1,5 +1,6 @@
 import { Block } from "./pqc-blockchain";
 import { getActiveNetwork, getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
+import { l1TokenDecimals, rawToHuman } from "@/hooks/use-eth-price";
 
 // RougeChain constants
 export const TOTAL_SUPPLY = 36_000_000_000; // 36 Billion XRGE
@@ -586,13 +587,15 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
 }
 
 // Get transaction history for a wallet
-export async function getWalletTransactions(publicKey: string): Promise<WalletTransaction[]> {
+export async function getWalletTransactions(publicKey: string, aliases: string[] = []): Promise<WalletTransaction[]> {
   const transactions = await getAllTransactions();
   const walletTxs: WalletTransaction[] = [];
+  // A transfer's recipient is stored as submitted: the public key OR its rouge1 address.
+  const aliasSet = new Set(aliases.map((a) => a.toLowerCase()));
 
   for (const { tx, block } of transactions) {
     const isSender = tx.from === publicKey;
-    const isReceiver = tx.to === publicKey;
+    const isReceiver = tx.to === publicKey || (!!tx.to && aliasSet.has(tx.to.toLowerCase()));
     const isFeeRecipient = tx.feeRecipient === publicKey;
 
     if (!isSender && !isReceiver && !isFeeRecipient) continue;
@@ -613,9 +616,10 @@ export async function getWalletTransactions(publicKey: string): Promise<WalletTr
     const counterparty = isSender ? tx.to : tx.from;
 
     const txSymbol = tx.symbol || "XRGE";
-    const isSixDec = txSymbol === "qETH" || txSymbol === "qUSDC";
-    const txAmount = isSixDec
-      ? (tx.amount / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 }).replace(/\.?0+$/, '')
+    // Raw on-chain units → whole tokens using the shared decimals (qBTC 8, qETH/qUSDC 6, XRGE 0).
+    const txDecimals = l1TokenDecimals(txSymbol);
+    const txAmount = txDecimals > 0
+      ? rawToHuman(tx.amount, txSymbol).toLocaleString(undefined, { maximumFractionDigits: Math.min(txDecimals, 8) })
       : tx.amount.toLocaleString();
 
     walletTxs.push({

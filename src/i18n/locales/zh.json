@@ -635,6 +635,14 @@
       "extensionNotFoundDesc": "请从 Chrome 应用商店安装",
       "extensionNoPublicKey": "扩展未返回公钥",
       "extensionConnectFailed": "连接扩展失败"
+    },
+    "notifications": {
+      "received": "收到来自 {{from}} 的 {{amount}} {{symbol}}",
+      "receivedTitle": "已收到转账"
+    },
+    "balance": {
+      "hide": "隐藏余额",
+      "show": "显示余额"
     }
   },
   "status": {
@@ -704,6 +712,16 @@
       "reverted": "兑换在链上被回滚",
       "failed": "兑换失败",
       "connectNamed": "连接 {{wallet}}"
+    }
+  },
+  "messenger": {
+    "tip": {
+      "label": "打赏",
+      "sent": "你发送了打赏",
+      "received": "收到打赏"
+    },
+    "reply": {
+      "unavailable": "原消息未加载"
     }
   }
 }

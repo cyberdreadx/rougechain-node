@@ -22,11 +22,15 @@ import {
   Copy,
   Check
 } from "lucide-react";
-import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
+import { useBlockchainWs, type WsNewTransactionEvent } from "@/hooks/use-blockchain-ws";
+import { useRougeAddress } from "@/hooks/useRougeAddress";
+import { useIncomingTransferNotifications } from "@/hooks/use-incoming-transfer-notifications";
 import { useTokenPrices } from "@/hooks/use-token-prices";
-import { useETHPrice, qethToHuman, formatQethForDisplay } from "@/hooks/use-eth-price";
+import { useMajorPrices } from "@/hooks/use-eth-price";
+import { useHideBalances, MASKED_AMOUNT } from "@/hooks/use-hide-balances";
+import { describeAsset } from "@/lib/asset-display";
 import { useTokenMetadata } from "@/hooks/use-token-metadata";
-import { formatUsd, formatTokenPrice } from "@/lib/price-service";
+import { formatUsd } from "@/lib/price-service";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,6 +41,7 @@ import AssetList from "@/components/wallet/AssetList";
 import TransactionHistory from "@/components/wallet/TransactionHistory";
 import NetworkBadge from "@/components/wallet/NetworkBadge";
 import SecurityStatus from "@/components/wallet/SecurityStatus";
+import { WalletPageSkeleton, BalanceCardSkeleton, AssetListSkeleton, ActivitySkeleton } from "@/components/wallet/WalletSkeleton";
 import WalletBackup from "@/components/wallet/WalletBackup";
 import { 
   getWalletBalance, 
@@ -290,18 +295,43 @@ const Wallet = () => {
     }
   }, [wallet?.signingPublicKey]);
 
+  // Incoming-transfer toasts. The node publishes NewTransaction frames to `account:<from>` and
+  // `account:<to>` with `to` exactly as submitted (rouge1 address OR public key), so watch both.
+  const { full: rougeAddress } = useRougeAddress(wallet?.signingPublicKey);
+  const { onTxFrame } = useIncomingTransferNotifications({
+    walletKey: wallet ? `${activeNetwork}|${wallet.signingPublicKey}|${rougeAddress ?? ""}` : null,
+    myIds: [wallet?.signingPublicKey, rougeAddress],
+    transactions,
+    loadedAt: lastUpdated,
+  });
+  const refreshRef = useRef<() => void>(() => {});
+  const frameRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (frameRefreshTimer.current) clearTimeout(frameRefreshTimer.current); }, []);
+  const handleNewTransaction = useCallback((frame: WsNewTransactionEvent) => {
+    if (!onTxFrame(frame)) return;
+    // The history is read from blocks: refresh shortly after, once the transfer is mined.
+    if (frameRefreshTimer.current) clearTimeout(frameRefreshTimer.current);
+    frameRefreshTimer.current = setTimeout(() => refreshRef.current(), 1500);
+  }, [onTxFrame]);
+  const wsTopics = wallet
+    ? ["blocks", `account:${wallet.signingPublicKey}`, ...(rougeAddress ? [`account:${rougeAddress}`] : [])]
+    : ["blocks"];
+
   const { isConnected: wsConnected, connectionType: wsConnectionType } = useBlockchainWs({
     onNewBlock: handleNewBlock,
+    onNewTransaction: handleNewTransaction,
+    topics: wsTopics,
     fallbackPollInterval: 15000,
   });
 
   // Load balance and transactions when the wallet or the network changes (the same wallet has a
   // different balance on each network).
+  // Also once the rouge1 address resolves: transfers sent to it only show up with it.
   useEffect(() => {
     if (wallet) {
       refreshWalletData();
     }
-  }, [wallet?.signingPublicKey, activeNetwork]);
+  }, [wallet?.signingPublicKey, activeNetwork, rougeAddress]);
 
   useEffect(() => {
     const handleActivity = () => setLastActivity(Date.now());
@@ -339,7 +369,7 @@ const Wallet = () => {
     try {
       const [newBalances, newTxs, supply] = await Promise.all([
         getWalletBalance(wallet.signingPublicKey),
-        getWalletTransactions(wallet.signingPublicKey),
+        getWalletTransactions(wallet.signingPublicKey, rougeAddress ? [rougeAddress] : []),
         getCirculatingSupply("XRGE"),
       ]);
       
@@ -356,6 +386,8 @@ const Wallet = () => {
       setRefreshing(false);
     }
   };
+
+  refreshRef.current = () => { void refreshWalletData(); };
 
   const createNewWallet = async () => {
     setLoading(true);
@@ -627,18 +659,18 @@ const Wallet = () => {
   // Get XRGE balance specifically for the main display (native token)
   const xrgeBalance = balances.find(b => b.symbol === "XRGE")?.balance || 0;
   
-  // Calculate total USD value for wallet display (all tokens)
-  const totalUsdValue = balances.reduce((total, b) => {
-    const tokenPrice = tokenPrices[b.symbol];
-    if (tokenPrice) {
-      return total + (b.balance * tokenPrice.priceUsd);
-    }
-    return total;
-  }, 0);
+  const networkLabel = getNetworkLabel(chainIdLabel);
+  const majorPrices = useMajorPrices(60_000);
+  const { hidden: balancesHidden, toggle: toggleBalancesHidden } = useHideBalances();
+  const assetDisplays = balances.map(b => ({
+    b,
+    d: describeAsset(b.symbol, b.balance, { poolPriceUsdPerRaw: tokenPrices[b.symbol]?.priceUsd, majors: majorPrices }),
+  }));
+
+  // Calculate total USD value for wallet display (all priced tokens, same figures as the asset rows)
+  const totalUsdValue = assetDisplays.reduce((total, { d }) => total + (d.usd ?? 0), 0);
   const walletUsdValue = totalUsdValue > 0 ? formatUsd(totalUsdValue) : null;
 
-  const networkLabel = getNetworkLabel(chainIdLabel);
-  const { priceUsd: ethPriceUsd } = useETHPrice(60_000);
 
   const formatLastUpdated = (timestamp: number | null) => {
     if (!timestamp && syncError) return t("wallet.sync.failed");
@@ -652,59 +684,26 @@ const Wallet = () => {
     return t("wallet.sync.hoursAgo", { hours });
   };
 
-  // Convert balances to asset format with USD values (from pools + DexScreener)
-  const assets = balances.map(b => {
-    const isQeth = b.symbol === "qETH";
-    const isQusdc = b.symbol === "qUSDC";
-    // qETH: 1 unit = 10^-6 ETH. qUSDC: 1 unit = 10^-6 USD (6-decimal stablecoin).
-    const displayBalance = isQeth ? qethToHuman(b.balance)
-      : isQusdc ? b.balance / 1_000_000
-      : b.balance;
-    const balanceStr = isQeth ? formatQethForDisplay(b.balance)
-      : isQusdc ? (b.balance / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      : b.balance.toLocaleString();
-
-    const tokenPrice = tokenPrices[b.symbol];
-    let usdValue: string | null = null;
-    if (isQeth && ethPriceUsd !== null) {
-      usdValue = formatUsd(displayBalance * ethPriceUsd);
-    } else if (isQusdc) {
-      usdValue = formatUsd(displayBalance);
-    } else if (tokenPrice) {
-      usdValue = tokenPrice.priceUsd < 0.01
-        ? formatTokenPrice(b.balance * tokenPrice.priceUsd)
-        : formatUsd(b.balance * tokenPrice.priceUsd);
-    }
-
-    const pricePerToken = isQeth && ethPriceUsd !== null
-      ? formatTokenPrice(ethPriceUsd)
-      : isQusdc
-        ? "$1.00"
-        : tokenPrice
-          ? formatTokenPrice(tokenPrice.priceUsd)
-          : null;
-
-    const imageUrl = getTokenImage(b.symbol);
-
-    return {
-      id: b.symbol,
-      name: b.name,
-      symbol: b.symbol,
-      balance: balanceStr,
-      value: isQeth ? `${balanceStr} qETH` : isQusdc ? `${balanceStr} qUSDC` : `${b.balance} ${b.symbol}`,
-      usdValue,
-      pricePerToken,
-      change: 0,
-      icon: b.icon,
-      imageUrl,
-    };
-  });
+  // Convert balances to asset format with USD values (spot for bridged majors, else pools).
+  // Decimals are applied generally (qBTC = 8, qETH/qUSDC = 6, daemon-provided for others).
+  const assets = assetDisplays.map(({ b, d }) => ({
+    id: b.symbol,
+    name: b.name,
+    symbol: b.symbol,
+    balance: balancesHidden ? MASKED_AMOUNT : d.balance,
+    value: balancesHidden ? `${MASKED_AMOUNT} ${b.symbol}` : d.value,
+    usdValue: balancesHidden ? (d.usdValue ? `$${MASKED_AMOUNT}` : null) : d.usdValue,
+    pricePerToken: d.pricePerToken,
+    change: 0,
+    icon: b.icon,
+    imageUrl: getTokenImage(b.symbol),
+  }));
 
   // Convert transactions to history format
   const txHistory = transactions.map(tx => ({
     id: tx.id,
     type: tx.type,
-    amount: tx.amount,
+    amount: balancesHidden ? MASKED_AMOUNT : tx.amount,
     symbol: tx.symbol,
     address: tx.address,
     timeLabel: tx.timeLabel,
@@ -715,7 +714,8 @@ const Wallet = () => {
     fee: tx.fee,
     from: tx.from,
     to: tx.to,
-    memo: tx.memo,
+    // Swap / LP / bridge memos spell out amounts ("Swap 5 XRGE for …").
+    memo: balancesHidden && tx.memo ? MASKED_AMOUNT : tx.memo,
   }));
 
   const emptyAssetActionLabel = isMainnet ? t("wallet.empty.receiveTokens") : t("wallet.empty.claimFaucet");
@@ -731,12 +731,11 @@ const Wallet = () => {
     : t("wallet.empty.faucetHint");
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    return <WalletPageSkeleton />;
   }
+
+  // Wallet known but its balances / history not fetched yet: placeholders, not empty states.
+  const firstDataLoad = !!wallet && lastUpdated === null && !syncError;
 
   if (showSeedReveal) {
     const words = newMnemonic.split(" ");
@@ -975,14 +974,16 @@ const Wallet = () => {
             animate={{ opacity: 1 }}
             className="space-y-6"
           >
-          <WalletCard
+          {firstDataLoad ? <BalanceCardSkeleton /> : <WalletCard
               address={wallet.signingPublicKey}
               balance={xrgeBalance.toLocaleString()}
               shieldedBalance={getShieldedBalance(wallet.signingPublicKey)}
               usdValue={walletUsdValue}
               priceChange24h={priceChange24h}
               isConnected={true}
-            />
+              balancesHidden={balancesHidden}
+              onToggleBalancesHidden={toggleBalancesHidden}
+            />}
 
             {/* Action Buttons */}
             <div className="flex items-center justify-between">
@@ -1185,18 +1186,27 @@ const Wallet = () => {
               </div>
             </motion.div>
 
-            <AssetList
-              assets={assets}
-              emptyActionLabel={emptyAssetActionLabel}
-              onEmptyAction={handleEmptyAssetAction}
-              emptyHint={emptyAssetHint}
-              onAssetClick={(asset) => setSelectedAsset(asset)}
-            />
-            <TransactionHistory
-              transactions={txHistory}
-              emptyActionLabel={t("wallet.empty.receiveTokens")}
-              onEmptyAction={() => setShowReceive(true)}
-            />
+            {firstDataLoad ? (
+              <>
+                <AssetListSkeleton />
+                <ActivitySkeleton />
+              </>
+            ) : (
+              <>
+                <AssetList
+                  assets={assets}
+                  emptyActionLabel={emptyAssetActionLabel}
+                  onEmptyAction={handleEmptyAssetAction}
+                  emptyHint={emptyAssetHint}
+                  onAssetClick={(asset) => setSelectedAsset(asset)}
+                />
+                <TransactionHistory
+                  transactions={txHistory}
+                  emptyActionLabel={t("wallet.empty.receiveTokens")}
+                  onEmptyAction={() => setShowReceive(true)}
+                />
+              </>
+            )}
             <SecurityStatus />
 
             {/* Chrome Extension Promo */}
