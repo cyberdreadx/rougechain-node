@@ -121,6 +121,7 @@ thread_local! {
 /// From this height votes/proofs follow FINALITY_V2 (verified ML-DSA votes, recomputed quorum,
 /// no producer self-finalization). Not part of block validity ⇒ a coordinated validator
 /// software upgrade, not a state fork.
+/// Mainnet height (the node reads `crate::upgrades::current()`, which is per network).
 pub const FINALITY_V2_ACTIVATION_HEIGHT: Option<u64> = Some(150);
 #[cfg(test)]
 thread_local! {
@@ -137,7 +138,7 @@ pub const FINALITY_V2_MAX_PROOF_REQUESTS_PER_PASS: usize = 16;
 pub(crate) fn finality_v2_active(height: u64) -> bool {
     #[cfg(test)]
     { if let Some(h) = TEST_FINALITY_V2_ACTIVATION.with(|c| c.get()) { return height >= h; } }
-    matches!(FINALITY_V2_ACTIVATION_HEIGHT, Some(h) if height >= h)
+    matches!(crate::upgrades::current().finality_v2, Some(h) if height >= h)
 }
 #[inline]
 fn state_root_activation_height() -> u64 {
@@ -180,7 +181,7 @@ fn tx_uniqueness_activation_height() -> Option<u64> {
     {
         if let Some(h) = TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.get()) { return h; }
     }
-    TX_UNIQUENESS_ACTIVATION_HEIGHT
+    crate::upgrades::current().tx_uniqueness
 }
 #[inline]
 pub fn tx_uniqueness_rule_active(height: u64) -> bool {
@@ -207,7 +208,7 @@ fn proposer_selection_activation_height() -> Option<u64> {
     {
         if let Some(h) = TEST_PROPOSER_SELECTION_OVERRIDE.with(|c| c.get()) { return h; }
     }
-    PROPOSER_SELECTION_ACTIVATION_HEIGHT
+    crate::upgrades::current().proposer_selection
 }
 #[inline]
 pub fn proposer_selection_active(height: u64) -> bool {
@@ -232,7 +233,7 @@ fn game_ready_activation_height() -> Option<u64> {
     {
         if let Some(h) = TEST_GAME_READY_OVERRIDE.with(|c| c.get()) { return h; }
     }
-    GAME_READY_ACTIVATION_HEIGHT
+    crate::upgrades::current().game_ready
 }
 #[inline]
 pub fn game_ready_active(height: u64) -> bool {
@@ -264,7 +265,7 @@ pub fn game_ready_2_active(height: u64) -> bool {
             return matches!(h, Some(a) if height >= a);
         }
     }
-    matches!(GAME_READY_2_ACTIVATION_HEIGHT, Some(a) if height >= a)
+    matches!(crate::upgrades::current().game_ready_2, Some(a) if height >= a)
 }
 
 /// GAME_READY 3 — `host_block_hash(height)`: contracts can read the hash of a finished block up
@@ -289,7 +290,7 @@ pub fn game_ready_3_active(height: u64) -> bool {
             return matches!(h, Some(a) if height >= a);
         }
     }
-    matches!(GAME_READY_3_ACTIVATION_HEIGHT, Some(a) if height >= a)
+    matches!(crate::upgrades::current().game_ready_3, Some(a) if height >= a)
 }
 
 /// Payable contract calls: a `contract_call` may carry a signed `attach` (symbol + integer amount).
@@ -314,7 +315,7 @@ pub fn payable_calls_active(height: u64) -> bool {
             return matches!(h, Some(a) if height >= a);
         }
     }
-    matches!(PAYABLE_CALLS_ACTIVATION_HEIGHT, Some(a) if height >= a)
+    matches!(crate::upgrades::current().payable_calls, Some(a) if height >= a)
 }
 
 /// Owner check for NFT transactions: exact match, or (from GAME_READY 2) the same canonical
@@ -828,7 +829,7 @@ impl L1Node {
             let next = t.height + 1;
             let d = self.designated_proposer(next).unwrap_or(None);
             eprintln!("[consensus] proposer selection: activation height {:?}; next height {} (rule {}); designated proposer for {}: {}",
-                PROPOSER_SELECTION_ACTIVATION_HEIGHT, next, if proposer_selection_active(next) { "ACTIVE" } else { "inactive" },
+                proposer_selection_activation_height(), next, if proposer_selection_active(next) { "ACTIVE" } else { "inactive" },
                 next, d.as_deref().map(|d| &d[..16.min(d.len())]).unwrap_or("none"));
         }
         // R1: derived bridge payout store — idempotent reconstruction from accepted history on
