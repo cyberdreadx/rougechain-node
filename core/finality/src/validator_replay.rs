@@ -44,13 +44,16 @@ pub enum ReplayError {
 pub type OutcomeFn<'a> = &'a dyn Fn(u64, usize, &quantum_vault_types::TxV1) -> Option<bool>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ValidatorReplay { height: u64, vals: BTreeMap<String, VState>, missed_frozen_from: Option<u64> }
+pub struct ValidatorReplay { height: u64, vals: BTreeMap<String, VState>, missed_frozen_from: Option<u64>, retirement: Option<(u64, Vec<String>)> }
 
 impl ValidatorReplay {
     /// `base_height` = the height whose POST-state `entries` describe (0 = genesis).
-    pub fn new(base_height: u64, entries: impl IntoIterator<Item = (String, VState)>) -> Self { Self { height: base_height, vals: entries.into_iter().collect(), missed_frozen_from: None } }
+    pub fn new(base_height: u64, entries: impl IntoIterator<Item = (String, VState)>) -> Self { Self { height: base_height, vals: entries.into_iter().collect(), missed_frozen_from: None, retirement: None } }
     /// Mirror the node's missed-block freeze from `height` (proposer selection Release 1).
     pub fn with_missed_block_freeze(mut self, height: Option<u64>) -> Self { self.missed_frozen_from = height; self }
+    /// Mirror the node's one-time validator retirement (testnet): at `height`, after that block's
+    /// transactions, each listed validator's stake becomes zero.
+    pub fn with_retirement(mut self, retirement: Option<(u64, Vec<String>)>) -> Self { self.retirement = retirement; self }
     pub fn height(&self) -> u64 { self.height }
     pub fn state(&self) -> &BTreeMap<String, VState> { &self.vals }
 
@@ -82,6 +85,13 @@ impl ValidatorReplay {
                     self.persist(&target, st, h);
                 }
                 _ => {}
+            }
+        }
+        if let Some((rh, keys)) = self.retirement.clone() {
+            if rh == h {
+                for k in keys {
+                    if let Some(mut st) = self.vals.get(&k).copied() { st.stake = 0; self.persist(&k, st, h); }
+                }
             }
         }
         if matches!(self.missed_frozen_from, Some(f) if h >= f) { self.height = h; return Ok(()); }
