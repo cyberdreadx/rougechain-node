@@ -36,6 +36,8 @@ import { loadUnifiedWallet } from "@/lib/unified-wallet";
 import { getWalletBalance } from "@/lib/pqc-wallet";
 import { qethToHuman, humanToQeth, formatQethForDisplay, formatTokenAmount } from "@/hooks/use-eth-price";
 import { useTranslation, Trans } from "react-i18next";
+import { TokenIcon } from "@/components/ui/token-icon";
+import { EmptyState } from "@/components/ui/empty-state";
 
 type BridgeDirection = "deposit" | "withdraw";
 type BridgeAsset = "ETH" | "USDC" | "XRGE" | "BTC";
@@ -812,7 +814,8 @@ const Bridge = () => {
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
 
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-foreground">{t("bridge.title")}</h1>
+          <p className="hud-label mb-1.5">{t("visual.eyebrow.bridge")}</p>
+          <h1 className="page-title">{t("bridge.title")}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t("bridge.subtitle")}</p>
         </div>
 
@@ -850,7 +853,7 @@ const Bridge = () => {
                     {visibleAssets.map((a) => (
                       <SelectItem key={a.id} value={a.id}>
                         <span className="flex items-center gap-2">
-                          <span className="w-4 text-center">{a.icon}</span>
+                          <TokenIcon symbol={a.l1Label} size={20} />
                           <span className="font-medium">{direction === "deposit" ? a.label : a.l1Label}</span>
                           {(() => {
                             const bal = direction === "deposit" ? assetSourceBalance(a.id) : assetL1Balance(a.id);
@@ -1251,15 +1254,11 @@ function BridgeActivityCard({ pubkey }: { pubkey: string }) {
           <h3 className="text-sm font-semibold text-foreground">{t("bridge.activity.title")}</h3>
         </div>
         {history.length === 0 ? (
-          <div className="py-8 text-center">
-            <ArrowRightLeft className="w-8 h-8 mx-auto mb-2 text-muted-foreground/50" />
-            <p className="text-sm text-muted-foreground">{t("bridge.activity.empty")}</p>
-            <p className="text-xs text-muted-foreground/70 mt-1">{t("bridge.activity.emptyHint")}</p>
-          </div>
+          <EmptyState compact icon={ArrowRightLeft} title={t("bridge.activity.empty")} hint={t("bridge.activity.emptyHint")} />
         ) : (
           <div className="divide-y divide-border">
             {history.map((entry) => (
-              <div key={entry.id} className="flex items-center justify-between px-4 py-3 hover:bg-secondary/30 transition-colors">
+              <div key={entry.id} className="flex items-center justify-between px-4 py-3 row-glow">
                 <div className="flex items-center gap-3">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
                     entry.direction === "deposit" ? "bg-green-500/10" : "bg-amber-500/10"

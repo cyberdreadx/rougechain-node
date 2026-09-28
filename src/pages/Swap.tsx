@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type CSSProperties } from "react";
 import { useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowDownUp, Settings, Info, Loader2, RefreshCw, ChevronDown, AlertTriangle, Shield, Search, X, Star, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TokenIcon } from "@/components/ui/token-icon";
+import { tokenAccent } from "@/lib/token-visual";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -239,9 +240,10 @@ const TokenPicker = ({
                           onSelect(symbol);
                           setOpen(false);
                         }}
-                        className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors text-left ${
+                        className={`token-row row-glow gap-3 px-4 py-3 ${
                           selected === symbol ? "bg-primary/5" : ""
                         }`}
+                        style={{ "--token-accent": tokenAccent(symbol) } as CSSProperties}
                       >
                         <TokenIcon symbol={symbol} size={32} imageUrl={getTokenImage(symbol)} />
                         <div className="flex-1 min-w-0">
@@ -557,13 +559,16 @@ const Swap = () => {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-6"
         >
-          <div className="flex items-center justify-between">
+          <div className="flex items-end justify-between">
+            <div className="min-w-0">
+            <p className="hud-label mb-1.5">{t("visual.eyebrow.swap")}</p>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold">{t("swap.title")}</h1>
+              <h1 className="page-title">{t("swap.title")}</h1>
               <div className="flex items-center gap-1 text-xs text-green-500 bg-green-500/10 px-2 py-0.5 rounded-full">
                 <Shield className="w-3 h-3" />
                 <span>{t("swap.secure")}</span>
               </div>
+            </div>
             </div>
             <Dialog open={showSettings} onOpenChange={setShowSettings}>
               <DialogTrigger asChild>

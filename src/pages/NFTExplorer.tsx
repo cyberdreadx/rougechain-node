@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { EmptyState } from "@/components/ui/empty-state";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -250,6 +252,7 @@ const NFTExplorer = () => {
 };
 
 const CollectionsList = () => {
+  const { t } = useTranslation();
   const [collections, setCollections] = useState<NFTCollection[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -289,8 +292,9 @@ const CollectionsList = () => {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-6"
         >
+          <p className="hud-label -mb-4">{t("visual.eyebrow.nfts")}</p>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <h1 className="text-xl sm:text-2xl font-bold text-foreground">NFT Explorer</h1>
+            <h1 className="page-title">NFT Explorer</h1>
             <Badge variant="outline">{getNetworkLabel()}</Badge>
             {!loading && (
               <Badge variant="secondary">{collections.length} collection{collections.length !== 1 ? "s" : ""}</Badge>
@@ -302,14 +306,8 @@ const CollectionsList = () => {
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
             </div>
           ) : collections.length === 0 ? (
-            <Card className="bg-muted/30">
-              <CardContent className="py-12 text-center">
-                <ImageIcon className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-lg font-medium mb-2">No Collections Yet</h3>
-                <p className="text-muted-foreground">
-                  No NFT collections have been created on the network.
-                </p>
-              </CardContent>
+            <Card className="glass-card">
+              <EmptyState icon={ImageIcon} title={t("visual.empty.collections.title")} hint={t("visual.empty.collections.hint")} />
             </Card>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -319,7 +317,7 @@ const CollectionsList = () => {
                   to={`/nfts/${collection.collection_id}`}
                   className="block group"
                 >
-                  <Card className="bg-card/50 backdrop-blur border-border hover:border-primary/50 transition-all duration-200 h-full">
+                  <Card className="bg-card/50 backdrop-blur border-border hover-lift h-full">
                     <div className="aspect-square relative overflow-hidden rounded-t-lg bg-secondary/30">
                       {collection.image ? (
                         <img
@@ -379,6 +377,7 @@ const CollectionsList = () => {
 };
 
 const CollectionDetail = ({ collectionId }: { collectionId: string }) => {
+  const { t } = useTranslation();
   const [collection, setCollection] = useState<NFTCollection | null>(null);
   const [tokens, setTokens] = useState<NFTToken[]>([]);
   const [totalTokens, setTotalTokens] = useState(0);
@@ -598,17 +597,14 @@ const CollectionDetail = ({ collectionId }: { collectionId: string }) => {
                   <Loader2 className="w-6 h-6 animate-spin text-primary" />
                 </div>
               ) : tokens.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  <ImageIcon className="w-10 h-10 mx-auto mb-3 opacity-50" />
-                  <p>No NFTs minted in this collection yet.</p>
-                </div>
+                <EmptyState compact icon={ImageIcon} title={t("visual.empty.nfts.title")} hint={t("visual.empty.nfts.hint")} />
               ) : (
                 <>
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
                     {tokens.map((token) => (
                       <div
                         key={token.token_id}
-                        className="rounded-lg border border-border bg-background/60 overflow-hidden hover:border-primary/40 transition-colors"
+                        className="rounded-lg border border-border bg-background/60 overflow-hidden hover-lift"
                       >
                         {/* NFT Image */}
                         <div className="aspect-square bg-secondary/30 relative overflow-hidden">

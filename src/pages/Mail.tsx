@@ -13,6 +13,8 @@ import WalletSetup from "@/components/messenger/WalletSetup";
 import type { WalletWithPrivateKeys } from "@/lib/pqc-messenger";
 import { registerWalletOnNode, resolveMessagingWallet } from "@/lib/pqc-messenger";
 import { WalletAvatar } from "@/components/WalletAvatar";
+import { useTranslation } from "react-i18next";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   getInbox, getSent, getTrash,
   sendMail, moveMail, deleteMail, markMailRead,
@@ -673,6 +675,7 @@ function SettingsView({
 // --- Main Page ---
 
 const MailPage = () => {
+  const { t } = useTranslation();
   const [wallet, setWallet] = useState<UnifiedWallet | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
@@ -921,7 +924,7 @@ const MailPage = () => {
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
 
       {/* Header */}
-      <div className="sticky top-0 z-40 flex items-center justify-between px-2 sm:px-4 py-2 bg-background/80 backdrop-blur-sm border-b border-border gap-1 w-full min-w-0">
+      <div className="sticky top-0 z-40 flex items-center justify-between px-2 sm:px-4 py-2 bg-background/80 backdrop-blur-sm border-b border-border neon-hairline gap-1 w-full min-w-0">
         <div className="flex items-center gap-2 min-w-0">
           <Key className="w-4 h-4 text-primary flex-shrink-0" />
           <div className="flex flex-col min-w-0">
@@ -1033,22 +1036,24 @@ const MailPage = () => {
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
           </div>
         ) : items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
-            <MailOpen className="w-12 h-12 mb-3 opacity-30" />
-            <p className="text-sm">No mail in {folder}</p>
-            {folder === "inbox" && (
-              <p className="text-xs mt-1">
-                {myName ? `Your addresses: ${myName}@${MAIL_DOMAIN} · ${myName}@${MAIL_DOMAIN_ALT}` : `Claim a name to get your @${MAIL_DOMAIN} and @${MAIL_DOMAIN_ALT} addresses`}
-              </p>
-            )}
-          </div>
+          <EmptyState
+            icon={folder === "trash" ? Trash2 : folder === "sent" ? SendHorizonal : MailOpen}
+            title={t(`visual.empty.mail.${folder}Title`)}
+            hint={
+              folder === "inbox"
+                ? myName
+                  ? t("visual.empty.mail.inboxNamed", { a: `${myName}@${MAIL_DOMAIN}`, b: `${myName}@${MAIL_DOMAIN_ALT}` })
+                  : t("visual.empty.mail.inboxClaim", { a: MAIL_DOMAIN, b: MAIL_DOMAIN_ALT })
+                : t(`visual.empty.mail.${folder}Hint`)
+            }
+          />
         ) : (
           <div className="divide-y divide-border">
             {threads.map(thread => (
               <button
                 key={thread.rootId}
                 onClick={() => openMail(thread.latestItem)}
-                className={`w-full flex items-start gap-3 px-4 py-3 hover:bg-secondary/30 transition-colors text-left ${
+                className={`w-full flex items-start gap-3 px-4 py-3 row-glow text-left ${
                   thread.hasUnread ? "bg-primary/5" : ""
                 }`}
               >
