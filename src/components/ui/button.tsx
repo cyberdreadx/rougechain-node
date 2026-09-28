@@ -9,9 +9,9 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-gradient-xrge text-white shadow-[0_0_0_1px_hsl(349_100%_59%/0.4),0_8px_30px_hsl(331_75%_51%/0.35)] hover:-translate-y-px hover:shadow-[0_0_0_1px_hsl(349_100%_59%/0.6),0_10px_38px_hsl(331_75%_51%/0.5)]",
+        default: "btn-neon bg-gradient-xrge text-white shadow-[0_0_0_1px_hsl(349_100%_59%/0.4),0_8px_30px_hsl(331_75%_51%/0.35)] hover:-translate-y-px hover:shadow-[0_0_0_1px_hsl(349_100%_59%/0.6),0_10px_38px_hsl(331_75%_51%/0.5)]",
         destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-        outline: "border border-foreground/15 bg-foreground/[0.06] backdrop-blur-xl hover:border-foreground/40 hover:bg-foreground/[0.1]",
+        outline: "border border-foreground/15 bg-foreground/[0.06] backdrop-blur-xl hover:border-[hsl(166_86%_57%/0.6)] hover:bg-foreground/[0.1] hover:shadow-[0_0_0_1px_hsl(166_86%_57%/0.35),0_0_18px_hsl(166_86%_57%/0.2)]",
         secondary: "bg-foreground/[0.08] text-foreground backdrop-blur-xl hover:bg-foreground/[0.12]",
         ghost: "hover:bg-secondary hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",

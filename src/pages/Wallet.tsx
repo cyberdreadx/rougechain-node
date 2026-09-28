@@ -24,7 +24,6 @@ import {
 } from "lucide-react";
 import { useBlockchainWs, type WsNewTransactionEvent } from "@/hooks/use-blockchain-ws";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
-import { useIncomingTransferNotifications } from "@/hooks/use-incoming-transfer-notifications";
 import { useTokenPrices } from "@/hooks/use-token-prices";
 import { useMajorPrices } from "@/hooks/use-eth-price";
 import { useHideBalances, MASKED_AMOUNT } from "@/hooks/use-hide-balances";
@@ -295,24 +294,18 @@ const Wallet = () => {
     }
   }, [wallet?.signingPublicKey]);
 
-  // Incoming-transfer toasts. The node publishes NewTransaction frames to `account:<from>` and
-  // `account:<to>` with `to` exactly as submitted (rouge1 address OR public key), so watch both.
+  // Incoming-transfer toasts are app-wide (IncomingTransferWatcher). Here, a NewTransaction frame on
+  // my account topics only refreshes the page early. The node publishes them to `account:<from>`
+  // and `account:<to>` with `to` exactly as submitted (rouge1 address OR public key): watch both.
   const { full: rougeAddress } = useRougeAddress(wallet?.signingPublicKey);
-  const { onTxFrame } = useIncomingTransferNotifications({
-    walletKey: wallet ? `${activeNetwork}|${wallet.signingPublicKey}|${rougeAddress ?? ""}` : null,
-    myIds: [wallet?.signingPublicKey, rougeAddress],
-    transactions,
-    loadedAt: lastUpdated,
-  });
   const refreshRef = useRef<() => void>(() => {});
   const frameRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (frameRefreshTimer.current) clearTimeout(frameRefreshTimer.current); }, []);
-  const handleNewTransaction = useCallback((frame: WsNewTransactionEvent) => {
-    if (!onTxFrame(frame)) return;
+  const handleNewTransaction = useCallback((_frame: WsNewTransactionEvent) => {
     // The history is read from blocks: refresh shortly after, once the transfer is mined.
     if (frameRefreshTimer.current) clearTimeout(frameRefreshTimer.current);
     frameRefreshTimer.current = setTimeout(() => refreshRef.current(), 1500);
-  }, [onTxFrame]);
+  }, []);
   const wsTopics = wallet
     ? ["blocks", `account:${wallet.signingPublicKey}`, ...(rougeAddress ? [`account:${rougeAddress}`] : [])]
     : ["blocks"];
@@ -988,7 +981,7 @@ const Wallet = () => {
 
             {/* Quick actions */}
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-foreground">{t("wallet.actions.title")}</h3>
+              <h3 className="hud-label">{t("wallet.actions.title")}</h3>
             </div>
             <QuickActions
               actions={[

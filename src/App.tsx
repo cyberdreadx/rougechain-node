@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { AuroraBackdrop } from "@/components/ui/aurora-backdrop";
+import { IncomingTransferWatcher } from "@/components/IncomingTransferWatcher";
 import { useEffect, useRef } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -116,6 +117,7 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <WalletAutoRegister />
+        <IncomingTransferWatcher />
         <ScrollToTop />
         <AuroraBackdrop />
         <div className="min-h-screen flex flex-col">

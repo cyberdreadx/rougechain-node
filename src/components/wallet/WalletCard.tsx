@@ -65,7 +65,7 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
-      className="relative overflow-hidden rounded-2xl bg-card p-6 glow-quantum gradient-ring"
+      className="relative overflow-hidden rounded-2xl bg-card p-6 glow-quantum gradient-ring hud-corners"
     >
       {/* Background circuit pattern */}
       <div className="absolute inset-0 circuit-bg opacity-30" />
@@ -84,7 +84,7 @@ const WalletCard = ({ address, balance, shieldedBalance, usdValue, priceChange24
           {/* Balance display */}
           <div className="relative mb-6">
             <div className="flex items-center gap-1.5 mb-1">
-              <p className="text-sm text-muted-foreground">Total Balance</p>
+              <p className="hud-label">Total Balance</p>
               {onToggleBalancesHidden && (
                 <button
                   type="button"
