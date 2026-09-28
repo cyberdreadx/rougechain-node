@@ -20,7 +20,8 @@ import {
   DollarSign,
   AlertTriangle,
   Copy,
-  Check
+  Check,
+  Settings as SettingsIcon
 } from "lucide-react";
 import { useBlockchainWs, type WsNewTransactionEvent } from "@/hooks/use-blockchain-ws";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
@@ -79,6 +80,8 @@ import {
   clearUnifiedWallet 
 } from "@/lib/unified-wallet";
 import { useTranslation } from "react-i18next";
+import { OnboardingFlow } from "@/components/onboarding/OnboardingFlow";
+import { setOnboardingActive } from "@/lib/tour";
 
 const Wallet = () => {
   const { t } = useTranslation();
@@ -134,6 +137,10 @@ const Wallet = () => {
   const [setupConfirm, setSetupConfirm] = useState("");
   const [setupError, setSetupError] = useState("");
   const [setupBusy, setSetupBusy] = useState(false);
+
+  // Qwalla-style onboarding (mail name → profile → done → tour) after create / import.
+  const [onboardingMode, setOnboardingMode] = useState<"create" | "import" | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   // Load wallet from storage
   useEffect(() => {
@@ -424,6 +431,8 @@ const Wallet = () => {
       setNewMnemonic(mnemonic);
       setSeedSaved(false);
       setShowSeedReveal(true);
+      setOnboardingMode("create");
+      setOnboardingActive(true);
     } catch (error) {
       console.error("Failed to create wallet:", error);
       const errorMessage = error instanceof Error ? error.message : t("wallet.errors.unknown");
@@ -454,6 +463,7 @@ const Wallet = () => {
       toast.success(t("wallet.toasts.createdSecured"), {
         description: t("wallet.toasts.createdSecuredDesc")
       });
+      if (onboardingMode) setShowOnboarding(true);
     } catch (err) {
       setSetupError(t("wallet.passwordSetup.errors.encryptFailed"));
     }
@@ -537,8 +547,12 @@ const Wallet = () => {
   const handleWalletImport = (importedWallet: UnifiedWallet) => {
     saveUnifiedWallet(importedWallet);
     setWallet(importedWallet);
+    setOnboardingMode("import");
+    setOnboardingActive(true);
     if (!hasEncryptedWallet()) {
       setShowPasswordSetup(true);
+    } else {
+      setShowOnboarding(true);
     }
     refreshWalletData();
   };
@@ -853,6 +867,20 @@ const Wallet = () => {
     );
   }
 
+  if (showOnboarding && onboardingMode) {
+    return (
+      <OnboardingFlow
+        mode={onboardingMode}
+        onFinish={() => {
+          setShowOnboarding(false);
+          setOnboardingMode(null);
+          const latest = loadUnifiedWallet();
+          if (latest) setWallet(latest);
+        }}
+      />
+    );
+  }
+
   if (isLocked) {
     const meta = getLockedWalletMetadata();
     return (
@@ -913,6 +941,11 @@ const Wallet = () => {
                   title={t("wallet.actions.backupTitle")}
                 >
                   <FileKey2 className="w-4 h-4" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-9 w-9" asChild title={t("settings.title")}>
+                  <Link to="/settings" aria-label={t("settings.title")}>
+                    <SettingsIcon className="w-4 h-4" />
+                  </Link>
                 </Button>
                 <Button
                   variant="ghost"

@@ -37,7 +37,8 @@
       "defi": "DeFi",
       "explorer": "Explorador",
       "social": "Social",
-      "network": "Red"
+      "network": "Red",
+      "account": "Cuenta"
     },
     "resources": "Recursos",
     "docs": "Documentación",
@@ -50,7 +51,8 @@
     "unreadEmails_other": "{{count}} correos sin leer",
     "team": "Equipo",
     "status": "Estado",
-    "buy": "Comprar XRGE"
+    "buy": "Comprar XRGE",
+    "settings": "Ajustes"
   },
   "swap": {
     "title": "Swap",
@@ -722,6 +724,185 @@
     },
     "reply": {
       "unavailable": "Mensaje original no cargado"
+    }
+  },
+  "settings": {
+    "title": "Ajustes",
+    "subtitle": "Perfil, nombre de correo, seguridad y preferencias en un solo lugar.",
+    "lockedHint": "Tu billetera está bloqueada. Desbloquéala para editar tu perfil y seguridad.",
+    "noWalletHint": "Crea o importa una billetera para configurar tu perfil.",
+    "sections": {
+      "profile": "Perfil",
+      "mail": "Nombre de correo",
+      "security": "Seguridad y respaldo",
+      "privacy": "Privacidad",
+      "notifications": "Notificaciones",
+      "network": "Red",
+      "language": "Idioma",
+      "connected": "Conexiones",
+      "help": "Ayuda"
+    },
+    "mail": {
+      "hint": "Un nombre te da dos direcciones para correo cifrado."
+    },
+    "security": {
+      "autoLock": "Bloqueo automático",
+      "autoLockHint": "Bloquea la billetera tras este tiempo de inactividad.",
+      "needsPassword": "Primero establece una contraseña.",
+      "never": "Nunca",
+      "minutes_one": "{{count}} min",
+      "minutes_other": "{{count}} min",
+      "changePassword": "Cambiar contraseña",
+      "setPassword": "Establecer contraseña",
+      "current": "Contraseña actual",
+      "new": "Nueva contraseña (8+ caracteres)",
+      "confirm": "Confirma la nueva contraseña",
+      "lockNow": "Bloquear ahora",
+      "backup": "Respaldo y frase de recuperación",
+      "backupHint": "Exporta un archivo cifrado .pqcbackup, muestra tu frase de recuperación o restaura una billetera.",
+      "tooShort": "La contraseña debe tener al menos 8 caracteres",
+      "mismatch": "Las contraseñas no coinciden",
+      "passwordChanged": "Contraseña cambiada",
+      "passwordSet": "Contraseña establecida — tu billetera está cifrada",
+      "passwordFailed": "No se pudo actualizar la contraseña",
+      "imported": "Billetera importada"
+    },
+    "privacy": {
+      "hideBalances": "Ocultar saldos",
+      "hideBalancesHint": "Oculta los montos en la página de la billetera.",
+      "discoverable": "Visible",
+      "discoverableHint": "Permite que te encuentren por nombre en Nuevo chat."
+    },
+    "notifications": {
+      "enabled": "Notificaciones",
+      "enabledHint": "Mensajes y correos nuevos.",
+      "sound": "Sonido",
+      "desktop": "Alertas de escritorio",
+      "desktopHint": "Usa las notificaciones de tu navegador.",
+      "permissionDenied": "Tu navegador bloqueó las notificaciones de este sitio."
+    },
+    "network": {
+      "hint": "Al cambiar se recarga la página. Cada red tiene su propia billetera.",
+      "lockedHint": "Este sitio está fijado a {{network}}; la otra red se abre en su propio sitio."
+    },
+    "connected": {
+      "extension": "Extensión de RougeChain",
+      "viaExtension": "Esta billetera está conectada mediante la extensión.",
+      "detected": "Extensión detectada en este navegador.",
+      "notDetected": "No detectada en este navegador.",
+      "base": "Base (puente)",
+      "baseHint": "Mueve activos entre RougeChain y Base."
+    },
+    "help": {
+      "tourHint": "Recorre lo que hace cada parte de RougeChain."
+    }
+  },
+  "profile": {
+    "avatar": {
+      "failed": "No se pudo actualizar tu foto",
+      "tooLarge": "No se pudo usar esa imagen",
+      "updated": "Foto de perfil actualizada",
+      "removed": "Foto de perfil eliminada",
+      "change": "Cambiar foto",
+      "upload": "Subir foto",
+      "chooseNft": "Elegir NFT",
+      "remove": "Quitar",
+      "loadingNfts": "Cargando tus NFT…",
+      "noNfts": "No hay NFT con imagen en esta billetera.",
+      "unlockFirst": "Desbloquea o crea una billetera para poner una foto."
+    },
+    "name": {
+      "label": "Nombre visible",
+      "placeholder": "Tu nombre",
+      "save": "Guardar",
+      "saved": "Nombre actualizado",
+      "failed": "No se pudo actualizar tu nombre"
+    },
+    "mail": {
+      "claimed": "Reclamaste {{a}} y {{b}}",
+      "failed": "No se pudo reclamar ese nombre",
+      "change": "Cambiar nombre",
+      "placeholder": "tunombre",
+      "rules": "3–20 letras, números o guiones bajos (no al inicio ni al final).",
+      "changeWarning": "{{name}} quedará libre y cualquiera podrá reclamarlo.",
+      "save": "Guardar nuevo nombre",
+      "claim": "Reclamar nombre"
+    }
+  },
+  "onboarding": {
+    "stepOf": "Paso {{current}} de {{total}}",
+    "steps": {
+      "wallet": "Crear",
+      "imported": "Importar",
+      "backup": "Respaldar",
+      "secure": "Proteger",
+      "mail": "Correo",
+      "profile": "Perfil",
+      "done": "Listo"
+    },
+    "continue": "Continuar",
+    "skip": "Omitir por ahora",
+    "mail": {
+      "title": "Reclama tu nombre de correo",
+      "subtitle": "Consigue una dirección fácil de recordar para el correo cifrado, para que te contacten por tu nombre en lugar de una clave larga. Puedes hacerlo más tarde en Ajustes."
+    },
+    "profile": {
+      "title": "Agrega una foto de perfil",
+      "subtitle": "Ayuda a que te reconozcan en chats y correo. Puedes cambiarla cuando quieras en Ajustes."
+    },
+    "done": {
+      "title": "Todo listo",
+      "subtitle": "Tu billetera resistente a la computación cuántica está lista.",
+      "cta": "Hacer el recorrido",
+      "settingsHint": "El perfil, el nombre de correo y la seguridad están en Ajustes."
+    }
+  },
+  "tour": {
+    "title": "Cómo funciona RougeChain",
+    "step": "{{current}} / {{total}}",
+    "skip": "Omitir",
+    "back": "Atrás",
+    "next": "Siguiente",
+    "done": "Empezar",
+    "open": "Abrir",
+    "replay": "Repetir el recorrido",
+    "sections": {
+      "welcome": {
+        "title": "Bienvenido a RougeChain",
+        "body": "Una billetera poscuántica, DEX, mensajería y correo en un solo lugar. Tus claves, chats y correos están protegidos con criptografía resistente a la computación cuántica (ML-DSA-65 + ML-KEM-768). Aquí tienes un recorrido rápido."
+      },
+      "wallet": {
+        "title": "Billetera",
+        "body": "Envía y recibe XRGE y tokens, crea tu propio token y protege fondos para mayor privacidad. Toca el ícono del ojo para ocultar los saldos."
+      },
+      "swap": {
+        "title": "Intercambio y pools",
+        "body": "Intercambia tokens en el DEX integrado y aporta liquidez para ganar comisiones. Revisa el impacto en el precio antes de confirmar."
+      },
+      "messenger": {
+        "title": "Mensajería",
+        "body": "Chats cifrados de extremo a extremo. Envía fotos, pagos y solicitudes de pago, reacciona y responde a mensajes, y crea chats grupales."
+      },
+      "mail": {
+        "title": "Correo",
+        "body": "Correo cifrado con tu propia dirección nombre@rouge.quant — nombre@qwalla.mail también funciona. Reclama tu nombre en Ajustes y luego redacta, responde y reenvía."
+      },
+      "nfts": {
+        "title": "NFT",
+        "body": "Explora colecciones, acuña las tuyas y usa cualquier NFT que tengas como foto de perfil."
+      },
+      "bridge": {
+        "title": "Puente",
+        "body": "Mueve ETH, USDC y XRGE entre Base y RougeChain como qETH, qUSDC y XRGE."
+      },
+      "security": {
+        "title": "Bloqueado y privado",
+        "body": "Protege tu billetera con una contraseña y bloqueo automático en Ajustes. Tus claves privadas nunca salen de este navegador."
+      },
+      "backup": {
+        "title": "Haz un respaldo — no pierdas tus mensajes",
+        "body": "Dos cosas te protegen, y son diferentes:\n\n• La frase de recuperación restaura tu billetera y tus fondos — pero NO tu historial de chat.\n• El archivo de respaldo cifrado (.pqcbackup) restaura tu billetera, tus fondos Y tus mensajes.\n\nExporta un respaldo en Ajustes → Seguridad y respaldo y guarda ambos en un lugar seguro."
+      }
     }
   }
 }

@@ -37,7 +37,8 @@
       "defi": "DeFi",
       "explorer": "Explorer",
       "social": "Social",
-      "network": "Network"
+      "network": "Network",
+      "account": "Account"
     },
     "resources": "Resources",
     "docs": "Docs",
@@ -50,7 +51,8 @@
     "unreadEmails_other": "{{count}} unread emails",
     "team": "Team",
     "status": "Status",
-    "buy": "Buy XRGE"
+    "buy": "Buy XRGE",
+    "settings": "Settings"
   },
   "swap": {
     "title": "Swap",
@@ -722,6 +724,185 @@
     },
     "reply": {
       "unavailable": "Original message not loaded"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Profile, mail name, security and preferences in one place.",
+    "lockedHint": "Your wallet is locked. Unlock it to edit your profile and security.",
+    "noWalletHint": "Create or import a wallet to set up your profile.",
+    "sections": {
+      "profile": "Profile",
+      "mail": "Mail name",
+      "security": "Security & backup",
+      "privacy": "Privacy",
+      "notifications": "Notifications",
+      "network": "Network",
+      "language": "Language",
+      "connected": "Connected",
+      "help": "Help"
+    },
+    "mail": {
+      "hint": "One name gives you two addresses for encrypted mail."
+    },
+    "security": {
+      "autoLock": "Auto-lock",
+      "autoLockHint": "Lock the wallet after this much inactivity.",
+      "needsPassword": "Set a password first.",
+      "never": "Never",
+      "minutes_one": "{{count}} min",
+      "minutes_other": "{{count}} min",
+      "changePassword": "Change password",
+      "setPassword": "Set a password",
+      "current": "Current password",
+      "new": "New password (8+ characters)",
+      "confirm": "Confirm new password",
+      "lockNow": "Lock now",
+      "backup": "Backup & recovery phrase",
+      "backupHint": "Export an encrypted .pqcbackup file, reveal your recovery phrase, or restore a wallet.",
+      "tooShort": "Password must be at least 8 characters",
+      "mismatch": "Passwords don't match",
+      "passwordChanged": "Password changed",
+      "passwordSet": "Password set — your wallet is encrypted",
+      "passwordFailed": "Couldn't update the password",
+      "imported": "Wallet imported"
+    },
+    "privacy": {
+      "hideBalances": "Hide balances",
+      "hideBalancesHint": "Mask amounts on the wallet page.",
+      "discoverable": "Discoverable",
+      "discoverableHint": "Let people find you by name in New Chat."
+    },
+    "notifications": {
+      "enabled": "Notifications",
+      "enabledHint": "New messages and mail.",
+      "sound": "Sound",
+      "desktop": "Desktop alerts",
+      "desktopHint": "Uses your browser's notifications.",
+      "permissionDenied": "Your browser blocked notifications for this site."
+    },
+    "network": {
+      "hint": "Switching reloads the page. Each network keeps its own wallet.",
+      "lockedHint": "This site is pinned to {{network}}; the other network opens on its own site."
+    },
+    "connected": {
+      "extension": "RougeChain extension",
+      "viaExtension": "This wallet is connected through the extension.",
+      "detected": "Extension detected in this browser.",
+      "notDetected": "Not detected in this browser.",
+      "base": "Base (bridge)",
+      "baseHint": "Move assets between RougeChain and Base."
+    },
+    "help": {
+      "tourHint": "Walk through what each part of RougeChain does."
+    }
+  },
+  "profile": {
+    "avatar": {
+      "failed": "Couldn't update your photo",
+      "tooLarge": "Couldn't use that image",
+      "updated": "Profile photo updated",
+      "removed": "Profile photo removed",
+      "change": "Change photo",
+      "upload": "Upload photo",
+      "chooseNft": "Choose NFT",
+      "remove": "Remove",
+      "loadingNfts": "Loading your NFTs…",
+      "noNfts": "No NFTs with an image in this wallet.",
+      "unlockFirst": "Unlock or create a wallet to set a photo."
+    },
+    "name": {
+      "label": "Display name",
+      "placeholder": "Your name",
+      "save": "Save",
+      "saved": "Display name updated",
+      "failed": "Couldn't update your name"
+    },
+    "mail": {
+      "claimed": "Claimed {{a}} and {{b}}",
+      "failed": "Couldn't claim that name",
+      "change": "Change name",
+      "placeholder": "yourname",
+      "rules": "3–20 letters, numbers or underscores (not at the start or end).",
+      "changeWarning": "{{name}} will be released and anyone could claim it.",
+      "save": "Save new name",
+      "claim": "Claim name"
+    }
+  },
+  "onboarding": {
+    "stepOf": "Step {{current}} of {{total}}",
+    "steps": {
+      "wallet": "Create",
+      "imported": "Import",
+      "backup": "Back up",
+      "secure": "Secure",
+      "mail": "Mail name",
+      "profile": "Profile",
+      "done": "Done"
+    },
+    "continue": "Continue",
+    "skip": "Skip for now",
+    "mail": {
+      "title": "Claim your mail name",
+      "subtitle": "Get a memorable address for encrypted mail so people can reach you by name instead of a long key. You can always do this later in Settings."
+    },
+    "profile": {
+      "title": "Add a profile photo",
+      "subtitle": "Help people recognize you across chats and mail. You can change it anytime in Settings."
+    },
+    "done": {
+      "title": "You're all set",
+      "subtitle": "Your quantum-safe wallet is ready.",
+      "cta": "Take the tour",
+      "settingsHint": "Profile, mail name and security live in Settings."
+    }
+  },
+  "tour": {
+    "title": "How RougeChain works",
+    "step": "{{current}} / {{total}}",
+    "skip": "Skip",
+    "back": "Back",
+    "next": "Next",
+    "done": "Get started",
+    "open": "Open",
+    "replay": "Replay the tour",
+    "sections": {
+      "welcome": {
+        "title": "Welcome to RougeChain",
+        "body": "A post-quantum wallet, DEX, messenger and mail in one place. Your keys, chats and mail are protected with quantum-resistant cryptography (ML-DSA-65 + ML-KEM-768). Here's a quick tour."
+      },
+      "wallet": {
+        "title": "Wallet",
+        "body": "Send and receive XRGE and tokens, create your own token, and shield funds for privacy. Tap the eye icon to hide balances."
+      },
+      "swap": {
+        "title": "Swap & pools",
+        "body": "Trade tokens on the built-in DEX and provide liquidity to earn fees. Check the price impact before you confirm."
+      },
+      "messenger": {
+        "title": "Messenger",
+        "body": "End-to-end encrypted chats. Send photos, payments and payment requests, react to and reply to messages, and start group chats."
+      },
+      "mail": {
+        "title": "Mail",
+        "body": "Encrypted mail with your own name@rouge.quant address — name@qwalla.mail works too. Claim your name in Settings, then compose, reply and forward."
+      },
+      "nfts": {
+        "title": "NFTs",
+        "body": "Browse collections, mint your own, and use any NFT you own as your profile photo."
+      },
+      "bridge": {
+        "title": "Bridge",
+        "body": "Move ETH, USDC and XRGE between Base and RougeChain as qETH, qUSDC and XRGE."
+      },
+      "security": {
+        "title": "Locked & private",
+        "body": "Protect your wallet with a password and auto-lock in Settings. Your private keys never leave this browser."
+      },
+      "backup": {
+        "title": "Back up — don't lose your messages",
+        "body": "Two things keep you safe, and they are different:\n\n• Recovery phrase restores your wallet and funds — but NOT your chat history.\n• Encrypted backup file (.pqcbackup) restores your wallet, funds AND your messages.\n\nExport a backup in Settings → Security & backup and keep both somewhere safe."
+      }
     }
   }
 }

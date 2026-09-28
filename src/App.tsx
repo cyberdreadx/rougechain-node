@@ -38,6 +38,8 @@ import Contracts from "./pages/Contracts";
 import ContractDetail from "./pages/ContractDetail";
 import Agents from "./pages/Agents";
 import Regenerate from "./pages/Regenerate";
+import Settings from "./pages/Settings";
+import { TourHost } from "@/components/onboarding/TourHost";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -119,6 +121,7 @@ const App = () => (
         <WalletAutoRegister />
         <IncomingTransferWatcher />
         <ScrollToTop />
+        <TourHost />
         <AuroraBackdrop />
         <div className="min-h-screen flex flex-col">
           <Sidebar>
@@ -151,6 +154,7 @@ const App = () => (
                 <Route path="/contract/:addr" element={<ContractDetail />} />
                 <Route path="/agents" element={<Agents />} />
                 <Route path="/regenerate" element={<Regenerate />} />
+                <Route path="/settings" element={<Settings />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
