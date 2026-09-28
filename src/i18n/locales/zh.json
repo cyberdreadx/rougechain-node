@@ -904,6 +904,116 @@
       }
     }
   },
+  "chat": {
+    "common": {
+      "anonymous": "匿名",
+      "cancel": "取消",
+      "close": "关闭",
+      "you": "你"
+    },
+    "list": {
+      "title": "会话",
+      "deleteConfirm": "将此会话移至回收站?30 天内可恢复。"
+    },
+    "menu": {
+      "title": "会话选项",
+      "search": "搜索消息"
+    },
+    "group": {
+      "new": "新建群组",
+      "newShort": "群组",
+      "newHint": "与 2 人或以上的加密群聊",
+      "info": "群组信息",
+      "name": "群组名称",
+      "namePlaceholder": "群组名称(可选)",
+      "members": "成员",
+      "selected_one": "已选 {{count}} 人",
+      "selected_other": "已选 {{count}} 人",
+      "searchContacts": "搜索联系人",
+      "pickTwo": "请至少选择 2 人。",
+      "noContacts": "未找到联系人。",
+      "noOneToAdd": "目录中没有其他可添加的人。",
+      "create_one": "创建群组({{count}})",
+      "create_other": "创建群组({{count}})",
+      "creating": "正在创建…",
+      "created": "群组已创建",
+      "createFailed": "无法创建群组",
+      "maxMembers": "一个群组最多 {{max}} 名成员。",
+      "untitled_one": "群组({{count}})",
+      "untitled_other": "群组({{count}})",
+      "memberCount_one": "{{count}} 名成员",
+      "memberCount_other": "{{count}} 名成员",
+      "rename": "重命名",
+      "renamed": "已重命名为 {{name}}",
+      "nameCleared": "已清除群组名称",
+      "renameFailed": "重命名失败",
+      "addMembers": "添加成员",
+      "addHint": "新成员只能看到加入后发送的消息。",
+      "addCount_one": "添加 {{count}} 人",
+      "addCount_other": "添加 {{count}} 人",
+      "added_one": "已添加 {{count}} 名成员",
+      "added_other": "已添加 {{count}} 名成员",
+      "addFailed": "无法添加成员",
+      "noKeys": "所有成员都还没有加密密钥。",
+      "someKeysMissing_one": "{{count}} 名成员没有加密密钥,将无法阅读此消息。",
+      "someKeysMissing_other": "{{count}} 名成员没有加密密钥,将无法阅读此消息。",
+      "e2eNote": "消息为每位成员分别加密(ML-KEM-768)。网络暂不支持退出群组或移除成员。"
+    },
+    "requests": {
+      "primary": "聊天",
+      "tab": "消息请求",
+      "hint": "你尚未与之聊天的人。在你接受之前,对方不会知道你已看到消息。",
+      "wantsToMessage": "想给你发消息",
+      "accept": "接受",
+      "accepted": "已接受请求",
+      "delete": "删除",
+      "deleteConfirm": "删除此消息请求?",
+      "deleted": "请求已删除",
+      "deleteFailed": "无法删除请求",
+      "banner": "{{name}} 想给你发消息。接受后即可回复并发送已读回执。"
+    },
+    "mute": {
+      "label": "静音",
+      "hint": "此聊天不再有提示音或弹窗",
+      "mute": "静音",
+      "unmute": "取消静音",
+      "muted": "聊天已静音",
+      "unmuted": "已取消静音"
+    },
+    "block": {
+      "title": "已屏蔽的钱包",
+      "block": "屏蔽",
+      "unblock": "取消屏蔽",
+      "blockedBadge": "已屏蔽",
+      "blocked": "已屏蔽 {{name}}",
+      "unblocked": "已取消屏蔽 {{name}}",
+      "confirm": "屏蔽 {{name}}?其聊天和消息将在此设备上隐藏。",
+      "confirmMember": "屏蔽 {{name}}?其消息将在此设备的所有聊天中隐藏。",
+      "emptyTitle": "没有屏蔽任何人",
+      "emptyBody": "你在聊天或消息请求中屏蔽的钱包会显示在这里。",
+      "hint": "屏蔽仅保存在此设备上,对方不会收到通知。",
+      "settingsHint": "其消息在此设备上被隐藏的钱包",
+      "manage": "管理"
+    },
+    "gif": {
+      "button": "发送 GIF",
+      "search": "搜索 GIF…",
+      "none": "未找到 GIF",
+      "unavailable": "GIF 服务暂时不可用",
+      "powered": "由 GIPHY 提供"
+    },
+    "media": {
+      "image": "图片",
+      "voice": "语音消息",
+      "loadImage": "从 {{host}} 加载图片"
+    },
+    "receipts": {
+      "sent": "已发送",
+      "delivered": "已送达",
+      "read": "已读",
+      "seen": "已读"
+    }
+  },
   "visual": {
     "hero": {
       "pqc": "PQC 保护",

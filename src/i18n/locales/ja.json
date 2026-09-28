@@ -904,6 +904,116 @@
       }
     }
   },
+  "chat": {
+    "common": {
+      "anonymous": "匿名",
+      "cancel": "キャンセル",
+      "close": "閉じる",
+      "you": "あなた"
+    },
+    "list": {
+      "title": "会話",
+      "deleteConfirm": "この会話をゴミ箱に移動しますか?30日間は復元できます。"
+    },
+    "menu": {
+      "title": "会話のオプション",
+      "search": "メッセージを検索"
+    },
+    "group": {
+      "new": "新しいグループ",
+      "newShort": "グループ",
+      "newHint": "2人以上との暗号化グループチャット",
+      "info": "グループ情報",
+      "name": "グループ名",
+      "namePlaceholder": "グループ名(任意)",
+      "members": "メンバー",
+      "selected_one": "{{count}}人を選択",
+      "selected_other": "{{count}}人を選択",
+      "searchContacts": "連絡先を検索",
+      "pickTwo": "2人以上を選んでください。",
+      "noContacts": "連絡先が見つかりません。",
+      "noOneToAdd": "ディレクトリに追加できる人がいません。",
+      "create_one": "グループを作成({{count}})",
+      "create_other": "グループを作成({{count}})",
+      "creating": "作成中…",
+      "created": "グループを作成しました",
+      "createFailed": "グループを作成できませんでした",
+      "maxMembers": "グループのメンバーは最大{{max}}人です。",
+      "untitled_one": "グループ({{count}})",
+      "untitled_other": "グループ({{count}})",
+      "memberCount_one": "{{count}}人のメンバー",
+      "memberCount_other": "{{count}}人のメンバー",
+      "rename": "名前を変更",
+      "renamed": "{{name}}に名前を変更しました",
+      "nameCleared": "グループ名を消去しました",
+      "renameFailed": "名前を変更できませんでした",
+      "addMembers": "メンバーを追加",
+      "addHint": "新しいメンバーには参加後に送られたメッセージだけが表示されます。",
+      "addCount_one": "{{count}}人を追加",
+      "addCount_other": "{{count}}人を追加",
+      "added_one": "{{count}}人のメンバーを追加しました",
+      "added_other": "{{count}}人のメンバーを追加しました",
+      "addFailed": "メンバーを追加できませんでした",
+      "noKeys": "暗号化キーを持つメンバーがまだいません。",
+      "someKeysMissing_one": "{{count}}人のメンバーは暗号化キーがないため、このメッセージを読めません。",
+      "someKeysMissing_other": "{{count}}人のメンバーは暗号化キーがないため、このメッセージを読めません。",
+      "e2eNote": "メッセージはメンバーごとに個別に暗号化されます(ML-KEM-768)。グループからの退出やメンバーの削除はネットワークがまだ対応していません。"
+    },
+    "requests": {
+      "primary": "チャット",
+      "tab": "リクエスト",
+      "hint": "まだチャットしたことのない相手です。承認するまで、既読になったことは相手に伝わりません。",
+      "wantsToMessage": "メッセージを送りたがっています",
+      "accept": "承認",
+      "accepted": "リクエストを承認しました",
+      "delete": "削除",
+      "deleteConfirm": "このメッセージリクエストを削除しますか?",
+      "deleted": "リクエストを削除しました",
+      "deleteFailed": "リクエストを削除できませんでした",
+      "banner": "{{name}}さんがメッセージを送りたがっています。承認すると返信と既読通知の送信ができます。"
+    },
+    "mute": {
+      "label": "ミュート",
+      "hint": "このチャットの通知音やポップアップを止めます",
+      "mute": "ミュート",
+      "unmute": "ミュート解除",
+      "muted": "チャットをミュートしました",
+      "unmuted": "ミュートを解除しました"
+    },
+    "block": {
+      "title": "ブロック中のウォレット",
+      "block": "ブロック",
+      "unblock": "ブロック解除",
+      "blockedBadge": "ブロック中",
+      "blocked": "{{name}}をブロックしました",
+      "unblocked": "{{name}}のブロックを解除しました",
+      "confirm": "{{name}}をブロックしますか?このデバイスではチャットとメッセージが非表示になります。",
+      "confirmMember": "{{name}}をブロックしますか?このデバイスのすべてのチャットでメッセージが非表示になります。",
+      "emptyTitle": "ブロック中の相手はいません",
+      "emptyBody": "チャットやメッセージリクエストからブロックしたウォレットがここに表示されます。",
+      "hint": "ブロックはこのデバイスにのみ保存され、相手には通知されません。",
+      "settingsHint": "このデバイスでメッセージを非表示にしているウォレット",
+      "manage": "管理"
+    },
+    "gif": {
+      "button": "GIFを送信",
+      "search": "GIFを検索…",
+      "none": "GIFが見つかりません",
+      "unavailable": "GIFサービスは一時的に利用できません",
+      "powered": "Powered by GIPHY"
+    },
+    "media": {
+      "image": "画像",
+      "voice": "ボイスメッセージ",
+      "loadImage": "{{host}}から画像を読み込む"
+    },
+    "receipts": {
+      "sent": "送信済み",
+      "delivered": "配信済み",
+      "read": "既読",
+      "seen": "既読"
+    }
+  },
   "visual": {
     "hero": {
       "pqc": "PQC 保護",

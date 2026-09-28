@@ -905,6 +905,116 @@
       }
     }
   },
+  "chat": {
+    "common": {
+      "anonymous": "Anónimo",
+      "cancel": "Cancelar",
+      "close": "Cerrar",
+      "you": "Tú"
+    },
+    "list": {
+      "title": "Conversaciones",
+      "deleteConfirm": "¿Mover esta conversación a la papelera? Se puede restaurar durante 30 días."
+    },
+    "menu": {
+      "title": "Opciones de la conversación",
+      "search": "Buscar mensajes"
+    },
+    "group": {
+      "new": "Nuevo grupo",
+      "newShort": "Grupo",
+      "newHint": "Chat de grupo cifrado con 2 o más personas",
+      "info": "Info del grupo",
+      "name": "Nombre del grupo",
+      "namePlaceholder": "Nombre del grupo (opcional)",
+      "members": "Miembros",
+      "selected_one": "{{count}} seleccionado",
+      "selected_other": "{{count}} seleccionados",
+      "searchContacts": "Buscar contactos",
+      "pickTwo": "Elige al menos 2 personas.",
+      "noContacts": "No se encontraron contactos.",
+      "noOneToAdd": "No hay nadie más en el directorio para añadir.",
+      "create_one": "Crear grupo ({{count}})",
+      "create_other": "Crear grupo ({{count}})",
+      "creating": "Creando…",
+      "created": "Grupo creado",
+      "createFailed": "No se pudo crear el grupo",
+      "maxMembers": "Un grupo puede tener como máximo {{max}} miembros.",
+      "untitled_one": "Grupo ({{count}})",
+      "untitled_other": "Grupo ({{count}})",
+      "memberCount_one": "{{count}} miembro",
+      "memberCount_other": "{{count}} miembros",
+      "rename": "Renombrar",
+      "renamed": "Renombrado a {{name}}",
+      "nameCleared": "Nombre del grupo borrado",
+      "renameFailed": "No se pudo renombrar",
+      "addMembers": "Añadir miembros",
+      "addHint": "Los nuevos miembros solo ven los mensajes enviados después de unirse.",
+      "addCount_one": "Añadir {{count}}",
+      "addCount_other": "Añadir {{count}}",
+      "added_one": "{{count}} miembro añadido",
+      "added_other": "{{count}} miembros añadidos",
+      "addFailed": "No se pudieron añadir miembros",
+      "noKeys": "Ningún miembro tiene todavía una clave de cifrado.",
+      "someKeysMissing_one": "{{count}} miembro no tiene clave de cifrado y no podrá leer esto.",
+      "someKeysMissing_other": "{{count}} miembros no tienen clave de cifrado y no podrán leer esto.",
+      "e2eNote": "Los mensajes se cifran por separado para cada miembro (ML-KEM-768). La red aún no permite salir del grupo ni eliminar miembros."
+    },
+    "requests": {
+      "primary": "Chats",
+      "tab": "Solicitudes",
+      "hint": "Personas con las que no has hablado. No sabrán que viste su mensaje hasta que aceptes.",
+      "wantsToMessage": "Quiere enviarte un mensaje",
+      "accept": "Aceptar",
+      "accepted": "Solicitud aceptada",
+      "delete": "Eliminar",
+      "deleteConfirm": "¿Eliminar esta solicitud de mensaje?",
+      "deleted": "Solicitud eliminada",
+      "deleteFailed": "No se pudo eliminar la solicitud",
+      "banner": "{{name}} quiere enviarte un mensaje. Acepta para responder y enviar confirmaciones de lectura."
+    },
+    "mute": {
+      "label": "Silenciar",
+      "hint": "Sin sonidos ni avisos para este chat",
+      "mute": "Silenciar",
+      "unmute": "Activar sonido",
+      "muted": "Chat silenciado",
+      "unmuted": "Chat con sonido"
+    },
+    "block": {
+      "title": "Carteras bloqueadas",
+      "block": "Bloquear",
+      "unblock": "Desbloquear",
+      "blockedBadge": "Bloqueado",
+      "blocked": "{{name}} bloqueado",
+      "unblocked": "{{name}} desbloqueado",
+      "confirm": "¿Bloquear a {{name}}? Sus chats y mensajes se ocultarán en este dispositivo.",
+      "confirmMember": "¿Bloquear a {{name}}? Sus mensajes se ocultarán en todos los chats de este dispositivo.",
+      "emptyTitle": "No has bloqueado a nadie",
+      "emptyBody": "Las carteras que bloquees desde un chat o una solicitud aparecen aquí.",
+      "hint": "El bloqueo se guarda solo en este dispositivo; la otra persona no recibe aviso.",
+      "settingsHint": "Carteras cuyos mensajes se ocultan en este dispositivo",
+      "manage": "Gestionar"
+    },
+    "gif": {
+      "button": "Enviar un GIF",
+      "search": "Buscar GIFs…",
+      "none": "No se encontraron GIFs",
+      "unavailable": "Servicio de GIFs no disponible temporalmente",
+      "powered": "Con tecnología de GIPHY"
+    },
+    "media": {
+      "image": "Imagen",
+      "voice": "Mensaje de voz",
+      "loadImage": "Cargar imagen de {{host}}"
+    },
+    "receipts": {
+      "sent": "Enviado",
+      "delivered": "Entregado",
+      "read": "Leído",
+      "seen": "Visto"
+    }
+  },
   "visual": {
     "hero": {
       "pqc": "Protección PQC",
