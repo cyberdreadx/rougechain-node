@@ -37,7 +37,8 @@
       "defi": "DeFi",
       "explorer": "エクスプローラー",
       "social": "ソーシャル",
-      "network": "ネットワーク"
+      "network": "ネットワーク",
+      "account": "アカウント"
     },
     "resources": "リソース",
     "docs": "ドキュメント",
@@ -50,7 +51,8 @@
     "unreadEmails_other": "未読メール{{count}}件",
     "team": "チーム",
     "status": "ステータス",
-    "buy": "XRGEを購入"
+    "buy": "XRGEを購入",
+    "settings": "設定"
   },
   "swap": {
     "title": "スワップ",
@@ -722,6 +724,184 @@
     },
     "reply": {
       "unavailable": "元のメッセージは読み込まれていません"
+    }
+  },
+  "settings": {
+    "title": "設定",
+    "subtitle": "プロフィール、メール名、セキュリティ、各種設定をひとまとめに。",
+    "lockedHint": "ウォレットはロックされています。プロフィールやセキュリティを編集するにはロックを解除してください。",
+    "noWalletHint": "プロフィールを設定するには、ウォレットを作成またはインポートしてください。",
+    "sections": {
+      "profile": "プロフィール",
+      "mail": "メール名",
+      "security": "セキュリティとバックアップ",
+      "privacy": "プライバシー",
+      "notifications": "通知",
+      "network": "ネットワーク",
+      "language": "言語",
+      "connected": "接続",
+      "help": "ヘルプ"
+    },
+    "mail": {
+      "hint": "1 つの名前で暗号化メール用のアドレスが 2 つ手に入ります。"
+    },
+    "security": {
+      "autoLock": "自動ロック",
+      "autoLockHint": "この時間操作がないとウォレットをロックします。",
+      "needsPassword": "先にパスワードを設定してください。",
+      "never": "しない",
+      "minutes_other": "{{count}} 分",
+      "changePassword": "パスワードを変更",
+      "setPassword": "パスワードを設定",
+      "current": "現在のパスワード",
+      "new": "新しいパスワード（8 文字以上）",
+      "confirm": "新しいパスワード（確認）",
+      "lockNow": "今すぐロック",
+      "backup": "バックアップとリカバリーフレーズ",
+      "backupHint": "暗号化された .pqcbackup ファイルの書き出し、リカバリーフレーズの表示、ウォレットの復元ができます。",
+      "tooShort": "パスワードは 8 文字以上にしてください",
+      "mismatch": "パスワードが一致しません",
+      "passwordChanged": "パスワードを変更しました",
+      "passwordSet": "パスワードを設定しました — ウォレットは暗号化されています",
+      "passwordFailed": "パスワードを更新できませんでした",
+      "imported": "ウォレットをインポートしました"
+    },
+    "privacy": {
+      "hideBalances": "残高を隠す",
+      "hideBalancesHint": "ウォレット画面の金額を伏せます。",
+      "discoverable": "検索可能",
+      "discoverableHint": "「新しいチャット」で名前から見つけられるようにします。"
+    },
+    "notifications": {
+      "enabled": "通知",
+      "enabledHint": "新着メッセージとメール。",
+      "sound": "サウンド",
+      "desktop": "デスクトップ通知",
+      "desktopHint": "ブラウザの通知を使います。",
+      "permissionDenied": "ブラウザがこのサイトの通知をブロックしています。"
+    },
+    "network": {
+      "hint": "切り替えるとページが再読み込みされます。ネットワークごとに別のウォレットです。",
+      "lockedHint": "このサイトは {{network}} 専用です。もう一方のネットワークは専用サイトで開きます。"
+    },
+    "connected": {
+      "extension": "RougeChain 拡張機能",
+      "viaExtension": "このウォレットは拡張機能経由で接続されています。",
+      "detected": "このブラウザで拡張機能を検出しました。",
+      "notDetected": "このブラウザでは検出されていません。",
+      "base": "Base（ブリッジ）",
+      "baseHint": "RougeChain と Base の間で資産を移動します。"
+    },
+    "help": {
+      "tourHint": "RougeChain の各機能をひと通り見てみましょう。"
+    }
+  },
+  "profile": {
+    "avatar": {
+      "failed": "写真を更新できませんでした",
+      "tooLarge": "その画像は使用できません",
+      "updated": "プロフィール写真を更新しました",
+      "removed": "プロフィール写真を削除しました",
+      "change": "写真を変更",
+      "upload": "写真をアップロード",
+      "chooseNft": "NFT を選ぶ",
+      "remove": "削除",
+      "loadingNfts": "NFT を読み込み中…",
+      "noNfts": "このウォレットに画像付きの NFT はありません。",
+      "unlockFirst": "写真を設定するには、ウォレットのロック解除または作成が必要です。"
+    },
+    "name": {
+      "label": "表示名",
+      "placeholder": "あなたの名前",
+      "save": "保存",
+      "saved": "表示名を更新しました",
+      "failed": "名前を更新できませんでした"
+    },
+    "mail": {
+      "claimed": "{{a}} と {{b}} を取得しました",
+      "failed": "その名前は取得できませんでした",
+      "change": "名前を変更",
+      "placeholder": "yourname",
+      "rules": "3〜20 文字の英数字またはアンダースコア（先頭・末尾は不可）。",
+      "changeWarning": "{{name}} は解放され、誰でも取得できるようになります。",
+      "save": "新しい名前を保存",
+      "claim": "名前を取得"
+    }
+  },
+  "onboarding": {
+    "stepOf": "ステップ {{current}} / {{total}}",
+    "steps": {
+      "wallet": "作成",
+      "imported": "インポート",
+      "backup": "バックアップ",
+      "secure": "保護",
+      "mail": "メール名",
+      "profile": "プロフィール",
+      "done": "完了"
+    },
+    "continue": "続ける",
+    "skip": "今はスキップ",
+    "mail": {
+      "title": "メール名を取得しよう",
+      "subtitle": "覚えやすい暗号化メールのアドレスを取得すれば、長い鍵ではなく名前で連絡してもらえます。あとから設定でも取得できます。"
+    },
+    "profile": {
+      "title": "プロフィール写真を追加",
+      "subtitle": "チャットやメールであなただと分かりやすくなります。設定からいつでも変更できます。"
+    },
+    "done": {
+      "title": "準備完了",
+      "subtitle": "耐量子ウォレットの準備ができました。",
+      "cta": "ツアーを見る",
+      "settingsHint": "プロフィール、メール名、セキュリティは設定にあります。"
+    }
+  },
+  "tour": {
+    "title": "RougeChain の使い方",
+    "step": "{{current}} / {{total}}",
+    "skip": "スキップ",
+    "back": "戻る",
+    "next": "次へ",
+    "done": "はじめる",
+    "open": "開く",
+    "replay": "ツアーをもう一度見る",
+    "sections": {
+      "welcome": {
+        "title": "RougeChain へようこそ",
+        "body": "ポスト量子ウォレット、DEX、メッセンジャー、メールがひとつに。鍵・チャット・メールは耐量子暗号（ML-DSA-65 + ML-KEM-768）で守られています。簡単にご案内します。"
+      },
+      "wallet": {
+        "title": "ウォレット",
+        "body": "XRGE やトークンの送受信、独自トークンの作成、プライバシーのための資金のシールドができます。目のアイコンで残高を隠せます。"
+      },
+      "swap": {
+        "title": "スワップとプール",
+        "body": "内蔵 DEX でトークンを交換し、流動性を提供して手数料を得られます。確定前に価格への影響を確認しましょう。"
+      },
+      "messenger": {
+        "title": "メッセンジャー",
+        "body": "エンドツーエンド暗号化チャット。写真・送金・支払いリクエストの送信、リアクションや返信、グループチャットに対応しています。"
+      },
+      "mail": {
+        "title": "メール",
+        "body": "自分だけの name@rouge.quant アドレスで暗号化メール — name@qwalla.mail も使えます。設定で名前を取得したら、作成・返信・転送ができます。"
+      },
+      "nfts": {
+        "title": "NFT",
+        "body": "コレクションを見たり、自分で発行したり、持っている NFT をプロフィール写真にしたりできます。"
+      },
+      "bridge": {
+        "title": "ブリッジ",
+        "body": "ETH、USDC、XRGE を Base と RougeChain の間で qETH、qUSDC、XRGE として移動できます。"
+      },
+      "security": {
+        "title": "ロックとプライバシー",
+        "body": "設定でパスワードと自動ロックを使ってウォレットを守りましょう。秘密鍵がこのブラウザの外に出ることはありません。"
+      },
+      "backup": {
+        "title": "バックアップを — メッセージを失わないために",
+        "body": "あなたを守るものは 2 つあり、役割が違います：\n\n• リカバリーフレーズはウォレットと資金を復元します — ただしチャット履歴は復元されません。\n• 暗号化バックアップファイル（.pqcbackup）はウォレット、資金、そしてメッセージも復元します。\n\n設定 → セキュリティとバックアップ でバックアップを書き出し、両方を安全な場所に保管してください。"
+      }
     }
   }
 }

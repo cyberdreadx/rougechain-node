@@ -6,6 +6,7 @@ import { getActiveNetwork } from "./network";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { generateMnemonic, keypairFromMnemonic } from "./mnemonic";
+import { overlayStoredProfile } from "./avatar";
 
 // Expected key sizes (bytes) for FIPS 204 / FIPS 203
 const ML_DSA65_SECRET_KEY_BYTES = 4032;
@@ -84,6 +85,10 @@ export interface UnifiedWallet {
   
   // Mnemonic seed phrase (optional — legacy wallets won't have this)
   mnemonic?: string;
+
+  // Profile photo shared via the messenger directory (data URI / https URL).
+  // Optional; also mirrored per signing key in lib/avatar.ts so re-registers keep it.
+  avatarUrl?: string;
 }
 
 export interface VaultSettings {
@@ -266,10 +271,26 @@ export async function unlockUnifiedWallet(password: string): Promise<UnifiedWall
     throw new Error("No encrypted wallet found");
   }
   const rawWallet = await decryptWallet(encrypted, password);
-  const wallet = ensureCorrectKeys(rawWallet);
+  // The blob is only re-encrypted when a password is set; renames / photo changes
+  // made since then live in the per-key profile store — apply them.
+  const wallet = ensureCorrectKeys(overlayStoredProfile(rawWallet));
   saveUnifiedWallet(wallet);
   localStorage.setItem(getScopedKey(WALLET_LOCKED_KEY), "false");
   return wallet;
+}
+
+/**
+ * Change the vault password: verify the current one against the encrypted blob,
+ * then re-encrypt the CURRENT (unlocked) wallet under the new one. Stays unlocked.
+ */
+export async function changeVaultPassword(currentPassword: string, newPassword: string): Promise<void> {
+  const blob = localStorage.getItem(getScopedKey(ENCRYPTED_WALLET_KEY));
+  if (!blob) throw new Error("No vault password is set");
+  await decryptWallet(blob, currentPassword); // throws on a wrong password
+  const wallet = loadUnifiedWallet();
+  if (!wallet) throw new Error("Unlock your wallet first");
+  const encrypted = await encryptWallet(wallet, newPassword);
+  localStorage.setItem(getScopedKey(ENCRYPTED_WALLET_KEY), encrypted);
 }
 
 export function autoLockWallet(): void {

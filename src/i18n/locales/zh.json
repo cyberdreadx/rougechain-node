@@ -37,7 +37,8 @@
       "defi": "DeFi",
       "explorer": "区块浏览器",
       "social": "社交",
-      "network": "网络"
+      "network": "网络",
+      "account": "账户"
     },
     "resources": "资源",
     "docs": "文档",
@@ -50,7 +51,8 @@
     "unreadEmails_other": "{{count}} 封未读邮件",
     "team": "团队",
     "status": "网络状态",
-    "buy": "购买 XRGE"
+    "buy": "购买 XRGE",
+    "settings": "设置"
   },
   "swap": {
     "title": "Swap",
@@ -722,6 +724,184 @@
     },
     "reply": {
       "unavailable": "原消息未加载"
+    }
+  },
+  "settings": {
+    "title": "设置",
+    "subtitle": "个人资料、邮件名、安全和偏好设置，集中在一处。",
+    "lockedHint": "你的钱包已锁定。解锁后才能编辑个人资料和安全设置。",
+    "noWalletHint": "创建或导入钱包以设置个人资料。",
+    "sections": {
+      "profile": "个人资料",
+      "mail": "邮件名",
+      "security": "安全与备份",
+      "privacy": "隐私",
+      "notifications": "通知",
+      "network": "网络",
+      "language": "语言",
+      "connected": "已连接",
+      "help": "帮助"
+    },
+    "mail": {
+      "hint": "一个名字即可获得两个加密邮件地址。"
+    },
+    "security": {
+      "autoLock": "自动锁定",
+      "autoLockHint": "闲置达到该时长后锁定钱包。",
+      "needsPassword": "请先设置密码。",
+      "never": "从不",
+      "minutes_other": "{{count}} 分钟",
+      "changePassword": "修改密码",
+      "setPassword": "设置密码",
+      "current": "当前密码",
+      "new": "新密码（至少 8 个字符）",
+      "confirm": "确认新密码",
+      "lockNow": "立即锁定",
+      "backup": "备份与助记词",
+      "backupHint": "导出加密的 .pqcbackup 文件、查看助记词或恢复钱包。",
+      "tooShort": "密码至少需要 8 个字符",
+      "mismatch": "两次输入的密码不一致",
+      "passwordChanged": "密码已修改",
+      "passwordSet": "密码已设置——你的钱包已加密",
+      "passwordFailed": "无法更新密码",
+      "imported": "钱包已导入"
+    },
+    "privacy": {
+      "hideBalances": "隐藏余额",
+      "hideBalancesHint": "在钱包页面隐藏金额。",
+      "discoverable": "可被发现",
+      "discoverableHint": "允许他人在“新聊天”中按名字找到你。"
+    },
+    "notifications": {
+      "enabled": "通知",
+      "enabledHint": "新消息和新邮件。",
+      "sound": "声音",
+      "desktop": "桌面提醒",
+      "desktopHint": "使用浏览器通知。",
+      "permissionDenied": "你的浏览器已阻止本网站的通知。"
+    },
+    "network": {
+      "hint": "切换后页面会重新加载。每个网络都有各自的钱包。",
+      "lockedHint": "本网站固定为 {{network}}；另一个网络会在其自己的网站打开。"
+    },
+    "connected": {
+      "extension": "RougeChain 扩展",
+      "viaExtension": "此钱包通过扩展连接。",
+      "detected": "已在此浏览器中检测到扩展。",
+      "notDetected": "此浏览器中未检测到。",
+      "base": "Base（跨链桥）",
+      "baseHint": "在 RougeChain 与 Base 之间转移资产。"
+    },
+    "help": {
+      "tourHint": "了解 RougeChain 各部分的功能。"
+    }
+  },
+  "profile": {
+    "avatar": {
+      "failed": "无法更新头像",
+      "tooLarge": "无法使用该图片",
+      "updated": "头像已更新",
+      "removed": "头像已移除",
+      "change": "更换头像",
+      "upload": "上传照片",
+      "chooseNft": "选择 NFT",
+      "remove": "移除",
+      "loadingNfts": "正在加载你的 NFT…",
+      "noNfts": "此钱包中没有带图片的 NFT。",
+      "unlockFirst": "解锁或创建钱包后即可设置头像。"
+    },
+    "name": {
+      "label": "显示名称",
+      "placeholder": "你的名字",
+      "save": "保存",
+      "saved": "显示名称已更新",
+      "failed": "无法更新名称"
+    },
+    "mail": {
+      "claimed": "已领取 {{a}} 和 {{b}}",
+      "failed": "无法领取该名字",
+      "change": "更改名字",
+      "placeholder": "yourname",
+      "rules": "3–20 个字母、数字或下划线（不能以下划线开头或结尾）。",
+      "changeWarning": "{{name}} 将被释放，任何人都可以领取。",
+      "save": "保存新名字",
+      "claim": "领取名字"
+    }
+  },
+  "onboarding": {
+    "stepOf": "第 {{current}} 步，共 {{total}} 步",
+    "steps": {
+      "wallet": "创建",
+      "imported": "导入",
+      "backup": "备份",
+      "secure": "加密",
+      "mail": "邮件名",
+      "profile": "个人资料",
+      "done": "完成"
+    },
+    "continue": "继续",
+    "skip": "暂时跳过",
+    "mail": {
+      "title": "领取你的邮件名",
+      "subtitle": "获取一个好记的加密邮件地址，别人可以用名字而不是长长的密钥联系你。之后也可以在设置中完成。"
+    },
+    "profile": {
+      "title": "添加头像",
+      "subtitle": "让别人在聊天和邮件中认出你。可随时在设置中更改。"
+    },
+    "done": {
+      "title": "一切就绪",
+      "subtitle": "你的抗量子钱包已准备好。",
+      "cta": "开始导览",
+      "settingsHint": "个人资料、邮件名和安全设置都在“设置”中。"
+    }
+  },
+  "tour": {
+    "title": "RougeChain 使用指南",
+    "step": "{{current}} / {{total}}",
+    "skip": "跳过",
+    "back": "上一步",
+    "next": "下一步",
+    "done": "开始使用",
+    "open": "打开",
+    "replay": "重新观看导览",
+    "sections": {
+      "welcome": {
+        "title": "欢迎来到 RougeChain",
+        "body": "集后量子钱包、DEX、即时通讯和邮件于一体。你的密钥、聊天和邮件均受抗量子密码学保护（ML-DSA-65 + ML-KEM-768）。下面快速了解一下。"
+      },
+      "wallet": {
+        "title": "钱包",
+        "body": "收发 XRGE 和代币，创建自己的代币，并可屏蔽资金以保护隐私。点击眼睛图标可隐藏余额。"
+      },
+      "swap": {
+        "title": "兑换与流动性池",
+        "body": "在内置 DEX 上兑换代币，提供流动性赚取手续费。确认前请查看价格影响。"
+      },
+      "messenger": {
+        "title": "即时通讯",
+        "body": "端到端加密聊天。发送照片、付款和收款请求，对消息点赞和回复，还能创建群聊。"
+      },
+      "mail": {
+        "title": "邮件",
+        "body": "使用你自己的 name@rouge.quant 地址收发加密邮件——name@qwalla.mail 同样可用。在设置中领取名字后即可撰写、回复和转发。"
+      },
+      "nfts": {
+        "title": "NFT",
+        "body": "浏览合集、铸造自己的 NFT，并可将你拥有的任意 NFT 设为头像。"
+      },
+      "bridge": {
+        "title": "跨链桥",
+        "body": "在 Base 与 RougeChain 之间转移 ETH、USDC 和 XRGE（对应 qETH、qUSDC 和 XRGE）。"
+      },
+      "security": {
+        "title": "安全与隐私",
+        "body": "在设置中用密码和自动锁定保护钱包。你的私钥永远不会离开此浏览器。"
+      },
+      "backup": {
+        "title": "请备份——别丢失你的消息",
+        "body": "有两样东西保护你，而且它们不同：\n\n• 助记词可恢复钱包和资金——但不能恢复聊天记录。\n• 加密备份文件（.pqcbackup）可恢复钱包、资金以及你的消息。\n\n请在 设置 → 安全与备份 中导出备份，并将两者妥善保存。"
+      }
     }
   }
 }

@@ -2,6 +2,7 @@ import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
 import { applyEnvelopes, type EnvelopeData, type EnvelopeReaction } from "@/lib/messenger-envelope";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
+import { fitsAvatarLimit, getStoredAvatar, isSafeAvatarUrl, normalizeAvatarField, setStoredAvatar } from "@/lib/avatar";
 
 export interface Wallet {
   id: string;
@@ -9,6 +10,8 @@ export interface Wallet {
   signingPublicKey: string;
   encryptionPublicKey: string;
   createdAt?: string;
+  /** Directory-shared avatar (data URI / https URL). */
+  avatarUrl?: string;
 }
 
 export interface WalletWithPrivateKeys extends Wallet {
@@ -584,17 +587,20 @@ export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKey
 
   if (!priv) return;
 
-  const signed = buildSignedRequest(
-    {
-      id: wallet.id,
-      displayName: wallet.displayName,
-      signingPublicKey: wallet.signingPublicKey,
-      encryptionPublicKey: wallet.encryptionPublicKey,
-      discoverable: discoverableOverride ?? privacy.discoverable,
-    },
-    priv,
-    sigPub,
-  );
+  // The node REPLACES the directory entry on every register, so always carry the
+  // avatar along — otherwise any routine re-register would wipe it.
+  const avatarUrl = await resolveAvatarForRegistration(wallet);
+
+  const payload: Record<string, unknown> = {
+    id: wallet.id,
+    displayName: wallet.displayName,
+    signingPublicKey: wallet.signingPublicKey,
+    encryptionPublicKey: wallet.encryptionPublicKey,
+    discoverable: discoverableOverride ?? privacy.discoverable,
+  };
+  if (avatarUrl) payload.avatarUrl = avatarUrl;
+
+  const signed = buildSignedRequest(payload, priv, sigPub);
   const res = await fetch(`${apiBase}/v2/messenger/wallets/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...getCoreApiHeaders() },
@@ -604,6 +610,35 @@ export async function registerWalletOnNode(wallet: Wallet | WalletWithPrivateKey
     const text = await res.text().catch(() => "");
     throw new Error(`Failed to register wallet: ${res.status} ${text}`);
   }
+}
+
+/**
+ * Avatar to send with a register: an explicit `avatarUrl` on the wallet wins;
+ * then this device's stored avatar for the key (null = user removed it); then
+ * the unified wallet's copy; finally whatever the directory already has (e.g.
+ * set from Qwalla), adopted locally so it isn't wiped by our re-register.
+ */
+async function resolveAvatarForRegistration(wallet: Wallet): Promise<string | undefined> {
+  const ok = (u: string | null | undefined): u is string => isSafeAvatarUrl(u) && fitsAvatarLimit(u);
+  if (wallet.avatarUrl !== undefined) return ok(wallet.avatarUrl) ? wallet.avatarUrl : undefined;
+  const key = wallet.signingPublicKey;
+  const stored = getStoredAvatar(key);
+  if (stored === null) return undefined;
+  if (ok(stored)) return stored;
+  try {
+    const { loadUnifiedWallet } = await import("@/lib/unified-wallet");
+    const uw = loadUnifiedWallet();
+    if (uw?.signingPublicKey === key && ok(uw.avatarUrl)) return uw.avatarUrl;
+  } catch { /* locked / unavailable */ }
+  try {
+    const { resolveWalletEntry } = await import("@/lib/wallet-directory");
+    const entry = await resolveWalletEntry(key);
+    if (ok(entry?.avatar)) {
+      setStoredAvatar(key, entry.avatar);
+      return entry.avatar;
+    }
+  } catch { /* directory unavailable: register without */ }
+  return undefined;
 }
 
 async function kemEncryptPlaintext(
@@ -803,12 +838,18 @@ export async function getWallets(): Promise<Wallet[]> {
     encryptionPublicKey?: string;
     created_at?: string;
     createdAt?: string;
-  }): Wallet => ({
-    id: w.id || "",
-    displayName: w.display_name || w.displayName || "",
-    signingPublicKey: w.signing_public_key || w.signingPublicKey || "",
-    encryptionPublicKey: w.encryption_public_key || w.encryptionPublicKey || "",
-  }));
+    avatar_url?: string;
+    avatarUrl?: string;
+  }): Wallet => {
+    const avatar = normalizeAvatarField(w);
+    return {
+      id: w.id || "",
+      displayName: w.display_name || w.displayName || "",
+      signingPublicKey: w.signing_public_key || w.signingPublicKey || "",
+      encryptionPublicKey: w.encryption_public_key || w.encryptionPublicKey || "",
+      ...(isSafeAvatarUrl(avatar) ? { avatarUrl: avatar } : {}),
+    };
+  });
 }
 
 // Create or get demo bot wallet
