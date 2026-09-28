@@ -83,6 +83,23 @@ impl ContractStore {
         vec![&self.contracts, &self.code, &self.state, &self.events, &self.event_counter]
     }
 
+    /// For the GAME_READY 2 state root: every contract as (address, sha256(code)) and every
+    /// storage entry as (raw sled key "addr:hexkey", value), both in sled (sorted) key order.
+    pub fn commitment_entries(&self) -> Result<(Vec<(Vec<u8>, [u8; 32])>, Vec<(Vec<u8>, Vec<u8>)>), String> {
+        use sha2::{Digest, Sha256};
+        let mut code = Vec::new();
+        for item in self.code.iter() {
+            let (k, v) = item.map_err(|e| e.to_string())?;
+            code.push((k.to_vec(), Sha256::digest(&v).into()));
+        }
+        let mut state = Vec::new();
+        for item in self.state.iter() {
+            let (k, v) = item.map_err(|e| e.to_string())?;
+            state.push((k.to_vec(), v.to_vec()));
+        }
+        Ok((code, state))
+    }
+
     /// Deploy a new contract
     pub fn deploy(
         &self,

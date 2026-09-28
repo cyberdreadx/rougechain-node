@@ -76,8 +76,13 @@ activation height, so one coordinated upgrade covers both.
 functions below linked (`quantum_vault_vm::game`); before activation they are not linked, so a
 module importing them fails to instantiate exactly as on older nodes. The VM reads token balances
 and NFTs through a `ChainView` snapshot, keeps a per-call overlay, and returns `ChainEffect`s that
-the node applies in order only when the call succeeds and made no cross-contract calls (single-hop,
-like XRGE). Invalid effects reject the block (fail closed).
+the node applies in order only when the call succeeds. Invalid effects reject the block (fail closed).
+
+**Multi-hop:** cross-contract sub-calls also run with these functions, each over an `OverlayView`
+that includes every move made before it (caller first, then earlier sub-calls); successful
+sub-calls' XRGE deltas and effects are merged into the top-level result and applied (a failed
+sub-call's moves are dropped). Sub-calls get their own randomness (`sub_call_seed`). Before
+activation, a call that made cross-contract calls still applies no XRGE moves, as before.
 
 | Host function | Result |
 |---|---|
@@ -95,8 +100,11 @@ rouge1 ledger entry; NFT owner checks in `nft_transfer`/`nft_burn`/`nft_lock` co
 addresses. Randomness is fixed before the tx executes (player can't re-roll a sent tx) but a block
 producer can choose whether to include it — use commit-reveal for high stakes.
 
-**Not in the state root yet:** NFT ownership and contract storage (token balances are). Tracked for
-a later release.
+**State root v2:** from activation the header's state root is
+`sha256("rougechain.stateroot.v2" ‖ balance root ‖ NFT collections (id, creator, minted, max,
+frozen) ‖ NFT tokens (collection, id, owner, locked) ‖ contract code hashes ‖ contract storage)`
+(`state_root::extend_state_root_v2`), so NFT ownership and contract state divergence is detected at
+import like a balance divergence.
 
 **API (no consensus change):** `POST /api/contract/:addr/query` (read-only dry run), events paging
 `GET /api/contract/:addr/events?limit=&before=&tx=`, WebSocket topic `contract:<addr>` (and
@@ -106,5 +114,11 @@ receipts report `Failed(error)` when the call reverted.
 **Example:** `contracts/loot_roll` (prebuilt `loot_roll.wasm`), exercised end to end by
 `loot_roll_example_pays_prizes_from_its_treasury`.
 
-**Still later:** cross-contract token/NFT/XRGE effects (multi-hop), NFTs + contract storage in the
-state root, validator VRF randomness, lazy storage loading + storage fees.
+**Tests:** `game_ready_2_contract_mints_nfts_pays_tokens_and_rolls`,
+`game_ready_2_cross_contract_calls_move_tokens_and_xrge`,
+`game_ready_2_state_root_covers_nfts_and_contract_storage_across_nodes` (second node imports and
+agrees; a tampered NFT makes its next import fail), `loot_roll_example_pays_prizes_from_its_treasury`,
+`before_game_ready_2_a_game_contract_cannot_run`.
+
+**Still later:** validator VRF randomness (needs Release 2b's multi-validator set), lazy storage
+loading + storage fees, incremental (Merkle) state root.

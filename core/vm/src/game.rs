@@ -294,3 +294,68 @@ pub fn register_game_functions(linker: &mut Linker<HostEnv>) -> Result<(), Strin
 
     Ok(())
 }
+
+/// A [`ChainView`] with some effects already applied on top — what a cross-contract sub-call
+/// sees after its caller (and earlier sub-calls) moved tokens or NFTs.
+pub struct OverlayView {
+    base: Arc<dyn ChainView>,
+    token_delta: HashMap<(String, String), i128>,
+    nft_owner: HashMap<(String, u64), String>,
+    collections: HashMap<String, CollectionView>,
+}
+
+impl OverlayView {
+    pub fn new(base: Arc<dyn ChainView>, effects: &[ChainEffect]) -> Self {
+        let mut o = Self { base, token_delta: HashMap::new(), nft_owner: HashMap::new(), collections: HashMap::new() };
+        for e in effects {
+            match e {
+                ChainEffect::TokenTransfer { symbol, from, to, amount } => {
+                    *o.token_delta.entry((from.clone(), symbol.clone())).or_insert(0) -= *amount as i128;
+                    *o.token_delta.entry((to.clone(), symbol.clone())).or_insert(0) += *amount as i128;
+                }
+                ChainEffect::NftCreateCollection { collection_id, creator, max_supply, .. } => {
+                    o.collections.insert(collection_id.clone(), CollectionView {
+                        creator: creator.clone(), max_supply: *max_supply, minted: 0, frozen: false,
+                    });
+                }
+                ChainEffect::NftMint { collection_id, token_id, to, .. } => {
+                    if let Some(mut c) = o.nft_collection(collection_id) {
+                        c.minted = c.minted.max(*token_id);
+                        o.collections.insert(collection_id.clone(), c);
+                    }
+                    o.nft_owner.insert((collection_id.clone(), *token_id), to.clone());
+                }
+                ChainEffect::NftTransfer { collection_id, token_id, to, .. } => {
+                    o.nft_owner.insert((collection_id.clone(), *token_id), to.clone());
+                }
+            }
+        }
+        o
+    }
+}
+
+impl ChainView for OverlayView {
+    fn canon(&self, addr: &str) -> String { self.base.canon(addr) }
+    fn token_balance(&self, owner: &str, symbol: &str) -> u128 {
+        let d = self.token_delta.get(&(owner.to_string(), symbol.to_string())).copied().unwrap_or(0);
+        (self.base.token_balance(owner, symbol) as i128 + d).max(0) as u128
+    }
+    fn nft_owner(&self, collection_id: &str, token_id: u64) -> Option<(String, bool)> {
+        match self.nft_owner.get(&(collection_id.to_string(), token_id)) {
+            Some(o) => Some((o.clone(), false)),
+            None => self.base.nft_owner(collection_id, token_id),
+        }
+    }
+    fn nft_collection(&self, collection_id: &str) -> Option<CollectionView> {
+        self.collections.get(collection_id).cloned().or_else(|| self.base.nft_collection(collection_id))
+    }
+}
+
+/// Seed for the `index`-th sub-call made from a call with `seed`.
+pub fn sub_call_seed(seed: &[u8; 32], index: usize) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"rougechain/rand/sub");
+    h.update(seed);
+    h.update((index as u64).to_be_bytes());
+    h.finalize().into()
+}

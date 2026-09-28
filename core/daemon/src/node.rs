@@ -1286,7 +1286,7 @@ impl L1Node {
                 }
             }
         } else if verify_root {
-            let computed = match self.compute_current_state_root() {
+            let computed = match self.compute_state_root_for_height(block.header.height) {
                 Ok(c) => c,
                 Err(e) => {
                     let _ = self.restore_pre_apply_snapshot(pre_snapshot);
@@ -3348,7 +3348,7 @@ impl L1Node {
             { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 1 { return Err("injected fault: root computation".into()); } }
             // Stamp the post-state root, gated on the activation height.
             let state_root = if height >= state_root_activation_height() {
-                Some(self.compute_current_state_root()?)
+                Some(self.compute_state_root_for_height(height)?)
             } else {
                 None
             };
@@ -4092,7 +4092,22 @@ impl L1Node {
     }
 
     pub fn get_state_root(&self) -> Result<String, String> {
-        self.compute_current_state_root()
+        self.compute_state_root_for_height(self.get_tip_height().unwrap_or(0))
+    }
+
+    /// The state root a block at `height` commits: the balance root, extended from GAME_READY 2
+    /// with NFTs and contract code/storage.
+    fn compute_state_root_for_height(&self, height: u64) -> Result<String, String> {
+        let base = self.compute_current_state_root()?;
+        if !game_ready_2_active(height) {
+            return Ok(base);
+        }
+        let (cols, toks) = self.nft_store.commitment_entries()?;
+        let (code, state) = match self.contract_store {
+            Some(ref cs) => cs.commitment_entries()?,
+            None => (Vec::new(), Vec::new()),
+        };
+        Ok(crate::state_root::extend_state_root_v2(&base, &cols, &toks, &code, &state))
     }
 
     /// Clone the three in-memory balance maps. Used by import (P2-5) to take a
@@ -4847,7 +4862,8 @@ impl L1Node {
                                         // silently move a partial set (documented v1 limit).
                                         let did_cross_call = result.cross_call_results
                                             .as_ref().map_or(false, |v| !v.is_empty());
-                                        if did_cross_call {
+                                        // From GAME_READY 2 the VM merges sub-call moves (multi-hop).
+                                        if did_cross_call && !game_ready_2_active(block.header.height) {
                                             eprintln!("[node] contract_call {} used cross-calls; XRGE deltas NOT applied (single-hop v1)",
                                                 &contract_addr[..16.min(contract_addr.len())]);
                                         } else {
@@ -11480,6 +11496,116 @@ mod game_ready_tests {
         assert!((e.node.get_balance(&addr).unwrap() - (100.0 - 0.5 * xrge as f64)).abs() < 1e-9);
         let col_id = crate::nft_store::NftCollection::make_collection_id(&addr, "LOOT");
         assert_eq!(e.node.nft_store.get_collection(&col_id).unwrap().unwrap().minted, swords);
+        set_test_game_ready_2(None);
+    }
+
+    /// Bank: `give` pays its caller 3 GOLD and 1 XRGE from the bank's own balances.
+    const WAT_BANK: &str = r#"
+    (module
+      (import "env" "host_get_caller"     (func $gc (param i32 i32) (result i32)))
+      (import "env" "host_transfer"       (func $xt (param i32 i32 i64) (result i32)))
+      (import "env" "host_token_transfer" (func $tt (param i32 i32 i32 i32 i64) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0) "GOLD")
+      (func (export "give") (local $n i32)
+        (local.set $n (call $gc (i32.const 100) (i32.const 8192)))
+        (drop (call $tt (i32.const 0) (i32.const 4) (i32.const 100) (local.get $n) (i64.const 3)))
+        (drop (call $xt (i32.const 100) (local.get $n) (i64.const 1000000000)))))
+    "#;
+
+    /// Router with the bank's address baked in: `go` calls bank.give twice.
+    fn wat_router(bank: &str) -> String {
+        format!(r#"
+    (module
+      (import "env" "host_call_contract" (func $cc (param i32 i32 i32 i32 i32 i32 i64) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0) "{bank}")
+      (data (i32.const 64) "give")
+      (data (i32.const 72) "{{}}")
+      (func (export "go")
+        (drop (call $cc (i32.const 0) (i32.const 40) (i32.const 64) (i32.const 4) (i32.const 72) (i32.const 2) (i64.const 100000)))
+        (drop (call $cc (i32.const 0) (i32.const 40) (i32.const 64) (i32.const 4) (i32.const 72) (i32.const 2) (i64.const 100000)))))
+    "#)
+    }
+
+    fn deploy_wat(e: &Env, wat_src: &str, acct_nonce: u64) -> String {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(wat::parse_str(wat_src).unwrap());
+        let pk = e.player.public_key_hex.clone();
+        let d = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), acct_nonce);
+        let addr = d.payload.contract_addr.clone().unwrap();
+        mine(e, d).expect("deploy");
+        addr
+    }
+
+    #[test]
+    fn game_ready_2_cross_contract_calls_move_tokens_and_xrge() {
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_game_ready_2(Some(1));
+        let pk = e.player.public_key_hex.clone();
+        let bank = deploy_wat(&e, WAT_BANK, 1);
+        let router = deploy_wat(&e, &wat_router(&bank), 2);
+        e.node.token_balances.lock().unwrap().insert((bank.clone(), "GOLD".to_string()), 100);
+        fund_xrge(&e.node, &bank, 10.0);
+
+        mine(&e, v2(&e.player, "contract_call", &json!({ "from": pk, "contractAddr": router, "method": "go",
+            "gasLimit": 1_000_000, "timestamp": 3, "nonce": "0000000000000003" }), 3)).expect("router call");
+
+        // Both sub-calls applied, the second seeing the first's moves.
+        let tb = e.node.token_balances.lock().unwrap().clone();
+        assert_eq!(tb.get(&(router.clone(), "GOLD".to_string())), Some(&6));
+        assert_eq!(tb.get(&(bank.clone(), "GOLD".to_string())), Some(&94));
+        assert!((e.node.get_balance(&router).unwrap() - 2.0).abs() < 1e-9);
+        assert!((e.node.get_balance(&bank).unwrap() - 8.0).abs() < 1e-9);
+        set_test_game_ready_2(None);
+    }
+
+    /// A second node importing GAME_READY 2 blocks recomputes the extended state root (NFTs +
+    /// contract code/storage) and agrees; a tampered NFT makes the next block's root mismatch.
+    #[test]
+    fn game_ready_2_state_root_covers_nfts_and_contract_storage_across_nodes() {
+        let a = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_game_ready_2(Some(1));
+        let b = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        let pk = a.player.public_key_hex.clone();
+        fund_xrge(&b.node, &pk, 1_000.0);
+        // b's own setup funded a different player; mirror it on a so the ledgers match.
+        fund_xrge(&a.node, &b.player.public_key_hex, 1_000.0);
+
+        let mine_block = |tx: TxV1| -> BlockV1 {
+            a.node.add_tx_to_mempool_verified(tx).unwrap();
+            a.node.mine_pending().unwrap().expect("block")
+        };
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(wat::parse_str(WAT_GAME).unwrap());
+        let deploy = v2(&a.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        b.node.import_block(mine_block(deploy)).expect("b imports deploy");
+        for n in [&a.node, &b.node] {
+            n.token_balances.lock().unwrap().insert((addr.clone(), "GOLD".to_string()), 100);
+            fund_xrge(n, &addr, 10.0);
+        }
+        let call = v2(&a.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": "play",
+            "gasLimit": 1_000_000, "timestamp": 2, "nonce": "aaaaaaaabbbbbbbb" }), 2);
+        let blk = mine_block(call);
+        b.node.import_block(blk.clone()).expect("b imports the game block: extended roots agree");
+        assert_eq!(a.node.get_state_root().unwrap(), b.node.get_state_root().unwrap());
+        assert_eq!(blk.header.state_root.as_deref(), Some(b.node.get_state_root().unwrap().as_str()));
+        let col = crate::nft_store::NftCollection::make_collection_id(&addr, "LOOT");
+        assert_eq!(b.node.nft_store.get_token(&col, 1).unwrap().unwrap().owner, pk);
+
+        // Tamper with an NFT owner on b only: the roots now differ, so b can't follow a's next block.
+        let mut t = b.node.nft_store.get_token(&col, 1).unwrap().unwrap();
+        t.owner = "mallory".into();
+        b.node.nft_store.save_token(&t).unwrap();
+        assert_ne!(a.node.get_state_root().unwrap(), b.node.get_state_root().unwrap());
+        let next = v2(&a.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": "play",
+            "gasLimit": 1_000_000, "timestamp": 3, "nonce": "ccccccccdddddddd" }), 3);
+        let err = b.node.import_block(mine_block(next)).unwrap_err();
+        assert!(err.contains("state root mismatch"), "{err}");
         set_test_game_ready_2(None);
     }
 

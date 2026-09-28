@@ -213,6 +213,7 @@ impl WasmRuntime {
             storage_cache,
         );
         env.call_depth = call_depth;
+        let game_ext = game.clone();
         env.game = game.map(game::GameState::new);
 
         let mut result = self.run_wasm(&wasm_bytes, method, args_json, env, gas_limit)?;
@@ -226,6 +227,10 @@ impl WasmRuntime {
                 let mut cross_results: Vec<(bool, Vec<u8>)> = Vec::new();
                 let mut total_sub_gas: u64 = 0;
                 let mut current_balances = balances;
+                // GAME_READY 2: sub-calls run with the game functions too, over a view that
+                // includes every move made so far, and their moves are merged into this result.
+                let mut merged_deltas: Vec<(String, i128)> = result.balance_deltas.clone().unwrap_or_default();
+                let mut merged_effects: Vec<game::ChainEffect> = result.effects.clone().unwrap_or_default();
 
                 // Apply balance deltas from the caller contract first
                 if let Some(ref deltas) = result.balance_deltas {
@@ -235,7 +240,7 @@ impl WasmRuntime {
                     }
                 }
 
-                for pending in pending_calls {
+                for (sub_index, pending) in pending_calls.into_iter().enumerate() {
                     let sub_args: serde_json::Value = serde_json::from_str(&pending.args_json)
                         .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
                     let sub_gas = if pending.gas_limit > 0 { pending.gas_limit } else { gas_limit / 2 };
@@ -252,7 +257,10 @@ impl WasmRuntime {
                         sub_gas,
                         tx_hash,
                         call_depth + 1,
-                        None, // sub-calls can't use GAME_READY 2 functions (single-hop, like XRGE)
+                        game_ext.as_ref().map(|g| GameExt {
+                            view: std::sync::Arc::new(game::OverlayView::new(g.view.clone(), &merged_effects)),
+                            seed: game::sub_call_seed(&g.seed, sub_index),
+                        }),
                     ) {
                         Ok(sub_result) => {
                             total_sub_gas += sub_result.gas_used;
@@ -276,6 +284,10 @@ impl WasmRuntime {
                                         let entry = current_balances.entry(addr.clone()).or_insert(0);
                                         *entry = (*entry as i128 + delta).max(0) as u128;
                                     }
+                                    merged_deltas.extend(deltas.iter().cloned());
+                                }
+                                if let Some(ref effects) = sub_result.effects {
+                                    merged_effects.extend(effects.iter().cloned());
                                 }
                             }
                         }
@@ -286,6 +298,10 @@ impl WasmRuntime {
                 }
 
                 result.gas_used += total_sub_gas;
+                if game_ext.is_some() {
+                    result.balance_deltas = Some(merged_deltas);
+                    result.effects = Some(merged_effects);
+                }
                 result.events.extend(all_sub_events);
                 result.cross_call_results = Some(cross_results);
 
