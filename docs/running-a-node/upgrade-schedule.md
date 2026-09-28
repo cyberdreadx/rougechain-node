@@ -8,16 +8,19 @@ reports it in `GET /api/stats` as `upgrade_schedule`. Source: `core/daemon/src/u
 | Upgrade | Mainnet (`rougechain-mainnet-1`) | Testnet (`rougechain-devnet-1`) |
 |---|---|---|
 | Transaction integrity (tx uniqueness + signed-payload binding) | 90 | 1200 |
-| Proposer selection, Release 1 | 100 | not scheduled |
-| Verified BFT finality (FINALITY_V2) | 150 | not scheduled |
+| Proposer selection, Release 1 | 100 | 1250 |
+| Verified BFT finality (FINALITY_V2) | 150 | 1250 |
 | Player-signed contracts (GAME_READY) | 150 | 1200 |
 | Tokens, NFTs, randomness, multi-hop, state root v2 (GAME_READY 2) | 160 | 1200 |
 | `host_block_hash` commit-then-settle (GAME_READY 3) | 170 | 1200 |
 | Payable contract calls (`attach`) | 190 | 1200 |
 
-**Why proposer selection and finality are off on testnet:** testnet's block producer is not its
-largest staker, and those upgrades require blocks from the largest staker and signatures from two
-thirds of stake. They'll be scheduled once testnet's validator set is arranged.
+**Testnet validator cleanup (block 1240, testnet only):** 99% of testnet's stake sat on validator
+`4e094d21…`, whose key nobody holds, so it could never sign finality votes. At block 1240 its stake is
+returned to its balance and set to zero, and the testnet node's own key (staked beforehand) becomes the
+largest validator. The finality validator replay starts from the validator set recorded at that block,
+because testnet's earliest blocks predate stored receipts. Proposer selection and finality turn on at
+1250. None of this exists on mainnet (`validator_retirement` is `None` there).
 
 **Rules for changing the schedule**
 

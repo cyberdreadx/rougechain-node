@@ -72,3 +72,17 @@ fn missed_block_accounting_is_frozen_from_the_given_height() {
     for h in 1..=20 { frozen.apply_block(&blk(h), &none).unwrap(); }
     assert_eq!(frozen.state()["Q"], VState { stake: 10, missed_blocks: 41, ..Default::default() });
 }
+
+#[test]
+fn retirement_zeroes_the_listed_validators_at_exactly_that_height() {
+    let mut r = base().with_retirement(Some((3, vec!["a".to_string()])));
+    r.apply_block(&block(1, "b", vec![]), OK).unwrap();
+    r.apply_block(&block(2, "b", vec![]), OK).unwrap();
+    assert_eq!(r.snapshot_for_next().stake_of("a"), Some(1000), "untouched before the retirement height");
+    r.apply_block(&block(3, "b", vec![tx("stake", "b", Some(50), None)]), OK).unwrap();
+    assert!(!r.state().contains_key("a"), "stake 0 and never slashed ⇒ record deleted, as the node does");
+    assert_eq!(r.snapshot_for_next().stake_of("b"), Some(150), "the block's own txs still apply");
+    assert_eq!(r.snapshot_for_next().entries().len(), 1, "only b is left: b alone holds all stake");
+    r.apply_block(&block(4, "b", vec![tx("stake", "a", Some(10), None)]), OK).unwrap();
+    assert_eq!(r.snapshot_for_next().stake_of("a"), Some(10), "a one-time retirement: a can stake again later");
+}

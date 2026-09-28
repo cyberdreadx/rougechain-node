@@ -318,6 +318,9 @@ pub fn payable_calls_active(height: u64) -> bool {
     matches!(crate::upgrades::current().payable_calls, Some(a) if height >= a)
 }
 
+/// `snapshot_db` key of the finality replay base pinned at a validator retirement (testnet).
+const RETIREMENT_REPLAY_BASE_KEY: &[u8] = b"__validator_replay_base_at_retirement";
+
 /// Owner check for NFT transactions: exact match, or (from GAME_READY 2) the same canonical
 /// address — so a token a contract minted to a rouge1 address can be moved by its key's owner.
 fn nft_owner_matches(owner: &str, signer: &str, height: u64) -> bool {
@@ -2947,6 +2950,15 @@ impl L1Node {
             return (crate::fork::FORK_HEIGHT - 1, crate::fork_tables::CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1.iter()
                 .map(|(k, stake, sc, j, m, _ts)| (k.to_string(), VState { stake: *stake, slash_count: *sc, jailed_until: *j, missed_blocks: *m })).collect());
         }
+        // A network with a validator retirement (testnet) pins the replay at the retirement block.
+        if crate::upgrades::current().validator_retirement.is_some() {
+            if let Ok(Some(raw)) = self.snapshot_db.get(RETIREMENT_REPLAY_BASE_KEY) {
+                if let Ok((h, entries)) = serde_json::from_slice::<(u64, Vec<(String, u128, u32, u64, u64)>)>(&raw) {
+                    return (h, entries.into_iter().map(|(k, stake, slash_count, jailed_until, missed_blocks)|
+                        (k, VState { stake, slash_count, jailed_until, missed_blocks })).collect());
+                }
+            }
+        }
         (0, self.opts.genesis_validators.iter().filter(|v| v.stake > 0).map(|v| (v.pub_key.clone(), VState { stake: v.stake as u128, ..Default::default() })).collect())
     }
 
@@ -2957,7 +2969,11 @@ impl L1Node {
         let mut guard = self.validator_replay.lock().map_err(|_| "validator replay lock")?;
         let (base_h, base) = self.validator_replay_base();
         if !matches!(guard.as_ref(), Some(r) if r.height() + 1 <= height) {
-            *guard = Some(ValidatorReplay::new(base_h, base).with_missed_block_freeze(proposer_selection_activation_height()));
+            let retirement = crate::upgrades::current().validator_retirement
+                .map(|r| (r.height, r.validators.iter().map(|k| k.to_string()).collect()));
+            *guard = Some(ValidatorReplay::new(base_h, base)
+                .with_missed_block_freeze(proposer_selection_activation_height())
+                .with_retirement(retirement));
         }
         let replay = guard.as_mut().unwrap();
         let outcome = |_h: u64, _i: usize, tx: &TxV1| -> Option<bool> { self.get_receipt(&compute_single_tx_hash(tx)).ok().flatten().map(|rc| matches!(rc.status, TxStatus::Success)) };
@@ -5046,6 +5062,20 @@ impl L1Node {
 
         // Matured unbonding releases are part of the block's deterministic ledger effects and
         // MUST land before the state root is computed (producer and importer alike).
+        // One-time validator retirement (testnet schedule only): the stake goes back to the
+        // validator's balance before the state root; `apply_validator_block` zeroes the stake.
+        if let Some(r) = crate::upgrades::current().validator_retirement {
+            if r.height == block.header.height {
+                for k in r.validators {
+                    if let Some(st) = self.validator_store.get_validator(k)? {
+                        if st.stake > 0 {
+                            *balances.entry(canon_addr(k)).or_insert(0) += st.stake * crate::units::QUANTA_PER_XRGE;
+                            eprintln!("[node] retired validator {} at height {}: {} XRGE stake returned to its balance", &k[..16], block.header.height, st.stake);
+                        }
+                    }
+                }
+            }
+        }
         Self::release_matured_unbonding(&self.unbonding_queue, &mut balances, block.header.height)?;
 
         // Distribute only actually collected fees
@@ -7020,8 +7050,31 @@ impl L1Node {
         }
         // Matured unbonding is released inside apply_balance_block (BEFORE the state root is
         // sealed) — this post-root phase must never touch balances/token/LP maps.
+        // One-time validator retirement (testnet schedule only; the balance was credited pre-root).
+        // Same position as in the finality replay: after the block's txs, before missed blocks.
+        let retirement_here = crate::upgrades::current().validator_retirement.filter(|r| r.height == block.header.height);
+        if let Some(r) = retirement_here {
+            for k in r.validators {
+                if let Some(mut st) = self.validator_store.get_validator(k)? {
+                    st.stake = 0;
+                    self.persist_validator_state(k, &st, block.header.height)?;
+                }
+            }
+        }
         // Check missed blocks and auto-slash
         self.check_missed_blocks(block);
+        // The validator set right after the retirement block becomes the pinned base of the
+        // finality validator replay on this network: its early history has stake txs from before
+        // the node stored receipts, which a replay from genesis cannot verify.
+        if let Some(r) = retirement_here {
+            let entries: Vec<(String, u128, u32, u64, u64)> = self.validator_store.list_validators()?
+                .into_iter().map(|(k, st)| (k, st.stake, st.slash_count, st.jailed_until, st.missed_blocks)).collect();
+            let bytes = serde_json::to_vec(&(r.height, entries)).map_err(|e| e.to_string())?;
+            self.snapshot_db.insert(RETIREMENT_REPLAY_BASE_KEY, bytes).map_err(|e| e.to_string())?;
+            self.snapshot_db.flush().map_err(|e| e.to_string())?;
+            if let Ok(mut g) = self.validator_replay.lock() { *g = None; }
+            eprintln!("[finality] validator replay base pinned at height {} ({} validators)", r.height, self.validator_store.list_validators()?.len());
+        }
         Ok(())
     }
 
