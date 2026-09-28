@@ -15,85 +15,163 @@ Contracts are written in Rust (or any language that compiles to WASM), compiled 
 ### Architecture
 
 ```
-Your Contract (Rust) → cargo build --target wasm32
-  → .wasm bytecode
-    → Deploy via API
-      → Execute in wasmi sandbox
+Your Contract (Rust) → cargo build --target wasm32-unknown-unknown
+  → .wasm bytecode (must export its memory as "memory", max 1 MiB)
+    → Publish: a transaction YOU sign (POST /api/v2/contract/publish)
+      → Execute: calls YOU sign (POST /api/v2/contract/execute), run in the wasmi sandbox
         → Host functions bridge to chain state
 ```
 
+Since block 150 on mainnet, every contract transaction is **player-signed**: the
+wallet that signs a call is the caller the contract sees (`host_get_caller`) and pays
+the fee; the wallet that signs a deployment is the deployer. The old node-signed
+endpoints are retired — `POST /api/v2/contract/deploy` returns **410 Gone**, and
+`POST /api/v2/contract/call` is only a dry run (it no longer submits anything).
+
 ## Host Functions
 
-Contracts can call these host functions to interact with the chain:
+Contracts import these from the `env` module:
 
 | Function | Description |
 |----------|-------------|
 | `host_log(ptr, len)` | Debug logging |
-| `host_get_caller(buf, len)` | Get caller's public key |
-| `host_get_self_addr(buf, len)` | Get contract's own address |
+| `host_get_caller(buf, len)` | Caller's public key (the signer of the call) |
+| `host_get_self_addr(buf, len)` | The contract's own address |
+| `host_get_args_len() → i32` | Length in bytes of the call's JSON arguments (`{}` when none) |
+| `host_read_args(buf, len) → i32` | Copy the JSON arguments into memory; bytes written, or `-1` if `buf` is too small |
 | `host_get_block_height()` | Current block height |
-| `host_get_block_time()` | Current block timestamp |
-| `host_get_balance(addr, len)` | Check XRGE balance |
-| `host_transfer(to, len, amount)` | Transfer XRGE from contract |
+| `host_get_block_time()` | Current block timestamp (seconds) |
+| `host_get_balance(addr, len)` | XRGE balance in **quanta** (`1 XRGE = 10^9 quanta`) |
+| `host_transfer(to, len, amount)` | Send XRGE (quanta) from the **contract's own** balance; single-hop |
 | `host_storage_read(key, klen, val, vlen)` | Read persistent storage |
 | `host_storage_write(key, klen, val, vlen)` | Write persistent storage |
 | `host_storage_delete(key, klen)` | Delete from storage |
-| `host_emit_event(topic, tlen, data, dlen)` | Emit indexed event |
-| `host_sha256(data, dlen, out)` | Compute SHA-256 hash |
-| `host_set_return(data, dlen)` | Set return value |
+| `host_emit_event(topic, tlen, data, dlen)` | Emit an indexed event (stored, and pushed over WebSocket) |
+| `host_sha256(data, dlen, out)` | Compute SHA-256 |
+| `host_set_return(data, dlen)` | Set the return value |
 | `host_call_contract(addr, alen, method, mlen, args, argslen, gas)` | Cross-contract call (returns call_id) |
-| `host_get_call_result(call_id, buf, len)` | Read sub-call result |
+| `host_get_call_result(call_id, buf, len)` | Read a sub-call result |
 | `host_pqc_verify(pk, pklen, msg, msglen, sig, siglen)` | ML-DSA-65 signature verify |
-| `host_pqc_pubkey_to_address(pk, pklen, out, outlen)` | Derive `rouge1...` address |
-| `host_pqc_hash_pubkey(pk, pklen, out)` | SHA-256 of public key |
+| `host_pqc_pubkey_to_address(pk, pklen, out, outlen)` | Derive a `rouge1...` address |
+| `host_pqc_hash_pubkey(pk, pklen, out)` | SHA-256 of a public key |
+
+> **Coming:** native token, NFT and randomness host functions for games are being
+> designed. They are not available yet; this page will document them when they ship.
 
 ## Gas Metering & Fees
 
-Every WASM instruction costs 1 fuel unit. The default limit is **10,000,000 fuel per call** (≈10M instructions). If a contract runs out of fuel, execution halts and all state changes are reverted.
+Every WASM instruction costs 1 fuel unit. A call may use at most **10,000,000 fuel**
+(≈10M instructions). If a contract runs out of fuel, execution halts and all state
+changes are reverted.
 
 ### Fee Schedule
 
-| Operation | Fee Formula |
-|-----------|-------------|
-| Contract Deploy | `wasm_size_bytes × 0.000001` XRGE |
-| Contract Call | `gas_used × 0.000001` XRGE |
+| Operation | Fee |
+|-----------|-----|
+| Publish (deploy) | **10 XRGE** flat |
+| Call | `gasLimit × 0.000001` XRGE — the **signed gas limit**, charged up front |
+| Query | Free (read-only, nothing is signed or committed) |
 
-Fees are automatically calculated and included in the on-chain transaction. They appear in the transaction detail view on the explorer.
+Because the fee is the signed `gasLimit`, not the gas used, pick a limit close to what
+the call needs: query the call first and add headroom (the SDK does this for you:
+`ceil(gasUsed × 1.5) + 1000`). The node dry-runs every call before accepting it and
+refuses calls that would fail or that need more gas than the limit, so a failing call
+costs nothing.
 
 ## API
 
-### Deploy a Contract
+All write endpoints take the standard signed envelope used by every `/api/v2/*`
+transaction: `{ payload, signature, public_key }`, where `signature` is ML-DSA-65
+over the JSON of `payload` with keys sorted. `payload.from` must be the signing key and
+`payload.timestamp` (ms) must be within 5 minutes of the node's clock.
+
+### Publish a Contract
 
 ```bash
-POST /api/v2/contract/deploy
+POST /api/v2/contract/publish
 {
-  "wasm": "<base64-encoded WASM bytecode>",
-  "deployer": "<public key hex>",
-  "nonce": 0
+  "payload": {
+    "type": "contract_deploy",
+    "from": "<your signing public key hex>",
+    "wasm": "<base64 WASM bytecode>",
+    "nonce": "<random string, at least 8 chars>",
+    "timestamp": 1790000000000
+  },
+  "signature": "<ML-DSA-65 signature hex>",
+  "public_key": "<your signing public key hex>"
 }
+→ { "success": true, "txId": "…", "address": "<40 hex chars>", "fee": 10 }
 ```
+
+The contract is installed when the transaction is mined. Its address is fixed by what
+you signed, so you know it before the block and nobody else can take it:
+
+```
+address = hex( sha256( "rougechain/contract/v2" ‖ from ‖ 0x00 ‖ nonce ‖ 0x00 ‖ sha256(wasm) )[0..20] )
+```
+
+Signing the same code again needs a new `nonce`.
 
 ### Call a Contract Method
 
 ```bash
-POST /api/v2/contract/call
+POST /api/v2/contract/execute
 {
-  "contractAddr": "<contract address>",
-  "method": "my_method",
-  "caller": "<public key>",
-  "args": { "key": "value" },
-  "gasLimit": 10000000
+  "payload": {
+    "type": "contract_call",
+    "from": "<your signing public key hex>",
+    "contractAddr": "<contract address>",
+    "method": "my_method",
+    "args": { "key": "value" },
+    "gasLimit": 50000,
+    "timestamp": 1790000000000,
+    "nonce": "<random string>"
+  },
+  "signature": "…",
+  "public_key": "…"
 }
+→ { "success": true, "txId": "…", "fee": 0.05,
+    "preview": { "returnData": …, "gasUsed": 31234, "events": [ … ] } }
 ```
 
-### Query Contract State
+`gasLimit` must be an integer from 1 to 10,000,000. The `preview` is the node's dry run;
+the authoritative execution happens when the transaction is mined. A receipt
+(`GET /api/tx/{txId}/receipt`) means the transaction was included. Check the contract's
+events or state for the outcome, because a call can still revert in the block if the
+state changed in between.
+
+### Query (read-only, free)
 
 ```bash
-GET /api/contract/{addr}                # metadata
-GET /api/contract/{addr}/state          # full state dump (all keys)
-GET /api/contract/{addr}/state?key=x    # single key lookup
-GET /api/contract/{addr}/events         # event log
-GET /api/contracts                      # list all contracts
+POST /api/contract/{addr}/query
+{ "method": "get_score", "args": { "player": "…" }, "caller": "<optional pubkey>" }
+→ { "success": true, "returnData": …, "gasUsed": 812, "events": [], "error": null }
+```
+
+### Read Contract Data
+
+```bash
+GET /api/contract/{addr}                        # metadata
+GET /api/contract/{addr}/state                  # full state dump (all keys)
+GET /api/contract/{addr}/state?key=x            # one key (hex, or UTF-8 if not valid hex)
+GET /api/contract/{addr}/events?limit=50        # event log
+GET /api/contract/{addr}/events?before=12345    # older page: events below that block height
+GET /api/contracts                              # list all contracts
+```
+
+### Live Events (WebSocket)
+
+Connect to `wss://<node>/api/ws` and send:
+
+```json
+{ "subscribe": ["contract:<addr>"] }
+```
+
+After each block is accepted you receive one frame per event:
+
+```json
+{ "type": "contract_event", "contract_addr": "…", "topic": "move",
+  "data": "…", "block_height": 1234, "tx_hash": "…" }
 ```
 
 ## ERC-20 Token Standard
@@ -121,7 +199,7 @@ RougeChain includes a reference ERC-20 token contract at `contracts/erc20_templa
 ```bash
 cd contracts/erc20_template
 cargo build --release --target wasm32-unknown-unknown
-# Deploy the .wasm from target/wasm32-unknown-unknown/release/
+# Publish target/wasm32-unknown-unknown/release/*.wasm with rc.contracts.publish (see SDK below)
 ```
 
 ## Explorer Integration
@@ -134,33 +212,51 @@ Deployed contracts are visible in the RougeChain explorer:
 
 ## SDK
 
-Contract helpers live on the `rc.shielded` sub-client. The constructor takes the API
-base URL as a **string** (note the trailing `/api`):
+`@rougechain/sdk` 1.9.0+ has a `contracts` namespace that signs, submits, queries and
+subscribes. The constructor takes the API base URL (note the trailing `/api`):
 
 ```typescript
-import { RougeChain } from '@rougechain/sdk';
+import { RougeChain, Wallet } from '@rougechain/sdk';
+import { readFileSync } from 'node:fs';
 
 const rc = new RougeChain('https://api.rougechain.io/api');
+const wallet = Wallet.fromMnemonic(process.env.MNEMONIC!);
 
-// Deploy
-const deploy = await rc.shielded.deployContract({
-  wasm: base64WasmBytes,
-  deployer: wallet.publicKey,
-});
+// Publish (10 XRGE). The address is known before the block.
+const wasm = readFileSync('target/wasm32-unknown-unknown/release/game.wasm');
+const pub = await rc.contracts.publish(wallet, wasm);
+console.log(pub.predictedAddress, pub.txId);
+await rc.contracts.waitForReceipt(pub.txId!);
 
-// Call
-const result = await rc.shielded.callContract({
-  contractAddr: deploy.address,
-  method: 'increment',
-  caller: wallet.publicKey,
-});
+// Free read-only call
+const q = await rc.contracts.query(pub.predictedAddress, 'get_score', { player: wallet.publicKey });
 
-// Query
-const meta = await rc.shielded.getContract(deploy.address);
-const events = await rc.shielded.getContractEvents(deploy.address);
-const allState = await rc.shielded.getContractState(deploy.address);         // full dump
-const single = await rc.shielded.getContractState(deploy.address, '636f756e74'); // single key
+// Signed call. Without gasLimit the SDK queries first and signs ceil(gasUsed × 1.5) + 1000.
+const r = await rc.contracts.execute(wallet, pub.predictedAddress, 'move', { x: 1, y: 2 });
+if (!r.success) console.error(r.error);        // e.g. "call would fail: not your turn"
+
+// Live events (one shared socket, reconnects automatically)
+const stop = rc.contracts.subscribe(pub.predictedAddress, (e) => console.log(e.topic, e.data));
+
+// State, events, metadata
+const all = await rc.contracts.state(pub.predictedAddress);
+const one = await rc.contracts.state(pub.predictedAddress, new TextEncoder().encode('score'));
+const older = await rc.contracts.events(pub.predictedAddress, { limit: 50, before: 12_000 });
 ```
+
+For games there is a smaller handle:
+
+```typescript
+const game = rc.contracts.game(address, wallet);
+const off = game.on('move', (e) => render(JSON.parse(e.data)));   // or '*' for every topic
+await game.call('move', { x: 1, y: 2 });
+const board = await game.query('board');
+```
+
+In the browser, dApps can have the RougeChain extension sign `contract_call` and
+`contract_deploy` payloads via `window.rougechain.signTransaction(payload)`. The
+extension (v1.4.0+) shows the method, arguments, gas limit and maximum fee (or the
+WASM size, predicted address and 10 XRGE fee) before signing.
 
 ## MCP Server (AI Agents)
 
@@ -172,15 +268,15 @@ The RougeChain MCP server exposes smart contract operations as tools for AI agen
 | `get_contract` | Get contract metadata |
 | `get_contract_state` | Read state (single key or full dump) |
 | `get_contract_events` | Get contract event log |
-| `deploy_contract` | Deploy WASM bytecode |
-| `call_contract` | Execute a contract method |
+| `deploy_contract` | Deploy WASM bytecode (legacy node-signed endpoint — returns 410 on networks with player-signed contracts) |
+| `call_contract` | Dry-run a contract method (legacy endpoint — preview only; it no longer submits) |
 
 ## Security
 
 WASM smart contracts maintain RougeChain's post-quantum security guarantees:
-- All contract interactions are ML-DSA-65 signed transactions
+- All contract transactions are ML-DSA-65 signed by the player: the signer is the caller and pays the fee
 - WASM execution is pure computation — no classical crypto involved
-- Contract addresses are derived deterministically via SHA-256
+- Contract addresses are derived from the signed deployment via SHA-256, so they cannot be front-run
 - Execution is sandboxed with no host OS access
 
 ## Cross-Contract Calls

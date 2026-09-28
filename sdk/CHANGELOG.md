@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.9.0
+
+### Added
+- `rc.contracts`: WASM smart contracts with player-signed transactions (node GAME_READY, active on mainnet since block 150).
+  - `publish(wallet, wasm, { nonce? })` signs a `contract_deploy` (`POST /api/v2/contract/publish`, 10 XRGE). Returns the node's `address` plus a locally computed `predictedAddress` and the signed `nonce`.
+  - `execute(wallet, addr, method, args?, { gasLimit?, accountNonce? })` signs a `contract_call` (`POST /api/v2/contract/execute`, fee `gasLimit × 0.000001` XRGE). With no `gasLimit`, it queries first and signs `min(ceil(gasUsed × 1.5) + 1000, 10_000_000)`. Node refusals ("call would fail: …") come back as `{ success: false, error }`.
+  - `query(addr, method, args?, caller?)`: a free read-only call (`POST /api/contract/:addr/query`).
+  - `get`, `state(addr, key?)`, `events(addr, { limit, before })`, `list`.
+  - `subscribe(addr, cb, { onStatus })`: live `contract_event` frames over one shared WebSocket, with auto-reconnect and resubscribe. Returns an unsubscribe function.
+  - `waitForReceipt(txId, { timeoutMs, intervalMs })` polls `GET /api/tx/:id/receipt` until the tx is included.
+  - `game(addr, wallet?)` returns a `{ call, query, state, on(topic | '*') }` handle for game code.
+- `predictContractAddress(from, nonce, wasm)`: the node's `contract_address_v2` derivation, tested against vectors from the Rust code.
+- Builders and helpers `createSignedContractCall`, `createSignedContractPublish`, `suggestGasLimit`, `contractCallFee`, `bytesToBase64`, `base64ToBytes`, constants `CONTRACT_MAX_GAS`, `CONTRACT_GAS_PRICE_XRGE`, `CONTRACT_DEPLOY_FEE_XRGE`.
+- `RougeChainOptions.WebSocket`: a WebSocket constructor for runtimes without a global one.
+- `SignedTransaction.payload_bytes_hex` (optional). Contract requests send the exact signed bytes.
+- `npm test` (node:test) for the contracts namespace.
+
+### Changed
+- `ContractMetadata` and `ContractEvent` now match what the node actually returns (`code_hash`, `created_at`, `wasm_size`, `contract_addr`, `block_height`, `tx_hash`). The old camelCase fields never matched the wire format.
+
+### Deprecated
+- `rc.shielded.deployContract` / `callContract` / `getContract*` / `listContracts`. The node-signed deploy endpoint now returns 410, and `/v2/contract/call` is a dry run only. Use `rc.contracts`.
+
 ## 1.8.1
 
 ### Fixed
