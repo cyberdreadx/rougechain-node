@@ -22,7 +22,9 @@ import {
   Copy,
   Check
 } from "lucide-react";
-import { useBlockchainWs } from "@/hooks/use-blockchain-ws";
+import { useBlockchainWs, type WsNewTransactionEvent } from "@/hooks/use-blockchain-ws";
+import { useRougeAddress } from "@/hooks/useRougeAddress";
+import { useIncomingTransferNotifications } from "@/hooks/use-incoming-transfer-notifications";
 import { useTokenPrices } from "@/hooks/use-token-prices";
 import { useMajorPrices } from "@/hooks/use-eth-price";
 import { describeAsset } from "@/lib/asset-display";
@@ -291,18 +293,43 @@ const Wallet = () => {
     }
   }, [wallet?.signingPublicKey]);
 
+  // Incoming-transfer toasts. The node publishes NewTransaction frames to `account:<from>` and
+  // `account:<to>` with `to` exactly as submitted (rouge1 address OR public key), so watch both.
+  const { full: rougeAddress } = useRougeAddress(wallet?.signingPublicKey);
+  const { onTxFrame } = useIncomingTransferNotifications({
+    walletKey: wallet ? `${activeNetwork}|${wallet.signingPublicKey}|${rougeAddress ?? ""}` : null,
+    myIds: [wallet?.signingPublicKey, rougeAddress],
+    transactions,
+    loadedAt: lastUpdated,
+  });
+  const refreshRef = useRef<() => void>(() => {});
+  const frameRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (frameRefreshTimer.current) clearTimeout(frameRefreshTimer.current); }, []);
+  const handleNewTransaction = useCallback((frame: WsNewTransactionEvent) => {
+    if (!onTxFrame(frame)) return;
+    // The history is read from blocks: refresh shortly after, once the transfer is mined.
+    if (frameRefreshTimer.current) clearTimeout(frameRefreshTimer.current);
+    frameRefreshTimer.current = setTimeout(() => refreshRef.current(), 1500);
+  }, [onTxFrame]);
+  const wsTopics = wallet
+    ? ["blocks", `account:${wallet.signingPublicKey}`, ...(rougeAddress ? [`account:${rougeAddress}`] : [])]
+    : ["blocks"];
+
   const { isConnected: wsConnected, connectionType: wsConnectionType } = useBlockchainWs({
     onNewBlock: handleNewBlock,
+    onNewTransaction: handleNewTransaction,
+    topics: wsTopics,
     fallbackPollInterval: 15000,
   });
 
   // Load balance and transactions when the wallet or the network changes (the same wallet has a
   // different balance on each network).
+  // Also once the rouge1 address resolves: transfers sent to it only show up with it.
   useEffect(() => {
     if (wallet) {
       refreshWalletData();
     }
-  }, [wallet?.signingPublicKey, activeNetwork]);
+  }, [wallet?.signingPublicKey, activeNetwork, rougeAddress]);
 
   useEffect(() => {
     const handleActivity = () => setLastActivity(Date.now());
@@ -340,7 +367,7 @@ const Wallet = () => {
     try {
       const [newBalances, newTxs, supply] = await Promise.all([
         getWalletBalance(wallet.signingPublicKey),
-        getWalletTransactions(wallet.signingPublicKey),
+        getWalletTransactions(wallet.signingPublicKey, rougeAddress ? [rougeAddress] : []),
         getCirculatingSupply("XRGE"),
       ]);
       
@@ -357,6 +384,8 @@ const Wallet = () => {
       setRefreshing(false);
     }
   };
+
+  refreshRef.current = () => { void refreshWalletData(); };
 
   const createNewWallet = async () => {
     setLoading(true);

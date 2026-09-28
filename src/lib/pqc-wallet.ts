@@ -587,13 +587,15 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
 }
 
 // Get transaction history for a wallet
-export async function getWalletTransactions(publicKey: string): Promise<WalletTransaction[]> {
+export async function getWalletTransactions(publicKey: string, aliases: string[] = []): Promise<WalletTransaction[]> {
   const transactions = await getAllTransactions();
   const walletTxs: WalletTransaction[] = [];
+  // A transfer's recipient is stored as submitted: the public key OR its rouge1 address.
+  const aliasSet = new Set(aliases.map((a) => a.toLowerCase()));
 
   for (const { tx, block } of transactions) {
     const isSender = tx.from === publicKey;
-    const isReceiver = tx.to === publicKey;
+    const isReceiver = tx.to === publicKey || (!!tx.to && aliasSet.has(tx.to.toLowerCase()));
     const isFeeRecipient = tx.feeRecipient === publicKey;
 
     if (!isSender && !isReceiver && !isFeeRecipient) continue;

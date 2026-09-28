@@ -635,6 +635,10 @@
       "extensionNotFoundDesc": "Install it from the Chrome Web Store",
       "extensionNoPublicKey": "Extension did not return a public key",
       "extensionConnectFailed": "Failed to connect extension"
+    },
+    "notifications": {
+      "received": "Received {{amount}} {{symbol}} from {{from}}",
+      "receivedTitle": "Transfer received"
     }
   },
   "status": {

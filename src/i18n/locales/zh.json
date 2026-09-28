@@ -635,6 +635,10 @@
       "extensionNotFoundDesc": "请从 Chrome 应用商店安装",
       "extensionNoPublicKey": "扩展未返回公钥",
       "extensionConnectFailed": "连接扩展失败"
+    },
+    "notifications": {
+      "received": "收到来自 {{from}} 的 {{amount}} {{symbol}}",
+      "receivedTitle": "已收到转账"
     }
   },
   "status": {

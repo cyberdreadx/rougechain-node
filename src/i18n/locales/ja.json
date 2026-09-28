@@ -635,6 +635,10 @@
       "extensionNotFoundDesc": "Chromeウェブストアからインストールしてください",
       "extensionNoPublicKey": "拡張機能が公開鍵を返しませんでした",
       "extensionConnectFailed": "拡張機能に接続できませんでした"
+    },
+    "notifications": {
+      "received": "{{from}} から {{amount}} {{symbol}} を受け取りました",
+      "receivedTitle": "送金を受け取りました"
     }
   },
   "status": {
