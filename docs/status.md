@@ -61,6 +61,7 @@ a minute.
 | Verified BFT finality (FINALITY_V2, Release 2a) | **LIVE since block 150** | Every block carries its parent's ≥⅔-stake certificate; see [Finality](staking/finality.md) |
 | Player-signed contracts (GAME_READY) | **LIVE since block 150** | Deploy and call signed by the player; see [Smart Contracts](advanced/smart-contracts.md) |
 | Game-ready contracts (GAME_READY 2) | **LIVE since block 160** | Tokens, NFTs, collections and minting, randomness, multi-hop moves; state root covers NFTs and contract state |
+| Grind-proof game rolls (GAME_READY 3, `host_block_hash`) | **Scheduled: block 170** | Commit-then-settle randomness; one-step `host_random` rolls can be ground by the sender |
 | LP fee collection | **LIVE** | "Collect fees" on Pools withdraws only fee earnings |
 
 The production XRGE bridge **still relies on classical (ECDSA / Safe multisig) authorization on the

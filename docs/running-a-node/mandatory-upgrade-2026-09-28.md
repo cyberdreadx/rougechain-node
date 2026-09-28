@@ -8,6 +8,7 @@
 | Verified BFT finality — Release 2a | `FINALITY_V2_ACTIVATION_HEIGHT` | **150** |
 | Player-signed contract calls and deployments (GAME_READY) | `GAME_READY_ACTIVATION_HEIGHT` | **150** |
 | Game-ready contracts: tokens, NFTs, randomness, multi-hop moves, state root v2 (GAME_READY 2) | `GAME_READY_2_ACTIVATION_HEIGHT` | **160** |
+| Grind-proof rolls: `host_block_hash` (GAME_READY 3) | `GAME_READY_3_ACTIVATION_HEIGHT` | **170** — upgrade before block 170 |
 
 A node without them cannot follow mainnet past block 150: from block 151 every block carries its
 parent's finality certificate, and from block 160 the header's state root also commits NFTs and
