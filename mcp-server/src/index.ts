@@ -28,10 +28,34 @@ import {
   CONTRACT_MAX_GAS,
   contractCallFee,
   createSignedContractCall,
+  describeAttach,
+  maxTotalXrge,
+  normalizeAttach,
+  type ContractAttach,
   createSignedContractPublish,
   normAddr,
   suggestGasLimit,
 } from "./contracts.js";
+
+/** Optional payment for a payable contract call (tool input). */
+const attachSchema = z
+  .object({
+    symbol: z.string().describe('"XRGE" or a token symbol'),
+    amount_xrge: z
+      .string()
+      .optional()
+      .describe('XRGE only: decimal XRGE as a string, e.g. "0.5" (converted exactly to quanta; max 9 decimals)'),
+    amount: z
+      .union([z.number().int(), z.string()])
+      .optional()
+      .describe("Tokens only: positive integer amount in RAW token units (no decimals applied)"),
+  })
+  .optional()
+  .describe(
+    "Pay the contract with this call (payable calls). XRGE: {symbol:'XRGE', amount_xrge:'0.5'}. " +
+      "Token: {symbol:'GOLD', amount: 25} (raw units). The payment moves to the contract ONLY if the call succeeds; " +
+      "if it fails or traps, it stays with the caller (the gas fee is still charged)."
+  );
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -134,7 +158,7 @@ function fail(message: string) {
 
 const server = new McpServer({
   name: "rougechain",
-  version: "1.2.0",
+  version: "1.3.0",
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -358,7 +382,8 @@ server.tool(
   "query_contract",
   "Call a contract method read-only: a free dry run against live state. Nothing is signed, " +
     "charged or committed. Returns { success, returnData, gasUsed, events, error }. " +
-    "Use this for view methods and to preview a state-changing call before execute_contract.",
+    "Use this for view methods and to preview a state-changing call before execute_contract. " +
+    "Pass attach to preview a paid (payable) call as the caller.",
   {
     address: z.string().describe("Contract address (hex)"),
     method: z.string().describe("Method name"),
@@ -367,11 +392,23 @@ server.tool(
       .string()
       .optional()
       .describe("Public key the contract sees as the caller (defaults to the configured wallet, if any)"),
+    attach: attachSchema,
   },
-  async ({ address, method, args, caller }) => {
+  async ({ address, method, args, caller, attach }) => {
     const body: Record<string, unknown> = { method, args: args ?? {} };
     const who = caller ?? signer?.publicKey;
     if (who) body.caller = who;
+    if (attach) {
+      let a: ContractAttach;
+      try {
+        a = normalizeAttach(attach);
+        if (!who) throw new Error("previewing an attached payment needs a caller (pass caller or configure a wallet)");
+      } catch (e) {
+        return ok({ success: false, error: e instanceof Error ? e.message : String(e) });
+      }
+      body.attach = a;
+      return ok({ ...(await postJson(`/contract/${encodeURIComponent(normAddr(address))}/query`, body)), attach: a, payment: describeAttach(a) });
+    }
     return ok(await postJson(`/contract/${encodeURIComponent(normAddr(address))}/query`, body));
   }
 );
@@ -974,7 +1011,9 @@ if (signer) {
       "Without gasLimit the server queries first and signs ceil(gasUsed × 1.5) + 1000. " +
       "The node dry-runs the call and refuses it if it would fail (nothing charged). " +
       "Set wait=true to wait for the receipt: status \"Success\" or {\"Failed\": …} if it reverted in the block (fee still charged). " +
-      "For read-only calls use query_contract instead (free).",
+      "For read-only calls use query_contract instead (free). " +
+      "Optional attach pays the contract (XRGE via amount_xrge decimal string, tokens via raw integer amount); " +
+      "the payment moves only if the call succeeds, and the node refuses the call if the wallet can't cover fee + payment.",
     {
       address: z.string().describe("Contract address (hex)"),
       method: z.string().describe("Method name"),
@@ -987,11 +1026,13 @@ if (signer) {
         .optional()
         .describe(`Signed gas limit (1-${CONTRACT_MAX_GAS}); the fee is charged on this, not on gas used`),
       accountNonce: z.number().int().optional().describe("Optional account nonce for durable replay protection"),
+      attach: attachSchema,
       wait: z.boolean().optional().default(false).describe("Wait (up to 60 s) for the tx receipt"),
     },
-    async ({ address, method, args, gasLimit, accountNonce, wait }) =>
+    async ({ address, method, args, gasLimit, accountNonce, attach, wait }) =>
       tx(async () => {
         const a = args ?? {};
+        const pay = attach ? normalizeAttach(attach) : undefined;
         let limit = gasLimit;
         let preview: unknown;
         if (limit === undefined) {
@@ -999,6 +1040,7 @@ if (signer) {
             method,
             args: a,
             caller: w.publicKey,
+            ...(pay ? { attach: pay } : {}),
           });
           if (q.success !== true) {
             return {
@@ -1010,13 +1052,18 @@ if (signer) {
           limit = suggestGasLimit(Number(q.gasUsed ?? 0));
           preview = { returnData: q.returnData, gasUsed: q.gasUsed, events: q.events };
         }
-        const signed = createSignedContractCall(w, address, method, a, limit, accountNonce);
+        const signed = createSignedContractCall(w, address, method, a, limit, accountNonce, pay);
         const r = await postJson("/v2/contract/execute", signed);
         const out: Record<string, unknown> = {
           ...r,
           gasLimit: limit,
           maxFee: contractCallFee(limit),
         };
+        if (pay) {
+          out.attach = pay;
+          out.payment = `${describeAttach(pay)}, paid to the contract only if the call succeeds`;
+          out.maxTotalXrge = maxTotalXrge(limit, pay);
+        }
         if (out.preview === undefined && preview !== undefined) out.preview = preview;
         if (wait && r.success === true && typeof r.txId === "string") out.receipt = await waitReceipt(r.txId);
         return out;

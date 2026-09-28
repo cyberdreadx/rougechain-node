@@ -812,14 +812,44 @@ export interface PublishContractResult {
   fee?: number;
 }
 
+/**
+ * A payment attached to a contract call (payable calls, from the payable-calls upgrade).
+ * `amount` is an INTEGER: quanta for XRGE (1 XRGE = 1_000_000_000 quanta — use
+ * `xrgeToQuanta("0.5")`), raw units for tokens. It is signed as a JSON integer, so it must be
+ * a positive safe integer (≤ `Number.MAX_SAFE_INTEGER`).
+ *
+ * The payment moves to the contract only if the call succeeds; a failing or trapping call leaves
+ * it with the caller (the gas fee is still charged).
+ */
+export interface ContractAttach {
+  /** `"XRGE"` or a token symbol (sent upper-cased). */
+  symbol: string;
+  /** Positive integer: quanta for XRGE, raw units for tokens. */
+  amount: bigint | number | string;
+}
+
+/** An attachment as it is signed and sent to the node. */
+export interface NormalizedContractAttach {
+  symbol: string;
+  amount: number;
+}
+
 export interface ExecuteContractOptions {
   /**
    * Gas limit (1..10,000,000). The fee is `gasLimit × 0.000001` XRGE, charged up front.
-   * If omitted, the SDK queries first and uses `ceil(gasUsed × 1.5) + 1000`, capped at 10M.
+   * If omitted, the SDK queries first (with the attachment) and uses
+   * `ceil(gasUsed × 1.5) + 1000`, capped at 10M.
    */
   gasLimit?: number;
   /** Optional durable replay protection: must equal the account's next nonce. */
   accountNonce?: number;
+  /** Pay the contract: XRGE (in quanta) or token units, moved only if the call succeeds. */
+  attach?: ContractAttach;
+}
+
+export interface QueryContractOptions {
+  /** Preview a paid call. Requires `caller`. */
+  attach?: ContractAttach;
 }
 
 export interface ExecuteContractResult {
@@ -830,6 +860,8 @@ export interface ExecuteContractResult {
   fee?: number;
   /** The gas limit that was signed. */
   gasLimit?: number;
+  /** The attachment that was signed, if any. */
+  attach?: NormalizedContractAttach;
   /** The node's dry run of the call (return data, gas used, events). */
   preview?: { returnData?: unknown; gasUsed: number; events: ContractEvent[] };
 }

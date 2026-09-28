@@ -72,6 +72,8 @@ own** tokens and NFTs; players stock it by sending tokens/NFTs/XRGE to the contr
 | `host_nft_mint(col, clen, to, tlen, name, nlen, meta, mlen) → i64` | Mint to a player (the contract must be the collection's creator). `meta` is optional JSON attributes. Returns the token id; `-1` not creator, `-2` sold out, `-3` missing/frozen, `-4` invalid |
 | `host_random(out) → i32` | 32 pseudo-random bytes per call. **The sender can grind it** — see below |
 | `host_block_hash(height, out) → i32` | From block **170**: the 32-byte hash of a finished block up to 256 back; `-1` otherwise. Use it to settle rolls |
+| `host_get_attached_amount() → i64` | From block **190**: the payment attached to this call, in quanta for XRGE or raw units for a token; `0` if none (always `0` in a cross-contract sub-call). See [Payable calls](#payable-calls) |
+| `host_get_attached_symbol(out, cap) → i32` | From block **190**: writes the attached symbol (`XRGE` or a token symbol, upper-case). Returns bytes written, `0` if nothing is attached, `-2` if `cap` is too small |
 
 Addresses a contract passes are normalised: paying the value `host_get_caller` returns (a public
 key) credits the player's `rouge1…` wallet.
@@ -97,6 +99,71 @@ collections and ownership plus contract code and storage, so every node must agr
 A complete example — a loot box paying NFTs, tokens or XRGE — is in
 [`contracts/loot_roll`](https://github.com/cyberdreadx/rougechain-node/tree/main/contracts/loot_roll).
 
+<a id="payable-calls"></a>
+
+## Payable calls (from block 190)
+
+From the payable-calls upgrade (block 190), a player can pay a contract in the same signed
+call, for example an entry fee, a shop purchase or a stake. The signed `contract_call` payload
+carries an optional `attach`:
+
+```json
+"attach": { "symbol": "XRGE", "amount": 500000000 }
+```
+
+- **`symbol`**: `"XRGE"` or a token symbol. The node upper-cases it. Allowed characters are 1–32
+  letters, digits, `_` and `-`.
+- **`amount`** is a **positive JSON integer**: **quanta** for XRGE (1 XRGE = 1,000,000,000 quanta,
+  so the example above is 0.5 XRGE) and **raw units** for a token (token decimals are not applied).
+  Decimals, strings, zero and negative numbers are rejected. The SDK, extension and site keep it
+  ≤ 2^53 − 1 so it round-trips exactly through JavaScript.
+- `attach` is **inside the signed payload**, so nobody can change it after you sign.
+
+**Pay on success.** While the call runs, the payment is already in the contract's balance
+(`host_get_balance` of the contract's own address, or `host_token_balance`), so the contract can use
+it. The payment becomes final **only if the call succeeds**. If the call fails or traps, all of its
+effects are discarded and the payment **stays with the player**. The gas fee is still charged, as
+for any failed call. A cross-contract sub-call sees no attachment.
+
+**Balance check.** `POST /api/v2/contract/execute` refuses the call before it is broadcast if the
+player can't cover `gas fee + XRGE payment`, or the token amount for a token payment. It also
+refuses the call if the dry run with the payment would fail. In a block, a call whose attachment
+the player can't cover is not executed. Before block 190, a call with `attach` is
+invalid.
+
+**Refuse a payment by failing the call.** A contract that doesn't want a payment should trap: wrong
+symbol, too little, too much, or a method that isn't payable. Trapping returns the payment. A
+method that ignores the attachment keeps whatever was sent, so non-payable methods should check
+that `host_get_attached_amount()` is `0`.
+
+```rust
+extern "C" {
+    fn host_get_attached_amount() -> i64;
+    fn host_get_attached_symbol(out_ptr: *mut u8, out_cap: u32) -> i32;
+}
+
+const ENTRY_FEE: i64 = 500_000_000; // 0.5 XRGE in quanta
+
+fn revert() -> ! { core::arch::wasm32::unreachable() } // fail the call: the payment goes back
+
+#[no_mangle]
+pub extern "C" fn roll() {
+    let mut sym = [0u8; 8];
+    let n = unsafe { host_get_attached_symbol(sym.as_mut_ptr(), sym.len() as u32) };
+    if n != 4 || &sym[..4] != b"XRGE" || unsafe { host_get_attached_amount() } < ENTRY_FEE {
+        revert(); // unpaid, underpaid or paid in the wrong token
+    }
+    // ... the fee is in the contract's balance; do the paid work ...
+}
+```
+
+Players attach payments with the SDK
+(`rc.contracts.execute(wallet, addr, 'roll', {}, { attach: { symbol: 'XRGE', amount: xrgeToQuanta('0.5') } })`),
+the browser extension (v1.5.0+, which shows "Pays 0.5 XRGE to the contract (only if the call
+succeeds)"), the explorer's contract page ("Attach payment"), or the MCP server
+(`attach: { symbol: "XRGE", amount_xrge: "0.5" }`). `loot_roll`'s `roll` requires a 0.5 XRGE entry
+fee this way.
+
 ## Gas Metering & Fees
 
 Every WASM instruction costs 1 fuel unit. A call may use at most **10,000,000 fuel**
@@ -109,6 +176,7 @@ changes are reverted.
 |-----------|-----|
 | Publish (deploy) | **10 XRGE** flat |
 | Call | `gasLimit × 0.000001` XRGE — the **signed gas limit**, charged up front |
+| Payable call | The call fee, plus the attached payment, which is paid only if the call succeeds (see [Payable calls](#payable-calls)) |
 | Query | Free (read-only, nothing is signed or committed) |
 
 Because the fee is the signed `gasLimit`, not the gas used, pick a limit close to what
@@ -163,6 +231,7 @@ POST /api/v2/contract/execute
     "method": "my_method",
     "args": { "key": "value" },
     "gasLimit": 50000,
+    "attach": { "symbol": "XRGE", "amount": 500000000 },   // optional, from block 190
     "timestamp": 1790000000000,
     "nonce": "<random string>"
   },
@@ -180,6 +249,10 @@ or `"status": {"Failed": "<error>"}` when it reverted in the block (possible if 
 changed between the dry run and the block). A reverted call is still included and its fee is
 charged; its state changes and events are discarded.
 
+`attach` is optional (see [Payable calls](#payable-calls)). `amount` is an
+integer: quanta for XRGE, raw units for a token. The node refuses the call if you can't cover the
+fee plus an XRGE payment, or the token amount. A reverted call keeps the payment with you.
+
 ### Query (read-only, free)
 
 ```bash
@@ -187,6 +260,10 @@ POST /api/contract/{addr}/query
 { "method": "get_score", "args": { "player": "…" }, "caller": "<optional pubkey>" }
 → { "success": true, "returnData": …, "gasUsed": 812, "events": [], "error": null }
 ```
+
+To preview a paid call, add the same `attach` plus the paying `caller` (required with `attach`):
+`{ "method": "roll", "args": {}, "caller": "<pubkey>", "attach": { "symbol": "XRGE", "amount": 500000000 } }`.
+The contract sees the payment exactly as it would in a block.
 
 ### Read Contract Data
 
@@ -294,12 +371,17 @@ const game = rc.contracts.game(address, wallet);
 const off = game.on('move', (e) => render(JSON.parse(e.data)));   // or '*' for every topic
 await game.call('move', { x: 1, y: 2 });
 const board = await game.query('board');
+
+// Payable call (SDK 1.10.0+): 0.5 XRGE entry fee, paid only if the call succeeds
+import { xrgeToQuanta } from '@rougechain/sdk';
+await game.call('roll', {}, { attach: { symbol: 'XRGE', amount: xrgeToQuanta('0.5') } });
 ```
 
 In the browser, dApps can have the RougeChain extension sign `contract_call` and
 `contract_deploy` payloads via `window.rougechain.signTransaction(payload)`. The
 extension (v1.4.0+) shows the method, arguments, gas limit and maximum fee (or the
-WASM size, predicted address and 10 XRGE fee) before signing.
+WASM size, predicted address and 10 XRGE fee) before signing. v1.5.0+ also shows any
+attached payment and the max total cost.
 
 ## MCP Server (AI Agents)
 
@@ -311,9 +393,9 @@ The RougeChain MCP server exposes smart contract operations as tools for AI agen
 | `get_contract` | Get contract metadata |
 | `get_contract_state` | Read state (single key or full dump) |
 | `get_contract_events` | Stored events (`limit`, `before`, `tx`) |
-| `query_contract` | Free read-only call (`POST /api/contract/:addr/query`) |
+| `query_contract` | Free read-only call (`POST /api/contract/:addr/query`); optional `attach` previews a paid call |
 | `publish_contract` | Write mode: sign and publish WASM with the server's wallet (10 XRGE) |
-| `execute_contract` | Write mode: sign a state-changing call with the server's wallet |
+| `execute_contract` | Write mode: sign a state-changing call with the server's wallet; optional `attach` (`amount_xrge` decimal for XRGE, integer `amount` for tokens) |
 | `get_tx_receipt` | Receipt of a transaction (`Success` or `Failed`) |
 
 ## Security

@@ -9852,17 +9852,28 @@ async fn contract_execute_signed(
         return Err(gr_err(format!("gasLimit must be between 1 and {}", quantum_vault_vm::DEFAULT_FUEL_LIMIT)));
     }
     let fee = gas as f64 * crate::v2_binding::CONTRACT_GAS_PRICE_XRGE;
+    let attach = crate::v2_binding::parse_attach(p).map_err(gr_err)?;
+    if attach.is_some() && !node::payable_calls_active(tip + 1) {
+        return Err(gr_err("payable contract calls (attach) are not active yet"));
+    }
     let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
-    if bal < fee {
-        return Err(gr_err(format!("insufficient XRGE for the gas fee: have {:.6}, need {:.6}", bal, fee)));
+    let attach_xrge = match &attach { Some((s, a)) if s == "XRGE" => *a as f64 / 1e9, _ => 0.0 };
+    if bal < fee + attach_xrge {
+        return Err(gr_err(format!("insufficient XRGE for the gas fee{}: have {:.6}, need {:.6}",
+            if attach_xrge > 0.0 { " and the attached payment" } else { "" }, bal, fee + attach_xrge)));
+    }
+    if let Some((s, a)) = &attach {
+        if s != "XRGE" {
+            let have = state.node.get_token_balance(&body.public_key, s).unwrap_or(0.0);
+            if have < *a as f64 {
+                return Err(gr_err(format!("insufficient {} for the attached payment: have {}, need {}", s, have, a)));
+            }
+        }
     }
     let args = p.get("args").cloned().unwrap_or(serde_json::Value::Null);
     let block_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-    let preview = state.wasm_runtime.query_contract_ext(
-        &state.contract_store, contract_addr, method, &args, &body.public_key,
-        state.node.native_balances_quanta(), tip + 1, block_time,
-        state.node.game_ext_for_preview(tip + 1),
-    ).map_err(gr_err)?;
+    let preview = preview_contract_call(&state, contract_addr, method, &args, &body.public_key, tip + 1, block_time, attach.as_ref())
+        .map_err(gr_err)?;
     if !preview.success {
         return Err(gr_err(format!("call would fail: {}", preview.error.unwrap_or_default())));
     }
@@ -10154,6 +10165,26 @@ async fn contract_state(
     }
 }
 
+/// Dry-run a contract call the way block execution will run it, including an attached payment
+/// (credited to the contract in the balances the call sees).
+fn preview_contract_call(
+    state: &AppState, addr: &str, method: &str, args: &serde_json::Value, caller: &str,
+    height: u64, block_time: u64, attach: Option<&(String, u64)>,
+) -> Result<quantum_vault_vm::ContractCallResult, String> {
+    let mut balances = state.node.native_balances_quanta();
+    let paid = attach.filter(|_| node::payable_calls_active(height)).map(|(s, a)| (s.clone(), *a as u128));
+    if let Some((s, a)) = &paid {
+        if s == "XRGE" {
+            let payer = quantum_vault_crypto::pub_key_to_address(caller).unwrap_or_else(|_| caller.to_string());
+            let p = balances.entry(payer).or_insert(0);
+            *p = p.saturating_sub(*a);
+            *balances.entry(addr.to_string()).or_insert(0) += a;
+        }
+    }
+    let ext = state.node.game_ext_for_preview_paid(height, paid.as_ref().map(|(s, a)| (caller, addr, s.as_str(), *a)));
+    state.wasm_runtime.query_contract_ext(&state.contract_store, addr, method, args, caller, balances, height, block_time, ext)
+}
+
 /// POST /api/contract/:addr/query — read-only dry run against the live ledger (no signature,
 /// no fee, commits nothing). Body: {method, args?, caller?}.
 async fn contract_query(
@@ -10169,11 +10200,12 @@ async fn contract_query(
     let caller = body.get("caller").and_then(|v| v.as_str()).unwrap_or("");
     let height = state.node.get_tip_height().unwrap_or(0) + 1;
     let block_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-    let r = state.wasm_runtime.query_contract_ext(
-        &state.contract_store, &addr, method, &args, caller,
-        state.node.native_balances_quanta(), height, block_time,
-        state.node.game_ext_for_preview(height),
-    ).map_err(gr_err)?;
+    let attach = crate::v2_binding::parse_attach(&body).map_err(gr_err)?;
+    if attach.is_some() && caller.is_empty() {
+        return Err(gr_err("previewing an attached payment needs the caller"));
+    }
+    let r = preview_contract_call(&state, &addr, method, &args, caller, height, block_time, attach.as_ref())
+        .map_err(gr_err)?;
     Ok(Json(serde_json::json!({
         "success": r.success,
         "returnData": r.return_data,

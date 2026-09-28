@@ -50,6 +50,12 @@ pub struct GameExt {
     pub seed: [u8; 32],
     /// GAME_READY 3: link `host_block_hash` (hashes of recent past blocks, for commit-then-settle).
     pub block_hashes: bool,
+    /// Payable calls: link `host_get_attached_amount` / `host_get_attached_symbol`.
+    pub payable: bool,
+    /// What the caller attached to this call (symbol, amount in quanta or raw token units). The node
+    /// has already credited it to the contract in the balances the call sees; it moves for real only
+    /// if the call succeeds. `None` for sub-calls and calls without payment.
+    pub attached: Option<(String, u128)>,
 }
 
 /// A token or NFT operation a successful call performed, for the node to apply.
@@ -388,6 +394,34 @@ pub fn register_block_hash_function(linker: &mut Linker<HostEnv>) -> Result<(), 
             let Some(bytes) = g.ext.view.block_hash(height as u64).and_then(|h| hex::decode(h).ok()) else { return -1 };
             if bytes.len() != 32 { return -1; }
             write(&mut caller, op, 32, &bytes)
+        }
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Payable calls: what the caller attached to this call.
+///
+/// * `host_get_attached_amount() -> i64` — quanta for XRGE, raw units for a token; 0 when nothing
+///   was attached (or in a cross-contract sub-call).
+/// * `host_get_attached_symbol(out_ptr, out_cap) -> i32` — bytes of the symbol written, 0 when
+///   nothing was attached, -2 if `out_cap` is too small.
+///
+/// The payment is already in the contract's balance during the call; it becomes final only if the
+/// call succeeds. A contract that refuses a payment should fail the call (trap), which returns it.
+pub fn register_payable_functions(linker: &mut Linker<HostEnv>) -> Result<(), String> {
+    linker.func_wrap("env", "host_get_attached_amount",
+        |caller: Caller<'_, HostEnv>| -> i64 {
+            caller.data().game.as_ref().and_then(|g| g.ext.attached.as_ref())
+                .map(|(_, a)| (*a).min(i64::MAX as u128) as i64).unwrap_or(0)
+        }
+    ).map_err(|e| e.to_string())?;
+    linker.func_wrap("env", "host_get_attached_symbol",
+        |mut caller: Caller<'_, HostEnv>, op: u32, oc: u32| -> i32 {
+            let sym = caller.data().game.as_ref().and_then(|g| g.ext.attached.as_ref()).map(|(s, _)| s.clone());
+            match sym {
+                Some(s) => write(&mut caller, op, oc, s.as_bytes()),
+                None => 0,
+            }
         }
     ).map_err(|e| e.to_string())?;
     Ok(())

@@ -157,11 +157,14 @@ pub fn derive_v2_fields(tx_type: &str, p: &Value) -> Result<(TxPayload, f64), St
         // / deployer and pays the fee.
         "contract_call" => {
             let gas = opt_u(p, "gasLimit").unwrap_or(quantum_vault_vm::DEFAULT_FUEL_LIMIT);
+            let attach = parse_attach(p)?;
             (TxPayload {
                 contract_addr: Some(s(p, "contractAddr")),
                 contract_method: Some(s(p, "method")),
                 contract_args: p.get("args").filter(|v| !v.is_null()).cloned(),
                 contract_gas_limit: Some(gas),
+                contract_attach_symbol: attach.as_ref().map(|a| a.0.clone()),
+                contract_attach_amount: attach.map(|a| a.1),
                 ..d
             }, gas as f64 * CONTRACT_GAS_PRICE_XRGE)
         }
@@ -216,4 +219,17 @@ pub fn verify_v2_binding(tx: &TxV1) -> Result<(), String> {
     if tx.payload != payload { return Err(format!("{} payload does not match its signed_payload", tx.tx_type)); }
     if tx.fee != fee { return Err(format!("{} fee {} does not match the fee bound to its signed_payload ({})", tx.tx_type, tx.fee, fee)); }
     Ok(())
+}
+
+/// Payable contract call: the optional signed `attach: {"symbol": "XRGE" | TOKEN, "amount": N}`,
+/// `N` an integer in quanta for XRGE (1 XRGE = 10^9) or raw units for a token. Integers only, so the
+/// amount survives JSON relay exactly. `None` when absent; an error when present but malformed.
+pub fn parse_attach(p: &Value) -> Result<Option<(String, u64)>, String> {
+    let Some(a) = p.get("attach").filter(|v| !v.is_null()) else { return Ok(None) };
+    let symbol = a.get("symbol").and_then(|v| v.as_str()).map(|s| s.trim().to_uppercase())
+        .filter(|s| !s.is_empty() && s.len() <= 32 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        .ok_or("attach.symbol must be a token symbol")?;
+    let amount = a.get("amount").and_then(|v| v.as_u64()).filter(|n| *n > 0)
+        .ok_or("attach.amount must be a positive integer (quanta for XRGE, raw units for tokens)")?;
+    Ok(Some((symbol, amount)))
 }

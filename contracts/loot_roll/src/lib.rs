@@ -1,8 +1,10 @@
 //! Loot roll — an example RougeChain game contract (commit, then settle).
 //!
 //! * `setup` creates the contract's own `LOOT` NFT collection (max 1,000 items). Call it once.
-//! * `roll` commits: it records the current block height for the caller (one open roll per player)
-//!   and emits `committed` {"height":H}. Nothing is decided yet.
+//! * `roll` commits: it must be paid — attach at least 0.5 XRGE to the call (a payable call) — and
+//!   records the current block height for the caller (one open roll per player), emitting
+//!   `committed` {"height":H}. Nothing is decided yet. A missing/short payment or a second open roll
+//!   fails the call, so the payment goes back to the player. Entry fees stay in the treasury.
 //! * `settle` (from block H+2 on) decides the roll from the hash of block H+1 — a block that did not
 //!   exist when the player committed, whose hash covers the producer's signature and the validators'
 //!   finality signatures — mixed with the caller and H. It pays a prize from the contract's treasury:
@@ -27,6 +29,8 @@ extern "C" {
     fn host_get_self_addr(buf_ptr: *mut u8, buf_len: u32) -> i32;
     fn host_block_hash(height: i64, out_ptr: *mut u8) -> i32;
     fn host_get_block_height() -> i64;
+    fn host_get_attached_amount() -> i64;
+    fn host_get_attached_symbol(out_ptr: *mut u8, out_cap: u32) -> i32;
     fn host_sha256(data_ptr: *const u8, data_len: u32, out_ptr: *mut u8) -> i32;
     fn host_storage_read(key_ptr: *const u8, key_len: u32, val_ptr: *mut u8, val_len: u32) -> i32;
     fn host_storage_write(key_ptr: *const u8, key_len: u32, val_ptr: *const u8, val_len: u32);
@@ -43,6 +47,14 @@ extern "C" {
 
 const SYMBOL: &[u8] = b"LOOT";
 const HALF_XRGE: i64 = 500_000_000; // quanta
+/// Entry fee for one roll, attached to the `roll` call.
+const ENTRY_FEE: i64 = 500_000_000; // 0.5 XRGE in quanta
+
+/// Fail the call. Everything the call did is discarded — including the attached payment, which
+/// stays with the player.
+fn revert() -> ! {
+    core::arch::wasm32::unreachable()
+}
 
 static mut CALLER: [u8; 8192] = [0; 8192];
 static mut SELF_ADDR: [u8; 64] = [0; 64];
@@ -111,12 +123,16 @@ fn push(out: &mut [u8], i: &mut usize, s: &[u8]) {
 #[no_mangle]
 pub extern "C" fn roll() {
     let caller = caller();
-    if caller.is_empty() { return; }
+    if caller.is_empty() { revert(); }
+    let mut sym = [0u8; 8];
+    let sl = unsafe { host_get_attached_symbol(sym.as_mut_ptr(), 8) };
+    if sl != 4 || &sym[..4] != b"XRGE" || unsafe { host_get_attached_amount() } < ENTRY_FEE {
+        revert(); // unpaid or underpaid: the call fails and any payment is returned
+    }
     let key = pending_key(caller);
     let mut existing = [0u8; 8];
     if unsafe { host_storage_read(key.as_ptr(), 33, existing.as_mut_ptr(), 8) } == 8 {
-        reply(b"error", b"{\"error\":\"already_committed\"}");
-        return;
+        revert(); // one open roll per player; the new payment is returned
     }
     let h = unsafe { host_get_block_height() };
     let hb = h.to_be_bytes();
