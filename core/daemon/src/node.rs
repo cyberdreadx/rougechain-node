@@ -94,6 +94,232 @@ const V2_FORK_HEIGHT: u64 = 0;
 const STATE_ROOT_ACTIVATION_HEIGHT: u64 = V2_FORK_HEIGHT;
 const CONTRACT_CUSTODY_ACTIVATION_HEIGHT: u64 = V2_FORK_HEIGHT;
 
+/// First height whose `bridge_withdraw` receipts carry the R1 typed execution result, i.e. the
+/// height from which the relayer-facing payout store is deterministically derivable from
+/// accepted chain history alone. Pre-R1 receipts are unconditionally `Success` and MUST NOT
+/// be used to derive payout records. Set to the R1 activation height at deployment (fork F);
+/// until then it is the first post-tip height so no historical record is ever re-derived.
+pub const BRIDGE_PAYOUT_STORE_ACTIVATION_HEIGHT: u64 = crate::fork::FORK_HEIGHT;
+
+/// Test-only, thread-local override of the v2 fork height so the historical-replay
+/// regression can exercise the PRODUCTION activation height (18) while unit tests keep
+/// activating from genesis. Compiled out of production builds — there is no runtime knob.
+#[cfg(test)]
+thread_local! {
+    static TEST_FORK_HEIGHT_OVERRIDE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    /// Test-only: skip the F-1 canonical-ledger assertion (used ONLY by the table generator test
+    /// that produces the canonical tables in the first place). Compiled out of production.
+    static TEST_SKIP_F_MINUS_1_ASSERT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Test-only producer fault injection: 0 none, 1 root computation, 2 validator
+    /// persistence (after the store was mutated), 3 append_block (after everything).
+    static TEST_PRODUCER_FAULT: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+// ── Track A Step 2.2 upgrade gates ───────────────────────────────────────────────────────────
+// Compiled consensus/protocol constants. `None` = NOT SCHEDULED: the node behaves exactly as
+// before at every height. They are constants (never env/config) so two validators can never
+// disagree about them; choosing a value is a coordinated release, not an operator setting.
+/// From this height votes/proofs follow FINALITY_V2 (verified ML-DSA votes, recomputed quorum,
+/// no producer self-finalization). Not part of block validity ⇒ a coordinated validator
+/// software upgrade, not a state fork.
+pub const FINALITY_V2_ACTIVATION_HEIGHT: Option<u64> = Some(150);
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TEST_FINALITY_V2_ACTIVATION: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    /// Test-only: the pinned validator replay base for devnets whose validators are injected
+    /// directly into the store (production uses genesis / the canonical F-1 table).
+    pub(crate) static TEST_VALIDATOR_REPLAY_BASE: std::cell::RefCell<Option<(u64, Vec<(String, quantum_vault_finality::validator_replay::VState)>)>> = const { std::cell::RefCell::new(None) };
+}
+/// FINALITY_V2 vote intake window: votes are only useful for the newest heights.
+pub const FINALITY_V2_VOTE_WINDOW: u64 = 256;
+/// Peer proof distribution: heights WE choose to ask a peer about, per sync pass.
+pub const FINALITY_V2_MAX_PROOF_REQUESTS_PER_PASS: usize = 16;
+#[inline]
+pub(crate) fn finality_v2_active(height: u64) -> bool {
+    #[cfg(test)]
+    { if let Some(h) = TEST_FINALITY_V2_ACTIVATION.with(|c| c.get()) { return height >= h; } }
+    matches!(FINALITY_V2_ACTIVATION_HEIGHT, Some(h) if height >= h)
+}
+#[inline]
+fn state_root_activation_height() -> u64 {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.get()) { return h; }
+    }
+    STATE_ROOT_ACTIVATION_HEIGHT
+}
+#[inline]
+fn contract_custody_activation_height() -> u64 {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.get()) { return h; }
+    }
+    CONTRACT_CUSTODY_ACTIVATION_HEIGHT
+}
+
+/// C1 — TRANSACTION-UNIQUENESS consensus rule (scheduled hard fork).
+///
+/// Block import verifies signatures but, before this rule, never checked that a signed
+/// transaction had not already been included, so any accepted proposer could re-include a
+/// historical signed tx and debit its sender again (the mempool nonce check is bypassed by a
+/// proposer building the block directly; mainnet history is not nonce-sequential, so a
+/// consensus nonce rule is NOT possible without splitting the chain).
+///
+/// From this height on, a block is INVALID if any of its transactions (by canonical tx hash,
+/// `compute_single_tx_hash` = sha256(encode_tx_v1)) appears twice in the block or was already
+/// included in an earlier accepted block. `None` = not scheduled (rule inactive everywhere;
+/// the index and the mempool guard still run, which are node-local and change no block
+/// validity). Set to the chosen fork height together with a validator rollout.
+pub const TX_UNIQUENESS_ACTIVATION_HEIGHT: Option<u64> = Some(90);
+#[cfg(test)]
+thread_local! {
+    static TEST_TX_UNIQUENESS_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[inline]
+fn tx_uniqueness_activation_height() -> Option<u64> {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.get()) { return h; }
+    }
+    TX_UNIQUENESS_ACTIVATION_HEIGHT
+}
+#[inline]
+pub fn tx_uniqueness_rule_active(height: u64) -> bool {
+    matches!(tx_uniqueness_activation_height(), Some(a) if height >= a)
+}
+/// Meta key inside the tx-seen tree: the tip height the index is complete up to.
+const TX_SEEN_INDEXED_TIP_KEY: &[u8] = b"__indexed_tip_v2";
+
+/// PROPOSER SELECTION, Release 1 (see `PROPOSER_SELECTION_DESIGN.md`). From this height on, block
+/// `H` is valid only if its proposer is `designated_proposer(H)`: the eligible validator
+/// (`stake > 0 && jailed_until <= H`) with the greatest stake in the canonical validator state after
+/// block `H-1`, ties broken by the lowest raw public-key bytes. No fallback, no rotation, no
+/// randomness: if the designated proposer is offline the chain halts at `H-1`. At the same height the
+/// legacy missed-block accounting (increment / auto-slash / auto-jail) is frozen: without a fallback
+/// there is no consensus block from which a missed slot could be derived. `None` = not scheduled.
+pub const PROPOSER_SELECTION_ACTIVATION_HEIGHT: Option<u64> = Some(100);
+#[cfg(test)]
+thread_local! {
+    static TEST_PROPOSER_SELECTION_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[inline]
+fn proposer_selection_activation_height() -> Option<u64> {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_PROPOSER_SELECTION_OVERRIDE.with(|c| c.get()) { return h; }
+    }
+    PROPOSER_SELECTION_ACTIVATION_HEIGHT
+}
+#[inline]
+pub fn proposer_selection_active(height: u64) -> bool {
+    matches!(proposer_selection_activation_height(), Some(a) if height >= a)
+}
+
+/// GAME_READY, Phase 0 (see `GAME_READY_SCOPE.md`): contract transactions become player-signed.
+/// From this height on a `contract_call` / `contract_deploy` is valid only if the CALLER signed
+/// it (a signed payload bound by `v2_binding`); the signer is the caller / deployer the contract
+/// sees and pays the fee. Node-signed contract transactions — whose "caller" was an unsigned
+/// field anyone could fill in — become invalid. Before this height, the `/api/v2/*` player-signed
+/// contract format is rejected, exactly as nodes without this code reject it, so activating is a
+/// coordinated upgrade like the others. `None` = not scheduled.
+pub const GAME_READY_ACTIVATION_HEIGHT: Option<u64> = Some(150);
+#[cfg(test)]
+thread_local! {
+    static TEST_GAME_READY_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[inline]
+fn game_ready_activation_height() -> Option<u64> {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_GAME_READY_OVERRIDE.with(|c| c.get()) { return h; }
+    }
+    GAME_READY_ACTIVATION_HEIGHT
+}
+#[inline]
+pub fn game_ready_active(height: u64) -> bool {
+    matches!(game_ready_activation_height(), Some(a) if height >= a)
+}
+
+/// GAME_READY 2 — contracts hold and move custom tokens and NFTs, create NFT collections and
+/// mint to players, and draw per-transaction randomness (`quantum_vault_vm::game`). From this
+/// height every contract call runs with those host functions linked and with contract-supplied
+/// addresses canonicalised; NFT owner checks compare canonical addresses. Before it, the VM links
+/// exactly the old host functions, so a module importing the new ones fails like on old nodes.
+/// NFT and contract-storage state are not yet in the state root (see GAME_READY_SCOPE.md).
+/// `None` = not scheduled.
+pub const GAME_READY_2_ACTIVATION_HEIGHT: Option<u64> = Some(160);
+#[cfg(test)]
+thread_local! {
+    static TEST_GAME_READY_2_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+pub(crate) fn set_test_game_ready_2(h: Option<u64>) {
+    TEST_GAME_READY_2_OVERRIDE.with(|c| c.set(Some(h)));
+}
+#[inline]
+pub fn game_ready_2_active(height: u64) -> bool {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_GAME_READY_2_OVERRIDE.with(|c| c.get()) {
+            return matches!(h, Some(a) if height >= a);
+        }
+    }
+    matches!(GAME_READY_2_ACTIVATION_HEIGHT, Some(a) if height >= a)
+}
+
+/// Owner check for NFT transactions: exact match, or (from GAME_READY 2) the same canonical
+/// address — so a token a contract minted to a rouge1 address can be moved by its key's owner.
+fn nft_owner_matches(owner: &str, signer: &str, height: u64) -> bool {
+    owner == signer || (game_ready_2_active(height) && canon_addr(owner) == canon_addr(signer))
+}
+
+/// Chain state a contract sees through the GAME_READY 2 host functions.
+struct NodeChainView {
+    tokens: HashMap<TokenBalanceKey, u128>,
+    nfts: NftStore,
+}
+
+impl quantum_vault_vm::ChainView for NodeChainView {
+    fn canon(&self, addr: &str) -> String { canon_addr(addr) }
+    fn token_balance(&self, owner: &str, symbol: &str) -> u128 {
+        *self.tokens.get(&(owner.to_string(), symbol.to_string())).unwrap_or(&0)
+    }
+    fn nft_owner(&self, collection_id: &str, token_id: u64) -> Option<(String, bool)> {
+        self.nfts.get_token(collection_id, token_id).ok().flatten().map(|t| (t.owner, t.locked))
+    }
+    fn nft_collection(&self, collection_id: &str) -> Option<quantum_vault_vm::CollectionView> {
+        self.nfts.get_collection(collection_id).ok().flatten().map(|c| quantum_vault_vm::CollectionView {
+            creator: c.creator, max_supply: c.max_supply, minted: c.minted, frozen: c.frozen,
+        })
+    }
+}
+
+/// Whether `tx` is a contract transaction in the player-signed `/api/v2/*` format (a signed
+/// payload that is not a CLI envelope).
+fn is_player_signed_contract_tx(tx: &TxV1) -> bool {
+    matches!(tx.tx_type.as_str(), "contract_call" | "contract_deploy")
+        && tx.signed_payload.as_deref()
+            .and_then(|sp| serde_json::from_str::<serde_json::Value>(sp).ok())
+            .map(|p| !crate::v2_binding::is_cli_envelope(&p))
+            .unwrap_or(false)
+}
+
+/// The GAME_READY transaction rule for a block at `height` (consensus from activation; also
+/// applied by the mempool and the producer so neither ever holds a tx a block would reject).
+pub fn game_ready_tx_rule(tx: &TxV1, height: u64) -> Result<(), String> {
+    if !matches!(tx.tx_type.as_str(), "contract_call" | "contract_deploy") {
+        return Ok(());
+    }
+    if game_ready_active(height) {
+        if tx.signed_payload.is_none() {
+            return Err(format!("{} must be signed by its caller from height {}", tx.tx_type,
+                game_ready_activation_height().unwrap_or_default()));
+        }
+    } else if is_player_signed_contract_tx(tx) {
+        return Err(format!("player-signed {} is not active before GAME_READY", tx.tx_type));
+    }
+    Ok(())
+}
+
 /// Height after which a P2P-imported block's proposer MUST be a staked validator
 /// (`stake > 0`) in the on-chain validator set, or the block is rejected on
 /// `import_block`. Blocks at or below this height skip *only that* check — a
@@ -139,6 +365,24 @@ pub const BURN_ADDRESS: &str = "XRGE_BURN_0x000000000000000000000000000000000000
 /// `__staking_rewards__`, and anything that isn't a valid ML-DSA public key —
 /// are not valid pubkeys, so `pub_key_to_address` fails and they pass through
 /// unchanged. A string that is already a `rouge1…` address passes through too.
+/// Response of `GET /api/pool/:pool_id/earnings/:owner`.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LpEarnings {
+    pub pool_id: String,
+    pub token_a: String,
+    pub token_b: String,
+    pub lp_balance: u64,
+    /// False when the fee ledger doesn't match the on-chain LP balance (nothing to collect then).
+    pub tracked: bool,
+    /// LP tokens to remove to take exactly the fees; the deposit stays in the pool.
+    pub lp_to_collect: u64,
+    pub earned_a: u64,
+    pub earned_b: u64,
+    /// Fee growth of the position since deposit (0.004 = +0.4%).
+    pub growth: f64,
+}
+
 fn canon_addr<S: AsRef<str>>(key: S) -> String {
     let key = key.as_ref();
     if quantum_vault_crypto::is_rouge_address(key) {
@@ -160,10 +404,55 @@ pub struct NodeOptions {
     /// set — not the live validator set — so validators that join later can
     /// never gain bridge-authority power. Empty disables the authority path.
     pub bridge_authority_keys: Vec<String>,
+    /// Genesis seed (allocations + validators) so a node can deterministically recover its
+    /// state from genesis + chain history (missing / corrupt snapshot) without any snapshot.
+    pub genesis_allocations: Vec<crate::GenesisAllocation>,
+    pub genesis_validators: Vec<crate::GenesisValidator>,
 }
 
 /// Key for token balances: (public_key, token_symbol)
 type TokenBalanceKey = (String, String);
+
+/// Position-aligned validator-state execution result of a `stake` / `unstake` tx. Produced by
+/// the SAME decision that debits the economic ledger (inside `apply_balance_tx_inner`, against a
+/// sequential in-block validator shadow); `apply_validator_block` consumes ONLY these results.
+/// A failed/no-op stake or unstake therefore can never change validator state.
+/// Outcome of UNTRUSTED (gossiped) vote intake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoteIntake { Accepted, Duplicate, /// we do not have that block / its validator set yet — the sender may retry
+    NotReady, Rejected }
+/// Bound on votes waiting to be offered to peers.
+pub const FINALITY_V2_MAX_OUTBOX: usize = 4096;
+/// How many recent unfinalized heights a validator re-offers its own (journal-idempotent) votes for.
+pub const FINALITY_V2_RESIGN_HEIGHTS: u64 = 8;
+
+/// Result of the read-only FINALITY_V2 preflight. Contains PUBLIC data only.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FinalityV2Preflight {
+    pub applicable_height: u64,
+    /// public key in node-keys.json
+    pub node_pub_key: String,
+    /// identity FINALITY_V2 votes are cast as — always the node's own key, by construction
+    pub votes_as: String,
+    pub eligible_stake: u128, pub total_stake: u128, pub quorum: u128, pub validators: usize,
+    pub store_matches_history: bool,
+    pub journal_entries: Option<usize>,
+    pub ready_to_vote: bool,
+    pub problems: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ValidatorExecution {
+    StakeApplied { validator: String, amount: u128 },
+    UnstakeApplied { validator: String, amount: u128, release_height: u64 },
+    Failed(String),
+}
+
+/// Everything `apply_balance_block` decided, indexed by tx position.
+pub struct BlockExecution {
+    pub bridge: Vec<Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>>,
+    pub validator: Vec<Option<ValidatorExecution>>,
+}
 
 /// Queued unbonding entry — funds release after UNBONDING_BLOCKS
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -194,10 +483,27 @@ pub struct L1Node {
     allowance_store: AllowanceStore,
     nullifier_store: NullifierStore,
     receipt_store: ReceiptStore,
+    /// Outcome of each executed contract_call (tx hash → success, gas, error), taken by
+    /// `generate_receipts` once the block is persisted. Off-consensus bookkeeping.
+    contract_outcomes: Arc<Mutex<HashMap<String, (bool, u64, Option<String>)>>>,
+    /// C1: canonical tx hash -> height of the accepted block that included it (see
+    /// `TX_UNIQUENESS_ACTIVATION_HEIGHT`). Written only after a block is durable; rebuilt
+    /// from the stored chain on every start.
+    tx_seen_db: sled::Tree,
+    /// Producer anti-equivocation journal (node-local safety, NOT a consensus rule): the exact sealed
+    /// block this node proposed for each (height, parent_hash), written before the block is made
+    /// durable/broadcast. See `journal_proposal` / `recover_pending_proposal`.
+    proposal_journal: sled::Tree,
     social_store: SocialStore,
     keys: Arc<Mutex<PQKeypair>>,
     mempool: Arc<Mutex<HashMap<String, TxV1>>>,
     verified_tx_ids: Arc<Mutex<HashSet<String>>>,
+    /// R1 derived-state health: set when a relayer-facing bridge payout record could NOT be
+    /// persisted for an ACCEPTED block. Chain validity is unaffected (the record is derived
+    /// data, rebuildable from accepted history); the bridge is fail-closed until rebuilt.
+    bridge_store_degraded: Arc<std::sync::atomic::AtomicBool>,
+    /// tx_ids whose payout-record write failed (for alerts / the health endpoint).
+    bridge_store_failed_ids: Arc<Mutex<Vec<String>>>,
     balances: Arc<Mutex<HashMap<String, u128>>>,  // native XRGE in quanta (1 XRGE = 1e9); T3c flip
     token_balances: Arc<Mutex<HashMap<TokenBalanceKey, u128>>>,
     lp_balances: Arc<Mutex<HashMap<TokenBalanceKey, u128>>>,  // LP token balances (integer counts; T3 flip)
@@ -217,6 +523,20 @@ pub struct L1Node {
     pub unbonding_queue: Arc<Mutex<Vec<UnbondingEntry>>>,
     /// Persisted finality proofs (height -> proof JSON)
     finality_db: sled::Tree,
+    /// FINALITY_V2: immutable per-height validator-set snapshots (derived; never consensus state)
+    validator_sets_db: sled::Tree,
+    /// FINALITY_V2: cursor of the deterministic validator replay (provenance check of snapshots)
+    validator_replay: Arc<Mutex<Option<quantum_vault_finality::validator_replay::ValidatorReplay>>>,
+    /// FINALITY_V2: heights whose persisted proof has been verified by THIS process (bounded)
+    verified_final: Arc<Mutex<std::collections::BTreeSet<u64>>>,
+    /// FINALITY_V2: newly recorded valid votes (own or relayed) waiting to be offered to peers
+    vote_outbox: Arc<Mutex<std::collections::VecDeque<VoteMessage>>>,
+    /// Test-only, PER-NODE copies of the thread-local gates, captured at construction, so a node
+    /// behaves the same on server / blocking-pool threads of a real-networking devnet test.
+    #[cfg(test)]
+    test_v2_gate: Option<u64>,
+    #[cfg(test)]
+    pub(crate) test_replay_base: Arc<Mutex<Option<(u64, Vec<(String, quantum_vault_finality::validator_replay::VState)>)>>>,
     /// Notify handle: wake the miner immediately when a tx enters mempool
     mine_notify: Arc<tokio::sync::Notify>,
     /// Running total of XRGE currently in the shielded privacy pool
@@ -239,6 +559,11 @@ impl L1Node {
         let messenger_store = MessengerStore::new(&data_dir_str);
         let pool_store = PoolStore::new(&opts.data_dir)?;
         let pool_event_store = PoolEventStore::new(&opts.data_dir)?;
+        match pool_event_store.rebuild_lp_positions_if_needed(|k| canon_addr(k)) {
+            Ok(0) => {},
+            Ok(n) => eprintln!("[startup] Built LP fee ledger from {} liquidity event(s)", n),
+            Err(e) => eprintln!("[startup] LP fee ledger rebuild failed: {}", e),
+        }
         let token_metadata_store = TokenMetadataStore::new(&data_dir_str)?;
         // Backfill token_id for existing tokens (migration)
         match token_metadata_store.migrate_token_ids() {
@@ -261,6 +586,14 @@ impl L1Node {
         let receipt_db = sled::open(opts.data_dir.join("receipt-db"))
             .map_err(|e| format!("open receipt DB: {}", e))?;
         let receipt_store = ReceiptStore::new(&receipt_db)?;
+        let proposal_journal = sled::open(opts.data_dir.join("proposal-journal-db"))
+            .map_err(|e| format!("open proposal journal: {}", e))?
+            .open_tree("proposals")
+            .map_err(|e| format!("open proposal tree: {}", e))?;
+        let tx_seen_db = sled::open(opts.data_dir.join("tx-seen-db"))
+            .map_err(|e| format!("open tx-seen DB: {}", e))?
+            .open_tree("tx_hashes")
+            .map_err(|e| format!("open tx-seen tree: {}", e))?;
         let keys = Self::load_or_create_keys(&opts.data_dir)?;
             let nonce_db = sled::open(opts.data_dir.join("nonce-db"))
                 .map_err(|e| format!("open nonce DB: {}", e))?
@@ -275,11 +608,12 @@ impl L1Node {
                 .map_err(|e| format!("open fee DB: {}", e))?;
             let fee_db = fee_sled.open_tree("eip1559")
                 .map_err(|e| format!("open fee tree: {}", e))?;
-            let finality_db_tree = {
-                sled::open(opts.data_dir.join("finality-db"))
-                    .map_err(|e| format!("finality-db: {}", e))?
-                    .open_tree("finality")
-                    .map_err(|e| format!("finality tree: {}", e))?
+            let (finality_db_tree, validator_sets_tree) = {
+                let fdb = sled::open(opts.data_dir.join("finality-db"))
+                    .map_err(|e| format!("finality-db: {}", e))?;
+                (fdb.open_tree("finality").map_err(|e| format!("finality tree: {}", e))?,
+                 // FINALITY_V2 derived state: height → eligible validator set applicable to it
+                 fdb.open_tree("validator_sets_v2").map_err(|e| format!("validator sets tree: {}", e))?)
             };
             let snapshot_db = sled::open(opts.data_dir.join("snapshot-db"))
                 .map_err(|e| format!("snapshot-db: {}", e))?
@@ -300,6 +634,7 @@ impl L1Node {
             commitment_store,
             nullifier_store,
             receipt_store,
+            contract_outcomes: Arc::new(Mutex::new(HashMap::new())),
             lock_store,
             multisig_store,
             token_stake_store,
@@ -309,6 +644,8 @@ impl L1Node {
             keys: Arc::new(Mutex::new(keys)),
             mempool: Arc::new(Mutex::new(HashMap::new())),
             verified_tx_ids: Arc::new(Mutex::new(HashSet::new())),
+            bridge_store_degraded: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            bridge_store_failed_ids: Arc::new(Mutex::new(Vec::new())),
             balances: Arc::new(Mutex::new(HashMap::new())),
             token_balances: Arc::new(Mutex::new(HashMap::new())),
             lp_balances: Arc::new(Mutex::new(HashMap::new())),
@@ -328,9 +665,19 @@ impl L1Node {
             },
             unbonding_queue: Arc::new(Mutex::new(Vec::new())),
             finality_db: finality_db_tree,
+            validator_sets_db: validator_sets_tree,
+            validator_replay: Arc::new(Mutex::new(None)),
+            verified_final: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
+            vote_outbox: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            #[cfg(test)]
+            test_v2_gate: TEST_FINALITY_V2_ACTIVATION.with(|c| c.get()),
+            #[cfg(test)]
+            test_replay_base: Arc::new(Mutex::new(None)), // set explicitly by multi-threaded devnet tests; else the thread-local applies
             mine_notify: Arc::new(tokio::sync::Notify::new()),
             shielded_supply: Arc::new(Mutex::new(0.0)),
             mined_tx_hashes: Arc::new(Mutex::new(HashSet::new())),
+            tx_seen_db,
+            proposal_journal,
             wasm_runtime: None,
             contract_store: None,
             snapshot_db,
@@ -363,7 +710,12 @@ impl L1Node {
         }
     }
 
-    pub fn init(&self) -> Result<(), String> {
+    pub fn init(&self) -> Result<(), String> { self.init_inner(false) }
+    /// ONLY for the explicit `--migrate-canonical-ledger` command: loads state without the
+    /// fork-readiness guard so the legacy ledger can be verified and migrated. Never used by a
+    /// normal start.
+    pub fn init_for_migration(&self) -> Result<(), String> { self.init_inner(true) }
+    fn init_inner(&self, allow_legacy_ledger_for_migration: bool) -> Result<(), String> {
         self.store.init()?;
         self.messenger_store.init()?;
 
@@ -387,15 +739,38 @@ impl L1Node {
             // Pool and NFT sled stores are already up to date from live block processing
             self.migrate_nonce_db();
         } else {
-            self.rebuild_pool_state()?;
-            self.rebuild_nft_state()?;
+            // Deterministic recovery = the fresh-sync path over the stored blocks (checkpoint
+            // validation + canonical rules). Never a legacy rebuild.
             self.migrate_nonce_db();
-            self.rebuild_balances()?;
-            self.rebuild_token_balances()?;
-            // Save snapshot after rebuild so next restart is instant
-            self.save_balance_snapshot(tip.height);
+            self.recover_from_history()?;
+        }
+        // Past F-1 a node may only run on the canonical ledger (explicit migration required
+        // for a legacy production ledger; never automatic).
+        if !allow_legacy_ledger_for_migration && self.fork_applies() {
+            self.fork_readiness_check()?;
         }
         self.rebuild_proposer_counts()?;
+        // C1: the tx-seen index is derived state — make it complete for the stored chain.
+        self.ensure_tx_seen_index()?;
+        // Amendment 2: a proposal journaled before a crash but never appended is re-imported now,
+        // so this node re-broadcasts the same block instead of sealing a second one.
+        self.recover_pending_proposal();
+        // Proposer selection Release 1: report the compiled activation height and what this node
+        // derives for the next height, so operators can compare nodes before activation.
+        if let Ok(t) = self.store.get_tip() {
+            let next = t.height + 1;
+            let d = self.designated_proposer(next).unwrap_or(None);
+            eprintln!("[consensus] proposer selection: activation height {:?}; next height {} (rule {}); designated proposer for {}: {}",
+                PROPOSER_SELECTION_ACTIVATION_HEIGHT, next, if proposer_selection_active(next) { "ACTIVE" } else { "inactive" },
+                next, d.as_deref().map(|d| &d[..16.min(d.len())]).unwrap_or("none"));
+        }
+        // R1: derived bridge payout store — idempotent reconstruction from accepted history on
+        // every start, so a missed persistence (crash, disk error) never survives a restart.
+        match self.rebuild_bridge_withdraw_store() {
+            Ok(n) if n > 0 => eprintln!("[bridge] rebuilt {} missing payout record(s) from accepted history", n),
+            Ok(_) => {}
+            Err(e) => eprintln!("[bridge] ALERT payout-store rebuild failed: {} — bridge DEGRADED", e),
+        }
         // Rebuild tx hash index if empty (first startup after upgrade)
         if self.store.lookup_tx_height("_probe_").unwrap_or(None).is_none() {
             // Check if index is populated by looking at tree length
@@ -426,6 +801,7 @@ impl L1Node {
         let finalized = persisted_finalized.min(tip.height);
         *self.finalized_height.lock().map_err(|_| "finality lock")? = finalized;
         eprintln!("[bft] Finalized height: {} (tip: {})", finalized, tip.height);
+        if let Err(e) = self.record_validator_set_for(tip.height + 1) { eprintln!("[bft] validator-set snapshot: {}", e); }
         Ok(())
     }
 
@@ -454,6 +830,8 @@ impl L1Node {
             self.snapshot_db.insert(b"burned_tokens", burned_bytes).map_err(|e| e.to_string())?;
             self.snapshot_db.insert(b"fees_burned", fees_burned.to_be_bytes().as_ref()).map_err(|e| e.to_string())?;
             self.snapshot_db.insert(b"shielded_supply", shielded.to_be_bytes().as_ref()).map_err(|e| e.to_string())?;
+            let ub = self.unbonding_queue.lock().map_err(|_| "unbonding lock")?;
+            self.snapshot_db.insert(b"unbonding_queue", serde_json::to_vec(&*ub).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
             self.snapshot_db.flush().map_err(|e| e.to_string())?;
             Ok(())
         };
@@ -513,8 +891,22 @@ impl L1Node {
         let shielded = f64::from_be_bytes(
             shielded_bytes.as_ref().try_into().map_err(|_| "bad shielded bytes")?
         );
+        // The pending-unbonding queue is consensus state (matured entries credit balances
+        // inside block application). A snapshot without it is acceptable ONLY for the legacy
+        // pre-fork era (no unstake exists in history 1..=F-1); at/after the fork its absence
+        // means the snapshot is incomplete ⇒ error ⇒ deterministic recovery from history.
+        let unbonding: Vec<UnbondingEntry> = match self.snapshot_db.get(b"unbonding_queue").map_err(|e| e.to_string())? {
+            Some(b) => serde_json::from_slice(&b).map_err(|e| format!("bad unbonding_queue: {}", e))?,
+            None if !self.fork_applies() => {
+                eprintln!("[init] snapshot has no unbonding_queue (pre-upgrade format on non-fork chain) — assuming empty");
+                Vec::new()
+            }
+            None if height < crate::fork::FORK_HEIGHT => Vec::new(),
+            None => return Err(format!("snapshot at height {} has no unbonding_queue — incomplete, rebuilding", height)),
+        };
 
         *self.balances.lock().map_err(|_| "bal lock")? = bal;
+        *self.unbonding_queue.lock().map_err(|_| "unbonding lock")? = unbonding;
         *self.token_balances.lock().map_err(|_| "tok lock")? = tok_vec.into_iter().collect();
         *self.lp_balances.lock().map_err(|_| "lp lock")? = lp_vec.into_iter().collect();
         *self.burned_tokens.lock().map_err(|_| "burned lock")? = burned;
@@ -535,6 +927,21 @@ impl L1Node {
     }
 
     /// Inject the contract store for WASM bytecode access during block import.
+    /// Events that contract calls in `block` emitted (after the block was accepted).
+    pub fn contract_events_in_block(&self, block: &BlockV1) -> Vec<quantum_vault_vm::ContractEvent> {
+        let Some(ref cs) = self.contract_store else { return Vec::new() };
+        let mut out = Vec::new();
+        for tx in block.txs.iter().filter(|t| t.tx_type == "contract_call") {
+            let Some(addr) = tx.payload.contract_addr.as_deref() else { continue };
+            let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
+            if let Ok(mut evs) = cs.get_events_page(addr, 256, Some(block.header.height + 1), Some(&tx_hash)) {
+                evs.reverse(); // emission order
+                out.extend(evs);
+            }
+        }
+        out
+    }
+
     pub fn set_contract_store(&mut self, cs: Arc<ContractStore>) {
         self.contract_store = Some(cs);
     }
@@ -692,92 +1099,9 @@ impl L1Node {
         self.store.get_block(height)
     }
 
-    /// Reset the chain with blocks from a peer (used for initial sync when genesis differs)
-    pub fn reset_chain(&self, blocks: &[BlockV1]) -> Result<(), String> {
-        if blocks.is_empty() {
-            return Err("Cannot reset with empty chain".to_string());
-        }
-        
-        // Clear and replace the chain file
-        self.store.reset_chain(blocks)?;
-        
-        // Rebuild pool and NFT state from the new chain
-        self.rebuild_pool_state()?;
-        self.rebuild_nft_state()?;
-        
-        // Reset balances
-        let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
-        let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
-        let mut lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
-        let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
-        balances.clear();
-        token_balances.clear();
-        lp_balances.clear();
-        burned_tokens.clear();
-        
-        // Replay all transactions to rebuild balances with fee distribution
-        let mut created_symbols: HashSet<String> = HashSet::new();
-        for block in blocks {
-            // Apply transaction effects
-            for tx in &block.txs {
-                if tx.tx_type == "create_token" {
-                    if let Some(ref sym) = tx.payload.token_symbol {
-                        let sym_upper = sym.trim().to_uppercase();
-                        if created_symbols.contains(&sym_upper) { continue; }
-                        created_symbols.insert(sym_upper.clone());
-
-                        let name = tx.payload.token_name.as_deref().unwrap_or(&sym_upper);
-                        let _ = self.register_or_merge_token_metadata(
-                            &sym_upper,
-                            name,
-                            &tx.from_pub_key,
-                            tx.payload.metadata_image.clone(),
-                            tx.payload.metadata_description.clone(),
-                            false,
-                            None,
-                        );
-                    }
-                }
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height, &self.shielded_supply);
-                self.apply_web3_state_effects(tx, block.header.height);
-                Self::apply_amm_balance_effects(
-                    &mut balances,
-                    &mut token_balances,
-                    &mut lp_balances,
-                    tx,
-                    &self.pool_store,
-                );
-            }
-            
-            // Distribute fees for this block
-            let total_fees: u128 = block.txs.iter().map(|tx| fee_to_quanta(tx.fee)).sum();
-            if total_fees > 0 {
-                let stakes = self.get_validator_stakes_at_height(block.header.height)?;
-                let base_fee = self.get_base_fee_quanta();
-                Self::distribute_fees(
-                    &mut balances,
-                    total_fees,
-                    &block.header.proposer_pub_key,
-                    &stakes,
-                    base_fee,
-                    block.txs.len(),
-                    &self.total_fees_burned,
-                );
-            }
-            // Update base fee for next block
-            let next_base_fee = self.calculate_next_base_fee(block.txs.len());
-            self.set_base_fee_quanta(next_base_fee);
-        }
-        
-        let final_height = blocks.last().map(|b| b.header.height).unwrap_or(0);
-        drop(balances);
-        drop(token_balances);
-        drop(lp_balances);
-        drop(burned_tokens);
-        self.save_balance_snapshot(final_height);
-        eprintln!("[node] Chain reset complete - now at height {}", final_height);
-        Ok(())
-    }
+    // `reset_chain` (legacy raw-replay chain replacement) was REMOVED: peer sync must reach
+    // every historical state only through `import_block` (checkpoints, canonical rules, F-1
+    // assertions, atomic rollback). Deterministic recovery = `recover_from_history`.
 
     pub fn get_recent_blocks(&self, limit: usize) -> Result<Vec<BlockV1>, String> {
         if limit == 0 {
@@ -898,39 +1222,80 @@ impl L1Node {
             }
         }
         
+        // C1: transaction uniqueness (consensus rule from TX_UNIQUENESS_ACTIVATION_HEIGHT).
+        if tx_uniqueness_rule_active(block.header.height) {
+            self.check_block_tx_uniqueness(&block)?;
+        }
+        // GAME_READY: contract transactions must be caller-signed from activation, and the
+        // player-signed format is refused before it (same outcome as pre-GAME_READY nodes).
+        for (i, tx) in block.txs.iter().enumerate() {
+            game_ready_tx_rule(tx, block.header.height)
+                .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
+        }
+        // Proposer selection (consensus rule from PROPOSER_SELECTION_ACTIVATION_HEIGHT): judged
+        // against the validator state after H-1 = the store as it is right now, before any
+        // state of this block is applied.
+        if proposer_selection_active(block.header.height) {
+            self.check_designated_proposer(&block)?;
+        }
+        // Release 2a: a block may only extend a FINAL parent (commit certificate required from the
+        // FINALITY_V2 activation), and carries no certificate before it. Checked before any state
+        // is touched, like the rules above.
+        self.check_parent_commit(&block)?;
+
         // Apply state BEFORE storing to disk (atomic: don't store blocks we can't apply)
         //
         // Phase 2: at/after the activation height, the block header commits to the
-        // post-state root. Snapshot the money maps first so a bad root can be
-        // rejected and the ledger restored exactly (side-effect stores are rebuilt
-        // from history on restart; the rejected block is never persisted).
-        let verify_root = block.header.height >= STATE_ROOT_ACTIVATION_HEIGHT;
-        let custody_active = block.header.height >= CONTRACT_CUSTODY_ACTIVATION_HEIGHT;
-        // Snapshot when either feature is live, so we can roll the money ledger
-        // back exactly on a rejected block — whether it's rejected by a
-        // fail-closed apply error (e.g. a bad contract) or a root mismatch.
-        let pre_snapshot = if verify_root || custody_active {
-            Some(self.snapshot_balance_maps()?)
-        } else {
-            None
-        };
+        // post-state root. ALWAYS take a full pre-apply snapshot first (money maps,
+        // burned tokens, fees, shielded supply, unbonding queue, nonce/address
+        // indexes and every side-effect sled store the block can touch) so ANY
+        // rejected block — apply error, root mismatch, validator-apply error or a
+        // persist failure — leaves the node state exactly as it was before the
+        // attempt. The rejected block is never persisted.
+        let verify_root = block.header.height >= state_root_activation_height();
+        let pre_snapshot = self.capture_pre_apply_snapshot(&block)?;
 
         // Any apply error (P3-4 fail-closed contract rejection included) must not
         // leave the ledger partially mutated.
-        if let Err(e) = self.apply_balance_block(&block) {
-            if let Some(snap) = pre_snapshot {
-                let _ = self.restore_balance_maps(snap);
+        let block_exec = match self.apply_balance_block(&block) {
+            Ok(results) => results,
+            Err(e) => {
+                let _ = self.restore_pre_apply_snapshot(pre_snapshot);
+                return Err(e);
             }
-            return Err(e);
-        }
+        };
 
-        if verify_root {
-            let computed = self.compute_current_state_root()?;
+        #[allow(unused_mut)]
+        let mut check_f_minus_1 = false;
+        if self.fork_applies() && crate::fork::is_checkpoint_height(block.header.height) {
+            // Historical era (18 ..= F-1): the committed root is a legacy operational commitment
+            // that canonical execution cannot recompute. Accept it ONLY by equality against the
+            // compiled, hash-pinned checkpoint table; the ledger itself is applied canonically.
+            if let Err(e) = crate::fork::verify_checkpoint(block.header.height, block.header.state_root.as_deref()) {
+                let _ = self.restore_pre_apply_snapshot(pre_snapshot);
+                return Err(e);
+            }
+            check_f_minus_1 = block.header.height == crate::fork::FORK_HEIGHT - 1;
+            #[cfg(test)]
+            { if TEST_SKIP_F_MINUS_1_ASSERT.with(|c| c.get()) { check_f_minus_1 = false; } }
+            if check_f_minus_1 {
+                // The canonical ledger at F-1 is itself a consensus commitment: assert it.
+                if let Err(e) = self.assert_canonical_ledger_at_f_minus_1() {
+                    let _ = self.restore_pre_apply_snapshot(pre_snapshot);
+                    return Err(format!("canonical ledger assertion failed at F-1 ({}): {}", block.header.height, e));
+                }
+            }
+        } else if verify_root {
+            let computed = match self.compute_state_root_for_height(block.header.height) {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = self.restore_pre_apply_snapshot(pre_snapshot);
+                    return Err(e);
+                }
+            };
             if block.header.state_root.as_deref() != Some(computed.as_str()) {
                 // Divergence (or a faulty/malicious proposer): roll back and reject.
-                if let Some(snap) = pre_snapshot {
-                    let _ = self.restore_balance_maps(snap);
-                }
+                let _ = self.restore_pre_apply_snapshot(pre_snapshot);
                 return Err(format!(
                     "state root mismatch at height {}: header={:?}, computed={}",
                     block.header.height, block.header.state_root, computed
@@ -938,15 +1303,38 @@ impl L1Node {
             }
         }
 
-        self.apply_validator_block(&block)?;
+        if let Err(e) = self.apply_validator_block(&block, &block_exec.validator) {
+            let _ = self.restore_pre_apply_snapshot(pre_snapshot);
+            return Err(e);
+        }
+        if check_f_minus_1 {
+            // Validator state after F-1 is asserted once the block's validator effects are in.
+            if let Err(e) = self.assert_canonical_validators_at_f_minus_1() {
+                let _ = self.restore_pre_apply_snapshot(pre_snapshot);
+                return Err(format!("canonical validator assertion failed at F-1 ({}): {}", block.header.height, e));
+            }
+        }
 
-        // Only persist after state was applied successfully
-        self.store.append_block(&block)?;
-        
+        // Only persist after state was applied successfully. If persisting fails
+        // the block is not on our chain, so the applied state must not survive.
+        if let Err(e) = self.store.append_block(&block) {
+            let _ = self.restore_pre_apply_snapshot(pre_snapshot);
+            return Err(e);
+        }
+
         // Generate and store transaction receipts
-        let receipts = self.generate_receipts(&block);
+        let receipts = self.generate_receipts(&block, &block_exec.bridge, &block_exec.validator);
         let _ = self.receipt_store.store_batch(&receipts);
-        
+        self.record_block_tx_hashes(&block);
+
+        // R1: relayer-facing payout records ONLY for an accepted + persisted block.
+        // (A block rejected above — apply error or state-root mismatch — never reaches
+        // this line, so it leaves zero withdrawal-store side effects.)
+        self.persist_bridge_withdraw_results(&block, &block_exec.bridge)?;
+        if self.fork_applies() && block.header.height == crate::fork::FORK_HEIGHT - 1 {
+            self.set_canonical_marker()?; // fresh sync reached the canonical F-1 ledger
+        }
+
         // Track proposer stats for imported blocks — node key may differ from validator key
         let proposer_key = block.header.proposer_pub_key.clone();
         if let Ok(Some(mut vstate)) = self.validator_store.get_validator(&proposer_key) {
@@ -971,6 +1359,12 @@ impl L1Node {
         Ok(())
     }
 
+    /// Read-only copy of every native XRGE balance (canonical address -> quanta), for
+    /// off-consensus features that need a point-in-time view (Regenerate vote snapshots).
+    pub fn xrge_balances_snapshot(&self) -> Result<HashMap<String, u128>, String> {
+        Ok(self.balances.lock().map_err(|_| "balance lock")?.clone())
+    }
+
     pub fn get_balance(&self, public_key: &str) -> Result<f64, String> {
         let balances = self.balances.lock().map_err(|_| "balance lock")?;
         Ok(quanta_to_display(*balances.get(&canon_addr(public_key)).unwrap_or(&0)))
@@ -982,9 +1376,15 @@ impl L1Node {
     }
 
     /// Generate receipts for all transactions in a block.
-    /// Called after successful block application — all txs are assumed successful
-    /// since invalid ones were rejected during signature verification.
-    fn generate_receipts(&self, block: &BlockV1) -> Vec<TxReceipt> {
+    /// Called after successful block application. Non-bridge txs keep the historical
+    /// `Success` status (out of R1 scope). For `bridge_withdraw`, the status is the
+    /// typed execution result — and an ABSENT result is `Failed`, never `Success`.
+    fn generate_receipts(
+        &self,
+        block: &BlockV1,
+        bridge_results: &[Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>],
+        validator_results: &[Option<ValidatorExecution>],
+    ) -> Vec<TxReceipt> {
         let mut receipts = Vec::with_capacity(block.txs.len());
         for (index, tx) in block.txs.iter().enumerate() {
             let tx_hash = compute_single_tx_hash(tx);
@@ -1191,13 +1591,33 @@ impl L1Node {
             };
 
             receipts.push(TxReceipt {
-                tx_hash,
+                tx_hash: tx_hash.clone(),
                 block_height: block.header.height,
                 block_hash: block.hash.clone(),
                 index: index as u32,
                 tx_type: tx.tx_type.clone(),
                 from: tx.from_pub_key.clone(),
-                status: TxStatus::Success,
+                status: if tx.tx_type == "bridge_withdraw" {
+                    use quantum_vault_bridge_exec::{bridge_receipt_status, BridgeReceipt};
+                    match bridge_receipt_status(bridge_results.get(index).and_then(|o| o.as_ref())) {
+                        BridgeReceipt::Success => TxStatus::Success,
+                        BridgeReceipt::Failed(reason) => TxStatus::Failed(reason), // Failed AND None
+                    }
+                } else if tx.tx_type == "stake" || tx.tx_type == "unstake" {
+                    // Derived observability: a stake/unstake that did not execute is not Success.
+                    match validator_results.get(index).and_then(|o| o.as_ref()) {
+                        Some(ValidatorExecution::StakeApplied { .. }) | Some(ValidatorExecution::UnstakeApplied { .. }) => TxStatus::Success,
+                        Some(ValidatorExecution::Failed(reason)) => TxStatus::Failed(reason.clone()),
+                        None => TxStatus::Failed("missing validator execution result".to_string()),
+                    }
+                } else if tx.tx_type == "contract_call" {
+                    match self.contract_outcomes.lock().ok().and_then(|mut o| o.remove(&tx_hash)) {
+                        Some((true, _, _)) | None => TxStatus::Success,
+                        Some((false, _, err)) => TxStatus::Failed(err.unwrap_or_else(|| "contract call failed".to_string())),
+                    }
+                } else {
+                    TxStatus::Success
+                },
                 fee_paid: tx.fee,
                 logs: vec![log],
                 timestamp: block.header.time,
@@ -1625,6 +2045,43 @@ impl L1Node {
         self.pool_store.list_pools()
     }
 
+    /// Uncollected swap fees for `owner`'s LP position in `pool_id`.
+    pub fn get_lp_earnings(&self, pool_id: &str, owner: &str) -> Result<Option<LpEarnings>, String> {
+        let Some(pool) = self.pool_store.get_pool(pool_id)? else { return Ok(None) };
+        let addr = canon_addr(owner);
+        let lp = {
+            let lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+            (*lp_balances.get(&(addr.clone(), pool_id.to_string())).unwrap_or(&0)).min(u64::MAX as u128) as u64
+        };
+        let pos = self.pool_event_store.get_lp_position(pool_id, &addr)?.unwrap_or_default();
+        let value = crate::pool_events::lp_share_value(pool.reserve_a, pool.reserve_b, pool.total_lp_supply);
+        let tracked = pos.lp == lp && lp > 0 && value.is_some();
+        let (lp_to_collect, growth) = match value {
+            Some(v) if tracked && pos.basis > 0.0 => {
+                let deposit_lp = pos.basis / v; // LP tokens worth the deposit today
+                (((lp as f64) - deposit_lp).floor().max(0.0) as u64, (lp as f64) / deposit_lp - 1.0)
+            }
+            _ => (0, 0.0),
+        };
+        let (earned_a, earned_b) = if lp_to_collect > 0 {
+            crate::amm::calculate_remove_liquidity(lp_to_collect, pool.reserve_a, pool.reserve_b, pool.total_lp_supply)
+                .unwrap_or((0, 0))
+        } else {
+            (0, 0)
+        };
+        Ok(Some(LpEarnings {
+            pool_id: pool_id.to_string(),
+            token_a: pool.token_a.clone(),
+            token_b: pool.token_b.clone(),
+            lp_balance: lp,
+            tracked,
+            lp_to_collect,
+            earned_a,
+            earned_b,
+            growth,
+        }))
+    }
+
     pub fn get_pool_events(&self, pool_id: &str, limit: usize) -> Result<Vec<PoolEvent>, String> {
         self.pool_event_store.get_pool_events(pool_id, limit)
     }
@@ -1688,6 +2145,18 @@ impl L1Node {
         self.check_nonce_valid(&tx.from_pub_key, tx.nonce)?;
 
         let tx_hash = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
+
+        // C1: a tx that is already in an accepted block is a replay — refuse it regardless
+        // of the (gap-tolerant) nonce check above.
+        // V2 binding (node-local, always on): the executable fields must be the canonical
+        // derivation of the signed payload, or an outsider could re-point a signed intent.
+        crate::v2_binding::verify_v2_binding(&tx)?;
+        let next_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
+        game_ready_tx_rule(&tx, next_height)?;
+        let identity = quantum_vault_types::tx_identity(&tx);
+        if let Some(h) = self.tx_included_at(&identity) {
+            return Err(format!("transaction {} already included in block {}", &identity[..16], h));
+        }
 
         // Reject txs already mined in a recent block
         if let Ok(mined) = self.mined_tx_hashes.lock() {
@@ -2234,13 +2703,306 @@ impl L1Node {
     }
 
     pub fn submit_vote(&self, vote: VoteMessage) -> Result<(), String> {
+        if self.v2_active(vote.height) { return self.submit_vote_v2(vote).map(|_| ()); }
         self.votes.lock().map_err(|_| "votes lock")?.push(vote);
         Ok(())
+    }
+
+    // ── FINALITY_V2 (Track A Step 2.2) ───────────────────────────────────────────────────────
+    /// Record (immutably) the eligible validator set applicable to `height` = validator state
+    /// after block `height - 1`. Only possible while the tip is exactly `height - 1`.
+    fn record_validator_set_for(&self, height: u64) -> Result<(), String> {
+        if !self.v2_active(height) { return Ok(()); }
+        let key = height.to_be_bytes();
+        if self.validator_sets_db.contains_key(key).map_err(|e| e.to_string())? { return Ok(()); }
+        if self.store.get_tip()?.height + 1 != height { return Err(format!("validator set for {height} can only be recorded at tip {}", height - 1)); }
+        let snap = quantum_vault_finality::ValidatorSetSnapshot::new(height, self.get_validator_stakes()?);
+        self.validator_sets_db.insert(key, snap.to_bytes()).map_err(|e| e.to_string())?;
+        self.validator_sets_db.flush().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    pub fn validator_set_for(&self, height: u64) -> Result<Option<quantum_vault_finality::ValidatorSetSnapshot>, String> {
+        Ok(self.validator_sets_db.get(height.to_be_bytes()).map_err(|e| e.to_string())?.and_then(|v| quantum_vault_finality::ValidatorSetSnapshot::from_bytes(&v)))
+    }
+    /// Run `f` with the verification context for `height`: OUR stored block + the recorded set.
+    fn with_vote_context<T>(&self, height: u64, f: impl FnOnce(&quantum_vault_finality::VoteContext) -> Result<T, String>) -> Result<T, String> {
+        let block = self.store.get_block(height)?.ok_or_else(|| format!("no accepted block at height {height}"))?;
+        let set = self.verified_validator_set_for(height)?; // stored bytes == deterministic replay, or error
+        f(&quantum_vault_finality::VoteContext { chain_id: &self.opts.chain.chain_id, height, stored_block_hash: &block.hash, validators: &set })
+    }
+    /// Verified vote intake. `Ok(true)` = newly recorded, `Ok(false)` = duplicate (no effect).
+    pub fn submit_vote_v2(&self, vote: VoteMessage) -> Result<bool, String> {
+        let height = vote.height;
+        // Bounded intake: cheap checks BEFORE any signature work or storage.
+        let tip = self.store.get_tip()?.height;
+        if height > tip { return Err(format!("vote rejected: height {height} is above the tip {tip}")); }
+        if tip - height > FINALITY_V2_VOTE_WINDOW { return Err(format!("vote rejected: height {height} is outside the {FINALITY_V2_VOTE_WINDOW}-block vote window")); }
+        if vote.signature.len() > 8192 || vote.voter_pub_key.len() > 8192 || vote.block_hash.len() != 64 || vote.vote_type.len() > 16 { return Err("vote rejected: malformed".to_string()); }
+        if self.has_verified_finality_proof(height) { return Ok(false); } // already final: nothing to add
+        // a slot that already holds a VALID vote needs no second signature verification
+        if self.votes.lock().map_err(|_| "votes lock")?.iter().any(|v| v.height == height && v.vote_type == vote.vote_type && v.voter_pub_key == vote.voter_pub_key) { return Ok(false); }
+        self.with_vote_context(height, |ctx| quantum_vault_finality::validate_vote(&vote, ctx).map_err(|e| format!("vote rejected: {:?}", e)))?;
+        {
+            let mut votes = self.votes.lock().map_err(|_| "votes lock")?;
+            if votes.iter().any(|v| v.height == height && v.vote_type == vote.vote_type && v.voter_pub_key == vote.voter_pub_key) { return Ok(false); }
+            // retained state ≤ window × validators × 2: drop everything outside the window
+            votes.retain(|v| !self.v2_active(v.height) || tip - v.height.min(tip) <= FINALITY_V2_VOTE_WINDOW);
+            votes.push(vote.clone());
+        }
+        // first acceptance ⇒ offer it to peers (own votes and relayed ones alike; a duplicate is
+        // never re-queued, so relaying terminates)
+        if let Ok(mut out) = self.vote_outbox.lock() { if out.len() >= FINALITY_V2_MAX_OUTBOX { out.pop_front(); } out.push_back(vote); }
+        self.try_finalize_block(height);
+        Ok(true)
+    }
+    /// Accept a finality proof produced elsewhere — only after full standalone verification.
+    pub fn import_finality_proof(&self, proof: &quantum_vault_types::FinalityProof) -> Result<(), String> {
+        if !self.v2_active(proof.height) { return Err("FINALITY_V2 is not active at that height".to_string()); }
+        if self.has_verified_finality_proof(proof.height) { return Ok(()); } // duplicate: ignored, nothing rewritten
+        if proof.precommit_votes.len() > quantum_vault_finality::MAX_PROOF_VOTES { return Err("proof rejected: too many votes".to_string()); }
+        self.with_vote_context(proof.height, |ctx| quantum_vault_finality::verify_finality_proof(proof, ctx).map(|_| ()).map_err(|e| format!("proof rejected: {:?}", e)))?;
+        self.persist_verified_finality(proof)
+    }
+    fn persist_verified_finality(&self, proof: &quantum_vault_types::FinalityProof) -> Result<(), String> {
+        let json = serde_json::to_vec(proof).map_err(|e| e.to_string())?;
+        self.finality_db.insert(proof.height.to_be_bytes(), json).map_err(|e| e.to_string())?;
+        self.finality_db.flush().map_err(|e| e.to_string())?;
+        { let mut fh = self.finalized_height.lock().map_err(|_| "finality lock")?; if proof.height > *fh { *fh = proof.height; } }
+        self.remember_verified_final(proof.height);
+        // the votes for a finalized height are no longer needed (the journal is untouched)
+        if let Ok(mut votes) = self.votes.lock() { votes.retain(|v| v.height != proof.height); }
+        Ok(())
+    }
+
+    /// Is there a persisted proof for `height` that VERIFIES? The mere presence of a `finality-db`
+    /// entry proves nothing (it may be legacy, corrupt or planted); each height is verified once
+    /// and remembered in a small bounded in-memory set.
+    fn has_verified_finality_proof(&self, height: u64) -> bool {
+        if self.verified_final.lock().map(|s| s.contains(&height)).unwrap_or(false) { return true; }
+        let Ok(Some(raw)) = self.finality_db.get(height.to_be_bytes()) else { return false };
+        let Ok(proof) = serde_json::from_slice::<quantum_vault_types::FinalityProof>(&raw) else { return false };
+        let ok = self.with_vote_context(height, |ctx| quantum_vault_finality::verify_finality_proof(&proof, ctx).map(|_| ()).map_err(|e| format!("{:?}", e))).is_ok();
+        if ok { self.remember_verified_final(height); }
+        ok
+    }
+    fn remember_verified_final(&self, height: u64) {
+        if let Ok(mut s) = self.verified_final.lock() { s.insert(height); while s.len() > 1024 { let first = *s.iter().next().unwrap(); s.remove(&first); } }
+    }
+
+    /// Is FINALITY_V2 active at `height` FOR THIS NODE (compiled constant; per-node test override).
+    #[inline]
+    pub fn v2_active(&self, height: u64) -> bool {
+        #[cfg(test)]
+        { if let Some(g) = self.test_v2_gate { return height >= g; } }
+        finality_v2_active(height)
+    }
+
+    /// Release 2a: does a block at `height` have to carry its parent's commit certificate?
+    /// Yes exactly when FINALITY_V2 is active for the parent (so votes/proofs exist for it).
+    #[inline]
+    pub fn parent_commit_required(&self, height: u64) -> bool {
+        height >= 1 && self.v2_active(height - 1)
+    }
+
+    /// Release 2a consensus rule. From activation, `header.parent_commit` must be a FINALITY_V2 proof
+    /// for exactly the parent (`height - 1`, `prev_hash`) that verifies against the validator set
+    /// applicable to the parent — quorum recomputed from verified signatures, nothing claimed is
+    /// trusted. Before activation the field must be absent, exactly as nodes without Release 2a
+    /// require (they could not even reproduce the block hash). A verified certificate is persisted,
+    /// so importing a block also finalizes its parent locally.
+    fn check_parent_commit(&self, block: &BlockV1) -> Result<(), String> {
+        let h = block.header.height;
+        let cert = block.header.parent_commit.as_ref();
+        if !self.parent_commit_required(h) {
+            if cert.is_some() {
+                return Err(format!("block {h} rejected: carries a parent commit certificate before Release 2a"));
+            }
+            return Ok(());
+        }
+        let cert = cert.ok_or_else(|| format!("block {h} rejected: missing the commit certificate of its parent {}", h - 1))?;
+        if cert.height != h - 1 || cert.block_hash != block.header.prev_hash {
+            return Err(format!("block {h} rejected: commit certificate is for {} / {}, not the parent {} / {}",
+                cert.height, &cert.block_hash[..16.min(cert.block_hash.len())], h - 1, &block.header.prev_hash[..16.min(block.header.prev_hash.len())]));
+        }
+        if cert.precommit_votes.len() > quantum_vault_finality::MAX_PROOF_VOTES {
+            return Err(format!("block {h} rejected: commit certificate has too many votes"));
+        }
+        self.with_vote_context(h - 1, |ctx| quantum_vault_finality::verify_finality_proof(cert, ctx)
+            .map(|_| ()).map_err(|e| format!("block {h} rejected: parent commit certificate invalid: {e:?}")))?;
+        if !self.has_verified_finality_proof(h - 1) { self.persist_verified_finality(cert)?; }
+        Ok(())
+    }
+
+    pub fn drain_vote_outbox(&self) -> Vec<VoteMessage> { self.vote_outbox.lock().map(|mut o| o.drain(..).collect()).unwrap_or_default() }
+    pub fn is_height_verified_final(&self, height: u64) -> bool { self.has_verified_finality_proof(height) }
+
+    /// UNTRUSTED intake used by peer gossip. FINALITY_V2 only — a gossiped vote can never reach
+    /// the legacy unverified path, whatever height it claims.
+    pub fn receive_gossiped_vote(&self, vote: VoteMessage) -> VoteIntake {
+        if !self.v2_active(vote.height) { return VoteIntake::Rejected; }
+        let tip = match self.store.get_tip() { Ok(t) => t.height, Err(_) => return VoteIntake::NotReady };
+        if vote.height > tip { return if vote.height - tip <= 2 { VoteIntake::NotReady } else { VoteIntake::Rejected }; }
+        match self.submit_vote_v2(vote) { Ok(true) => VoteIntake::Accepted, Ok(false) => VoteIntake::Duplicate, Err(_) => VoteIntake::Rejected }
+    }
+
+    /// Re-derive this validator's own votes for the newest unfinalized heights. Signing goes
+    /// through the journal, so this can only ever reproduce the vote already locked for a slot.
+    pub fn resign_recent_votes(&self) -> Vec<VoteMessage> {
+        let mut out = Vec::new();
+        let Ok(tip) = self.store.get_tip().map(|t| t.height) else { return out };
+        let mut h = tip;
+        while h >= 1 && tip - h < FINALITY_V2_RESIGN_HEIGHTS {
+            if !self.v2_active(h) || self.has_verified_finality_proof(h) { break; }
+            if let Ok(Some(block)) = self.store.get_block(h) {
+                self.auto_vote_v2(&block); // verified eligibility → journal → sign → local intake
+                if let (Ok(keys), Ok(votes)) = (self.keys.lock(), self.votes.lock()) { out.extend(votes.iter().filter(|v| v.height == h && v.voter_pub_key == keys.public_key_hex).cloned()); }
+            }
+            h -= 1;
+        }
+        out
+    }
+
+    fn signing_journal(&self) -> Result<quantum_vault_finality::journal::SigningJournal, String> {
+        quantum_vault_finality::journal::SigningJournal::open(self.opts.data_dir.join("finality-signing-journal")).map_err(|e| format!("{:?}", e))
+    }
+
+    /// The pinned base of the validator replay: mainnet = the canonical F-1 table; any other
+    /// chain = its genesis validators.
+    fn validator_replay_base(&self) -> (u64, Vec<(String, quantum_vault_finality::validator_replay::VState)>) {
+        use quantum_vault_finality::validator_replay::VState;
+        #[cfg(test)]
+        {
+            if let Some(b) = self.test_replay_base.lock().ok().and_then(|g| g.clone()) { return b; }
+            if let Some(b) = TEST_VALIDATOR_REPLAY_BASE.with(|c| c.borrow().clone()) { return b; }
+        }
+        if self.fork_applies() {
+            return (crate::fork::FORK_HEIGHT - 1, crate::fork_tables::CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1.iter()
+                .map(|(k, stake, sc, j, m, _ts)| (k.to_string(), VState { stake: *stake, slash_count: *sc, jailed_until: *j, missed_blocks: *m })).collect());
+        }
+        (0, self.opts.genesis_validators.iter().filter(|v| v.stake > 0).map(|v| (v.pub_key.clone(), VState { stake: v.stake as u128, ..Default::default() })).collect())
+    }
+
+    /// Deterministically derive the validator set applicable to `height` from ACCEPTED HISTORY
+    /// (blocks + stake/unstake receipts), never from the validator store.
+    pub fn derive_validator_set_from_history(&self, height: u64) -> Result<quantum_vault_finality::ValidatorSetSnapshot, String> {
+        use quantum_vault_finality::validator_replay::ValidatorReplay;
+        let mut guard = self.validator_replay.lock().map_err(|_| "validator replay lock")?;
+        let (base_h, base) = self.validator_replay_base();
+        if !matches!(guard.as_ref(), Some(r) if r.height() + 1 <= height) {
+            *guard = Some(ValidatorReplay::new(base_h, base).with_missed_block_freeze(proposer_selection_activation_height()));
+        }
+        let replay = guard.as_mut().unwrap();
+        let outcome = |_h: u64, _i: usize, tx: &TxV1| -> Option<bool> { self.get_receipt(&compute_single_tx_hash(tx)).ok().flatten().map(|rc| matches!(rc.status, TxStatus::Success)) };
+        let res = replay.derive_for(height, &|h| self.store.get_block(h), &outcome).map_err(|e| format!("validator replay: {:?}", e));
+        if res.is_err() { *guard = None; }
+        res
+    }
+
+    /// The stored snapshot for `height`, returned ONLY if it is byte-identical to the
+    /// deterministic replay. Missing / malformed / different / history unavailable ⇒ error.
+    pub fn verified_validator_set_for(&self, height: u64) -> Result<quantum_vault_finality::ValidatorSetSnapshot, String> {
+        let stored = self.validator_sets_db.get(height.to_be_bytes()).map_err(|e| e.to_string())?.ok_or_else(|| format!("no validator-set snapshot for height {height}"))?;
+        let derived = self.derive_validator_set_from_history(height)?;
+        if stored.as_ref() != derived.to_bytes().as_slice() { return Err(format!("validator-set snapshot for height {height} does NOT match deterministic replay of accepted history")); }
+        Ok(derived)
+    }
+
+    /// Rebuild every FINALITY_V2 snapshot up to `tip + 1` from history. Returns how many were (re)written.
+    pub fn rebuild_validator_sets_from_history(&self) -> Result<usize, String> {
+        let tip = self.store.get_tip()?.height;
+        self.validator_sets_db.clear().map_err(|e| e.to_string())?;
+        let mut n = 0;
+        for h in 1..=tip + 1 {
+            if !self.v2_active(h) { continue; }
+            if h - 1 < self.validator_replay_base().0 { continue; }
+            let snap = self.derive_validator_set_from_history(h)?;
+            self.validator_sets_db.insert(h.to_be_bytes(), snap.to_bytes()).map_err(|e| e.to_string())?; n += 1;
+        }
+        self.validator_sets_db.flush().map_err(|e| e.to_string())?;
+        Ok(n)
+    }
+
+    /// A persisted (hence locally VERIFIED) FINALITY_V2 proof — the only thing served to peers.
+    pub fn get_persisted_finality_proof(&self, height: u64) -> Result<Option<quantum_vault_types::FinalityProof>, String> {
+        if !self.v2_active(height) || !self.has_verified_finality_proof(height) { return Ok(None); }
+        Ok(self.finality_db.get(height.to_be_bytes()).map_err(|e| e.to_string())?.and_then(|v| serde_json::from_slice(&v).ok()))
+    }
+
+    /// Pull-based proof distribution. WE choose the heights (newest first, bounded); the peer is
+    /// only a byte source. Nothing the peer says about "its finalized height" is ever used.
+    /// Returns (imported, rejected).
+    pub fn pull_finality_proofs(&self, fetch: &dyn Fn(u64) -> Result<Option<quantum_vault_types::FinalityProof>, String>) -> Result<(usize, usize), String> {
+        let tip = self.store.get_tip()?.height;
+        let (mut imported, mut rejected, mut asked) = (0, 0, 0);
+        let mut h = tip;
+        while h >= 1 && asked < FINALITY_V2_MAX_PROOF_REQUESTS_PER_PASS {
+            if !self.v2_active(h) || self.has_verified_finality_proof(h) { break; } // everything below is covered or legacy
+            asked += 1;
+            if let Ok(Some(proof)) = fetch(h) {
+                if proof.height != h { rejected += 1; }
+                else { match self.import_finality_proof(&proof) { Ok(()) => { imported += 1; break; } Err(_) => rejected += 1 } }
+            }
+            h -= 1;
+        }
+        Ok((imported, rejected))
+    }
+
+    /// READ-ONLY preflight before FINALITY_V2 activation. Never exposes secret key material.
+    pub fn finality_v2_preflight(&self) -> Result<FinalityV2Preflight, String> {
+        let tip = self.store.get_tip()?.height;
+        let node_pub_key = self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone();
+        let set = quantum_vault_finality::ValidatorSetSnapshot::new(tip + 1, self.get_validator_stakes()?);
+        let derived = self.derive_validator_set_from_history(tip + 1);
+        let stake = set.stake_of(&node_pub_key).unwrap_or(0);
+        // read-only: do not even create the journal directory
+        let journal_dir = self.opts.data_dir.join("finality-signing-journal");
+        let journal_entries = if journal_dir.exists() { self.signing_journal().and_then(|j| j.verify_all().map_err(|e| format!("{:?}", e))) } else { Ok(0) };
+        let keypair_consistent = self.keys.lock().map(|k| quantum_vault_crypto::pqc_verify_keypair(&k.public_key_hex, &k.secret_key_hex).unwrap_or(false)).unwrap_or(false);
+        let mut problems = Vec::new();
+        if !keypair_consistent { problems.push("node-keys.json: the secret key does not match the public key".to_string()); }
+        if stake == 0 { problems.push("the node key is not an eligible validator (no stake, or jailed): this node will FOLLOW finality but never vote".to_string()); }
+        match &derived { Ok(d) if *d == set => {}, Ok(_) => problems.push("validator store differs from the deterministic replay of accepted history".to_string()), Err(e) => problems.push(format!("validator replay unavailable: {e}")) }
+        if let Err(e) = &journal_entries { problems.push(format!("signing journal: {e}")); }
+        Ok(FinalityV2Preflight { applicable_height: tip + 1, votes_as: node_pub_key.clone(), node_pub_key, eligible_stake: stake, total_stake: set.total_stake().unwrap_or(0), quorum: set.quorum().unwrap_or(0),
+            validators: set.entries().len(), store_matches_history: matches!(&derived, Ok(d) if *d == set), journal_entries: journal_entries.ok(), ready_to_vote: problems.is_empty(), problems })
+    }
+    fn auto_vote_v2(&self, block: &BlockV1) {
+        let height = block.header.height;
+        let keys = match self.keys.lock() { Ok(k) => k.clone(), Err(_) => return };
+        // A node votes ONLY as itself, and only if its own key is an eligible validator.
+        // Eligibility is decided on the PROVENANCE-VERIFIED set (stored snapshot == deterministic replay
+        // of accepted history) — a corrupt or edited snapshot can neither make us vote nor silence us silently.
+        match self.verified_validator_set_for(height) {
+            Ok(set) if set.stake_of(&keys.public_key_hex).is_some() => {}
+            Ok(_) => return, // follower / jailed / unstaked: never originates a vote
+            Err(e) => { eprintln!("[bft] NOT voting at height {}: {}", height, e); return; }
+        }
+        // Durable anti-double-sign journal FIRST, signature second. No journal ⇒ no vote.
+        let journal = match self.signing_journal() { Ok(j) => j, Err(e) => { eprintln!("[bft] signing journal unavailable — NOT voting: {}", e); return; } };
+        for ty in [quantum_vault_finality::PREVOTE, quantum_vault_finality::PRECOMMIT] {
+            match journal.sign_vote(&keys, &self.opts.chain.chain_id, ty, height, quantum_vault_finality::ONLY_ROUND, &block.hash) {
+                Ok(vote) => { let _ = self.submit_vote_v2(vote); }
+                Err(e) => eprintln!("[bft] refusing to sign {} for height {}: {:?}", ty, height, e),
+            }
+        }
+    }
+    fn try_finalize_block_v2(&self, height: u64) {
+        let votes: Vec<VoteMessage> = match self.votes.lock() { Ok(v) => v.iter().filter(|v| v.height == height).cloned().collect(), Err(_) => return };
+        let res = self.with_vote_context(height, |ctx| {
+            let mut book = quantum_vault_finality::VoteBook::new(height);
+            for v in votes { let _ = book.submit(v, ctx); } // re-validated; invalid entries cannot count
+            book.build_proof(ctx, chrono::Utc::now().timestamp_millis() as u64).map_err(|e| format!("{:?}", e))
+        });
+        if let Ok(Some(proof)) = res { if let Err(e) = self.persist_verified_finality(&proof) { eprintln!("[bft] could not persist finality proof {}: {}", height, e); } }
     }
 
     /// Automatically submit prevote + precommit for a finalized block.
     /// Uses the highest-staked validator key as the voter (node key != validator key).
     pub fn auto_vote_for_block(&self, block: &BlockV1) {
+        // FINALITY_V2: snapshot the set for the NEXT height while the tip is this block, then vote
+        // as ourselves with a verified, typed, chain-bound signature.
+        if let Err(e) = self.record_validator_set_for(block.header.height + 1) { eprintln!("[bft] validator-set snapshot: {}", e); }
+        if self.v2_active(block.header.height) { return self.auto_vote_v2(block); }
         let voter_key = if let Ok(validators) = self.validator_store.list_validators() {
             validators.iter().max_by_key(|(_, v)| v.stake).map(|(k, _)| k.clone())
         } else {
@@ -2284,6 +3046,7 @@ impl L1Node {
     /// Attempt to finalize a block if 2/3+ stake has precommitted.
     /// Only advances finalized_height if quorum is met.
     fn try_finalize_block(&self, height: u64) {
+        if self.v2_active(height) { return self.try_finalize_block_v2(height); }
         match self.generate_finality_proof(height) {
             Ok(Some(proof)) => {
                 // Persist the finality proof
@@ -2461,6 +3224,43 @@ impl L1Node {
     }
 
     pub fn mine_pending(&self) -> Result<Option<BlockV1>, String> {
+        // Producer-side proposer rule + anti-equivocation journal, BEFORE touching the mempool.
+        {
+            let tip = self.store.get_tip()?;
+            let next = tip.height + 1;
+            // A proposal already journaled for (next, tip.hash) is THE proposal for this slot:
+            // re-import/re-broadcast it, never construct a second one.
+            if let Some(recorded) = self.pending_proposal(next, &tip.hash)? {
+                return self.replay_recorded_proposal(recorded).map(Some);
+            }
+            // Release 2a: only extend a FINAL parent. If the certificate for the tip isn't known yet,
+            // (re)cast our own vote for it and wait; transactions stay queued.
+            if self.parent_commit_required(next) && self.get_persisted_finality_proof(tip.height)?.is_none() {
+                if let Ok(Some(tip_block)) = self.store.get_block(tip.height) { self.auto_vote_for_block(&tip_block); }
+                if self.get_persisted_finality_proof(tip.height)?.is_none() {
+                    // Logged once per height: the miner loop retries every tick, and a stall (a
+                    // validator offline) must not flood the journal.
+                    static LAST_WAIT_LOGGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+                    if LAST_WAIT_LOGGED.swap(tip.height, std::sync::atomic::Ordering::Relaxed) != tip.height {
+                        eprintln!("[miner] waiting for the commit certificate of block {} before sealing {} (needs ⅔ of stake to vote)", tip.height, next);
+                    }
+                    return Ok(None);
+                }
+            }
+            if proposer_selection_active(next) {
+                let me = self.keys.lock().map_err(|_| "keys lock")?.public_key_hex.clone();
+                match self.designated_proposer(next)? {
+                    Some(d) if d == me => {}
+                    other => {
+                        // Not our slot (or no eligible validator): refuse to seal. Transactions stay
+                        // queued for the designated proposer / a later slot.
+                        eprintln!("[miner] not the designated proposer for height {} (designated: {}) — not sealing",
+                            next, other.map(|d| d[..16.min(d.len())].to_string()).unwrap_or_else(|| "none".into()));
+                        return Ok(None);
+                    }
+                }
+            }
+        }
         let mut mempool = self.mempool.lock().map_err(|_| "mempool lock")?;
         if mempool.is_empty() {
             return Ok(None);
@@ -2469,7 +3269,7 @@ impl L1Node {
         drop(mempool);
         let mut verified_set = self.verified_tx_ids.lock().map_err(|_| "verified lock")?;
         // Verify signatures in parallel; skip re-verification for pre-verified (v2 API) txs
-        let txs: Vec<TxV1> = {
+        let verified_entries: Vec<(String, TxV1)> = {
             use rayon::prelude::*;
             tx_entries.into_par_iter()
                 .filter(|(id, tx)| {
@@ -2479,14 +3279,22 @@ impl L1Node {
                     let bytes = encode_tx_for_signing(tx);
                     pqc_verify(&tx.from_pub_key, &bytes, &tx.sig).ok() == Some(true)
                 })
-                .map(|(_, tx)| tx)
                 .collect()
         };
         verified_set.clear();
         drop(verified_set);
-        if txs.is_empty() {
+        // C1: never include a tx the chain already accepted (replay), whatever its nonce says.
+        // GAME_READY: never include a contract tx the next block's rule would reject.
+        let producing_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
+        let verified_entries: Vec<(String, TxV1)> = verified_entries.into_iter()
+            .filter(|(_, tx)| !self.tx_already_included(&quantum_vault_types::tx_identity(tx)))
+            .filter(|(_, tx)| game_ready_tx_rule(tx, producing_height).is_ok())
+            .collect();
+        if verified_entries.is_empty() {
             return Ok(None);
         }
+        let txs: Vec<TxV1> = verified_entries.iter().map(|(_, tx)| tx.clone()).collect();
+        let requeue = verified_entries; // returned to the mempool if production fails before commit
         let tip = self.store.get_tip()?;
         let height = tip.height + 1;
         let time = Utc::now().timestamp_millis() as u64;
@@ -2506,7 +3314,13 @@ impl L1Node {
             tx_hash: tx_hash.clone(),
             proposer_pub_key: proposer_pub_key.clone(),
             state_root: None,
+            parent_commit: if self.parent_commit_required(height) { self.get_persisted_finality_proof(tip.height)? } else { None },
         };
+        if self.parent_commit_required(height) && prelim_header.parent_commit.is_none() {
+            // the tip changed or the certificate vanished between the guard and here: requeue
+            if let Ok(mut mp) = self.mempool.lock() { for (id, tx) in requeue { mp.insert(id, tx); } }
+            return Ok(None);
+        }
         let prelim_block = BlockV1 {
             version: 1,
             header: prelim_header.clone(),
@@ -2514,27 +3328,66 @@ impl L1Node {
             proposer_sig: String::new(),
             hash: String::new(),
         };
-        // Apply to state ONCE, here. (The old post-append apply_balance_block call
-        // is intentionally removed — applying twice would double-charge fees.)
-        self.apply_balance_block(&prelim_block)?;
-
-        // Stamp the post-state root, gated on the activation height.
-        let state_root = if height >= STATE_ROOT_ACTIVATION_HEIGHT {
-            Some(self.compute_current_state_root()?)
-        } else {
-            None
+        // ── PRODUCER ATOMICITY (same contract as import_block) ────────────────────────
+        // Full pre-apply snapshot first. Every step through append_block is speculative:
+        // ANY failure before the commit point restores the node state exactly and requeues
+        // the drained transactions. Order: snapshot → apply ledger effects (incl. matured
+        // unbonding) → post-state root → sign → validator effects → append (COMMIT POINT)
+        // → derived bookkeeping (mined hashes, finality, receipts, payouts, stats).
+        let pre_snapshot = self.capture_pre_apply_snapshot(&prelim_block)?;
+        // Slot key journaled by THIS attempt (None until the journal write succeeded). A failure
+        // after that point but before append means the block was never durable nor broadcast, so
+        // the record is withdrawn with the rollback; a record left by an earlier attempt/process is
+        // never touched here (it is re-imported at the top of mine_pending instead).
+        let journaled_key: std::cell::Cell<Option<Vec<u8>>> = std::cell::Cell::new(None);
+        let attempt = (|| -> Result<(BlockV1, BlockExecution), String> {
+            // Apply to state ONCE, here. (The old post-append apply_balance_block call
+            // is intentionally removed — applying twice would double-charge fees.)
+            let block_exec = self.apply_balance_block(&prelim_block)?;
+            #[cfg(test)]
+            { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 1 { return Err("injected fault: root computation".into()); } }
+            // Stamp the post-state root, gated on the activation height.
+            let state_root = if height >= state_root_activation_height() {
+                Some(self.compute_state_root_for_height(height)?)
+            } else {
+                None
+            };
+            let header = BlockHeaderV1 { state_root, ..prelim_header.clone() };
+            let header_bytes = encode_header_v1(&header);
+            let proposer_sig = pqc_sign(&self.keys.lock().map_err(|_| "keys lock")?.secret_key_hex, &header_bytes)?;
+            let hash = compute_block_hash(&header_bytes, &proposer_sig);
+            let block = BlockV1 { version: 1, header, txs: prelim_block.txs.clone(), proposer_sig, hash };
+            // Amendment 2: durable proposal record for (height, parent) BEFORE the block can be made
+            // durable or broadcast. A different record for this slot ⇒ refuse (equivocation guard).
+            self.journal_proposal(&block)?;
+            journaled_key.set(Some(Self::proposal_key(block.header.height, &block.header.prev_hash)));
+            // Validator-store effects BEFORE the block is durable (post-root, store-only).
+            self.apply_validator_block(&block, &block_exec.validator)?;
+            #[cfg(test)]
+            { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 2 { return Err("injected fault: validator persistence".into()); } }
+            #[cfg(test)]
+            { if TEST_PRODUCER_FAULT.with(|c| c.get()) == 3 { return Err("injected fault: append_block".into()); } }
+            self.store.append_block(&block)?;
+            Ok((block, block_exec))
+        })();
+        let (block, block_exec) = match attempt {
+            Ok(v) => v,
+            Err(e) => {
+                let restore = self.restore_pre_apply_snapshot(pre_snapshot);
+                if let Some(k) = journaled_key.take() { let _ = self.proposal_journal.remove(k); let _ = self.proposal_journal.flush(); }
+                // Requeue the drained (already signature-verified) transactions.
+                if let Ok(mut mempool) = self.mempool.lock() {
+                    if let Ok(mut verified) = self.verified_tx_ids.lock() {
+                        for (id, tx) in requeue { verified.insert(id.clone()); mempool.insert(id, tx); }
+                    }
+                }
+                return Err(match restore {
+                    Ok(()) => format!("block production at height {} failed and was rolled back: {}", height, e),
+                    Err(re) => format!("block production at height {} failed ({}) AND rollback failed ({}) — manual investigation", height, e, re),
+                });
+            }
         };
-        let header = BlockHeaderV1 { state_root, ..prelim_header };
-        let header_bytes = encode_header_v1(&header);
-        let proposer_sig = pqc_sign(&self.keys.lock().map_err(|_| "keys lock")?.secret_key_hex, &header_bytes)?;
-        let hash = compute_block_hash(&header_bytes, &proposer_sig);
-        let block = BlockV1 {
-            version: 1,
-            header,
-            txs,
-            proposer_sig,
-            hash,
-        };
+        // ── COMMIT POINT: the block is durable; everything below is derived bookkeeping ──
         // Track mined tx hashes to prevent re-adding to mempool
         if let Ok(mut mined) = self.mined_tx_hashes.lock() {
             for tx in &block.txs {
@@ -2546,17 +3399,21 @@ impl L1Node {
                 mined.clear();
             }
         }
-
-        self.store.append_block(&block)?;
-        self.apply_validator_block(&block)?;
-        *self.finalized_height.lock().map_err(|_| "finality lock")? = block.header.height;
+        // FINALITY_V2: producing a block is not evidence of finality — only a verified quorum is.
+        if !self.v2_active(block.header.height) {
+            *self.finalized_height.lock().map_err(|_| "finality lock")? = block.header.height;
+        }
         // Note: finalized_height set here as proposer (single-validator mode).
         // In multi-validator mode, try_finalize_block (called by auto_vote_for_block)
         // handles finalization via vote quorum verification.
-        
+
         // Generate and store transaction receipts
-        let receipts = self.generate_receipts(&block);
+        let receipts = self.generate_receipts(&block, &block_exec.bridge, &block_exec.validator);
         let _ = self.receipt_store.store_batch(&receipts);
+        self.record_block_tx_hashes(&block);
+
+        // R1: payout records only after the block is appended/persisted (see import path).
+        self.persist_bridge_withdraw_results(&block, &block_exec.bridge)?;
         
         // Track proposer stats — node key may differ from validator staking key
         let proposer_key = block.header.proposer_pub_key.clone();
@@ -2599,6 +3456,166 @@ impl L1Node {
     }
 
     /// Get the current nonce for an account (0 if never used)
+    // ── C1: transaction-uniqueness index + rule ─────────────────────────────────────
+    /// Height of the accepted block that included `tx_hash` (canonical hash), if any.
+    pub fn tx_included_at(&self, tx_hash: &str) -> Option<u64> {
+        match self.tx_seen_db.get(tx_hash.as_bytes()) {
+            Ok(Some(v)) if v.len() == 8 => Some(u64::from_be_bytes(v.as_ref().try_into().unwrap_or([0u8; 8]))),
+            _ => None,
+        }
+    }
+    pub fn tx_already_included(&self, tx_hash: &str) -> bool { self.tx_included_at(tx_hash).is_some() }
+
+    /// Consensus check: every tx IDENTITY (`tx_identity`, key-bound) in the block must be new
+    /// to the chain and unique within the block. Fail-closed on the index: if the tx-seen
+    /// index is not complete for the current tip (crash between append and record, or a
+    /// failed record write) it is rebuilt from the stored chain here, BEFORE the block can
+    /// be judged, so an incomplete index can never let a replay through.
+    fn check_block_tx_uniqueness(&self, block: &BlockV1) -> Result<(), String> {
+        self.ensure_tx_seen_index()?;
+        let mut in_block: HashSet<String> = HashSet::with_capacity(block.txs.len());
+        for (i, tx) in block.txs.iter().enumerate() {
+            // V2 binding is part of the same consensus rule: a signed-payload tx whose fields
+            // are not the canonical derivation of its payload makes the block invalid.
+            if let Err(e) = crate::v2_binding::verify_v2_binding(tx) {
+                return Err(format!("block {} rejected: tx #{} signed-payload binding failed: {}", block.header.height, i, e));
+            }
+            let h = quantum_vault_types::tx_identity(tx);
+            if let Some(prev) = self.tx_included_at(&h) {
+                return Err(format!("block {} rejected: tx #{} ({}) already included in block {} (replay)",
+                    block.header.height, i, &h[..16], prev));
+            }
+            if !in_block.insert(h.clone()) {
+                return Err(format!("block {} rejected: tx #{} ({}) duplicated within the block",
+                    block.header.height, i, &h[..16]));
+            }
+        }
+        Ok(())
+    }
+
+    /// Record the hashes of an ACCEPTED + PERSISTED block (post-commit bookkeeping only; a
+    /// rejected block never reaches this). Failure to record is not fatal here — the index
+    /// is re-derived from the stored chain at the next start (`ensure_tx_seen_index`).
+    fn record_block_tx_hashes(&self, block: &BlockV1) {
+        let hb = block.header.height.to_be_bytes();
+        for tx in &block.txs {
+            let _ = self.tx_seen_db.insert(quantum_vault_types::tx_identity(tx).as_bytes(), &hb);
+        }
+        let _ = self.tx_seen_db.insert(TX_SEEN_INDEXED_TIP_KEY, &hb);
+        let _ = self.tx_seen_db.flush();
+    }
+
+    /// Make the index complete for the stored chain: if its recorded tip is not the chain
+    /// tip (fresh node, upgrade from a binary without the index, crash between append and
+    /// record), rebuild it from every stored block. Deterministic and idempotent.
+    fn ensure_tx_seen_index(&self) -> Result<(), String> {
+        let tip = self.store.get_tip()?.height;
+        let indexed = self.tx_seen_db.get(TX_SEEN_INDEXED_TIP_KEY).map_err(|e| e.to_string())?
+            .and_then(|v| v.as_ref().try_into().ok().map(u64::from_be_bytes));
+        if indexed == Some(tip) { return Ok(()); }
+        let blocks = self.store.get_all_blocks()?;
+        self.tx_seen_db.clear().map_err(|e| e.to_string())?;
+        let mut n = 0usize;
+        for b in &blocks {
+            let hb = b.header.height.to_be_bytes();
+            for tx in &b.txs {
+                self.tx_seen_db.insert(quantum_vault_types::tx_identity(tx).as_bytes(), &hb).map_err(|e| e.to_string())?;
+                n += 1;
+            }
+        }
+        self.tx_seen_db.insert(TX_SEEN_INDEXED_TIP_KEY, &tip.to_be_bytes()).map_err(|e| e.to_string())?;
+        self.tx_seen_db.flush().map_err(|e| e.to_string())?;
+        eprintln!("[init] tx-seen index rebuilt: {} tx hashes over {} blocks (tip {})", n, blocks.len(), tip);
+        Ok(())
+    }
+
+    // ── Proposer selection (Release 1) ───────────────────────────────────────────────
+    /// Eligible validators after the current tip, ordered by raw public-key bytes (never by
+    /// store iteration order). Eligible ⇔ stake > 0 && jailed_until <= height.
+    fn eligible_validators_ordered(&self, height: u64) -> Result<Vec<(Vec<u8>, String, u128)>, String> {
+        let mut v: Vec<(Vec<u8>, String, u128)> = self.validator_store.list_validators()?
+            .into_iter()
+            .filter(|(_, st)| st.stake > 0 && st.jailed_until <= height)
+            .map(|(pk, st)| (quantum_vault_crypto::hex_to_bytes(&pk).unwrap_or_else(|_| pk.as_bytes().to_vec()), pk, st.stake))
+            .collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(v)
+    }
+
+    /// `designated_proposer(H)`: greatest stake among the eligible validators in the canonical
+    /// validator state after `H-1` (= the store now, when called with H = tip+1 or from
+    /// `import_block` before the block is applied); ties → lowest raw key bytes (first in order).
+    pub fn designated_proposer(&self, height: u64) -> Result<Option<String>, String> {
+        let mut best: Option<(String, u128)> = None;
+        for (_, pk, stake) in self.eligible_validators_ordered(height)? {
+            match &best { Some((_, s)) if *s >= stake => {} _ => best = Some((pk, stake)) }
+        }
+        Ok(best.map(|(pk, _)| pk))
+    }
+
+    fn check_designated_proposer(&self, block: &BlockV1) -> Result<(), String> {
+        let h = block.header.height;
+        match self.designated_proposer(h)? {
+            Some(d) if d == block.header.proposer_pub_key => Ok(()),
+            Some(d) => Err(format!("block {} rejected: proposer {} is not the designated proposer ({})",
+                h, &block.header.proposer_pub_key[..16.min(block.header.proposer_pub_key.len())], &d[..16.min(d.len())])),
+            None => Err(format!("block {} rejected: no eligible validator to propose", h)),
+        }
+    }
+
+    // ── Producer anti-equivocation journal (node-local) ─────────────────────────────
+    fn proposal_key(height: u64, parent_hash: &str) -> Vec<u8> { format!("{}:{}", height, parent_hash).into_bytes() }
+
+    /// The proposal this node already journaled for (height, parent), if any.
+    pub fn pending_proposal(&self, height: u64, parent_hash: &str) -> Result<Option<BlockV1>, String> {
+        match self.proposal_journal.get(Self::proposal_key(height, parent_hash)).map_err(|e| e.to_string())? {
+            Some(v) => serde_json::from_slice(&v).map(Some).map_err(|e| format!("proposal journal corrupt: {}", e)),
+            None => Ok(None),
+        }
+    }
+
+    /// Record the exact sealed block for its (height, parent). Byte-identical re-record is a no-op;
+    /// a DIFFERENT block for the same slot is refused — this node must never sign two proposals for
+    /// one slot. Durable (flushed) before returning.
+    fn journal_proposal(&self, block: &BlockV1) -> Result<(), String> {
+        let key = Self::proposal_key(block.header.height, &block.header.prev_hash);
+        let bytes = serde_json::to_vec(block).map_err(|e| e.to_string())?;
+        if let Some(existing) = self.proposal_journal.get(&key).map_err(|e| e.to_string())? {
+            if existing.as_ref() == bytes.as_slice() { return Ok(()); }
+            let prev: Option<BlockV1> = serde_json::from_slice(&existing).ok();
+            return Err(format!("EQUIVOCATION GUARD: refusing to seal a second, different block for height {} on parent {} (already proposed {}; candidate {})",
+                block.header.height, &block.header.prev_hash[..16], prev.map(|b| b.hash[..16].to_string()).unwrap_or_else(|| "?".into()), &block.hash[..16]));
+        }
+        self.proposal_journal.insert(key, bytes).map_err(|e| e.to_string())?;
+        self.proposal_journal.flush().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// A journaled proposal for (tip+1, tip.hash) that is not yet on our chain: make it our block
+    /// through the real import path (same validation as any block) and hand it back for broadcast.
+    fn replay_recorded_proposal(&self, recorded: BlockV1) -> Result<BlockV1, String> {
+        let tip = self.store.get_tip()?;
+        if recorded.header.height == tip.height && recorded.hash == tip.hash { return Ok(recorded); } // already ours
+        eprintln!("[miner] re-using journaled proposal for height {} ({}) instead of sealing a new block",
+            recorded.header.height, &recorded.hash[..16]);
+        self.import_block(recorded.clone()).map_err(|e| format!(
+            "HIGH SEVERITY: journaled proposal for height {} ({}) cannot be re-imported ({}); refusing to seal a different block for the same slot — operator inspection required (proposal-journal-db)",
+            recorded.header.height, &recorded.hash[..16], e))?;
+        Ok(recorded)
+    }
+
+    fn recover_pending_proposal(&self) {
+        let Ok(tip) = self.store.get_tip() else { return };
+        match self.pending_proposal(tip.height + 1, &tip.hash) {
+            Ok(Some(b)) => match self.replay_recorded_proposal(b) {
+                Ok(b) => eprintln!("[init] recovered journaled proposal {} at height {}", &b.hash[..16], b.header.height),
+                Err(e) => eprintln!("[init] {}", e),
+            },
+            Ok(None) => {}
+            Err(e) => eprintln!("[init] proposal journal: {}", e),
+        }
+    }
+
     pub fn get_account_nonce(&self, pubkey: &str) -> u64 {
         match self.nonce_db.get(pubkey.as_bytes()) {
             Ok(Some(bytes)) => {
@@ -2791,11 +3808,306 @@ impl L1Node {
         self.balances.lock().map(|b| b.clone()).unwrap_or_default()
     }
 
+    /// GAME_READY 2 extension for a read-only preview at `height` (None before activation).
+    /// Randomness in a preview is illustrative only: the real roll uses the mined tx's hash.
+    pub fn game_ext_for_preview(&self, height: u64) -> Option<quantum_vault_vm::GameExt> {
+        if !game_ready_2_active(height) { return None; }
+        let tokens = self.token_balances.lock().map(|t| t.clone()).unwrap_or_default();
+        let tip_hash = self.store.get_tip().map(|t| t.hash).unwrap_or_default();
+        Some(quantum_vault_vm::GameExt {
+            view: Arc::new(NodeChainView { tokens, nfts: self.nft_store.clone() }),
+            seed: quantum_vault_vm::game::random_seed(&tip_hash, "preview"),
+        })
+    }
+
     /// Public accessor for the current ledger state root (display/debugging).
     /// Lets an operator compare nodes at the same height to spot divergence; it
     /// is the same value the block header commits at/after activation.
+    // ── Option-B canonical-ledger fork (issue #66) ─────────────────────────────────
+    fn assert_canonical_ledger_at_f_minus_1(&self) -> Result<(), String> {
+        let b = self.balances.lock().map_err(|_| "balance lock")?;
+        crate::fork::ledger_matches_table(&b, crate::fork::CANONICAL_LEDGER_AT_F_MINUS_1)?;
+        let tok = self.token_balances.lock().map_err(|_| "token lock")?;
+        let lp = self.lp_balances.lock().map_err(|_| "lp lock")?;
+        crate::fork::token_lp_match_tables(&tok, &lp)?;
+        let fb = self.get_total_fees_burned().to_bits();
+        if fb != crate::fork::CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1 {
+            return Err(format!("fees_burned accumulator {} (bits {}) != canonical {}", f64::from_bits(fb), fb, f64::from_bits(crate::fork::CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1)));
+        }
+        Ok(())
+    }
+    /// Set the persisted `total_fees_burned` accumulator (in-memory + `fee_db["total_burned"]`).
+    fn set_total_fees_burned(&self, v: f64) -> Result<(), String> {
+        *self.total_fees_burned.lock().map_err(|_| "fees lock")? = v;
+        self.fee_db.insert(b"total_burned", v.to_string().as_bytes()).map_err(|e| e.to_string())?;
+        self.fee_db.flush().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    /// Consensus-relevant validator rows of the live store (see `fork::ValidatorRow`).
+    pub fn validator_rows(&self) -> Result<Vec<crate::fork::ValidatorRow>, String> {
+        let mut rows: Vec<crate::fork::ValidatorRow> = self.validator_store.list_validators()?.into_iter()
+            .map(|(k, v)| (k, v.stake, v.slash_count, v.jailed_until, v.missed_blocks, v.total_slashed)).collect();
+        rows.sort(); Ok(rows)
+    }
+    /// Validator state at F-1 is a consensus commitment too (proposer selection, quorum): the
+    /// live validator set must equal the pinned canonical table and the unbonding queue must be
+    /// empty (no unstake exists in history 1..=F-1).
+    fn assert_canonical_validators_at_f_minus_1(&self) -> Result<(), String> {
+        crate::fork::validators_match_table(&self.validator_rows()?, crate::fork::CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1)?;
+        let ub = self.unbonding_queue.lock().map_err(|_| "unbonding lock")?.len();
+        if ub != 0 { return Err(format!("unbonding queue must be empty at F-1, found {} entries", ub)); }
+        Ok(())
+    }
+    /// The pending-unbonding queue in canonical (sorted) form — consensus state.
+    pub fn unbonding_rows(&self) -> Result<Vec<(String, u64, u64)>, String> {
+        let q = self.unbonding_queue.lock().map_err(|_| "unbonding lock")?;
+        let mut v: Vec<(String, u64, u64)> = q.iter().map(|e| (e.delegator.clone(), e.amount.to_bits(), e.release_height)).collect();
+        v.sort(); Ok(v)
+    }
+    /// Apply `VALIDATOR_TRANSITION` to the live store: consensus fields are overwritten from the
+    /// row, informational counters (`blocks_proposed`, `entropy_contributions`, `name`) are kept.
+    fn apply_validator_transition_to_store(&self) -> Result<(), String> {
+        for (op, k, s, sc, j, m, ts) in crate::fork::VALIDATOR_TRANSITION {
+            match *op {
+                "set" => {
+                    let mut st = self.validator_store.get_validator(k)?.unwrap_or(ValidatorState {
+                        stake: 0, slash_count: 0, jailed_until: 0, entropy_contributions: 0, blocks_proposed: 0, name: None, missed_blocks: 0, total_slashed: 0 });
+                    st.stake = *s; st.slash_count = *sc; st.jailed_until = *j; st.missed_blocks = *m; st.total_slashed = *ts;
+                    self.validator_store.set_validator(k, &st)?;
+                }
+                "remove" => self.validator_store.delete_validator(k)?,
+                other => return Err(format!("unknown validator transition op {}", other)),
+            }
+        }
+        Ok(())
+    }
+    /// Whether the Option-B mainnet fork rules apply to this node's chain.
+    pub fn fork_applies(&self) -> bool { self.opts.chain.chain_id == crate::fork::FORK_CHAIN_ID }
+    pub fn canonical_marker_present(&self) -> bool {
+        self.snapshot_db.get(crate::fork::CANONICAL_MARKER_KEY).ok().flatten().is_some()
+    }
+    fn set_canonical_marker(&self) -> Result<(), String> {
+        self.snapshot_db.insert(crate::fork::CANONICAL_MARKER_KEY, &(crate::fork::FORK_HEIGHT - 1).to_be_bytes()).map_err(|e| e.to_string())?;
+        self.snapshot_db.flush().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    /// Startup guard: past F-1 a node may only run on the canonical ledger.
+    pub fn fork_readiness_check(&self) -> Result<(), String> {
+        let tip = self.store.get_tip()?.height;
+        if tip >= crate::fork::FORK_HEIGHT - 1 && !self.canonical_marker_present() {
+            let b = self.balances.lock().map_err(|_| "balance lock")?;
+            if tip == crate::fork::FORK_HEIGHT - 1 && crate::fork::ledger_matches_table(&b, crate::fork::PRODUCTION_LEDGER_AT_F_MINUS_1).is_ok() {
+                return Err(format!("ledger at height {} is the LEGACY production ledger — run --migrate-canonical-ledger before the fork height {}", tip, crate::fork::FORK_HEIGHT));
+            }
+            return Err(format!("tip {} is at/after the fork but this node's ledger is not marked canonical — refusing to run (recover from history or migrate)", tip));
+        }
+        Ok(())
+    }
+
+    /// EXPLICIT, operator-invoked, one-time, ATOMIC Option-B migration of a legacy production
+    /// ledger to the canonical ledger at F-1. Never runs on ordinary restart.
+    /// `persist` performs the durable write (injected so tests can fail it); on ANY failure
+    /// the in-memory ledger is restored exactly and the pre-migration snapshot re-persisted.
+    pub fn migrate_canonical_ledger(&self, persist: &dyn Fn(&Self) -> Result<(), String>) -> Result<&'static str, String> {
+        use crate::fork::*;
+        if !self.fork_applies() { return Err(format!("the canonical-ledger migration applies only to chain '{}' (this node: '{}')", FORK_CHAIN_ID, self.opts.chain.chain_id)); }
+        verify_table_hashes()?;
+        let tip = self.store.get_tip()?.height;
+        if tip != FORK_HEIGHT - 1 {
+            return Err(format!("migration requires tip == {} (F-1); current tip {}", FORK_HEIGHT - 1, tip));
+        }
+        let pre = self.balances.lock().map_err(|_| "balance lock")?.clone();
+        let pre_rows = self.validator_rows()?;
+        {
+            let tok = self.token_balances.lock().map_err(|_| "token lock")?;
+            let lp = self.lp_balances.lock().map_err(|_| "lp lock")?;
+            token_lp_match_tables(&tok, &lp)?;
+        }
+        let unbonding = self.unbonding_queue.lock().map_err(|_| "unbonding lock")?.len();
+        if unbonding != 0 { return Err(format!("unbonding queue has {} entries but history 1..=F-1 contains no unstake — ABORT, manual investigation", unbonding)); }
+        let pre_fees_burned = self.get_total_fees_burned();
+        let pre_fee_db_total_burned = self.fee_db.get(b"total_burned").map_err(|e| e.to_string())?.map(|v| v.to_vec());
+        let ledger_canon = ledger_matches_table(&pre, CANONICAL_LEDGER_AT_F_MINUS_1).is_ok();
+        let vals_canon = validators_match_table(&pre_rows, CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1).is_ok();
+        let fees_canon = pre_fees_burned.to_bits() == CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1;
+        if ledger_canon && vals_canon && fees_canon {
+            if self.canonical_marker_present() { return Ok("already-migrated"); }
+            self.set_canonical_marker()?;
+            return Ok("already-canonical-marked");
+        }
+        if ledger_canon != vals_canon || ledger_canon != fees_canon {
+            return Err(format!("INCONSISTENT state: ledger canonical={} validators canonical={} fees_burned canonical={} — ABORT, manual investigation", ledger_canon, vals_canon, fees_canon));
+        }
+        if pre_fees_burned.to_bits() != PRODUCTION_FEES_BURNED_BITS_AT_F_MINUS_1 {
+            return Err(format!("pre-migration fees_burned {} (bits {}) != PRODUCTION_FEES_BURNED_BITS_AT_F_MINUS_1 ({}) — ABORT, no partial migration", pre_fees_burned, pre_fees_burned.to_bits(), f64::from_bits(PRODUCTION_FEES_BURNED_BITS_AT_F_MINUS_1)));
+        }
+        if self.canonical_marker_present() {
+            return Err("canonical marker present but state is not canonical — ABORT, manual investigation".into());
+        }
+        if let Err(e) = ledger_matches_table(&pre, PRODUCTION_LEDGER_AT_F_MINUS_1) {
+            return Err(format!("pre-migration ledger does not match PRODUCTION_LEDGER_AT_F_MINUS_1 — ABORT, no partial migration: {}", e));
+        }
+        if let Err(e) = validators_match_table(&pre_rows, PRODUCTION_VALIDATOR_STATE_AT_F_MINUS_1) {
+            return Err(format!("pre-migration validator state does not match PRODUCTION_VALIDATOR_STATE_AT_F_MINUS_1 — ABORT, no partial migration: {}", e));
+        }
+        let after = apply_delta(&pre)?;
+        ledger_matches_table(&after, CANONICAL_LEDGER_AT_F_MINUS_1)
+            .map_err(|e| format!("post-delta ledger does not equal CANONICAL_LEDGER_AT_F_MINUS_1 — ABORT: {}", e))?;
+        validators_match_table(&apply_validator_transition(&pre_rows), CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1)
+            .map_err(|e| format!("post-transition validators do not equal CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1 — ABORT: {}", e))?;
+        // full dump of the validator trees for byte-exact rollback (validators + unbonding + meta)
+        let mut vtrees: Vec<(sled::Tree, Vec<(Vec<u8>, Vec<u8>)>)> = Vec::new();
+        for t in self.validator_store.trees() { vtrees.push((t.clone(), snapshot_tree(t)?)); }
+        // ── apply BOTH components; any failure below rolls back both ──
+        *self.balances.lock().map_err(|_| "balance lock")? = after;
+        let result = (|| -> Result<(), String> {
+            self.apply_validator_transition_to_store()?;
+            validators_match_table(&self.validator_rows()?, CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1)?;
+            self.set_total_fees_burned(f64::from_bits(CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1))?;
+            persist(self)?;
+            for t in self.validator_store.trees() { t.flush().map_err(|e| e.to_string())?; }
+            self.set_canonical_marker()?;
+            let b = self.balances.lock().map_err(|_| "balance lock")?;
+            ledger_matches_table(&b, CANONICAL_LEDGER_AT_F_MINUS_1)?;
+            validators_match_table(&self.validator_rows()?, CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1)?;
+            if self.get_total_fees_burned().to_bits() != CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1 { return Err("fees_burned not canonical after migration".into()); }
+            Ok(())
+        })();
+        if let Err(e) = result {
+            *self.balances.lock().map_err(|_| "balance lock")? = pre;
+            let mut rollback_err = None;
+            if let Ok(mut f) = self.total_fees_burned.lock() { *f = pre_fees_burned; }
+            let r = match &pre_fee_db_total_burned { Some(v) => self.fee_db.insert(b"total_burned", v.clone()).map(|_| ()), None => self.fee_db.remove(b"total_burned").map(|_| ()) };
+            if let Err(e) = r { rollback_err = Some(e.to_string()); }
+            let _ = self.fee_db.flush();
+            for (t, dump) in &vtrees { if let Err(e) = restore_tree(t, dump) { rollback_err = Some(e); } }
+            let _ = self.snapshot_db.remove(CANONICAL_MARKER_KEY);
+            let _ = self.snapshot_db.flush();
+            let _ = self.persist_snapshot_atomic(tip); // re-persist the exact pre-migration ledger
+            if let Some(re) = rollback_err { return Err(format!("migration FAILED ({}) AND validator rollback failed ({}) — manual investigation", e, re)); }
+            return Err(format!("migration FAILED and was rolled back: {}", e));
+        }
+        Ok("migrated")
+    }
+
+    /// Durable write for the migration / recovery: the balance snapshot as ONE atomic sled batch.
+    pub fn persist_snapshot_atomic(&self, height: u64) -> Result<(), String> {
+        let bal = self.balances.lock().map_err(|_| "bal lock")?;
+        let tok = self.token_balances.lock().map_err(|_| "tok lock")?;
+        let lp = self.lp_balances.lock().map_err(|_| "lp lock")?;
+        let burned = self.burned_tokens.lock().map_err(|_| "burned lock")?;
+        let fees_burned = *self.total_fees_burned.lock().map_err(|_| "fees lock")?;
+        let shielded = *self.shielded_supply.lock().map_err(|_| "shielded lock")?;
+        let tok_vec: Vec<((String, String), u128)> = tok.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let lp_vec: Vec<((String, String), u128)> = lp.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let mut batch = sled::Batch::default();
+        batch.insert(b"version".to_vec(), SNAPSHOT_VERSION.to_be_bytes().to_vec());
+        batch.insert(b"height".to_vec(), height.to_be_bytes().to_vec());
+        batch.insert(b"balances".to_vec(), serde_json::to_vec(&*bal).map_err(|e| e.to_string())?);
+        batch.insert(b"token_balances".to_vec(), serde_json::to_vec(&tok_vec).map_err(|e| e.to_string())?);
+        batch.insert(b"lp_balances".to_vec(), serde_json::to_vec(&lp_vec).map_err(|e| e.to_string())?);
+        batch.insert(b"burned_tokens".to_vec(), serde_json::to_vec(&*burned).map_err(|e| e.to_string())?);
+        batch.insert(b"fees_burned".to_vec(), fees_burned.to_be_bytes().to_vec());
+        batch.insert(b"shielded_supply".to_vec(), shielded.to_be_bytes().to_vec());
+        let ub = self.unbonding_queue.lock().map_err(|_| "unbonding lock")?;
+        batch.insert(b"unbonding_queue".to_vec(), serde_json::to_vec(&*ub).map_err(|e| e.to_string())?);
+        self.snapshot_db.apply_batch(batch).map_err(|e| format!("snapshot batch: {}", e))?;
+        self.snapshot_db.flush().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Deterministic recovery WITHOUT a snapshot: reset every derived state component, then
+    /// re-import the stored blocks from genesis through the REAL import path (checkpoint
+    /// validation, canonical rules, F-1 assertion). Ends in exactly the fresh-sync state.
+    pub fn recover_from_history(&self) -> Result<(), String> {
+        let blocks = self.store.get_all_blocks()?;
+        if blocks.is_empty() { return Ok(()); }
+        eprintln!("[recover] no valid snapshot — deterministic re-import of {} blocks from genesis", blocks.len());
+        {
+            self.balances.lock().map_err(|_| "bal")?.clear();
+            self.token_balances.lock().map_err(|_| "tok")?.clear();
+            self.lp_balances.lock().map_err(|_| "lp")?.clear();
+            self.burned_tokens.lock().map_err(|_| "burned")?.clear();
+            *self.total_fees_burned.lock().map_err(|_| "fees")? = 0.0;
+            *self.shielded_supply.lock().map_err(|_| "sh")? = 0.0;
+            self.unbonding_queue.lock().map_err(|_| "uq")?.clear();
+        }
+        let _ = self.fee_db.clear(); let _ = self.fee_db.flush();
+        let _ = self.nonce_db.clear(); let _ = self.nonce_db.flush();
+        let _ = self.tx_seen_db.clear(); let _ = self.tx_seen_db.flush();
+        let _ = self.snapshot_db.remove(crate::fork::CANONICAL_MARKER_KEY);
+        // validators, unbonding queue AND meta: recovery re-derives every validator component
+        for t in self.validator_store.trees() { t.clear().map_err(|e| e.to_string())?; }
+        self.pool_store.clear_all()?;
+        self.nft_store.clear_all()?;
+        self.token_metadata_store.clear()?;
+        for t in self.pool_event_store.trees().into_iter().chain(self.allowance_store.trees()).chain(self.multisig_store.trees()) {
+            t.clear().map_err(|e| e.to_string())?;
+        }
+        if let Some(ref cs) = self.contract_store { for t in cs.trees() { t.clear().map_err(|e| e.to_string())?; } }
+        self.store.reset_chain(&blocks[..1])?;
+        self.apply_genesis_allocations(&self.opts.genesis_allocations, &self.opts.genesis_validators)?;
+        for block in blocks.into_iter().skip(1) {
+            let h = block.header.height;
+            self.import_block(block).map_err(|e| format!("recovery failed at height {}: {}", h, e))?;
+        }
+        let tip = self.store.get_tip()?.height;
+        self.persist_snapshot_atomic(tip)?;
+        eprintln!("[recover] re-import complete at height {}", tip);
+        Ok(())
+    }
+
+    /// Read-only operator diagnostic: canonical digests of consensus state.
+    pub fn state_digest(&self) -> Result<serde_json::Value, String> {
+        fn h(s: &str) -> String { bytes_to_hex(&sha256(s.as_bytes())) }
+        let (sb, st, sl, sbt) = {
+            let b = self.balances.lock().map_err(|_| "bal")?; let t = self.token_balances.lock().map_err(|_| "tok")?; let l = self.lp_balances.lock().map_err(|_| "lp")?; let bt = self.burned_tokens.lock().map_err(|_| "burned")?;
+            // zero-valued entries are not state (the state root ignores them too)
+            let sb: std::collections::BTreeMap<String, u128> = b.iter().filter(|(_, v)| **v != 0).map(|(k, v)| (k.clone(), *v)).collect();
+            let st: std::collections::BTreeMap<(String, String), u128> = t.iter().filter(|(_, v)| **v != 0).map(|(k, v)| (k.clone(), *v)).collect();
+            let sl: std::collections::BTreeMap<(String, String), u128> = l.iter().filter(|(_, v)| **v != 0).map(|(k, v)| (k.clone(), *v)).collect();
+            let sbt: std::collections::BTreeMap<String, f64> = bt.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            (sb, st, sl, sbt)
+        };
+        let mut nonces = String::new(); for item in self.nonce_db.iter() { let (k, v) = item.map_err(|e| e.to_string())?; nonces.push_str(&format!("{}={}\n", bytes_to_hex(&k), bytes_to_hex(&v))); }
+        let stakes: std::collections::BTreeMap<String, u128> = self.list_validators().unwrap_or_default().into_iter().map(|(k, v)| (k, v.stake)).collect();
+        // validators: consensus fields (exact), informational counters separately (excluded from parity)
+        let rows = self.validator_rows()?;
+        let validators: std::collections::BTreeMap<String, serde_json::Value> = rows.iter().map(|(k, s, sc, j, m, ts)| (k.clone(), serde_json::json!({ "stake": s, "slash_count": sc, "jailed_until": j, "missed_blocks": m, "total_slashed": ts }))).collect();
+        let informational: std::collections::BTreeMap<String, serde_json::Value> = self.list_validators().unwrap_or_default().into_iter().map(|(k, v)| (k, serde_json::json!({ "blocks_proposed": v.blocks_proposed, "entropy_contributions": v.entropy_contributions, "name": v.name }))).collect();
+        let (total_stake, quorum) = crate::fork::stake_and_quorum(&rows);
+        // (delegator, amount f64 bits, release_height) — the in-memory queue IS the consensus queue
+        let ub = self.unbonding_rows()?;
+        Ok(serde_json::json!({
+            "tip": self.store.get_tip()?.height, "tip_hash": self.store.get_tip()?.hash, "state_root": self.get_state_root()?,
+            "validators": validators, "validators_informational": informational, "total_stake": total_stake, "quorum": quorum, "unbonding": ub,
+            "balances": h(&sb.iter().map(|(k, v)| format!("{}={}\n", k, v)).collect::<String>()),
+            "token_balances": h(&st.iter().map(|((a, x), v)| format!("{}|{}={}\n", a, x, v)).collect::<String>()),
+            "lp_balances": h(&sl.iter().map(|((a, x), v)| format!("{}|{}={}\n", a, x, v)).collect::<String>()),
+            "burned_tokens": h(&sbt.iter().map(|(k, v)| format!("{}={:016x}\n", k, v.to_bits())).collect::<String>()),
+            "nonce_db": h(&nonces), "stakes": stakes, "shielded_supply_bits": self.get_shielded_supply().to_bits(),
+            "base_fee_quanta": self.get_base_fee_quanta(), "fees_burned_bits": self.get_total_fees_burned().to_bits(),
+            "canonical_marker": self.canonical_marker_present(),
+        }))
+    }
+
     pub fn get_state_root(&self) -> Result<String, String> {
-        self.compute_current_state_root()
+        self.compute_state_root_for_height(self.get_tip_height().unwrap_or(0))
+    }
+
+    /// The state root a block at `height` commits: the balance root, extended from GAME_READY 2
+    /// with NFTs and contract code/storage.
+    fn compute_state_root_for_height(&self, height: u64) -> Result<String, String> {
+        let base = self.compute_current_state_root()?;
+        if !game_ready_2_active(height) {
+            return Ok(base);
+        }
+        let (cols, toks) = self.nft_store.commitment_entries()?;
+        let (code, state) = match self.contract_store {
+            Some(ref cs) => cs.commitment_entries()?,
+            None => (Vec::new(), Vec::new()),
+        };
+        Ok(crate::state_root::extend_state_root_v2(&base, &cols, &toks, &code, &state))
     }
 
     /// Clone the three in-memory balance maps. Used by import (P2-5) to take a
@@ -2837,19 +4149,274 @@ impl L1Node {
         *self.lp_balances.lock().map_err(|_| "lp balance lock")? = l;
         Ok(())
     }
+}
 
-    fn apply_balance_block(&self, block: &BlockV1) -> Result<(), String> {
+/// Complete pre-apply snapshot of EVERY node-state component that
+/// `apply_balance_block` (and the post-verification `apply_validator_block`)
+/// can mutate before a block is accepted. `import_block` captures one right
+/// before the speculative apply and, on ANY rejection (apply error, state-root
+/// mismatch, validator-apply error, persist failure), restores it with
+/// [`L1Node::restore_pre_apply_snapshot`] so the node state after a rejected
+/// block is byte-for-byte the state before it was attempted — nothing that
+/// can influence future execution, validity, fees, bridge execution or
+/// replay is left dirty.
+///
+/// Components (see `capture_pre_apply_snapshot` for the exact set):
+/// * in-memory `balances`, `token_balances`, `lp_balances`, `burned_tokens`
+/// * EIP-1559 base fee (sled `fee_db["base_fee"]`) and `total_fees_burned`
+///   (in-memory + sled `fee_db["total_burned"]`)
+/// * `shielded_supply`, `unbonding_queue`
+/// * `nonce_db` entries for every sender in the block
+/// * `address_db` (rouge1 index) entries for every sender/recipient
+/// * full dumps of the sled trees of the side-effect stores the block can
+///   touch (token metadata, pools, allowances, multisig, validators always;
+///   pool events / NFT / contract stores gated on the block's tx types
+///   because those trees grow with history).
+pub(crate) struct PreApplySnapshot {
+    balances: HashMap<String, u128>,
+    token_balances: HashMap<TokenBalanceKey, u128>,
+    lp_balances: HashMap<TokenBalanceKey, u128>,
+    burned_tokens: HashMap<String, f64>,
+    /// raw `fee_db` entries ("base_fee", "total_burned") → prior bytes (None = absent)
+    fee_db_entries: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    total_fees_burned: f64,
+    shielded_supply: f64,
+    unbonding_queue: Vec<UnbondingEntry>,
+    /// nonce_db key → prior value (None = key was absent)
+    nonce_entries: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    /// address_db key → prior value (None = key was absent)
+    address_entries: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    /// (tree handle, full key/value dump) for every snapshotted sled tree
+    trees: Vec<(sled::Tree, Vec<(Vec<u8>, Vec<u8>)>)>,
+}
+
+/// Full key/value dump of a sled tree (rollback primitive).
+pub(crate) fn snapshot_tree(tree: &sled::Tree) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+    let mut out = Vec::new();
+    for item in tree.iter() {
+        let (k, v) = item.map_err(|e| format!("snapshot tree iter: {}", e))?;
+        out.push((k.to_vec(), v.to_vec()));
+    }
+    Ok(out)
+}
+
+/// Restore a sled tree to a dump taken by [`snapshot_tree`]: clear, reinsert
+/// every entry, flush. Afterwards the tree holds exactly the snapshot's keys.
+pub(crate) fn restore_tree(tree: &sled::Tree, entries: &[(Vec<u8>, Vec<u8>)]) -> Result<(), String> {
+    tree.clear().map_err(|e| format!("restore tree clear: {}", e))?;
+    for (k, v) in entries {
+        tree.insert(k.as_slice(), v.as_slice()).map_err(|e| format!("restore tree insert: {}", e))?;
+    }
+    tree.flush().map_err(|e| format!("restore tree flush: {}", e))?;
+    Ok(())
+}
+
+/// The two `address_db` keys `index_address(pubkey)` writes, if derivable.
+fn address_index_keys(pubkey: &str) -> Option<(Vec<u8>, Vec<u8>)> {
+    use quantum_vault_crypto::{pub_key_to_address, address_to_hash};
+    let addr = pub_key_to_address(pubkey).ok()?;
+    let hash = address_to_hash(&addr).ok()?;
+    Some((bytes_to_hex(&hash).into_bytes(), pubkey.as_bytes().to_vec()))
+}
+
+impl L1Node {
+    /// Capture a [`PreApplySnapshot`] for `block`. Callers must not hold any of
+    /// the ledger locks; they are taken in the canonical order
+    /// (balances → token → lp → burned) matching `apply_balance_block`.
+    pub(crate) fn capture_pre_apply_snapshot(&self, block: &BlockV1) -> Result<PreApplySnapshot, String> {
+        let (balances, token_balances, lp_balances, burned_tokens) = {
+            let b = self.balances.lock().map_err(|_| "balance lock")?;
+            let t = self.token_balances.lock().map_err(|_| "token balance lock")?;
+            let l = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+            let bt = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
+            (b.clone(), t.clone(), l.clone(), bt.clone())
+        };
+        // Raw persisted fee state, restored byte-exactly (an absent key stays absent).
+        let mut fee_db_entries = Vec::new();
+        for key in [&b"base_fee"[..], &b"total_burned"[..]] {
+            let prev = self.fee_db.get(key).map_err(|e| format!("fee_db get: {}", e))?.map(|v| v.to_vec());
+            fee_db_entries.push((key.to_vec(), prev));
+        }
+        let total_fees_burned = *self.total_fees_burned.lock().map_err(|_| "fees burned lock")?;
+        let shielded_supply = *self.shielded_supply.lock().map_err(|_| "shielded supply lock")?;
+        let unbonding_queue = self.unbonding_queue.lock().map_err(|_| "unbonding lock")?.clone();
+
+        // Per-key snapshots of the two per-account sled indexes.
+        let mut nonce_entries = Vec::new();
+        let mut address_entries = Vec::new();
+        {
+            let mut seen_nonce: HashSet<&str> = HashSet::new();
+            let mut seen_addr: HashSet<&str> = HashSet::new();
+            for tx in &block.txs {
+                if seen_nonce.insert(tx.from_pub_key.as_str()) {
+                    let key = tx.from_pub_key.as_bytes().to_vec();
+                    let prev = self.nonce_db.get(&key).map_err(|e| format!("nonce_db get: {}", e))?
+                        .map(|v| v.to_vec());
+                    nonce_entries.push((key, prev));
+                }
+                let mut pks: Vec<&str> = vec![tx.from_pub_key.as_str()];
+                if let Some(ref to) = tx.payload.to_pub_key_hex { pks.push(to.as_str()); }
+                for pk in pks {
+                    if !seen_addr.insert(pk) { continue; }
+                    if let Some((k1, k2)) = address_index_keys(pk) {
+                        for key in [k1, k2] {
+                            let prev = self.address_db.get(&key).map_err(|e| format!("address_db get: {}", e))?
+                                .map(|v| v.to_vec());
+                            address_entries.push((key, prev));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Side-effect stores. Small, bounded stores are always snapshotted;
+        // history-sized ones only when the block carries a tx type that writes them.
+        let has = |pred: &dyn Fn(&str) -> bool| block.txs.iter().any(|tx| pred(tx.tx_type.as_str()));
+        let touches_amm = has(&|t| matches!(t,
+            "create_pool" | "add_liquidity" | "remove_liquidity" | "swap"
+            | "place_limit_order" | "cancel_limit_order"));
+        // Contract calls can create/mint/move NFTs from GAME_READY 2.
+        let touches_nft = has(&|t| t.starts_with("nft_") || t == "contract_call");
+        let touches_contract = has(&|t| t.starts_with("contract_"));
+
+        let mut handles: Vec<sled::Tree> = Vec::new();
+        let mut push_all = |ts: Vec<&sled::Tree>| for t in ts { handles.push(t.clone()); };
+        push_all(self.token_metadata_store.trees());
+        push_all(self.pool_store.trees());
+        push_all(self.allowance_store.trees());
+        push_all(self.multisig_store.trees());
+        push_all(self.validator_store.trees());
+        if touches_amm { push_all(self.pool_event_store.trees()); }
+        if touches_nft { push_all(self.nft_store.trees()); }
+        if touches_contract {
+            if let Some(ref cs) = self.contract_store { push_all(cs.trees()); }
+        }
+        let mut trees = Vec::with_capacity(handles.len());
+        for h in handles {
+            let dump = snapshot_tree(&h)?;
+            trees.push((h, dump));
+        }
+
+        Ok(PreApplySnapshot {
+            balances, token_balances, lp_balances, burned_tokens,
+            fee_db_entries, total_fees_burned, shielded_supply, unbonding_queue,
+            nonce_entries, address_entries, trees,
+        })
+    }
+
+    /// Restore every component captured by [`capture_pre_apply_snapshot`].
+    /// Continues past individual failures so one bad store cannot prevent the
+    /// rest from rolling back; the first error is returned at the end.
+    pub(crate) fn restore_pre_apply_snapshot(&self, snap: PreApplySnapshot) -> Result<(), String> {
+        let mut first_err: Option<String> = None;
+        let mut note = |r: Result<(), String>| if let Err(e) = r { if first_err.is_none() { first_err = Some(e); } };
+
+        // In-memory ledger, canonical lock order.
+        note((|| -> Result<(), String> {
+            let mut b = self.balances.lock().map_err(|_| "balance lock")?;
+            let mut t = self.token_balances.lock().map_err(|_| "token balance lock")?;
+            let mut l = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
+            let mut bt = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
+            *b = snap.balances;
+            *t = snap.token_balances;
+            *l = snap.lp_balances;
+            *bt = snap.burned_tokens;
+            Ok(())
+        })());
+        note((|| -> Result<(), String> {
+            *self.shielded_supply.lock().map_err(|_| "shielded supply lock")? = snap.shielded_supply;
+            Ok(())
+        })());
+        note((|| -> Result<(), String> {
+            *self.unbonding_queue.lock().map_err(|_| "unbonding lock")? = snap.unbonding_queue;
+            Ok(())
+        })());
+        // Fees: in-memory burned total, and the raw persisted fee_db entries restored
+        // byte-exactly (base fee is read from fee_db on demand, so this also restores it;
+        // a key that was absent before the block stays absent — no default gets written).
+        note((|| -> Result<(), String> {
+            *self.total_fees_burned.lock().map_err(|_| "fees burned lock")? = snap.total_fees_burned;
+            Ok(())
+        })());
+        for (key, prev) in snap.fee_db_entries {
+            let r = match prev {
+                Some(v) => self.fee_db.insert(key, v).map(|_| ()),
+                None => self.fee_db.remove(key).map(|_| ()),
+            };
+            note(r.map_err(|e| format!("fee_db restore: {}", e)));
+        }
+        note(self.fee_db.flush().map(|_| ()).map_err(|e| format!("fee_db flush: {}", e)));
+
+        // Per-key sled indexes: reinsert the old value or remove the key.
+        for (key, prev) in snap.nonce_entries {
+            let r = match prev {
+                Some(v) => self.nonce_db.insert(key, v).map(|_| ()),
+                None => self.nonce_db.remove(key).map(|_| ()),
+            };
+            note(r.map_err(|e| format!("nonce_db restore: {}", e)));
+        }
+        note(self.nonce_db.flush().map(|_| ()).map_err(|e| format!("nonce_db flush: {}", e)));
+        for (key, prev) in snap.address_entries {
+            let r = match prev {
+                Some(v) => self.address_db.insert(key, v).map(|_| ()),
+                None => self.address_db.remove(key).map(|_| ()),
+            };
+            note(r.map_err(|e| format!("address_db restore: {}", e)));
+        }
+        note(self.address_db.flush().map(|_| ()).map_err(|e| format!("address_db flush: {}", e)));
+
+        // Side-effect store trees.
+        for (tree, dump) in &snap.trees {
+            note(restore_tree(tree, dump));
+        }
+
+        match first_err { Some(e) => Err(e), None => Ok(()) }
+    }
+
+    /// DETERMINISTIC identity for `apply_balance_tx_inner`'s faucet / `bridge_mint`
+    /// authorization. When the genesis-anchored bridge authority set is configured, a tx is
+    /// authorized iff its signer is in that set — the SAME answer on every node and on every
+    /// replay, independent of which node produced the block or which key this process holds
+    /// (issue #66, item 3: no node-local identity in block-state application). Only when no
+    /// authority set exists (devnets / unit tests) does the local node key decide, as before.
+    fn apply_identity_for(&self, tx: &TxV1, node_pub_key: &str) -> String {
+        let authority = &self.opts.bridge_authority_keys;
+        if authority.is_empty() {
+            node_pub_key.to_string()
+        } else if authority.iter().any(|k| k == &tx.from_pub_key) {
+            tx.from_pub_key.clone() // authorized signer: passes the equality gate
+        } else {
+            "_unauthorized_".to_string() // non-empty, never equal, never "_rebuild_": rejected
+        }
+    }
+
+    /// Speculative state application. Returns the per-tx `bridge_withdraw` execution
+    /// results, INDEXED BY TX POSITION (a slot stays `None` for any tx that is not a
+    /// bridge_withdraw or that an early `continue` skipped). This function performs NO
+    /// bridge payout-store writes: it runs BEFORE state-root verification and its ledger
+    /// effects may be rolled back, so the store is persisted only by
+    /// `persist_bridge_withdraw_results` on the accepted-block path.
+    fn apply_balance_block(&self, block: &BlockV1) -> Result<BlockExecution, String> {
         let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
         let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
         let mut lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
         let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
-        
+
         // Track actual fees collected (not all tx fees -- rejected txs don't pay)
         let mut actual_fees_collected: u128 = 0;
 
+        // R1: fixed-length, position-indexed result vector. Never push-based — the loop
+        // below has early `continue` paths that would misalign every later result.
+        let mut bridge_results: Vec<Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>> =
+            vec![None; block.txs.len()];
+        // Validator results (position-indexed) + the sequential in-block stake shadow. Fee
+        // distribution below still uses the PRE-block validator set (unchanged consensus timing).
+        let mut validator_results: Vec<Option<ValidatorExecution>> = vec![None; block.txs.len()];
+        let mut validator_shadow: HashMap<String, u128> = HashMap::new();
+
         let node_pub_key = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         // Apply transaction effects (transfers, stakes, etc.) - fees deducted from senders
-        for tx in &block.txs {
+        for (tx_index, tx) in block.txs.iter().enumerate() {
             // ── SECURITY: Consensus-layer guards (metadata store access) ──
             // These checks require &self and cannot live inside the static apply_balance_tx_inner.
             match tx.tx_type.as_str() {
@@ -2891,7 +4458,12 @@ impl L1Node {
             }
 
             let before = balances.values().sum::<u128>();
-            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block.header.height, &self.shielded_supply);
+            let mut bwo: Option<quantum_vault_bridge_exec::BridgeWithdrawExecution> = None;
+            let mut vwo: Option<ValidatorExecution> = None;
+            let apply_identity = self.apply_identity_for(tx, &node_pub_key);
+            Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &apply_identity, &self.unbonding_queue, block.header.height, &self.shielded_supply, &mut bwo, &mut validator_shadow, &mut vwo);
+            bridge_results[tx_index] = bwo; // index by position — never push
+            validator_results[tx_index] = vwo;
             // Commit sequential nonce for this sender
             let _ = self.nonce_db.insert(tx.from_pub_key.as_bytes(), &tx.nonce.to_be_bytes());
 
@@ -2940,6 +4512,7 @@ impl L1Node {
                 &mut balances,
                 tx,
                 block.header.time,
+                block.header.height,
             )?;
             let after_nft = balances.values().sum::<u128>();
             let deducted_nft = before_nft.saturating_sub(after_nft);
@@ -3160,7 +4733,10 @@ impl L1Node {
             for tx in &block.txs {
                 match tx.tx_type.as_str() {
                     "contract_deploy" => {
-                        let deployer = tx.payload.to_pub_key_hex.as_deref().unwrap_or(&tx.from_pub_key);
+                        // GAME_READY: the deployer is whoever signed; before it, the legacy field.
+                        let game_ready = game_ready_active(block.header.height);
+                        let deployer = if game_ready { tx.from_pub_key.as_str() }
+                            else { tx.payload.to_pub_key_hex.as_deref().unwrap_or(&tx.from_pub_key) };
                         let contract_addr = match tx.payload.contract_addr.as_deref() {
                             Some(a) => a,
                             None => { eprintln!("[node] Skipping contract_deploy: no contract_addr"); continue; }
@@ -3187,6 +4763,15 @@ impl L1Node {
                                             use base64::Engine as _;
                                             match base64::engine::general_purpose::STANDARD.decode(wasm_b64) {
                                                 Ok(wasm_bytes) => {
+                                                    // GAME_READY: bytecode that fails deployment validation
+                                                    // (e.g. no exported memory) is not installed — on every
+                                                    // node alike; the deploy fee is still charged.
+                                                    if game_ready {
+                                                        if let Err(e) = rt.validate_contract_wasm(&wasm_bytes) {
+                                                            eprintln!("[node] contract_deploy {} not installed: {}", &contract_addr[..16.min(contract_addr.len())], e);
+                                                            continue;
+                                                        }
+                                                    }
                                                     match rt.install_contract(cs, contract_addr, deployer, &wasm_bytes, block.header.height) {
                                                         Ok(()) => eprintln!("[node] Block import: installed contract {} from tx bytecode", &contract_addr[..16.min(contract_addr.len())]),
                                                         Err(e) => eprintln!("[node] Block import: contract install failed: {} (non-fatal pre-activation)", e),
@@ -3204,7 +4789,10 @@ impl L1Node {
                         eprintln!("[node] Processed contract_deploy tx: deployer={}... addr={}", &deployer[..16.min(deployer.len())], &contract_addr[..16.min(contract_addr.len())]);
                     }
                     "contract_call" => {
-                        let caller = tx.payload.to_pub_key_hex.as_deref().unwrap_or(&tx.from_pub_key);
+                        // GAME_READY: the caller is whoever signed the tx. Before it, the legacy
+                        // (unsigned) field — which is why contracts must not hold value pre-activation.
+                        let caller = if game_ready_active(block.header.height) { tx.from_pub_key.as_str() }
+                            else { tx.payload.to_pub_key_hex.as_deref().unwrap_or(&tx.from_pub_key) };
                         let contract_addr = match tx.payload.contract_addr.as_deref() {
                             Some(a) => a,
                             None => { eprintln!("[node] Skipping contract_call: no contract_addr"); continue; }
@@ -3228,7 +4816,7 @@ impl L1Node {
                         actual_fees_collected += fee_to_quanta(tx.fee);
 
                         // Re-execute the contract call if runtime is available.
-                        let custody_active = block.header.height >= CONTRACT_CUSTODY_ACTIVATION_HEIGHT;
+                        let custody_active = block.header.height >= contract_custody_activation_height();
                         if let (Some(ref rt), Some(ref cs)) = (&self.wasm_runtime, &self.contract_store) {
                             // Full quanta balances — no u64 truncation (P3-2). The VM
                             // ABI is quanta-native, so pass the ledger as-is.
@@ -3237,7 +4825,11 @@ impl L1Node {
                             // Real call args from the tx payload (P3-2) — not an empty map.
                             let args = tx.payload.contract_args.clone()
                                 .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
-                            match rt.execute_contract(
+                            let game = game_ready_2_active(block.header.height).then(|| quantum_vault_vm::GameExt {
+                                view: Arc::new(NodeChainView { tokens: token_balances.clone(), nfts: self.nft_store.clone() }),
+                                seed: quantum_vault_vm::game::random_seed(&block.header.prev_hash, &tx_hash_str),
+                            });
+                            match rt.execute_contract_ext(
                                 cs,
                                 contract_addr,
                                 method,
@@ -3248,9 +4840,14 @@ impl L1Node {
                                 call_balances,
                                 gas_limit,
                                 &tx_hash_str,
+                                game,
                             ) {
                                 Ok(result) => {
                                     block_fuel_used += result.gas_used;
+                                    if let Ok(mut o) = self.contract_outcomes.lock() {
+                                        if o.len() > 10_000 { o.clear(); } // stale entries from rejected blocks
+                                        o.insert(tx_hash_str.clone(), (result.success, result.gas_used, result.error.clone()));
+                                    }
                                     eprintln!("[node] contract_call {} method={} gas={} success={}",
                                         &contract_addr[..16.min(contract_addr.len())], method, result.gas_used, result.success);
 
@@ -3265,18 +4862,25 @@ impl L1Node {
                                         // silently move a partial set (documented v1 limit).
                                         let did_cross_call = result.cross_call_results
                                             .as_ref().map_or(false, |v| !v.is_empty());
-                                        if did_cross_call {
+                                        // From GAME_READY 2 the VM merges sub-call moves (multi-hop).
+                                        if did_cross_call && !game_ready_2_active(block.header.height) {
                                             eprintln!("[node] contract_call {} used cross-calls; XRGE deltas NOT applied (single-hop v1)",
                                                 &contract_addr[..16.min(contract_addr.len())]);
-                                        } else if let Some(ref deltas) = result.balance_deltas {
-                                            // Conservation + overdraft enforced here; an Err
-                                            // means the VM emitted invalid deltas — a genuine
-                                            // invariant break, so fail closed (reject block).
-                                            crate::units::apply_balance_deltas(&mut balances, deltas)
-                                                .map_err(|e| format!(
-                                                    "contract {} balance deltas rejected: {}",
-                                                    contract_addr, e
-                                                ))?;
+                                        } else {
+                                            if let Some(ref deltas) = result.balance_deltas {
+                                                // Conservation + overdraft enforced here; an Err
+                                                // means the VM emitted invalid deltas — a genuine
+                                                // invariant break, so fail closed (reject block).
+                                                crate::units::apply_balance_deltas(&mut balances, deltas)
+                                                    .map_err(|e| format!(
+                                                        "contract {} balance deltas rejected: {}",
+                                                        contract_addr, e
+                                                    ))?;
+                                            }
+                                            if let Some(ref effects) = result.effects {
+                                                self.apply_contract_effects(&mut token_balances, effects, block.header.time)
+                                                    .map_err(|e| format!("contract {} effects rejected: {}", contract_addr, e))?;
+                                            }
                                         }
                                     }
                                 }
@@ -3310,32 +4914,14 @@ impl L1Node {
             }
         }
         
-        // Persist bridge_withdraw txs for operator to fulfill releases
-        if let Some(ref store) = self.opts.bridge_withdraw_store {
-            for tx in &block.txs {
-                if tx.tx_type == "bridge_withdraw"
-                    && tx.payload.amount.unwrap_or(0) > 0
-                {
-                    if let Some(evm_addr) = tx.payload.evm_address.as_ref() {
-                        let token = tx.payload.token_symbol.as_deref().unwrap_or("qETH");
-                        // Legacy "xrge:" tx_id prefix is retained for relayer / claim-store
-                        // continuity; the authoritative discriminator is now token_symbol.
-                        let prefix = if token == "XRGE" { "xrge:" } else { "" };
-                        let raw_id = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
-                        let tx_id = format!("{}{}", prefix, raw_id);
-                        let amount = tx.payload.amount.unwrap_or(0);
-                        let _ = store.add(
-                            tx_id.clone(),
-                            evm_addr.clone(),
-                            amount,
-                            tx.from_pub_key.clone(),
-                            token.to_string(),
-                        );
-                    }
-                }
-            }
-        }
-        
+        // R1: the bridge payout store is NOT written here (speculative apply may be rolled
+        // back on a state-root mismatch). See `persist_bridge_withdraw_results`, which runs
+        // only after the block is accepted and persisted.
+
+        // Matured unbonding releases are part of the block's deterministic ledger effects and
+        // MUST land before the state root is computed (producer and importer alike).
+        Self::release_matured_unbonding(&self.unbonding_queue, &mut balances, block.header.height)?;
+
         // Distribute only actually collected fees
         if actual_fees_collected > 0 {
             let base_fee = self.get_base_fee_quanta();
@@ -3354,10 +4940,130 @@ impl L1Node {
         let next_base_fee = self.calculate_next_base_fee(block.txs.len());
         self.set_base_fee_quanta(next_base_fee);
         self.persist_fees_burned();
-        
+
+        Ok(BlockExecution { bridge: bridge_results, validator: validator_results })
+    }
+
+    /// R1: persist relayer-facing bridge payout records for an ACCEPTED, PERSISTED block.
+    /// Called only after `store.append_block` succeeded (import + mine paths). Requires
+    /// `results` to be position-aligned with `block.txs` (fail closed otherwise). A record is
+    /// written only for `Success(effect)` with a destination AND a recognized payout asset
+    /// (`is_payout_eligible`): `Failed`, `None`, no-destination and unsupported/custom tokens
+    /// never produce a record. Owner is the ORIGINAL sender of tx[i]; token/amount/tx_id/
+    /// destination are the effect's canonical values.
+    fn persist_bridge_withdraw_results(
+        &self,
+        block: &BlockV1,
+        results: &[Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>],
+    ) -> Result<(), String> {
+        use quantum_vault_bridge_exec::{is_payout_eligible, BridgeWithdrawExecution::Success};
+        if results.len() != block.txs.len() {
+            return Err(format!(
+                "bridge results ({}) not aligned to block txs ({}) at height {}",
+                results.len(), block.txs.len(), block.header.height
+            ));
+        }
+        let store = match self.opts.bridge_withdraw_store { Some(ref s) => s, None => return Ok(()) };
+        for (i, r) in results.iter().enumerate() {
+            let exec = match r {
+                Some(e) if is_payout_eligible(e) => e,
+                _ => continue, // None / Failed / no destination / Unsupported ⇒ no record
+            };
+            if let Success(effect) = exec {
+                let dest = match effect.destination.as_ref() { Some(d) => d.clone(), None => continue };
+                // Legacy "xrge:" tx_id prefix retained for relayer / claim-store continuity.
+                let prefix = if effect.canonical_token == "XRGE" { "xrge:" } else { "" };
+                let tx_id = format!("{}{}", prefix, bytes_to_hex(&effect.rougechain_tx_id));
+                if let Err(e) = store.add(
+                    tx_id.clone(),
+                    dest,
+                    effect.amount,
+                    block.txs[i].from_pub_key.clone(),
+                    effect.canonical_token.clone(),
+                ) {
+                    // DERIVED DATA: the block is already committed and stays committed. Surface
+                    // the failure loudly, mark the bridge degraded (relayer lists fail closed until
+                    // `rebuild_bridge_withdraw_store` reconstructs the record), never roll back.
+                    eprintln!("[bridge] ALERT payout-record persistence FAILED for {} at height {}: {} — bridge derived state DEGRADED (payouts paused until rebuilt)",
+                        tx_id, block.header.height, e);
+                    self.bridge_store_degraded.store(true, std::sync::atomic::Ordering::SeqCst);
+                    if let Ok(mut f) = self.bridge_store_failed_ids.lock() { f.push(tx_id); }
+                }
+            }
+        }
         Ok(())
     }
-    
+
+    /// True while a derived bridge payout record is known to be missing (see
+    /// `persist_bridge_withdraw_results`). Relayer-facing lists must fail closed while set.
+    pub fn bridge_store_degraded(&self) -> bool {
+        self.bridge_store_degraded.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    pub fn bridge_store_failed_ids(&self) -> Vec<String> {
+        self.bridge_store_failed_ids.lock().map(|f| f.clone()).unwrap_or_default()
+    }
+
+    /// Relayer-facing pending withdrawals — FAIL CLOSED while the derived payout store is
+    /// degraded (a known-missing record would otherwise let the relayer act on an incomplete
+    /// list). Every relayer list endpoint must go through here.
+    pub fn relayer_pending_withdrawals(&self) -> Result<Vec<quantum_vault_storage::bridge_withdraw_store::PendingWithdrawal>, String> {
+        if self.bridge_store_degraded() {
+            return Err(format!(
+                "bridge derived state DEGRADED: {} payout record(s) failed to persist — payouts paused until the store is rebuilt",
+                self.bridge_store_failed_ids().len()
+            ));
+        }
+        match self.opts.bridge_withdraw_store { Some(ref s) => s.list_pending(), None => Ok(Vec::new()) }
+    }
+
+    /// Deterministically rebuild the relayer-facing bridge payout store from ACCEPTED chain
+    /// history at/after `BRIDGE_PAYOUT_STORE_ACTIVATION_HEIGHT`: every `bridge_withdraw` whose
+    /// receipt records `TxStatus::Success` (the R1 execution result) with a destination and a
+    /// recognized payout asset yields exactly the record `persist_bridge_withdraw_results`
+    /// would have written. Idempotent (`store.add` dedups by tx_id). Clears the degraded flag
+    /// only if every derived record is present afterwards. Returns the number of records added.
+    pub fn rebuild_bridge_withdraw_store(&self) -> Result<usize, String> {
+        self.rebuild_bridge_withdraw_store_from(BRIDGE_PAYOUT_STORE_ACTIVATION_HEIGHT)
+    }
+
+    /// `rebuild_bridge_withdraw_store` from an explicit start height (tests / operator tooling).
+    pub fn rebuild_bridge_withdraw_store_from(&self, from_height: u64) -> Result<usize, String> {
+        use quantum_vault_bridge_exec::{payout_route, PayoutRoute};
+        let store = match self.opts.bridge_withdraw_store { Some(ref s) => s, None => return Ok(0) };
+        let tip = self.store.get_tip()?.height;
+        let mut added = 0usize;
+        let mut missing_after = 0usize;
+        let mut h = from_height.max(1);
+        while h <= tip {
+            if let Some(block) = self.store.get_block(h)? {
+                for tx in &block.txs {
+                    if tx.tx_type != "bridge_withdraw" { continue; }
+                    let ok = matches!(self.get_receipt(&compute_single_tx_hash(tx))?, Some(rc) if matches!(rc.status, TxStatus::Success));
+                    if !ok { continue; }
+                    let (token, amount, dest) = match (&tx.payload.token_symbol, tx.payload.amount, &tx.payload.evm_address) {
+                        (Some(t), Some(a), Some(d)) if a > 0 => (t.trim().to_string(), a, d.clone()),
+                        _ => continue,
+                    };
+                    let canonical = if token.eq_ignore_ascii_case("XRGE") { "XRGE".to_string() } else { token };
+                    if payout_route(&canonical) == PayoutRoute::Unsupported { continue; }
+                    let prefix = if canonical == "XRGE" { "xrge:" } else { "" };
+                    let tx_id = format!("{}{}", prefix, bytes_to_hex(&sha256(&encode_tx_v1(tx))));
+                    let before = store.get(&tx_id)?.is_some();
+                    match store.add(tx_id.clone(), dest, amount, tx.from_pub_key.clone(), canonical) {
+                        Ok(()) => { if !before { added += 1; } }
+                        Err(e) => { missing_after += 1; eprintln!("[bridge] rebuild: still cannot persist {}: {}", tx_id, e); }
+                    }
+                }
+            }
+            h += 1;
+        }
+        if missing_after == 0 {
+            self.bridge_store_degraded.store(false, std::sync::atomic::Ordering::SeqCst);
+            if let Ok(mut f) = self.bridge_store_failed_ids.lock() { f.clear(); }
+        }
+        Ok(added)
+    }
+
     /// Apply AMM-specific transaction effects
     fn apply_amm_tx_inner(
         &self,
@@ -3446,6 +5152,9 @@ impl L1Node {
                     reserve_b_after: pool.reserve_b,
                 };
                 let _ = self.pool_event_store.save_event(&event);
+                if let Some(v) = crate::pool_events::lp_share_value(pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
+                    let _ = self.pool_event_store.record_lp_change(&pool.pool_id, &canon_addr(&tx.from_pub_key), true, pool.total_lp_supply, v);
+                }
                 
                 // Save price snapshot
                 let price_a_in_b = if pool.reserve_a > 0 { pool.reserve_b as f64 / pool.reserve_a as f64 } else { 0.0 };
@@ -3546,6 +5255,9 @@ impl L1Node {
                     reserve_b_after: pool.reserve_b,
                 };
                 let _ = self.pool_event_store.save_event(&event);
+                if let Some(v) = crate::pool_events::lp_share_value(pool.reserve_a, pool.reserve_b, pool.total_lp_supply) {
+                    let _ = self.pool_event_store.record_lp_change(&pool_id, &canon_addr(&tx.from_pub_key), true, lp_amount, v);
+                }
                 
                 // Save price snapshot
                 let price_a_in_b = if pool.reserve_a > 0 { pool.reserve_b as f64 / pool.reserve_a as f64 } else { 0.0 };
@@ -3631,6 +5343,12 @@ impl L1Node {
                     reserve_b_after: pool.reserve_b,
                 };
                 let _ = self.pool_event_store.save_event(&event);
+                let (pre_a, pre_b, pre_s) = (pool.reserve_a + amount_a, pool.reserve_b + amount_b, pool.total_lp_supply + lp_amount);
+                if let Some(v) = crate::pool_events::lp_share_value(pool.reserve_a, pool.reserve_b, pool.total_lp_supply)
+                    .or_else(|| crate::pool_events::lp_share_value(pre_a, pre_b, pre_s))
+                {
+                    let _ = self.pool_event_store.record_lp_change(&pool_id, &canon_addr(&tx.from_pub_key), false, lp_amount, v);
+                }
                 
                 // Save price snapshot
                 let price_a_in_b = if pool.reserve_a > 0 { pool.reserve_b as f64 / pool.reserve_a as f64 } else { 0.0 };
@@ -3805,143 +5523,12 @@ impl L1Node {
         let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
         let node_pub_key = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         let block_height = self.store.get_tip().map(|t| t.height).unwrap_or(0);
-        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block_height, &self.shielded_supply);
+        Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), &node_pub_key, &self.unbonding_queue, block_height, &self.shielded_supply, &mut None, &mut HashMap::new(), &mut None);
         Ok(())
     }
 
-    fn rebuild_balances(&self) -> Result<(), String> {
-        let blocks = self.store.get_all_blocks()?;
-        let mut balances = self.balances.lock().map_err(|_| "balance lock")?;
-        let mut token_balances = self.token_balances.lock().map_err(|_| "token balance lock")?;
-        let mut lp_balances = self.lp_balances.lock().map_err(|_| "lp balance lock")?;
-        let mut burned_tokens = self.burned_tokens.lock().map_err(|_| "burned tokens lock")?;
-        balances.clear();
-        token_balances.clear();
-        lp_balances.clear();
-        burned_tokens.clear();
-        // Reset shielded supply — it will be rebuilt from chain history
-        if let Ok(mut sp) = self.shielded_supply.lock() {
-            *sp = 0.0;
-        }
-        
-        let mut skipped_txs = 0u64;
-        let mut created_token_symbols: HashSet<String> = HashSet::new();
-
-        for block in &blocks {
-            let mut actual_fees_collected: u128 = 0;
-
-            for tx in &block.txs {
-                // Skip duplicate create_token txs (same symbol already created)
-                if tx.tx_type == "create_token" {
-                    if let Some(ref sym) = tx.payload.token_symbol {
-                        let sym_upper = sym.trim().to_uppercase();
-                        if created_token_symbols.contains(&sym_upper) {
-                            skipped_txs += 1;
-                            continue;
-                        }
-                    }
-                }
-
-                let sum_before: u128 = balances.values().sum();
-
-                Self::apply_balance_tx_inner(&mut balances, &mut token_balances, &mut burned_tokens, tx, Some(&self.validator_store), "_rebuild_", &self.unbonding_queue, block.header.height, &self.shielded_supply);
-
-                // Register token metadata during rebuild + track created symbols
-                // Uses merge to preserve user-updated fields (image, links, etc.)
-                if tx.tx_type == "create_token" {
-                    if let Some(ref sym) = tx.payload.token_symbol {
-                        let sym_upper = sym.trim().to_uppercase();
-                        created_token_symbols.insert(sym_upper.clone());
-                        let name = tx.payload.token_name.as_deref().unwrap_or(&sym_upper);
-                        let _ = self.register_or_merge_token_metadata(
-                            &sym_upper,
-                            name,
-                            &tx.from_pub_key,
-                            tx.payload.metadata_image.clone(),
-                            tx.payload.metadata_description.clone(),
-                            false,
-                            None,
-                        );
-                    }
-                }
-
-                Self::apply_amm_balance_effects(
-                    &mut balances,
-                    &mut token_balances,
-                    &mut lp_balances,
-                    tx,
-                    &self.pool_store,
-                );
-
-                Self::apply_nft_balance_effects(&mut balances, tx);
-
-                // Apply shielded state effects (commitment/nullifier stores)
-                self.apply_shielded_state_effects(tx);
-                self.apply_web3_state_effects(tx, block.header.height);
-
-                let sum_after: u128 = balances.values().sum();
-                let fee_delta = sum_before as i128 - sum_after as i128;
-                if fee_delta > 0 {
-                    actual_fees_collected += fee_delta as u128;
-                } else if fee_delta == 0 && tx.fee > 0.0 {
-                    skipped_txs += 1;
-                }
-            }
-            
-            if actual_fees_collected > 0 {
-                let stakes = self.get_validator_stakes_at_height(block.header.height)?;
-                let base_fee = self.get_base_fee_quanta();
-                Self::distribute_fees(
-                    &mut balances,
-                    actual_fees_collected,
-                    &block.header.proposer_pub_key,
-                    &stakes,
-                    base_fee,
-                    block.txs.len(),
-                    &self.total_fees_burned,
-                );
-            }
-        }
-
-        if skipped_txs > 0 {
-            eprintln!("[rebuild] Skipped {} invalid transactions during balance rebuild", skipped_txs);
-        }
-        // Persist computed shielded supply to sled for fast startup
-        if let Ok(sp) = self.shielded_supply.lock() {
-            let _ = self.store.set_shielded_supply(*sp);
-        }
-
-        // Auto-backfill: for tokens with image=None, try to find an image
-        // from an NFT collection by the same creator with a related symbol.
-        if let Ok(all_meta) = self.token_metadata_store.get_all() {
-            let imageless: Vec<_> = all_meta.into_iter()
-                .filter(|m| m.image.is_none())
-                .collect();
-            if !imageless.is_empty() {
-                if let Ok(collections) = self.nft_store.list_collections() {
-                    for meta in &imageless {
-                        // Look for an NFT collection by the same creator whose
-                        // symbol shares the token's symbol as a prefix (e.g. SENSEI -> SENSEINFT)
-                        let best = collections.iter().find(|c| {
-                            c.creator == meta.creator
-                                && c.image.is_some()
-                                && c.symbol.starts_with(&meta.symbol)
-                        });
-                        if let Some(col) = best {
-                            if let Some(ref img) = col.image {
-                                let mut updated = meta.clone();
-                                updated.image = Some(img.clone());
-                                let _ = self.token_metadata_store.set_metadata(&updated);
-                                eprintln!("[rebuild] Backfilled image for {} from NFT collection {}", meta.symbol, col.collection_id);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
+    // `rebuild_balances` (second transaction-application implementation) was REMOVED: there is
+    // ONE historical execution semantics — `apply_balance_block` via `import_block`.
     
     // ── Shared AMM balance primitives (XRGE → native ledger, else token map) ──
     // The create_pool/add_liquidity/remove_liquidity/swap appliers — both the
@@ -4767,6 +6354,14 @@ impl L1Node {
         unbonding_queue: &Arc<Mutex<Vec<UnbondingEntry>>>,
         block_height: u64,
         shielded_supply: &Arc<Mutex<f64>>,
+        // R1: typed execution result for `bridge_withdraw` ONLY. Written at the existing
+        // decision points of the arm below; every other arm leaves it untouched (None).
+        bridge_out: &mut Option<quantum_vault_bridge_exec::BridgeWithdrawExecution>,
+        // Sequential in-block validator stake shadow (pubkey → stake after earlier txs of this
+        // block) and the position-aligned validator result. Stake/unstake validity is decided
+        // HERE, together with the ledger debit, never by re-scanning the block later.
+        validator_shadow: &mut HashMap<String, u128>,
+        validator_out: &mut Option<ValidatorExecution>,
     ) {
         match tx.tx_type.as_str() {
             "transfer" => {
@@ -4824,35 +6419,51 @@ impl L1Node {
             }
             "stake" => {
                 let amount = tx.payload.amount.unwrap_or(0) as f64;
+                if tx.payload.amount.unwrap_or(0) == 0 {
+                    *validator_out = Some(ValidatorExecution::Failed("stake amount must be > 0".into()));
+                    return;
+                }
                 let xrge_bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
                 if xrge_bal < xrge_f64_to_quanta(amount + tx.fee) {
                     eprintln!("[node] Rejecting stake: insufficient XRGE ({:.4} < {:.4})", xrge_bal, amount + tx.fee);
-                    return;
+                    *validator_out = Some(ValidatorExecution::Failed(format!("insufficient XRGE for stake+fee ({} < {})", quanta_to_display(xrge_bal), amount + tx.fee)));
+                    return; // NO ledger debit ⇒ NO validator effect
                 }
                 *balances.entry(canon_addr(&tx.from_pub_key)).or_insert(0) -= xrge_f64_to_quanta(amount + tx.fee);
+                let current = *validator_shadow.entry(tx.from_pub_key.clone()).or_insert_with(|| {
+                    validator_store.and_then(|vs| vs.get_validator(&tx.from_pub_key).unwrap_or(None)).map(|v| v.stake).unwrap_or(0)
+                });
+                let amount_u = tx.payload.amount.unwrap_or(0) as u128;
+                validator_shadow.insert(tx.from_pub_key.clone(), current + amount_u);
+                *validator_out = Some(ValidatorExecution::StakeApplied { validator: tx.from_pub_key.clone(), amount: amount_u });
             }
             "unstake" => {
                 let amount = tx.payload.amount.unwrap_or(0) as f64;
-                // Verify staked balance before queueing
-                if let Some(vs) = validator_store {
-                    let staked = vs.get_validator(&tx.from_pub_key)
-                        .unwrap_or(None)
-                        .map(|v| v.stake)
-                        .unwrap_or(0);
-                    if (amount as u128) > staked {
-                        eprintln!("[node] Rejecting unstake: staked {} but requested {}", staked, amount);
-                        return;
-                    }
+                let amount_u = tx.payload.amount.unwrap_or(0) as u128;
+                if amount_u == 0 {
+                    *validator_out = Some(ValidatorExecution::Failed("unstake amount must be > 0".into()));
+                    return;
+                }
+                // SEQUENTIAL validator shadow: earlier stake/unstake txs of this block are visible.
+                let staked = *validator_shadow.entry(tx.from_pub_key.clone()).or_insert_with(|| {
+                    validator_store.and_then(|vs| vs.get_validator(&tx.from_pub_key).unwrap_or(None)).map(|v| v.stake).unwrap_or(0)
+                });
+                if amount_u > staked {
+                    eprintln!("[node] Rejecting unstake: staked {} but requested {}", staked, amount);
+                    *validator_out = Some(ValidatorExecution::Failed(format!("unstake {} exceeds sequential stake {}", amount_u, staked)));
+                    return; // no validator change, no unbonding
                 }
                 let xrge_bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
                 if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                     eprintln!("[node] Rejecting unstake: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
-                    return;
+                    *validator_out = Some(ValidatorExecution::Failed("insufficient XRGE for unstake fee".into()));
+                    return; // fee failed ⇒ no validator change, no unbonding
                 }
                 // Deduct fee now, queue the unbonding (funds released after UNBONDING_BLOCKS)
                 *balances.entry(canon_addr(&tx.from_pub_key)).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
+                validator_shadow.insert(tx.from_pub_key.clone(), staked - amount_u);
+                let release_at = block_height + UNBONDING_BLOCKS;
                 if let Ok(mut queue) = unbonding_queue.lock() {
-                    let release_at = block_height + UNBONDING_BLOCKS;
                     queue.push(UnbondingEntry {
                         delegator: tx.from_pub_key.clone(),
                         amount,
@@ -4861,6 +6472,7 @@ impl L1Node {
                     eprintln!("[node] Unstake queued: {:.4} XRGE, releases at block {}",
                         amount, release_at);
                 }
+                *validator_out = Some(ValidatorExecution::UnstakeApplied { validator: tx.from_pub_key.clone(), amount: amount_u, release_height: release_at });
             }
             "create_token" => {
                 const RESERVED: &[&str] = &["XRGE", "QETH", "QUSDC", "ETH", "USDC"];
@@ -4957,6 +6569,11 @@ impl L1Node {
                 }
             }
             "bridge_withdraw" => {
+                // R1: this arm is INSTRUMENTED, not rewritten. Every balance/fee/burn expression,
+                // ordering, key casing and `return;` below is byte-identical to the pre-R1 code;
+                // the only additions are the `*bridge_out = ...` assignments that record what the
+                // existing arithmetic already decided. Failure paths mutate nothing (as before).
+                use quantum_vault_bridge_exec::{BridgeWithdrawExecution as BX, BridgeWithdrawFailure as BF, BridgeWithdrawEffect};
                 if let (Some(token_symbol), Some(amount)) = (
                     tx.payload.token_symbol.as_ref(),
                     tx.payload.amount,
@@ -4969,11 +6586,13 @@ impl L1Node {
                         let xrge_bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
                         if xrge_bal < xrge_f64_to_quanta(tx.fee) {
                             eprintln!("[node] Rejecting bridge_withdraw: insufficient XRGE for fee ({:.4} < {:.4})", xrge_bal, tx.fee);
+                            *bridge_out = Some(BX::Failed(BF::InsufficientFee));
                             return;
                         }
                         if token_sym.eq_ignore_ascii_case("XRGE") {
                             if xrge_bal.saturating_sub(fee_to_quanta(tx.fee)) < xrge_f64_to_quanta(amount as f64) {
                                 eprintln!("[node] Rejecting bridge_withdraw: insufficient XRGE ({:.4} < {})", quanta_to_display(xrge_bal.saturating_sub(fee_to_quanta(tx.fee))), amount);
+                                *bridge_out = Some(BX::Failed(BF::InsufficientXrge));
                                 return;
                             }
                             *balances.entry(canon_addr(&tx.from_pub_key)).or_insert(0) -= xrge_f64_to_quanta(tx.fee + amount as f64);
@@ -4982,13 +6601,35 @@ impl L1Node {
                             let token_bal = *token_balances.get(&sender_key).unwrap_or(&0);
                             if token_bal < amount as u128 {
                                 eprintln!("[node] Rejecting bridge_withdraw: insufficient {} ({:.4} < {})", token_sym, token_bal, amount);
+                                *bridge_out = Some(BX::Failed(BF::InsufficientToken));
                                 return;
                             }
                             *balances.entry(canon_addr(&tx.from_pub_key)).or_insert(0) -= xrge_f64_to_quanta(tx.fee);
                             *token_balances.entry(sender_key).or_insert(0) -= amount as u128;
                         }
+                        // Canonical token for the DERIVED record/routing only; the burn key below
+                        // stays the RAW trimmed symbol (state-root relevant, unchanged).
+                        let canonical_token = if token_sym.eq_ignore_ascii_case("XRGE") { "XRGE".to_string() } else { token_sym.clone() };
                         *burned_tokens.entry(token_sym).or_insert(0.0) += amount as f64;
+                        let rougechain_tx_id = {
+                            let d = sha256(&encode_tx_v1(tx));
+                            let mut r = [0u8; 32];
+                            r.copy_from_slice(&d);
+                            r
+                        };
+                        *bridge_out = Some(BX::Success(BridgeWithdrawEffect {
+                            canonical_token,
+                            amount,
+                            destination: tx.payload.evm_address.clone(),
+                            rougechain_tx_id,
+                        }));
+                    } else {
+                        *bridge_out = Some(BX::Failed(BF::ZeroAmount));
                     }
+                } else {
+                    *bridge_out = Some(BX::Failed(
+                        if tx.payload.token_symbol.is_none() { BF::MissingToken } else { BF::MissingAmount }
+                    ));
                 }
             }
             "slash" => {}
@@ -5226,48 +6867,78 @@ impl L1Node {
         self.get_validator_stakes()
     }
 
-    fn apply_validator_block(&self, block: &BlockV1) -> Result<(), String> {
-        for tx in &block.txs {
-            self.apply_validator_tx(tx, block.header.height)?;
+    fn apply_validator_block(&self, block: &BlockV1, validator_results: &[Option<ValidatorExecution>]) -> Result<(), String> {
+        if validator_results.len() != block.txs.len() {
+            return Err(format!("validator results ({}) not aligned to block txs ({})", validator_results.len(), block.txs.len()));
         }
-        // Process unbonding queue — release matured entries
-        self.process_unbonding_queue(block.header.height);
+        for (tx, res) in block.txs.iter().zip(validator_results.iter()) {
+            match res {
+                // ONLY a stake/unstake whose ledger execution succeeded reaches the store.
+                Some(ValidatorExecution::StakeApplied { validator, amount }) => {
+                    let mut state = self.validator_store.get_validator(validator)?.unwrap_or(ValidatorState {
+                        stake: 0, slash_count: 0, jailed_until: 0, entropy_contributions: 0, blocks_proposed: 0, name: None, missed_blocks: 0, total_slashed: 0 });
+                    state.stake += amount;
+                    self.persist_validator_state(validator, &state, block.header.height)?;
+                }
+                Some(ValidatorExecution::UnstakeApplied { validator, amount, .. }) => {
+                    if let Some(mut state) = self.validator_store.get_validator(validator)? {
+                        state.stake = state.stake.saturating_sub(*amount);
+                        self.persist_validator_state(validator, &state, block.header.height)?;
+                    }
+                }
+                Some(ValidatorExecution::Failed(_)) | None => {
+                    // slashing is not a ledger tx; it keeps its own path
+                    if tx.tx_type == "slash" { self.apply_validator_tx(tx, block.header.height)?; }
+                }
+            }
+        }
+        // Matured unbonding is released inside apply_balance_block (BEFORE the state root is
+        // sealed) — this post-root phase must never touch balances/token/LP maps.
         // Check missed blocks and auto-slash
         self.check_missed_blocks(block);
         Ok(())
     }
 
-    /// Release matured unbonding entries — transfer funds back to delegator balance
-    fn process_unbonding_queue(&self, current_height: u64) {
-        if let Ok(mut queue) = self.unbonding_queue.lock() {
-            let mut released = Vec::new();
-            let mut remaining = Vec::new();
-            for entry in queue.drain(..) {
-                if current_height >= entry.release_height {
-                    released.push(entry);
-                } else {
-                    remaining.push(entry);
-                }
-            }
-            *queue = remaining;
-
-            // Credit released unbonds to balances
-            if !released.is_empty() {
-                if let Ok(mut balances) = self.balances.lock() {
-                    for entry in &released {
-                        *balances.entry(canon_addr(&entry.delegator)).or_insert(0) += xrge_f64_to_quanta(entry.amount);
-                        eprintln!("[node] Unbonding released: {:.4} XRGE to {}",
-                            entry.amount, &entry.delegator[..8.min(entry.delegator.len())]);
-                    }
-                }
-            }
+    /// Release matured unbonding entries (release_height <= current_height) into the given
+    /// balance map, exactly once, removing them from the queue. Part of the deterministic
+    /// speculative block application (pre-root), so it is covered by the state root and by
+    /// the pre-apply snapshot/rollback. Returns the released entries.
+    fn release_matured_unbonding(
+        unbonding_queue: &Arc<Mutex<Vec<UnbondingEntry>>>,
+        balances: &mut HashMap<String, u128>,
+        current_height: u64,
+    ) -> Result<Vec<UnbondingEntry>, String> {
+        let mut queue = unbonding_queue.lock().map_err(|_| "unbonding lock")?;
+        let mut released = Vec::new();
+        let mut remaining = Vec::new();
+        for entry in queue.drain(..) {
+            if current_height >= entry.release_height { released.push(entry); } else { remaining.push(entry); }
         }
+        *queue = remaining;
+        for entry in &released {
+            *balances.entry(canon_addr(&entry.delegator)).or_insert(0) += xrge_f64_to_quanta(entry.amount);
+            eprintln!("[node] Unbonding released at height {}: {:.4} XRGE to {}",
+                current_height, entry.amount, &entry.delegator[..8.min(entry.delegator.len())]);
+        }
+        Ok(released)
     }
 
     /// Track missed blocks and auto-slash validators over threshold
     fn check_missed_blocks(&self, block: &BlockV1) {
         // Get the block proposer
         let proposer = &block.header.proposer_pub_key;
+        if proposer_selection_active(block.header.height) {
+            // Amendment 1: legacy missed-block accounting is FROZEN from the activation height.
+            // Only the designated proposer can produce a block, and without a fallback proposer a
+            // missed slot never becomes a consensus block, so no validator may accumulate
+            // `missed_blocks`, be auto-slashed or auto-jailed here. Historical counters are left
+            // exactly as they are. `blocks_proposed` is informational and still counts.
+            if let Ok(Some(mut state)) = self.validator_store.get_validator(proposer) {
+                state.blocks_proposed += 1;
+                let _ = self.validator_store.set_validator(proposer, &state);
+            }
+            return;
+        }
         // Get all active validators
         if let Ok(validators) = self.validator_store.list_validators() {
             for (pubkey, mut state) in validators {
@@ -5312,17 +6983,8 @@ impl L1Node {
             })
         };
         match tx.tx_type.as_str() {
-            "stake" | "unstake" => {
-                let amount = tx.payload.amount.unwrap_or(0) as u128;
-                let current = ensure(self.validator_store.get_validator(&tx.from_pub_key)?);
-                let mut state = current;
-                if tx.tx_type == "stake" {
-                    state.stake += amount;
-                } else {
-                    state.stake = state.stake.saturating_sub(amount);
-                }
-                self.persist_validator_state(&tx.from_pub_key, &state, height)?;
-            }
+            // stake / unstake are applied from `ValidatorExecution` results only (see
+            // apply_validator_block) — never inferred from a tx's presence in a block.
             "slash" => {
                 let payload = SlashPayload {
                     target_pub_key: tx.payload.target_pub_key.clone().unwrap_or_default(),
@@ -5415,11 +7077,93 @@ impl L1Node {
     }
 
     /// Apply NFT transaction effects during block processing
+    /// Apply a successful contract call's GAME_READY 2 token/NFT effects, in order. The VM
+    /// validated them against the same state, so a failure here is an invariant break and the
+    /// caller rejects the block (like invalid XRGE deltas).
+    fn apply_contract_effects(
+        &self,
+        token_balances: &mut HashMap<TokenBalanceKey, u128>,
+        effects: &[quantum_vault_vm::ChainEffect],
+        block_time: u64,
+    ) -> Result<(), String> {
+        use quantum_vault_vm::ChainEffect as E;
+        for e in effects {
+            match e {
+                E::TokenTransfer { symbol, from, to, amount } => {
+                    let from_key = (canon_addr(from), symbol.clone());
+                    let have = *token_balances.get(&from_key).unwrap_or(&0);
+                    if have < *amount {
+                        return Err(format!("token overdraft: {} has {} {}, moving {}", from, have, symbol, amount));
+                    }
+                    token_balances.insert(from_key, have - amount);
+                    *token_balances.entry((canon_addr(to), symbol.clone())).or_insert(0) += amount;
+                }
+                E::NftCreateCollection { collection_id, symbol, name, creator, max_supply } => {
+                    if self.nft_store.get_collection(collection_id)?.is_some() {
+                        return Err(format!("collection {} already exists", collection_id));
+                    }
+                    self.nft_store.save_collection(&NftCollection {
+                        collection_id: collection_id.clone(),
+                        symbol: symbol.clone(),
+                        name: name.clone(),
+                        creator: creator.clone(),
+                        description: None,
+                        image: None,
+                        max_supply: *max_supply,
+                        minted: 0,
+                        royalty_bps: 0,
+                        royalty_recipient: creator.clone(),
+                        frozen: false,
+                        created_at: block_time,
+                        public_mint: false,
+                        mint_price: None,
+                        token_gate_symbol: None,
+                        token_gate_amount: None,
+                        discount_pct: None,
+                    })?;
+                }
+                E::NftMint { collection_id, token_id, to, name, metadata } => {
+                    let mut col = self.nft_store.get_collection(collection_id)?
+                        .ok_or_else(|| format!("collection {} not found", collection_id))?;
+                    if col.minted + 1 != *token_id {
+                        return Err(format!("mint id {} out of sequence for {}", token_id, collection_id));
+                    }
+                    col.minted = *token_id;
+                    self.nft_store.save_collection(&col)?;
+                    self.nft_store.save_token(&NftToken {
+                        collection_id: collection_id.clone(),
+                        token_id: *token_id,
+                        owner: to.clone(),
+                        creator: col.creator.clone(),
+                        name: name.clone(),
+                        metadata_uri: None,
+                        attributes: metadata.clone(),
+                        locked: false,
+                        minted_at: block_time,
+                        transferred_at: block_time,
+                    })?;
+                }
+                E::NftTransfer { collection_id, token_id, from, to } => {
+                    let mut t = self.nft_store.get_token(collection_id, *token_id)?
+                        .ok_or_else(|| format!("NFT {}:{} not found", collection_id, token_id))?;
+                    if t.owner != *from || t.locked {
+                        return Err(format!("NFT {}:{} moved or locked since the call was checked", collection_id, token_id));
+                    }
+                    t.owner = to.clone();
+                    t.transferred_at = block_time;
+                    self.nft_store.save_token(&t)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn apply_nft_tx_inner(
         &self,
         balances: &mut HashMap<String, u128>,
         tx: &TxV1,
         block_time: u64,
+        block_height: u64,
     ) -> Result<(), String> {
         match tx.tx_type.as_str() {
             "nft_create_collection" => {
@@ -5608,7 +7352,7 @@ impl L1Node {
                     }
                 };
 
-                if token.owner != tx.from_pub_key {
+                if !nft_owner_matches(&token.owner, &tx.from_pub_key, block_height) {
                     eprintln!("[node] Warning: NFT {}:{} not owned by sender, skipping transfer", col_id, token_id);
                     return Ok(());
                 }
@@ -5654,7 +7398,7 @@ impl L1Node {
                 let token_id = tx.payload.nft_token_id.ok_or("missing nft_token_id")?;
 
                 if let Some(token) = self.nft_store.get_token(col_id, token_id)? {
-                    if token.owner != tx.from_pub_key {
+                    if !nft_owner_matches(&token.owner, &tx.from_pub_key, block_height) {
                         eprintln!("[node] Warning: NFT {}:{} not owned by sender, skipping burn", col_id, token_id);
                         return Ok(());
                     }
@@ -5682,7 +7426,7 @@ impl L1Node {
                     None => return Ok(()),
                 };
 
-                if token.owner != tx.from_pub_key {
+                if !nft_owner_matches(&token.owner, &tx.from_pub_key, block_height) {
                     eprintln!("[node] Warning: NFT {}:{} not owned by sender, skipping lock", col_id, token_id);
                     return Ok(());
                 }
@@ -5757,7 +7501,7 @@ impl L1Node {
                         }
                         // Ensure sender has enough balance for fee checks during rebuild
                         *dummy_balances.entry(tx.from_pub_key.clone()).or_insert(0) += xrge_f64_to_quanta(tx.fee + 1.0);
-                        let _ = self.apply_nft_tx_inner(&mut dummy_balances, tx, block.header.time);
+                        let _ = self.apply_nft_tx_inner(&mut dummy_balances, tx, block.header.time, block.header.height);
                     }
                     _ => {}
                 }
@@ -5802,6 +7546,32 @@ impl L1Node {
 
     pub fn delete_conversation(&self, conversation_id: &str) -> Result<(), String> {
         self.messenger_store.delete_conversation(conversation_id)
+    }
+    // ── messenger: deterministic 1:1 ids + recoverable delete (rougechain-node #73) ──
+    pub fn create_or_get_conversation(&self, created_by: &str, participant_ids: Vec<String>, name: Option<String>, is_group: bool) -> Result<(Conversation, bool), String> {
+        self.messenger_store.create_or_get_conversation(created_by, participant_ids, name, is_group)
+    }
+    pub fn list_conversations_with_activity_in(&self, wallet_id: &str, extra_keys: &[&str], folder: quantum_vault_storage::messenger_store::Folder) -> Result<Vec<serde_json::Value>, String> {
+        self.messenger_store.list_conversations_with_activity_in(wallet_id, extra_keys, folder)
+    }
+    pub fn conversation_has_participant(&self, conversation_id: &str, wallet_id: &str, extra_keys: &[&str]) -> Result<bool, String> {
+        self.messenger_store.conversation_has_participant(conversation_id, wallet_id, extra_keys)
+    }
+    pub fn soft_delete_conversation(&self, conversation_id: &str, wallet_id: &str, extra_keys: &[&str], purge: bool) -> Result<Conversation, String> {
+        self.messenger_store.soft_delete_conversation(conversation_id, wallet_id, extra_keys, purge)
+    }
+    pub fn restore_conversation(&self, conversation_id: &str, wallet_id: &str, extra_keys: &[&str]) -> Result<Conversation, String> {
+        self.messenger_store.restore_conversation(conversation_id, wallet_id, extra_keys)
+    }
+    pub fn list_messages_in_folder(&self, conversation_id: &str, folder: quantum_vault_storage::messenger_store::Folder) -> Result<Vec<MessengerMessage>, String> {
+        self.messenger_store.list_messages_in_folder(conversation_id, folder)
+    }
+    pub fn restore_message(&self, message_id: &str) -> Result<MessengerMessage, String> {
+        self.messenger_store.restore_message(message_id)
+    }
+    pub fn messenger_canonical_participant(&self, pid: &str) -> String { self.messenger_store.canonical_participant(pid) }
+    pub fn sweep_soft_deleted_messenger(&self) -> Result<(usize, usize), String> {
+        self.messenger_store.sweep_soft_deleted(chrono::Utc::now())
     }
 
     pub fn delete_message(&self, message_id: &str) -> Result<(), String> {
@@ -6163,7 +7933,7 @@ mod ledger_tests {
         let uq: Arc<Mutex<Vec<UnbondingEntry>>> = Arc::new(Mutex::new(Vec::new()));
         let ss = Arc::new(Mutex::new(0.0f64));
         L1Node::apply_balance_tx_inner(
-            balances, &mut token_balances, &mut burned, tx, None, "", &uq, 1, &ss,
+            balances, &mut token_balances, &mut burned, tx, None, "", &uq, 1, &ss, &mut None, &mut HashMap::new(), &mut None,
         );
         (token_balances, burned)
     }
@@ -6552,6 +8322,7 @@ mod live_amm_tests {
             mine: false,
             bridge_withdraw_store: None,
             bridge_authority_keys: Vec::new(),
+            genesis_allocations: Vec::new(), genesis_validators: Vec::new(),
         })
         .expect("test node");
         (dir, node)
@@ -6674,7 +8445,7 @@ mod live_amm_tests {
         let mut burned = node.burned_tokens.lock().unwrap();
         L1Node::apply_balance_tx_inner(
             &mut bal, &mut tok, &mut burned, tx,
-            Some(&node.validator_store), node_pub, &node.unbonding_queue, 1, &node.shielded_supply,
+            Some(&node.validator_store), node_pub, &node.unbonding_queue, 1, &node.shielded_supply, &mut None, &mut HashMap::new(), &mut None,
         );
     }
 
@@ -7222,5 +8993,2845 @@ mod live_amm_tests {
         // The over-transfer was refused at the VM host boundary: no XRGE moved.
         assert_eq!(a.get_balance("bob").unwrap(), 0.0, "bob got nothing — overspend refused");
         assert_eq!(a.get_balance(addr).unwrap(), 1.0, "contract balance intact");
+    }
+
+    // ── LP fee ledger: uncollected fees and the Collect fees removal ─────
+    #[test]
+    fn lp_earnings_track_swap_fees_and_collect_leaves_the_deposit() {
+        let (_dir, node) = test_node();
+        let mut bal = HashMap::from([("alice".to_string(), 100_000_000 * Q), ("bob".to_string(), 100_000_000 * Q)]);
+        let mut tok: HashMap<TokenBalanceKey, u128> = HashMap::from([
+            (("alice".to_string(), "QTOK".to_string()), 100_000_000u128),
+            (("bob".to_string(), "QTOK".to_string()), 100_000_000u128),
+        ]);
+        let mut lp: HashMap<TokenBalanceKey, u128> = HashMap::new();
+        let mut h = 1;
+        let mut run = |tx: TxV1, bal: &mut HashMap<String, u128>, tok: &mut HashMap<TokenBalanceKey, u128>, lp: &mut HashMap<TokenBalanceKey, u128>| {
+            h += 1;
+            node.apply_amm_tx_inner(bal, tok, lp, &tx, 1000 + h, h).unwrap();
+            // The earnings API reads the node's committed LP balances.
+            *node.lp_balances.lock().unwrap() = lp.clone();
+        };
+        let swap = |from: &str, tin: &str, tout: &str, amt: u64| amm_tx("swap", from, 0.1, TxPayload {
+            token_a_symbol: Some(tin.to_string()), token_b_symbol: Some(tout.to_string()), amount_a: Some(amt), ..Default::default()
+        });
+        run(amm_tx("create_pool", "alice", 0.1, TxPayload {
+            token_a_symbol: Some("XRGE".to_string()), token_b_symbol: Some("QTOK".to_string()),
+            amount_a: Some(10_000_000), amount_b: Some(10_000_000), ..Default::default()
+        }), &mut bal, &mut tok, &mut lp);
+        // Wallets are sorted into the lp map by canonical address; the fee ledger uses the same key.
+        let alice_lp = |lp: &HashMap<TokenBalanceKey, u128>| lp[&("alice".to_string(), "QTOK-XRGE".to_string())] as u64;
+        let e0 = node.get_lp_earnings("QTOK-XRGE", "alice").unwrap().unwrap();
+        assert!(e0.tracked);
+        assert_eq!(e0.lp_to_collect, 0, "no fees right after depositing");
+
+        // Round-trip trading: price ends near where it started, so all growth is fees.
+        for _ in 0..20 {
+            run(swap("bob", "XRGE", "QTOK", 500_000), &mut bal, &mut tok, &mut lp);
+            run(swap("bob", "QTOK", "XRGE", 500_000), &mut bal, &mut tok, &mut lp);
+        }
+        let e1 = node.get_lp_earnings("QTOK-XRGE", "alice").unwrap().unwrap();
+        assert!(e1.tracked && e1.lp_to_collect > 0 && e1.growth > 0.0);
+        // 40 swaps × 500k × 0.3% ≈ 60k of fees across both sides.
+        assert!(e1.earned_a + e1.earned_b > 50_000 && e1.earned_a + e1.earned_b < 70_000, "{:?}", e1);
+
+        // A second LP who joins now has nothing to collect yet.
+        run(amm_tx("add_liquidity", "bob", 0.1, TxPayload {
+            pool_id: Some("QTOK-XRGE".to_string()), amount_a: Some(1_000_000), amount_b: Some(1_000_000), ..Default::default()
+        }), &mut bal, &mut tok, &mut lp);
+        let bob = node.get_lp_earnings("QTOK-XRGE", "bob").unwrap().unwrap();
+        assert!(bob.tracked && bob.lp_to_collect <= 1, "{:?}", bob);
+
+        // Collect fees = remove exactly lp_to_collect; the payout matches the preview.
+        let e1 = node.get_lp_earnings("QTOK-XRGE", "alice").unwrap().unwrap();
+        let q_before = tok[&("alice".to_string(), "QTOK".to_string())];
+        run(amm_tx("remove_liquidity", "alice", 0.1, TxPayload {
+            pool_id: Some("QTOK-XRGE".to_string()), lp_amount: Some(e1.lp_to_collect), ..Default::default()
+        }), &mut bal, &mut tok, &mut lp);
+        assert_eq!((tok[&("alice".to_string(), "QTOK".to_string())] - q_before) as u64, e1.earned_a);
+        let e2 = node.get_lp_earnings("QTOK-XRGE", "alice").unwrap().unwrap();
+        assert!(e2.tracked);
+        assert!(e2.lp_to_collect <= 1, "nothing left after collecting: {:?}", e2);
+        assert_eq!(e2.lp_balance, alice_lp(&lp));
+
+        // Rebuilding the ledger from events (nodes upgrading from an older build) gives the same answer.
+        let before = node.pool_event_store.get_lp_position("QTOK-XRGE", "alice").unwrap().unwrap();
+        node.pool_event_store.clear_lp_positions_for_test();
+        assert!(node.pool_event_store.rebuild_lp_positions_if_needed(|k| canon_addr(k)).unwrap() > 0);
+        let after = node.pool_event_store.get_lp_position("QTOK-XRGE", "alice").unwrap().unwrap();
+        assert_eq!(after.lp, before.lp);
+        assert!((after.basis - before.basis).abs() / before.basis < 1e-9, "{:?} vs {:?}", before, after);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R1 — daemon integration tests: bridge_withdraw execution result, index-aligned
+// results, post-acceptance store persistence, fail-closed receipts, and the
+// rejected-bad-state-root regression on the REAL import path.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod bridge_r1_daemon_tests {
+    use super::*;
+    use quantum_vault_bridge_exec::{BridgeWithdrawExecution as BX, BridgeWithdrawFailure as BF};
+
+    pub(super) struct TmpDir(pub(super) PathBuf);
+    impl TmpDir {
+        pub(super) fn new() -> Self {
+            static CTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+            let p = std::env::temp_dir().join(format!("r1-node-{}-{}-{}", std::process::id(), n,
+                CTR.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
+            std::fs::create_dir_all(&p).unwrap();
+            TmpDir(p)
+        }
+    }
+    impl Drop for TmpDir { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+
+    /// A real node with a bridge withdraw store (the relayer-facing payout list).
+    pub(super) fn node_with_store() -> (TmpDir, L1Node, std::sync::Arc<BridgeWithdrawStore>) {
+        let dir = TmpDir::new();
+        let store = std::sync::Arc::new(BridgeWithdrawStore::new(&dir.0).unwrap());
+        let node = L1Node::new(NodeOptions {
+            data_dir: dir.0.clone(),
+            chain: ChainConfig { chain_id: "test".to_string(), genesis_time: 0, block_time_ms: 1000 },
+            mine: false,
+            bridge_withdraw_store: Some(store.clone()),
+            bridge_authority_keys: Vec::new(),
+            genesis_allocations: Vec::new(), genesis_validators: Vec::new(),
+        }).expect("node");
+        node.init().expect("init");
+        (dir, node, store)
+    }
+
+    pub(super) fn fund_xrge(node: &L1Node, pubkey: &str, xrge: f64) {
+        node.balances.lock().unwrap().insert(canon_addr(pubkey), xrge_f64_to_quanta(xrge));
+    }
+    fn fund_token(node: &L1Node, pubkey: &str, sym: &str, units: u128) {
+        node.token_balances.lock().unwrap().insert((canon_addr(pubkey), sym.to_string()), units);
+    }
+
+    pub(super) fn withdraw_tx(from: &str, token: &str, amount: u64, dest: &str, fee: f64, nonce: u64) -> TxV1 {
+        TxV1 {
+            version: 1, tx_type: "bridge_withdraw".to_string(), from_pub_key: from.to_string(), nonce,
+            payload: TxPayload { token_symbol: Some(token.to_string()), amount: Some(amount),
+                evm_address: Some(dest.to_string()), ..Default::default() },
+            fee, sig: String::new(), signed_payload: None,
+        }
+    }
+    pub(super) fn signed(mut tx: TxV1, sk: &str) -> TxV1 {
+        tx.sig = pqc_sign(sk, &encode_tx_for_signing(&tx)).unwrap();
+        tx
+    }
+    /// Unsigned block header/shell for apply_balance_block (which reads only height/time/txs).
+    fn prelim_block(node: &L1Node, txs: Vec<TxV1>) -> BlockV1 {
+        let tip = node.store.get_tip().unwrap();
+        BlockV1 {
+            version: 1,
+            header: BlockHeaderV1 { version: 1, chain_id: "test".into(), height: tip.height + 1, time: 1,
+                prev_hash: tip.hash, tx_hash: compute_tx_hash(&txs), proposer_pub_key: String::new(), state_root: None , parent_commit: None},
+            txs, proposer_sig: String::new(), hash: String::new(),
+        }
+    }
+    /// A fully signed, hash-consistent block for the REAL import path.
+    pub(super) fn sealed_block(node: &L1Node, proposer_pub: &str, proposer_sk: &str, txs: Vec<TxV1>, state_root: Option<String>, time: u64) -> BlockV1 {
+        let tip = node.store.get_tip().unwrap();
+        let header = BlockHeaderV1 { version: 1, chain_id: "test".into(), height: tip.height + 1,
+            time, prev_hash: tip.hash,
+            tx_hash: compute_tx_hash(&txs), proposer_pub_key: proposer_pub.to_string(), state_root,
+            parent_commit: if node.parent_commit_required(tip.height + 1) { node.get_persisted_finality_proof(tip.height).unwrap() } else { None } };
+        let hb = encode_header_v1(&header);
+        let sig = pqc_sign(proposer_sk, &hb).unwrap();
+        let hash = compute_block_hash(&hb, &sig);
+        BlockV1 { version: 1, header, txs, proposer_sig: sig, hash }
+    }
+    pub(super) const DEST: &str = "0x00000000000000000000000000000000000000a1";
+
+    #[test]
+    fn r1_double_withdraw_only_first_payout_eligible() {
+        let (_d, node, store) = node_with_store();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 100.1); // exactly one 100-XRGE withdrawal + 0.1 fee
+        let txs = vec![
+            withdraw_tx(&user.public_key_hex, "XRGE", 100, DEST, 0.1, 1),
+            withdraw_tx(&user.public_key_hex, "XRGE", 100, DEST, 0.1, 2),
+        ];
+        let block = prelim_block(&node, txs);
+        let results = node.apply_balance_block(&block).unwrap().bridge;
+        assert_eq!(results.len(), 2, "one slot per tx");
+        assert!(matches!(results[0], Some(BX::Success(_))), "first burns");
+        assert_eq!(results[1], Some(BX::Failed(BF::InsufficientFee)), "second fails (balance drained)");
+        assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 0.0, "debited exactly once");
+        assert_eq!(*node.burned_tokens.lock().unwrap().get("XRGE").unwrap(), 100.0);
+        node.persist_bridge_withdraw_results(&block, &results).unwrap();
+        let pending = store.list_pending().unwrap();
+        assert_eq!(pending.len(), 1, "exactly ONE relayer-facing payout record for two attempts");
+        assert_eq!(pending[0].amount_units, 100);
+        assert_eq!(pending[0].token_symbol, "XRGE");
+        assert!(pending[0].tx_id.starts_with("xrge:"));
+        // receipts: first Success, second Failed(reason)
+        let receipts = node.generate_receipts(&block, &results, &[]);
+        assert!(matches!(receipts[0].status, TxStatus::Success));
+        assert!(matches!(&receipts[1].status, TxStatus::Failed(r) if r == "InsufficientFee"));
+    }
+
+    #[test]
+    fn r1_insolvent_withdrawal_no_payout() {
+        let (_d, node, store) = node_with_store();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 50.1);
+        let block = prelim_block(&node, vec![withdraw_tx(&user.public_key_hex, "XRGE", 100, DEST, 0.1, 1)]);
+        let results = node.apply_balance_block(&block).unwrap().bridge;
+        assert_eq!(results[0], Some(BX::Failed(BF::InsufficientXrge)));
+        assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 50.1, "no debit");
+        assert!(node.burned_tokens.lock().unwrap().is_empty(), "no burn");
+        node.persist_bridge_withdraw_results(&block, &results).unwrap();
+        assert!(store.list_pending().unwrap().is_empty(), "no payout record");
+    }
+
+    #[test]
+    fn r1_result_index_alignment_after_skipped_tx() {
+        let (_d, node, store) = node_with_store();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1000.0);
+        // tx[0]: mint_tokens for a symbol the sender does not own ⇒ consensus guard `continue`
+        let skipped = TxV1 { version: 1, tx_type: "mint_tokens".into(), from_pub_key: user.public_key_hex.clone(), nonce: 1,
+            payload: TxPayload { token_symbol: Some("NOPE".into()), token_total_supply: Some(5), ..Default::default() },
+            fee: 0.1, sig: String::new(), signed_payload: None };
+        let txs = vec![skipped, withdraw_tx(&user.public_key_hex, "XRGE", 10, DEST, 0.1, 2)];
+        let block = prelim_block(&node, txs);
+        let results = node.apply_balance_block(&block).unwrap().bridge;
+        assert_eq!(results.len(), 2);
+        assert!(results[0].is_none(), "skipped tx leaves its slot None");
+        assert!(matches!(results[1], Some(BX::Success(_))), "withdrawal result lands at ITS index");
+        node.persist_bridge_withdraw_results(&block, &results).unwrap();
+        let pending = store.list_pending().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].owner_pubkey, user.public_key_hex, "record belongs to tx[1]'s sender");
+        assert_eq!(pending[0].amount_units, 10);
+        // misaligned results are refused
+        assert!(node.persist_bridge_withdraw_results(&block, &results[..1]).is_err());
+    }
+
+    #[test]
+    fn r1_failed_and_none_results_fail_closed_in_receipts() {
+        let (_d, node, store) = node_with_store();
+        let user = pqc_keygen();
+        let block = prelim_block(&node, vec![withdraw_tx(&user.public_key_hex, "XRGE", 1, DEST, 0.1, 1)]);
+        // absent result (defensive: never Success)
+        let none: Vec<Option<BX>> = vec![None];
+        let r = node.generate_receipts(&block, &none, &[]);
+        assert!(matches!(&r[0].status, TxStatus::Failed(m) if m == "missing bridge execution result"));
+        node.persist_bridge_withdraw_results(&block, &none).unwrap();
+        assert!(store.list_pending().unwrap().is_empty(), "None never stored");
+        // explicit failure
+        let failed: Vec<Option<BX>> = vec![Some(BX::Failed(BF::ZeroAmount))];
+        let r = node.generate_receipts(&block, &failed, &[]);
+        assert!(matches!(&r[0].status, TxStatus::Failed(m) if m == "ZeroAmount"));
+        node.persist_bridge_withdraw_results(&block, &failed).unwrap();
+        assert!(store.list_pending().unwrap().is_empty(), "Failed never stored");
+    }
+
+    #[test]
+    fn r1b_daemon_routing_qusdc_qbtc_recorded_custom_token_not() {
+        let (_d, node, store) = node_with_store();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 10.0);
+        fund_token(&node, &user.public_key_hex, "qUSDC", 100);
+        fund_token(&node, &user.public_key_hex, "qBTC", 100);
+        fund_token(&node, &user.public_key_hex, "3EYE", 100);
+        let txs = vec![
+            withdraw_tx(&user.public_key_hex, "qUSDC", 100, DEST, 0.1, 1),
+            withdraw_tx(&user.public_key_hex, "qBTC", 100, "bc1qexampledestaddr0000000000000000000000", 0.1, 2),
+            withdraw_tx(&user.public_key_hex, "3EYE", 100, DEST, 0.1, 3),
+        ];
+        let block = prelim_block(&node, txs);
+        let results = node.apply_balance_block(&block).unwrap().bridge;
+        // all three BURN at the ledger (execution semantics unchanged) ...
+        assert!(results.iter().all(|r| matches!(r, Some(BX::Success(_)))));
+        for sym in ["qUSDC", "qBTC", "3EYE"] {
+            assert_eq!(node.get_token_balance(&user.public_key_hex, sym).unwrap(), 0.0, "{sym} debited");
+        }
+        // ... but only RECOGNIZED payout assets reach the relayer-facing store.
+        node.persist_bridge_withdraw_results(&block, &results).unwrap();
+        let mut toks: Vec<String> = store.list_pending().unwrap().into_iter().map(|w| w.token_symbol).collect();
+        toks.sort();
+        assert_eq!(toks, vec!["qBTC".to_string(), "qUSDC".to_string()], "3EYE (unsupported) gets NO payout record");
+        let btc = store.list_pending().unwrap().into_iter().find(|w| w.token_symbol == "qBTC").unwrap();
+        assert!(btc.evm_address.starts_with("bc1q"), "BTC destination preserved verbatim (no EVM-format gate)");
+    }
+
+    #[test]
+    fn r1_rejected_bad_state_root_block_leaves_zero_store_side_effects() {
+        let (_d, node, store) = node_with_store();
+        let proposer = pqc_keygen();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1000.0);
+        let tx = signed(withdraw_tx(&user.public_key_hex, "XRGE", 100, DEST, 0.1, 1), &user.secret_key_hex);
+
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        // (a) valid-looking withdrawal inside a block with a DELIBERATELY WRONG state root
+        let bad = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![tx.clone()], Some("00".repeat(32)), t);
+        let base_fee_before = node.get_base_fee_quanta();
+        let err = node.import_block(bad).unwrap_err();
+        assert!(err.contains("state root mismatch"), "rejected on state root: {err}");
+        assert_eq!(node.tip_height().unwrap(), 0, "block NOT persisted");
+        assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 1000.0, "ledger rolled back exactly");
+        // Blocker B: the full pre-apply snapshot also rolls back everything outside the
+        // state root — the burn ledger and the EIP-1559 base fee included.
+        assert!(node.burned_tokens.lock().unwrap().is_empty(), "burned_tokens rolled back");
+        assert_eq!(node.get_base_fee_quanta(), base_fee_before, "base fee rolled back");
+        assert!(store.list_pending().unwrap().is_empty(), "ZERO withdrawal-store side effects");
+
+        // (b) the SAME block with the CORRECT post-state root is accepted → exactly one record
+        // Probe with the SAME proposer + time (fee distribution credits the proposer), then
+        // roll the probe back with the full pre-apply snapshot so the real import starts
+        // from exactly the state the probe saw.
+        let probe = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![tx.clone()], None, t);
+        let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
+        let _ = node.apply_balance_block(&probe).unwrap();
+        let correct_root = node.compute_state_root_for_height(probe.header.height).unwrap();
+        node.restore_pre_apply_snapshot(snap).unwrap();
+        assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 1000.0, "probe restored");
+        assert_eq!(node.get_base_fee_quanta(), base_fee_before, "probe base fee restored");
+
+        let good = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![tx.clone()], Some(correct_root), t);
+        node.import_block(good).expect("accepted with correct root");
+        assert_eq!(node.tip_height().unwrap(), 1);
+        assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 899.9, "1000 - 100 - 0.1");
+        let pending = store.list_pending().unwrap();
+        assert_eq!(pending.len(), 1, "payout record created ONLY for the accepted block");
+        assert_eq!(pending[0].owner_pubkey, user.public_key_hex);
+        assert_eq!(pending[0].amount_units, 100);
+        let rc = node.get_receipt(&compute_single_tx_hash(&tx)).unwrap().unwrap();
+        assert!(matches!(rc.status, TxStatus::Success));
+    }
+
+    // ── Blocker B: atomic rejected-block rollback ──────────────────────────────
+
+    /// Exact, comparable image of every node-state component a speculative apply
+    /// can touch. f64 fields are compared bit-for-bit; sled values as raw bytes.
+    #[derive(Debug, Clone, PartialEq)]
+    struct Fingerprint {
+        tip: u64,
+        balances: Vec<(String, u128)>,
+        token_balances: Vec<((String, String), u128)>,
+        lp_balances: Vec<((String, String), u128)>,
+        burned_tokens: Vec<(String, u64)>,
+        base_fee_quanta: u128,
+        base_fee_raw: Option<Vec<u8>>,
+        total_fees_burned_bits: u64,
+        total_burned_raw: Option<Vec<u8>>,
+        shielded_supply_bits: u64,
+        unbonding_len: usize,
+        nonces: Vec<(String, Option<Vec<u8>>)>,
+        address_index: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+        token_metadata: Vec<String>,
+        pools: Vec<String>,
+        allowances_len: usize,
+        withdraw_pending: Vec<String>,
+        receipts: Vec<Option<String>>,
+    }
+
+    fn fingerprint(node: &L1Node, store: &BridgeWithdrawStore, pubkeys: &[&str], tx_hashes: &[String]) -> Fingerprint {
+        let mut balances: Vec<_> = node.balances.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+        balances.sort();
+        let mut token_balances: Vec<_> = node.token_balances.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+        token_balances.sort();
+        let mut lp_balances: Vec<_> = node.lp_balances.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+        lp_balances.sort();
+        let mut burned_tokens: Vec<_> = node.burned_tokens.lock().unwrap().iter().map(|(k, v)| (k.clone(), v.to_bits())).collect();
+        burned_tokens.sort();
+        let mut nonces = Vec::new();
+        let mut address_index = Vec::new();
+        for pk in pubkeys {
+            nonces.push((pk.to_string(), node.nonce_db.get(pk.as_bytes()).unwrap().map(|v| v.to_vec())));
+            let (k1, k2) = address_index_keys(pk).expect("derivable address");
+            for k in [k1, k2] {
+                let v = node.address_db.get(&k).unwrap().map(|v| v.to_vec());
+                address_index.push((k, v));
+            }
+        }
+        let mut token_metadata: Vec<String> = node.token_metadata_store.get_all().unwrap()
+            .iter().map(|m| serde_json::to_string(m).unwrap()).collect();
+        token_metadata.sort();
+        let mut pools: Vec<String> = node.pool_store.list_pools().unwrap()
+            .iter().map(|p| serde_json::to_string(p).unwrap()).collect();
+        pools.sort();
+        let allowances_len = node.allowance_store.trees()[0].len();
+        let mut withdraw_pending: Vec<String> = store.list_pending().unwrap()
+            .iter().map(|w| format!("{}|{}|{}|{}|{}", w.tx_id, w.evm_address, w.amount_units, w.owner_pubkey, w.token_symbol)).collect();
+        withdraw_pending.sort();
+        let receipts = tx_hashes.iter()
+            .map(|h| node.get_receipt(h).unwrap().map(|r| format!("{:?}", r.status)))
+            .collect();
+        Fingerprint {
+            tip: node.tip_height().unwrap(),
+            balances, token_balances, lp_balances, burned_tokens,
+            base_fee_quanta: node.get_base_fee_quanta(),
+            base_fee_raw: node.fee_db.get(b"base_fee").unwrap().map(|v| v.to_vec()),
+            total_fees_burned_bits: node.get_total_fees_burned().to_bits(),
+            total_burned_raw: node.fee_db.get(b"total_burned").unwrap().map(|v| v.to_vec()),
+            shielded_supply_bits: node.get_shielded_supply().to_bits(),
+            unbonding_len: node.unbonding_queue.lock().unwrap().len(),
+            nonces, address_index, token_metadata, pools, allowances_len, withdraw_pending, receipts,
+        }
+    }
+
+    fn transfer_tx(from: &str, to: &str, amount: u64, fee: f64, nonce: u64) -> TxV1 {
+        TxV1 {
+            version: 1, tx_type: "transfer".to_string(), from_pub_key: from.to_string(), nonce,
+            payload: TxPayload { to_pub_key_hex: Some(to.to_string()), amount: Some(amount), ..Default::default() },
+            fee, sig: String::new(), signed_payload: None,
+        }
+    }
+    fn create_token_tx(from: &str, symbol: &str, supply: u64, fee: f64, nonce: u64) -> TxV1 {
+        TxV1 {
+            version: 1, tx_type: "create_token".to_string(), from_pub_key: from.to_string(), nonce,
+            payload: TxPayload { token_symbol: Some(symbol.to_string()), token_name: Some(format!("{symbol} token")),
+                token_total_supply: Some(supply), ..Default::default() },
+            fee, sig: String::new(), signed_payload: None,
+        }
+    }
+
+    /// A multi-component block: bridge_withdraw (burn ledger + fee), XRGE transfer
+    /// (fees / base fee / recipient), create_token (token metadata store + token ledger).
+    fn multi_component_txs(user: &PQKeypair, recipient: &str) -> Vec<TxV1> {
+        vec![
+            signed(withdraw_tx(&user.public_key_hex, "XRGE", 100, DEST, 0.1, 1), &user.secret_key_hex),
+            signed(transfer_tx(&user.public_key_hex, recipient, 50, 0.1, 2), &user.secret_key_hex),
+            signed(create_token_tx(&user.public_key_hex, "ROLL", 1_000, 0.1, 3), &user.secret_key_hex),
+        ]
+    }
+
+    #[test]
+    fn rejected_block_rollback_is_atomic() {
+        let (_d, node, store) = node_with_store();
+        let proposer = pqc_keygen();
+        let user = pqc_keygen();
+        let recipient = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1000.0);
+        let txs = multi_component_txs(&user, &recipient.public_key_hex);
+        let hashes: Vec<String> = txs.iter().map(compute_single_tx_hash).collect();
+        let pks = [user.public_key_hex.as_str(), recipient.public_key_hex.as_str(), proposer.public_key_hex.as_str()];
+
+        let before = fingerprint(&node, &store, &pks, &hashes);
+        assert!(node.get_token_metadata("ROLL").unwrap().is_none());
+        assert!(before.nonces.iter().all(|(_, v)| v.is_none()), "no nonces yet");
+
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        let bad = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, txs.clone(), Some("ab".repeat(32)), t);
+        let err = node.import_block(bad).unwrap_err();
+        assert!(err.contains("state root mismatch"), "rejected on state root: {err}");
+
+        assert_eq!(node.tip_height().unwrap(), 0, "tip unchanged");
+        assert!(node.get_block(1).unwrap().is_none(), "rejected block never persisted");
+        let after = fingerprint(&node, &store, &pks, &hashes);
+        assert_eq!(after, before, "EVERY state component identical after rejection");
+        // Spot checks on the components the old (maps-only) rollback left dirty.
+        assert!(node.burned_tokens.lock().unwrap().is_empty(), "burn ledger rolled back");
+        assert!(node.get_token_metadata("ROLL").unwrap().is_none(), "token metadata store rolled back");
+        assert!(node.nonce_db.get(user.public_key_hex.as_bytes()).unwrap().is_none(), "nonce_db rolled back");
+        assert_eq!(node.get_token_balance(&user.public_key_hex, "ROLL").unwrap(), 0.0);
+        assert_eq!(node.get_balance(&recipient.public_key_hex).unwrap(), 0.0);
+        for h in &hashes {
+            assert!(node.get_receipt(h).unwrap().is_none(), "no receipt for a rejected block's tx");
+        }
+        assert!(store.list_pending().unwrap().is_empty(), "withdrawal store empty");
+    }
+
+    #[test]
+    fn repeated_rejections_do_not_drift() {
+        let (_d, node, store) = node_with_store();
+        let proposer = pqc_keygen();
+        let user = pqc_keygen();
+        let recipient = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1000.0);
+        let txs = multi_component_txs(&user, &recipient.public_key_hex);
+        let hashes: Vec<String> = txs.iter().map(compute_single_tx_hash).collect();
+        let pks = [user.public_key_hex.as_str(), recipient.public_key_hex.as_str(), proposer.public_key_hex.as_str()];
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+
+        let before = fingerprint(&node, &store, &pks, &hashes);
+        for i in 0..5u8 {
+            let bogus = format!("{:02x}", i + 1).repeat(32);
+            let bad = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, txs.clone(), Some(bogus), t);
+            let err = node.import_block(bad).unwrap_err();
+            assert!(err.contains("state root mismatch"), "attempt {i}: {err}");
+            assert_eq!(fingerprint(&node, &store, &pks, &hashes), before, "no drift after rejection #{}", i + 1);
+        }
+
+        // Correct root via a probe apply rolled back with the full snapshot.
+        let probe = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, txs.clone(), None, t);
+        let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
+        let _ = node.apply_balance_block(&probe).unwrap();
+        let correct_root = node.compute_state_root_for_height(probe.header.height).unwrap();
+        node.restore_pre_apply_snapshot(snap).unwrap();
+        assert_eq!(fingerprint(&node, &store, &pks, &hashes), before, "probe fully rolled back");
+
+        let good = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, txs.clone(), Some(correct_root), t);
+        node.import_block(good).expect("accepted with correct root");
+        assert_eq!(node.tip_height().unwrap(), 1);
+        assert!(node.get_block(1).unwrap().is_some());
+        for h in &hashes {
+            let rc = node.get_receipt(h).unwrap().expect("receipt exists for accepted block");
+            assert!(matches!(rc.status, TxStatus::Success), "{h}: {:?}", rc.status);
+        }
+        let pending = store.list_pending().unwrap();
+        assert_eq!(pending.len(), 1, "exactly one withdrawal record");
+        assert_eq!(pending[0].owner_pubkey, user.public_key_hex);
+        assert_eq!(pending[0].amount_units, 100);
+        // Expected post-state: 1000 - (100 + 0.1) - (50 + 0.1) - 0.1
+        assert_eq!(node.get_balance(&user.public_key_hex).unwrap(), 849.7);
+        assert_eq!(node.get_balance(&recipient.public_key_hex).unwrap(), 50.0);
+        assert_eq!(node.get_token_balance(&user.public_key_hex, "ROLL").unwrap(), 1000.0);
+        assert_eq!(*node.burned_tokens.lock().unwrap().get("XRGE").unwrap(), 100.0);
+        assert!(node.get_token_metadata("ROLL").unwrap().is_some(), "token metadata registered once accepted");
+        assert_eq!(node.nonce_db.get(user.public_key_hex.as_bytes()).unwrap().map(|v| v.to_vec()),
+            Some(3u64.to_be_bytes().to_vec()), "nonce committed only by the accepted block");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #66 — strict historical replay regression: a FRESH node initialised from
+// genesis-mainnet.json must import every real mainnet block through the REAL
+// `import_block` path with NORMAL state-root verification. No skip flags, no
+// snapshots, no pre-seeded ledger. Expected: every block accepted, zero root
+// mismatches. Runs against the committed fixtures in `tests/fixtures/`.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod strict_historical_replay_tests {
+    use super::*;
+
+    pub(super) const FIXTURE_BLOCKS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-48.jsonl");
+    pub(super) const FIXTURE_GENESIS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/genesis-mainnet.json");
+
+    pub(super) struct TmpDir(pub(super) PathBuf);
+    impl Drop for TmpDir { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+
+    /// Replays the fixture chain and returns (last accepted height, first failure).
+    #[allow(dead_code)]
+    fn replay_fixture() -> (u64, Option<(u64, String)>) { let (a, b, _n, _d) = replay_fixture_node(); (a, b) }
+    pub(super) fn replay_fixture_node() -> (u64, Option<(u64, String)>, L1Node, TmpDir) {
+        // Historical mainnet blocks were produced with the PRODUCTION fork height.
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(18)));
+        let gc: crate::GenesisConfig = serde_json::from_str(&std::fs::read_to_string(FIXTURE_GENESIS).unwrap()).unwrap();
+        let dir = TmpDir(std::env::temp_dir().join(format!("strict-replay-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let node = L1Node::new(NodeOptions {
+            data_dir: dir.0.clone(),
+            chain: ChainConfig { chain_id: gc.chain_id.clone(), genesis_time: gc.genesis_time, block_time_ms: gc.block_time_ms },
+            mine: false,
+            bridge_withdraw_store: None,
+            bridge_authority_keys: gc.initial_validators.iter().map(|v| v.pub_key.clone()).collect(),
+            genesis_allocations: gc.initial_allocations.clone(), genesis_validators: gc.initial_validators.clone(),
+        }).unwrap();
+        node.init().unwrap();
+        node.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators).unwrap();
+        let mut last_ok = 0u64;
+        for line in std::fs::read_to_string(FIXTURE_BLOCKS).unwrap().lines() {
+            let block: BlockV1 = serde_json::from_str(line).unwrap();
+            let h = block.header.height;
+            if h == 0 {
+                let g = node.get_block(0).unwrap().unwrap();
+                if g.hash != block.hash { return (0, Some((0, format!("genesis mismatch: fresh={} fixture={}", g.hash, block.hash))), node, dir); }
+                continue;
+            }
+            if let Err(e) = node.import_block(block) { return (last_ok, Some((h, e)), node, dir); }
+            last_ok = h;
+        }
+        (last_ok, None, node, dir)
+    }
+
+    pub(super) const FIXTURE_BLOCKS_0_60: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-60.jsonl");
+
+    /// Transaction-integrity release gate: replay ALL canonical mainnet history (genesis through
+    /// the live tip at the time of release preparation, height 60) through the real import path
+    /// and land on exactly the live primary's tip hash and state root. The tx-uniqueness rule is
+    /// unscheduled here (None) — exactly the binary that will run below N.
+    #[test]
+    fn strict_replay_full_history_through_live_tip_60() {
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(None)));
+        let (last_ok, failure, node, _dir) = replay_fixture_node_from(FIXTURE_BLOCKS_0_60);
+        assert!(failure.is_none(), "first divergence at {:?} (last accepted {})", failure, last_ok);
+        assert_eq!(last_ok, 60);
+        let tip = node.get_block(60).unwrap().unwrap();
+        assert_eq!(tip.hash, "ea90a89107bb741743516e41d3fb5428816cf95a69f46e660992075a0bc79096", "live primary tip hash at 60");
+        assert_eq!(node.compute_current_state_root().unwrap(), "069a9d03c9eec33915caac641e1c5b89faa7077d40df387315ff7f7a65bc27e4", "live primary state root at 60");
+        // every historical tx is now in the identity index, and none repeats
+        let blocks: Vec<BlockV1> = std::fs::read_to_string(FIXTURE_BLOCKS_0_60).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        let mut ids = std::collections::HashSet::new();
+        for b in &blocks { for tx in &b.txs { assert!(ids.insert(quantum_vault_types::tx_identity(tx)), "no identity repeats in history"); assert_eq!(node.tx_included_at(&quantum_vault_types::tx_identity(tx)), Some(b.header.height)); } }
+        assert_eq!(ids.len(), 61 - 1 + 0, "61 txs over 61 blocks? (one tx per block except genesis)");
+    }
+
+    pub(super) fn replay_fixture_node_from(fixture: &str) -> (u64, Option<(u64, String)>, L1Node, TmpDir) {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(18)));
+        let gc: crate::GenesisConfig = serde_json::from_str(&std::fs::read_to_string(FIXTURE_GENESIS).unwrap()).unwrap();
+        let dir = TmpDir(std::env::temp_dir().join(format!("strict-replay-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let node = L1Node::new(NodeOptions {
+            data_dir: dir.0.clone(),
+            chain: ChainConfig { chain_id: gc.chain_id.clone(), genesis_time: gc.genesis_time, block_time_ms: gc.block_time_ms },
+            mine: false, bridge_withdraw_store: None,
+            bridge_authority_keys: gc.initial_validators.iter().map(|v| v.pub_key.clone()).collect(),
+            genesis_allocations: gc.initial_allocations.clone(), genesis_validators: gc.initial_validators.clone(),
+        }).unwrap();
+        node.init().unwrap();
+        node.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators).unwrap();
+        let mut last_ok = 0u64;
+        for line in std::fs::read_to_string(fixture).unwrap().lines() {
+            let block: BlockV1 = serde_json::from_str(line).unwrap();
+            let h = block.header.height;
+            if h == 0 { let g = node.get_block(0).unwrap().unwrap(); if g.hash != block.hash { return (0, Some((0, "genesis mismatch".into())), node, dir); } continue; }
+            if let Err(e) = node.import_block(block) { return (last_ok, Some((h, e)), node, dir); }
+            last_ok = h;
+        }
+        (last_ok, None, node, dir)
+    }
+
+    /// Option-B fork: a FRESH node (random identity, empty data dir) imports every historical
+    /// block through the real import path — heights 18..=F-1 verified by equality against the
+    /// compiled checkpoint table, canonical execution throughout — and arrives at exactly the
+    /// pinned canonical ledger at F-1 with the canonical marker set. No skip flags.
+    #[test]
+    fn strict_replay_full_history_verifies_every_root() {
+        let (last_ok, failure, node, _dir) = replay_fixture_node();
+        assert!(failure.is_none(), "first divergence at {:?} (last accepted {})", failure, last_ok);
+        assert_eq!(last_ok, crate::fork::FORK_HEIGHT - 1, "F-1 = 48 imported, 0 mismatches");
+        let b = node.balances.lock().unwrap().clone();
+        crate::fork::ledger_matches_table(&b, crate::fork::CANONICAL_LEDGER_AT_F_MINUS_1).expect("canonical ledger at F-1");
+        assert!(node.canonical_marker_present(), "canonical marker set by fresh sync");
+        assert!(node.fork_readiness_check().is_ok());
+        // supply identity in integer quanta at F-1 (see FORK_DECISION_PACKAGE §6):
+        // mints + faucet == ledger + stake + shielded + pool XRGE reserve + burned + fee-burn + implicit sinks
+        let ledger: u128 = b.values().sum();
+        // Stake term = XRGE actually debited from the ledger by SUCCESSFUL stake txs: h20 only
+        // (10,000). The h29 stake fails atomically (10,000.87 < 10,001): no debit, no validator
+        // power, no entry. Validator store = genesis 100,000 (never a ledger debit) + 10,000.
+        let stake: u128 = 10_000;
+        let rows = node.validator_rows().unwrap();
+        crate::fork::validators_match_table(&rows, crate::fork::CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1).expect("fresh sync reaches the pinned canonical validator set");
+        assert_eq!(crate::fork::stake_and_quorum(&rows), (110_000, 73_334), "backed stake only; quorum = total*2/3+1");
+        assert!(rows.iter().all(|r| !r.0.starts_with("c97f59a2")), "h29 unbacked staker holds no validator power");
+        assert!(node.unbonding_queue.lock().unwrap().is_empty());
+        assert_eq!(node.get_total_fees_burned().to_bits(), crate::fork::CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1, "fresh sync reproduces the pinned fees_burned accumulator");
+        let h29 = node.get_block(29).unwrap().unwrap();
+        let stake_tx = h29.txs.iter().find(|t| t.tx_type == "stake").expect("h29 carries the stake tx");
+        let rc = node.get_receipt(&compute_single_tx_hash(stake_tx)).unwrap().expect("receipt for h29 stake");
+        assert!(!matches!(rc.status, quantum_vault_types::TxStatus::Success), "h29 stake receipt marks failure: {:?}", rc.status);
+        let pool_xrge: u128 = node.pool_store.list_pools().unwrap().iter().map(|p| if p.token_a == "XRGE" { p.reserve_a as u128 } else if p.token_b == "XRGE" { p.reserve_b as u128 } else { 0 }).sum();
+        let burned = (*node.burned_tokens.lock().unwrap().get("XRGE").unwrap_or(&0.0) * 1e9).round() as u128;
+        let fee_burn = (node.get_total_fees_burned() * 1e9).round() as u128;
+        let shielded = (node.get_shielded_supply() * 1e9).round() as u128;
+        const Q: u128 = 1_000_000_000;
+        let inflow = (55_123_564u128 + 101) * Q;
+        let sinks = 6 * Q; // unshield fee sink 4 (h28,h32,h34,h36) + AMM sinks 2 (h46,h48) — pre-existing, identical in both ledgers
+        assert_eq!(inflow, ledger + stake * Q + shielded + pool_xrge * Q + burned + fee_burn + sinks,
+            "exact supply identity in quanta: ledger={ledger} stake={stake} shielded={shielded} pool={pool_xrge} burned={burned} fee_burn={fee_burn}");
+    }
+
+    /// Pinned CURRENT behaviour so a regression (or the eventual fix) is visible: the
+    /// pre-fork prefix imports cleanly and the first committed root (height 18) is where
+    /// a fresh replay stops today.
+    /// A wrong committed root inside the checkpoint era is rejected against the table, and the
+    /// canonical execution at 18 is identity-independent (root 99a37ecc… from a random key).
+    #[test]
+    fn checkpoint_era_rejects_wrong_committed_root_and_is_identity_independent() {
+        let gc: crate::GenesisConfig = serde_json::from_str(&std::fs::read_to_string(FIXTURE_GENESIS).unwrap()).unwrap();
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(18)));
+        let dir = TmpDir(std::env::temp_dir().join(format!("strict-cp-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let node = L1Node::new(NodeOptions { data_dir: dir.0.clone(),
+            chain: ChainConfig { chain_id: gc.chain_id.clone(), genesis_time: gc.genesis_time, block_time_ms: gc.block_time_ms },
+            mine: false, bridge_withdraw_store: None,
+            bridge_authority_keys: gc.initial_validators.iter().map(|v| v.pub_key.clone()).collect(),
+            genesis_allocations: gc.initial_allocations.clone(), genesis_validators: gc.initial_validators.clone() }).unwrap();
+        node.init().unwrap();
+        node.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators).unwrap();
+        let blocks: Vec<BlockV1> = std::fs::read_to_string(FIXTURE_BLOCKS).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        for b in blocks.iter().filter(|b| (1..=17).contains(&b.header.height)) { node.import_block(b.clone()).unwrap(); }
+        let mut b18 = blocks.iter().find(|b| b.header.height == 18).unwrap().clone();
+        assert_eq!(node.get_state_root().unwrap().len(), 64);
+        // tamper the committed root (and re-seal so only the checkpoint check can reject it)
+        let real_root = b18.header.state_root.clone();
+        b18.header.state_root = Some("00".repeat(32));
+        let hb = encode_header_v1(&b18.header);
+        // the historical proposer signature no longer covers this header → import fails on the
+        // signature first; assert the checkpoint verifier itself rejects the tampered root:
+        assert!(crate::fork::verify_checkpoint(18, b18.header.state_root.as_deref()).unwrap_err().contains("checkpoint mismatch"));
+        assert!(crate::fork::verify_checkpoint(18, real_root.as_deref()).is_ok());
+        let _ = hb;
+        // canonical, identity-independent execution at 18 (random node key here)
+        b18.header.state_root = real_root;
+        node.import_block(b18).unwrap();
+        assert_eq!(node.get_state_root().unwrap(), "99a37ecc808ce7e5b800c6078666935b9a83574f96c7a4d516e9c3207a01c378");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R1 derived bridge-store hardening: a failed payout-record write must never affect
+// chain validity, must surface as DEGRADED (relayer fail-closed), and must be exactly
+// reconstructable from accepted history — on demand and on restart.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod bridge_store_hardening_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, withdraw_tx, signed, sealed_block, TmpDir, DEST};
+
+    fn set_readonly(path: &std::path::Path, ro: bool) {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = if ro { 0o444 } else { 0o644 };
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// Accept a solvent XRGE withdrawal block while the store file is unwritable.
+    fn accept_withdraw_with_broken_store() -> (TmpDir, L1Node, std::sync::Arc<BridgeWithdrawStore>, String, String) {
+        let (d, node, store) = node_with_store();
+        let proposer = pqc_keygen();
+        let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1000.0);
+        let tx = signed(withdraw_tx(&user.public_key_hex, "XRGE", 100, DEST, 0.1, 1), &user.secret_key_hex);
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        let probe = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![tx.clone()], None, t);
+        let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
+        let _ = node.apply_balance_block(&probe).unwrap();
+        let root = node.compute_state_root_for_height(probe.header.height).unwrap();
+        node.restore_pre_apply_snapshot(snap).unwrap();
+        // Make the JSON store unwritable (a realistic persistence failure: EACCES).
+        let store_path = d.0.join("bridge_withdrawals.json");
+        std::fs::write(&store_path, "[]").unwrap();
+        set_readonly(&store_path, true);
+        let good = sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![tx.clone()], Some(root), t);
+        node.import_block(good).expect("(2) block ACCEPTED despite derived-store failure");
+        let expected_id = format!("xrge:{}", bytes_to_hex(&sha256(&encode_tx_v1(&tx))));
+        (d, node, store, user.public_key_hex.clone(), expected_id)
+    }
+
+    #[test]
+    fn store_persistence_failure_keeps_block_and_degrades_bridge() {
+        let (d, node, store, user, expected_id) = accept_withdraw_with_broken_store();
+        // (1) persistence failed, (2) chain accepted the block
+        assert_eq!(node.tip_height().unwrap(), 1, "accepted block remains accepted");
+        assert_eq!(node.get_balance(&user).unwrap(), 899.9, "burn + fee applied");
+        // (3) bridge health degraded, failed id recorded
+        assert!(node.bridge_store_degraded(), "bridge derived state must be DEGRADED");
+        assert_eq!(node.bridge_store_failed_ids(), vec![expected_id.clone()]);
+        // (4) relayer gets NO instruction (fail closed), not a partial list
+        let err = match node.relayer_pending_withdrawals() { Err(e) => e, Ok(_) => panic!("relayer list must fail closed while degraded") };
+        assert!(err.contains("DEGRADED"), "{err}");
+        // atomic store: neither memory nor disk claims the record
+        assert!(store.get(&expected_id).unwrap().is_none(), "failed write rolled back in memory");
+        let on_disk = std::fs::read_to_string(d.0.join("bridge_withdrawals.json")).unwrap();
+        assert!(!on_disk.contains(&expected_id), "record never persisted");
+        let _ = store;
+    }
+
+    #[test]
+    fn rebuild_reconstructs_exact_missing_record_and_clears_degraded() {
+        let (d, node, store, user, expected_id) = accept_withdraw_with_broken_store();
+        assert!(node.bridge_store_degraded());
+        set_readonly(&d.0.join("bridge_withdrawals.json"), false);
+        // Fresh store handle over the same (still incomplete) file, as a restart would see it.
+        let fresh_store = std::sync::Arc::new(BridgeWithdrawStore::new(&d.0).unwrap());
+        assert!(fresh_store.get(&expected_id).unwrap().is_none(), "record genuinely missing on disk");
+        // (5) rebuild from accepted history reconstructs the exact record
+        // (activation height is 49 in production; this test chain starts at 1 → override via
+        // a node whose store is the fresh handle and rebuilding from height 1)
+        let added = node.rebuild_bridge_withdraw_store_from(1).unwrap();
+        assert_eq!(added, 1, "exactly the one missing record is reconstructed");
+        let rec = store.get(&expected_id).unwrap().expect("record present");
+        assert_eq!(rec.owner_pubkey, user);
+        assert_eq!(rec.amount_units, 100);
+        assert_eq!(rec.token_symbol, "XRGE");
+        assert_eq!(rec.evm_address, DEST);
+        let on_disk = std::fs::read_to_string(d.0.join("bridge_withdrawals.json")).unwrap();
+        assert!(on_disk.contains(&expected_id), "rebuild persisted the record");
+        assert!(!node.bridge_store_degraded(), "degraded flag cleared once every record is present");
+        assert_eq!(node.relayer_pending_withdrawals().unwrap().len(), 1, "relayer list restored");
+        // idempotent: a second rebuild adds nothing and keeps exactly one record
+        assert_eq!(node.rebuild_bridge_withdraw_store_from(1).unwrap(), 0);
+        assert_eq!(store.list_pending().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn restart_reconstructs_missing_record_from_history() {
+        let (d, node, _store, user, expected_id) = accept_withdraw_with_broken_store();
+        set_readonly(&d.0.join("bridge_withdrawals.json"), false);
+        drop(node);
+        // (6) a new node over the same data dir (restart) — init() rebuilds derived state.
+        let store2 = std::sync::Arc::new(BridgeWithdrawStore::new(&d.0).unwrap());
+        assert!(store2.get(&expected_id).unwrap().is_none(), "missing before restart rebuild");
+        let node2 = L1Node::new(NodeOptions {
+            data_dir: d.0.clone(),
+            chain: ChainConfig { chain_id: "test".to_string(), genesis_time: 0, block_time_ms: 1000 },
+            mine: false,
+            bridge_withdraw_store: Some(store2.clone()),
+            bridge_authority_keys: Vec::new(),
+            genesis_allocations: Vec::new(), genesis_validators: Vec::new(),
+        }).unwrap();
+        node2.init().unwrap();
+        let _ = node2.rebuild_bridge_withdraw_store_from(1).unwrap();
+        let rec = store2.get(&expected_id).unwrap().expect("reconstructed on restart");
+        assert_eq!(rec.owner_pubkey, user);
+        assert_eq!(rec.amount_units, 100);
+        assert!(!node2.bridge_store_degraded());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Option-B fork: migration atomicity, fork block F, post-fork restart/recovery,
+// economics, and the old rebuild-accounting bug regression.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod fork_table_generation {
+    use super::*;
+    use super::strict_historical_replay_tests::{FIXTURE_BLOCKS, FIXTURE_GENESIS, TmpDir};
+    /// TABLE GENERATOR (run explicitly): fresh random-identity node, blocks 0..48 through the real
+    /// import path with the F-1 assertion disabled, then dump the canonical ledger + validator
+    /// state to fork-decision/canonical_state_48.json. Used to (re)generate fork_tables.rs.
+    #[test]
+    #[ignore = "table generator — run explicitly with --ignored"]
+    fn generate_canonical_state_at_f_minus_1() {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(18)));
+        TEST_SKIP_F_MINUS_1_ASSERT.with(|c| c.set(true));
+        let gc: crate::GenesisConfig = serde_json::from_str(&std::fs::read_to_string(FIXTURE_GENESIS).unwrap()).unwrap();
+        let dir = TmpDir(std::env::temp_dir().join(format!("gen-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let node = L1Node::new(NodeOptions { data_dir: dir.0.clone(), chain: ChainConfig { chain_id: gc.chain_id.clone(), genesis_time: gc.genesis_time, block_time_ms: gc.block_time_ms },
+            mine: false, bridge_withdraw_store: None, bridge_authority_keys: gc.initial_validators.iter().map(|v| v.pub_key.clone()).collect(),
+            genesis_allocations: gc.initial_allocations.clone(), genesis_validators: gc.initial_validators.clone() }).unwrap();
+        node.init().unwrap(); node.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators).unwrap();
+        for line in std::fs::read_to_string(FIXTURE_BLOCKS).unwrap().lines() {
+            let b: BlockV1 = serde_json::from_str(line).unwrap();
+            if b.header.height == 0 { continue; }
+            if b.header.height >= crate::fork::FORK_HEIGHT { break; }
+            node.import_block(b).unwrap();
+        }
+        assert_eq!(node.tip_height().unwrap(), crate::fork::FORK_HEIGHT - 1);
+        let bal: std::collections::BTreeMap<String, u128> = node.balances.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let tok: Vec<((String, String), u128)> = node.token_balances.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let lp: Vec<((String, String), u128)> = node.lp_balances.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let vals: Vec<(String, ValidatorState)> = node.list_validators().unwrap();
+        let out = serde_json::json!({ "height": node.tip_height().unwrap(), "state_root": node.get_state_root().unwrap(),
+            "balances": bal, "token_balances": tok, "lp_balances": lp, "validators": vals,
+            "unbonding": *node.unbonding_queue.lock().unwrap(), "shielded_supply": node.get_shielded_supply(), "fees_burned": node.get_total_fees_burned() });
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/../bridge-exec/fork-decision/canonical_state_48.json");
+        std::fs::write(p, serde_json::to_vec_pretty(&out).unwrap()).unwrap();
+        eprintln!("wrote {}", p);
+    }
+}
+
+#[cfg(test)]
+mod fork_integration_tests {
+    use super::*;
+    use super::strict_historical_replay_tests::{replay_fixture_node, TmpDir, FIXTURE_GENESIS};
+    use crate::fork::*;
+
+    fn prod_table() -> HashMap<String, u128> { PRODUCTION_LEDGER_AT_F_MINUS_1.iter().map(|(k, v)| (k.to_string(), *v)).collect() }
+    fn canon_table() -> HashMap<String, u128> { CANONICAL_LEDGER_AT_F_MINUS_1.iter().filter(|(_, v)| *v != 0).map(|(k, v)| (k.to_string(), *v)).collect() }
+    fn persist(n: &L1Node) -> Result<(), String> { n.persist_snapshot_atomic(FORK_HEIGHT - 1) }
+
+    /// A node synced to F-1 through the real import path, then turned into a LEGACY production
+    /// node: production ledger substituted, canonical marker removed (what production holds today).
+    fn legacy_production_node() -> (L1Node, TmpDir) {
+        let (last, fail, node, dir) = replay_fixture_node();
+        assert!(fail.is_none() && last == FORK_HEIGHT - 1);
+        *node.balances.lock().unwrap() = prod_table();
+        // production validator store: h29 phantom validator present, consensus fields as exported
+        for (k, s, sc, j, m, ts) in PRODUCTION_VALIDATOR_STATE_AT_F_MINUS_1 {
+            let mut st = node.validator_store.get_validator(k).unwrap().unwrap_or(ValidatorState { stake: 0, slash_count: 0, jailed_until: 0, entropy_contributions: 0, blocks_proposed: 0, name: None, missed_blocks: 0, total_slashed: 0 });
+            st.stake = *s; st.slash_count = *sc; st.jailed_until = *j; st.missed_blocks = *m; st.total_slashed = *ts;
+            node.validator_store.set_validator(k, &st).unwrap();
+        }
+        validators_match_table(&node.validator_rows().unwrap(), PRODUCTION_VALIDATOR_STATE_AT_F_MINUS_1).unwrap();
+        assert_eq!(stake_and_quorum(&node.validator_rows().unwrap()), (120_000, 80_001), "production: 10,000 phantom power");
+        // production's phantom-era fees_burned accumulator
+        node.set_total_fees_burned(f64::from_bits(PRODUCTION_FEES_BURNED_BITS_AT_F_MINUS_1)).unwrap();
+        let _ = node.snapshot_db.remove(CANONICAL_MARKER_KEY); let _ = node.snapshot_db.flush();
+        node.persist_snapshot_atomic(FORK_HEIGHT - 1).unwrap();
+        assert!(node.fork_readiness_check().unwrap_err().contains("LEGACY production ledger"), "startup guard demands migration");
+        (node, dir)
+    }
+    fn assert_canonical_validators(n: &L1Node) {
+        let rows = n.validator_rows().unwrap();
+        validators_match_table(&rows, CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1).unwrap();
+        assert_eq!(stake_and_quorum(&rows), (110_000, 73_334));
+        assert!(rows.iter().all(|r| !r.0.starts_with("c97f59a2")), "h29 phantom validator removed");
+        assert!(n.unbonding_queue.lock().unwrap().is_empty());
+        assert_eq!(n.get_total_fees_burned().to_bits(), CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1, "fees_burned accumulator canonical");
+        assert_eq!(n.fee_db.get(b"total_burned").unwrap().map(|v| v.to_vec()), Some(f64::from_bits(CANONICAL_FEES_BURNED_BITS_AT_F_MINUS_1).to_string().into_bytes()));
+    }
+    fn reopen(opts: &NodeOptions) -> L1Node {
+        let n = L1Node::new(NodeOptions { data_dir: opts.data_dir.clone(), chain: opts.chain.clone(), mine: false, bridge_withdraw_store: None,
+            bridge_authority_keys: opts.bridge_authority_keys.clone(), genesis_allocations: opts.genesis_allocations.clone(), genesis_validators: opts.genesis_validators.clone() }).unwrap();
+        n.init().unwrap(); n
+    }
+    fn consensus_fields(n: &L1Node) -> serde_json::Value {
+        let d = n.state_digest().unwrap();
+        serde_json::json!({ "tip": d["tip"], "state_root": d["state_root"], "balances": d["balances"], "token_balances": d["token_balances"], "lp_balances": d["lp_balances"],
+            "burned_tokens": d["burned_tokens"], "stakes": d["stakes"], "shielded_supply_bits": d["shielded_supply_bits"], "base_fee_quanta": d["base_fee_quanta"],
+            "validators": d["validators"], "total_stake": d["total_stake"], "quorum": d["quorum"], "unbonding": d["unbonding"] })
+    }
+    struct Keys(String, String);
+    fn proposer_keys() -> Keys { let k = pqc_keygen(); Keys(k.public_key_hex, k.secret_key_hex) }
+    /// Seal a block on top of the tip with the given txs and root.
+    fn seal(node: &L1Node, p: &Keys, txs: Vec<TxV1>, root: Option<String>, time: u64) -> BlockV1 {
+        let tip = node.store.get_tip().unwrap();
+        let header = BlockHeaderV1 { version: 1, chain_id: node.opts.chain.chain_id.clone(), height: tip.height + 1, time, prev_hash: tip.hash,
+            tx_hash: compute_tx_hash(&txs), proposer_pub_key: p.0.clone(), state_root: root , parent_commit: None};
+        let hb = encode_header_v1(&header); let sig = pqc_sign(&p.1, &hb).unwrap(); let hash = compute_block_hash(&hb, &sig);
+        BlockV1 { version: 1, header, txs, proposer_sig: sig, hash }
+    }
+    /// Root the block WOULD commit (probe apply, fully rolled back).
+    fn probe_root(node: &L1Node, p: &Keys, txs: &[TxV1], time: u64) -> String {
+        let probe = seal(node, p, txs.to_vec(), None, time);
+        let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
+        let _ = node.apply_balance_block(&probe).unwrap();
+        let r = node.get_state_root().unwrap();
+        node.restore_pre_apply_snapshot(snap).unwrap(); r
+    }
+
+    #[test]
+    fn migration_exact_state_accepted_and_final_ledger_canonical() {
+        let (node, _d) = legacy_production_node();
+        assert_eq!(node.migrate_canonical_ledger(&persist).unwrap(), "migrated");
+        ledger_matches_table(&node.balances.lock().unwrap(), CANONICAL_LEDGER_AT_F_MINUS_1).unwrap();
+        assert_canonical_validators(&node);
+        assert!(node.canonical_marker_present() && node.fork_readiness_check().is_ok());
+        let before: u128 = prod_table().values().sum(); let after: u128 = canon_table().values().sum();
+        assert_eq!(before - after, 10_255_079_099_271, "exactly the phantom amount removed");
+        // informational counters survive the transition untouched
+        assert!(node.list_validators().unwrap().iter().any(|(k, v)| k.starts_with("8ccf7878") && v.blocks_proposed > 0));
+        let opts = node.opts.clone(); drop(node);
+        let reloaded = reopen(&opts);
+        ledger_matches_table(&reloaded.balances.lock().unwrap(), CANONICAL_LEDGER_AT_F_MINUS_1).unwrap();
+        assert_canonical_validators(&reloaded);
+        assert_eq!(reloaded.migrate_canonical_ledger(&persist).unwrap(), "already-migrated", "double migration recognized idempotently");
+    }
+
+    #[test]
+    fn migration_refuses_validator_mismatch_and_inconsistent_partial_state() {
+        // (a) one extra missed block on a production validator ⇒ abort, nothing touched
+        let (node, _d) = legacy_production_node();
+        let (k, mut st) = node.list_validators().unwrap().into_iter().find(|(k, _)| k.starts_with("21e0ed0a")).unwrap();
+        st.missed_blocks += 1; node.validator_store.set_validator(&k, &st).unwrap();
+        let rows_before = node.validator_rows().unwrap(); let bal_before = node.balances.lock().unwrap().clone();
+        let err = node.migrate_canonical_ledger(&persist).unwrap_err();
+        assert!(err.contains("does not match PRODUCTION_VALIDATOR_STATE_AT_F_MINUS_1"), "{err}");
+        assert_eq!(node.validator_rows().unwrap(), rows_before); assert_eq!(*node.balances.lock().unwrap(), bal_before);
+        assert!(!node.canonical_marker_present());
+        // (b) ledger already canonical but validators still production ⇒ INCONSISTENT abort
+        st.missed_blocks -= 1; node.validator_store.set_validator(&k, &st).unwrap();
+        *node.balances.lock().unwrap() = canon_table();
+        let err = node.migrate_canonical_ledger(&persist).unwrap_err();
+        assert!(err.contains("INCONSISTENT state: ledger canonical=true validators canonical=false"), "{err}");
+        assert!(!node.canonical_marker_present());
+    }
+
+    #[test]
+    fn migration_rollback_restores_validator_store_byte_exact() {
+        let (node, _d) = legacy_production_node();
+        let dump_before: Vec<Vec<(Vec<u8>, Vec<u8>)>> = node.validator_store.trees().iter().map(|t| snapshot_tree(t).unwrap()).collect();
+        let err = node.migrate_canonical_ledger(&|n| {
+            // the ledger + validator transition are already applied in memory/store at this point
+            assert_canonical_validators(n);
+            Err("injected disk failure after validator transition".to_string())
+        }).unwrap_err();
+        assert!(err.contains("rolled back"), "{err}");
+        let dump_after: Vec<Vec<(Vec<u8>, Vec<u8>)>> = node.validator_store.trees().iter().map(|t| snapshot_tree(t).unwrap()).collect();
+        assert_eq!(dump_before, dump_after, "validator trees byte-exact after rollback");
+        assert_eq!(stake_and_quorum(&node.validator_rows().unwrap()), (120_000, 80_001), "phantom validator is back (legacy state)");
+        assert_eq!(node.get_total_fees_burned().to_bits(), PRODUCTION_FEES_BURNED_BITS_AT_F_MINUS_1, "fees_burned restored");
+        assert_eq!(node.fee_db.get(b"total_burned").unwrap().map(|v| v.to_vec()), Some(f64::from_bits(PRODUCTION_FEES_BURNED_BITS_AT_F_MINUS_1).to_string().into_bytes()));
+        ledger_matches_table(&node.balances.lock().unwrap(), PRODUCTION_LEDGER_AT_F_MINUS_1).unwrap();
+        assert_eq!(node.migrate_canonical_ledger(&persist).unwrap(), "migrated");
+        assert_canonical_validators(&node);
+    }
+
+    /// Finality after the fork counts ONLY ledger-backed stake: total 110,000, quorum 73,334.
+    /// The genesis validator alone (100,000) reaches quorum; the 10,000 validator alone does not;
+    /// the removed h29 staker has no weight at all.
+    #[test]
+    fn finality_quorum_uses_backed_stake_only() {
+        let (node, _d) = legacy_production_node();
+        assert_eq!(stake_and_quorum(&node.validator_rows().unwrap()), (120_000, 80_001), "legacy: 10,000 phantom weight inflates the quorum");
+        node.migrate_canonical_ledger(&persist).unwrap();
+        let stakes = node.get_validator_stakes().unwrap();
+        let total: u128 = stakes.values().sum();
+        let quorum = total * 2 / 3 + 1;
+        assert_eq!((total, quorum), (110_000, 73_334));
+        let expected: BTreeMap<String, u128> = CANONICAL_VALIDATOR_STATE_AT_F_MINUS_1.iter().map(|(k, s, ..)| (k.to_string(), *s)).collect();
+        assert_eq!(stakes, expected, "proposer-selection stake map == canonical table");
+        let w = |prefix: &str| stakes.iter().filter(|(k, _)| k.starts_with(prefix)).map(|(_, s)| *s).sum::<u128>();
+        assert!(w("8ccf7878") >= quorum && w("21e0ed0a") < quorum && w("c97f59a2") == 0);
+        assert_eq!(node.state_digest().unwrap()["quorum"], 73_334);
+    }
+
+    #[test]
+    fn migration_refuses_one_quanta_mismatch_and_leaves_state_untouched() {
+        let (node, _d) = legacy_production_node();
+        { let mut b = node.balances.lock().unwrap(); *b.get_mut("__treasury__").unwrap() += 1; }
+        let before = node.balances.lock().unwrap().clone();
+        let err = node.migrate_canonical_ledger(&persist).unwrap_err();
+        assert!(err.contains("does not match PRODUCTION_LEDGER_AT_F_MINUS_1"), "{err}");
+        assert_eq!(*node.balances.lock().unwrap(), before, "no partial migration");
+        assert!(!node.canonical_marker_present());
+    }
+
+    #[test]
+    fn migration_partial_write_failure_rolls_back_completely() {
+        let (node, _d) = legacy_production_node();
+        let before = node.balances.lock().unwrap().clone();
+        let snap_before = node.snapshot_db.get(b"balances").unwrap().map(|v| v.to_vec());
+        let err = node.migrate_canonical_ledger(&|_n| Err("injected disk failure mid-write".to_string())).unwrap_err();
+        assert!(err.contains("rolled back"), "{err}");
+        assert_eq!(*node.balances.lock().unwrap(), before, "in-memory ledger restored exactly");
+        assert!(!node.canonical_marker_present(), "no marker after failed migration");
+        assert_eq!(node.snapshot_db.get(b"balances").unwrap().map(|v| v.to_vec()), snap_before, "persisted snapshot unchanged");
+        assert!(node.fork_readiness_check().is_err(), "still a legacy node");
+        assert_eq!(stake_and_quorum(&node.validator_rows().unwrap()), (120_000, 80_001), "validator store untouched");
+        assert_eq!(node.migrate_canonical_ledger(&persist).unwrap(), "migrated", "a later correct migration succeeds");
+        assert_canonical_validators(&node);
+    }
+
+    #[test]
+    fn migration_refuses_wrong_tip() {
+        let gc: crate::GenesisConfig = serde_json::from_str(&std::fs::read_to_string(FIXTURE_GENESIS).unwrap()).unwrap();
+        let (_l, _f, src, _d1) = replay_fixture_node();
+        let dir = TmpDir(std::env::temp_dir().join(format!("fork-tip-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let n2 = L1Node::new(NodeOptions { data_dir: dir.0.clone(), chain: src.opts.chain.clone(), mine: false, bridge_withdraw_store: None,
+            bridge_authority_keys: gc.initial_validators.iter().map(|v| v.pub_key.clone()).collect(), genesis_allocations: gc.initial_allocations.clone(), genesis_validators: gc.initial_validators.clone() }).unwrap();
+        n2.init().unwrap(); n2.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators).unwrap();
+        for b in src.get_all_blocks().unwrap().into_iter().filter(|b| (1..=47).contains(&b.header.height)) { n2.import_block(b).unwrap(); }
+        let err = n2.migrate_canonical_ledger(&|n| n.persist_snapshot_atomic(47)).unwrap_err();
+        assert!(err.contains("requires tip == 48"), "{err}");
+    }
+
+    #[test]
+    fn fork_block_f_requires_exact_canonical_root_then_normal_verification() {
+        let (node, _d) = legacy_production_node();
+        assert_eq!(node.migrate_canonical_ledger(&persist).unwrap(), "migrated");
+        let p = proposer_keys(); let t = chrono::Utc::now().timestamp_millis() as u64;
+        let err = node.import_block(seal(&node, &p, vec![], Some("11".repeat(32)), t)).unwrap_err();
+        assert!(err.contains("state root mismatch at height 49"), "wrong root at F rejected by NORMAL verification: {err}");
+        assert_eq!(node.tip_height().unwrap(), 48);
+        let root_f = probe_root(&node, &p, &[], t);
+        node.import_block(seal(&node, &p, vec![], Some(root_f.clone()), t)).expect("fork block F accepted");
+        assert_eq!(node.tip_height().unwrap(), FORK_HEIGHT);
+        assert_eq!(node.get_block(FORK_HEIGHT).unwrap().unwrap().header.state_root.as_deref(), Some(root_f.as_str()));
+        assert!(node.import_block(seal(&node, &p, vec![], Some("22".repeat(32)), t + 1)).unwrap_err().contains("state root mismatch at height 50"), "no checkpoint exceptions after F");
+        eprintln!("FORK_BLOCK_F_ROOT(empty block)={}", root_f);
+    }
+
+    #[test]
+    fn post_fork_restart_snapshot_loss_and_corruption_all_reach_identical_state() {
+        let (node, _d) = legacy_production_node();
+        node.migrate_canonical_ledger(&persist).unwrap();
+        let p = proposer_keys(); let t = chrono::Utc::now().timestamp_millis() as u64;
+        let root_f = probe_root(&node, &p, &[], t);
+        node.import_block(seal(&node, &p, vec![], Some(root_f), t)).unwrap();
+        let reference = consensus_fields(&node);
+        assert_eq!(reference["tip"], FORK_HEIGHT);
+        let opts = node.opts.clone(); drop(node);
+        // (a) valid snapshot restart
+        let n1 = reopen(&opts); assert_eq!(consensus_fields(&n1), reference, "snapshot restart"); assert!(n1.canonical_marker_present()); drop(n1);
+        // (b) snapshot loss → deterministic recovery from genesis through checkpoints + fork
+        std::fs::remove_dir_all(opts.data_dir.join("snapshot-db")).unwrap();
+        let n2 = reopen(&opts); assert_eq!(consensus_fields(&n2), reference, "recovery without snapshot"); assert!(n2.canonical_marker_present()); drop(n2);
+        // (c) corrupt snapshot → rejected → same deterministic recovery
+        { let db = sled::open(opts.data_dir.join("snapshot-db")).unwrap(); let tr = db.open_tree("balance_snapshot").unwrap(); tr.insert(b"balances", &b"{corrupt"[..]).unwrap(); tr.flush().unwrap(); }
+        let n3 = reopen(&opts); assert_eq!(consensus_fields(&n3), reference, "recovery from corrupt snapshot");
+    }
+
+    /// Issue #66 regression (item 12): burned bridge_withdraw principal and a stake debit must
+    /// NEVER become proposer/validator/treasury income — neither on the live path nor on
+    /// recovery-from-history (which is now the same path).
+    #[test]
+    fn principal_burn_and_stake_debit_are_never_fee_income() {
+        let (node, _d) = legacy_production_node();
+        node.migrate_canonical_ledger(&persist).unwrap();
+        let user = pqc_keygen(); let p = proposer_keys(); let t = chrono::Utc::now().timestamp_millis() as u64;
+        node.balances.lock().unwrap().insert(canon_addr(&user.public_key_hex), xrge_f64_to_quanta(20_000.0));
+        // the ledger changed off-block; re-persist so the F-1 snapshot/marker stay consistent for recovery
+        let mk = |ty: &str, amount: u64, fee: f64, nonce: u64| { let mut tx = TxV1 { version: 1, tx_type: ty.into(), from_pub_key: user.public_key_hex.clone(), nonce,
+            payload: TxPayload { amount: Some(amount), token_symbol: if ty == "bridge_withdraw" { Some("XRGE".into()) } else { None }, evm_address: if ty == "bridge_withdraw" { Some("0x00000000000000000000000000000000000000a1".into()) } else { None }, ..Default::default() },
+            fee, sig: String::new(), signed_payload: None }; tx.sig = pqc_sign(&user.secret_key_hex, &encode_tx_for_signing(&tx)).unwrap(); tx };
+        let txs = vec![mk("bridge_withdraw", 100, 0.1, 1), mk("stake", 10_000, 1.0, 2)];
+        let others_before: u128 = node.balances.lock().unwrap().iter().filter(|(k, _)| **k != canon_addr(&user.public_key_hex)).map(|(_, v)| *v).sum();
+        let root = probe_root(&node, &p, &txs, t);
+        node.import_block(seal(&node, &p, txs, Some(root), t)).unwrap();
+        let others_after: u128 = node.balances.lock().unwrap().iter().filter(|(k, _)| **k != canon_addr(&user.public_key_hex)).map(|(_, v)| *v).sum();
+        let income = others_after - others_before;
+        let fees = fee_to_quanta(0.1) + fee_to_quanta(1.0);
+        assert!(income <= fees, "everyone else's income {} must not exceed the fees {} — principal 100 XRGE and stake 10,000 XRGE are NOT fee income", income, fees);
+        assert!(income > fees - fee_to_quanta(0.01), "fees (minus the base-fee burn) were distributed: {}", income);
+        let q = *node.balances.lock().unwrap().get(&canon_addr(&user.public_key_hex)).unwrap();
+        assert_eq!(q, xrge_f64_to_quanta(20_000.0) - fee_to_quanta(100.1) - fee_to_quanta(10_001.0), "user debited exactly principal + stake + fees (quanta)");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Validator-state atomicity (issue #66 final blocker): stake / unstake must share ONE
+// success decision between the economic ledger and the validator store, sequentially
+// within a block. These tests encode the REQUIRED behaviour; on the pre-fix code they
+// reproduce the live exploit shape (validator power without a ledger debit).
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod validator_atomicity_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, signed, sealed_block};
+
+    fn stake_tx(from: &str, amount: u64, fee: f64, nonce: u64) -> TxV1 {
+        TxV1 { version: 1, tx_type: "stake".into(), from_pub_key: from.into(), nonce,
+            payload: TxPayload { amount: Some(amount), ..Default::default() }, fee, sig: String::new(), signed_payload: None }
+    }
+    fn unstake_tx(from: &str, amount: u64, fee: f64, nonce: u64) -> TxV1 {
+        TxV1 { version: 1, tx_type: "unstake".into(), from_pub_key: from.into(), nonce,
+            payload: TxPayload { amount: Some(amount), ..Default::default() }, fee, sig: String::new(), signed_payload: None }
+    }
+    fn staked(node: &L1Node, pk: &str) -> u128 { node.validator_store.get_validator(pk).unwrap().map(|v| v.stake).unwrap_or(0) }
+    /// Import a block of `txs` with its correct root (probe + rollback), returning the receipts' statuses.
+    fn import_with_correct_root(node: &L1Node, proposer_pub: &str, proposer_sk: &str, txs: Vec<TxV1>) -> Vec<TxStatus> {
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        let probe = sealed_block(node, proposer_pub, proposer_sk, txs.clone(), None, t);
+        let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
+        let _ = node.apply_balance_block(&probe).unwrap();
+        let root = node.compute_state_root_for_height(probe.header.height).unwrap();
+        node.restore_pre_apply_snapshot(snap).unwrap();
+        let good = sealed_block(node, proposer_pub, proposer_sk, txs.clone(), Some(root), t);
+        node.import_block(good).expect("block accepted");
+        txs.iter().map(|tx| node.get_receipt(&compute_single_tx_hash(tx)).unwrap().unwrap().status).collect()
+    }
+
+    #[test]
+    fn insolvent_stake_cannot_create_validator_power() {
+        let (_d, node, _s) = node_with_store();
+        let p = pqc_keygen(); let u = pqc_keygen();
+        fund_xrge(&node, &u.public_key_hex, 10_000.87); // < 10,000 + 1 fee  (the h29 shape)
+        let st = import_with_correct_root(&node, &p.public_key_hex, &p.secret_key_hex,
+            vec![signed(stake_tx(&u.public_key_hex, 10_000, 1.0, 1), &u.secret_key_hex)]);
+        assert_eq!(node.get_balance(&u.public_key_hex).unwrap(), 10_000.87, "ledger debit must be a no-op");
+        assert_eq!(staked(&node, &u.public_key_hex), 0, "NO validator power without a ledger debit");
+        assert!(matches!(&st[0], TxStatus::Failed(_)), "failed stake must not be reported Success: {:?}", st[0]);
+    }
+
+    #[test]
+    fn same_block_double_stake_locks_only_what_was_paid() {
+        let (_d, node, _s) = node_with_store();
+        let p = pqc_keygen(); let u = pqc_keygen();
+        fund_xrge(&node, &u.public_key_hex, 10_001.5); // enough for exactly ONE 10,000 stake + fee
+        let st = import_with_correct_root(&node, &p.public_key_hex, &p.secret_key_hex, vec![
+            signed(stake_tx(&u.public_key_hex, 10_000, 1.0, 1), &u.secret_key_hex),
+            signed(stake_tx(&u.public_key_hex, 10_000, 1.0, 2), &u.secret_key_hex),
+        ]);
+        assert_eq!(staked(&node, &u.public_key_hex), 10_000, "validator power == XRGE actually locked (not 20,000)");
+        assert_eq!(node.get_balance(&u.public_key_hex).unwrap(), 0.5);
+        assert!(matches!(st[0], TxStatus::Success) && matches!(&st[1], TxStatus::Failed(_)), "{:?}", st);
+    }
+
+    #[test]
+    fn same_block_double_unstake_cannot_release_more_than_staked() {
+        let (_d, node, _s) = node_with_store();
+        let p = pqc_keygen(); let u = pqc_keygen();
+        fund_xrge(&node, &u.public_key_hex, 10_003.0);
+        // stake exactly 10,000 first (its own block)
+        import_with_correct_root(&node, &p.public_key_hex, &p.secret_key_hex,
+            vec![signed(stake_tx(&u.public_key_hex, 10_000, 1.0, 1), &u.secret_key_hex)]);
+        assert_eq!(staked(&node, &u.public_key_hex), 10_000);
+        let before_q = node.unbonding_queue.lock().unwrap().len();
+        let st = import_with_correct_root(&node, &p.public_key_hex, &p.secret_key_hex, vec![
+            signed(unstake_tx(&u.public_key_hex, 10_000, 1.0, 2), &u.secret_key_hex),
+            signed(unstake_tx(&u.public_key_hex, 10_000, 1.0, 3), &u.secret_key_hex),
+        ]);
+        assert_eq!(staked(&node, &u.public_key_hex), 0, "first unstake releases the whole stake");
+        let q = node.unbonding_queue.lock().unwrap();
+        let mine: Vec<_> = q.iter().skip(before_q).filter(|e| e.delegator == u.public_key_hex).collect();
+        assert_eq!(mine.len(), 1, "exactly ONE unbonding entry");
+        assert_eq!(mine[0].amount, 10_000.0, "totalling 10,000 — never 20,000");
+        drop(q);
+        assert!(matches!(st[0], TxStatus::Success) && matches!(&st[1], TxStatus::Failed(_)), "{:?}", st);
+        // exactly ONE unstake fee was paid: 10,003 − 10,001 (stake+fee) − 1 = 1.0, plus the staker's own
+        // validator fee-share income for this block (< 0.7 XRGE) — a second fee would leave < 1.0.
+        let bal = node.get_balance(&u.public_key_hex).unwrap();
+        assert!((1.0..1.7).contains(&bal), "only the successful unstake's fee was paid: {bal}");
+    }
+
+    #[test]
+    fn failed_fee_cannot_change_validator_state() {
+        let (_d, node, _s) = node_with_store();
+        let p = pqc_keygen(); let u = pqc_keygen();
+        fund_xrge(&node, &u.public_key_hex, 10_002.0);
+        import_with_correct_root(&node, &p.public_key_hex, &p.secret_key_hex,
+            vec![signed(stake_tx(&u.public_key_hex, 10_000, 1.0, 1), &u.secret_key_hex)]);
+        assert_eq!(node.get_balance(&u.public_key_hex).unwrap(), 1.0);
+        // unstake with a fee the account cannot pay (fee 5 > balance 1)
+        let st = import_with_correct_root(&node, &p.public_key_hex, &p.secret_key_hex,
+            vec![signed(unstake_tx(&u.public_key_hex, 10_000, 5.0, 2), &u.secret_key_hex)]);
+        assert_eq!(staked(&node, &u.public_key_hex), 10_000, "validator state unchanged when the fee fails");
+        assert!(node.unbonding_queue.lock().unwrap().iter().all(|e| e.delegator != u.public_key_hex), "no unbonding entry");
+        assert!(matches!(&st[0], TxStatus::Failed(_)));
+    }
+
+    #[test]
+    fn rejected_block_leaves_no_validator_or_unbonding_mutation() {
+        let (_d, node, _s) = node_with_store();
+        let p = pqc_keygen(); let u = pqc_keygen();
+        fund_xrge(&node, &u.public_key_hex, 20_003.0);
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        let vals_before = serde_json::to_string(&node.list_validators().unwrap()).unwrap(); let q_before = serde_json::to_string(&*node.unbonding_queue.lock().unwrap()).unwrap();
+        let bad = sealed_block(&node, &p.public_key_hex, &p.secret_key_hex,
+            vec![signed(stake_tx(&u.public_key_hex, 10_000, 1.0, 1), &u.secret_key_hex)], Some("ab".repeat(32)), t);
+        assert!(node.import_block(bad).unwrap_err().contains("state root mismatch"));
+        assert_eq!(serde_json::to_string(&node.list_validators().unwrap()).unwrap(), vals_before, "validator store untouched by a rejected block");
+        assert_eq!(serde_json::to_string(&*node.unbonding_queue.lock().unwrap()).unwrap(), q_before);
+        assert_eq!(staked(&node, &u.public_key_hex), 0);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Producer atomicity, pre-root matured unbonding, post-root invariant, verified peer sync.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod producer_and_unbonding_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, signed, sealed_block};
+
+    fn stake_tx(from: &str, amount: u64, fee: f64, nonce: u64) -> TxV1 {
+        TxV1 { version: 1, tx_type: "stake".into(), from_pub_key: from.into(), nonce,
+            payload: TxPayload { amount: Some(amount), ..Default::default() }, fee, sig: String::new(), signed_payload: None }
+    }
+    fn unstake_tx(from: &str, amount: u64, fee: f64, nonce: u64) -> TxV1 {
+        TxV1 { version: 1, tx_type: "unstake".into(), from_pub_key: from.into(), nonce,
+            payload: TxPayload { amount: Some(amount), ..Default::default() }, fee, sig: String::new(), signed_payload: None }
+    }
+    fn xfer_tx(from: &str, to: &str, amount: u64, fee: f64, nonce: u64) -> TxV1 {
+        TxV1 { version: 1, tx_type: "transfer".into(), from_pub_key: from.into(), nonce,
+            payload: TxPayload { to_pub_key_hex: Some(to.into()), amount: Some(amount), ..Default::default() }, fee, sig: String::new(), signed_payload: None }
+    }
+    /// Every consensus-relevant component (what the dress rehearsal compares), minus tip hash/time.
+    fn consensus_state(n: &L1Node) -> serde_json::Value {
+        let d = n.state_digest().unwrap();
+        serde_json::json!({ "tip": d["tip"], "state_root": d["state_root"], "balances": d["balances"], "token_balances": d["token_balances"],
+            "lp_balances": d["lp_balances"], "burned_tokens": d["burned_tokens"], "base_fee_quanta": d["base_fee_quanta"], "fees_burned_bits": d["fees_burned_bits"],
+            "shielded_supply_bits": d["shielded_supply_bits"], "validators": d["validators"], "total_stake": d["total_stake"], "quorum": d["quorum"], "unbonding": d["unbonding"] })
+    }
+    fn full_fingerprint(n: &L1Node, store: &BridgeWithdrawStore) -> (serde_json::Value, String, usize, usize) {
+        (consensus_state(n), n.store.get_tip().unwrap().hash, store.list().map(|v| v.len()).unwrap_or(0), n.mempool.lock().unwrap().len())
+    }
+    /// Producer node: its block-signing key is also a funded, staked validator.
+    fn producer() -> (super::bridge_r1_daemon_tests::TmpDir, L1Node, std::sync::Arc<BridgeWithdrawStore>, PQKeypair) {
+        let (d, node, store) = node_with_store();
+        let p = pqc_keygen();
+        *node.keys.lock().unwrap() = PQKeypair { algorithm: p.algorithm.clone(), public_key_hex: p.public_key_hex.clone(), secret_key_hex: p.secret_key_hex.clone() };
+        fund_xrge(&node, &p.public_key_hex, 5_000.0);
+        (d, node, store, p)
+    }
+    fn mine(node: &L1Node, txs: Vec<TxV1>) -> BlockV1 {
+        for tx in txs { node.add_tx_to_mempool_verified(tx).unwrap(); }
+        node.mine_pending().unwrap().expect("block produced")
+    }
+    /// Empty block on top of the tip via the import path with the correct root (probe + rollback).
+    fn import_empty(node: &L1Node, p: &PQKeypair, time: u64) -> BlockV1 {
+        let probe = sealed_block(node, &p.public_key_hex, &p.secret_key_hex, vec![], None, time);
+        let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
+        let _ = node.apply_balance_block(&probe).unwrap();
+        let root = node.compute_state_root_for_height(probe.header.height).unwrap();
+        node.restore_pre_apply_snapshot(snap).unwrap();
+        let b = sealed_block(node, &p.public_key_hex, &p.secret_key_hex, vec![], Some(root), time);
+        node.import_block(b.clone()).unwrap(); b
+    }
+
+    // ── 1. producer failure atomicity (root / validator persistence / append) + retry ──
+    #[test]
+    fn producer_failures_roll_back_everything_and_requeue_then_retry_equals_clean_node() {
+        let u = pqc_keygen();
+        let (_d, node, store, p) = producer();
+        let (_d2, clean, _s2) = node_with_store();
+        *clean.keys.lock().unwrap() = PQKeypair { algorithm: p.algorithm.clone(), public_key_hex: p.public_key_hex.clone(), secret_key_hex: p.secret_key_hex.clone() };
+        fund_xrge(&clean, &p.public_key_hex, 5_000.0);
+        for n in [&node, &clean] { fund_xrge(n, &u.public_key_hex, 1_000.0); }
+        // a pending unbonding entry that matures in the attempted block, so the rollback must
+        // also restore the queue and the credit
+        let h = node.tip_height().unwrap() + 1;
+        for n in [&node, &clean] { n.unbonding_queue.lock().unwrap().push(UnbondingEntry { delegator: u.public_key_hex.clone(), amount: 7.0, release_height: h }); }
+        let txs = || vec![signed(xfer_tx(&u.public_key_hex, &p.public_key_hex, 10, 0.5, 1), &u.secret_key_hex),
+                          signed(stake_tx(&p.public_key_hex, 100, 1.0, 1), &p.secret_key_hex)];
+        let before = full_fingerprint(&node, &store);
+        for fault in [1u8, 2, 3] {
+            TEST_PRODUCER_FAULT.with(|c| c.set(fault));
+            for tx in txs() { node.add_tx_to_mempool_verified(tx).unwrap(); }
+            let err = node.mine_pending().unwrap_err();
+            TEST_PRODUCER_FAULT.with(|c| c.set(0));
+            assert!(err.contains("rolled back"), "fault {}: {}", fault, err);
+            let after = full_fingerprint(&node, &store);
+            assert_eq!(after.0, before.0, "fault {}: consensus state (ledger, validators, unbonding, base fee) unchanged", fault);
+            assert_eq!(after.1, before.1, "fault {}: tip unchanged", fault);
+            assert_eq!(after.2, before.2, "fault {}: bridge store unchanged", fault);
+            assert_eq!(after.3, 2, "fault {}: both txs requeued", fault);
+            assert!(node.mined_tx_hashes.lock().unwrap().is_empty(), "fault {}: nothing marked mined", fault);
+            assert_eq!(node.unbonding_queue.lock().unwrap().len(), 1, "fault {}: matured entry still pending", fault);
+            node.mempool.lock().unwrap().clear();
+        }
+        // retry: same logical block after the fault is removed == a clean node that never failed
+        let b = mine(&node, txs());
+        let cb = mine(&clean, txs());
+        assert_eq!(b.header.height, cb.header.height);
+        assert_eq!(b.header.state_root, cb.header.state_root, "identical committed root");
+        assert_eq!(consensus_state(&node), consensus_state(&clean), "identical consensus state after retry");
+        assert!(node.unbonding_queue.lock().unwrap().is_empty(), "matured entry released exactly once");
+        assert_eq!(node.mined_tx_hashes.lock().unwrap().len(), 2);
+        assert_eq!(node.validator_store.get_validator(&p.public_key_hex).unwrap().unwrap().stake, 100);
+    }
+
+    // ── 2. matured unbonding is committed in the root; peer importer, restart and recovery agree ──
+    #[test]
+    fn matured_unbonding_is_credited_before_root_and_reproduced_by_peer_restart_and_recovery() {
+        let (_d, a, _sa, p) = producer();
+        let u = pqc_keygen();
+        fund_xrge(&a, &u.public_key_hex, 1_000.0);
+        let t0 = chrono::Utc::now().timestamp_millis() as u64;
+        // block 1: proposer stakes 1000 (so it stays a valid proposer past the auth window); user stakes 100
+        mine(&a, vec![signed(stake_tx(&p.public_key_hex, 1_000, 1.0, 1), &p.secret_key_hex), signed(stake_tx(&u.public_key_hex, 100, 1.0, 1), &u.secret_key_hex)]);
+        // block 2: user unstakes 100 → release at 2 + UNBONDING_BLOCKS
+        mine(&a, vec![signed(unstake_tx(&u.public_key_hex, 100, 1.0, 2), &u.secret_key_hex)]);
+        let release_h = 2 + UNBONDING_BLOCKS;
+        assert_eq!(a.unbonding_rows().unwrap(), vec![(u.public_key_hex.clone(), 100f64.to_bits(), release_h)]);
+        let bal_before = *a.balances.lock().unwrap().get(&canon_addr(&u.public_key_hex)).unwrap();
+        // the pending queue is persisted in the snapshot (it is consensus state)
+        { let raw = a.snapshot_db.get(b"unbonding_queue").unwrap().expect("snapshot carries the unbonding queue");
+          let q: Vec<UnbondingEntry> = serde_json::from_slice(&raw).unwrap();
+          assert_eq!(q.len(), 1); assert_eq!(q[0].release_height, release_h); assert_eq!(q[0].amount, 100.0); }
+        // blocks 3 .. release_h-1: no release
+        for h in 3..release_h { import_empty(&a, &p, t0 + h); }
+        assert_eq!(a.tip_height().unwrap(), release_h - 1);
+        assert_eq!(*a.balances.lock().unwrap().get(&canon_addr(&u.public_key_hex)).unwrap(), bal_before, "no release before release_height");
+        assert_eq!(a.unbonding_queue.lock().unwrap().len(), 1);
+        // block release_h via the LOCAL MINER: the credit lands before the root is sealed
+        let blk = mine(&a, vec![signed(xfer_tx(&u.public_key_hex, &p.public_key_hex, 1, 0.5, 3), &u.secret_key_hex)]);
+        assert_eq!(blk.header.height, release_h);
+        let bal_after = *a.balances.lock().unwrap().get(&canon_addr(&u.public_key_hex)).unwrap();
+        assert_eq!(bal_after, bal_before + xrge_f64_to_quanta(100.0) - xrge_f64_to_quanta(1.5), "released 100 XRGE exactly once (minus the 1 XRGE transfer + 0.5 fee)");
+        assert!(a.unbonding_queue.lock().unwrap().is_empty(), "entry removed");
+        assert_eq!(blk.header.state_root.as_deref(), Some(a.get_state_root().unwrap().as_str()), "header root == post-block state incl. the credit");
+        // peer importer B recomputes the same root for every block, including the release block
+        let (_db, b, _sb) = node_with_store();
+        fund_xrge(&b, &p.public_key_hex, 5_000.0); fund_xrge(&b, &u.public_key_hex, 1_000.0);
+        for blk in a.get_all_blocks().unwrap().into_iter().filter(|x| x.header.height > 0) { b.import_block(blk).unwrap(); }
+        assert_eq!(consensus_state(&b), consensus_state(&a), "peer import parity incl. release");
+        // snapshot restart of A reproduces the same state (queue empty, credit present); the
+        // no-snapshot recovery variant is `unbonding_recovery_without_snapshot_reproduces_root_with_genesis_funding`
+        let opts = a.opts.clone(); let reference = consensus_state(&a); drop(a);
+        let r1 = L1Node::new(opts).unwrap(); r1.init().unwrap();
+        assert_eq!(consensus_state(&r1), reference, "snapshot restart");
+    }
+
+    /// Recovery parity for the unbonding path with ALL funding in history (genesis allocations).
+    #[test]
+    fn unbonding_recovery_without_snapshot_reproduces_root_with_genesis_funding() {
+        let p = pqc_keygen(); let u = pqc_keygen();
+        let dir = super::bridge_r1_daemon_tests::TmpDir::new();
+        let alloc = vec![crate::GenesisAllocation { address: p.public_key_hex.clone(), amount: 5_000, label: None }, crate::GenesisAllocation { address: u.public_key_hex.clone(), amount: 1_000, label: None }];
+        let mk = || { let n = L1Node::new(NodeOptions { data_dir: dir.0.clone(), chain: ChainConfig { chain_id: "test".into(), genesis_time: 0, block_time_ms: 1000 }, mine: false,
+            bridge_withdraw_store: None, bridge_authority_keys: Vec::new(), genesis_allocations: alloc.clone(), genesis_validators: Vec::new() }).unwrap(); n };
+        let a = mk(); a.init().unwrap(); // init() applies the genesis seed exactly once
+        assert_eq!(*a.balances.lock().unwrap().get(&canon_addr(&p.public_key_hex)).unwrap(), xrge_f64_to_quanta(5_000.0));
+        *a.keys.lock().unwrap() = PQKeypair { algorithm: p.algorithm.clone(), public_key_hex: p.public_key_hex.clone(), secret_key_hex: p.secret_key_hex.clone() };
+        mine(&a, vec![signed(stake_tx(&p.public_key_hex, 1_000, 1.0, 1), &p.secret_key_hex), signed(stake_tx(&u.public_key_hex, 100, 1.0, 1), &u.secret_key_hex)]);
+        mine(&a, vec![signed(unstake_tx(&u.public_key_hex, 100, 1.0, 2), &u.secret_key_hex)]);
+        let release_h = 2 + UNBONDING_BLOCKS; let t0 = 1_000_000u64;
+        for h in 3..release_h { import_empty(&a, &p, t0 + h); }
+        mine(&a, vec![signed(xfer_tx(&u.public_key_hex, &p.public_key_hex, 1, 0.5, 3), &u.secret_key_hex)]);
+        import_empty(&a, &p, t0 + release_h + 1);
+        let reference = consensus_state(&a); assert!(a.unbonding_queue.lock().unwrap().is_empty()); drop(a);
+        std::fs::remove_dir_all(dir.0.join("snapshot-db")).unwrap();
+        let r = mk(); r.init().unwrap();
+        assert_eq!(consensus_state(&r), reference, "no-snapshot recovery reproduces the release exactly once");
+    }
+
+    // ── 3. post-root invariant: apply_validator_block never mutates root-covered maps ──
+    #[test]
+    fn post_root_validator_apply_cannot_mutate_balance_maps() {
+        let (_d, node, _s) = node_with_store();
+        let p = pqc_keygen(); let u = pqc_keygen();
+        fund_xrge(&node, &u.public_key_hex, 1_000.0); fund_xrge(&node, &p.public_key_hex, 10.0);
+        let h = node.tip_height().unwrap() + 1;
+        node.unbonding_queue.lock().unwrap().push(UnbondingEntry { delegator: p.public_key_hex.clone(), amount: 3.0, release_height: h });
+        let txs = vec![signed(stake_tx(&u.public_key_hex, 100, 1.0, 1), &u.secret_key_hex), signed(unstake_tx(&u.public_key_hex, 40, 1.0, 2), &u.secret_key_hex)];
+        let blk = sealed_block(&node, &p.public_key_hex, &p.secret_key_hex, txs, None, 1);
+        let exec = node.apply_balance_block(&blk).unwrap();
+        let root = node.compute_state_root_for_height(blk.header.height).unwrap();
+        let (b0, t0, l0) = (node.balances.lock().unwrap().clone(), node.token_balances.lock().unwrap().clone(), node.lp_balances.lock().unwrap().clone());
+        let pb = *b0.get(&canon_addr(&p.public_key_hex)).unwrap();
+        assert!(pb >= xrge_f64_to_quanta(13.0) && pb < xrge_f64_to_quanta(15.0), "matured release (3 XRGE) credited BEFORE the root (+ proposer fee share): {}", pb);
+        node.apply_validator_block(&blk, &exec.validator).unwrap();
+        assert_eq!(*node.balances.lock().unwrap(), b0, "balances untouched after the root is sealed");
+        assert_eq!(*node.token_balances.lock().unwrap(), t0);
+        assert_eq!(*node.lp_balances.lock().unwrap(), l0);
+        assert_eq!(node.compute_state_root_for_height(blk.header.height).unwrap(), root, "root unchanged by the validator phase");
+        assert_eq!(node.validator_store.get_validator(&u.public_key_hex).unwrap().unwrap().stake, 60, "validator-store effects applied post-root");
+    }
+}
+
+#[cfg(test)]
+mod peer_sync_tests {
+    use super::*;
+    use super::strict_historical_replay_tests::{replay_fixture_node, TmpDir, FIXTURE_GENESIS};
+    use crate::fork::*;
+    use crate::peer::apply_peer_blocks;
+
+    struct Keys(String, String);
+    fn keys() -> Keys { let k = pqc_keygen(); Keys(k.public_key_hex, k.secret_key_hex) }
+    fn seal(node: &L1Node, p: &Keys, txs: Vec<TxV1>, root: Option<String>, time: u64) -> BlockV1 {
+        let tip = node.store.get_tip().unwrap();
+        let header = BlockHeaderV1 { version: 1, chain_id: node.opts.chain.chain_id.clone(), height: tip.height + 1, time, prev_hash: tip.hash,
+            tx_hash: compute_tx_hash(&txs), proposer_pub_key: p.0.clone(), state_root: root , parent_commit: None};
+        let hb = encode_header_v1(&header); let sig = pqc_sign(&p.1, &hb).unwrap(); let hash = compute_block_hash(&hb, &sig);
+        BlockV1 { version: 1, header, txs, proposer_sig: sig, hash }
+    }
+    fn probe_root(node: &L1Node, p: &Keys, time: u64) -> String {
+        let probe = seal(node, p, vec![], None, time);
+        let snap = node.capture_pre_apply_snapshot(&probe).unwrap();
+        let _ = node.apply_balance_block(&probe).unwrap();
+        let r = node.compute_state_root_for_height(probe.header.height).unwrap(); node.restore_pre_apply_snapshot(snap).unwrap(); r
+    }
+    /// Mainnet-fixture source at 49 (canonical 48 + one post-fork block) and an empty fresh node.
+    fn source_and_fresh() -> (L1Node, TmpDir, L1Node, TmpDir, Keys) {
+        let (last, fail, src, d1) = replay_fixture_node();
+        assert!(fail.is_none() && last == FORK_HEIGHT - 1);
+        let p = keys(); let t = chrono::Utc::now().timestamp_millis() as u64;
+        let root = probe_root(&src, &p, t);
+        src.import_block(seal(&src, &p, vec![], Some(root), t)).unwrap();
+        let gc: crate::GenesisConfig = serde_json::from_str(&std::fs::read_to_string(FIXTURE_GENESIS).unwrap()).unwrap();
+        let d2 = TmpDir(std::env::temp_dir().join(format!("peer-fresh-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())));
+        std::fs::create_dir_all(&d2.0).unwrap();
+        let fresh = L1Node::new(NodeOptions { data_dir: d2.0.clone(), chain: src.opts.chain.clone(), mine: false, bridge_withdraw_store: None,
+            bridge_authority_keys: src.opts.bridge_authority_keys.clone(), genesis_allocations: gc.initial_allocations.clone(), genesis_validators: gc.initial_validators.clone() }).unwrap();
+        fresh.init().unwrap(); fresh.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators).unwrap();
+        (src, d1, fresh, d2, p)
+    }
+    fn digest(n: &L1Node) -> serde_json::Value { let mut d = n.state_digest().unwrap(); d.as_object_mut().unwrap().remove("nonce_db"); d.as_object_mut().unwrap().remove("validators_informational"); d }
+
+    #[test]
+    fn fresh_random_node_syncs_0_to_49_only_through_verified_import() {
+        let (src, _d1, fresh, _d2, _p) = source_and_fresh();
+        let blocks = src.get_all_blocks().unwrap();
+        assert_eq!(apply_peer_blocks(&fresh, "src", blocks).unwrap(), 49);
+        assert_eq!(fresh.tip_height().unwrap(), 49);
+        assert!(fresh.canonical_marker_present() && fresh.fork_readiness_check().is_ok());
+        assert_eq!(digest(&fresh), digest(&src), "fresh peer sync == source on every consensus component");
+    }
+
+    #[test]
+    fn bad_historical_checkpoint_is_rejected_without_reset_and_sync_can_resume() {
+        let (src, _d1, fresh, _d2, _p) = source_and_fresh();
+        let blocks = src.get_all_blocks().unwrap();
+        apply_peer_blocks(&fresh, "src", blocks[..20].to_vec()).unwrap(); // 1..=19
+        // a validly SIGNED block 20 carrying a wrong committed root (the shape of a malicious peer)
+        let evil = keys(); let mut bad = blocks[20].clone();
+        let h20 = seal(&fresh, &evil, bad.txs.clone(), Some("ab".repeat(32)), bad.header.time); bad = h20;
+        let tip_before = fresh.store.get_tip().unwrap();
+        let err = apply_peer_blocks(&fresh, "evil", vec![bad]).unwrap_err();
+        assert!(err.contains("checkpoint mismatch") && err.contains("no reset"), "{err}");
+        assert_eq!(fresh.store.get_tip().unwrap().hash, tip_before.hash, "local chain intact at 19");
+        // the honest history still imports afterwards
+        assert_eq!(apply_peer_blocks(&fresh, "src", blocks.clone()).unwrap(), 30);
+        assert_eq!(digest(&fresh), digest(&src));
+    }
+
+    #[test]
+    fn bad_block_after_fork_is_rejected_without_chain_wipe() {
+        let (src, _d1, fresh, _d2, _p) = source_and_fresh();
+        apply_peer_blocks(&fresh, "src", src.get_all_blocks().unwrap()).unwrap();
+        let evil = keys(); let t = chrono::Utc::now().timestamp_millis() as u64;
+        let bad50 = seal(&fresh, &evil, vec![], Some("cd".repeat(32)), t);
+        let tip_before = fresh.store.get_tip().unwrap(); let before = digest(&fresh);
+        let err = apply_peer_blocks(&fresh, "evil", vec![bad50]).unwrap_err();
+        assert!(err.contains("state root mismatch at height 50") && err.contains("no reset"), "{err}");
+        assert_eq!(fresh.store.get_tip().unwrap().hash, tip_before.hash);
+        assert_eq!(digest(&fresh), before, "state untouched");
+    }
+
+    #[test]
+    fn incompatible_genesis_and_equal_or_longer_divergent_peer_cannot_replace_local_chain() {
+        let (src, _d1, fresh, _d2, p) = source_and_fresh();
+        let blocks = src.get_all_blocks().unwrap();
+        apply_peer_blocks(&fresh, "src", blocks.clone()).unwrap();
+        let established = digest(&fresh); let tip = fresh.store.get_tip().unwrap();
+        // (a) different genesis
+        let mut foreign = blocks.clone(); foreign[0].hash = "00".repeat(32);
+        let err = apply_peer_blocks(&fresh, "foreign", foreign).unwrap_err();
+        assert!(err.contains("incompatible chain"), "{err}");
+        // (b) different chain id
+        let mut other = blocks.clone(); other[5].header.chain_id = "rougechain-devnet-1".into();
+        assert!(apply_peer_blocks(&fresh, "other", other).unwrap_err().contains("refusing sync"));
+        // (c) a LONGER peer chain with the same genesis but divergent history from height 30: it
+        //     can never replace ours — its first block above our tip fails prev_hash; nothing is wiped.
+        let (_l, _f, alt, _d3) = replay_fixture_node(); // canonical to 48
+        let mut longer: Vec<BlockV1> = alt.get_all_blocks().unwrap();
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        // build 50..=60 on the alt node (different proposer ⇒ different hashes than ours from 49)
+        let root49 = probe_root(&alt, &p, t + 1); alt.import_block(seal(&alt, &p, vec![], Some(root49), t + 1)).unwrap();
+        for i in 2..=12 { let r = probe_root(&alt, &p, t + i); alt.import_block(seal(&alt, &p, vec![], Some(r), t + i)).unwrap(); }
+        longer = alt.get_all_blocks().unwrap();
+        assert!(longer.len() > tip.height as usize + 1);
+        let err = apply_peer_blocks(&fresh, "longer", longer).unwrap_err();
+        assert!(err.contains("prev_hash") && err.contains("no reset"), "{err}");
+        assert_eq!(fresh.store.get_tip().unwrap().hash, tip.hash, "established chain kept");
+        assert_eq!(digest(&fresh), established);
+        // (d) an EQUAL-height peer with identical history is simply a no-op
+        assert_eq!(apply_peer_blocks(&fresh, "src", blocks).unwrap(), 0);
+    }
+}
+
+/// C1 — transaction-uniqueness rule (replay of an already-included signed tx).
+#[cfg(test)]
+mod tx_uniqueness_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, sealed_block, signed};
+    use quantum_vault_crypto::{pqc_keygen, pqc_sign, pqc_verify};
+    use quantum_vault_types::{compute_single_tx_hash, encode_tx_for_signing};
+
+    fn transfer(from: &str, to: &str, amount: u64, nonce: u64) -> TxV1 {
+        TxV1 { version: 1, tx_type: "transfer".into(), from_pub_key: from.into(), nonce,
+            payload: TxPayload { to_pub_key_hex: Some(to.into()), amount: Some(amount), ..Default::default() },
+            fee: 0.1, sig: String::new(), signed_payload: None }
+    }
+    /// State-root commitment is not what these tests are about: disable it (test-only knob),
+    /// and set the C1 activation height for this thread.
+    fn setup(activation: Option<u64>) -> (super::bridge_r1_daemon_tests::TmpDir, L1Node, PQKeypair, PQKeypair, PQKeypair) {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(u64::MAX)));
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(activation)));
+        let (d, node, _store) = node_with_store();
+        let proposer = pqc_keygen(); let user = pqc_keygen(); let other = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1_000.0);
+        (d, node, proposer, user, other)
+    }
+    fn import(node: &L1Node, p: &PQKeypair, txs: Vec<TxV1>) -> Result<(), String> {
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        node.import_block(sealed_block(node, &p.public_key_hex, &p.secret_key_hex, txs, None, t))
+    }
+    fn bal(node: &L1Node, pk: &str) -> u128 { *node.balances.lock().unwrap().get(&canon_addr(pk)).unwrap_or(&0) }
+
+    #[test]
+    fn replay_of_an_included_tx_is_rejected_once_the_rule_is_active() {
+        let (_d, node, p, user, other) = setup(Some(1));
+        let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
+        let h = quantum_vault_types::tx_identity(&t1);
+        import(&node, &p, vec![t1.clone()]).expect("first inclusion");
+        assert_eq!(node.tx_included_at(&h), Some(1));
+        let before = bal(&node, &user.public_key_hex);
+        let err = import(&node, &p, vec![t1.clone()]).unwrap_err();
+        assert!(err.contains("already included in block 1") && err.contains("replay"), "{err}");
+        assert_eq!(node.tip_height().unwrap(), 1, "replay block never persisted");
+        assert_eq!(bal(&node, &user.public_key_hex), before, "victim not debited twice");
+        // a genuinely new tx from the same sender still works
+        let t2 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 5, 8), &user.secret_key_hex);
+        import(&node, &p, vec![t2]).expect("fresh tx accepted");
+        assert_eq!(node.tip_height().unwrap(), 2);
+    }
+
+    #[test]
+    fn duplicate_within_one_block_is_rejected() {
+        let (_d, node, p, user, other) = setup(Some(1));
+        let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
+        let err = import(&node, &p, vec![t1.clone(), t1]).unwrap_err();
+        assert!(err.contains("duplicated within the block"), "{err}");
+        assert_eq!(node.tip_height().unwrap(), 0);
+    }
+
+    #[test]
+    fn rule_is_inactive_below_the_activation_height_and_when_unscheduled() {
+        // Documents (and pins) the LEGACY behaviour the fork removes: below the activation
+        // height a replayed block is still accepted, so history before the fork replays
+        // identically on every node.
+        for activation in [Some(10), None] {
+            let (_d, node, p, user, other) = setup(activation);
+            let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
+            import(&node, &p, vec![t1.clone()]).unwrap();
+            let before = bal(&node, &user.public_key_hex);
+            import(&node, &p, vec![t1]).expect("legacy: replay accepted below activation");
+            assert!(bal(&node, &user.public_key_hex) < before, "legacy: debited again (the bug being fixed)");
+            assert_eq!(node.tip_height().unwrap(), 2);
+        }
+    }
+
+    #[test]
+    fn rule_activates_exactly_at_the_activation_height() {
+        let (_d, node, p, user, other) = setup(Some(3));
+        let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 10, 7), &user.secret_key_hex);
+        import(&node, &p, vec![t1.clone()]).unwrap();          // h1
+        import(&node, &p, vec![t1.clone()]).unwrap();          // h2: still legacy
+        let err = import(&node, &p, vec![t1]).unwrap_err();    // h3: rule active
+        assert!(err.contains("replay"), "{err}");
+        assert_eq!(node.tip_height().unwrap(), 2);
+    }
+
+    #[test]
+    fn mempool_refuses_an_included_tx_even_when_the_nonce_check_would_pass() {
+        // Real-world shape: after a nonce_db migration/clear the gap-tolerant nonce check no
+        // longer knows the tx's nonce, so only the tx-seen index stands between a public
+        // API caller and a replay mined by an honest producer.
+        let (_d, node, p, user, other) = setup(None);
+        let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 1_789_443_418_154), &user.secret_key_hex);
+        import(&node, &p, vec![t1.clone()]).unwrap();
+        node.nonce_db.clear().unwrap(); // what migrate_nonce_db does for timestamp nonces
+        assert!(node.check_nonce_valid(&t1.from_pub_key, t1.nonce).is_ok(), "nonce check alone would pass");
+        let err = node.insert_tx_to_mempool(t1).unwrap_err();
+        assert!(err.contains("already included in block 1"), "{err}");
+        assert!(node.mempool.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn producer_never_includes_an_already_included_tx() {
+        let (_d, node, p, user, other) = setup(None);
+        let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
+        import(&node, &p, vec![t1.clone()]).unwrap();
+        // bypass admission entirely (simulates a stale mempool / pre-fix peer gossip)
+        node.mempool.lock().unwrap().insert(compute_single_tx_hash(&t1), t1);
+        let mined = node.mine_pending().unwrap();
+        assert!(mined.is_none(), "nothing left to mine once the replay is dropped");
+        assert_eq!(node.tip_height().unwrap(), 1);
+    }
+
+    #[test]
+    fn v1_identity_is_fixed_by_the_signed_fields_only() {
+        // An outsider can re-encode the signature or attach a payload; neither changes the
+        // identity, so neither escapes the uniqueness rule. Only the signed fields do.
+        let user = pqc_keygen(); let other = pqc_keygen();
+        let t = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
+        let id = quantum_vault_types::tx_identity(&t);
+        let mut upper = t.clone(); upper.sig = upper.sig.to_uppercase();
+        assert_ne!(upper.sig, t.sig); assert_eq!(quantum_vault_types::tx_identity(&upper), id, "sig hex case");
+        assert_ne!(quantum_vault_types::compute_single_tx_hash(&upper), quantum_vault_types::compute_single_tx_hash(&t), "(the raw storage hash DOES change — why it is not the identity)");
+        let mut resigned = t.clone(); resigned.sig = pqc_sign(&user.secret_key_hex, &encode_tx_for_signing(&t)).unwrap();
+        assert_ne!(resigned.sig, t.sig, "ML-DSA signing is randomized"); assert_eq!(quantum_vault_types::tx_identity(&resigned), id, "owner re-signature");
+        // a V1 tx with a bogus attachment is a DIFFERENT identity class (V2) — but such a tx must not verify as V2:
+        // its signature is over the V1 fields, not over the attachment, so import/mempool reject it (covered by the
+        // signature checks); here we only pin that the attachment does not alias the V1 identity.
+        let mut attached = t.clone(); attached.signed_payload = Some("{}".into());
+        assert_ne!(quantum_vault_types::tx_identity(&attached), id);
+        for (name, m) in [("nonce", { let mut m = t.clone(); m.nonce += 1; m }), ("amount", { let mut m = t.clone(); m.payload.amount = Some(101); m }), ("fee", { let mut m = t.clone(); m.fee = 0.2; m }), ("to", { let mut m = t.clone(); m.payload.to_pub_key_hex = Some(user.public_key_hex.clone()); m })] {
+            assert_ne!(quantum_vault_types::tx_identity(&m), id, "{name} is a signed field: changing it changes the identity (and breaks the signature)");
+            assert!(pqc_verify(&user.public_key_hex, &encode_tx_for_signing(&m), &m.sig).ok() != Some(true), "{name}: altered V1 tx no longer verifies");
+        }
+    }
+
+    #[test]
+    fn crash_between_append_and_index_write_cannot_let_a_replay_through() {
+        // Simulate: block appended + receipts stored, process died before record_block_tx_hashes.
+        let (_d, node, p, user, other) = setup(Some(1));
+        let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        let b1 = sealed_block(&node, &p.public_key_hex, &p.secret_key_hex, vec![t1.clone()], None, t);
+        // (a) the live-process shape: the record write is lost
+        node.store.append_block(&b1).unwrap();
+        assert!(!node.tx_already_included(&quantum_vault_types::tx_identity(&t1)), "index incomplete");
+        // next block replays t1 → the consensus check must first make the index complete, then reject
+        let err = import(&node, &p, vec![t1.clone()]).unwrap_err();
+        assert!(err.contains("already included in block 1"), "{err}");
+        assert_eq!(node.tip_height().unwrap(), 1);
+        assert_eq!(node.tx_included_at(&quantum_vault_types::tx_identity(&t1)), Some(1), "index healed");
+        // (b) a genuinely new block still imports after the heal, and gets recorded
+        let t2 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 5, 8), &user.secret_key_hex);
+        import(&node, &p, vec![t2.clone()]).unwrap();
+        assert_eq!(node.tx_included_at(&quantum_vault_types::tx_identity(&t2)), Some(2));
+        // (c) restart shape: init() also heals (indexed tip marker stale)
+        node.tx_seen_db.insert(TX_SEEN_INDEXED_TIP_KEY, &1u64.to_be_bytes()).unwrap();
+        node.tx_seen_db.remove(quantum_vault_types::tx_identity(&t2).as_bytes()).unwrap();
+        node.ensure_tx_seen_index().unwrap();
+        assert_eq!(node.tx_included_at(&quantum_vault_types::tx_identity(&t2)), Some(2));
+    }
+
+    #[test]
+    fn index_is_rebuilt_from_the_stored_chain_on_start_and_after_recovery() {
+        let (_d, node, p, user, other) = setup(None);
+        let t1 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 100, 7), &user.secret_key_hex);
+        let t2 = signed(transfer(&user.public_key_hex, &other.public_key_hex, 1, 8), &user.secret_key_hex);
+        import(&node, &p, vec![t1.clone()]).unwrap();
+        import(&node, &p, vec![t2.clone()]).unwrap();
+        let (h1, h2) = (quantum_vault_types::tx_identity(&t1), quantum_vault_types::tx_identity(&t2));
+        // upgrade-from-old-binary shape: index missing entirely
+        node.tx_seen_db.clear().unwrap();
+        assert!(!node.tx_already_included(&h1));
+        node.ensure_tx_seen_index().unwrap();
+        assert_eq!((node.tx_included_at(&h1), node.tx_included_at(&h2)), (Some(1), Some(2)));
+        // crash-between-append-and-record shape: stale indexed tip
+        node.tx_seen_db.insert(TX_SEEN_INDEXED_TIP_KEY, &1u64.to_be_bytes()).unwrap();
+        node.tx_seen_db.remove(h2.as_bytes()).unwrap();
+        node.ensure_tx_seen_index().unwrap();
+        assert_eq!(node.tx_included_at(&h2), Some(2));
+        // full deterministic recovery re-derives it through import_block
+        node.recover_from_history().unwrap();
+        assert_eq!((node.tx_included_at(&h1), node.tx_included_at(&h2)), (Some(1), Some(2)));
+        assert_eq!(node.tip_height().unwrap(), 2);
+    }
+}
+
+/// V2 signed-payload binding: the executable fields of a signed-payload transaction are a
+/// deterministic function of the signed JSON, at every ingress and (from N) in consensus.
+#[cfg(test)]
+mod v2_binding_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, sealed_block};
+    use crate::v2_binding::{build_v2_tx, verify_v2_binding, derive_v2_fields};
+    use quantum_vault_crypto::{pqc_keygen, pqc_sign};
+    use quantum_vault_types::tx_identity;
+    use serde_json::{json, Value};
+
+    /// One representative signed payload per V2 transaction type (every type the API builds).
+    fn sample_payloads(from: &str, to: &str) -> Vec<(&'static str, Value)> {
+        let ts = 1_790_000_000_000i64;
+        vec![
+            ("transfer", json!({"from": from, "to": to, "amount": 12.7, "token": "XRGE", "timestamp": ts})),
+            ("transfer", json!({"from": from, "to": to, "amount": 5, "token": "KOALA", "timestamp": ts})),
+            ("create_token", json!({"from": from, "token_name": "Koala", "token_symbol": "KOALA", "initial_supply": 1000000, "image": "https://x/y.png", "description": "d", "timestamp": ts})),
+            ("mint_tokens", json!({"from": from, "token_symbol": "KOALA", "amount": 50, "timestamp": ts})),
+            ("approve", json!({"from": from, "spender": to, "token_symbol": "KOALA", "amount": 7, "timestamp": ts})),
+            ("transfer_from", json!({"from": from, "owner": to, "to": from, "token_symbol": "KOALA", "amount": 3, "timestamp": ts})),
+            ("create_pool", json!({"from": from, "token_a": "KOALA", "token_b": "XRGE", "amount_a": 100, "amount_b": 10, "timestamp": ts})),
+            ("add_liquidity", json!({"from": from, "pool_id": "KOALA-XRGE", "amount_a": 1, "amount_b": 2, "timestamp": ts})),
+            ("remove_liquidity", json!({"from": from, "pool_id": "KOALA-XRGE", "lp_amount": 9, "timestamp": ts})),
+            ("swap", json!({"from": from, "token_in": "XRGE", "token_out": "KOALA", "amount_in": 4, "min_amount_out": 1, "timestamp": ts})),
+            ("stake", json!({"from": from, "amount": 10000, "timestamp": ts})),
+            ("unstake", json!({"from": from, "amount": 10000, "timestamp": ts})),
+            ("nft_create_collection", json!({"from": from, "symbol": "KOL", "name": "Koalas", "description": "d", "image": "i", "maxSupply": 10, "royaltyBps": 250, "royaltyRecipient": " rouge1abc ", "publicMint": true, "mintPrice": 1.5, "tokenGateSymbol": "KOALA", "tokenGateAmount": 2.0, "discountPct": 10, "timestamp": ts})),
+            ("nft_mint", json!({"from": from, "collectionId": "col:1", "name": "K#1", "metadataUri": "ipfs://a", "attributes": {"eyes": "blue"}, "timestamp": ts})),
+            ("nft_batch_mint", json!({"from": from, "collectionId": "col:1", "names": ["a", "b", "c"], "uris": ["u1", "u2", "u3"], "attributes": [{"x": 1}, {"x": 2}, {"x": 3}], "timestamp": ts})),
+            ("nft_transfer", json!({"from": from, "collectionId": "col:1", "tokenId": 1, "to": to, "salePrice": 40, "timestamp": ts})),
+            ("nft_burn", json!({"from": from, "collectionId": "col:1", "tokenId": 2, "timestamp": ts})),
+            ("nft_lock", json!({"from": from, "collectionId": "col:1", "tokenId": 3, "locked": false, "timestamp": ts})),
+            ("nft_freeze_collection", json!({"from": from, "collectionId": "col:1", "frozen": true, "timestamp": ts})),
+            ("shield", json!({"from": from, "amount": 3, "commitment": "ab".repeat(32), "timestamp": ts})),
+            ("shielded_transfer", json!({"from": from, "nullifiers": ["n1"], "output_commitments": ["c1", "c2"], "proof": "deadbeef", "fee": 1, "timestamp": ts})),
+            ("unshield", json!({"from": from, "nullifiers": ["n1"], "amount": 3, "proof": "deadbeef", "timestamp": ts})),
+        ]
+    }
+
+    fn v2(kp: &PQKeypair, ty: &str, payload: &Value, nonce: u64) -> TxV1 {
+        let sp = serde_json::to_string(payload).unwrap(); // what verify_signed_tx returns without payload_bytes_hex
+        let sig = pqc_sign(&kp.secret_key_hex, sp.as_bytes()).unwrap();
+        build_v2_tx(ty, kp.public_key_hex.clone(), nonce, payload, sig, sp).unwrap()
+    }
+
+    /// Every payload/fee field that a forger could want to change, expressed as a mutation of the
+    /// constructed tx. Each must be detected by the binding check.
+    fn mutations(t: &TxV1, attacker: &str) -> Vec<(&'static str, TxV1)> {
+        let mut out = vec![];
+        macro_rules! m { ($n:expr, $f:expr) => {{ let mut x = t.clone(); $f(&mut x); out.push(($n, x)); }} }
+        m!("fee+", |x: &mut TxV1| x.fee += 1.0);
+        m!("fee=0", |x: &mut TxV1| x.fee = 0.0);
+        m!("version", |x: &mut TxV1| x.version = 2);
+        m!("tx_type", |x: &mut TxV1| x.tx_type = if x.tx_type == "transfer" { "stake".into() } else { "transfer".into() });
+        let p = &t.payload;
+        if p.to_pub_key_hex.is_some() { m!("to", |x: &mut TxV1| x.payload.to_pub_key_hex = Some(attacker.to_string())); }
+        if p.amount.is_some() { m!("amount", |x: &mut TxV1| x.payload.amount = Some(999_999)); }
+        if p.token_symbol.is_some() { m!("token_symbol", |x: &mut TxV1| x.payload.token_symbol = Some("OTHER".into())); }
+        if p.token_symbol.is_none() && t.tx_type == "transfer" { m!("token_symbol_added", |x: &mut TxV1| x.payload.token_symbol = Some("KOALA".into())); }
+        if p.token_total_supply.is_some() { m!("supply", |x: &mut TxV1| x.payload.token_total_supply = Some(u64::MAX)); }
+        if p.spender_pub_key.is_some() { m!("spender", |x: &mut TxV1| x.payload.spender_pub_key = Some(attacker.to_string())); }
+        if p.allowance_amount.is_some() { m!("allowance", |x: &mut TxV1| x.payload.allowance_amount = Some(u64::MAX)); }
+        if p.owner_pub_key.is_some() { m!("owner", |x: &mut TxV1| x.payload.owner_pub_key = Some(attacker.to_string())); }
+        if p.pool_id.is_some() { m!("pool_id", |x: &mut TxV1| x.payload.pool_id = Some("X-Y".into())); }
+        if p.amount_a.is_some() { m!("amount_a", |x: &mut TxV1| x.payload.amount_a = x.payload.amount_a.map(|v| v + 1000)); }
+        if p.amount_b.is_some() { m!("amount_b", |x: &mut TxV1| x.payload.amount_b = x.payload.amount_b.map(|v| v + 1000)); }
+        if p.lp_amount.is_some() { m!("lp_amount", |x: &mut TxV1| x.payload.lp_amount = x.payload.lp_amount.map(|v| v + 1000)); }
+        if p.min_amount_out.is_some() { m!("min_out", |x: &mut TxV1| x.payload.min_amount_out = x.payload.min_amount_out.map(|v| v + 1)); }
+        if p.token_a_symbol.is_some() { m!("token_a", |x: &mut TxV1| x.payload.token_a_symbol = Some("Z".into())); }
+        if p.nft_collection_id.is_some() { m!("collection", |x: &mut TxV1| x.payload.nft_collection_id = Some("col:9".into())); }
+        if p.nft_token_id.is_some() { m!("token_id", |x: &mut TxV1| x.payload.nft_token_id = x.payload.nft_token_id.map(|v| v + 77)); }
+        if p.nft_royalty_bps.is_some() { m!("royalty", |x: &mut TxV1| x.payload.nft_royalty_bps = Some(9999)); }
+        if p.nft_royalty_recipient.is_some() { m!("royalty_to", |x: &mut TxV1| x.payload.nft_royalty_recipient = Some(attacker.to_string())); }
+        if p.nft_mint_price.is_some() { m!("mint_price", |x: &mut TxV1| x.payload.nft_mint_price = Some(0.0)); }
+        if p.nft_public_mint.is_some() { m!("public_mint", |x: &mut TxV1| x.payload.nft_public_mint = Some(false)); }
+        if p.nft_batch_names.is_some() { m!("batch_names", |x: &mut TxV1| x.payload.nft_batch_names = Some(vec!["a".into()])); }
+        if p.nft_locked.is_some() { m!("locked", |x: &mut TxV1| x.payload.nft_locked = x.payload.nft_locked.map(|b| !b)); }
+        if p.nft_frozen.is_some() { m!("frozen", |x: &mut TxV1| x.payload.nft_frozen = x.payload.nft_frozen.map(|b| !b)); }
+        if p.nft_metadata_uri.is_some() { m!("uri", |x: &mut TxV1| x.payload.nft_metadata_uri = Some("ipfs://evil".into())); }
+        if p.shielded_value.is_some() { m!("shielded_value", |x: &mut TxV1| x.payload.shielded_value = Some(u64::MAX)); }
+        if p.shielded_commitment.is_some() { m!("commitment", |x: &mut TxV1| x.payload.shielded_commitment = Some("00".repeat(32))); }
+        if p.shielded_nullifiers.is_some() { m!("nullifiers", |x: &mut TxV1| x.payload.shielded_nullifiers = Some(vec!["other".into()])); }
+        if p.shielded_proof.is_some() { m!("proof", |x: &mut TxV1| x.payload.shielded_proof = Some("00".into())); }
+        if p.shielded_fee.is_some() { m!("shielded_fee", |x: &mut TxV1| x.payload.shielded_fee = Some(0)); }
+        m!("extra_field", |x: &mut TxV1| x.payload.reason = Some("smuggled".into()));
+        m!("signed_payload_swapped", |x: &mut TxV1| x.signed_payload = Some(r#"{"from":"x","to":"y","amount":1,"timestamp":1}"#.into()));
+        out
+    }
+
+    #[test]
+    fn every_v2_type_round_trips_and_every_field_mutation_is_detected() {
+        let user = pqc_keygen(); let other = pqc_keygen(); let attacker = pqc_keygen();
+        let mut types_seen = std::collections::BTreeSet::new(); let mut mutations_checked = 0;
+        for (ty, payload) in sample_payloads(&user.public_key_hex, &other.public_key_hex) {
+            let t = v2(&user, ty, &payload, 1);
+            types_seen.insert(ty);
+            verify_v2_binding(&t).unwrap_or_else(|e| panic!("{ty}: honest tx must bind: {e}"));
+            let (p2, fee2) = derive_v2_fields(ty, &payload).unwrap();
+            assert_eq!((t.payload.clone(), t.fee), (p2, fee2), "{ty}: derivation is deterministic");
+            for (name, mutated) in mutations(&t, &attacker.public_key_hex) {
+                assert!(verify_v2_binding(&mutated).is_err(), "{ty}: mutation '{name}' must fail the binding");
+                mutations_checked += 1;
+            }
+            // nonce is server-assigned and NOT part of the identity — a replay with a new nonce is the same tx
+            let mut n = t.clone(); n.nonce += 1;
+            assert!(verify_v2_binding(&n).is_ok()); assert_eq!(tx_identity(&n), tx_identity(&t), "{ty}: nonce does not change the identity");
+            // from_pub_key: bound by `from` in the payload (and by the signature)
+            let mut f = t.clone(); f.from_pub_key = attacker.public_key_hex.clone();
+            assert!(verify_v2_binding(&f).is_err(), "{ty}: from mismatch");
+        }
+        assert_eq!(types_seen.len(), 21, "all 21 distinct V2 tx types exercised: {types_seen:?}");
+        assert!(mutations_checked >= 120, "{mutations_checked} mutations checked");
+    }
+
+    /// The `rougechain` CLI signs an envelope {tx_type, from, nonce, fee, payload} and posts a
+    /// complete TxV1 to /api/tx/broadcast (mainnet blocks 29, 49–52, 59).
+    fn cli_tx(kp: &PQKeypair, tx_type: &str, nonce: u64, fee: u64, payload: Value) -> TxV1 {
+        let env = json!({"tx_type": tx_type, "from": kp.public_key_hex, "nonce": nonce, "fee": fee, "payload": payload});
+        let sp = serde_json::to_string(&env).unwrap();
+        let sig = pqc_sign(&kp.secret_key_hex, sp.as_bytes()).unwrap();
+        TxV1 { version: 1, tx_type: tx_type.into(), from_pub_key: kp.public_key_hex.clone(), nonce,
+            payload: serde_json::from_value(payload).unwrap(), fee: fee as f64, sig, signed_payload: Some(sp) }
+    }
+
+    #[test]
+    fn cli_envelope_binds_type_nonce_fee_and_payload() {
+        let user = pqc_keygen(); let other = pqc_keygen(); let attacker = pqc_keygen();
+        for (ty, payload) in [("stake", json!({"amount": 10000})), ("transfer", json!({"to_pub_key_hex": other.public_key_hex, "amount": 1}))] {
+            let t = cli_tx(&user, ty, 2, 1, payload);
+            verify_v2_binding(&t).unwrap();
+            let mut m = t.clone(); m.nonce = 3; assert!(verify_v2_binding(&m).is_err(), "{ty}: nonce IS bound in the envelope");
+            let mut m = t.clone(); m.fee = 100.0; assert!(verify_v2_binding(&m).is_err(), "{ty}: fee bound");
+            let mut m = t.clone(); m.tx_type = "unstake".into(); assert!(verify_v2_binding(&m).is_err(), "{ty}: tx_type bound");
+            let mut m = t.clone(); m.payload.amount = Some(999_999); assert!(verify_v2_binding(&m).is_err(), "{ty}: amount bound");
+            let mut m = t.clone(); m.payload.to_pub_key_hex = Some(attacker.public_key_hex.clone()); assert!(verify_v2_binding(&m).is_err(), "{ty}: recipient bound");
+            let mut m = t.clone(); m.payload.token_symbol = Some("KOALA".into()); assert!(verify_v2_binding(&m).is_err(), "{ty}: smuggled field");
+            let mut m = t.clone(); m.from_pub_key = attacker.public_key_hex.clone(); assert!(verify_v2_binding(&m).is_err(), "{ty}: from bound");
+        }
+    }
+
+    #[test]
+    fn forged_v2_transfer_is_refused_at_mempool_and_by_consensus_without_touching_state() {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(u64::MAX)));
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(Some(1))));
+        let (_d, node, _s) = node_with_store();
+        let proposer = pqc_keygen(); let user = pqc_keygen(); let friend = pqc_keygen(); let thief = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1_000.0);
+        let honest = v2(&user, "transfer", &json!({"from": user.public_key_hex, "to": friend.public_key_hex, "amount": 10, "token": "XRGE", "timestamp": 1_790_000_000_000i64}), 1);
+        let mut forged = honest.clone();
+        forged.payload.to_pub_key_hex = Some(thief.public_key_hex.clone()); forged.payload.amount = Some(900);
+        // (1) mempool / P2P ingress (node-local, regardless of activation)
+        let err = node.add_tx_to_mempool(forged.clone()).unwrap_err();
+        assert!(err.contains("does not match its signed_payload"), "{err}");
+        // (2) consensus at/after N: block rejected, no state change
+        let before = node.balances.lock().unwrap().clone();
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        let err = node.import_block(sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![forged.clone()], None, t)).unwrap_err();
+        assert!(err.contains("signed-payload binding failed"), "{err}");
+        assert_eq!(node.tip_height().unwrap(), 0);
+        assert_eq!(*node.balances.lock().unwrap(), before, "no balance mutation");
+        assert!(!node.tx_already_included(&tx_identity(&forged)), "no index mutation");
+        assert!(node.get_receipt(&compute_single_tx_hash(&forged)).unwrap().is_none(), "no receipt");
+        // (3) the honest tx still goes through
+        node.import_block(sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![honest.clone()], None, t)).unwrap();
+        assert_eq!(*node.balances.lock().unwrap().get(&canon_addr(&friend.public_key_hex)).unwrap(), xrge_f64_to_quanta(10.0));
+        // (4) and a nonce-changed replay of it (different raw hash!) is a replay
+        let mut replay = honest.clone(); replay.nonce = 99;
+        assert_ne!(compute_single_tx_hash(&replay), compute_single_tx_hash(&honest));
+        let err = node.import_block(sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![replay], None, t)).unwrap_err();
+        assert!(err.contains("already included in block 1"), "{err}");
+    }
+
+    #[test]
+    fn forged_v2_is_legacy_accepted_below_activation_but_never_at_ingress() {
+        // Documents the pre-fork consensus behaviour (the bug) and that upgraded nodes' ingress
+        // already refuses it — the reason the fork is still required (other proposers).
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(u64::MAX)));
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(Some(100))));
+        let (_d, node, _s) = node_with_store();
+        let proposer = pqc_keygen(); let user = pqc_keygen(); let friend = pqc_keygen(); let thief = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 1_000.0);
+        let mut forged = v2(&user, "transfer", &json!({"from": user.public_key_hex, "to": friend.public_key_hex, "amount": 10, "token": "XRGE", "timestamp": 1_790_000_000_000i64}), 1);
+        forged.payload.to_pub_key_hex = Some(thief.public_key_hex.clone()); forged.payload.amount = Some(900);
+        assert!(node.add_tx_to_mempool(forged.clone()).is_err(), "ingress refuses even below N");
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        node.import_block(sealed_block(&node, &proposer.public_key_hex, &proposer.secret_key_hex, vec![forged], None, t)).expect("LEGACY consensus (below N) still accepts the forgery — hence the fork");
+        assert_eq!(*node.balances.lock().unwrap().get(&canon_addr(&thief.public_key_hex)).unwrap(), xrge_f64_to_quanta(900.0));
+    }
+
+    #[test]
+    fn historical_mainnet_v2_transactions_against_the_proposed_binding() {
+        // Blocks 20–60 of rougechain-mainnet-1: every signed-payload tx, exactly as stored.
+        // The rule only applies from N (> 60), so failures here are INFORMATIONAL: they show
+        // which historical constructions differ from today's canonical mapping.
+        let raw = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-v2-txs-h20-60.json")).unwrap();
+        let rows: Vec<Value> = serde_json::from_str(&raw).unwrap();
+        assert_eq!(rows.len(), 26);
+        let mut ok = 0; let mut fail = vec![];
+        for r in &rows {
+            let tx: TxV1 = serde_json::from_value(r["tx"].clone()).unwrap();
+            let h = r["height"].as_u64().unwrap();
+            match verify_v2_binding(&tx) { Ok(()) => ok += 1, Err(e) => fail.push(format!("h{h} {}: {e}", tx.tx_type)) }
+            // the identity is well-defined for all of them and distinct
+        }
+        let ids: std::collections::BTreeSet<String> = rows.iter().map(|r| tx_identity(&serde_json::from_value::<TxV1>(r["tx"].clone()).unwrap())).collect();
+        assert_eq!(ids.len(), 26, "26 distinct identities");
+        eprintln!("HISTORICAL V2 BINDING: {ok} pass, {} differ:\n  {}", fail.len(), fail.join("\n  "));
+        // 20 API-format + 6 CLI-envelope txs; ALL satisfy the proposed rule (pinned).
+        assert_eq!((ok, fail.len()), (26, 0), "{fail:?}");
+    }
+}
+
+/// Proposer selection, Release 1 (PROPOSER_SELECTION_DESIGN.md) — consensus rule, missed-block
+/// freeze (Amendment 1) and the producer anti-equivocation journal (Amendment 2).
+#[cfg(test)]
+mod proposer_selection_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, sealed_block, signed, TmpDir};
+    use quantum_vault_crypto::pqc_keygen;
+    use quantum_vault_storage::validator_store::ValidatorState;
+
+    fn vstate(stake: u128) -> ValidatorState {
+        ValidatorState { stake, slash_count: 0, jailed_until: 0, entropy_contributions: 0, blocks_proposed: 0, name: None, missed_blocks: 0, total_slashed: 0 }
+    }
+    fn set_v(node: &L1Node, pk: &str, st: ValidatorState) { node.validator_store.set_validator(pk, &st).unwrap(); }
+    fn setup(activation: Option<u64>) -> (TmpDir, L1Node) {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(u64::MAX)));
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(None)));
+        TEST_PROPOSER_SELECTION_OVERRIDE.with(|c| c.set(Some(activation)));
+        let (d, node, _s) = node_with_store();
+        (d, node)
+    }
+    fn reopen(d: &TmpDir) -> L1Node {
+        let node = L1Node::new(NodeOptions {
+            data_dir: d.0.clone(),
+            chain: ChainConfig { chain_id: "test".to_string(), genesis_time: 0, block_time_ms: 1000 },
+            mine: false, bridge_withdraw_store: None, bridge_authority_keys: Vec::new(),
+            genesis_allocations: Vec::new(), genesis_validators: Vec::new(),
+        }).expect("reopen");
+        node.init().expect("init");
+        node
+    }
+    fn transfer(from: &PQKeypair, to: &str, amount: u64, nonce: u64) -> TxV1 {
+        signed(TxV1 { version: 1, tx_type: "transfer".into(), from_pub_key: from.public_key_hex.clone(), nonce,
+            payload: TxPayload { to_pub_key_hex: Some(to.into()), amount: Some(amount), ..Default::default() },
+            fee: 0.1, sig: String::new(), signed_payload: None }, &from.secret_key_hex)
+    }
+    fn stake(from: &PQKeypair, amount: u64, nonce: u64) -> TxV1 {
+        signed(TxV1 { version: 1, tx_type: "stake".into(), from_pub_key: from.public_key_hex.clone(), nonce,
+            payload: TxPayload { amount: Some(amount), ..Default::default() }, fee: 1.0, sig: String::new(), signed_payload: None }, &from.secret_key_hex)
+    }
+    fn seal(node: &L1Node, p: &PQKeypair, txs: Vec<TxV1>) -> BlockV1 {
+        sealed_block(node, &p.public_key_hex, &p.secret_key_hex, txs, None, chrono::Utc::now().timestamp_millis() as u64)
+    }
+    /// Two keys ordered by RAW key bytes (lo, hi).
+    fn ordered_pair() -> (PQKeypair, PQKeypair) {
+        let (a, b) = (pqc_keygen(), pqc_keygen());
+        let (ab, bb) = (quantum_vault_crypto::hex_to_bytes(&a.public_key_hex).unwrap(), quantum_vault_crypto::hex_to_bytes(&b.public_key_hex).unwrap());
+        if ab < bb { (a, b) } else { (b, a) }
+    }
+
+    #[test]
+    fn t01_t02_authorized_accepted_unauthorized_rejected_same_height() {
+        let (_d, node) = setup(Some(1));
+        let (a, b) = (pqc_keygen(), pqc_keygen()); let user = pqc_keygen(); fund_xrge(&node, &user.public_key_hex, 100.0);
+        set_v(&node, &a.public_key_hex, vstate(100_000)); set_v(&node, &b.public_key_hex, vstate(10_000));
+        assert_eq!(node.designated_proposer(1).unwrap().as_deref(), Some(a.public_key_hex.as_str()));
+        // both validators seal height 1 on the same parent (the height-60 shape)
+        let tx = transfer(&user, &a.public_key_hex, 1, 1);
+        let by_b = seal(&node, &b, vec![tx.clone()]); let by_a = seal(&node, &a, vec![tx]);
+        let before = node.balances.lock().unwrap().clone();
+        let err = node.import_block(by_b).unwrap_err();
+        assert!(err.contains("not the designated proposer"), "{err}");
+        assert_eq!(node.tip_height().unwrap(), 0); assert_eq!(*node.balances.lock().unwrap(), before, "rejected before any state application");
+        node.import_block(by_a).expect("designated proposer accepted");
+        assert_eq!(node.tip_height().unwrap(), 1);
+    }
+
+    #[test]
+    fn t03_activation_boundary() {
+        let (_d, node) = setup(Some(2));
+        let (a, b) = (pqc_keygen(), pqc_keygen()); let user = pqc_keygen(); fund_xrge(&node, &user.public_key_hex, 100.0);
+        set_v(&node, &a.public_key_hex, vstate(100_000)); set_v(&node, &b.public_key_hex, vstate(10_000));
+        node.import_block(seal(&node, &b, vec![transfer(&user, &a.public_key_hex, 1, 1)])).expect("A-1: legacy — any staked validator");
+        let err = node.import_block(seal(&node, &b, vec![transfer(&user, &a.public_key_hex, 1, 2)])).unwrap_err();
+        assert!(err.contains("not the designated proposer"), "A: {err}");
+        node.import_block(seal(&node, &a, vec![transfer(&user, &a.public_key_hex, 1, 2)])).unwrap();
+        assert_eq!(node.tip_height().unwrap(), 2);
+    }
+
+    #[test]
+    fn t04_t05_highest_stake_wins_and_raw_key_tie_break() {
+        let (_d, node) = setup(Some(1));
+        let (lo, hi) = ordered_pair();
+        set_v(&node, &lo.public_key_hex, vstate(10_000)); set_v(&node, &hi.public_key_hex, vstate(100_000));
+        assert_eq!(node.designated_proposer(1).unwrap().unwrap(), hi.public_key_hex, "highest stake wins");
+        set_v(&node, &lo.public_key_hex, vstate(100_000));
+        assert_eq!(node.designated_proposer(1).unwrap().unwrap(), lo.public_key_hex, "equal stake → lowest raw key bytes");
+        // hex case of the stored key must not matter for the ordering (raw bytes are compared)
+    }
+
+    #[test]
+    fn t06_t07_stake_in_h_minus_1_affects_h_stake_in_h_affects_h_plus_1() {
+        let (_d, node) = setup(Some(1));
+        let a = pqc_keygen(); let c = pqc_keygen(); fund_xrge(&node, &c.public_key_hex, 200_000.0);
+        set_v(&node, &a.public_key_hex, vstate(100_000));
+        // block 1 (proposed by A, judged against the state after block 0) carries C's 150k stake
+        assert_eq!(node.designated_proposer(1).unwrap().unwrap(), a.public_key_hex);
+        node.import_block(seal(&node, &a, vec![stake(&c, 150_000, 1)])).unwrap();
+        assert_eq!(node.validator_store.get_validator(&c.public_key_hex).unwrap().unwrap().stake, 150_000);
+        // from block 2 on, C is designated: A's block 2 is rejected, C's accepted
+        assert_eq!(node.designated_proposer(2).unwrap().unwrap(), c.public_key_hex, "stake applied in H-1 counts for H");
+        let err = node.import_block(seal(&node, &a, vec![transfer(&c, &a.public_key_hex, 1, 2)])).unwrap_err();
+        assert!(err.contains("not the designated proposer"), "{err}");
+        node.import_block(seal(&node, &c, vec![transfer(&c, &a.public_key_hex, 1, 2)])).unwrap();
+        assert_eq!(node.tip_height().unwrap(), 2);
+    }
+
+    #[test]
+    fn t08_t09_jailed_excluded_and_jail_expiry_deterministic() {
+        let (_d, node) = setup(Some(1));
+        let (a, b) = (pqc_keygen(), pqc_keygen());
+        set_v(&node, &a.public_key_hex, vstate(100_000));
+        set_v(&node, &b.public_key_hex, ValidatorState { jailed_until: 10, ..vstate(200_000) });
+        for h in 1..10 { assert_eq!(node.designated_proposer(h).unwrap().unwrap(), a.public_key_hex, "h{h}: jailed B excluded"); }
+        assert_eq!(node.designated_proposer(10).unwrap().unwrap(), b.public_key_hex, "jailed_until <= H ⇒ eligible again exactly at 10");
+        assert_eq!(node.designated_proposer(11).unwrap().unwrap(), b.public_key_hex);
+        set_v(&node, &b.public_key_hex, ValidatorState { jailed_until: 10, stake: 0, ..vstate(0) });
+        assert_eq!(node.designated_proposer(11).unwrap().unwrap(), a.public_key_hex, "stake 0 never eligible");
+    }
+
+    #[test]
+    fn t10_ordering_independent_of_store_iteration_order() {
+        let keys: Vec<PQKeypair> = (0..5).map(|_| pqc_keygen()).collect();
+        let (_d1, n1) = setup(Some(1)); let (_d2, n2) = setup(Some(1));
+        for k in keys.iter() { set_v(&n1, &k.public_key_hex, vstate(50_000)); }
+        for k in keys.iter().rev() { set_v(&n2, &k.public_key_hex, vstate(50_000)); }
+        // overwrite in a third, shuffled order too
+        for k in [3usize, 0, 4, 1, 2].iter().map(|i| &keys[*i]) { set_v(&n2, &k.public_key_hex, vstate(50_000)); }
+        let e1 = n1.eligible_validators_ordered(1).unwrap(); let e2 = n2.eligible_validators_ordered(1).unwrap();
+        assert_eq!(e1, e2); assert!(e1.windows(2).all(|w| w[0].0 < w[1].0), "strictly ascending raw key bytes");
+        assert_eq!(n1.designated_proposer(1).unwrap(), n2.designated_proposer(1).unwrap());
+        let min_key = keys.iter().min_by_key(|k| quantum_vault_crypto::hex_to_bytes(&k.public_key_hex).unwrap()).unwrap();
+        assert_eq!(n1.designated_proposer(1).unwrap().unwrap(), min_key.public_key_hex);
+    }
+
+    #[test]
+    fn t11_separate_nodes_derive_identical_proposer_from_the_same_blocks() {
+        let (_d1, n1) = setup(Some(1)); let (_d2, n2) = setup(Some(1));
+        let a = pqc_keygen(); let c = pqc_keygen();
+        for n in [&n1, &n2] { fund_xrge(n, &c.public_key_hex, 200_000.0); set_v(n, &a.public_key_hex, vstate(100_000)); }
+        let b1 = seal(&n1, &a, vec![stake(&c, 150_000, 1)]);
+        n1.import_block(b1.clone()).unwrap(); n2.import_block(b1).unwrap();
+        assert_eq!(n1.designated_proposer(2).unwrap(), n2.designated_proposer(2).unwrap());
+        assert_eq!(n1.designated_proposer(2).unwrap().unwrap(), c.public_key_hex);
+        let b2 = seal(&n1, &c, vec![transfer(&c, &a.public_key_hex, 1, 2)]);
+        n1.import_block(b2.clone()).unwrap(); n2.import_block(b2).unwrap();
+        assert_eq!(n1.get_block(2).unwrap().unwrap().hash, n2.get_block(2).unwrap().unwrap().hash);
+    }
+
+    #[test]
+    fn t12_restart_derives_identical_proposer() {
+        let (d, node) = setup(Some(1));
+        let a = pqc_keygen(); let c = pqc_keygen(); fund_xrge(&node, &c.public_key_hex, 200_000.0);
+        set_v(&node, &a.public_key_hex, vstate(100_000));
+        node.import_block(seal(&node, &a, vec![stake(&c, 150_000, 1)])).unwrap();
+        let before = node.designated_proposer(2).unwrap();
+        drop(node);
+        let node = reopen(&d);
+        assert_eq!(node.designated_proposer(2).unwrap(), before);
+        assert_eq!(node.designated_proposer(2).unwrap().unwrap(), c.public_key_hex);
+    }
+
+    #[test]
+    fn t15_t16_passive_validators_accumulate_no_missed_blocks_and_cannot_be_slashed_at_or_above_a() {
+        let (_d, node) = setup(Some(3));
+        let (a, b) = (pqc_keygen(), pqc_keygen()); let user = pqc_keygen(); fund_xrge(&node, &user.public_key_hex, 1_000.0);
+        set_v(&node, &a.public_key_hex, vstate(100_000));
+        set_v(&node, &b.public_key_hex, ValidatorState { missed_blocks: 47, ..vstate(10_000) }); // node #2's shape
+        let v = |pk: &str| node.validator_store.get_validator(pk).unwrap().unwrap();
+        // below A (heights 1, 2): legacy accounting still increments (pinned)
+        for n in 1..=2u64 { node.import_block(seal(&node, &a, vec![transfer(&user, &a.public_key_hex, 1, n)])).unwrap(); }
+        assert_eq!(v(&b.public_key_hex).missed_blocks, 49, "legacy below A: 47 + 2");
+        // at/above A: 25 blocks by the designated proposer; B stays passive
+        for n in 3..=27u64 { node.import_block(seal(&node, &a, vec![transfer(&user, &a.public_key_hex, 1, n)])).unwrap(); }
+        let vb = v(&b.public_key_hex);
+        assert_eq!(vb.missed_blocks, 49, "frozen: no increments at/above A (would have crossed 50 on the first block)");
+        assert_eq!((vb.stake, vb.slash_count, vb.jailed_until, vb.total_slashed), (10_000, 0, 0, 0), "no auto-slash, no jail");
+        let va = v(&a.public_key_hex);
+        // blocks_proposed is informational and is (pre-existing behaviour) incremented twice per imported
+        // block: once in check_missed_blocks and once in import_block's proposer-stats bookkeeping.
+        assert_eq!(va.missed_blocks, 0); assert_eq!(va.blocks_proposed, 2 * 27, "informational counter still counts (legacy double count preserved)");
+        assert_eq!(node.tip_height().unwrap(), 27);
+    }
+
+    #[test]
+    fn t16b_legacy_auto_slash_still_fires_below_activation_pinned() {
+        let (_d, node) = setup(Some(100));
+        let (a, b) = (pqc_keygen(), pqc_keygen()); let user = pqc_keygen(); fund_xrge(&node, &user.public_key_hex, 100.0);
+        set_v(&node, &a.public_key_hex, vstate(100_000));
+        set_v(&node, &b.public_key_hex, ValidatorState { missed_blocks: 49, ..vstate(10_000) });
+        node.import_block(seal(&node, &a, vec![transfer(&user, &a.public_key_hex, 1, 1)])).unwrap();
+        let vb = node.validator_store.get_validator(&b.public_key_hex).unwrap().unwrap();
+        assert_eq!((vb.stake, vb.slash_count, vb.jailed_until, vb.missed_blocks), (9_000, 1, 1 + 20, 0), "the legacy rule that slashed the outside validator at 69");
+    }
+
+    // ── 13/14: full canonical mainnet replay through the live tip (95) ──
+    fn replay_0_95(activation: Option<u64>) {
+        TEST_PROPOSER_SELECTION_OVERRIDE.with(|c| c.set(Some(activation)));
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(Some(90))));   // the production value
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-95.jsonl");
+        let (last_ok, failure, node, _dir) = super::strict_historical_replay_tests::replay_fixture_node_from(fixture);
+        assert!(failure.is_none(), "activation {activation:?}: first divergence at {failure:?} (last accepted {last_ok})");
+        assert_eq!(last_ok, 95);
+        let blocks: Vec<BlockV1> = std::fs::read_to_string(fixture).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        // every stored block is byte-identical to the fixture (hash) and its committed root is what we recomputed
+        for b in &blocks { assert_eq!(node.get_block(b.header.height).unwrap().unwrap().hash, b.hash, "h{}", b.header.height); }
+        assert_eq!(node.compute_current_state_root().unwrap(), blocks[95].header.state_root.clone().unwrap(), "live tip state root");
+        // canonical validator state after 95 → the designated proposer for 96 is the primary
+        assert_eq!(node.designated_proposer(96).unwrap().unwrap()[..8].to_string(), "8ccf7878");
+        let v21 = node.list_validators().unwrap().into_iter().find(|(k, _)| k.starts_with("21e0ed0a")).unwrap().1;
+        assert_eq!((v21.stake, v21.slash_count, v21.jailed_until), (9_000, 1, 89), "outside validator's historical slash at 69 is preserved");
+    }
+    #[test] fn t13_t14_replay_0_95_with_rule_unscheduled() { replay_0_95(None); }
+    #[test] fn t13_t14_replay_0_95_with_rule_scheduled_after_tip() { replay_0_95(Some(96)); }
+
+    // ── 17–20: producer anti-equivocation journal + producer-side proposer rule ──
+    /// A producer node: its OWN key is the designated proposer.
+    fn producer(activation: Option<u64>) -> (TmpDir, L1Node, PQKeypair) {
+        let (d, node) = setup(activation);
+        let me = node.keys.lock().unwrap().clone();
+        set_v(&node, &me.public_key_hex, vstate(100_000));
+        let user = pqc_keygen(); fund_xrge(&node, &user.public_key_hex, 1_000.0);
+        (d, node, user)
+    }
+
+    #[test]
+    fn t17_durable_proposal_survives_restart() {
+        let (d, node, user) = producer(Some(1));
+        node.mempool.lock().unwrap().insert("t1".into(), transfer(&user, &user.public_key_hex, 1, 1));
+        let mined = node.mine_pending().unwrap().expect("sealed");
+        let genesis_hash = node.get_block(0).unwrap().unwrap().hash;
+        assert_eq!(node.pending_proposal(1, &genesis_hash).unwrap().unwrap().hash, mined.hash);
+        drop(node);
+        let node = reopen(&d);
+        assert_eq!(serde_json::to_vec(&node.pending_proposal(1, &genesis_hash).unwrap().unwrap()).unwrap(), serde_json::to_vec(&mined).unwrap(), "byte-identical record after restart");
+        assert_eq!(node.tip_height().unwrap(), 1);
+    }
+
+    #[test]
+    fn t18_second_different_proposal_for_the_same_slot_is_refused() {
+        let (_d, node, user) = producer(Some(1));
+        let me = node.keys.lock().unwrap().clone();
+        let b1 = seal(&node, &me, vec![transfer(&user, &user.public_key_hex, 1, 1)]);
+        let b2 = seal(&node, &me, vec![transfer(&user, &user.public_key_hex, 2, 1)]);
+        assert_ne!(b1.hash, b2.hash);
+        node.journal_proposal(&b1).unwrap();
+        node.journal_proposal(&b1).expect("byte-identical re-record is a no-op");
+        let err = node.journal_proposal(&b2).unwrap_err();
+        assert!(err.contains("EQUIVOCATION GUARD"), "{err}");
+        let genesis_hash = node.get_block(0).unwrap().unwrap().hash;
+        assert_eq!(node.pending_proposal(1, &genesis_hash).unwrap().unwrap().hash, b1.hash, "first record kept");
+        // and the producer path: with a record present that cannot be re-imported, no NEW block is ever sealed
+        let bad = seal(&node, &me, vec![TxV1 { sig: "00".repeat(10), ..transfer(&user, &user.public_key_hex, 3, 1) }]);
+        let (_d2, node2, user2) = producer(Some(1));
+        let me2 = node2.keys.lock().unwrap().clone();
+        let bad2 = seal(&node2, &me2, vec![TxV1 { sig: "00".repeat(10), ..transfer(&user2, &user2.public_key_hex, 3, 1) }]);
+        node2.journal_proposal(&bad2).unwrap();
+        node2.mempool.lock().unwrap().insert("t".into(), transfer(&user2, &user2.public_key_hex, 1, 1));
+        let err = node2.mine_pending().unwrap_err();
+        assert!(err.contains("HIGH SEVERITY") && err.contains("refusing to seal a different block"), "{err}");
+        assert_eq!(node2.tip_height().unwrap(), 0); assert_eq!(node2.mempool.lock().unwrap().len(), 1, "tx still queued");
+        let _ = bad;
+    }
+
+    #[test]
+    fn t19_identical_stored_proposal_is_recovered_and_rebroadcast_after_a_crash_before_append() {
+        let (d, node, user) = producer(Some(1));
+        let me = node.keys.lock().unwrap().clone();
+        // crash shape: the proposal was journaled, the block was never appended
+        let b1 = seal(&node, &me, vec![transfer(&user, &user.public_key_hex, 1, 1)]);
+        node.journal_proposal(&b1).unwrap();
+        assert_eq!(node.tip_height().unwrap(), 0);
+        // (a) the producer path re-uses it instead of sealing a new block, even with other txs queued
+        node.mempool.lock().unwrap().insert("other".into(), transfer(&user, &user.public_key_hex, 5, 1));
+        let out = node.mine_pending().unwrap().unwrap();
+        assert_eq!(out.hash, b1.hash, "the journaled block is what gets (re)broadcast");
+        assert_eq!(node.tip_height().unwrap(), 1); assert_eq!(node.get_block(1).unwrap().unwrap().hash, b1.hash);
+        assert_eq!(node.mempool.lock().unwrap().len(), 1, "queued tx untouched");
+        // (b) restart shape: journal present, block not appended → init recovers it
+        let (d2, node2, user2) = producer(Some(1));
+        let me2 = node2.keys.lock().unwrap().clone();
+        let c1 = seal(&node2, &me2, vec![transfer(&user2, &user2.public_key_hex, 1, 1)]);
+        node2.journal_proposal(&c1).unwrap();
+        // the funded balance lives only in memory in this harness; persist the ledger so a reopen sees it
+        node2.save_balance_snapshot(0);
+        drop(node2);
+        let node2 = reopen(&d2);
+        assert_eq!(node2.tip_height().unwrap(), 1, "recovered on init");
+        assert_eq!(node2.get_block(1).unwrap().unwrap().hash, c1.hash);
+        let _ = (d, d2);
+    }
+
+    #[test]
+    fn t20_producer_refuses_to_seal_when_not_designated() {
+        let (_d, node) = setup(Some(1));
+        let me = node.keys.lock().unwrap().clone(); let other = pqc_keygen(); let user = pqc_keygen();
+        fund_xrge(&node, &user.public_key_hex, 100.0);
+        set_v(&node, &me.public_key_hex, vstate(10_000)); set_v(&node, &other.public_key_hex, vstate(100_000));
+        node.mempool.lock().unwrap().insert("t".into(), transfer(&user, &user.public_key_hex, 1, 1));
+        assert!(node.mine_pending().unwrap().is_none(), "not our slot");
+        assert_eq!(node.tip_height().unwrap(), 0); assert_eq!(node.mempool.lock().unwrap().len(), 1, "tx stays queued");
+        // below activation the same node still seals (legacy)
+        TEST_PROPOSER_SELECTION_OVERRIDE.with(|c| c.set(Some(Some(50))));
+        assert!(node.mine_pending().unwrap().is_some());
+    }
+}
+
+/// GAME_READY Phase 0 — player-signed contract transactions (see GAME_READY_ACTIVATION_HEIGHT).
+#[cfg(test)]
+mod game_ready_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{node_with_store, fund_xrge, sealed_block};
+    use crate::v2_binding::{build_v2_tx, contract_address_v2, derive_v2_fields, CONTRACT_DEPLOY_FEE_XRGE};
+    use quantum_vault_crypto::{pqc_keygen, pqc_sign};
+    use quantum_vault_types::encode_tx_for_signing;
+    use quantum_vault_vm::{ContractStore, WasmRuntime};
+    use serde_json::{json, Value};
+
+    /// Records the caller it sees under storage key "caller".
+    const WAT_WHOAMI: &str = r#"
+    (module
+      (import "env" "host_get_caller"    (func $gc (param i32 i32) (result i32)))
+      (import "env" "host_storage_write" (func $sw (param i32 i32 i32 i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0) "caller")
+      (func (export "whoami") (local $n i32)
+        (local.set $n (call $gc (i32.const 64) (i32.const 8192)))
+        (call $sw (i32.const 0) (i32.const 6) (i32.const 64) (local.get $n))))
+    "#;
+
+    struct Env { _d: super::bridge_r1_daemon_tests::TmpDir, _cs: super::bridge_r1_daemon_tests::TmpDir, node: L1Node, proposer: PQKeypair, player: PQKeypair }
+
+    fn setup(activation: Option<u64>) -> Env {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(u64::MAX))); // state root not under test
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(Some(1)))); // binding enforced at import
+        TEST_GAME_READY_OVERRIDE.with(|c| c.set(Some(activation)));
+        let (d, mut node, _store) = node_with_store();
+        let cs = super::bridge_r1_daemon_tests::TmpDir::new();
+        node.set_contract_store(std::sync::Arc::new(ContractStore::new(&cs.0).unwrap()));
+        node.set_wasm_runtime(std::sync::Arc::new(WasmRuntime::new().unwrap()));
+        let proposer = pqc_keygen();
+        let player = pqc_keygen();
+        fund_xrge(&node, &player.public_key_hex, 1_000.0);
+        Env { _d: d, _cs: cs, node, proposer, player }
+    }
+
+    fn v2(kp: &PQKeypair, ty: &str, payload: &Value, nonce: u64) -> TxV1 {
+        let sp = serde_json::to_string(payload).unwrap();
+        let sig = pqc_sign(&kp.secret_key_hex, sp.as_bytes()).unwrap();
+        build_v2_tx(ty, kp.public_key_hex.clone(), nonce, payload, sig, sp).unwrap()
+    }
+
+    fn import(e: &Env, txs: Vec<TxV1>) -> Result<(), String> {
+        let t = chrono::Utc::now().timestamp_millis() as u64;
+        e.node.import_block(sealed_block(&e.node, &e.proposer.public_key_hex, &e.proposer.secret_key_hex, txs, None, t))
+    }
+
+    fn wasm_b64() -> (Vec<u8>, String) {
+        use base64::Engine as _;
+        let wasm = wat::parse_str(WAT_WHOAMI).unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&wasm);
+        (wasm, b64)
+    }
+
+    fn deploy_payload(from: &str, b64: &str) -> Value {
+        json!({ "from": from, "nonce": "0123456789abcdef", "wasm": b64, "timestamp": 1 })
+    }
+
+    fn bal(e: &Env, pk: &str) -> f64 { e.node.get_balance(pk).unwrap() }
+
+    #[test]
+    fn binding_derives_fee_from_gas_and_address_from_the_signed_payload() {
+        let (p, fee) = derive_v2_fields("contract_call", &json!({ "contractAddr": "c1", "method": "m", "args": { "x": 1 }, "gasLimit": 250_000 })).unwrap();
+        assert_eq!(p.contract_addr.as_deref(), Some("c1"));
+        assert_eq!(p.contract_method.as_deref(), Some("m"));
+        assert_eq!(p.contract_args, Some(json!({ "x": 1 })));
+        assert_eq!(p.contract_gas_limit, Some(250_000));
+        assert!((fee - 0.25).abs() < 1e-12, "fee = gas x 0.000001");
+        assert_eq!(p.to_pub_key_hex, None, "no unsigned 'caller' field is carried");
+
+        let (wasm, b64) = wasm_b64();
+        let (d, fee) = derive_v2_fields("contract_deploy", &json!({ "from": "alice", "nonce": "n1n1n1n1", "wasm": b64 })).unwrap();
+        assert_eq!(fee, CONTRACT_DEPLOY_FEE_XRGE);
+        assert_eq!(d.contract_addr, Some(contract_address_v2("alice", "n1n1n1n1", &wasm)));
+        assert_ne!(contract_address_v2("alice", "n1n1n1n1", &wasm), contract_address_v2("mallory", "n1n1n1n1", &wasm), "deployer is bound");
+        assert_ne!(contract_address_v2("alice", "n1n1n1n1", &wasm), contract_address_v2("alice", "n2n2n2n2", &wasm), "nonce is bound");
+    }
+
+    #[test]
+    fn before_activation_player_signed_contract_txs_are_refused_like_old_nodes() {
+        let e = setup(None);
+        let (_, b64) = wasm_b64();
+        let tx = v2(&e.player, "contract_deploy", &deploy_payload(&e.player.public_key_hex, &b64), 1);
+        let err = import(&e, vec![tx]).unwrap_err();
+        assert!(err.contains("not active before GAME_READY"), "{err}");
+        assert_eq!(e.node.tip_height().unwrap(), 0);
+    }
+
+    #[test]
+    fn after_activation_the_contract_sees_the_signer_and_the_signer_pays() {
+        let e = setup(Some(1));
+        let pk = e.player.public_key_hex.clone();
+        let (wasm, b64) = wasm_b64();
+
+        let deploy = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        assert_eq!(addr, contract_address_v2(&pk, "0123456789abcdef", &wasm));
+        import(&e, vec![deploy]).expect("player-signed deploy accepted");
+        let cs = e.node.contract_store.as_ref().unwrap();
+        assert!(cs.get_contract(&addr).unwrap().is_some(), "installed at the derived address");
+        assert_eq!(cs.get_contract(&addr).unwrap().unwrap().deployer, pk, "deployer is the signer");
+        assert!((bal(&e, &pk) - (1_000.0 - CONTRACT_DEPLOY_FEE_XRGE)).abs() < 1e-9, "signer paid the deploy fee");
+
+        let call = v2(&e.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": "whoami", "gasLimit": 100_000, "timestamp": 2, "nonce": "aaaaaaaabbbbbbbb" }), 2);
+        import(&e, vec![call]).expect("player-signed call accepted");
+        let state = cs.load_all_state(&addr).unwrap();
+        assert_eq!(state.get(b"caller".as_slice()).map(|v| String::from_utf8_lossy(v).to_string()), Some(pk.clone()),
+            "the contract saw the verified signer as its caller");
+        assert!((bal(&e, &pk) - (1_000.0 - CONTRACT_DEPLOY_FEE_XRGE - 0.1)).abs() < 1e-9, "signer paid gasLimit x price");
+    }
+
+    #[test]
+    fn after_activation_a_node_signed_call_claiming_another_caller_is_invalid() {
+        let e = setup(Some(1));
+        let victim = pqc_keygen();
+        // The old shape: signed by whoever (here the proposer), with an UNSIGNED 'caller' field.
+        let mut tx = TxV1 {
+            version: 1, tx_type: "contract_call".into(), from_pub_key: e.proposer.public_key_hex.clone(), nonce: 1,
+            payload: TxPayload {
+                contract_addr: Some("c0ffee00000000000000000000000000000000ab".into()),
+                contract_method: Some("withdraw".into()),
+                to_pub_key_hex: Some(victim.public_key_hex.clone()),
+                contract_gas_limit: Some(1000),
+                ..Default::default()
+            },
+            fee: 0.001, sig: String::new(), signed_payload: None,
+        };
+        tx.sig = pqc_sign(&e.proposer.secret_key_hex, &encode_tx_for_signing(&tx)).unwrap();
+        let err = import(&e, vec![tx.clone()]).unwrap_err();
+        assert!(err.contains("must be signed by its caller"), "{err}");
+        // The mempool refuses it too, so the producer never builds such a block.
+        assert!(e.node.add_tx_to_mempool_verified(tx).unwrap_err().contains("must be signed by its caller"));
+    }
+
+    // ── GAME_READY 2: tokens, NFTs, randomness ────────────────────────────
+    /// `play`: rolls 32 random bytes, creates its own LOOT collection, mints a Sword to the
+    /// caller, pays the caller 5 GOLD from its own tokens and 1 XRGE from its own balance.
+    /// Result codes land in storage: mint (i64 id), xfer, roll (32 bytes), xrge.
+    const WAT_GAME: &str = r#"
+    (module
+      (import "env" "host_get_caller"            (func $gc (param i32 i32) (result i32)))
+      (import "env" "host_storage_write"         (func $sw (param i32 i32 i32 i32)))
+      (import "env" "host_transfer"              (func $xt (param i32 i32 i64) (result i32)))
+      (import "env" "host_token_transfer"        (func $tt (param i32 i32 i32 i32 i64) (result i32)))
+      (import "env" "host_nft_create_collection" (func $cc (param i32 i32 i32 i32 i64 i32 i32) (result i32)))
+      (import "env" "host_nft_mint"              (func $nm (param i32 i32 i32 i32 i32 i32 i32 i32) (result i64)))
+      (import "env" "host_random"                (func $rn (param i32) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0)  "LOOT")
+      (data (i32.const 8)  "Loot")
+      (data (i32.const 16) "GOLD")
+      (data (i32.const 24) "Sword")
+      (data (i32.const 32) "mint")
+      (data (i32.const 40) "xfer")
+      (data (i32.const 48) "roll")
+      (data (i32.const 56) "xrge")
+      (data (i32.const 64) "{\"power\":7}")
+      (func (export "play") (local $n i32) (local $c i32)
+        (local.set $n (call $gc (i32.const 20000) (i32.const 8192)))
+        (local.set $c (call $cc (i32.const 0) (i32.const 4) (i32.const 8) (i32.const 4) (i64.const 0) (i32.const 100) (i32.const 200)))
+        (i64.store (i32.const 300)
+          (call $nm (i32.const 100) (local.get $c) (i32.const 20000) (local.get $n) (i32.const 24) (i32.const 5) (i32.const 64) (i32.const 11)))
+        (call $sw (i32.const 32) (i32.const 4) (i32.const 300) (i32.const 8))
+        (i32.store (i32.const 310) (call $tt (i32.const 16) (i32.const 4) (i32.const 20000) (local.get $n) (i64.const 5)))
+        (call $sw (i32.const 40) (i32.const 4) (i32.const 310) (i32.const 4))
+        (drop (call $rn (i32.const 400)))
+        (call $sw (i32.const 48) (i32.const 4) (i32.const 400) (i32.const 32))
+        (i32.store (i32.const 320) (call $xt (i32.const 20000) (local.get $n) (i64.const 1000000000)))
+        (call $sw (i32.const 56) (i32.const 4) (i32.const 320) (i32.const 4))))
+    "#;
+
+    fn deploy_game(e: &Env) -> String {
+        use base64::Engine as _;
+        let wasm = wat::parse_str(WAT_GAME).unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&wasm);
+        let pk = e.player.public_key_hex.clone();
+        let deploy = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        mine(e, deploy).expect("deploy");
+        // Treasure: 100 GOLD and 10 XRGE sent to the contract earlier.
+        e.node.token_balances.lock().unwrap().insert((addr.clone(), "GOLD".to_string()), 100);
+        fund_xrge(&e.node, &addr, 10.0);
+        addr
+    }
+
+    /// Mine `tx` into a block on the node itself (producer path: applies contract custody and
+    /// commits the post-state root, which these tests enable).
+    fn mine(e: &Env, tx: TxV1) -> Result<String, String> {
+        let hash = compute_single_tx_hash(&tx);
+        e.node.add_tx_to_mempool_verified(tx)?;
+        match e.node.mine_pending()? {
+            Some(b) if !b.txs.is_empty() => Ok(hash),
+            _ => Err("contract_call execution failed: tx not mined".into()),
+        }
+    }
+
+    fn play(e: &Env, addr: &str, nonce: u64, n: &str) -> Result<String, String> {
+        let pk = e.player.public_key_hex.clone();
+        mine(e, v2(&e.player, "contract_call",
+            &json!({ "from": pk, "contractAddr": addr, "method": "play", "gasLimit": 1_000_000, "timestamp": nonce, "nonce": n }), nonce))
+    }
+
+    #[test]
+    fn game_ready_2_contract_mints_nfts_pays_tokens_and_rolls() {
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0))); // custody + state root on
+        set_test_game_ready_2(Some(1));
+        let pk = e.player.public_key_hex.clone();
+        let player = canon_addr(&pk);
+        let addr = deploy_game(&e);
+        let xrge_before = bal(&e, &pk);
+
+        let h = play(&e, &addr, 2, "aaaaaaaabbbbbbbb").expect("game call accepted");
+        assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success));
+
+        let cs = e.node.contract_store.as_ref().unwrap();
+        let st = cs.load_all_state(&addr).unwrap();
+        let get = |k: &str| st.get(k.as_bytes()).cloned().unwrap_or_default();
+        assert_eq!(i64::from_le_bytes(get("mint").try_into().unwrap()), 1, "minted token #1");
+        assert_eq!(i32::from_le_bytes(get("xfer").try_into().unwrap()), 0, "token transfer ok");
+        assert_eq!(i32::from_le_bytes(get("xrge").try_into().unwrap()), 0, "xrge transfer ok");
+        assert_eq!(get("roll").len(), 32);
+        assert!(get("roll").iter().any(|b| *b != 0));
+
+        // Tokens: pubkey the contract passed was canonicalised to the player's ledger entry.
+        let tb = e.node.token_balances.lock().unwrap().clone();
+        assert_eq!(tb.get(&(player.clone(), "GOLD".to_string())), Some(&5));
+        assert_eq!(tb.get(&(addr.clone(), "GOLD".to_string())), Some(&95));
+        assert!(tb.get(&(pk.clone(), "GOLD".to_string())).is_none(), "no split pubkey bucket");
+        // XRGE: 1 XRGE arrived (minus the gas fee paid by the player).
+        assert!((bal(&e, &pk) - (xrge_before + 1.0 - 1.0)).abs() < 1e-9, "paid 1 XRGE, spent 1 XRGE gas");
+
+        // NFTs: the contract owns the collection; the player owns the sword with its attributes.
+        let col_id = crate::nft_store::NftCollection::make_collection_id(&addr, "LOOT");
+        let col = e.node.nft_store.get_collection(&col_id).unwrap().expect("collection");
+        assert_eq!(col.creator, addr);
+        assert_eq!(col.minted, 1);
+        let sword = e.node.nft_store.get_token(&col_id, 1).unwrap().expect("token");
+        assert_eq!(sword.owner, pk);
+        assert_eq!(sword.name, "Sword");
+        assert_eq!(sword.attributes, Some(json!({ "power": 7 })));
+
+        // Second play: collection exists (create returns -1), but minting continues at #2.
+        play(&e, &addr, 3, "ccccccccdddddddd").expect("second call");
+        let st2 = cs.load_all_state(&addr).unwrap();
+        assert_ne!(st2.get(b"roll".as_slice()), st.get(b"roll".as_slice()), "new tx, new roll");
+        assert_eq!(e.node.nft_store.get_collection(&col_id).unwrap().unwrap().minted, 1,
+            "create failed (-1) so the id passed to mint was invalid; nothing minted");
+        assert_eq!(e.node.token_balances.lock().unwrap().get(&(player.clone(), "GOLD".to_string())), Some(&10));
+        // A call that reverts is included (the player pays gas) but its receipt says Failed.
+        let pk2 = e.player.public_key_hex.clone();
+        let h = mine(&e, v2(&e.player, "contract_call",
+            &json!({ "from": pk2, "contractAddr": addr, "method": "missing", "gasLimit": 1_000, "timestamp": 4, "nonce": "eeeeeeeeffffffff" }), 4))
+            .expect("failing call still mined");
+        match e.node.get_receipt(&h).unwrap().unwrap().status {
+            TxStatus::Failed(r) => assert!(r.contains("missing"), "{r}"),
+            s => panic!("expected Failed, got {:?}", s),
+        }
+        set_test_game_ready_2(None);
+    }
+
+    /// The shipped example (contracts/loot_roll) end to end: setup, stock the treasury, 40 rolls.
+    #[test]
+    fn loot_roll_example_pays_prizes_from_its_treasury() {
+        use base64::Engine as _;
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_game_ready_2(Some(1));
+        let wasm = include_bytes!("../../../contracts/loot_roll/loot_roll.wasm");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(wasm);
+        let pk = e.player.public_key_hex.clone();
+        let player = canon_addr(&pk);
+        let deploy = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        mine(&e, deploy).expect("deploy");
+        let call = |method: &str, nonce: u64| {
+            mine(&e, v2(&e.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": method,
+                "gasLimit": 200_000, "timestamp": nonce, "nonce": format!("{:016x}", nonce) }), nonce)).expect(method)
+        };
+        call("setup", 2);
+        e.node.token_balances.lock().unwrap().insert((addr.clone(), "GOLD".to_string()), 1_000);
+        fund_xrge(&e.node, &addr, 100.0);
+
+        let cs = e.node.contract_store.as_ref().unwrap();
+        let mut prizes = std::collections::HashMap::<String, u32>::new();
+        for i in 0..40u64 {
+            let h = call("roll", 3 + i);
+            assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success));
+            let ev = cs.get_events_page(&addr, 1, None, Some(&h)).unwrap();
+            let v: Value = serde_json::from_str(&ev[0].data).unwrap();
+            assert!(v["roll"].as_u64().unwrap() < 100);
+            *prizes.entry(v["prize"].as_str().unwrap().to_string()).or_default() += 1;
+        }
+        let gold = *prizes.get("gold").unwrap_or(&0) as u128;
+        let xrge = *prizes.get("xrge").unwrap_or(&0);
+        let swords = *prizes.get("sword").unwrap_or(&0) as u64;
+        assert!(gold + xrge as u128 + swords as u128 > 0, "40 rolls won something: {:?}", prizes);
+        let tb = e.node.token_balances.lock().unwrap().clone();
+        assert_eq!(tb.get(&(player.clone(), "GOLD".to_string())).copied().unwrap_or(0), gold * 10);
+        assert_eq!(tb.get(&(addr.clone(), "GOLD".to_string())).copied().unwrap_or(0), 1_000 - gold * 10);
+        assert!((e.node.get_balance(&addr).unwrap() - (100.0 - 0.5 * xrge as f64)).abs() < 1e-9);
+        let col_id = crate::nft_store::NftCollection::make_collection_id(&addr, "LOOT");
+        assert_eq!(e.node.nft_store.get_collection(&col_id).unwrap().unwrap().minted, swords);
+        set_test_game_ready_2(None);
+    }
+
+    /// Bank: `give` pays its caller 3 GOLD and 1 XRGE from the bank's own balances.
+    const WAT_BANK: &str = r#"
+    (module
+      (import "env" "host_get_caller"     (func $gc (param i32 i32) (result i32)))
+      (import "env" "host_transfer"       (func $xt (param i32 i32 i64) (result i32)))
+      (import "env" "host_token_transfer" (func $tt (param i32 i32 i32 i32 i64) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0) "GOLD")
+      (func (export "give") (local $n i32)
+        (local.set $n (call $gc (i32.const 100) (i32.const 8192)))
+        (drop (call $tt (i32.const 0) (i32.const 4) (i32.const 100) (local.get $n) (i64.const 3)))
+        (drop (call $xt (i32.const 100) (local.get $n) (i64.const 1000000000)))))
+    "#;
+
+    /// Router with the bank's address baked in: `go` calls bank.give twice.
+    fn wat_router(bank: &str) -> String {
+        format!(r#"
+    (module
+      (import "env" "host_call_contract" (func $cc (param i32 i32 i32 i32 i32 i32 i64) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0) "{bank}")
+      (data (i32.const 64) "give")
+      (data (i32.const 72) "{{}}")
+      (func (export "go")
+        (drop (call $cc (i32.const 0) (i32.const 40) (i32.const 64) (i32.const 4) (i32.const 72) (i32.const 2) (i64.const 100000)))
+        (drop (call $cc (i32.const 0) (i32.const 40) (i32.const 64) (i32.const 4) (i32.const 72) (i32.const 2) (i64.const 100000)))))
+    "#)
+    }
+
+    fn deploy_wat(e: &Env, wat_src: &str, acct_nonce: u64) -> String {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(wat::parse_str(wat_src).unwrap());
+        let pk = e.player.public_key_hex.clone();
+        let d = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), acct_nonce);
+        let addr = d.payload.contract_addr.clone().unwrap();
+        mine(e, d).expect("deploy");
+        addr
+    }
+
+    #[test]
+    fn game_ready_2_cross_contract_calls_move_tokens_and_xrge() {
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_game_ready_2(Some(1));
+        let pk = e.player.public_key_hex.clone();
+        let bank = deploy_wat(&e, WAT_BANK, 1);
+        let router = deploy_wat(&e, &wat_router(&bank), 2);
+        e.node.token_balances.lock().unwrap().insert((bank.clone(), "GOLD".to_string()), 100);
+        fund_xrge(&e.node, &bank, 10.0);
+
+        mine(&e, v2(&e.player, "contract_call", &json!({ "from": pk, "contractAddr": router, "method": "go",
+            "gasLimit": 1_000_000, "timestamp": 3, "nonce": "0000000000000003" }), 3)).expect("router call");
+
+        // Both sub-calls applied, the second seeing the first's moves.
+        let tb = e.node.token_balances.lock().unwrap().clone();
+        assert_eq!(tb.get(&(router.clone(), "GOLD".to_string())), Some(&6));
+        assert_eq!(tb.get(&(bank.clone(), "GOLD".to_string())), Some(&94));
+        assert!((e.node.get_balance(&router).unwrap() - 2.0).abs() < 1e-9);
+        assert!((e.node.get_balance(&bank).unwrap() - 8.0).abs() < 1e-9);
+        set_test_game_ready_2(None);
+    }
+
+    /// A second node importing GAME_READY 2 blocks recomputes the extended state root (NFTs +
+    /// contract code/storage) and agrees; a tampered NFT makes the next block's root mismatch.
+    #[test]
+    fn game_ready_2_state_root_covers_nfts_and_contract_storage_across_nodes() {
+        let a = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_game_ready_2(Some(1));
+        let b = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        let pk = a.player.public_key_hex.clone();
+        fund_xrge(&b.node, &pk, 1_000.0);
+        // b's own setup funded a different player; mirror it on a so the ledgers match.
+        fund_xrge(&a.node, &b.player.public_key_hex, 1_000.0);
+
+        let mine_block = |tx: TxV1| -> BlockV1 {
+            a.node.add_tx_to_mempool_verified(tx).unwrap();
+            a.node.mine_pending().unwrap().expect("block")
+        };
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(wat::parse_str(WAT_GAME).unwrap());
+        let deploy = v2(&a.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        b.node.import_block(mine_block(deploy)).expect("b imports deploy");
+        for n in [&a.node, &b.node] {
+            n.token_balances.lock().unwrap().insert((addr.clone(), "GOLD".to_string()), 100);
+            fund_xrge(n, &addr, 10.0);
+        }
+        let call = v2(&a.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": "play",
+            "gasLimit": 1_000_000, "timestamp": 2, "nonce": "aaaaaaaabbbbbbbb" }), 2);
+        let blk = mine_block(call);
+        b.node.import_block(blk.clone()).expect("b imports the game block: extended roots agree");
+        assert_eq!(a.node.get_state_root().unwrap(), b.node.get_state_root().unwrap());
+        assert_eq!(blk.header.state_root.as_deref(), Some(b.node.get_state_root().unwrap().as_str()));
+        let col = crate::nft_store::NftCollection::make_collection_id(&addr, "LOOT");
+        assert_eq!(b.node.nft_store.get_token(&col, 1).unwrap().unwrap().owner, pk);
+
+        // Tamper with an NFT owner on b only: the roots now differ, so b can't follow a's next block.
+        let mut t = b.node.nft_store.get_token(&col, 1).unwrap().unwrap();
+        t.owner = "mallory".into();
+        b.node.nft_store.save_token(&t).unwrap();
+        assert_ne!(a.node.get_state_root().unwrap(), b.node.get_state_root().unwrap());
+        let next = v2(&a.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": "play",
+            "gasLimit": 1_000_000, "timestamp": 3, "nonce": "ccccccccdddddddd" }), 3);
+        let err = b.node.import_block(mine_block(next)).unwrap_err();
+        assert!(err.contains("state root mismatch"), "{err}");
+        set_test_game_ready_2(None);
+    }
+
+    #[test]
+    fn before_game_ready_2_a_game_contract_cannot_run() {
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_game_ready_2(None);
+        let addr = deploy_game(&e);
+        let err = play(&e, &addr, 2, "aaaaaaaabbbbbbbb").unwrap_err();
+        assert!(err.contains("contract_call execution failed"), "{err}");
+        assert_eq!(e.node.token_balances.lock().unwrap().get(&(addr.clone(), "GOLD".to_string())), Some(&100), "nothing moved");
+    }
+
+    #[test]
+    fn after_activation_undeployable_bytecode_is_not_installed_anywhere() {
+        let e = setup(Some(1));
+        use base64::Engine as _;
+        let wasm = wat::parse_str(r#"(module (memory 1) (func (export "run")))"#).unwrap(); // no exported memory
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&wasm);
+        let pk = e.player.public_key_hex.clone();
+        let deploy = v2(&e.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let addr = deploy.payload.contract_addr.clone().unwrap();
+        import(&e, vec![deploy]).expect("block is valid; the deploy just installs nothing");
+        assert!(e.node.contract_store.as_ref().unwrap().get_contract(&addr).unwrap().is_none());
+    }
+}
+
+
+/// Proposer selection Release 2a — a block may only extend a FINAL parent (FINALITY_V2 commit
+/// certificate in `header.parent_commit`). See PROPOSER_SELECTION_RELEASE2_DESIGN.md §6.
+#[cfg(test)]
+mod release_2a_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{fund_xrge, signed, TmpDir};
+    use quantum_vault_crypto::{pqc_keygen, pqc_sign};
+    use quantum_vault_finality::validator_replay::VState;
+    use quantum_vault_storage::validator_store::ValidatorState;
+
+    fn open_node(dir: &std::path::Path) -> L1Node {
+        let n = L1Node::new(NodeOptions { data_dir: dir.to_path_buf(),
+            chain: ChainConfig { chain_id: "test".to_string(), genesis_time: 0, block_time_ms: 1000 }, mine: false,
+            bridge_withdraw_store: None, bridge_authority_keys: Vec::new(), genesis_allocations: Vec::new(), genesis_validators: Vec::new() }).expect("node");
+        n.init().expect("init"); n
+    }
+    fn me(n: &L1Node) -> PQKeypair { n.keys.lock().unwrap().clone() }
+    fn stake(n: &L1Node, pk: &str, s: u128) {
+        n.validator_store.set_validator(pk, &ValidatorState { stake: s, slash_count: 0, jailed_until: 0, entropy_contributions: 0,
+            blocks_proposed: 0, name: None, missed_blocks: 0, total_slashed: 0 }).unwrap();
+    }
+
+    /// Three validators (40 / 35 / 25 — nobody reaches ⅔ alone) + a non-voting follower.
+    struct Net { _dirs: Vec<TmpDir>, nodes: Vec<L1Node>, user: PQKeypair, nonce: std::cell::Cell<u64> }
+    fn net(finality_from: Option<u64>) -> Net {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(u64::MAX)));   // state root not under test
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(finality_from));   // read by every node at construction
+        let dirs: Vec<TmpDir> = (0..4).map(|_| TmpDir::new()).collect();
+        let nodes: Vec<L1Node> = dirs.iter().map(|d| open_node(&d.0)).collect();
+        let stakes: Vec<(String, u128)> = [40u128, 35, 25].iter().enumerate().map(|(i, s)| (me(&nodes[i]).public_key_hex, *s)).collect();
+        TEST_VALIDATOR_REPLAY_BASE.with(|c| *c.borrow_mut() = Some((0, stakes.iter().map(|(k, s)| (k.clone(), VState { stake: *s, ..Default::default() })).collect())));
+        let user = pqc_keygen();
+        for n in &nodes {
+            for (k, s) in &stakes { stake(n, k, *s); }
+            fund_xrge(n, &user.public_key_hex, 1_000.0);
+            n.validator_sets_db.clear().unwrap();
+            n.record_validator_set_for(1).unwrap();
+        }
+        Net { _dirs: dirs, nodes, user, nonce: std::cell::Cell::new(1) }
+    }
+    impl Net {
+        fn queue_tx(&self, n: &L1Node) {
+            let k = self.nonce.get(); self.nonce.set(k + 1);
+            let tx = signed(TxV1 { version: 1, tx_type: "transfer".into(), from_pub_key: self.user.public_key_hex.clone(), nonce: k,
+                payload: TxPayload { to_pub_key_hex: Some(format!("bob{k}")), amount: Some(1), ..Default::default() },
+                fee: 0.1, sig: String::new(), signed_payload: None }, &self.user.secret_key_hex);
+            n.mempool.lock().unwrap().insert(format!("t{k}"), tx);
+        }
+        /// validator 0 produces; everyone else imports its block
+        fn produce(&self) -> Option<BlockV1> {
+            self.queue_tx(&self.nodes[0]);
+            let b = self.nodes[0].mine_pending().unwrap()?;
+            for n in &self.nodes[1..] { n.import_block(b.clone()).expect("peer imports the block"); }
+            Some(b)
+        }
+        /// deliver every node's queued votes to every other node (the gossip layer's job)
+        fn relay_votes(&self) {
+            for _ in 0..2 {
+                let batches: Vec<Vec<VoteMessage>> = self.nodes.iter().map(|n| n.drain_vote_outbox()).collect();
+                for (i, batch) in batches.iter().enumerate() {
+                    for (j, n) in self.nodes.iter().enumerate() { if i != j { for v in batch { let _ = n.receive_gossiped_vote(v.clone()); } } }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn blocks_extend_only_final_parents_and_carry_their_certificate() {
+        let net = net(Some(1));
+        let b1 = net.produce().expect("block 1 (no parent certificate needed for the first finality height)");
+        assert!(b1.header.parent_commit.is_none());
+        net.relay_votes();
+        for n in &net.nodes { assert!(n.is_height_verified_final(1), "every node holds a verified certificate for 1"); }
+
+        let b2 = net.produce().expect("block 2 extends the final block 1");
+        let cert = b2.header.parent_commit.as_ref().expect("block 2 carries block 1's certificate");
+        assert_eq!((cert.height, cert.block_hash.as_str()), (1, b1.hash.as_str()));
+        assert!(cert.voting_stake * 3 > cert.total_stake * 2, "certificate is a real ⅔ quorum");
+        for n in &net.nodes { assert_eq!(n.tip_height().unwrap(), 2); }
+    }
+
+    #[test]
+    fn producer_waits_until_its_parent_is_final() {
+        let net = net(Some(1));
+        net.produce().expect("block 1");
+        // No vote relay: the producer alone has 40 of 100 stake — below quorum — so it must NOT seal 2.
+        net.queue_tx(&net.nodes[0]);
+        assert!(net.nodes[0].mine_pending().unwrap().is_none(), "waits for the certificate");
+        assert_eq!(net.nodes[0].tip_height().unwrap(), 1);
+        assert!(!net.nodes[0].mempool.lock().unwrap().is_empty(), "transactions stay queued");
+        // Votes arrive → quorum → the producer seals, carrying the certificate.
+        net.relay_votes();
+        let b2 = net.nodes[0].mine_pending().unwrap().expect("seals once the parent is final");
+        assert!(b2.header.parent_commit.is_some());
+    }
+
+    #[test]
+    fn import_rejects_missing_wrong_and_forged_certificates() {
+        let net = net(Some(1));
+        let b1 = net.produce().expect("block 1");
+        net.relay_votes();
+        let a = &net.nodes[0];
+        let good = a.get_persisted_finality_proof(1).unwrap().unwrap();
+        // Fresh follower that has block 1 but not its certificate.
+        let d = TmpDir::new(); let f = open_node(&d.0);
+        let (proposer, _) = (me(a), ());
+        for (k, s) in [(me(&net.nodes[0]).public_key_hex, 40u128), (me(&net.nodes[1]).public_key_hex, 35), (me(&net.nodes[2]).public_key_hex, 25)] { stake(&f, &k, s); }
+        fund_xrge(&f, &net.user.public_key_hex, 1_000.0); f.validator_sets_db.clear().unwrap(); f.record_validator_set_for(1).unwrap();
+        f.import_block(b1.clone()).unwrap();
+
+        let seal = |parent_commit: Option<quantum_vault_types::FinalityProof>| -> BlockV1 {
+            let header = BlockHeaderV1 { version: 1, chain_id: "test".into(), height: 2, time: 2, prev_hash: b1.hash.clone(),
+                tx_hash: compute_tx_hash(&[]), proposer_pub_key: proposer.public_key_hex.clone(), state_root: None, parent_commit };
+            let hb = encode_header_v1(&header);
+            let sig = pqc_sign(&proposer.secret_key_hex, &hb).unwrap();
+            BlockV1 { version: 1, hash: compute_block_hash(&hb, &sig), header, txs: vec![], proposer_sig: sig }
+        };
+        let err = f.import_block(seal(None)).unwrap_err();
+        assert!(err.contains("missing the commit certificate"), "{err}");
+
+        let mut wrong = good.clone(); wrong.block_hash = "ab".repeat(32);
+        assert!(f.import_block(seal(Some(wrong))).unwrap_err().contains("not the parent"));
+
+        // Forged: the 40-stake vote alone, but the certificate CLAIMS a quorum.
+        let mut forged = good.clone();
+        forged.precommit_votes.retain(|v| v.voter_pub_key == proposer.public_key_hex);
+        let err = f.import_block(seal(Some(forged))).unwrap_err();
+        assert!(err.contains("certificate invalid"), "{err}");
+
+        // A tampered signature on an otherwise-quorate certificate.
+        let mut tampered = good.clone();
+        tampered.precommit_votes[0].signature = format!("00{}", &tampered.precommit_votes[0].signature[2..]);
+        assert!(f.import_block(seal(Some(tampered))).unwrap_err().contains("certificate invalid"));
+
+        assert_eq!(f.tip_height().unwrap(), 1, "no rejected block was stored");
+        f.import_block(seal(Some(good))).expect("the genuine certificate is accepted");
+        assert!(f.is_height_verified_final(1), "importing block 2 finalized block 1 on the follower");
+    }
+
+    #[test]
+    fn before_activation_a_certificate_is_not_allowed_and_nothing_changes() {
+        let net = net(None);
+        let b1 = net.produce().expect("legacy block 1");
+        assert!(b1.header.parent_commit.is_none());
+        let b2 = net.produce().expect("legacy block 2 needs no certificate");
+        assert!(b2.header.parent_commit.is_none());
+        // A block that carries a certificate before activation is refused (old nodes couldn't hash it).
+        let p = me(&net.nodes[0]);
+        let fake = quantum_vault_types::FinalityProof { height: 2, block_hash: b2.hash.clone(), total_stake: 1, voting_stake: 1, quorum_threshold: 1, precommit_votes: vec![], created_at: 0 };
+        let header = BlockHeaderV1 { version: 1, chain_id: "test".into(), height: 3, time: 3, prev_hash: b2.hash.clone(),
+            tx_hash: compute_tx_hash(&[]), proposer_pub_key: p.public_key_hex.clone(), state_root: None, parent_commit: Some(fake) };
+        let hb = encode_header_v1(&header); let sig = pqc_sign(&p.secret_key_hex, &hb).unwrap();
+        let blk = BlockV1 { version: 1, hash: compute_block_hash(&hb, &sig), header, txs: vec![], proposer_sig: sig };
+        assert!(net.nodes[1].import_block(blk).unwrap_err().contains("before Release 2a"));
+    }
+
+    /// After activation every node re-derives each height's validator set from history and refuses
+    /// to verify votes against a stored set that differs. That derivation must reproduce mainnet's
+    /// real validator state — including the outside validator's slash at 69 and the missed-block
+    /// freeze from 100 — or finality would stall on day one.
+    #[test]
+    fn validator_set_rebuilt_from_mainnet_history_matches_the_live_state() {
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(None));
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-95.jsonl");
+        let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node_from(fixture);
+        assert!(fail.is_none(), "{fail:?}");
+        assert_eq!(ok, 95);
+        let live = quantum_vault_finality::ValidatorSetSnapshot::new(96, n.get_validator_stakes().unwrap());
+        let derived = n.derive_validator_set_from_history(96).expect("history replay");
+        assert_eq!(derived, live, "history-derived validator set for 96 equals the node's own state");
+        assert!(live.entries().len() >= 2, "a real multi-validator set: {:?}", live.entries().keys().map(|k| &k[..8]).collect::<Vec<_>>());
+    }
+
+    /// Replay mainnet history 0..=137 (pinned fixture; override with QV_REPLAY_FIXTURE to check a
+    /// newer export before scheduling activation) and require the history-derived validator set at
+    /// tip+1 to equal the node's own state. This caught the missed-block-freeze divergence.
+    #[test]
+    fn full_mainnet_history_replays_and_validator_set_matches_at_tip() {
+        let fixture = std::env::var("QV_REPLAY_FIXTURE").unwrap_or_else(|_|
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-137.jsonl").to_string());
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(None));
+        let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node_from(&fixture);
+        assert!(fail.is_none(), "replay failed: {fail:?}");
+        let live = quantum_vault_finality::ValidatorSetSnapshot::new(ok + 1, n.get_validator_stakes().unwrap());
+        let derived = n.derive_validator_set_from_history(ok + 1).expect("history replay");
+        eprintln!("replayed 0..={ok}; validator set at {}: {:?}", ok + 1, live.entries().iter().map(|(k, s)| (&k[..8], *s)).collect::<Vec<_>>());
+        assert_eq!(derived, live);
+    }
+
+    #[test]
+    fn mainnet_history_replays_identically_with_release_2a_scheduled_above_it() {
+        let snap = |n: &L1Node| (n.get_state_root().unwrap(), n.get_all_blocks().unwrap().iter().map(|b| b.hash.clone()).collect::<Vec<_>>());
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(None));
+        let base = { let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node(); assert!(fail.is_none(), "{fail:?}"); (ok, snap(&n)) };
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(Some(10_000)));
+        let gated = { let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node(); assert!(fail.is_none(), "{fail:?}"); (ok, snap(&n)) };
+        TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(None));
+        assert_eq!(base, gated, "identical tip, state root and every block hash");
     }
 }

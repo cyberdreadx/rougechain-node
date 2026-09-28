@@ -72,3 +72,4 @@ tweets.md
 
 # Withdrawal-test throwaway rouge wallet
 .btc-wd-wallet.*
+.bridge-queued-txs.json

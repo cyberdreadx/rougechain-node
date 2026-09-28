@@ -80,6 +80,27 @@ impl NftStore {
         })
     }
 
+    /// Every sled tree this store writes to (rollback snapshot/restore).
+    pub fn trees(&self) -> Vec<&sled::Tree> {
+        vec![&**self.collections_db, &**self.tokens_db]
+    }
+
+    /// For the GAME_READY 2 state root: collections and tokens in sled (sorted) key order,
+    /// reduced to the fields that decide ownership and minting.
+    pub fn commitment_entries(&self) -> Result<(Vec<NftCollection>, Vec<NftToken>), String> {
+        let mut cols = Vec::new();
+        for item in self.collections_db.iter() {
+            let (_, v) = item.map_err(|e| e.to_string())?;
+            cols.push(serde_json::from_slice(&v).map_err(|e| format!("collection: {}", e))?);
+        }
+        let mut toks = Vec::new();
+        for item in self.tokens_db.iter() {
+            let (_, v) = item.map_err(|e| e.to_string())?;
+            toks.push(serde_json::from_slice(&v).map_err(|e| format!("nft token: {}", e))?);
+        }
+        Ok((cols, toks))
+    }
+
     // ── Collections ──
 
     pub fn save_collection(&self, col: &NftCollection) -> Result<(), String> {

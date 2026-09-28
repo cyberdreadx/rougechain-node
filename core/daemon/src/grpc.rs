@@ -324,6 +324,7 @@ impl MessengerService for GrpcNode {
             read_at: None,
             message_type: "text".to_string(),
             spoiler: false,
+            deleted_at: None,
         };
         let stored = self.node.send_message(message).map_err(|e| Status::internal(e))?;
         Ok(Response::new(map_message(stored)))

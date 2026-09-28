@@ -1,0 +1,8 @@
+[package]
+name = "quantum-vault-bridge-exec"
+version = "0.1.0"
+edition = "2021"
+description = "R1: strict bridge_withdraw execution — a typed, testable decision function that mirrors the daemon's exact quanta arithmetic. Gates payout eligibility on ACTUAL burn success (never block presence)."
+
+[dependencies]
+sha3 = "0.10"

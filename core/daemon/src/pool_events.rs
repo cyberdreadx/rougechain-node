@@ -53,11 +53,51 @@ pub struct PriceSnapshot {
     pub price_b_in_a: f64,  // How many token A for 1 token B
 }
 
+/// A liquidity provider's position, for fee accounting (off-consensus, derived from events).
+///
+/// `basis` is the deposit measured in share-value units, where a share's value is
+/// √(reserve_a · reserve_b) / total_lp_supply. Swap fees raise that value; adding or removing
+/// liquidity doesn't. So `lp × value_now − basis` is the fee income still in the pool.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub struct LpPosition {
+    pub lp: u64,
+    pub basis: f64,
+}
+
+impl LpPosition {
+    /// Apply a mint or burn of `lp` tokens at share value `value`. Withdrawals come out of
+    /// earnings first, then the deposit, so collecting fees leaves the deposit's basis intact.
+    pub fn apply(&mut self, minted: bool, lp: u64, value: f64) {
+        if minted {
+            self.lp = self.lp.saturating_add(lp);
+            self.basis += lp as f64 * value;
+        } else {
+            let earned = (self.lp as f64 * value - self.basis).max(0.0);
+            self.basis = (self.basis - (lp as f64 * value - earned).max(0.0)).max(0.0);
+            self.lp = self.lp.saturating_sub(lp);
+        }
+        if self.lp == 0 || !self.basis.is_finite() {
+            self.basis = 0.0;
+        }
+    }
+}
+
+/// √(reserve_a · reserve_b) per LP token; None for an empty pool.
+pub fn lp_share_value(reserve_a: u64, reserve_b: u64, total_lp_supply: u64) -> Option<f64> {
+    if total_lp_supply == 0 {
+        return None;
+    }
+    Some(((reserve_a as f64) * (reserve_b as f64)).sqrt() / total_lp_supply as f64)
+}
+
+const LP_POSITIONS_MARKER: &[u8] = b"__lp_positions_v1__";
+
 /// Persistent storage for pool events
 #[derive(Clone)]
 pub struct PoolEventStore {
     events_db: Arc<Db>,
     prices_db: Arc<Db>,
+    positions: sled::Tree,
 }
 
 impl PoolEventStore {
@@ -71,12 +111,97 @@ impl PoolEventStore {
         let prices_db = sled::open(prices_path)
             .map_err(|e| format!("Failed to open prices DB: {}", e))?;
         
+        let positions = events_db.open_tree("lp-positions")
+            .map_err(|e| format!("Failed to open LP positions: {}", e))?;
+
         Ok(Self {
             events_db: Arc::new(events_db),
             prices_db: Arc::new(prices_db),
+            positions,
         })
     }
-    
+
+    /// Every sled tree this store writes to (rollback snapshot/restore).
+    pub fn trees(&self) -> Vec<&sled::Tree> {
+        vec![&**self.events_db, &**self.prices_db, &self.positions]
+    }
+
+    #[cfg(test)]
+    pub fn clear_lp_positions_for_test(&self) {
+        self.positions.clear().unwrap();
+    }
+
+    fn position_key(pool_id: &str, owner: &str) -> Vec<u8> {
+        format!("{}\0{}", pool_id, owner).into_bytes()
+    }
+
+    pub fn get_lp_position(&self, pool_id: &str, owner: &str) -> Result<Option<LpPosition>, String> {
+        match self.positions.get(Self::position_key(pool_id, owner)).map_err(|e| e.to_string())? {
+            Some(v) => serde_json::from_slice(&v).map(Some).map_err(|e| e.to_string()),
+            None => Ok(None),
+        }
+    }
+
+    /// Record an LP mint/burn for `owner` (canonical address). `value` is the share value from
+    /// `lp_share_value`, taken after the change (or before it, if the change emptied the pool).
+    pub fn record_lp_change(&self, pool_id: &str, owner: &str, minted: bool, lp: u64, value: f64) -> Result<(), String> {
+        let key = Self::position_key(pool_id, owner);
+        let mut pos: LpPosition = match self.positions.get(&key).map_err(|e| e.to_string())? {
+            Some(v) => serde_json::from_slice(&v).unwrap_or_default(),
+            None => LpPosition::default(),
+        };
+        pos.apply(minted, lp, value);
+        let bytes = serde_json::to_vec(&pos).map_err(|e| e.to_string())?;
+        self.positions.insert(key, bytes).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Build LP positions from the full event history once (nodes that ran before the ledger
+    /// existed). LP supply isn't in old events, so it's re-derived: only create/add/remove
+    /// change it, and each of those is recorded as an event.
+    pub fn rebuild_lp_positions_if_needed(&self, canon: impl Fn(&str) -> String) -> Result<usize, String> {
+        if self.positions.contains_key(LP_POSITIONS_MARKER).map_err(|e| e.to_string())? {
+            return Ok(0);
+        }
+        self.positions.clear().map_err(|e| e.to_string())?;
+        let mut events: Vec<PoolEvent> = self.events_db.iter()
+            .filter_map(|r| r.ok())
+            .filter_map(|(_, v)| serde_json::from_slice::<PoolEvent>(&v).ok())
+            .filter(|e| e.event_type != PoolEventType::Swap)
+            .collect();
+        events.sort_by(|x, y| x.pool_id.cmp(&y.pool_id)
+            .then(x.block_height.cmp(&y.block_height))
+            .then(x.timestamp.cmp(&y.timestamp))
+            .then(x.id.cmp(&y.id)));
+        let mut supply: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        let mut n = 0;
+        for e in &events {
+            let lp = e.lp_amount.unwrap_or(0);
+            if lp == 0 { continue; }
+            let s = supply.entry(e.pool_id.clone()).or_insert(0);
+            let before = *s;
+            let minted = e.event_type != PoolEventType::RemoveLiquidity;
+            *s = match e.event_type {
+                PoolEventType::CreatePool => lp,
+                PoolEventType::AddLiquidity => before.saturating_add(lp),
+                _ => before.saturating_sub(lp),
+            };
+            let value = lp_share_value(e.reserve_a_after, e.reserve_b_after, *s)
+                .or_else(|| {
+                    // Pool emptied: value just before the burn.
+                    let a = e.reserve_a_after + e.amount_a.unwrap_or(0);
+                    let b = e.reserve_b_after + e.amount_b.unwrap_or(0);
+                    lp_share_value(a, b, before)
+                })
+                .unwrap_or(0.0);
+            self.record_lp_change(&e.pool_id, &canon(&e.user_pub_key), minted, lp, value)?;
+            n += 1;
+        }
+        self.positions.insert(LP_POSITIONS_MARKER, b"1".to_vec()).map_err(|e| e.to_string())?;
+        self.positions.flush().map_err(|e| e.to_string())?;
+        Ok(n)
+    }
+
     /// Save a pool event
     pub fn save_event(&self, event: &PoolEvent) -> Result<(), String> {
         // Key format: pool_id:timestamp:event_id for ordering

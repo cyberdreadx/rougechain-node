@@ -201,6 +201,32 @@ Content-Type: application/json
 
 Used for self-destruct messages. Requires a signed request with `messageId` and `conversationId` in the payload.
 
+## Create Conversation
+
+```http
+POST /api/v2/messenger/conversations
+Content-Type: application/json
+```
+
+Signed request with `participantIds` (wallet ids or public keys; the creator must be included),
+optional `name`, optional `isGroup`.
+
+**1:1 conversations have a deterministic id and creation is an upsert.** For two distinct
+participants (and `isGroup` not set) the id is
+`"dm_" + hex(sha256(sorted([idA, idB]).join("\n")))` over the two *canonical* wallet ids, so
+Alice→Bob and Bob→Alice, or the same person addressed by wallet id, signing key or encryption key,
+all resolve to the same thread. If it already exists it is returned unchanged with
+`"existing": true` (and, if the caller had trashed it, it comes back to their inbox). Groups keep
+random ids and are never deduplicated.
+
+### Response
+
+```json
+{ "success": true, "existing": false, "conversationId": "dm_9f2c…", "conversation": { "id": "dm_9f2c…", "participant_ids": ["…"], "is_group": false, "created_at": "…" } }
+```
+
+---
+
 ## Delete Message
 
 ```http
@@ -208,7 +234,10 @@ POST /api/v2/messenger/messages/delete
 Content-Type: application/json
 ```
 
-Requires a signed request with `messageId` and `conversationId` in the payload. The caller must be a conversation participant.
+Signed request with `messageId` and `conversationId`. Only the sender may delete. The delete is
+**soft**: the message disappears from listings for everyone but stays recoverable by the sender for
+**30 days** via `POST /api/v2/messenger/messages/restore` (same payload). After 30 days the sweep
+removes it permanently.
 
 ## Delete Conversation
 
@@ -217,7 +246,38 @@ POST /api/v2/messenger/conversations/delete
 Content-Type: application/json
 ```
 
-Requires a signed request with `conversationId` in the payload. The caller must be a conversation participant.
+Signed request with `conversationId`, optional `"purge": true`. The caller must be a participant.
+
+**Deleting affects only the caller's view** (this changed from the previous global hard delete):
+the conversation moves to the caller's trash and disappears from their `…/list`; every other
+participant keeps the thread and all its messages. It stays recoverable for **30 days**; `purge: true`
+waives the caller's retention window. The record and its messages are removed permanently only once
+**every** participant has deleted it and each share is purged or past retention.
+
+### Response
+
+```json
+{ "success": true, "conversationId": "dm_9f2c…", "softDeleted": true, "purge": false, "recoverableUntil": "2026-10-25T14:00:00Z" }
+```
+
+## Restore Conversation
+
+```http
+POST /api/v2/messenger/conversations/restore
+Content-Type: application/json
+```
+
+Signed request with `conversationId`. Clears the caller's delete; the thread and its messages
+reappear in the caller's inbox. Fails if the conversation is not in the caller's trash (or was purged).
+
+## Restore Message
+
+```http
+POST /api/v2/messenger/messages/restore
+Content-Type: application/json
+```
+
+Signed request with `conversationId` and `messageId`; sender only; within the 30-day window.
 
 ---
 
@@ -228,31 +288,34 @@ POST /api/v2/messenger/conversations/list
 Content-Type: application/json
 ```
 
-Returns all conversations for a wallet. Requires a signed request.
+Signed request. Optional `"folder"`: `"inbox"` (default — not deleted by the caller), `"trash"`
+(deleted by the caller, still recoverable; use it for a "Recently deleted" view), or `"all"`.
 
 ### Response
 
 ```json
 {
+  "success": true,
+  "folder": "inbox",
   "conversations": [
     {
-      "conversationId": "conv-uuid",
-      "participants": [
-        {
-          "publicKey": "abc...",
-          "displayName": "Alice"
-        },
-        {
-          "publicKey": "def...",
-          "displayName": "Bob"
-        }
-      ],
-      "lastMessage": "2024-01-31T12:00:00Z",
-      "unreadCount": 2
+      "id": "dm_9f2c…",
+      "participant_ids": ["…", "…"],
+      "is_group": false,
+      "name": null,
+      "created_at": "2026-09-25T12:00:00Z",
+      "deleted_by": {},
+      "last_message_at": "2026-09-25T12:30:00Z",
+      "last_sender_id": "…",
+      "last_message_preview": "[Encrypted message]",
+      "unread_count": 2
     }
   ]
 }
 ```
+
+`deleted_by` maps the canonical wallet id of each participant who trashed the thread to the time
+they did; a conversation in your `trash` folder has your id in it.
 
 ---
 

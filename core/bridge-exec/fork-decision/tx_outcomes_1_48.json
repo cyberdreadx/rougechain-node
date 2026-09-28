@@ -1,0 +1,482 @@
+[
+ {
+  "height": 1,
+  "tx_type": "transfer",
+  "from": "8ccf7878003b2668",
+  "amount": 100,
+  "fee": 0.0,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 2,
+  "tx_type": "transfer",
+  "from": "8ccf7878003b2668",
+  "amount": 1,
+  "fee": 0.0,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 3,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 1000,
+  "fee": 0.0,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 4,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 500,
+  "fee": 0.0,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 5,
+  "tx_type": "bridge_withdraw",
+  "from": "45e332579003aaef",
+  "amount": 250,
+  "fee": 0.1,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 6,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 50,
+  "fee": 0.0,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 7,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 1000,
+  "fee": 0.0,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 8,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 1000,
+  "fee": 0.0,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 9,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 5,
+  "fee": 0.0,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 10,
+  "tx_type": "bridge_withdraw",
+  "from": "df255dbddd5a257e",
+  "amount": 1,
+  "fee": 0.1,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 11,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 1,
+  "fee": 0.0,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 12,
+  "tx_type": "bridge_withdraw",
+  "from": "df255dbddd5a257e",
+  "amount": 1,
+  "fee": 0.1,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 13,
+  "tx_type": "bridge_withdraw",
+  "from": "df255dbddd5a257e",
+  "amount": 1,
+  "fee": 0.1,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 14,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 1,
+  "fee": 0.0,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 15,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 1,
+  "fee": 0.0,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 16,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 1,
+  "fee": 0.0,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 17,
+  "tx_type": "bridge_withdraw",
+  "from": "df255dbddd5a257e",
+  "amount": 1,
+  "fee": 0.1,
+  "historical_outcome": null,
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 18,
+  "tx_type": "bridge_withdraw",
+  "from": "df255dbddd5a257e",
+  "amount": 1,
+  "fee": 0.1,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 19,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 20000,
+  "fee": 0.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 20,
+  "tx_type": "stake",
+  "from": "21e0ed0a4c3d06ed",
+  "amount": 10000,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 21,
+  "tx_type": "transfer",
+  "from": "673b04212052d59a",
+  "amount": 1999,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 22,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 5,
+  "fee": 0.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 23,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 10000,
+  "fee": 0.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 24,
+  "tx_type": "transfer",
+  "from": "df255dbddd5a257e",
+  "amount": 5,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 25,
+  "tx_type": "transfer",
+  "from": "df255dbddd5a257e",
+  "amount": 9995,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 26,
+  "tx_type": "transfer",
+  "from": "df255dbddd5a257e",
+  "amount": 1,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 27,
+  "tx_type": "shield",
+  "from": "df255dbddd5a257e",
+  "amount": null,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 28,
+  "tx_type": "unshield",
+  "from": "2a1522939a65acc9",
+  "amount": null,
+  "fee": 1.0,
+  "historical_outcome": "no-op",
+  "canonical_outcome": "no-op",
+  "differs": false
+ },
+ {
+  "height": 29,
+  "tx_type": "stake",
+  "from": "c97f59a2409eb025",
+  "amount": 10000,
+  "fee": 1.0,
+  "historical_outcome": "no-op",
+  "canonical_outcome": "no-op",
+  "differs": false
+ },
+ {
+  "height": 30,
+  "tx_type": "transfer",
+  "from": "df255dbddd5a257e",
+  "amount": 1,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 31,
+  "tx_type": "shield",
+  "from": "df255dbddd5a257e",
+  "amount": null,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 32,
+  "tx_type": "unshield",
+  "from": "2a1522939a65acc9",
+  "amount": null,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 33,
+  "tx_type": "shield",
+  "from": "df255dbddd5a257e",
+  "amount": null,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 34,
+  "tx_type": "unshield",
+  "from": "2a1522939a65acc9",
+  "amount": null,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 35,
+  "tx_type": "shield",
+  "from": "df255dbddd5a257e",
+  "amount": null,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 36,
+  "tx_type": "unshield",
+  "from": "2a1522939a65acc9",
+  "amount": null,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 37,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 100000,
+  "fee": 0.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 38,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 100000,
+  "fee": 0.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 39,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 100000,
+  "fee": 0.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 40,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 90000,
+  "fee": 0.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 41,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 11100,
+  "fee": 0.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 42,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 200,
+  "fee": 0.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 43,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 100000000,
+  "fee": 0.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 44,
+  "tx_type": "bridge_mint",
+  "from": "8ccf7878003b2668",
+  "amount": 55000000,
+  "fee": 0.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 45,
+  "tx_type": "create_pool",
+  "from": "df255dbddd5a257e",
+  "amount": null,
+  "fee": 10.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 46,
+  "tx_type": "remove_liquidity",
+  "from": "df255dbddd5a257e",
+  "amount": null,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 47,
+  "tx_type": "add_liquidity",
+  "from": "df255dbddd5a257e",
+  "amount": null,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ },
+ {
+  "height": 48,
+  "tx_type": "swap",
+  "from": "df255dbddd5a257e",
+  "amount": 100000,
+  "fee": 1.0,
+  "historical_outcome": "applied",
+  "canonical_outcome": "applied",
+  "differs": false
+ }
+]

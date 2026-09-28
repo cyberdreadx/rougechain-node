@@ -7,7 +7,9 @@ mod grpc;
 mod nft_store;
 mod pool_events;
 mod node;
+mod finality_net;
 mod peer;
+mod rouge_bridge_deposit;
 mod pool_store;
 mod order_book;
 mod rollup;
@@ -16,6 +18,10 @@ mod jsonrpc;
 mod indexer;
 mod bridge_btc;
 mod push;
+mod fork;
+mod fork_tables;
+mod v2_binding;
+mod regen_votes;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -124,6 +130,22 @@ struct Args {
     mine: bool,
     #[arg(long)]
     data_dir: Option<String>,
+    /// OPTION-B FORK: explicit, operator-invoked, one-time, atomic migration of a LEGACY
+    /// production ledger to the canonical ledger at fork height F-1. Refuses unless
+    /// tip == F-1 and the ledger equals the pinned PRODUCTION_LEDGER_AT_F_MINUS_1 table.
+    /// Never runs automatically. Exits after migrating.
+    #[arg(long)]
+    migrate_canonical_ledger: bool,
+    /// Track A Step 2.3 — READ-ONLY FINALITY_V2 preflight: proves the node-keys.json public key is
+    /// the validator identity this node would vote as, that it has eligible stake in the set
+    /// derived from accepted history, and that the signing journal is intact. Prints PUBLIC data
+    /// only (never key material) and exits. Run with the daemon stopped (exclusive data dir).
+    #[arg(long)]
+    finality_v2_preflight: bool,
+    /// Read-only operator diagnostic: print canonical digests of this node's consensus state
+    /// (loads/recovers state exactly as a normal start would) and exit.
+    #[arg(long)]
+    print_state_digest: bool,
     #[arg(long, env = "QV_API_KEYS")]
     api_keys: Option<String>,
     /// Rate limit per minute (0 = unlimited, recommended for public testnets)
@@ -184,6 +206,8 @@ struct AppState {
     faucet_whitelist: Vec<String>,
     faucet_enabled: bool,
     peer_manager: Arc<peer::PeerManager>,
+    /// operator-configured peer URLs (source of the FINALITY_V2 vote-ingress allowlist)
+    configured_peer_urls: Vec<String>,
     ws_broadcaster: Arc<WsBroadcaster>,
     bridge_custody_address: Option<String>,
     base_sepolia_rpc: String,
@@ -219,6 +243,8 @@ struct AppState {
     groq_api_key: Option<String>,
     /// Fire-and-forget Expo push dispatcher (transfer / message / mail notifications)
     push: push::PushDispatcher,
+    /// RougeChain Regenerate community votes (node-hosted, off-consensus).
+    regen_votes: Arc<quantum_vault_storage::regen_vote_store::RegenVoteStore>,
 }
 
 #[derive(Clone)]
@@ -365,27 +391,44 @@ async fn main() -> Result<(), String> {
             .as_ref()
             .map(|gc| gc.initial_validators.iter().map(|v| v.pub_key.clone()).collect())
             .unwrap_or_default(),
+        genesis_allocations: genesis_config.as_ref().map(|gc| gc.initial_allocations.clone()).unwrap_or_default(),
+        genesis_validators: genesis_config.as_ref().map(|gc| gc.initial_validators.clone()).unwrap_or_default(),
     })?;
     // Inject WASM runtime/store so apply_balance_block can re-execute contract txs
     node.set_wasm_runtime(wasm_runtime.clone());
     node.set_contract_store(contract_store.clone());
     let node = Arc::new(node);
-    node.init()?;
+    if args.migrate_canonical_ledger { node.init_for_migration()?; } else { node.init()?; }
     node.backfill_address_index();
 
-    // Apply genesis allocations on first boot (chain height == 0)
+    // Genesis allocations/validators are applied EXACTLY ONCE, inside `L1Node::init()` →
+    // `recover_from_history` (the deterministic path a fresh chain and a snapshot-less restart
+    // share; NodeOptions carries the genesis seed). Applying them again here would double-credit
+    // every allocation on first boot.
     if let Some(ref gc) = genesis_config {
-        let current_height = node.tip_height().unwrap_or(0);
-        if current_height == 0 && (!gc.initial_allocations.is_empty() || !gc.initial_validators.is_empty()) {
-            eprintln!("[main] Applying genesis allocations (chain is fresh)...");
-            if let Err(e) = node.apply_genesis_allocations(&gc.initial_allocations, &gc.initial_validators) {
-                eprintln!("[main] WARNING: Failed to apply genesis allocations: {}", e);
-            } else {
-                let total: u64 = gc.initial_allocations.iter().map(|a| a.amount).sum();
-                eprintln!("[main] Genesis: credited {} XRGE across {} addresses, {} validators staked",
-                    total, gc.initial_allocations.len(), gc.initial_validators.len());
-            }
+        if node.tip_height().unwrap_or(0) == 0 {
+            let total: u64 = gc.initial_allocations.iter().map(|a| a.amount).sum();
+            eprintln!("[main] Genesis seed (applied by init): {} XRGE across {} addresses, {} validators",
+                total, gc.initial_allocations.len(), gc.initial_validators.len());
         }
+    }
+
+    if args.print_state_digest {
+        let d = node.state_digest()?;
+        println!("{}", serde_json::to_string_pretty(&d).map_err(|e| e.to_string())?);
+        return Ok(());
+    }
+    if args.finality_v2_preflight {
+        let report = node.finality_v2_preflight()?;
+        println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
+        return Ok(());
+    }
+    if args.migrate_canonical_ledger {
+        eprintln!("[fork] OPTION-B canonical-ledger migration requested (F = {})", fork::FORK_HEIGHT);
+        let outcome = node.migrate_canonical_ledger(&|n: &L1Node| n.persist_snapshot_atomic(fork::FORK_HEIGHT - 1))?;
+        eprintln!("[fork] migration outcome: {}", outcome);
+        println!("{}", serde_json::to_string_pretty(&node.state_digest()?).map_err(|e| e.to_string())?);
+        return Ok(());
     }
 
     let grpc_addr: SocketAddr = format!("{}:{}", args.host, args.port)
@@ -438,6 +481,10 @@ async fn main() -> Result<(), String> {
     let btc_deposit_store = Arc::new(
         BtcDepositStore::new(&data_dir_clone).map_err(|e| format!("btc deposit store: {}", e))?
     );
+    let regen_votes = Arc::new(
+        quantum_vault_storage::regen_vote_store::RegenVoteStore::new(std::path::Path::new(&data_dir_clone))
+            .map_err(|e| format!("regen vote store: {}", e))?
+    );
     // Expo push dispatcher — enabled by default; QV_PUSH_ENABLED=0/false turns it off. When
     // enabled it spawns one background task that POSTs to Expo; call sites only enqueue.
     let push_dispatcher = {
@@ -467,6 +514,7 @@ async fn main() -> Result<(), String> {
         faucet_whitelist: parse_whitelist(args.faucet_whitelist),
         faucet_enabled: args.faucet_enabled,
         peer_manager: peer_manager.clone(),
+        configured_peer_urls: initial_peers.clone(),
         ws_broadcaster: ws_broadcaster.clone(),
         bridge_custody_address: args.bridge_custody_address.clone(),
         base_sepolia_rpc: args.base_sepolia_rpc.clone(),
@@ -494,6 +542,7 @@ async fn main() -> Result<(), String> {
         replay_nonces: Arc::new(RwLock::new(HashMap::new())),
         groq_api_key: args.groq_api_key.clone(),
         push: push_dispatcher,
+        regen_votes,
     };
 
     // BTC HD deposit watcher: poll each assigned deposit address, two-provider-verify incoming
@@ -558,6 +607,11 @@ async fn main() -> Result<(), String> {
 
     eprintln!("[core-daemon] WebSocket broadcaster initialized");
 
+    // FINALITY_V2 vote propagation (inert while the gate is unscheduled)
+    {
+        let (gossip_node, pm) = (node.clone(), peer_manager.clone());
+        tokio::spawn(async move { finality_net::run_vote_gossip(pm, gossip_node).await; });
+    }
     // Start peer sync
     {
         let peer_node = node.clone();
@@ -581,6 +635,12 @@ async fn main() -> Result<(), String> {
                     Err(e) => {
                         eprintln!("[messenger] cleanup error: {}", e);
                     }
+                    _ => {}
+                }
+                // soft-deleted conversations/messages past the 30-day retention window
+                match cleanup_node.sweep_soft_deleted_messenger() {
+                    Ok((c, m)) if c > 0 || m > 0 => eprintln!("[messenger] purged {} conversation(s) and {} message(s) past soft-delete retention", c, m),
+                    Err(e) => eprintln!("[messenger] soft-delete sweep error: {}", e),
                     _ => {}
                 }
             }
@@ -638,6 +698,7 @@ async fn main() -> Result<(), String> {
                     
                     // Broadcast to WebSocket clients
                     ws_bc.broadcast_new_block(&block);
+                    ws_bc.broadcast_contract_events(miner.contract_events_in_block(&block));
 
                     // Index the block
                     let _ = idx_bc.index_block(&block);
@@ -794,7 +855,6 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/orders/:order_id", get(get_order_by_id))
         .route("/api/stats", get(get_stats))
         .route("/api/fee", get(get_fee_info))
-        .route("/api/finality/:height", get(get_finality_proof))
         .route("/api/burn-address", get(get_burn_address))
         .route("/api/burned", get(get_burned_tokens))
         .route("/api/price/xrge", get(get_xrge_price))
@@ -849,10 +909,21 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/v2/messenger/conversations/update", post(update_conversation_signed))
         .route("/api/v2/messenger/conversations/participants", post(add_conversation_participants_signed))
         .route("/api/v2/messenger/conversations/delete", post(delete_conversation_signed))
+        .route("/api/v2/messenger/conversations/restore", post(restore_conversation_signed))
         .route("/api/v2/messenger/messages/list", post(get_messages_signed))
         .route("/api/v2/messenger/messages", post(send_message_signed))
+        // RougeChain Regenerate community votes (node-hosted, off-consensus)
+        .route("/api/regen/config", get(regen_votes::get_config))
+        .route("/api/regen/proposals", get(regen_votes::list_proposals))
+        .route("/api/regen/proposals/:id", get(regen_votes::get_proposal))
+        .route("/api/regen/proposals/:id/weight/:who", get(regen_votes::get_weight))
+        .route("/api/v2/regen/proposals", post(regen_votes::create_proposal))
+        .route("/api/v2/regen/votes", post(regen_votes::cast_vote))
+        .route("/api/v2/regen/proposals/payout", post(regen_votes::record_payout))
+        .route("/api/v2/regen/proposals/cancel", post(regen_votes::cancel_proposal))
         .route("/api/v2/messenger/messages/read", post(mark_message_read_signed))
         .route("/api/v2/messenger/messages/delete", post(delete_message_signed))
+        .route("/api/v2/messenger/messages/restore", post(restore_message_signed))
         // Quantum Bot AI proxy
         .route("/api/bot/reply", post(bot_reply))
         // Name registry (resolve/reverse stay public, register/release require signatures)
@@ -884,6 +955,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/pools", get(get_pools))
         .route("/api/pool/:pool_id", get(get_pool))
         .route("/api/pool/:pool_id/events", get(get_pool_events))
+        .route("/api/pool/:pool_id/earnings/:owner", get(get_pool_earnings))
         .route("/api/pool/:pool_id/prices", get(get_pool_price_history))
         .route("/api/pool/:pool_id/stats", get(get_pool_stats))
         .route("/api/pool/create", post(create_pool))
@@ -935,6 +1007,7 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/bridge/config", get(bridge_config))
         .route("/api/bridge/claim", post(bridge_claim))
         .route("/api/bridge/withdraw", post(bridge_withdraw))
+        .route("/api/bridge/health", get(bridge_health))
         .route("/api/bridge/withdrawals", get(bridge_withdrawals))
         .route("/api/bridge/withdrawals/:tx_id", delete(bridge_withdrawal_fulfill))
         .route("/api/bridge/withdrawals/:tx_id/failure", post(bridge_withdrawal_report_failure))
@@ -1007,9 +1080,13 @@ fn build_http_router(state: AppState) -> Router {
         // WASM contract endpoints
         .route("/api/v2/contract/deploy", post(contract_deploy))
         .route("/api/v2/contract/call", post(contract_call))
+        // GAME_READY: player-signed contract calls and deployments
+        .route("/api/v2/contract/execute", post(contract_execute_signed))
+        .route("/api/v2/contract/publish", post(contract_publish_signed))
         .route("/api/contract/:addr", get(contract_get))
         .route("/api/contract/:addr/state", get(contract_state))
         .route("/api/contract/:addr/events", get(contract_events))
+        .route("/api/contract/:addr/query", post(contract_query))
         .route("/api/contracts", get(contract_list))
         // EIP-1559 fee info
         .route("/api/fee-info", get(fee_info))
@@ -1048,7 +1125,9 @@ fn build_http_router(state: AppState) -> Router {
                 ])),
             }
         })
-        .with_state(state)
+        .with_state(state.clone())
+        // Track A Step 2.4: FINALITY_V2 gossip intake + verified proof serving (own body limit + verification budget)
+        .merge(finality_net::finality_router_with(state.node.clone(), finality_net::IngressPolicy::from_env_and_peers(&state.configured_peer_urls)))
 }
 
 async fn auth_middleware<B>(
@@ -1460,44 +1539,58 @@ async fn handle_ws_connection(socket: WebSocket, state: AppState) {
     let (mut sender, mut receiver) = socket.split();
     let broadcaster = state.ws_broadcaster.clone();
 
+    // Public topic filter (empty = receive every PUBLIC event, the legacy default).
     let subscriptions: Arc<tokio::sync::RwLock<HashSet<String>>> = Arc::new(tokio::sync::RwLock::new(HashSet::new()));
+    // Private messenger inboxes this connection has proven (signed) ownership of.
+    let inboxes: Arc<tokio::sync::RwLock<HashSet<String>>> = Arc::new(tokio::sync::RwLock::new(HashSet::new()));
+    // Direct replies to THIS connection (initial stats, auth results).
+    let (direct_tx, mut direct_rx) = tokio::sync::mpsc::channel::<String>(16);
 
     let mut rx = broadcaster.subscribe();
 
-    let height = state.node.get_tip_height().unwrap_or(0);
-    let peer_count = state.peer_manager.peer_count().await;
-    broadcaster.broadcast_stats(height, peer_count, 0);
+    // Initial stats go to the new client only (previously broadcast to everyone on
+    // every connect — O(n^2) traffic during a reconnect storm).
+    {
+        let height = state.node.get_tip_height().unwrap_or(0);
+        let peer_count = state.peer_manager.peer_count().await;
+        if let Some(f) = crate::websocket::WsBroadcaster::frame(&crate::websocket::WsEvent::Stats {
+            block_height: height, peer_count, mempool_size: 0,
+        }) {
+            let _ = direct_tx.try_send(f.json.clone());
+        }
+    }
 
     let subs_clone = subscriptions.clone();
+    let inbox_clone = inboxes.clone();
     let send_task = tokio::spawn(async move {
         let mut ping_interval = interval(Duration::from_secs(30));
         loop {
             tokio::select! {
                 result = rx.recv() => {
                     match result {
-                        Ok(msg) => {
-                            let should_send = {
+                        Ok(frame) => {
+                            let should_send = if frame.private {
+                                let mine = inbox_clone.read().await;
+                                !mine.is_empty() && frame.topics.iter().any(|t| mine.contains(t))
+                            } else {
                                 let subs = subs_clone.read().await;
-                                if subs.is_empty() {
-                                    true
-                                } else if let Ok(event) = serde_json::from_str::<serde_json::Value>(&msg) {
-                                    if let Ok(ws_event) = serde_json::from_value::<crate::websocket::WsEvent>(event) {
-                                        let event_topics = ws_event.topics();
-                                        event_topics.iter().any(|t| subs.contains(t))
-                                    } else {
-                                        true
-                                    }
-                                } else {
-                                    true
-                                }
+                                subs.is_empty() || frame.topics.iter().any(|t| subs.contains(t))
                             };
-                            if should_send {
-                                if sender.send(Message::Text(msg)).await.is_err() {
-                                    break;
-                                }
+                            if should_send && sender.send(Message::Text(frame.json.clone())).await.is_err() {
+                                break;
                             }
                         }
-                        Err(_) => break,
+                        // Slow client: skip what it missed instead of dropping it.
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                direct = direct_rx.recv() => {
+                    match direct {
+                        Some(text) => {
+                            if sender.send(Message::Text(text)).await.is_err() { break; }
+                        }
+                        None => break,
                     }
                 }
                 _ = ping_interval.tick() => {
@@ -1520,7 +1613,10 @@ async fn handle_ws_connection(socket: WebSocket, state: AppState) {
                                 let mut subs = subscriptions.write().await;
                                 for topic in topics {
                                     if let Some(t) = topic.as_str() {
-                                        subs.insert(t.to_string());
+                                        // Private inboxes are only granted via signed "auth".
+                                        if !t.starts_with("inbox:") && subs.len() < 64 {
+                                            subs.insert(t.to_string());
+                                        }
                                     }
                                 }
                                 drop(subs);
@@ -1532,6 +1628,11 @@ async fn handle_ws_connection(socket: WebSocket, state: AppState) {
                                         subs.remove(t);
                                     }
                                 }
+                            }
+                            // {"auth": <signed request with payload.action = "messenger_ws_subscribe">}
+                            if let Some(auth) = cmd.get("auth") {
+                                let reply = ws_messenger_auth(&state, auth, &inboxes).await;
+                                let _ = direct_tx.try_send(reply.to_string());
                             }
                         }
                     }
@@ -1551,6 +1652,60 @@ async fn handle_ws_connection(socket: WebSocket, state: AppState) {
     send_task.abort();
 }
 
+/// Verify a signed messenger subscription and grant this connection the caller's
+/// private inbox. Same signed-request rules as the v2 REST endpoints (ML-DSA-65
+/// signature, ±5 min timestamp, single-use nonce) plus a WS-specific action tag so
+/// no other signed request can be replayed as a subscription.
+async fn ws_messenger_auth(
+    state: &AppState,
+    auth: &serde_json::Value,
+    inboxes: &tokio::sync::RwLock<std::collections::HashSet<String>>,
+) -> serde_json::Value {
+    let req: SignedTransactionRequest = match serde_json::from_value(auth.clone()) {
+        Ok(r) => r,
+        Err(_) => return serde_json::json!({ "type": "auth_error", "error": "malformed auth" }),
+    };
+    if req.payload.get("action").and_then(|v| v.as_str()) != Some("messenger_ws_subscribe") {
+        return serde_json::json!({ "type": "auth_error", "error": "payload.action must be messenger_ws_subscribe" });
+    }
+    let authed_key = match verify_signed_request(&req, &state.replay_nonces).await {
+        Ok(k) => k,
+        Err(e) => return serde_json::json!({ "type": "auth_error", "error": e }),
+    };
+    let mut set = inboxes.write().await;
+    let topic = crate::websocket::inbox_topic(&authed_key);
+    if !set.contains(&topic) && set.len() >= crate::websocket::MAX_INBOXES_PER_CONNECTION {
+        return serde_json::json!({ "type": "auth_error", "error": "too many identities on one connection" });
+    }
+    set.insert(topic);
+    serde_json::json!({ "type": "subscribed", "topics": ["messenger"] })
+}
+
+/// Resolve a conversation's participant ids (wallet UUIDs or signing keys) to
+/// signing public keys — the identity WS inboxes are keyed by. One wallet scan.
+fn messenger_participant_signing_keys(
+    node: &std::sync::Arc<crate::L1Node>,
+    conversation_id: &str,
+) -> Vec<String> {
+    let pids = node.get_conversation_participants(conversation_id);
+    if pids.is_empty() {
+        return vec![];
+    }
+    let wallets = node.list_wallets().unwrap_or_default();
+    let mut out: Vec<String> = Vec::with_capacity(pids.len());
+    for pid in pids {
+        let key = wallets.iter()
+            .find(|w| w.id == pid || w.signing_public_key == pid)
+            .map(|w| w.signing_public_key.clone())
+            .filter(|k| !k.is_empty())
+            .unwrap_or(pid);
+        if !out.contains(&key) {
+            out.push(key);
+        }
+    }
+    out
+}
+
 #[derive(Serialize)]
 struct StatsResponse {
     connected_peers: u32,
@@ -1568,6 +1723,14 @@ struct StatsResponse {
     /// Canonical ledger state root (Phase 2). Same across honest nodes at the
     /// same height — compare it across nodes to spot divergence.
     state_root: String,
+    /// Proposer selection Release 1 (read-only report): the compiled activation height, the
+    /// next height this node will judge, whether the rule applies at that height, and the
+    /// validator this node derives as designated proposer for it (from canonical validator
+    /// state after the current tip). Compare across nodes before/at activation.
+    proposer_selection_activation_height: Option<u64>,
+    designated_proposer_next_height: u64,
+    proposer_selection_active_next: bool,
+    designated_proposer_next: Option<String>,
 }
 
 async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, StatusCode> {
@@ -1591,8 +1754,13 @@ async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>,
         base_fee: node.get_base_fee(),
         total_fees_burned: node.get_total_fees_burned(),
         state_root: node.get_state_root().unwrap_or_default(),
+        proposer_selection_activation_height: crate::node::PROPOSER_SELECTION_ACTIVATION_HEIGHT,
+        designated_proposer_next_height: height + 1,
+        proposer_selection_active_next: crate::node::proposer_selection_active(height + 1),
+        designated_proposer_next: node.designated_proposer(height + 1).unwrap_or(None),
     }))
 }
+
 
 #[derive(Serialize)]
 struct BurnAddressResponse {
@@ -1621,27 +1789,6 @@ async fn get_burned_tokens(State(state): State<AppState>) -> Result<Json<BurnedT
         burned,
         total_xrge_burned: total_xrge,
     }))
-}
-
-async fn get_finality_proof(
-    State(state): State<AppState>,
-    Path(height): Path<u64>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let node = &state.node;
-    match node.generate_finality_proof(height) {
-        Ok(Some(proof)) => Ok(Json(serde_json::json!({
-            "success": true,
-            "proof": proof
-        }))),
-        Ok(None) => Ok(Json(serde_json::json!({
-            "success": false,
-            "error": format!("No finality proof available for height {}", height)
-        }))),
-        Err(e) => Ok(Json(serde_json::json!({
-            "success": false,
-            "error": e
-        }))),
-    }
 }
 
 async fn get_fee_info(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -2512,6 +2659,7 @@ async fn import_block(
         Ok(()) => {
             // Broadcast to WebSocket clients
             state.ws_broadcaster.broadcast_new_block(&block_clone);
+            state.ws_broadcaster.broadcast_contract_events(node.contract_events_in_block(&block_clone));
             // Index the block
             let _ = state.indexer.index_block(&block_clone);
             Ok(Json(ImportBlockResponse { success: true, error: None }))
@@ -2646,11 +2794,19 @@ async fn get_address_transactions(
     let node = &state.node;
     let limit_blocks = 500; // Scan recent blocks instead of entire chain
     let blocks = node.get_recent_blocks(limit_blocks).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Match on canonical rouge1 addresses: senders are recorded as public keys and
+    // recipients as either form, so comparing raw strings missed every outgoing tx when
+    // the caller asked by rouge1 address (and incoming ones addressed by pubkey).
+    let canon = |k: &str| -> String {
+        if quantum_vault_crypto::is_rouge_address(k) { k.to_string() }
+        else { quantum_vault_crypto::pub_key_to_address(k).unwrap_or_else(|_| k.to_string()) }
+    };
+    let me = canon(&public_key);
     let mut items: Vec<serde_json::Value> = Vec::new();
     for block in &blocks {
         for tx in &block.txs {
-            let is_sender = tx.from_pub_key == public_key;
-            let is_recipient = tx.payload.to_pub_key_hex.as_deref() == Some(&public_key);
+            let is_sender = tx.from_pub_key == public_key || canon(&tx.from_pub_key) == me;
+            let is_recipient = tx.payload.to_pub_key_hex.as_deref().map(|to| to == public_key || canon(to) == me).unwrap_or(false);
             if is_sender || is_recipient {
                 let tx_id = quantum_vault_crypto::bytes_to_hex(
                     &quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(tx)),
@@ -3286,12 +3442,33 @@ struct PoolEventsResponse {
     events: Vec<PoolEvent>,
 }
 
+/// Uncollected swap fees for one LP position (`owner` = public key or rouge1 address).
+async fn get_pool_earnings(
+    State(state): State<AppState>,
+    Path((pool_id, owner)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state.node.get_lp_earnings(&pool_id, &owner) {
+        Ok(Some(e)) => Ok(Json(serde_json::json!({ "success": true, "earnings": e }))),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+#[derive(Deserialize)]
+struct PoolEventsQuery {
+    limit: Option<usize>,
+}
+
+/// Most recent events first. `?limit=` (default 100, max 5000) lets wallets replay a pool's
+/// history, e.g. to work out an LP's uncollected fees.
 async fn get_pool_events(
     State(state): State<AppState>,
     Path(pool_id): Path<String>,
+    Query(q): Query<PoolEventsQuery>,
 ) -> Result<Json<PoolEventsResponse>, StatusCode> {
     let node = &state.node;
-    let events = node.get_pool_events(&pool_id, 100)
+    let limit = q.limit.unwrap_or(100).clamp(1, 5000);
+    let events = node.get_pool_events(&pool_id, limit)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(PoolEventsResponse { success: true, events }))
 }
@@ -4246,8 +4423,17 @@ async fn send_messenger_message(
         read_at: None,
         message_type: body.get("messageType").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
         spoiler: body.get("spoiler").and_then(|v| v.as_bool()).unwrap_or(false),
+        deleted_at: None,
     };
     let message = node.send_message(message).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    {
+        let keys = messenger_participant_signing_keys(&state.node, &message.conversation_id);
+        let sender_key = state.node.list_wallets().unwrap_or_default().into_iter()
+            .find(|w| w.id == message.sender_wallet_id || w.signing_public_key == message.sender_wallet_id)
+            .map(|w| w.signing_public_key)
+            .unwrap_or_else(|| message.sender_wallet_id.clone());
+        state.ws_broadcaster.broadcast_new_message(&message.conversation_id, &message.id, &message.created_at, &sender_key, keys);
+    }
     let recipients: Vec<String> = state.node.get_conversation_participants(&message.conversation_id)
         .into_iter().filter(|p| *p != message.sender_wallet_id).collect();
     state.push.notify_to(recipients, "New message", "You received a new encrypted message", serde_json::json!({ "type": "message", "conversationId": message.conversation_id }));
@@ -5063,9 +5249,11 @@ async fn get_conversations_signed(
         w.encryption_public_key.as_str(),
     ]).unwrap_or_default();
 
-    let conversations = state.node.list_conversations_with_activity(wallet_id, &extra_keys)
+    // `folder`: "inbox" (default) | "trash" (soft-deleted by me, still recoverable) | "all"
+    let folder = quantum_vault_storage::messenger_store::Folder::parse(body.payload.get("folder").and_then(|v| v.as_str()));
+    let conversations = state.node.list_conversations_with_activity_in(wallet_id, &extra_keys, folder)
         .map_err(|e| signed_internal(&e))?;
-    Ok(Json(serde_json::json!({ "success": true, "conversations": conversations })))
+    Ok(Json(serde_json::json!({ "success": true, "conversations": conversations, "folder": match folder { quantum_vault_storage::messenger_store::Folder::Trash => "trash", quantum_vault_storage::messenger_store::Folder::All => "all", _ => "inbox" } })))
 }
 
 async fn create_conversation_signed(
@@ -5094,9 +5282,10 @@ async fn create_conversation_signed(
 
     let name = p.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
     let is_group = p.get("isGroup").and_then(|v| v.as_bool()).unwrap_or(false);
-    let conversation = state.node.create_conversation(&wallet.id, participant_ids, name, is_group)
+    // 1:1 threads have a deterministic id and creation is an upsert (`existing: true` when the pair already has one)
+    let (conversation, existing) = state.node.create_or_get_conversation(&wallet.id, participant_ids, name, is_group)
         .map_err(|e| signed_internal(&e))?;
-    Ok(Json(serde_json::json!({ "success": true, "conversation": conversation })))
+    Ok(Json(serde_json::json!({ "success": true, "conversation": conversation, "conversationId": conversation.id, "existing": existing })))
 }
 
 /// Rename (or clear the name of) a conversation. Any existing participant may rename.
@@ -5253,8 +5442,14 @@ async fn send_message_signed(
         read_at: None,
         message_type: p.get("messageType").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
         spoiler: p.get("spoiler").and_then(|v| v.as_bool()).unwrap_or(false),
+        deleted_at: None,
     };
     let message = state.node.send_message(message).map_err(|e| signed_internal(&e))?;
+    // Real-time, private: only the participants' authenticated sockets receive this.
+    state.ws_broadcaster.broadcast_new_message(
+        &message.conversation_id, &message.id, &message.created_at, &authed_key,
+        messenger_participant_signing_keys(&state.node, &message.conversation_id),
+    );
     // Notify every other participant (recipient pubkeys == push-store keys). authed_key is the sender.
     let recipients: Vec<String> = state.node.get_conversation_participants(&message.conversation_id)
         .into_iter().filter(|p| p != &authed_key).collect();
@@ -5270,13 +5465,57 @@ async fn delete_conversation_signed(
     let p = &body.payload;
 
     let conversation_id = p.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default();
-    if !is_conversation_participant(&state.node, conversation_id, &authed_key) {
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key);
+    let wallet_id = wallet.as_ref().map(|w| w.id.clone()).unwrap_or_else(|| authed_key.clone());
+    let extra: Vec<&str> = wallet.as_ref().map(|w| vec![w.signing_public_key.as_str(), w.encryption_public_key.as_str()]).unwrap_or_default();
+    if !state.node.conversation_has_participant(conversation_id, &wallet_id, &extra).unwrap_or(false) {
         return Err(signed_err("Not a participant in this conversation"));
     }
-
-    state.node.delete_conversation(conversation_id)
+    // Soft delete for the CALLER only (recoverable via /conversations/restore for 30 days). `purge: true`
+    // skips the caller's retention window; the thread is hard-removed only once every participant deleted it.
+    let purge = p.get("purge").and_then(|v| v.as_bool()).unwrap_or(false);
+    let conv = state.node.soft_delete_conversation(conversation_id, &wallet_id, &extra, purge)
         .map_err(|e| signed_internal(&e))?;
-    Ok(Json(serde_json::json!({ "success": true })))
+    Ok(Json(serde_json::json!({ "success": true, "conversationId": conv.id, "softDeleted": true, "purge": purge, "recoverableUntil": if purge { None } else { conv.deleted_by.get(&state.node.messenger_canonical_participant(&wallet_id)).and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok()).map(|t| (t + chrono::Duration::seconds(quantum_vault_storage::messenger_store::SOFT_DELETE_RETENTION_SECS)).to_rfc3339()) } })))
+}
+
+/// Restore a conversation the caller soft-deleted (only the caller's view changes).
+async fn restore_conversation_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
+    let conversation_id = body.payload.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default();
+    if conversation_id.is_empty() { return Err(signed_bad("conversationId is required")); }
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key);
+    let wallet_id = wallet.as_ref().map(|w| w.id.clone()).unwrap_or_else(|| authed_key.clone());
+    let extra: Vec<&str> = wallet.as_ref().map(|w| vec![w.signing_public_key.as_str(), w.encryption_public_key.as_str()]).unwrap_or_default();
+    if !state.node.conversation_has_participant(conversation_id, &wallet_id, &extra).unwrap_or(false) {
+        return Err(signed_err("Not a participant in this conversation"));
+    }
+    let conv = state.node.restore_conversation(conversation_id, &wallet_id, &extra).map_err(|e| signed_bad(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "conversation": conv })))
+}
+
+/// Restore a message the caller (its sender) soft-deleted.
+async fn restore_message_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let authed_key = verify_signed_request(&body, &state.replay_nonces).await.map_err(|e| signed_err(&e))?;
+    let p = &body.payload;
+    let message_id = p.get("messageId").and_then(|v| v.as_str()).unwrap_or_default();
+    let conversation_id = p.get("conversationId").and_then(|v| v.as_str()).unwrap_or_default();
+    if message_id.is_empty() || conversation_id.is_empty() { return Err(signed_bad("conversationId and messageId are required")); }
+    let wallet = find_wallet_by_signing_key(&state.node, &authed_key).ok_or_else(|| signed_err("Wallet not registered"))?;
+    let msgs = state.node.list_messages_in_folder(conversation_id, quantum_vault_storage::messenger_store::Folder::Trash).map_err(|e| signed_internal(&e))?;
+    match msgs.iter().find(|m| m.id == message_id) {
+        Some(m) if m.sender_wallet_id == wallet.id => {}
+        Some(_) => return Err(signed_err("Only the sender can restore a message")),
+        None => return Err(signed_bad("Message is not in the trash of this conversation")),
+    }
+    let msg = state.node.restore_message(message_id).map_err(|e| signed_bad(&e))?;
+    Ok(Json(serde_json::json!({ "success": true, "message": msg })))
 }
 
 async fn delete_message_signed(
@@ -5303,7 +5542,7 @@ async fn delete_message_signed(
 
     state.node.delete_message(message_id)
         .map_err(|e| signed_internal(&e))?;
-    Ok(Json(serde_json::json!({ "success": true })))
+    Ok(Json(serde_json::json!({ "success": true, "softDeleted": true, "restoreEndpoint": "/api/v2/messenger/messages/restore" })))
 }
 
 async fn mark_message_read_signed(
@@ -5375,7 +5614,6 @@ async fn v2_transfer(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -5438,22 +5676,8 @@ async fn v2_transfer(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "transfer".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: state.node.get_next_nonce(&body.public_key),
-        payload: TxPayload {
-            to_pub_key_hex: Some(to.to_string()),
-            amount: Some(amount as u64),
-            token_name: Some(token.to_string()),
-            token_symbol: if token != "XRGE" { Some(token.to_string()) } else { None },
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("transfer", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -5471,7 +5695,7 @@ async fn v2_batch_submit(
     State(state): State<AppState>,
     Json(batch): Json<Vec<SignedTransactionRequest>>,
 ) -> Json<serde_json::Value> {
-    use quantum_vault_types::{TxPayload, TxV1};
+    use quantum_vault_types::TxV1;
 
     const MAX_BATCH: usize = 50;
     const VERIFY_CONCURRENCY: usize = 4;
@@ -5550,7 +5774,7 @@ async fn v2_batch_submit(
         let to = payload.get("to").and_then(|v| v.as_str()).unwrap_or_default();
         let amount = payload.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let token = payload.get("token").and_then(|v| v.as_str()).unwrap_or("XRGE");
-        let fee = 1.0_f64;
+        let _fee = 1.0_f64;
 
         if to.is_empty() || amount <= 0.0 || to == req.public_key {
             results[i] = serde_json::json!({"success": false, "error": "invalid transfer params"});
@@ -5564,22 +5788,8 @@ async fn v2_batch_submit(
             }
         }
 
-        let tx = TxV1 {
-            version: 1,
-            tx_type: "transfer".to_string(),
-            from_pub_key: req.public_key.clone(),
-            nonce: node.get_next_nonce(&req.public_key),
-            payload: TxPayload {
-                to_pub_key_hex: Some(to.to_string()),
-                amount: Some(amount as u64),
-                token_name: Some(token.to_string()),
-                token_symbol: if token != "XRGE" { Some(token.to_string()) } else { None },
-                ..Default::default()
-            },
-            fee,
-            sig: req.signature.clone(),
-            signed_payload: Some(signed_payload),
-        };
+        // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("transfer", req.public_key.clone(), node.get_next_nonce(&req.public_key), &req.payload, req.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => { results[i] = serde_json::json!({"success": false, "error": e}); continue; } };
 
         match node.add_tx_to_mempool_verified(tx.clone()) {
             Ok(()) => {
@@ -5620,7 +5830,6 @@ async fn v2_create_token(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -5631,9 +5840,9 @@ async fn v2_create_token(
     let token_symbol = payload.get("token_symbol").and_then(|v| v.as_str()).unwrap_or_default();
     let initial_supply = payload.get("initial_supply").and_then(|v| v.as_u64()).unwrap_or(0);
     let token_image = payload.get("image").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let token_description = payload.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let mintable = payload.get("mintable").and_then(|v| v.as_bool()).unwrap_or(false);
-    let max_supply = payload.get("max_supply").and_then(|v| v.as_u64());
+    let _token_description = payload.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let _mintable = payload.get("mintable").and_then(|v| v.as_bool()).unwrap_or(false);
+    let _max_supply = payload.get("max_supply").and_then(|v| v.as_u64());
     let fee = 100.0_f64; // Server-enforced token creation fee
 
     if token_name.is_empty() || token_symbol.is_empty() {
@@ -5683,24 +5892,8 @@ async fn v2_create_token(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "create_token".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: state.node.get_next_nonce(&body.public_key),
-        payload: TxPayload {
-            token_name: Some(token_name.to_string()),
-            token_symbol: Some(token_symbol.to_string()),
-            token_decimals: Some(18),
-            token_total_supply: Some(initial_supply),
-            metadata_image: token_image,
-            metadata_description: token_description,
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("create_token", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -5787,7 +5980,6 @@ async fn v2_token_approve(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let node = &state.node;
@@ -5807,21 +5999,8 @@ async fn v2_token_approve(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE for fee: {:.4} < {:.4}", bal, fee)}))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "approve".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            spender_pub_key: Some(spender.to_string()),
-            token_symbol: Some(token_symbol.to_string()),
-            allowance_amount: Some(amount),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("approve", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -5842,7 +6021,6 @@ async fn v2_token_transfer_from(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     let node = &state.node;
@@ -5873,22 +6051,8 @@ async fn v2_token_transfer_from(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE for fee: {:.4} < {:.4}", bal, fee)}))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "transfer_from".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            owner_pub_key: Some(owner.to_string()),
-            to_pub_key_hex: Some(to.to_string()),
-            token_symbol: Some(token_symbol.to_string()),
-            amount: Some(amount),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("transfer_from", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -5971,7 +6135,6 @@ async fn v2_create_pool(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -6037,23 +6200,8 @@ async fn v2_create_pool(
         }
     }
     
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "create_pool".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            pool_id: Some(pool_id.clone()),
-            token_a_symbol: Some(token_a.to_string()),
-            token_b_symbol: Some(token_b.to_string()),
-            amount_a: Some(amount_a),
-            amount_b: Some(amount_b),
-            ..Default::default()
-        },
-        fee: pool_fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("create_pool", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -6072,7 +6220,6 @@ async fn v2_add_liquidity(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -6125,21 +6272,8 @@ async fn v2_add_liquidity(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "liquidity amounts must be greater than zero"}))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "add_liquidity".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            pool_id: Some(pool_id.to_string()),
-            amount_a: Some(amount_a),
-            amount_b: Some(amount_b),
-            ..Default::default()
-        },
-        fee: liq_fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("add_liquidity", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -6157,7 +6291,6 @@ async fn v2_remove_liquidity(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -6198,20 +6331,8 @@ async fn v2_remove_liquidity(
         }))));
     }
     
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "remove_liquidity".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            pool_id: Some(pool_id.to_string()),
-            lp_amount: Some(lp_amount),
-            ..Default::default()
-        },
-        fee: remove_fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("remove_liquidity", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -6229,7 +6350,6 @@ async fn v2_execute_swap(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -6239,7 +6359,7 @@ async fn v2_execute_swap(
     let token_in = payload.get("token_in").and_then(|v| v.as_str()).unwrap_or_default();
     let token_out = payload.get("token_out").and_then(|v| v.as_str()).unwrap_or_default();
     let amount_in = payload.get("amount_in").and_then(|v| v.as_u64()).unwrap_or(0);
-    let min_amount_out = payload.get("min_amount_out").and_then(|v| v.as_u64()).unwrap_or(0);
+    let _min_amount_out = payload.get("min_amount_out").and_then(|v| v.as_u64()).unwrap_or(0);
     
     let swap_fee = 1.0_f64;
 
@@ -6280,26 +6400,10 @@ async fn v2_execute_swap(
         }
     }
 
-    let pool_id = LiquidityPool::make_pool_id(token_in, token_out);
+    let _pool_id = LiquidityPool::make_pool_id(token_in, token_out);
     
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "swap".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            amount: Some(amount_in),
-            pool_id: Some(pool_id),
-            token_a_symbol: Some(token_in.to_string()),
-            token_b_symbol: Some(token_out.to_string()),
-            amount_a: Some(amount_in),
-            min_amount_out: Some(min_amount_out),
-            ..Default::default()
-        },
-        fee: swap_fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("swap", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -6317,7 +6421,6 @@ async fn v2_stake(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -6340,19 +6443,8 @@ async fn v2_stake(
         }))));
     }
     
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "stake".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            amount: Some(amount),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("stake", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -6370,7 +6462,6 @@ async fn v2_unstake(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
     
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
     
@@ -6407,19 +6498,8 @@ async fn v2_unstake(
         }))));
     }
     
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "unstake".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            amount: Some(amount),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("unstake", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -6487,28 +6567,27 @@ async fn v2_nft_create_collection(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let symbol = p.get("symbol").and_then(|v| v.as_str()).unwrap_or_default();
-    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
-    let description = p.get("description").and_then(|v| v.as_str()).map(String::from);
-    let image = p.get("image").and_then(|v| v.as_str()).map(String::from);
-    let max_supply = p.get("maxSupply").and_then(|v| v.as_u64());
-    let royalty_bps = p.get("royaltyBps").and_then(|v| v.as_u64()).map(|v| v as u16);
-    let royalty_recipient = p
+    let _name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+    let _description = p.get("description").and_then(|v| v.as_str()).map(String::from);
+    let _image = p.get("image").and_then(|v| v.as_str()).map(String::from);
+    let _max_supply = p.get("maxSupply").and_then(|v| v.as_u64());
+    let _royalty_bps = p.get("royaltyBps").and_then(|v| v.as_u64()).map(|v| v as u16);
+    let _royalty_recipient = p
         .get("royaltyRecipient")
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(String::from);
-    let public_mint = p.get("publicMint").and_then(|v| v.as_bool());
-    let mint_price = p.get("mintPrice").and_then(|v| v.as_f64());
-    let token_gate_symbol = p.get("tokenGateSymbol").and_then(|v| v.as_str()).map(String::from);
-    let token_gate_amount = p.get("tokenGateAmount").and_then(|v| v.as_f64());
-    let discount_pct = p.get("discountPct").and_then(|v| v.as_u64()).map(|v| v as u32);
+    let _public_mint = p.get("publicMint").and_then(|v| v.as_bool());
+    let _mint_price = p.get("mintPrice").and_then(|v| v.as_f64());
+    let _token_gate_symbol = p.get("tokenGateSymbol").and_then(|v| v.as_str()).map(String::from);
+    let _token_gate_amount = p.get("tokenGateAmount").and_then(|v| v.as_f64());
+    let _discount_pct = p.get("discountPct").and_then(|v| v.as_u64()).map(|v| v as u32);
 
     let nft_fee = 50.0_f64;
     let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
@@ -6516,30 +6595,8 @@ async fn v2_nft_create_collection(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE balance for collection fee: have {:.4}, need {:.4}", bal, nft_fee)}))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "nft_create_collection".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            nft_collection_symbol: Some(symbol.to_string()),
-            nft_collection_name: Some(name.to_string()),
-            nft_description: description,
-            nft_image: image,
-            nft_max_supply: max_supply,
-            nft_royalty_bps: royalty_bps,
-            nft_royalty_recipient: royalty_recipient,
-            nft_public_mint: public_mint,
-            nft_mint_price: mint_price,
-            nft_token_gate_symbol: token_gate_symbol,
-            nft_token_gate_amount: token_gate_amount,
-            nft_discount_pct: discount_pct,
-            ..Default::default()
-        },
-        fee: nft_fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("nft_create_collection", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let creator_short = if body.public_key.len() >= 16 { &body.public_key[..16] } else { &body.public_key };
     let collection_id = format!("col:{}:{}", creator_short, symbol.to_uppercase());
@@ -6561,15 +6618,14 @@ async fn v2_nft_mint(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
-    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
-    let metadata_uri = p.get("metadataUri").and_then(|v| v.as_str()).map(String::from);
-    let attributes = p.get("attributes").cloned();
+    let _name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+    let _metadata_uri = p.get("metadataUri").and_then(|v| v.as_str()).map(String::from);
+    let _attributes = p.get("attributes").cloned();
 
     let mint_fee = 5.0_f64;
     let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
@@ -6613,22 +6669,8 @@ async fn v2_nft_mint(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": format!("insufficient XRGE: have {:.4}, need {:.4} (fee {:.4} + mint price {:.4})", bal, total_needed, mint_fee, mint_price_charge)}))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "nft_mint".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            nft_collection_id: Some(collection_id.to_string()),
-            nft_token_name: Some(name.to_string()),
-            nft_metadata_uri: metadata_uri,
-            nft_attributes: attributes,
-            ..Default::default()
-        },
-        fee: mint_fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("nft_mint", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     state.node.add_tx_to_mempool_verified(tx)
@@ -6646,7 +6688,6 @@ async fn v2_nft_batch_mint(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
@@ -6684,29 +6725,15 @@ async fn v2_nft_batch_mint(
         return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"success": false, "error": "collection not found"}))));
     }
 
-    let uris: Option<Vec<String>> = p.get("uris")
+    let _uris: Option<Vec<String>> = p.get("uris")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
-    let attributes: Option<Vec<serde_json::Value>> = p.get("attributes")
+    let _attributes: Option<Vec<serde_json::Value>> = p.get("attributes")
         .and_then(|v| v.as_array())
         .map(|arr| arr.to_vec());
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "nft_batch_mint".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            nft_collection_id: Some(collection_id.to_string()),
-            nft_batch_names: Some(names),
-            nft_batch_uris: uris,
-            nft_batch_attributes: attributes,
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("nft_batch_mint", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     state.node.add_tx_to_mempool_verified(tx)
@@ -6724,14 +6751,13 @@ async fn v2_nft_transfer(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
     let token_id = p.get("tokenId").and_then(|v| v.as_u64()).unwrap_or(0);
-    let to = p.get("to").and_then(|v| v.as_str()).unwrap_or_default();
+    let _to = p.get("to").and_then(|v| v.as_str()).unwrap_or_default();
     let sale_price = p.get("salePrice").and_then(|v| v.as_u64());
 
     let transfer_fee = 1.0_f64;
@@ -6768,22 +6794,8 @@ async fn v2_nft_transfer(
         }
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "nft_transfer".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            nft_collection_id: Some(collection_id.to_string()),
-            nft_token_id: Some(token_id),
-            to_pub_key_hex: Some(to.to_string()),
-            amount: sale_price,
-            ..Default::default()
-        },
-        fee: transfer_fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("nft_transfer", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     state.node.add_tx_to_mempool_verified(tx)
@@ -6801,7 +6813,6 @@ async fn v2_nft_burn(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
@@ -6827,20 +6838,8 @@ async fn v2_nft_burn(
         }
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "nft_burn".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            nft_collection_id: Some(collection_id.to_string()),
-            nft_token_id: Some(token_id),
-            ..Default::default()
-        },
-        fee: 0.1,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("nft_burn", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     state.node.add_tx_to_mempool_verified(tx)
@@ -6858,14 +6857,13 @@ async fn v2_nft_lock(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
     let token_id = p.get("tokenId").and_then(|v| v.as_u64()).unwrap_or(0);
-    let locked = p.get("locked").and_then(|v| v.as_bool()).unwrap_or(true);
+    let _locked = p.get("locked").and_then(|v| v.as_bool()).unwrap_or(true);
 
     let lock_fee = 0.1_f64;
     let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
@@ -6885,21 +6883,8 @@ async fn v2_nft_lock(
         }
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "nft_lock".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            nft_collection_id: Some(collection_id.to_string()),
-            nft_token_id: Some(token_id),
-            nft_locked: Some(locked),
-            ..Default::default()
-        },
-        fee: 0.1,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("nft_lock", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     state.node.add_tx_to_mempool_verified(tx)
@@ -6917,13 +6902,12 @@ async fn v2_nft_freeze_collection(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
     let p = &body.payload;
     let collection_id = p.get("collectionId").and_then(|v| v.as_str()).unwrap_or_default();
-    let frozen = p.get("frozen").and_then(|v| v.as_bool()).unwrap_or(true);
+    let _frozen = p.get("frozen").and_then(|v| v.as_bool()).unwrap_or(true);
 
     let freeze_fee = 0.1_f64;
     let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
@@ -6943,20 +6927,8 @@ async fn v2_nft_freeze_collection(
         }
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "nft_freeze_collection".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: chrono::Utc::now().timestamp_millis() as u64,
-        payload: TxPayload {
-            nft_collection_id: Some(collection_id.to_string()),
-            nft_frozen: Some(frozen),
-            ..Default::default()
-        },
-        fee: 0.1,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("nft_freeze_collection", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     state.node.add_tx_to_mempool_verified(tx)
@@ -7724,23 +7696,54 @@ async fn process_bridge_reclaim(
             }
             (amount, "XRGE", normalize_recipient(&dep.rougechain_pubkey))
         }
-        "USDC" => {
-            return serde_json::json!({ "success": false, "error": "USDC reclaim is temporarily unavailable during the security upgrade" });
+        "ETH" | "USDC" => {
+            // RougeBridge deposit auto-claim (dedicated verifier — see rouge_bridge_deposit.rs). The
+            // asset, amount AND recipient come exclusively from the BridgeDepositETH/ERC20 event
+            // emitted by the CONFIGURED RougeBridge in a successful receipt; a plain value transfer
+            // (no event) is still refused, and nothing caller-supplied is used.
+            let asset = if token == "ETH" { rouge_bridge_deposit::DepositAsset::Eth } else { rouge_bridge_deposit::DepositAsset::Usdc };
+            let bridge = match rouge_bridge_address() {
+                Some(b) => b,
+                None => return serde_json::json!({ "success": false, "error": "RougeBridge address not configured — refusing to credit" }),
+            };
+            let usdc = bridge_usdc_address().unwrap_or_default();
+            // Bind the credit to the configured EVM chain using the DAEMON's own RPC (independent of
+            // the relayer's preflight): RPC failure / malformed / mismatch ⇒ no credit.
+            let expected_chain = match rouge_bridge_deposit::expected_bridge_chain_id(std::env::var("QV_BRIDGE_CHAIN_ID").ok().as_deref()) {
+                Ok(c) => c,
+                Err(e) => return serde_json::json!({ "success": false, "error": e }),
+            };
+            let chain_resp: Result<serde_json::Value, String> = match client.post(rpc_url)
+                .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1})).send().await {
+                Ok(r) => r.json::<serde_json::Value>().await.map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            };
+            if let Err(e) = rouge_bridge_deposit::require_chain_id(chain_resp.as_ref().map_err(|e| e.as_str()), expected_chain) {
+                return serde_json::json!({ "success": false, "error": e });
+            }
+            let receipt: serde_json::Value = match client.post(rpc_url)
+                .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":[tx_hash_hex],"id":1}))
+                .send().await {
+                Ok(r) => match r.json::<serde_json::Value>().await {
+                    Ok(v) => v.get("result").cloned().unwrap_or(serde_json::Value::Null),
+                    Err(e) => return serde_json::json!({ "success": false, "error": format!("bad RPC response: {} — refusing to credit", e) }),
+                },
+                Err(e) => return serde_json::json!({ "success": false, "error": format!("RPC error: {} — refusing to credit", e) }),
+            };
+            let dep = match rouge_bridge_deposit::verify_rouge_bridge_deposit(&receipt, asset, &bridge, &usdc) {
+                Ok(d) => d,
+                Err(e) => return serde_json::json!({ "success": false, "error": format!("No verifiable RougeBridge deposit: {}", e) }),
+            };
+            // Fail-closed confirmation depth (unknown head ⇒ no credit).
+            if let Err(e) = rouge_bridge_deposit::require_confirmations(dep.block, evm_latest_block(&client, rpc_url).await, bridge_min_confirmations()) {
+                return serde_json::json!({ "success": false, "error": e });
+            }
+            (dep.l1_units, dep.mint_symbol, normalize_recipient(&dep.rougechain_pubkey))
         }
-        _ => {
-            // ETH auto-claim/reclaim is DISABLED: a plain value transfer to custody carries no
-            // on-chain recipient, so this path cannot bind the mint destination. qETH deposits
-            // must use the signed /api/bridge/claim endpoint (recipient bound by the EVM signature).
-            return serde_json::json!({ "success": false, "error": "ETH auto-claim is disabled — use the signed /api/bridge/claim endpoint" });
+        other => {
+            return serde_json::json!({ "success": false, "error": format!("unsupported deposit token {}", other) });
         }
     };
-
-    // SECURITY: atomically reserve before minting (release on failure so a legit retry works).
-    match state.bridge_claim_store.insert_if_absent(claim_key.clone()).await {
-        Ok(true) => {}
-        Ok(false) => return serde_json::json!({ "success": false, "error": "Transaction already claimed" }),
-        Err(e) => return serde_json::json!({ "success": false, "error": format!("Failed to persist claim: {}", e) }),
-    }
 
     if !requested_recipient.is_empty() && requested_recipient != bound_recipient {
         eprintln!("[bridge-reclaim] request recipient {} != on-chain recipient {} — using on-chain",
@@ -7749,15 +7752,13 @@ async fn process_bridge_reclaim(
     eprintln!("[bridge-reclaim] Minting tx {} -> {} {} for {}", tx_hash_hex, amount_units, mint_symbol, &bound_recipient[..20.min(bound_recipient.len())]);
     use quantum_vault_crypto::{bytes_to_hex, sha256};
     use quantum_vault_types::encode_tx_v1;
-    match state.node.submit_bridge_mint_tx(&bound_recipient, amount_units, mint_symbol) {
+    // SECURITY: atomically reserve the Base tx BEFORE minting (released only if the mint fails).
+    match rouge_bridge_deposit::reserve_then_mint(&state.bridge_claim_store, &claim_key, || state.node.submit_bridge_mint_tx(&bound_recipient, amount_units, mint_symbol)).await {
         Ok(tx) => {
             let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
             serde_json::json!({ "success": true, "txId": id, "amount": amount_units, "token": mint_symbol })
         }
-        Err(e) => {
-            let _ = state.bridge_claim_store.remove(&claim_key).await;
-            serde_json::json!({ "success": false, "error": e })
-        }
+        Err(e) => serde_json::json!({ "success": false, "error": e }),
     }
 }
 
@@ -7786,44 +7787,14 @@ async fn bridge_withdraw(
     State(state): State<AppState>,
     Json(body): Json<BridgeWithdrawRequest>,
 ) -> Result<Json<BridgeWithdrawResponse>, (StatusCode, Json<BridgeWithdrawResponse>)> {
-    // Which token is being withdrawn. qBTC withdrawals are gated on the BTC bridge being
-    // configured (QV_BRIDGE_BTC_CUSTODY); every other token on the EVM (Base) custody address.
-    // This lets a node offer BTC bridging without the EVM bridge enabled, and vice versa —
-    // previously a qBTC withdrawal was wrongly rejected whenever the EVM custody was unset.
-    let token_symbol = body.payload.as_ref()
-        .and_then(|p| p.get("tokenSymbol"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("qETH")
-        .to_string();
-    let is_qbtc = token_symbol.eq_ignore_ascii_case("qBTC");
-    let bridge_ready = if is_qbtc {
-        bridge_btc::btc_custody_address().is_some()
-    } else {
-        state.bridge_custody_address.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
+    use quantum_vault_bridge_exec::{
+        authorize_bridge_withdraw, Endpoint, PayoutRoute, SignedWithdrawIntent, TopLevelCompat,
     };
-    if !bridge_ready {
-        return Ok(Json(BridgeWithdrawResponse {
-            success: false,
-            tx_id: None,
-            error: Some(if is_qbtc {
-                "BTC bridge is not enabled (QV_BRIDGE_BTC_CUSTODY not set)".to_string()
-            } else {
-                "Bridge is not enabled (QV_BRIDGE_CUSTODY_ADDRESS not set)".to_string()
-            }),
-        }));
-    }
-    if body.amount_units == 0 {
-        return Ok(Json(BridgeWithdrawResponse {
-            success: false,
-            tx_id: None,
-            error: Some("Amount must be greater than 0".to_string()),
-        }));
-    }
-    if let Err(e) = check_withdraw_guardrails(body.amount_units) {
-        return Ok(Json(BridgeWithdrawResponse { success: false, tx_id: None, error: Some(e) }));
-    }
+    let fail = |msg: String| Ok(Json(BridgeWithdrawResponse { success: false, tx_id: None, error: Some(msg) }));
 
-    // Prefer signed payload (client-side signing) over raw private key
+    // R1C: the VERIFIED signed payload is the sole authority for every security-relevant
+    // withdrawal value. Top-level `amountUnits` / `evmAddress` / `fee` are legacy compatibility
+    // copies that must EQUAL the signed values; they never override them.
     let tx_result = if let (Some(signature), Some(payload)) = (&body.signature, &body.payload) {
         let signed_req = SignedTransactionRequest {
             payload: payload.clone(),
@@ -7832,20 +7803,75 @@ async fn bridge_withdraw(
             payload_bytes_hex: None,
         };
         if let Err(e) = verify_signed_tx(&signed_req).await {
-            return Ok(Json(BridgeWithdrawResponse {
-                success: false,
-                tx_id: None,
-                error: Some(format!("Signature verification failed: {}", e)),
-            }));
+            return fail(format!("Signature verification failed: {}", e));
         }
+        // Mandatory signer binding (verify_signed_tx only checks `from` when present).
+        if payload.get("from").and_then(|v| v.as_str()) != Some(body.from_public_key.as_str()) {
+            return fail("signed payload 'from' must equal the authenticated public key".to_string());
+        }
+        // Durable account nonce if the client signed one (no-op otherwise; the persistent
+        // signature replay guard inside verify_signed_tx always applies).
+        if let Err(e) = check_signed_nonce(&state.node, &body.from_public_key, payload) {
+            return fail(e);
+        }
+        let intent = SignedWithdrawIntent {
+            op_type: payload.get("type").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            amount: payload.get("amount").and_then(|v| v.as_u64()),
+            destination: payload.get("evmAddress").and_then(|v| v.as_str()).map(str::to_string),
+            fee: payload.get("fee").and_then(|v| v.as_f64()),
+            token_symbol: payload.get("tokenSymbol").and_then(|v| v.as_str()).map(str::to_string),
+        };
+        let compat = TopLevelCompat {
+            amount: Some(body.amount_units),
+            destination: Some(body.evm_address.clone()),
+            fee: body.fee,
+        };
+        // R1B admission allowlist (qETH/qUSDC/qBTC; XRGE → its own endpoint; else rejected),
+        // R1C value binding, R1D fee policy (exactly 0.1 XRGE) + zero-amount/blank-destination.
+        let auth = match authorize_bridge_withdraw(Endpoint::Generic, &intent, &compat) {
+            Ok(a) => a,
+            Err(e) => return fail(format!("signed-intent rejected: {:?}", e)),
+        };
+        // Bridge readiness is keyed on the AUTHORIZED route, not a caller-chosen string.
+        let bridge_ready = match auth.route {
+            PayoutRoute::Btc => bridge_btc::btc_custody_address().is_some(),
+            _ => state.bridge_custody_address.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
+        };
+        if !bridge_ready {
+            return fail(if auth.route == PayoutRoute::Btc {
+                "BTC bridge is not enabled (QV_BRIDGE_BTC_CUSTODY not set)".to_string()
+            } else {
+                "Bridge is not enabled (QV_BRIDGE_CUSTODY_ADDRESS not set)".to_string()
+            });
+        }
+        if let Err(e) = check_withdraw_guardrails(auth.amount) {
+            return fail(e);
+        }
+        // The node-cosigned TxV1 is built ONLY from authorized (signed + canonicalized) values.
+        // Token-specific destination FORMAT validation (EVM vs Bitcoin) happens inside.
         state.node.submit_bridge_withdraw_tx_signed(
             &body.from_public_key,
-            body.amount_units,
-            &body.evm_address,
-            body.fee,
-            &token_symbol,
+            auth.amount,
+            &auth.destination,
+            Some(auth.fee),
+            &auth.canonical_token,
         )
     } else if let Some(ref private_key) = body.from_private_key {
+        // R1C-(8): deprecated raw-private-key path — default OFF. It is qETH-only by
+        // construction (submit_bridge_withdraw_tx hard-codes qETH) and still subject to the
+        // same admission checks; it can never reach qUSDC/qBTC/XRGE.
+        if std::env::var("QV_BRIDGE_ALLOW_RAW_KEY").map(|v| v == "true").unwrap_or(false) == false {
+            return fail("raw-private-key bridge withdrawal is disabled; use the signed path".to_string());
+        }
+        if !state.bridge_custody_address.as_ref().map(|s| !s.is_empty()).unwrap_or(false) {
+            return fail("Bridge is not enabled (QV_BRIDGE_CUSTODY_ADDRESS not set)".to_string());
+        }
+        if body.amount_units == 0 {
+            return fail("Amount must be greater than 0".to_string());
+        }
+        if let Err(e) = check_withdraw_guardrails(body.amount_units) {
+            return fail(e);
+        }
         state.node.submit_bridge_withdraw_tx(
             private_key,
             &body.from_public_key,
@@ -7854,11 +7880,7 @@ async fn bridge_withdraw(
             body.fee,
         )
     } else {
-        return Ok(Json(BridgeWithdrawResponse {
-            success: false,
-            tx_id: None,
-            error: Some("Either signature+payload or fromPrivateKey is required".to_string()),
-        }));
+        return fail("Either signature+payload or fromPrivateKey is required".to_string());
     };
 
     match tx_result {
@@ -7915,15 +7937,40 @@ fn is_xrge_withdrawal(w: &PendingWithdrawal) -> bool {
     w.token_symbol.eq_ignore_ascii_case("XRGE") || w.tx_id.starts_with("xrge:")
 }
 
-async fn bridge_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdrawalsResponse> {
-    let list = state.bridge_withdraw_store.list_pending().unwrap_or_default();
-    Json(BridgeWithdrawalsResponse {
+/// R1B: positive routing helpers for the generic (Base EVM) relayer list. There is NO
+/// catch-all: a record is served to the EVM relayer only if it is explicitly qETH or qUSDC.
+fn is_eth_withdrawal(w: &PendingWithdrawal) -> bool {
+    w.token_symbol.eq_ignore_ascii_case("qETH")
+}
+fn is_usdc_withdrawal(w: &PendingWithdrawal) -> bool {
+    w.token_symbol.eq_ignore_ascii_case("qUSDC")
+}
+
+/// R1 derived-state health for the relayer: `degraded == true` means at least one payout
+/// record for an ACCEPTED block could not be persisted; every relayer list is fail-closed
+/// (HTTP 503) until `rebuild_bridge_withdraw_store` succeeds (automatic on restart).
+async fn bridge_health(State(state): State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
+    let degraded = state.node.bridge_store_degraded();
+    let body = serde_json::json!({
+        "degraded": degraded,
+        "failed_tx_ids": state.node.bridge_store_failed_ids(),
+        "pending": state.bridge_withdraw_store.list_pending().map(|v| v.len()).unwrap_or(0),
+    });
+    (if degraded { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK }, Json(body))
+}
+
+async fn bridge_withdrawals(State(state): State<AppState>) -> Result<Json<BridgeWithdrawalsResponse>, (StatusCode, Json<serde_json::Value>)> {
+    // Fail closed while derived bridge state is degraded — the relayer must get NO list.
+    let list = state.node.relayer_pending_withdrawals()
+        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({ "error": e, "degraded": true }))))?;
+    Ok(Json(BridgeWithdrawalsResponse {
         withdrawals: list
             .into_iter()
-            // The ETH relayer must not pick up XRGE or qBTC withdrawals — those are served by
-            // /api/bridge/xrge/withdrawals and /api/bridge/btc/withdrawals and paid on their
-            // own chains. Paying a Bitcoin withdrawal as native ETH would be catastrophic.
-            .filter(|w| !is_xrge_withdrawal(w) && !is_btc_withdrawal(w))
+            // R1B: the generic EVM list exposes ONLY explicitly supported EVM assets (qETH,
+            // qUSDC) — never "anything that isn't XRGE/qBTC". XRGE and qBTC keep their
+            // dedicated lists; an unsupported/custom symbol appears on NO relayer list.
+            // `tokenSymbol` is included in every item so the relayer routes on it.
+            .filter(|w| is_eth_withdrawal(w) || is_usdc_withdrawal(w))
             .map(|w| BridgeWithdrawalItem {
                 tx_id: w.tx_id,
                 evm_address: w.evm_address,
@@ -7936,7 +7983,7 @@ async fn bridge_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdra
                 last_error: w.last_error,
             })
             .collect(),
-    })
+    }))
 }
 
 #[derive(Serialize)]
@@ -7957,66 +8004,149 @@ fn payout_hash_from_body(body: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Verify a Base *native ETH* payout before a qETH withdrawal is marked fulfilled: the tx
-/// `from` must be custody, `to` the recipient, `value` at least what is owed, status success,
-/// with enough confirmations. Never trust the relayer's "done" without the on-chain receipt.
-async fn verify_native_eth_payout(
+/// R1D: the configured RougeBridge contract on Base. From `QV_ROUGE_BRIDGE_ADDRESS`, else the
+/// relayer's `ROUGE_BRIDGE_ADDRESS` (the node service shares that env file). `None` ⇒ qETH/
+/// qUSDC payouts cannot be verified and fulfillment FAILS CLOSED.
+fn rouge_bridge_address() -> Option<String> {
+    for key in ["QV_ROUGE_BRIDGE_ADDRESS", "ROUGE_BRIDGE_ADDRESS"] {
+        if let Ok(a) = std::env::var(key) {
+            let a = a.trim().to_lowercase();
+            if a.len() == 42 && a.starts_with("0x") && a[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+                return Some(a);
+            }
+        }
+    }
+    None
+}
+
+/// Event topic0 selectors for the RougeBridge release events (Ethereum keccak256 of the
+/// canonical signature). Pinned by `bridge_release_topics_match_solidity` in the tests.
+fn topic_bridge_release_eth() -> String {
+    format!("0x{}", quantum_vault_bridge_exec::bytes_to_hex(
+        &quantum_vault_bridge_exec::keccak256(b"BridgeReleaseETH(address,uint256,bytes32)")))
+}
+fn topic_bridge_release_erc20() -> String {
+    format!("0x{}", quantum_vault_bridge_exec::bytes_to_hex(
+        &quantum_vault_bridge_exec::keccak256(b"BridgeReleaseERC20(address,address,uint256,bytes32)")))
+}
+
+/// A decoded RougeBridge release event found in a receipt.
+struct RougeBridgeRelease {
+    recipient: String,      // lowercase 0x…
+    token: Option<String>,  // None for BridgeReleaseETH; Some(lowercase token) for ERC20
+    amount: u128,
+    l1_tx_id: String,       // lowercase 0x + 64 hex
+}
+
+/// Decode `BridgeReleaseETH` / `BridgeReleaseERC20` logs emitted BY `rouge_bridge` from a
+/// receipt's `logs` array. Layouts (RougeBridge.sol): ETH = topics[recipient], data =
+/// amount ‖ l1TxId; ERC20 = topics[recipient, token], data = amount ‖ l1TxId.
+fn decode_rouge_bridge_releases(logs: &[serde_json::Value], rouge_bridge: &str) -> Vec<RougeBridgeRelease> {
+    let t_eth = topic_bridge_release_eth();
+    let t_erc = topic_bridge_release_erc20();
+    let mut out = Vec::new();
+    for log in logs {
+        let emitter = log.get("address").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        if emitter != rouge_bridge { continue; }
+        let topics = match log.get("topics").and_then(|v| v.as_array()) { Some(t) => t, None => continue };
+        let t0 = topics.first().and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        let data = log.get("data").and_then(|v| v.as_str()).unwrap_or("0x").trim_start_matches("0x").to_lowercase();
+        if data.len() < 128 { continue; }
+        // uint256 word; a value above u128::MAX cannot be a real payout and is skipped.
+        let amount = match u128::from_str_radix(&data[..64], 16) { Ok(a) => a, Err(_) => continue };
+        let l1_tx_id = format!("0x{}", &data[64..128]);
+        if t0 == t_eth && topics.len() >= 2 {
+            out.push(RougeBridgeRelease {
+                recipient: topic_to_address(topics[1].as_str().unwrap_or("")),
+                token: None, amount, l1_tx_id,
+            });
+        } else if t0 == t_erc && topics.len() >= 3 {
+            out.push(RougeBridgeRelease {
+                recipient: topic_to_address(topics[1].as_str().unwrap_or("")),
+                token: Some(topic_to_address(topics[2].as_str().unwrap_or(""))), amount, l1_tx_id,
+            });
+        }
+    }
+    out
+}
+
+/// R1D §6/§7: verify a RougeBridge release payout by its EVENT, not by `tx.to == recipient`
+/// (the tx is sent to the contract). Requires: tx.to == configured RougeBridge; receipt success;
+/// a `BridgeReleaseETH` (qETH) or `BridgeReleaseERC20` with token == USDC (qUSDC) emitted BY
+/// the RougeBridge with recipient == expected, amount >= owed, l1TxId == canonical id; for
+/// qUSDC additionally the USDC `Transfer(from = RougeBridge → recipient, amount >= owed)`;
+/// and confirmation depth (fail closed if the head can't be read).
+async fn verify_rouge_bridge_release(
     client: &reqwest::Client,
     rpc_url: &str,
     tx_hash: &str,
-    from_custody: &str,
-    to_addr: &str,
-    min_wei: u128,
+    rouge_bridge: &str,
+    expected_recipient: &str,
+    expected_token: Option<&str>, // None = native ETH; Some(usdc) = ERC20
+    min_amount: u128,
+    canonical_l1_tx_id: &str,
 ) -> Result<(), String> {
     let tx_hash = if tx_hash.starts_with("0x") { tx_hash.to_string() } else { format!("0x{}", tx_hash) };
-    let from_custody = from_custody.to_lowercase();
-    let to_addr = to_addr.to_lowercase();
+    let rouge_bridge = rouge_bridge.to_lowercase();
+    let expected_recipient = expected_recipient.to_lowercase();
+    let canonical_l1_tx_id = canonical_l1_tx_id.to_lowercase();
 
-    let tx: serde_json::Value = client
-        .post(rpc_url)
+    // 1. The Base transaction destination must be the configured RougeBridge.
+    let tx: serde_json::Value = client.post(rpc_url)
         .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionByHash","params":[tx_hash],"id":1}))
         .send().await.map_err(|e| format!("RPC error: {}", e))?
         .json().await.map_err(|e| format!("bad RPC response: {}", e))?;
-    let result = tx.get("result").filter(|v| !v.is_null())
-        .ok_or_else(|| "payout tx not found or not yet mined".to_string())?;
-    let tx_from = result.get("from").and_then(|v| v.as_str()).unwrap_or_default().to_lowercase();
-    let tx_to = result.get("to").and_then(|v| v.as_str()).unwrap_or_default().to_lowercase();
-    if tx_from != from_custody {
-        return Err(format!("payout sender {} is not the custody address {}", tx_from, from_custody));
+    let txr = tx.get("result").filter(|v| !v.is_null()).ok_or_else(|| "payout tx not found or not yet mined".to_string())?;
+    let tx_to = txr.get("to").and_then(|v| v.as_str()).unwrap_or_default().to_lowercase();
+    if tx_to != rouge_bridge {
+        return Err(format!("payout tx destination {} is not the configured RougeBridge {}", tx_to, rouge_bridge));
     }
-    if tx_to != to_addr {
-        return Err(format!("payout recipient {} does not match the withdrawal address {}", tx_to, to_addr));
-    }
-    let value_hex = result.get("value").and_then(|v| v.as_str()).unwrap_or("0x0");
-    let value_wei = u128::from_str_radix(value_hex.trim_start_matches("0x"), 16).unwrap_or(0);
-    if value_wei < min_wei {
-        return Err(format!("payout {} wei is less than the {} wei owed", value_wei, min_wei));
-    }
-
-    let receipt: serde_json::Value = client
-        .post(rpc_url)
+    // 2. Successful receipt + the release event emitted by the RougeBridge.
+    let receipt: serde_json::Value = client.post(rpc_url)
         .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":[tx_hash],"id":1}))
         .send().await.map_err(|e| format!("RPC error: {}", e))?
         .json().await.map_err(|e| format!("bad RPC response: {}", e))?;
-    let rec = receipt.get("result").filter(|v| !v.is_null())
-        .ok_or_else(|| "payout receipt not found".to_string())?;
+    let rec = receipt.get("result").filter(|v| !v.is_null()).ok_or_else(|| "payout receipt not found".to_string())?;
     if rec.get("status").and_then(|v| v.as_str()).unwrap_or("0x0") != "0x1" {
         return Err("payout transaction reverted".to_string());
     }
+    let logs = rec.get("logs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let releases = decode_rouge_bridge_releases(&logs, &rouge_bridge);
+    let expected_token_lc = expected_token.map(|t| t.to_lowercase());
+    let matched = releases.iter().any(|r| {
+        r.recipient == expected_recipient
+            && r.token == expected_token_lc
+            && r.amount >= min_amount
+            && r.l1_tx_id == canonical_l1_tx_id
+    });
+    if !matched {
+        return Err(format!(
+            "no matching {} event from RougeBridge for recipient {} / l1TxId {} (amount >= {})",
+            if expected_token.is_some() { "BridgeReleaseERC20" } else { "BridgeReleaseETH" },
+            expected_recipient, canonical_l1_tx_id, min_amount
+        ));
+    }
+    // 3. qUSDC: the ERC20 Transfer must come FROM the RougeBridge contract (not the signer).
+    if let Some(usdc) = expected_token {
+        let dep = parse_erc20_transfer_to(client, rpc_url, &tx_hash, usdc, &expected_recipient).await
+            .map_err(|e| format!("USDC Transfer to recipient not found: {}", e))?;
+        if dep.from.to_lowercase() != rouge_bridge {
+            return Err(format!("USDC Transfer source {} is not the RougeBridge {}", dep.from, rouge_bridge));
+        }
+        if dep.amount < min_amount {
+            return Err(format!("USDC Transfer {} is less than the {} base units owed", dep.amount, min_amount));
+        }
+    }
+    // 4. Confirmation depth (fail closed).
     let block = rec.get("blockNumber").and_then(|v| v.as_str())
         .and_then(|h| u64::from_str_radix(h.trim_start_matches("0x"), 16).ok())
         .ok_or_else(|| "payout block missing".to_string())?;
     let min_conf = bridge_min_confirmations();
     match evm_latest_block(client, rpc_url).await {
-        Some(latest) => {
-            if latest < block + min_conf {
-                return Err(format!("payout needs {} confirmations (block {}, latest {})", min_conf, block, latest));
-            }
-        }
-        // Fail closed: if we cannot read the chain head, we cannot prove depth — refuse.
-        None => return Err("could not verify confirmations (Base RPC unavailable) — refusing to fulfill".to_string()),
+        Some(latest) if latest >= block + min_conf => Ok(()),
+        Some(latest) => Err(format!("payout needs {} confirmations (block {}, latest {})", min_conf, block, latest)),
+        None => Err("could not verify confirmations (Base RPC unavailable) — refusing to fulfill".to_string()),
     }
-    Ok(())
 }
 
 async fn bridge_withdrawal_fulfill(
@@ -8072,14 +8202,36 @@ async fn bridge_withdrawal_fulfill(
         Ok(None) => return Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found".to_string()) }),
         Err(e) => return Json(BridgeFulfillResponse { success: false, error: Some(e) }),
     };
-    let custody = match &state.bridge_custody_address {
-        Some(c) if !c.is_empty() => c.clone(),
-        _ => return Json(BridgeFulfillResponse { success: false, error: Some("bridge custody not configured".to_string()) }),
-    };
-    // qETH: 1 unit = 1e-6 ETH = 1e12 wei.
-    let min_wei = (record.amount_units as u128).saturating_mul(1_000_000_000_000u128);
+    // R1B/R1D: token-aware verification keyed on the STORED canonical token. A qUSDC record
+    // can never be fulfilled by an ETH transaction and vice-versa; XRGE/qBTC/unsupported are
+    // not fulfillable on this endpoint at all.
+    use quantum_vault_bridge_exec::{payout_route, rouge_bridge_id, PayoutRoute};
     let client = reqwest::Client::new();
-    if let Err(e) = verify_native_eth_payout(&client, &state.base_sepolia_rpc, &payout_hash, &custody, &record.evm_address, min_wei).await {
+    let canonical_id = format!("0x{}", quantum_vault_bridge_exec::bytes_to_hex(&rouge_bridge_id(&record.tx_id)));
+    let verification = match payout_route(&record.token_symbol) {
+        PayoutRoute::Eth => {
+            // qETH: 1 unit = 1e-6 ETH = 1e12 wei.
+            let min_wei = (record.amount_units as u128).saturating_mul(1_000_000_000_000u128);
+            match rouge_bridge_address() {
+                Some(rb) => verify_rouge_bridge_release(&client, &state.base_sepolia_rpc, &payout_hash, &rb,
+                    &record.evm_address, None, min_wei, &canonical_id).await,
+                None => Err("RougeBridge address not configured — refusing to verify qETH payout (fail closed)".to_string()),
+            }
+        }
+        PayoutRoute::Usdc => {
+            // qUSDC: 1 unit == 1 Base-USDC base unit (both 6-decimal). NO 10^12 scaling.
+            let min_units = record.amount_units as u128;
+            let usdc = bridge_usdc_address().or_else(|| std::env::var("USDC_ADDRESS").ok().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()));
+            match (rouge_bridge_address(), usdc) {
+                (Some(rb), Some(usdc)) => verify_rouge_bridge_release(&client, &state.base_sepolia_rpc, &payout_hash, &rb,
+                    &record.evm_address, Some(&usdc), min_units, &canonical_id).await,
+                (None, _) => Err("RougeBridge address not configured — refusing to verify qUSDC payout (fail closed)".to_string()),
+                (_, None) => Err("Base USDC address not configured — refusing to verify qUSDC payout (fail closed)".to_string()),
+            }
+        }
+        other => Err(format!("asset {} ({:?}) is not fulfillable on the EVM bridge endpoint", record.token_symbol, other)),
+    };
+    if let Err(e) = verification {
         return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout not verified: {}", e)) });
     }
     match state.bridge_withdraw_store.mark_fulfilled(&tx_id, &payout_hash) {
@@ -8203,7 +8355,8 @@ async fn bridge_btc_claim(
 
 /// GET /api/bridge/btc/withdrawals — pending qBTC withdrawals for the BTC relayer to pay out.
 async fn bridge_btc_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdrawalsResponse> {
-    let list = state.bridge_withdraw_store.list_pending().unwrap_or_default();
+    // Fail closed while derived bridge state is degraded: the BTC relayer gets an EMPTY list.
+    let list = match state.node.relayer_pending_withdrawals() { Ok(v) => v, Err(e) => { eprintln!("[bridge] btc withdrawals list refused: {}", e); return Json(BridgeWithdrawalsResponse { withdrawals: Vec::new() }); } };
     Json(BridgeWithdrawalsResponse {
         withdrawals: list
             .into_iter()
@@ -8571,14 +8724,11 @@ async fn xrge_bridge_withdraw(
     State(state): State<AppState>,
     Json(body): Json<XrgeBridgeWithdrawRequest>,
 ) -> Json<serde_json::Value> {
+    use quantum_vault_bridge_exec::{authorize_bridge_withdraw, Endpoint, SignedWithdrawIntent, TopLevelCompat};
+    let fail = |msg: String| Json(serde_json::json!({ "success": false, "error": msg }));
+
     if state.xrge_bridge_vault.is_none() {
-        return Json(serde_json::json!({ "success": false, "error": "XRGE bridge not enabled" }));
-    }
-    if body.amount == 0 {
-        return Json(serde_json::json!({ "success": false, "error": "Amount must be greater than 0" }));
-    }
-    if let Err(e) = check_withdraw_guardrails(body.amount) {
-        return Json(serde_json::json!({ "success": false, "error": e }));
+        return fail("XRGE bridge not enabled".to_string());
     }
 
     let tx_result = if let (Some(signature), Some(payload)) = (&body.signature, &body.payload) {
@@ -8589,16 +8739,52 @@ async fn xrge_bridge_withdraw(
             payload_bytes_hex: None,
         };
         if let Err(e) = verify_signed_tx(&signed_req).await {
-            return Json(serde_json::json!({ "success": false, "error": format!("Signature verification failed: {}", e) }));
+            return fail(format!("Signature verification failed: {}", e));
+        }
+        if payload.get("from").and_then(|v| v.as_str()) != Some(body.from_public_key.as_str()) {
+            return fail("signed payload 'from' must equal the authenticated public key".to_string());
+        }
+        if let Err(e) = check_signed_nonce(&state.node, &body.from_public_key, payload) {
+            return fail(e);
+        }
+        // R1C/R1D: amount, destination, fee and asset come ONLY from the verified payload.
+        // The signed fee MUST exist (no server-side carve-out) and must consume exactly the
+        // protocol 0.1 XRGE — authorize_bridge_withdraw enforces that policy.
+        let intent = SignedWithdrawIntent {
+            op_type: payload.get("type").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            amount: payload.get("amount").and_then(|v| v.as_u64()),
+            destination: payload.get("evmAddress").and_then(|v| v.as_str()).map(str::to_string),
+            fee: payload.get("fee").and_then(|v| v.as_f64()),
+            token_symbol: payload.get("tokenSymbol").and_then(|v| v.as_str()).map(str::to_string),
+        };
+        // This request struct has no top-level fee; amount/evmAddress are compatibility copies.
+        let compat = TopLevelCompat { amount: Some(body.amount), destination: Some(body.evm_address.clone()), fee: None };
+        let auth = match authorize_bridge_withdraw(Endpoint::Xrge, &intent, &compat) {
+            Ok(a) => a, // route == Xrge is guaranteed here (any other asset is rejected)
+            Err(e) => return fail(format!("signed-intent rejected: {:?}", e)),
+        };
+        if let Err(e) = check_withdraw_guardrails(auth.amount) {
+            return fail(e);
         }
         state.node.submit_bridge_withdraw_tx_signed(
             &body.from_public_key,
-            body.amount,
-            &body.evm_address,
-            Some(0.1),
-            "XRGE",
+            auth.amount,
+            &auth.destination,
+            Some(auth.fee),
+            &auth.canonical_token, // "XRGE"
         )
     } else if let Some(ref private_key) = body.from_private_key {
+        // Deprecated raw-key path: default OFF (and note submit_bridge_withdraw_tx is
+        // qETH-only, so it cannot produce an XRGE withdrawal at all).
+        if std::env::var("QV_BRIDGE_ALLOW_RAW_KEY").map(|v| v == "true").unwrap_or(false) == false {
+            return fail("raw-private-key bridge withdrawal is disabled; use the signed path".to_string());
+        }
+        if body.amount == 0 {
+            return fail("Amount must be greater than 0".to_string());
+        }
+        if let Err(e) = check_withdraw_guardrails(body.amount) {
+            return fail(e);
+        }
         state.node.submit_bridge_withdraw_tx(
             private_key,
             &body.from_public_key,
@@ -8607,7 +8793,7 @@ async fn xrge_bridge_withdraw(
             Some(0.1),
         )
     } else {
-        return Json(serde_json::json!({ "success": false, "error": "Either signature+payload or fromPrivateKey is required" }));
+        return fail("Either signature+payload or fromPrivateKey is required".to_string());
     };
 
     match tx_result {
@@ -8628,7 +8814,7 @@ async fn xrge_bridge_withdraw(
 }
 
 async fn xrge_bridge_withdrawals(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let list = state.bridge_withdraw_store.list_pending().unwrap_or_default();
+    let list = match state.node.relayer_pending_withdrawals() { Ok(v) => v, Err(e) => return Json(serde_json::json!({ "withdrawals": [], "degraded": true, "error": e })) };
     let xrge_withdrawals: Vec<_> = list.into_iter()
         .filter(is_xrge_withdrawal)
         .map(|w| serde_json::json!({
@@ -9004,7 +9190,6 @@ async fn v2_shield(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
@@ -9035,20 +9220,8 @@ async fn v2_shield(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "shield".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: state.node.get_next_nonce(&body.public_key),
-        payload: TxPayload {
-            shielded_commitment: Some(commitment.to_string()),
-            shielded_value: Some(amount),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("shield", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -9068,7 +9241,6 @@ async fn v2_shielded_transfer(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
@@ -9149,22 +9321,8 @@ async fn v2_shielded_transfer(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "shielded_transfer".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: state.node.get_next_nonce(&body.public_key),
-        payload: TxPayload {
-            shielded_nullifiers: Some(nullifiers),
-            shielded_output_commitments: Some(output_commitments),
-            shielded_proof: Some(proof_hex.to_string()),
-            shielded_fee: Some(shielded_fee),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("shielded_transfer", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -9183,7 +9341,6 @@ async fn v2_unshield(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
@@ -9258,21 +9415,8 @@ async fn v2_unshield(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "unshield".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: state.node.get_next_nonce(&body.public_key),
-        payload: TxPayload {
-            shielded_nullifiers: Some(nullifiers),
-            shielded_value: Some(amount),
-            shielded_proof: Some(proof_hex.to_string()),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("unshield", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -9594,7 +9738,6 @@ async fn v2_token_mint(
     State(state): State<AppState>,
     Json(body): Json<SignedTransactionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    use quantum_vault_types::{TxPayload, TxV1};
 
     let signed_payload = verify_signed_tx(&body).await.map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
 
@@ -9660,20 +9803,8 @@ async fn v2_token_mint(
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
     }
 
-    let tx = TxV1 {
-        version: 1,
-        tx_type: "mint_tokens".to_string(),
-        from_pub_key: body.public_key.clone(),
-        nonce: state.node.get_next_nonce(&body.public_key),
-        payload: TxPayload {
-            token_symbol: Some(token_symbol.to_string()),
-            token_total_supply: Some(amount),
-            ..Default::default()
-        },
-        fee,
-        sig: body.signature.clone(),
-        signed_payload: Some(signed_payload),
-    };
+    // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
+    let tx = match crate::v2_binding::build_v2_tx("mint_tokens", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
 
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -9694,10 +9825,121 @@ async fn v2_token_mint(
 // ─── WASM Smart Contract Handlers ─────────────────────────────────────────────
 
 /// Deploy a new WASM smart contract
+fn gr_err(msg: impl std::fmt::Display) -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": msg.to_string() })))
+}
+
+/// POST /api/v2/contract/execute — a player-signed contract call (GAME_READY). The signer is the
+/// caller the contract sees (`host_get_caller`) and pays `gasLimit × CONTRACT_GAS_PRICE_XRGE`.
+/// The call is dry-run first so an obviously failing call is refused before it costs a fee.
+async fn contract_execute_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let tip = state.node.get_tip_height().unwrap_or(0);
+    if !node::game_ready_active(tip + 1) {
+        return Err(gr_err("player-signed contract calls are not active yet (GAME_READY)"));
+    }
+    let signed_payload = verify_signed_tx(&body).await.map_err(gr_err)?;
+    let p = &body.payload;
+    let contract_addr = p.get("contractAddr").and_then(|v| v.as_str()).unwrap_or_default();
+    let method = p.get("method").and_then(|v| v.as_str()).unwrap_or_default();
+    if contract_addr.is_empty() || method.is_empty() {
+        return Err(gr_err("contractAddr and method are required"));
+    }
+    let gas = p.get("gasLimit").and_then(|v| v.as_u64()).unwrap_or(quantum_vault_vm::DEFAULT_FUEL_LIMIT);
+    if gas == 0 || gas > quantum_vault_vm::DEFAULT_FUEL_LIMIT {
+        return Err(gr_err(format!("gasLimit must be between 1 and {}", quantum_vault_vm::DEFAULT_FUEL_LIMIT)));
+    }
+    let fee = gas as f64 * crate::v2_binding::CONTRACT_GAS_PRICE_XRGE;
+    let bal = state.node.get_balance(&body.public_key).unwrap_or(0.0);
+    if bal < fee {
+        return Err(gr_err(format!("insufficient XRGE for the gas fee: have {:.6}, need {:.6}", bal, fee)));
+    }
+    let args = p.get("args").cloned().unwrap_or(serde_json::Value::Null);
+    let block_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let preview = state.wasm_runtime.query_contract_ext(
+        &state.contract_store, contract_addr, method, &args, &body.public_key,
+        state.node.native_balances_quanta(), tip + 1, block_time,
+        state.node.game_ext_for_preview(tip + 1),
+    ).map_err(gr_err)?;
+    if !preview.success {
+        return Err(gr_err(format!("call would fail: {}", preview.error.unwrap_or_default())));
+    }
+    if preview.gas_used > gas {
+        return Err(gr_err(format!("gasLimit {} is below the {} gas this call needs", gas, preview.gas_used)));
+    }
+    if let Err(e) = check_signed_nonce(&state.node, &body.public_key, &body.payload) {
+        return Err(gr_err(e));
+    }
+    let tx = crate::v2_binding::build_v2_tx("contract_call", body.public_key.clone(),
+        state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload)
+        .map_err(gr_err)?;
+    let tx_id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
+    let tx_clone = tx.clone();
+    state.node.add_tx_to_mempool_verified(tx).map_err(gr_err)?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "txId": tx_id,
+        "fee": fee,
+        "preview": { "returnData": preview.return_data, "gasUsed": preview.gas_used, "events": preview.events },
+    })))
+}
+
+/// POST /api/v2/contract/publish — a player-signed deployment (GAME_READY). The signer is the
+/// deployer; the address is derived from the signed payload (`v2_binding::contract_address_v2`),
+/// so it is known before the block and nobody else can claim it. Installed when mined.
+async fn contract_publish_signed(
+    State(state): State<AppState>,
+    Json(body): Json<SignedTransactionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !node::game_ready_active(state.node.get_tip_height().unwrap_or(0) + 1) {
+        return Err(gr_err("player-signed contract deployment is not active yet (GAME_READY)"));
+    }
+    let signed_payload = verify_signed_tx(&body).await.map_err(gr_err)?;
+    let p = &body.payload;
+    if p.get("from").and_then(|v| v.as_str()) != Some(body.public_key.as_str()) {
+        return Err(gr_err("payload.from must be the signing public key"));
+    }
+    if p.get("nonce").and_then(|v| v.as_str()).map_or(true, |n| n.len() < 8) {
+        return Err(gr_err("payload.nonce is required"));
+    }
+    let wasm_b64 = p.get("wasm").and_then(|v| v.as_str()).unwrap_or_default();
+    let wasm = {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.decode(wasm_b64).map_err(|_| gr_err("wasm must be base64"))?
+    };
+    state.wasm_runtime.validate_contract_wasm(&wasm).map_err(gr_err)?;
+    let fee = crate::v2_binding::CONTRACT_DEPLOY_FEE_XRGE;
+    if state.node.get_balance(&body.public_key).unwrap_or(0.0) < fee {
+        return Err(gr_err(format!("deploying costs {} XRGE", fee)));
+    }
+    let tx = crate::v2_binding::build_v2_tx("contract_deploy", body.public_key.clone(),
+        state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload)
+        .map_err(gr_err)?;
+    let address = tx.payload.contract_addr.clone().unwrap_or_default();
+    if state.contract_store.get_contract(&address).ok().flatten().is_some() {
+        return Err(gr_err("a contract already exists at that address; sign with a new nonce"));
+    }
+    let tx_id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
+    let tx_clone = tx.clone();
+    state.node.add_tx_to_mempool_verified(tx).map_err(gr_err)?;
+    let peers = state.peer_manager.get_peers().await;
+    if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
+    Ok(Json(serde_json::json!({ "success": true, "txId": tx_id, "address": address, "fee": fee })))
+}
+
 async fn contract_deploy(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // GAME_READY: node-signed deployments are invalid from activation; deployers sign their own
+    // via POST /api/v2/contract/publish.
+    if node::game_ready_active(state.node.get_tip_height().unwrap_or(0) + 1) {
+        return Err(StatusCode::GONE);
+    }
     let wasm_base64 = body.get("wasm")
         .and_then(|v| v.as_str())
         .ok_or(StatusCode::BAD_REQUEST)?;
@@ -9801,7 +10043,10 @@ async fn contract_call(
         Ok(result) => {
             // Submit on-chain transaction so it appears in the tx feed and is
             // re-executed deterministically (carrying the args, P3-5).
-            if let Ok(tx) = state.node.submit_contract_call_tx(
+            // GAME_READY: from activation this endpoint is a preview (dry run) only — the caller
+            // signs the real call via POST /api/v2/contract/execute.
+            let preview_only = node::game_ready_active(block_height + 1);
+            if preview_only {} else if let Ok(tx) = state.node.submit_contract_call_tx(
                 caller,
                 contract_addr,
                 method,
@@ -9826,6 +10071,7 @@ async fn contract_call(
                 "gasUsed": result.gas_used,
                 "events": result.events,
                 "error": result.error,
+                "submitted": !preview_only,
             })))
         },
         Err(e) => Ok(Json(serde_json::json!({
@@ -9908,6 +10154,35 @@ async fn contract_state(
     }
 }
 
+/// POST /api/contract/:addr/query — read-only dry run against the live ledger (no signature,
+/// no fee, commits nothing). Body: {method, args?, caller?}.
+async fn contract_query(
+    State(state): State<AppState>,
+    Path(addr): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let method = body.get("method").and_then(|v| v.as_str()).unwrap_or_default();
+    if method.is_empty() {
+        return Err(gr_err("method is required"));
+    }
+    let args = body.get("args").cloned().unwrap_or(serde_json::Value::Null);
+    let caller = body.get("caller").and_then(|v| v.as_str()).unwrap_or("");
+    let height = state.node.get_tip_height().unwrap_or(0) + 1;
+    let block_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let r = state.wasm_runtime.query_contract_ext(
+        &state.contract_store, &addr, method, &args, caller,
+        state.node.native_balances_quanta(), height, block_time,
+        state.node.game_ext_for_preview(height),
+    ).map_err(gr_err)?;
+    Ok(Json(serde_json::json!({
+        "success": r.success,
+        "returnData": r.return_data,
+        "gasUsed": r.gas_used,
+        "events": r.events,
+        "error": r.error,
+    })))
+}
+
 /// Get events for a contract
 async fn contract_events(
     State(state): State<AppState>,
@@ -9916,9 +10191,11 @@ async fn contract_events(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let limit = params.get("limit")
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(50);
-
-    match state.contract_store.get_events(&addr, limit) {
+        .unwrap_or(50)
+        .clamp(1, 1000);
+    let before = params.get("before").and_then(|s| s.parse::<u64>().ok());
+    let tx = params.get("tx").map(|s| s.as_str());
+    match state.contract_store.get_events_page(&addr, limit, before, tx) {
         Ok(events) => Ok(Json(serde_json::json!({
             "success": true,
             "events": events,
@@ -10394,5 +10671,102 @@ mod image_guard_tests {
         assert!(validate_token_image(&Some(small)).is_ok());
         let huge = format!("data:image/png;base64,{}", "A".repeat(MAX_TOKEN_IMAGE_DATA_URI_BYTES));
         assert!(validate_token_image(&Some(huge)).is_err());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R1B/R1D — daemon-side unit tests for the bridge payout helpers (no network).
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod bridge_r1_helper_tests {
+    use super::*;
+
+    fn pw(tx_id: &str, token: &str) -> PendingWithdrawal {
+        PendingWithdrawal {
+            tx_id: tx_id.to_string(),
+            evm_address: "0x00000000000000000000000000000000000000a1".to_string(),
+            amount_units: 1,
+            created_at: 0,
+            owner_pubkey: "owner".to_string(),
+            token_symbol: token.to_string(),
+            status: WithdrawalStatus::Pending,
+            attempts: 0,
+            last_error: None,
+            payout_tx_hash: None,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn bridge_release_topics_match_solidity() {
+        // keccak256 of the canonical event signatures in RougeBridge.sol. The Transfer topic
+        // reproduces the well-known ERC20 constant, which cross-checks the hash function.
+        assert_eq!(topic_bridge_release_eth(), "0x6e92b6f202ac06fbce19b0d07299219ca32be691ccee41bc0cfe5d9ab51b524f");
+        assert_eq!(topic_bridge_release_erc20(), "0x4131db420291b34fea891e4c6b5cdf224c27982fae69fbddfba9b7d5ee7398a1");
+        let xfer = format!("0x{}", quantum_vault_bridge_exec::bytes_to_hex(
+            &quantum_vault_bridge_exec::keccak256(b"Transfer(address,address,uint256)")));
+        assert_eq!(xfer, "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef");
+    }
+
+    fn topic_addr(a: &str) -> String { format!("0x{:0>64}", a.trim_start_matches("0x")) }
+    fn word_u128(v: u128) -> String { format!("{:064x}", v) }
+
+    #[test]
+    fn decode_release_events_from_configured_bridge_only() {
+        let rb = "0x00000000000000000000000000000000000000bb";
+        let usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+        let recipient = "0x00000000000000000000000000000000000000a1";
+        let l1 = "11".repeat(32);
+        let eth_log = serde_json::json!({
+            "address": rb,
+            "topics": [topic_bridge_release_eth(), topic_addr(recipient)],
+            "data": format!("0x{}{}", word_u128(5_000_000_000_000u128), l1),
+        });
+        let erc_log = serde_json::json!({
+            "address": rb,
+            "topics": [topic_bridge_release_erc20(), topic_addr(recipient), topic_addr(usdc)],
+            "data": format!("0x{}{}", word_u128(123u128), l1),
+        });
+        // same event but emitted by a DIFFERENT contract → must be ignored
+        let impostor = serde_json::json!({
+            "address": "0x00000000000000000000000000000000000000cc",
+            "topics": [topic_bridge_release_eth(), topic_addr(recipient)],
+            "data": format!("0x{}{}", word_u128(5_000_000_000_000u128), l1),
+        });
+        let rel = decode_rouge_bridge_releases(&[eth_log, erc_log, impostor], rb);
+        assert_eq!(rel.len(), 2, "impostor emitter ignored");
+        assert_eq!(rel[0].recipient, recipient);
+        assert_eq!(rel[0].token, None);
+        assert_eq!(rel[0].amount, 5_000_000_000_000u128);
+        assert_eq!(rel[0].l1_tx_id, format!("0x{}", l1));
+        assert_eq!(rel[1].token.as_deref(), Some(usdc));
+        assert_eq!(rel[1].amount, 123);
+    }
+
+    #[test]
+    fn generic_list_routing_is_positive_only() {
+        // qETH / qUSDC (any case) are served to the EVM relayer; XRGE, qBTC, custom are NOT.
+        assert!(is_eth_withdrawal(&pw("a", "qETH")));
+        assert!(is_eth_withdrawal(&pw("a", "QETH")));
+        assert!(is_usdc_withdrawal(&pw("a", "qUSDC")));
+        for sym in ["XRGE", "qBTC", "3EYE", "", "qDAI"] {
+            assert!(!is_eth_withdrawal(&pw("a", sym)) && !is_usdc_withdrawal(&pw("a", sym)), "{sym} must not be on the EVM list");
+        }
+        // the dedicated lists still take their own assets
+        assert!(is_xrge_withdrawal(&pw("a", "XRGE")) && is_xrge_withdrawal(&pw("xrge:abc", "")));
+        assert!(is_btc_withdrawal(&pw("a", "qBTC")));
+    }
+
+    #[test]
+    fn rouge_bridge_address_fails_closed_on_invalid_config() {
+        // Env-driven; exercise the validator with isolated keys.
+        std::env::remove_var("QV_ROUGE_BRIDGE_ADDRESS");
+        std::env::remove_var("ROUGE_BRIDGE_ADDRESS");
+        assert_eq!(rouge_bridge_address(), None);
+        std::env::set_var("QV_ROUGE_BRIDGE_ADDRESS", "not-an-address");
+        assert_eq!(rouge_bridge_address(), None, "malformed → None (fail closed)");
+        std::env::set_var("QV_ROUGE_BRIDGE_ADDRESS", "0x00000000000000000000000000000000000000BB");
+        assert_eq!(rouge_bridge_address().as_deref(), Some("0x00000000000000000000000000000000000000bb"));
+        std::env::remove_var("QV_ROUGE_BRIDGE_ADDRESS");
     }
 }
