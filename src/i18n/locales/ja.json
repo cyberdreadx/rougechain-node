@@ -1013,5 +1013,90 @@
       "read": "既読",
       "seen": "既読"
     }
+  },
+  "visual": {
+    "hero": {
+      "pqc": "PQC 保護",
+      "portfolio": "ポートフォリオ評価額",
+      "noPrice": "USD 価格を取得できません",
+      "changeHint": "過去 24 時間の XRGE 市場価格の変動",
+      "xrge24h": "XRGE 24h",
+      "shielded": "シールド済み",
+      "address": "ウォレットアドレス",
+      "copy": "アドレスをコピー",
+      "copied": "コピーしました",
+      "viewOnChain": "チェーンで表示"
+    },
+    "assets": {
+      "title": "トークン",
+      "emptyTitle": "トークンはまだありません",
+      "emptyHint": "ウォレットに入金して始めましょう"
+    },
+    "activity": {
+      "title": "最近のアクティビティ",
+      "emptyTitle": "取引はまだありません",
+      "emptyHint": "アクティビティはここに表示されます"
+    },
+    "eyebrow": {
+      "transactions": "エクスプローラー · ライブ",
+      "nfts": "エクスプローラー · コレクション",
+      "contracts": "エクスプローラー · WASM コントラクト",
+      "tokens": "エクスプローラー · トークン",
+      "pools": "DeFi · 流動性",
+      "swap": "DeFi · 耐量子 AMM",
+      "bridge": "クロスチェーン",
+      "settings": "コントロールパネル",
+      "mail": "暗号化メール",
+      "validators": "ステーキング · コンセンサス",
+      "blockchain": "エクスプローラー · ネットワーク"
+    },
+    "titles": {
+      "validators": "バリデーター",
+      "blockchain": "ネットワークエクスプローラー",
+      "blockchainHint": "ブロック、ピア、チェーンの状態をライブで"
+    },
+    "empty": {
+      "transactions": {
+        "title": "取引はまだありません",
+        "hint": "新しいブロックが生成されると、取引がここに表示されます。"
+      },
+      "collections": {
+        "title": "コレクションはまだありません",
+        "hint": "ネットワーク上に NFT コレクションはまだ作成されていません。"
+      },
+      "nfts": {
+        "title": "まだミントされていません",
+        "hint": "このコレクションでは NFT がまだミントされていません。"
+      },
+      "pools": {
+        "title": "プールはまだありません",
+        "hint": "最初の流動性プールを作成しましょう。",
+        "cta": "プールを作成"
+      },
+      "poolSearch": {
+        "title": "一致するプールはありません",
+        "hint": "「{{query}}」に一致するプールはありません。"
+      },
+      "tokens": {
+        "title": "トークンはまだありません",
+        "hint": "ネットワーク上にトークンはまだ作成されていません。",
+        "searchTitle": "一致なし",
+        "searchHint": "検索に一致するトークンはありません。"
+      },
+      "contracts": {
+        "title": "コントラクトが見つかりません",
+        "hint": "スマートコントラクトはまだデプロイされていません。API から最初の 1 つをデプロイしましょう！",
+        "searchHint": "検索に一致するコントラクトはありません。"
+      },
+      "mail": {
+        "inboxTitle": "受信トレイは空です",
+        "sentTitle": "送信済みメールはありません",
+        "trashTitle": "ゴミ箱は空です",
+        "inboxNamed": "あなたのアドレス：{{a}} · {{b}}",
+        "inboxClaim": "名前を取得すると @{{a}} と @{{b}} のアドレスが使えます",
+        "sentHint": "送信したメールはここに表示されます。",
+        "trashHint": "削除したメールはここに移動します。"
+      }
+    }
   }
 }

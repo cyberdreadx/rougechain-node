@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { EmptyState } from "@/components/ui/empty-state";
 import { motion } from "framer-motion";
 import {
   Coins,
@@ -83,6 +85,7 @@ const BUILTIN_TOKENS: TokenInfo[] = [
 ];
 
 const TokensList = () => {
+  const { t } = useTranslation();
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -139,12 +142,15 @@ const TokensList = () => {
           className="space-y-6"
         >
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-foreground">All Tokens</h1>
-              <Badge variant="outline">{getNetworkLabel()}</Badge>
-              {!loading && (
-                <Badge variant="secondary">{tokens.length} token{tokens.length !== 1 ? "s" : ""}</Badge>
-              )}
+            <div className="space-y-1.5 min-w-0">
+              <p className="hud-label">{t("visual.eyebrow.tokens")}</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="page-title">All Tokens</h1>
+                <Badge variant="outline">{getNetworkLabel()}</Badge>
+                {!loading && (
+                  <Badge variant="secondary">{tokens.length} token{tokens.length !== 1 ? "s" : ""}</Badge>
+                )}
+              </div>
             </div>
             <div className="relative md:w-72">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -162,18 +168,12 @@ const TokensList = () => {
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
             </div>
           ) : filteredTokens.length === 0 ? (
-            <Card className="bg-muted/30">
-              <CardContent className="py-12 text-center">
-                <Coins className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-lg font-medium mb-2">
-                  {query ? "No Matches" : "No Tokens Yet"}
-                </h3>
-                <p className="text-muted-foreground">
-                  {query
-                    ? "No tokens match your search criteria."
-                    : "No tokens have been created on the network."}
-                </p>
-              </CardContent>
+            <Card className="glass-card">
+              <EmptyState
+                icon={query ? Search : Coins}
+                title={query ? t("visual.empty.tokens.searchTitle") : t("visual.empty.tokens.title")}
+                hint={query ? t("visual.empty.tokens.searchHint") : t("visual.empty.tokens.hint")}
+              />
             </Card>
           ) : (
             <>
@@ -202,7 +202,7 @@ const TokensList = () => {
                         {filteredTokens.map((token) => (
                           <tr
                             key={token.symbol}
-                            className="hover:bg-secondary/40 transition-colors"
+                            className="row-glow"
                           >
                             <td className="py-3 px-2">
                               <div className="flex items-center gap-3">
@@ -286,7 +286,7 @@ const TokensList = () => {
                 {filteredTokens.map((token) => (
                   <Card
                     key={token.symbol}
-                    className="bg-card/50 backdrop-blur border-border"
+                    className="bg-card/50 backdrop-blur border-border glass-card hover-lift"
                   >
                     <CardContent className="p-4 space-y-3">
                       <div className="flex items-center gap-3">

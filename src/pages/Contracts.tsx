@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   FileCode,
   Upload,
@@ -35,6 +37,7 @@ const truncateAddr = (value: string, left = 10, right = 6) => {
 };
 
 const Contracts = () => {
+  const { t } = useTranslation();
   const [contracts, setContracts] = useState<ContractInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -106,10 +109,13 @@ const Contracts = () => {
 
       <main className="relative z-10 max-w-6xl mx-auto px-4 py-10">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <FileCode className="w-7 h-7 text-primary" />
-            <h1 className="text-2xl font-bold text-foreground">Smart Contracts</h1>
-            <Badge variant="outline">{getNetworkLabel()}</Badge>
+          <div className="space-y-1.5 min-w-0">
+            <p className="hud-label">{t("visual.eyebrow.contracts")}</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <FileCode className="w-7 h-7 text-primary drop-shadow-[0_0_8px_hsl(var(--primary)/0.6)]" />
+              <h1 className="page-title">Smart Contracts</h1>
+              <Badge variant="outline">{getNetworkLabel()}</Badge>
+            </div>
           </div>
         </div>
 
@@ -182,23 +188,19 @@ const Contracts = () => {
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
           </div>
         ) : sorted.length === 0 ? (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-              <FileCode className="w-16 h-16 text-muted-foreground mb-4 opacity-50" />
-              <h3 className="text-lg font-semibold mb-2">No Contracts Found</h3>
-              <p className="text-sm text-muted-foreground max-w-sm">
-                {searchQuery
-                  ? "No contracts match your search."
-                  : "No smart contracts have been deployed yet. Deploy the first one via the API!"}
-              </p>
-            </CardContent>
+          <Card className="glass-card">
+            <EmptyState
+              icon={searchQuery ? Search : FileCode}
+              title={t("visual.empty.contracts.title")}
+              hint={searchQuery ? t("visual.empty.contracts.searchHint") : t("visual.empty.contracts.hint")}
+            />
           </Card>
         ) : (
           <div className="space-y-3">
             {sorted.map((contract) => (
               <Card
                 key={contract.address}
-                className="hover:border-primary/50 transition-colors cursor-pointer"
+                className="glass-card hover-lift cursor-pointer"
                 onClick={() => navigate(`/contract/${contract.address}`)}
               >
                 <CardContent className="p-4">

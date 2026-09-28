@@ -1014,5 +1014,90 @@
       "read": "Leído",
       "seen": "Visto"
     }
+  },
+  "visual": {
+    "hero": {
+      "pqc": "Protección PQC",
+      "portfolio": "Valor del portafolio",
+      "noPrice": "Precio en USD no disponible",
+      "changeHint": "Cambio del precio de mercado de XRGE en las últimas 24 horas",
+      "xrge24h": "XRGE 24 h",
+      "shielded": "blindados",
+      "address": "Dirección de la billetera",
+      "copy": "Copiar dirección",
+      "copied": "Copiado",
+      "viewOnChain": "Ver en la cadena"
+    },
+    "assets": {
+      "title": "Tokens",
+      "emptyTitle": "Aún no hay tokens",
+      "emptyHint": "Añade fondos a tu billetera para empezar"
+    },
+    "activity": {
+      "title": "Actividad reciente",
+      "emptyTitle": "Aún no hay transacciones",
+      "emptyHint": "Tu actividad aparecerá aquí"
+    },
+    "eyebrow": {
+      "transactions": "Explorador · En vivo",
+      "nfts": "Explorador · Coleccionables",
+      "contracts": "Explorador · Contratos WASM",
+      "tokens": "Explorador · Tokens",
+      "pools": "DeFi · Liquidez",
+      "swap": "DeFi · AMM cuántico-seguro",
+      "bridge": "Entre cadenas",
+      "settings": "Panel de control",
+      "mail": "Correo cifrado",
+      "validators": "Staking · Consenso",
+      "blockchain": "Explorador · Red"
+    },
+    "titles": {
+      "validators": "Validadores",
+      "blockchain": "Explorador de red",
+      "blockchainHint": "Bloques, pares y estado de la cadena en vivo"
+    },
+    "empty": {
+      "transactions": {
+        "title": "Aún no hay transacciones",
+        "hint": "Las nuevas transacciones aparecerán aquí a medida que lleguen los bloques."
+      },
+      "collections": {
+        "title": "Aún no hay colecciones",
+        "hint": "No se han creado colecciones NFT en la red."
+      },
+      "nfts": {
+        "title": "Nada acuñado todavía",
+        "hint": "No se han acuñado NFT en esta colección."
+      },
+      "pools": {
+        "title": "Aún no hay pools",
+        "hint": "Sé el primero en crear un pool de liquidez.",
+        "cta": "Crear pool"
+      },
+      "poolSearch": {
+        "title": "Sin pools coincidentes",
+        "hint": "Ningún pool coincide con «{{query}}»."
+      },
+      "tokens": {
+        "title": "Aún no hay tokens",
+        "hint": "No se han creado tokens en la red.",
+        "searchTitle": "Sin coincidencias",
+        "searchHint": "Ningún token coincide con tu búsqueda."
+      },
+      "contracts": {
+        "title": "No se encontraron contratos",
+        "hint": "Aún no se han desplegado contratos inteligentes. ¡Despliega el primero con la API!",
+        "searchHint": "Ningún contrato coincide con tu búsqueda."
+      },
+      "mail": {
+        "inboxTitle": "Bandeja vacía",
+        "sentTitle": "Aún no has enviado nada",
+        "trashTitle": "La papelera está vacía",
+        "inboxNamed": "Tus direcciones: {{a}} · {{b}}",
+        "inboxClaim": "Reclama un nombre para obtener tus direcciones @{{a}} y @{{b}}",
+        "sentHint": "El correo que envíes aparecerá aquí.",
+        "trashHint": "El correo eliminado llega aquí."
+      }
+    }
   }
 }
