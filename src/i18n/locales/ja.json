@@ -525,7 +525,8 @@
       "invalidBtcAddress": "有効なBitcoinアドレスを入力してください",
       "invalidQbtcAmount": "有効なqBTC金額を入力してください",
       "invalidEvmAddress": "有効なEVMアドレスを入力してください",
-      "withdrawFailed": "出金に失敗しました"
+      "withdrawFailed": "出金に失敗しました",
+      "btcWithdrawPaused": "Bitcoin 支払いサービスの開始準備中のため、BTC の出金は一時停止しています。qBTC は安全です。入金とその他の出金は通常どおり利用できます。"
     }
   },
   "wallet": {

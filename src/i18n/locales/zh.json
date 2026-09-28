@@ -525,7 +525,8 @@
       "invalidBtcAddress": "请输入有效的比特币地址",
       "invalidQbtcAmount": "请输入有效的 qBTC 金额",
       "invalidEvmAddress": "请输入有效的 EVM 地址",
-      "withdrawFailed": "提取失败"
+      "withdrawFailed": "提取失败",
+      "btcWithdrawPaused": "比特币支付服务上线期间，BTC 提现暂停。您的 qBTC 是安全的；充值和其他提现正常进行。"
     }
   },
   "wallet": {

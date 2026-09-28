@@ -59,6 +59,13 @@ interface EIP6963Detail { info: EIP6963ProviderInfo; provider: EIP1193Provider }
 const ROUGECHAIN_RDNS = "io.rougechain.wallet";
 const QWALLA_RDNS = "app.qwalla.wallet"; // announced by Qwalla's dApp browser (EIP-6963)
 
+/**
+ * qBTC → BTC payouts need the BTC relayer, which is stopped until its own launch. Until then the
+ * node would accept the burn and the withdrawal would sit pending, so the site doesn't offer it.
+ * Set VITE_BTC_WITHDRAW_ENABLED=true when the BTC relayer is live.
+ */
+const BTC_WITHDRAW_ENABLED = import.meta.env.VITE_BTC_WITHDRAW_ENABLED === "true";
+
 const ASSETS: { id: BridgeAsset; label: string; icon: string; l1Label: string }[] = [
   { id: "ETH", label: "ETH", icon: "Ξ", l1Label: "qETH" },
   { id: "USDC", label: "USDC", icon: "$", l1Label: "qUSDC" },
@@ -691,6 +698,7 @@ const Bridge = () => {
 
     // qBTC withdraws to a Bitcoin address (goes in the evmAddress field verbatim).
     if (asset === "BTC") {
+      if (!BTC_WITHDRAW_ENABLED) { toast.error(t("bridge.errors.btcWithdrawPaused")); return; }
       const btcAddr = evmTarget.trim();
       if (btcAddr.length < 14) { toast.error(t("bridge.errors.invalidBtcAddress")); return; }
       const amountUnits = Math.round(amountNum * 1e8); // 1 unit = 1 satoshi
@@ -1177,9 +1185,15 @@ const Bridge = () => {
                   )}
                 </div>
               ) : (
+                <>
+                {direction === "withdraw" && asset === "BTC" && !BTC_WITHDRAW_ENABLED && (
+                  <p role="status" className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+                    {t("bridge.errors.btcWithdrawPaused")}
+                  </p>
+                )}
                 <Button
                   onClick={direction === "deposit" ? handleDeposit : handleWithdraw}
-                  disabled={processing || !amount || parseFloat(amount) <= 0}
+                  disabled={processing || !amount || parseFloat(amount) <= 0 || (direction === "withdraw" && asset === "BTC" && !BTC_WITHDRAW_ENABLED)}
                   className="w-full h-12 text-base gap-2"
                 >
                   {processing ? (
@@ -1199,6 +1213,7 @@ const Bridge = () => {
                     </>
                   )}
                 </Button>
+                </>
               )}
 
               {/* Connected wallet info */}
