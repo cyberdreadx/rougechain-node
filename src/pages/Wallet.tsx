@@ -41,6 +41,7 @@ import AssetList from "@/components/wallet/AssetList";
 import TransactionHistory from "@/components/wallet/TransactionHistory";
 import NetworkBadge from "@/components/wallet/NetworkBadge";
 import SecurityStatus from "@/components/wallet/SecurityStatus";
+import { WalletPageSkeleton, BalanceCardSkeleton, AssetListSkeleton, ActivitySkeleton } from "@/components/wallet/WalletSkeleton";
 import WalletBackup from "@/components/wallet/WalletBackup";
 import { 
   getWalletBalance, 
@@ -730,12 +731,11 @@ const Wallet = () => {
     : t("wallet.empty.faucetHint");
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    return <WalletPageSkeleton />;
   }
+
+  // Wallet known but its balances / history not fetched yet: placeholders, not empty states.
+  const firstDataLoad = !!wallet && lastUpdated === null && !syncError;
 
   if (showSeedReveal) {
     const words = newMnemonic.split(" ");
@@ -974,7 +974,7 @@ const Wallet = () => {
             animate={{ opacity: 1 }}
             className="space-y-6"
           >
-          <WalletCard
+          {firstDataLoad ? <BalanceCardSkeleton /> : <WalletCard
               address={wallet.signingPublicKey}
               balance={xrgeBalance.toLocaleString()}
               shieldedBalance={getShieldedBalance(wallet.signingPublicKey)}
@@ -983,7 +983,7 @@ const Wallet = () => {
               isConnected={true}
               balancesHidden={balancesHidden}
               onToggleBalancesHidden={toggleBalancesHidden}
-            />
+            />}
 
             {/* Action Buttons */}
             <div className="flex items-center justify-between">
@@ -1186,18 +1186,27 @@ const Wallet = () => {
               </div>
             </motion.div>
 
-            <AssetList
-              assets={assets}
-              emptyActionLabel={emptyAssetActionLabel}
-              onEmptyAction={handleEmptyAssetAction}
-              emptyHint={emptyAssetHint}
-              onAssetClick={(asset) => setSelectedAsset(asset)}
-            />
-            <TransactionHistory
-              transactions={txHistory}
-              emptyActionLabel={t("wallet.empty.receiveTokens")}
-              onEmptyAction={() => setShowReceive(true)}
-            />
+            {firstDataLoad ? (
+              <>
+                <AssetListSkeleton />
+                <ActivitySkeleton />
+              </>
+            ) : (
+              <>
+                <AssetList
+                  assets={assets}
+                  emptyActionLabel={emptyAssetActionLabel}
+                  onEmptyAction={handleEmptyAssetAction}
+                  emptyHint={emptyAssetHint}
+                  onAssetClick={(asset) => setSelectedAsset(asset)}
+                />
+                <TransactionHistory
+                  transactions={txHistory}
+                  emptyActionLabel={t("wallet.empty.receiveTokens")}
+                  onEmptyAction={() => setShowReceive(true)}
+                />
+              </>
+            )}
             <SecurityStatus />
 
             {/* Chrome Extension Promo */}
