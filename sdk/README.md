@@ -585,6 +585,22 @@ await game.call("move", { x: 1, y: 2 });
 
 Fees: publish 10 XRGE flat; call `gasLimit × 0.000001` XRGE (max gas 10,000,000). `predictContractAddress(from, nonce, wasm)` derives the address offline.
 
+### Payable calls (1.10.0, node from block PAYABLE_HEIGHT)
+
+A call can pay the contract. `amount` is an integer: quanta for XRGE (use `xrgeToQuanta`), raw units for tokens. The payment moves only if the call succeeds. A failing call keeps it with you, but the gas fee is still charged.
+
+```typescript
+import { xrgeToQuanta, quantaToXrge } from "@rougechain/sdk";
+
+const attach = { symbol: "XRGE", amount: xrgeToQuanta("0.5") };        // 500_000_000n quanta
+const preview = await rc.contracts.query(addr, "roll", {}, wallet.publicKey, { attach });  // free
+const r = await rc.contracts.execute(wallet, addr, "roll", {}, { attach });  // gas sized WITH the payment
+await game.call("buy", { item: 3 }, { attach: { symbol: "GOLD", amount: 25 } });  // token units
+quantaToXrge(500_000_000n);  // "0.5"
+```
+
+Amounts must be positive safe integers (≤ `Number.MAX_SAFE_INTEGER`). Anything else is rejected before signing. The node refuses the call if you can't cover the gas fee plus an XRGE payment, or the token amount.
+
 ## Low-Level Signing
 
 For advanced use cases:

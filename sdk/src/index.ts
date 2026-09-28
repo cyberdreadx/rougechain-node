@@ -15,6 +15,10 @@ export {
   CONTRACT_MAX_GAS,
   CONTRACT_GAS_PRICE_XRGE,
   CONTRACT_DEPLOY_FEE_XRGE,
+  QUANTA_PER_XRGE,
+  xrgeToQuanta,
+  quantaToXrge,
+  normalizeContractAttach,
 } from "./contracts.js";
 export type { GameContract } from "./contracts.js";
 
@@ -135,6 +139,9 @@ export type {
   PublishContractResult,
   ExecuteContractOptions,
   ExecuteContractResult,
+  ContractAttach,
+  NormalizedContractAttach,
+  QueryContractOptions,
   TxReceipt,
   TxReceiptStatus,
   DeployContractParams,
