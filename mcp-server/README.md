@@ -105,7 +105,7 @@ Then point the config at the built file:
 - **Name service:** `register_name`, `release_name`
 - **Social:** `create_post`, `delete_post`, `repost`, `follow`, `like_track`, `comment_on_track`
 - **Bridge:** `bridge_withdraw`
-- **Smart contracts:** `publish_contract` (10 XRGE), `execute_contract` (fee = gasLimit × 0.000001 XRGE) — see below
+- **Smart contracts:** `publish_contract` (10 XRGE), `execute_contract` (fee = gasLimit × 0.000001 XRGE; optional `attach` payment) — see below
 
 ---
 
@@ -141,7 +141,8 @@ Then point the config at the built file:
 - `get_contract` — Contract metadata
 - `get_contract_state` — Read contract storage (one key or all)
 - `get_contract_events` — Stored events, newest first (`limit`, `before` block height, `tx` hash)
-- `query_contract` — Free read-only call (`POST /api/contract/:addr/query`); `caller` defaults to the configured wallet
+- `query_contract` — Free read-only call (`POST /api/contract/:addr/query`); `caller` defaults to the configured wallet.
+  Optional `attach` previews a paid call (see *Payable calls* below; needs a caller)
 - `get_tx_receipt` — Receipt of an included tx: `status` is `"Success"` or `{"Failed": "<error>"}`
 
 Write mode adds two player-signed tools. The configured wallet is the deployer / the caller the
@@ -155,7 +156,23 @@ contract sees (`host_get_caller`) and pays the fee:
   `ceil(gasUsed × 1.5) + 1000` (max 10,000,000); the fee is `gasLimit × 0.000001` XRGE. The node
   dry-runs the call and refuses it if it would fail (nothing charged). With `wait: true` the
   result includes the receipt; a call that reverted in its block is still charged and reports
-  `status: {"Failed": …}`.
+  `status: {"Failed": …}`. Optional `attach` pays the contract (see below).
+
+**Payable calls (1.3.0; the node accepts them from block PAYABLE_HEIGHT).** `execute_contract` and
+`query_contract` take an optional `attach`:
+
+| Payment | `attach` | Signed as |
+|---------|----------|-----------|
+| XRGE | `{ "symbol": "XRGE", "amount_xrge": "0.5" }`: a **decimal XRGE string**, at most 9 decimals | `{"symbol":"XRGE","amount":500000000}` (integer quanta, 1 XRGE = 1,000,000,000) |
+| Token | `{ "symbol": "GOLD", "amount": 25 }`: an **integer in raw token units** (number or digit string) | `{"symbol":"GOLD","amount":25}` |
+
+The conversion is exact, with no floating point. XRGE must use `amount_xrge`, and a token must use
+`amount`. The tool rejects any other combination, a zero amount, or an amount above
+2^53 − 1. The payment moves to the contract **only if the call succeeds**. If the call fails or
+traps, the payment stays with the wallet, but the gas fee is still charged. The node refuses the
+call up front if the wallet can't cover the gas fee plus an XRGE payment, or the token amount.
+Gas auto-sizing previews the call with the payment. The result adds `attach`, `payment` and
+`maxTotalXrge` (gas fee + XRGE payment).
 
 The node-signed `/api/v2/contract/deploy` (410 Gone) and `/api/v2/contract/call` (preview only)
 endpoints are retired, so the old `deploy_contract` / `call_contract` tools were removed.
