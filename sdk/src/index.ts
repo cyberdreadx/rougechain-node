@@ -4,6 +4,21 @@ export type { RougeChainOptions, TrackStats, ArtistStats, SocialComment, SocialP
 export { Wallet } from "./wallet.js";
 
 export {
+  ContractsClient,
+  predictContractAddress,
+  suggestGasLimit,
+  contractCallFee,
+  createSignedContractPublish,
+  createSignedContractCall,
+  bytesToBase64,
+  base64ToBytes,
+  CONTRACT_MAX_GAS,
+  CONTRACT_GAS_PRICE_XRGE,
+  CONTRACT_DEPLOY_FEE_XRGE,
+} from "./contracts.js";
+export type { GameContract } from "./contracts.js";
+
+export {
   generateMnemonic,
   validateMnemonic,
   mnemonicToMLDSASeed,
@@ -112,6 +127,16 @@ export type {
   ContractMetadata,
   ContractEvent,
   ContractCallResult,
+  ContractQueryResult,
+  ContractEventFrame,
+  ContractStateValue,
+  ContractEventsQuery,
+  PublishContractOptions,
+  PublishContractResult,
+  ExecuteContractOptions,
+  ExecuteContractResult,
+  TxReceipt,
+  TxReceiptStatus,
   DeployContractParams,
   CallContractParams,
   FeeInfo,

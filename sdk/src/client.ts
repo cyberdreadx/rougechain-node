@@ -91,6 +91,7 @@ import type {
   FinalityProof,
 } from "./types.js";
 import { createShieldedNote, type ShieldedNote } from "./shielded.js";
+import { ContractsClient } from "./contracts.js";
 
 type FetchFn = typeof globalThis.fetch;
 
@@ -99,12 +100,18 @@ export interface RougeChainOptions {
   fetch?: FetchFn;
   /** Optional API key for authenticated endpoints */
   apiKey?: string;
+  /**
+   * WebSocket constructor for live subscriptions (defaults to globalThis.WebSocket).
+   * Pass e.g. the `ws` package on Node versions without a global WebSocket.
+   */
+  WebSocket?: new (url: string) => unknown;
 }
 
 export class RougeChain {
   /** @internal */ readonly baseUrl: string;
   /** @internal */ readonly fetchFn: FetchFn;
   /** @internal */ readonly headers: Record<string, string>;
+  /** @internal */ readonly wsCtor: (new (url: string) => unknown) | undefined;
 
   public readonly nft: NftClient;
   public readonly dex: DexClient;
@@ -113,11 +120,15 @@ export class RougeChain {
   public readonly messenger: MessengerClient;
   public readonly shielded: ShieldedClient;
   public readonly social: SocialClient;
+  public readonly contracts: ContractsClient;
 
   constructor(baseUrl: string, options: RougeChainOptions = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.headers = { "Content-Type": "application/json" };
+    this.wsCtor =
+      options.WebSocket ??
+      (typeof globalThis.WebSocket === "function" ? globalThis.WebSocket : undefined);
     if (options.apiKey) {
       this.headers["X-API-Key"] = options.apiKey;
     }
@@ -129,6 +140,7 @@ export class RougeChain {
     this.messenger = new MessengerClient(this);
     this.shielded = new ShieldedClient(this);
     this.social = new SocialClient(this);
+    this.contracts = new ContractsClient(this);
   }
 
   // ===== Internal helpers =====
@@ -1398,7 +1410,10 @@ class ShieldedClient {
 
   // ─── WASM Smart Contracts ──────────────────────────────────────────
 
-  /** Deploy a WASM smart contract */
+  /**
+   * Deploy a WASM smart contract (node-signed, legacy).
+   * @deprecated Disabled on networks with player-signed contracts (410 Gone). Use `rc.contracts.publish`.
+   */
   async deployContract(params: {
     wasm: string;
     deployer: string;
@@ -1407,7 +1422,10 @@ class ShieldedClient {
     return this.rc.post("/v2/contract/deploy", params);
   }
 
-  /** Call a WASM smart contract method (mutating) */
+  /**
+   * Call a WASM smart contract method (legacy, node-signed).
+   * @deprecated Preview-only on networks with player-signed contracts. Use `rc.contracts.execute` / `rc.contracts.query`.
+   */
   async callContract(params: {
     contractAddr: string;
     method: string;
@@ -1418,12 +1436,12 @@ class ShieldedClient {
     return this.rc.post("/v2/contract/call", params);
   }
 
-  /** Get contract metadata */
+  /** Get contract metadata. @deprecated Use `rc.contracts.get`. */
   async getContract(addr: string): Promise<ApiResponse> {
     return this.rc.get(`/contract/${addr}`);
   }
 
-  /** Read contract storage. Omit key for full state dump. */
+  /** Read contract storage. Omit key for full state dump. @deprecated Use `rc.contracts.state`. */
   async getContractState(
     addr: string,
     key?: string
@@ -1432,7 +1450,7 @@ class ShieldedClient {
     return this.rc.get(`/contract/${addr}/state${q}`);
   }
 
-  /** Get contract events */
+  /** Get contract events. @deprecated Use `rc.contracts.events`. */
   async getContractEvents(
     addr: string,
     limit?: number
@@ -1441,7 +1459,7 @@ class ShieldedClient {
     return this.rc.get(`/contract/${addr}/events${q}`);
   }
 
-  /** List all deployed contracts */
+  /** List all deployed contracts. @deprecated Use `rc.contracts.list`. */
   async listContracts(): Promise<ApiResponse> {
     return this.rc.get("/contracts");
   }

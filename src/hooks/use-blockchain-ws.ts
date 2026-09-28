@@ -38,7 +38,17 @@ export interface WsNewMessageEvent {
   participant_ids: string[];
 }
 
-export type WsEvent = WsNewBlockEvent | WsNewTransactionEvent | WsStatsEvent | WsNewMessageEvent;
+/** An event a WASM contract emitted in an accepted block (topic `contract:<addr>`). */
+export interface WsContractEvent {
+  type: "contract_event";
+  contract_addr: string;
+  topic: string;
+  data: string;
+  block_height: number;
+  tx_hash: string;
+}
+
+export type WsEvent = WsNewBlockEvent | WsNewTransactionEvent | WsStatsEvent | WsNewMessageEvent | WsContractEvent;
 
 // Module-level fan-out so components that don't own the socket (e.g. an open chat)
 // can react to new_message events without opening a second WebSocket.
@@ -86,6 +96,13 @@ interface UseBlockchainWsOptions {
   onNewTransaction?: (event: WsNewTransactionEvent) => void;
   onStats?: (event: WsStatsEvent) => void;
   onNewMessage?: (event: WsNewMessageEvent) => void;
+  onContractEvent?: (event: WsContractEvent) => void;
+  /**
+   * Public topics to subscribe to (e.g. `["blocks", "contract:<addr>"]`). Once a socket
+   * subscribes to anything, the node only sends it frames for those topics, so include
+   * "blocks" / "stats" / "transactions" if you also want those. Omit for the firehose.
+   */
+  topics?: string[];
   fallbackPollInterval?: number;
 }
 
@@ -117,6 +134,11 @@ export function useBlockchainWs(options: UseBlockchainWsOptions = {}): UseBlockc
   const onNewTransactionRef = useRef(options.onNewTransaction);
   const onStatsRef = useRef(options.onStats);
   const onNewMessageRef = useRef(options.onNewMessage);
+  const onContractEventRef = useRef(options.onContractEvent);
+  onContractEventRef.current = options.onContractEvent;
+  const topicsKey = (options.topics ?? []).join("\n");
+  const topicsRef = useRef<string[]>(options.topics ?? []);
+  const sentTopicsRef = useRef<string[]>([]);
   onNewBlockRef.current = options.onNewBlock;
   onNewTransactionRef.current = options.onNewTransaction;
   onStatsRef.current = options.onStats;
@@ -203,6 +225,8 @@ export function useBlockchainWs(options: UseBlockchainWsOptions = {}): UseBlockc
       ws.onopen = () => {
         console.log("[ws] Connected");
         openSockets.add(ws);
+        sentTopicsRef.current = [...topicsRef.current];
+        if (sentTopicsRef.current.length) ws.send(JSON.stringify({ subscribe: sentTopicsRef.current }));
         sendMessengerAuth(ws);
         setIsConnected(true);
         setConnectionType("websocket");
@@ -234,6 +258,9 @@ export function useBlockchainWs(options: UseBlockchainWsOptions = {}): UseBlockc
               lastHeightRef.current = data.block_height;
               setLastBlockHeight(data.block_height);
               onStatsRef.current?.(data);
+              break;
+            case "contract_event":
+              onContractEventRef.current?.(data);
               break;
             case "new_message":
               onNewMessageRef.current?.(data);
@@ -282,6 +309,20 @@ export function useBlockchainWs(options: UseBlockchainWsOptions = {}): UseBlockc
     }
     connect();
   }, [connect]);
+
+  // Topic changes on a live socket: diff the subscription instead of reconnecting.
+  useEffect(() => {
+    const next = topicsKey ? topicsKey.split("\n") : [];
+    topicsRef.current = next;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const prev = sentTopicsRef.current;
+    const add = next.filter((t) => !prev.includes(t));
+    const remove = prev.filter((t) => !next.includes(t));
+    if (add.length) ws.send(JSON.stringify({ subscribe: add }));
+    if (remove.length) ws.send(JSON.stringify({ unsubscribe: remove }));
+    sentTopicsRef.current = next;
+  }, [topicsKey]);
 
   // Single stable effect — connect once on mount, cleanup on unmount
   useEffect(() => {

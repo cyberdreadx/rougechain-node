@@ -562,6 +562,29 @@ const commitment = computeCommitment(100, wallet.publicKey, randomness);
 const nullifier = computeNullifier(randomness, commitment);
 ```
 
+## Smart Contracts (`rc.contracts`)
+
+WASM contracts with player-signed transactions: the signer is the caller the contract sees and pays the fee.
+
+```typescript
+const pub = await rc.contracts.publish(wallet, wasmBytes);   // 10 XRGE; pub.predictedAddress known up front
+await rc.contracts.waitForReceipt(pub.txId!);
+
+const q = await rc.contracts.query(addr, "get_score", { player: wallet.publicKey });  // free
+const r = await rc.contracts.execute(wallet, addr, "move", { x: 1 });  // gas auto-sized from a query
+const receipt = await rc.contracts.waitForReceipt(r.txId!);
+if (receipt.status !== "Success") console.error("reverted:", receipt.status.Failed);  // fee still charged
+const mine = await rc.contracts.events(addr, { tx: r.txId });  // events emitted by that tx
+const stop = rc.contracts.subscribe(addr, (e) => console.log(e.topic, e.data));
+
+// Game helper
+const game = rc.contracts.game(addr, wallet);
+game.on("move", (e) => render(JSON.parse(e.data)));
+await game.call("move", { x: 1, y: 2 });
+```
+
+Fees: publish 10 XRGE flat; call `gasLimit × 0.000001` XRGE (max gas 10,000,000). `predictContractAddress(from, nonce, wasm)` derives the address offline.
+
 ## Low-Level Signing
 
 For advanced use cases:

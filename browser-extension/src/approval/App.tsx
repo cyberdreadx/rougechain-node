@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
-import { Shield, Link2, FileSignature, Send, AlertTriangle } from "lucide-react";
+import { useState, useEffect, type ReactNode } from "react";
+import { Shield, Link2, FileSignature, Send, AlertTriangle, Code2, Upload } from "lucide-react";
+import type { ContractTxDetails } from "../lib/contract-tx";
 
 /**
  * Approval popup — opened by the service worker when a dApp
@@ -19,9 +20,87 @@ interface PendingRequest {
     origin: string;
     favicon?: string;
     payload?: Record<string, unknown>;
+    details?: ContractTxDetails;
 }
 
 const isEvm = (t: ApprovalType) => t.startsWith("evm-");
+
+function shortAddr(a: string): string {
+    return a.length > 16 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a;
+}
+
+function formatXrge(n: number): string {
+    return n.toLocaleString(undefined, { maximumFractionDigits: 6 });
+}
+
+function Row({ label, children, title }: { label: string; children: ReactNode; title?: string }) {
+    return (
+        <div className="flex justify-between gap-3 text-sm" title={title}>
+            <span className="text-muted-foreground shrink-0">{label}</span>
+            <span className="text-right min-w-0 break-all">{children}</span>
+        </div>
+    );
+}
+
+/** Contract call / deployment summary (details are derived by the service worker). */
+function ContractTxView({ details, sending }: { details: ContractTxDetails; sending: boolean }) {
+    if (details.kind === "contract_call") {
+        return (
+            <div className="space-y-3">
+                <div className="flex items-center gap-2 text-amber-400 text-sm justify-center">
+                    <Code2 className="w-4 h-4" />
+                    <span>{sending ? "Call a smart contract" : "Sign a smart contract call"}</span>
+                </div>
+                <div className="rounded-xl border border-border bg-card/30 p-4 space-y-2.5">
+                    <Row label="Contract" title={details.contractAddr}>
+                        <span className="font-mono text-xs">{shortAddr(details.contractAddr)}</span>
+                    </Row>
+                    <Row label="Method"><span className="font-mono text-xs font-semibold">{details.method}</span></Row>
+                    <Row label="Gas limit">
+                        <span className="font-mono text-xs">{details.gasLimit.toLocaleString()}</span>
+                        {details.gasLimitDefaulted && <span className="block text-[10px] text-amber-400">not set: node default</span>}
+                    </Row>
+                    <Row label="Max fee"><span className="font-semibold">{formatXrge(details.maxFeeXrge)} XRGE</span></Row>
+                </div>
+                <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">
+                        Arguments ({details.argsBytes.toLocaleString()} bytes)
+                    </p>
+                    <div className="rounded-xl border border-border bg-card/30 p-3 max-h-[160px] overflow-auto">
+                        <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-all">{details.argsPretty}</pre>
+                        {details.argsTruncated && (
+                            <p className="mt-1 text-[10px] text-amber-400">Truncated for display. The full arguments are signed.</p>
+                        )}
+                    </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground text-center">
+                    The fee is gas limit × 0.000001 XRGE, charged up front. The contract sees this wallet as the caller.
+                </p>
+            </div>
+        );
+    }
+    return (
+        <div className="space-y-3">
+            <div className="flex items-center gap-2 text-red-400 text-sm justify-center">
+                <Upload className="w-4 h-4" />
+                <span>{sending ? "Deploy a smart contract" : "Sign a smart contract deployment"}</span>
+            </div>
+            <div className="rounded-xl border border-border bg-card/30 p-4 space-y-2.5">
+                <Row label="WASM size"><span className="font-mono text-xs">{details.wasmSize.toLocaleString()} bytes</span></Row>
+                <Row label="Address" title={details.predictedAddress}>
+                    <span className="font-mono text-xs">{details.predictedAddress}</span>
+                </Row>
+                <Row label="Code hash" title={details.codeHash}>
+                    <span className="font-mono text-xs">{shortAddr(details.codeHash)}</span>
+                </Row>
+                <Row label="Fee"><span className="font-semibold">{formatXrge(details.feeXrge)} XRGE</span></Row>
+            </div>
+            <p className="text-[11px] text-muted-foreground text-center">
+                The contract is installed at this address once the transaction is mined. You are its deployer.
+            </p>
+        </div>
+    );
+}
 
 export default function ApprovalApp() {
     const [request, setRequest] = useState<PendingRequest | null>(null);
@@ -43,6 +122,7 @@ export default function ApprovalApp() {
                 origin,
                 favicon,
                 payload: stored?.payload,
+                details: stored?.details,
             });
         });
     }, []);
@@ -109,8 +189,8 @@ export default function ApprovalApp() {
                     </div>
                     <h2 className="text-lg font-semibold">
                         {isConnect && "Connection Request"}
-                        {isSign && "Signature Request"}
-                        {isSend && "Transaction Request"}
+                        {isSign && (request.details ? "Contract Signature" : "Signature Request")}
+                        {isSend && (request.details ? "Contract Transaction" : "Transaction Request")}
                     </h2>
                     {evm && (
                         <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/20">
@@ -154,7 +234,11 @@ export default function ApprovalApp() {
                     </div>
                 )}
 
-                {request.type === "sign" && (
+                {(request.type === "sign" || request.type === "send") && request.details && (
+                    <ContractTxView details={request.details} sending={request.type === "send"} />
+                )}
+
+                {request.type === "sign" && !request.details && (
                     <div className="space-y-3">
                         <p className="text-sm text-muted-foreground text-center">
                             This site is requesting your signature on the following data:
@@ -167,7 +251,7 @@ export default function ApprovalApp() {
                     </div>
                 )}
 
-                {request.type === "send" && (
+                {request.type === "send" && !request.details && (
                     <div className="space-y-3">
                         <div className="flex items-center gap-2 text-amber-400 text-sm justify-center">
                             <AlertTriangle className="w-4 h-4" />

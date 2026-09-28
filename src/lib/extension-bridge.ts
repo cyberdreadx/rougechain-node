@@ -43,6 +43,8 @@ export function getRougeChainProvider(): RougeChainProvider | null {
 /**
  * Sign a transaction payload via the extension/dApp browser provider.
  * Sends pre-serialized bytes so the signature matches the node's expected format.
+ * The extension (v1.4.0+) signs exactly these bytes after checking they encode `payload`,
+ * and shows a contract-specific approval for `contract_call` / `contract_deploy`.
  */
 export async function signViaExtension(
   payload: TransactionPayload,

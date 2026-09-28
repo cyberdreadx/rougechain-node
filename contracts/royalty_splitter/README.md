@@ -39,10 +39,11 @@ cargo build --release --target wasm32-unknown-unknown
 
 ## Deploy
 
-Base64-encode the wasm and deploy via the node API (`/api/contract/deploy` with
-`{ wasm, deployer, nonce }`); the response returns the contract **address**.
-Use that address as the NFT `royaltyRecipient`. To pay out, call `split` on the
-contract (`/api/contract/call` with `{ contractAddr, method: "split", caller }`).
+Publish the wasm with a wallet-signed deployment (`rc.contracts.publish(wallet, wasm)`
+in `@rougechain/sdk` 1.9.0+, or `POST /api/v2/contract/publish`); the contract **address**
+is `predictedAddress` in the result. Use that address as the NFT `royaltyRecipient`. To pay
+out, sign a call to `split` (`rc.contracts.execute(wallet, address, "split")`, or
+`POST /api/v2/contract/execute`); the signer pays the call fee.
 
 > **v2 required.** XRGE custody activates at the v2 fork height; on a pre-v2
 > node the transfers are inert. See `docs/advanced/contract-xrge-custody.md`.

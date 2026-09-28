@@ -173,11 +173,13 @@ The `payload` is JSON-serialized with keys sorted alphabetically, then signed wi
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v2/contract/deploy` | POST | Deploy WASM contract (signed) |
-| `/api/v2/contract/call` | POST | Call contract method (signed) |
+| `/api/v2/contract/publish` | POST | Publish (deploy) WASM contract (player-signed, 10 XRGE) |
+| `/api/v2/contract/execute` | POST | Call a contract method (player-signed, fee = gasLimit × 0.000001 XRGE) |
+| `/api/contract/:address/query` | POST | Read-only call (free, not signed) |
 | `/api/contract/:address` | GET | Get contract metadata |
 | `/api/contract/:address/state` | GET | Get contract state |
-| `/api/contract/:address/events` | GET | Get contract events |
+| `/api/contract/:address/events` | GET | Get contract events (`limit`, `before`, `tx`) |
+| `/api/contracts` | GET | List contracts |
 
 ### Bridge (ETH/USDC + XRGE)
 
