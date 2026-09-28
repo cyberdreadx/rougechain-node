@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { AuroraBackdrop } from "@/components/ui/aurora-backdrop";
 import { useEffect, useRef } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -116,6 +117,7 @@ const App = () => (
       <BrowserRouter>
         <WalletAutoRegister />
         <ScrollToTop />
+        <AuroraBackdrop />
         <div className="min-h-screen flex flex-col">
           <Sidebar>
             <div className="flex-1">
