@@ -705,5 +705,15 @@
       "failed": "Swap failed",
       "connectNamed": "Connect {{wallet}}"
     }
+  },
+  "messenger": {
+    "tip": {
+      "label": "Tip",
+      "sent": "You sent a tip",
+      "received": "Tip received"
+    },
+    "reply": {
+      "unavailable": "Original message not loaded"
+    }
   }
 }

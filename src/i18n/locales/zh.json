@@ -705,5 +705,15 @@
       "failed": "兑换失败",
       "connectNamed": "连接 {{wallet}}"
     }
+  },
+  "messenger": {
+    "tip": {
+      "label": "打赏",
+      "sent": "你发送了打赏",
+      "received": "收到打赏"
+    },
+    "reply": {
+      "unavailable": "原消息未加载"
+    }
   }
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { isNoteToSelf } from "../../lib/messenger-envelope";
+import { isNoteToSelf, parseTip } from "../../lib/messenger-envelope";
 import {
     ArrowLeft, Send, Lock, Shield, Plus, Loader2,
     MessageCircle, CheckCircle2, XCircle, Timer,
@@ -678,7 +678,11 @@ function MessageBubble({ msg, isOwn }: { msg: Message; isOwn: boolean }) {
                             <p className={`text-xs whitespace-pre-wrap break-words transition-all duration-300 ${isSpoiler ? "blur-md" : ""}`}>
                                 {msg.plaintext?.startsWith("[Unable") ? (
                                     <span className="italic opacity-60">{msg.plaintext}</span>
-                                ) : msg.plaintext}
+                                ) : (() => {
+                                    // Qwalla tip: [tip:AMOUNT:SYMBOL]
+                                    const tip = parseTip(msg.plaintext);
+                                    return tip ? <span className="font-semibold">💸 Tip: {tip.amount} {tip.symbol}</span> : msg.plaintext;
+                                })()}
                             </p>
                         )}
                     </div>

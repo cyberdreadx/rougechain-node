@@ -705,5 +705,15 @@
       "failed": "スワップに失敗しました",
       "connectNamed": "{{wallet}} を接続"
     }
+  },
+  "messenger": {
+    "tip": {
+      "label": "チップ",
+      "sent": "チップを送りました",
+      "received": "チップを受け取りました"
+    },
+    "reply": {
+      "unavailable": "元のメッセージは読み込まれていません"
+    }
   }
 }

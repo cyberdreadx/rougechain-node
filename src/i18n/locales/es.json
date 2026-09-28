@@ -705,5 +705,15 @@
       "failed": "El intercambio falló",
       "connectNamed": "Conectar {{wallet}}"
     }
+  },
+  "messenger": {
+    "tip": {
+      "label": "Propina",
+      "sent": "Enviaste una propina",
+      "received": "Propina recibida"
+    },
+    "reply": {
+      "unavailable": "Mensaje original no cargado"
+    }
   }
 }

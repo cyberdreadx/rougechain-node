@@ -1,5 +1,5 @@
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@/lib/network";
-import { applyEnvelopes } from "@/lib/messenger-envelope";
+import { applyEnvelopes, type EnvelopeData, type EnvelopeReaction } from "@/lib/messenger-envelope";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 
@@ -32,8 +32,13 @@ export interface Message {
   plaintext?: string;
   /** Reactions other clients (Qwalla) attached to this message, as emoji. */
   reactions?: string[];
+  /** The same reactions with their sender (for counting / highlighting my own). */
+  reactionsFrom?: EnvelopeReaction[];
   /** Id of the message this one replies to (Qwalla envelopes). */
   replyTo?: string;
+  /** Structured payment / payment request carried in a site msg envelope (`pay` / `req`). */
+  pay?: EnvelopeData;
+  req?: EnvelopeData;
   signatureValid?: boolean;
   senderDisplayName?: string;
   // Media support
