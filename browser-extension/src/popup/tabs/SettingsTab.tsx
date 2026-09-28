@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { Lock, LogOut, Globe, Clock, Download, Shield, ExternalLink, KeyRound, Copy, Check, Eye, EyeOff, Wallet } from "lucide-react";
+import { useState, useMemo, useEffect } from "react";
+import { Lock, LogOut, Globe, Clock, Download, Shield, ExternalLink, KeyRound, Copy, Check, Eye, EyeOff, Wallet, Link2, X } from "lucide-react";
 import type { UnifiedWallet } from "../../lib/unified-wallet";
 import { deriveEvmAccount } from "../../lib/evm-wallet";
 import {
@@ -36,6 +36,30 @@ export default function SettingsTab({ wallet, onLock, onDisconnect }: Props) {
     const [seedCopied, setSeedCopied] = useState(false);
     const [evmCopied, setEvmCopied] = useState(false);
     const evmAccount = useMemo(() => deriveEvmAccount(wallet.mnemonic), [wallet.mnemonic]);
+
+    // Sites allowed to talk to the wallet (RougeChain provider and the EVM provider). Any https
+    // site can ASK to connect; only the ones approved here can request signatures.
+    const [connectedSites, setConnectedSites] = useState<string[]>([]);
+    const loadConnectedSites = () => {
+        chrome.storage.local.get(["rougechain-connected-sites", "rougechain-evm-origins"], (data) => {
+            const parse = (v: unknown) => { try { return typeof v === "string" ? JSON.parse(v) : []; } catch { return []; } };
+            const rc = (parse(data["rougechain-connected-sites"]) as { origin: string }[]).map(s => s.origin);
+            const evm = parse(data["rougechain-evm-origins"]) as string[];
+            setConnectedSites([...new Set([...rc, ...evm])].sort());
+        });
+    };
+    useEffect(loadConnectedSites, []);
+    const disconnectSite = (origin: string) => {
+        chrome.storage.local.get(["rougechain-connected-sites", "rougechain-evm-origins"], (data) => {
+            const parse = (v: unknown) => { try { return typeof v === "string" ? JSON.parse(v) : []; } catch { return []; } };
+            const rc = (parse(data["rougechain-connected-sites"]) as { origin: string }[]).filter(s => s.origin !== origin);
+            const evm = (parse(data["rougechain-evm-origins"]) as string[]).filter(o => o !== origin);
+            chrome.storage.local.set({
+                "rougechain-connected-sites": JSON.stringify(rc),
+                "rougechain-evm-origins": JSON.stringify(evm),
+            }, loadConnectedSites);
+        });
+    };
 
     const handleLock = async () => {
         if (!lockPassword) return;
@@ -133,6 +157,32 @@ export default function SettingsTab({ wallet, onLock, onDisconnect }: Props) {
                         Lock
                     </button>
                 </div>
+            </div>
+
+            {/* Connected sites */}
+            <div className="p-3 border-b border-border">
+                <div className="flex items-center gap-2 mb-2">
+                    <Link2 className="w-3.5 h-3.5 text-primary" />
+                    <span className="text-xs font-medium text-foreground">Connected Sites</span>
+                </div>
+                {connectedSites.length === 0 ? (
+                    <p className="text-[10px] text-muted-foreground">No sites connected. A site must ask, and you must approve, before it can see your address or request signatures.</p>
+                ) : (
+                    <div className="space-y-1">
+                        {connectedSites.map(origin => (
+                            <div key={origin} className="flex items-center justify-between gap-2 rounded-lg bg-secondary/40 px-2 py-1.5">
+                                <span className="text-[10px] font-mono text-foreground truncate">{origin.replace(/^https:\/\//, "")}</span>
+                                <button
+                                    onClick={() => disconnectSite(origin)}
+                                    className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-destructive"
+                                    title={`Disconnect ${origin}`}
+                                >
+                                    <X className="w-3 h-3" /> Disconnect
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* Auto-lock timer */}

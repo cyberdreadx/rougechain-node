@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RougeChain Wallet",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "Quantum-safe cryptocurrency wallet & encrypted messenger for RougeChain",
   "action": {
     "default_popup": "popup.html",
@@ -35,12 +35,9 @@
   "content_scripts": [
     {
       "matches": [
-        "https://rougechain.io/*",
-        "https://*.rougechain.io/*",
-        "https://testnet.rougechain.io/*",
-        "https://rougee.app/*",
-        "https://*.rougee.app/*",
-        "http://localhost/*"
+        "https://*/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
       ],
       "js": [
         "content.js"
@@ -55,12 +52,9 @@
         "evm-provider.js"
       ],
       "matches": [
-        "https://rougechain.io/*",
-        "https://*.rougechain.io/*",
-        "https://testnet.rougechain.io/*",
-        "https://rougee.app/*",
-        "https://*.rougee.app/*",
-        "http://localhost/*"
+        "https://*/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
       ]
     }
   ],
