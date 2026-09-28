@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import BaseBalances from "../components/BaseBalances";
 import { RefreshCw, Send, Download, Droplets, Copy, Check, TrendingUp, ArrowDownUp, Shield, ShieldOff, AlertCircle, X } from "lucide-react";
 import type { UnifiedWallet } from "../../lib/unified-wallet";
 import { pubkeyToAddress, formatAddress, formatIdentity } from "../../lib/address";
@@ -458,6 +459,9 @@ export default function WalletTab({ wallet }: Props) {
                     ))}
                 </div>
             )}
+
+            {/* Base (Ethereum L2) balances of the same recovery phrase */}
+            <BaseBalances mnemonic={wallet.mnemonic} />
 
             {/* Transactions */}
             <div className="flex-1 overflow-y-auto">
