@@ -17,6 +17,7 @@ import ChatPayment, { PaymentBubble, encodePaymentMessage, encodeRequestMessage,
 import type { PaymentMessageData, RequestMessageData } from "./ChatPayment";
 import { ReactionPicker, ReactionBadges, aggregateReactions, isSystemMessage, encodeReactionMessage } from "./ChatReactions";
 import { QuotedMessage, ReplyComposer, parseReplyMessage, encodeReplyMessage } from "./ChatReply";
+import { WalletAvatar } from "@/components/WalletAvatar";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -835,16 +836,20 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
         >
           <ArrowLeft className="w-5 h-5" />
         </Button>
-        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isRecipientBot
-          ? "bg-gradient-to-br from-primary to-accent"
-          : "bg-primary/20"
-          }`}>
-          {isRecipientBot ? (
-            <Bot className="w-5 h-5 text-primary-foreground" />
-          ) : (
-            <Shield className="w-5 h-5 text-primary" />
-          )}
-        </div>
+        {isRecipientBot || !recipient ? (
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isRecipientBot
+            ? "bg-gradient-to-br from-primary to-accent"
+            : "bg-primary/20"
+            }`}>
+            {isRecipientBot ? (
+              <Bot className="w-5 h-5 text-primary-foreground" />
+            ) : (
+              <Shield className="w-5 h-5 text-primary" />
+            )}
+          </div>
+        ) : (
+          <WalletAvatar id={recipient.id || recipient.signingPublicKey} uri={"avatarUrl" in recipient ? recipient.avatarUrl : undefined} name={getConversationName()} size={40} ring />
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 min-w-0">
             <p className="font-medium text-foreground truncate">{getConversationName()}</p>
@@ -1496,7 +1501,8 @@ const MessageBubble = ({
           className={`max-w-[85%] sm:max-w-[80%] px-4 py-2 cursor-pointer break-words ${isOwn ? "bubble-own" : "bubble-peer"}`}
         >
           {!isOwn && (
-            <p className="bubble-meta font-medium mb-1 text-[hsl(var(--hologram))]">
+            <p className="bubble-meta font-medium mb-1 text-[hsl(var(--hologram))] flex items-center gap-1.5">
+              <WalletAvatar id={message.senderWalletId} name={message.senderDisplayName} size={16} />
               {message.senderDisplayName}
             </p>
           )}

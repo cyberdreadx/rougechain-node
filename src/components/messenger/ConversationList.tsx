@@ -6,6 +6,7 @@ import type { Conversation, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
 import { deleteConversation } from "@/lib/pqc-messenger";
 import { toast } from "sonner";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
+import { WalletAvatar } from "@/components/WalletAvatar";
 
 function formatRelativeTime(dateStr: string): string {
   try {
@@ -142,21 +143,30 @@ const ConversationList = ({ conversations, selectedId, wallet, currentWalletId, 
               selectedId === conversation.id ? "bg-muted" : ""
             }`}
           >
+            {!isSelfConversation(conversation) && !conversation.isGroup ? (
+              (() => {
+                const other = getOtherParticipant(conversation);
+                return other ? (
+                  <WalletAvatar id={other.id || other.signingPublicKey} uri={other.avatarUrl} name={getConversationName(conversation)} size={40} />
+                ) : (
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center bg-primary/20">
+                    <MessageSquare className="w-5 h-5 text-primary" />
+                  </div>
+                );
+              })()
+            ) : (
             <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
               isSelfConversation(conversation)
                 ? "bg-amber-500/20"
-                : conversation.isGroup 
-                  ? "bg-accent/20" 
-                  : "bg-primary/20"
+                : "bg-accent/20"
             }`}>
               {isSelfConversation(conversation) ? (
                 <StickyNote className="w-5 h-5 text-amber-500" />
-              ) : conversation.isGroup ? (
-                <Users className="w-5 h-5 text-accent" />
               ) : (
-                <MessageSquare className="w-5 h-5 text-primary" />
+                <Users className="w-5 h-5 text-accent" />
               )}
             </div>
+            )}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <ConversationNameDisplay name={getConversationName(conversation)} pubkey={getConversationPubkey(conversation)} />
