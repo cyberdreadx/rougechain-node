@@ -151,6 +151,10 @@ pub struct TxPayload {
     pub contract_args: Option<serde_json::Value>,         // JSON arguments for the method
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_gas_limit: Option<u64>,                  // Max fuel for execution
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_attach_symbol: Option<String>,           // Payable call: token paid with the call ("XRGE" or a token)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_attach_amount: Option<u64>,              // Payable call: quanta (XRGE) or raw token units
     // Multi-sig wallet fields
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub multisig_wallet_id: Option<String>,                // Wallet identifier

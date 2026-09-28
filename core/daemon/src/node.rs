@@ -292,6 +292,31 @@ pub fn game_ready_3_active(height: u64) -> bool {
     matches!(GAME_READY_3_ACTIVATION_HEIGHT, Some(a) if height >= a)
 }
 
+/// Payable contract calls: a `contract_call` may carry a signed `attach` (symbol + integer amount).
+/// The payment is credited to the contract in the balances the call sees and moves for real only if
+/// the call succeeds; a failed call leaves it with the caller (the gas fee is still charged). The
+/// contract reads it with `host_get_attached_amount` / `host_get_attached_symbol`. Before this height
+/// a call carrying `attach` is invalid. `None` = not scheduled.
+pub const PAYABLE_CALLS_ACTIVATION_HEIGHT: Option<u64> = None;
+#[cfg(test)]
+thread_local! {
+    static TEST_PAYABLE_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+pub(crate) fn set_test_payable_calls(h: Option<u64>) {
+    TEST_PAYABLE_OVERRIDE.with(|c| c.set(Some(h)));
+}
+#[inline]
+pub fn payable_calls_active(height: u64) -> bool {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_PAYABLE_OVERRIDE.with(|c| c.get()) {
+            return matches!(h, Some(a) if height >= a);
+        }
+    }
+    matches!(PAYABLE_CALLS_ACTIVATION_HEIGHT, Some(a) if height >= a)
+}
+
 /// Owner check for NFT transactions: exact match, or (from GAME_READY 2) the same canonical
 /// address — so a token a contract minted to a rouge1 address can be moved by its key's owner.
 fn nft_owner_matches(owner: &str, signer: &str, height: u64) -> bool {
@@ -346,6 +371,18 @@ pub fn game_ready_tx_rule(tx: &TxV1, height: u64) -> Result<(), String> {
         }
     } else if is_player_signed_contract_tx(tx) {
         return Err(format!("player-signed {} is not active before GAME_READY", tx.tx_type));
+    }
+    let has_attach = tx.payload.contract_attach_symbol.is_some() || tx.payload.contract_attach_amount.is_some();
+    if has_attach {
+        if tx.tx_type != "contract_call" {
+            return Err(format!("{} cannot carry an attached payment", tx.tx_type));
+        }
+        if !payable_calls_active(height) {
+            return Err("payable contract calls (attach) are not active yet".to_string());
+        }
+        if tx.payload.contract_attach_symbol.is_none() || tx.payload.contract_attach_amount.unwrap_or(0) == 0 {
+            return Err("attach needs a symbol and a positive amount".to_string());
+        }
     }
     Ok(())
 }
@@ -3841,13 +3878,29 @@ impl L1Node {
     /// GAME_READY 2 extension for a read-only preview at `height` (None before activation).
     /// Randomness in a preview is illustrative only: the real roll uses the mined tx's hash.
     pub fn game_ext_for_preview(&self, height: u64) -> Option<quantum_vault_vm::GameExt> {
+        self.game_ext_for_preview_paid(height, None)
+    }
+
+    /// Preview of a payable call: `attach` = (payer, contract, symbol, amount), credited to the
+    /// contract in the view the same way block execution does. XRGE is moved by the caller in the
+    /// native balances it passes.
+    pub fn game_ext_for_preview_paid(&self, height: u64, attach: Option<(&str, &str, &str, u128)>) -> Option<quantum_vault_vm::GameExt> {
         if !game_ready_2_active(height) { return None; }
-        let tokens = self.token_balances.lock().map(|t| t.clone()).unwrap_or_default();
+        let mut tokens = self.token_balances.lock().map(|t| t.clone()).unwrap_or_default();
+        if let Some((payer, contract, sym, amt)) = attach {
+            if sym != "XRGE" {
+                let p = tokens.entry((canon_addr(payer), sym.to_string())).or_insert(0);
+                *p = p.saturating_sub(amt);
+                *tokens.entry((contract.to_string(), sym.to_string())).or_insert(0) += amt;
+            }
+        }
         let tip_hash = self.store.get_tip().map(|t| t.hash).unwrap_or_default();
         Some(quantum_vault_vm::GameExt {
             view: Arc::new(NodeChainView { tokens, nfts: self.nft_store.clone(), blocks: self.store.clone() }),
             seed: quantum_vault_vm::game::random_seed(&tip_hash, "preview"),
             block_hashes: game_ready_3_active(height),
+            payable: payable_calls_active(height),
+            attached: attach.map(|(_, _, s, a)| (s.to_string(), a)),
         })
     }
 
@@ -4851,15 +4904,43 @@ impl L1Node {
                         if let (Some(ref rt), Some(ref cs)) = (&self.wasm_runtime, &self.contract_store) {
                             // Full quanta balances — no u64 truncation (P3-2). The VM
                             // ABI is quanta-native, so pass the ledger as-is.
-                            let call_balances: HashMap<String, u128> = balances.clone();
+                            let mut call_balances: HashMap<String, u128> = balances.clone();
                             let tx_hash_str = bytes_to_hex(&sha256(&encode_tx_v1(tx)));
+                            // Payable call: check the payer can cover the attachment, and show it to the
+                            // contract as already credited. It moves for real only on success.
+                            let payer = canon_addr(&tx.from_pub_key);
+                            let attach: Option<(String, u128)> = match (&tx.payload.contract_attach_symbol, tx.payload.contract_attach_amount) {
+                                (Some(sym), Some(amt)) if payable_calls_active(block.header.height) => Some((sym.clone(), amt as u128)),
+                                _ => None,
+                            };
+                            let mut view_tokens = token_balances.clone();
+                            if let Some((sym, amt)) = &attach {
+                                let have = if sym == "XRGE" { *balances.get(&payer).unwrap_or(&0) }
+                                    else { *token_balances.get(&(payer.clone(), sym.clone())).unwrap_or(&0) };
+                                if have < *amt {
+                                    eprintln!("[node] contract_call {}: attached {} {} exceeds the caller's balance — not executed", &tx_hash_str[..16], amt, sym);
+                                    if let Ok(mut o) = self.contract_outcomes.lock() {
+                                        o.insert(tx_hash_str.clone(), (false, 0, Some(format!("insufficient {} for the attached payment", sym))));
+                                    }
+                                    continue;
+                                }
+                                if sym == "XRGE" {
+                                    *call_balances.entry(payer.clone()).or_insert(0) -= amt;
+                                    *call_balances.entry(contract_addr.to_string()).or_insert(0) += amt;
+                                } else {
+                                    *view_tokens.entry((payer.clone(), sym.clone())).or_insert(0) -= amt;
+                                    *view_tokens.entry((contract_addr.to_string(), sym.clone())).or_insert(0) += amt;
+                                }
+                            }
                             // Real call args from the tx payload (P3-2) — not an empty map.
                             let args = tx.payload.contract_args.clone()
                                 .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
                             let game = game_ready_2_active(block.header.height).then(|| quantum_vault_vm::GameExt {
-                                view: Arc::new(NodeChainView { tokens: token_balances.clone(), nfts: self.nft_store.clone(), blocks: self.store.clone() }),
+                                view: Arc::new(NodeChainView { tokens: view_tokens, nfts: self.nft_store.clone(), blocks: self.store.clone() }),
                                 seed: quantum_vault_vm::game::random_seed(&block.header.prev_hash, &tx_hash_str),
                                 block_hashes: game_ready_3_active(block.header.height),
+                                payable: payable_calls_active(block.header.height),
+                                attached: attach.clone(),
                             });
                             match rt.execute_contract_ext(
                                 cs,
@@ -4899,6 +4980,18 @@ impl L1Node {
                                             eprintln!("[node] contract_call {} used cross-calls; XRGE deltas NOT applied (single-hop v1)",
                                                 &contract_addr[..16.min(contract_addr.len())]);
                                         } else {
+                                            // The call succeeded: the attached payment becomes final.
+                                            if let Some((sym, amt)) = &attach {
+                                                if sym == "XRGE" {
+                                                    let bal = balances.entry(payer.clone()).or_insert(0);
+                                                    *bal = bal.checked_sub(*amt).ok_or("attached XRGE exceeds the caller's balance")?;
+                                                    *balances.entry(contract_addr.to_string()).or_insert(0) += amt;
+                                                } else {
+                                                    let bal = token_balances.entry((payer.clone(), sym.clone())).or_insert(0);
+                                                    *bal = bal.checked_sub(*amt).ok_or("attached tokens exceed the caller's balance")?;
+                                                    *token_balances.entry((contract_addr.to_string(), sym.clone())).or_insert(0) += amt;
+                                                }
+                                            }
                                             if let Some(ref deltas) = result.balance_deltas {
                                                 // Conservation + overdraft enforced here; an Err
                                                 // means the VM emitted invalid deltas — a genuine
@@ -11497,6 +11590,7 @@ mod game_ready_tests {
         TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
         set_test_game_ready_2(Some(1));
         set_test_game_ready_3(Some(1));
+        set_test_payable_calls(Some(1));
         let wasm = include_bytes!("../../../contracts/loot_roll/loot_roll.wasm");
         let b64 = base64::engine::general_purpose::STANDARD.encode(wasm);
         let pk = e.player.public_key_hex.clone();
@@ -11505,12 +11599,16 @@ mod game_ready_tests {
         let addr = deploy.payload.contract_addr.clone().unwrap();
         mine(&e, deploy).expect("deploy");
         let mut acct = 1u64;
-        let mut call = |method: &str| -> (String, u64) {
+        let mut call_paid = |method: &str, attach: Value, ok: bool| -> (String, u64) {
             acct += 1;
             let h = mine(&e, v2(&e.player, "contract_call", &json!({ "from": pk, "contractAddr": addr, "method": method,
-                "gasLimit": 300_000, "timestamp": acct, "nonce": format!("{:016x}", acct) }), acct)).expect(method);
-            assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success), "{method}");
+                "gasLimit": 300_000, "attach": attach, "timestamp": acct, "nonce": format!("{:016x}", acct) }), acct)).expect(method);
+            assert_eq!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success), ok, "{method}");
             (h, e.node.tip_height().unwrap())
+        };
+        let entry = || json!({ "symbol": "XRGE", "amount": 500_000_000u64 });
+        let mut call = |method: &str| -> (String, u64) {
+            if method == "roll" { call_paid(method, entry(), true) } else { call_paid(method, Value::Null, true) }
         };
         call("setup");
         e.node.token_balances.lock().unwrap().insert((addr.clone(), "GOLD".to_string()), 1_000);
@@ -11522,7 +11620,8 @@ mod game_ready_tests {
             (ev[0].topic.clone(), serde_json::from_str(&ev[0].data).unwrap())
         };
         let mut prizes = std::collections::HashMap::<String, u32>::new();
-        for _ in 0..20 {
+        let rounds = 20u32;
+        for _ in 0..rounds {
             let (h1, commit_height) = call("roll");
             assert_eq!(event(&h1), ("committed".to_string(), json!({ "height": commit_height })));
             let (h2, _) = call("settle"); // block H+1: its hash doesn't exist until now
@@ -11542,6 +11641,12 @@ mod game_ready_tests {
         // A settle with no open roll is refused cleanly.
         let (h, _) = call("settle");
         assert_eq!(event(&h).1, json!({ "error": "no_roll" }));
+        drop(call);
+        // Unpaid and underpaid rolls fail; the contract keeps nothing.
+        let before = e.node.get_balance(&addr).unwrap();
+        call_paid("roll", Value::Null, false);
+        call_paid("roll", json!({ "symbol": "XRGE", "amount": 100_000_000u64 }), false);
+        assert_eq!(e.node.get_balance(&addr).unwrap(), before);
 
         let gold = *prizes.get("gold").unwrap_or(&0) as u128;
         let xrge = *prizes.get("xrge").unwrap_or(&0);
@@ -11549,7 +11654,8 @@ mod game_ready_tests {
         let tb = e.node.token_balances.lock().unwrap().clone();
         assert_eq!(tb.get(&(player.clone(), "GOLD".to_string())).copied().unwrap_or(0), gold * 10);
         assert_eq!(tb.get(&(addr.clone(), "GOLD".to_string())).copied().unwrap_or(0), 1_000 - gold * 10);
-        assert!((e.node.get_balance(&addr).unwrap() - (100.0 - 0.5 * xrge as f64)).abs() < 1e-9);
+        assert!((e.node.get_balance(&addr).unwrap() - (100.0 + 0.5 * rounds as f64 - 0.5 * xrge as f64)).abs() < 1e-9,
+            "treasury = stock + entry fees − XRGE prizes");
         let col_id = crate::nft_store::NftCollection::make_collection_id(&addr, "LOOT");
         assert_eq!(e.node.nft_store.get_collection(&col_id).unwrap().unwrap().minted, swords);
         set_test_game_ready_2(None);
@@ -11586,6 +11692,109 @@ mod game_ready_tests {
         a.node.add_tx_to_mempool_verified(call).unwrap();
         relay(a.node.mine_pending().unwrap().unwrap()).expect("peer accepts the gas-1837 call block received as JSON");
         assert_eq!(a.node.get_state_root().unwrap(), b.node.get_state_root().unwrap());
+    }
+
+    /// Payable calls: `pay` accepts any attachment and records it; `pay_min` traps below 1 XRGE.
+    const WAT_TILL: &str = r#"
+    (module
+      (import "env" "host_get_attached_amount" (func $amt (result i64)))
+      (import "env" "host_get_attached_symbol" (func $sym (param i32 i32) (result i32)))
+      (import "env" "host_storage_write"       (func $sw (param i32 i32 i32 i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0) "amt")
+      (data (i32.const 4) "sym")
+      (func $record (local $a i64)
+        (local.set $a (call $amt))
+        (if (i64.eqz (local.get $a)) (then unreachable))
+        (i64.store (i32.const 64) (local.get $a))
+        (call $sw (i32.const 0) (i32.const 3) (i32.const 64) (i32.const 8))
+        (call $sw (i32.const 4) (i32.const 3) (i32.const 128) (call $sym (i32.const 128) (i32.const 32))))
+      (func (export "pay") (call $record))
+      (func (export "pay_min")
+        (if (i64.lt_u (call $amt) (i64.const 1000000000)) (then unreachable))
+        (call $record)))
+    "#;
+
+    #[test]
+    fn payable_calls_move_payment_only_on_success_and_relay_as_json() {
+        use base64::Engine as _;
+        let a = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        set_test_game_ready_2(Some(1));
+        set_test_game_ready_3(Some(1));
+        set_test_payable_calls(Some(3)); // the deploy and one refused call happen before activation
+        let b = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        let pk = a.player.public_key_hex.clone();
+        let payer = canon_addr(&pk);
+        fund_xrge(&b.node, &pk, 1_000.0);
+        fund_xrge(&a.node, &b.player.public_key_hex, 1_000.0);
+        for n in [&a.node, &b.node] { n.token_balances.lock().unwrap().insert((payer.clone(), "GOLD".into()), 50); }
+        let relay = |blk: BlockV1| b.node.import_block(serde_json::from_str(&serde_json::to_string(&blk).unwrap()).unwrap());
+        let mine_relay = |tx: TxV1| -> Result<String, String> {
+            let h = compute_single_tx_hash(&tx);
+            a.node.add_tx_to_mempool_verified(tx)?;
+            relay(a.node.mine_pending()?.ok_or("no block")?)?;
+            Ok(h)
+        };
+        let b64 = base64::engine::general_purpose::STANDARD.encode(wat::parse_str(WAT_TILL).unwrap());
+        let d = v2(&a.player, "contract_deploy", &deploy_payload(&pk, &b64), 1);
+        let till = d.payload.contract_addr.clone().unwrap();
+        mine_relay(d).expect("deploy (block 1)");
+        let pay = |method: &str, attach: Value, n: u64| v2(&a.player, "contract_call", &json!({ "from": pk, "contractAddr": till,
+            "method": method, "gasLimit": 100_000, "attach": attach, "timestamp": n, "nonce": format!("{:016x}", n) }), n);
+
+        // Before activation (block 2): a call carrying `attach` is refused.
+        let err = mine_relay(pay("pay", json!({ "symbol": "XRGE", "amount": 1_000_000_000u64 }), 2)).unwrap_err();
+        assert!(err.contains("not active"), "{err}");
+        mine_relay(v2(&a.player, "transfer", &json!({ "from": pk, "to": b.player.public_key_hex, "amount": 1, "fee": 1.0,
+            "timestamp": 2, "nonce": "0000000000000002" }), 2)).expect("filler block 2");
+
+        let xrge = |n: &L1Node, k: &str| *n.balances.lock().unwrap().get(k).unwrap_or(&0);
+        let gold = |n: &L1Node, k: &str| *n.token_balances.lock().unwrap().get(&(k.to_string(), "GOLD".to_string())).unwrap_or(&0);
+        let status = |h: &str| a.node.get_receipt(h).unwrap().unwrap().status;
+
+        // 2 XRGE attached to pay_min: accepted; the contract saw it and now holds it.
+        let (p0, c0) = (xrge(&a.node, &payer), xrge(&a.node, &till));
+        let h = mine_relay(pay("pay_min", json!({ "symbol": "XRGE", "amount": 2_000_000_000u64 }), 3)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Success));
+        assert_eq!(xrge(&a.node, &till) - c0, 2_000_000_000);
+        assert_eq!(p0 - xrge(&a.node, &payer), 2_000_000_000 + 100_000 * 1_000, "payment + gas fee");
+        let st = a.node.contract_store.as_ref().unwrap().load_all_state(&till).unwrap();
+        assert_eq!(i64::from_le_bytes(st[b"amt".as_slice()].clone().try_into().unwrap()), 2_000_000_000);
+        assert_eq!(st[b"sym".as_slice()], b"XRGE".to_vec());
+
+        // 0.5 XRGE to pay_min: the contract refuses (traps) — the payment stays with the player.
+        let (p1, c1) = (xrge(&a.node, &payer), xrge(&a.node, &till));
+        let h = mine_relay(pay("pay_min", json!({ "symbol": "XRGE", "amount": 500_000_000u64 }), 4)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        assert_eq!(xrge(&a.node, &till), c1);
+        assert_eq!(p1 - xrge(&a.node, &payer), 100_000 * 1_000, "only the gas fee");
+
+        // 7 GOLD to pay: tokens move to the contract.
+        let h = mine_relay(pay("pay", json!({ "symbol": "gold", "amount": 7 }), 5)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Success));
+        assert_eq!((gold(&a.node, &payer), gold(&a.node, &till)), (43, 7));
+
+        // More GOLD than the player has: not executed, nothing moves.
+        let h = mine_relay(pay("pay", json!({ "symbol": "GOLD", "amount": 1_000 }), 6)).unwrap();
+        match status(&h) { TxStatus::Failed(r) => assert!(r.contains("insufficient"), "{r}"), s => panic!("{s:?}") }
+        assert_eq!((gold(&a.node, &payer), gold(&a.node, &till)), (43, 7));
+
+        // Malformed attachments never reach a block.
+        for bad in [json!({ "symbol": "XRGE", "amount": 0 }), json!({ "symbol": "XRGE", "amount": 1.5 }), json!({ "amount": 5 })] {
+            let p = json!({ "from": pk, "contractAddr": till, "method": "pay", "gasLimit": 100_000, "attach": bad, "timestamp": 9, "nonce": "0000000000000009" });
+            let sp = serde_json::to_string(&p).unwrap();
+            let sig = pqc_sign(&a.player.secret_key_hex, sp.as_bytes()).unwrap();
+            assert!(build_v2_tx("contract_call", pk.clone(), 9, &p, sig, sp).is_err(), "{bad}");
+        }
+
+        // The peer received every block as JSON and agrees.
+        assert_eq!(a.node.get_state_root().unwrap(), b.node.get_state_root().unwrap());
+        assert_eq!((gold(&b.node, &payer), gold(&b.node, &till)), (43, 7));
+        set_test_game_ready_2(None);
+        set_test_game_ready_3(None);
+        set_test_payable_calls(None);
     }
 
     /// `host_block_hash` only serves finished blocks within 256, and isn't linked before GAME_READY 3.
