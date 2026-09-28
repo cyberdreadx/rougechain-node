@@ -23,6 +23,15 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { RougeChain, Wallet } from "@rougechain/sdk";
 import type { WalletKeys } from "@rougechain/sdk";
+import {
+  CONTRACT_DEPLOY_FEE_XRGE,
+  CONTRACT_MAX_GAS,
+  contractCallFee,
+  createSignedContractCall,
+  createSignedContractPublish,
+  normAddr,
+  suggestGasLimit,
+} from "./contracts.js";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -44,13 +53,40 @@ async function apiGet(path: string): Promise<unknown> {
   return res.json();
 }
 
-async function apiPost(path: string, body: unknown): Promise<unknown> {
-  const res = await fetch(`${API}${path}`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-  return res.json();
+/** POST that keeps the node's JSON body on 4xx (the node explains refusals there). */
+async function postJson(path: string, body: unknown): Promise<Record<string, unknown>> {
+  let res: Response;
+  try {
+    res = await fetch(`${API}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
+  }
+  return readJson(res, `POST ${path}`);
+}
+
+/** GET that tolerates non-JSON / error bodies. */
+async function getJson(path: string): Promise<Record<string, unknown>> {
+  let res: Response;
+  try {
+    res = await fetch(`${API}${path}`, { headers });
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
+  }
+  return readJson(res, `GET ${path}`);
+}
+
+async function readJson(res: Response, what: string): Promise<Record<string, unknown>> {
+  const text = await res.text().catch(() => "");
+  let data: unknown = null;
+  try { data = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const d = data as Record<string, unknown>;
+    if (!res.ok && d.success === undefined) d.success = false;
+    if (!res.ok && !d.error) d.error = `${what} failed: ${res.status}`;
+    return d;
+  }
+  if (res.ok) return { success: true, data };
+  return { success: false, error: `${what} failed: ${res.status} ${res.statusText} ${text}`.trim() };
 }
 
 // ─── SDK client (write side) ────────────────────────────────────────────────────
@@ -98,7 +134,7 @@ function fail(message: string) {
 
 const server = new McpServer({
   name: "rougechain",
-  version: "1.1.0",
+  version: "1.2.0",
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -218,7 +254,7 @@ server.tool(
     amount: z.number().describe("Amount of source token to swap"),
   },
   async ({ from, to, amount }) => {
-    const data = await apiPost("/swap/quote", {
+    const data = await postJson("/swap/quote", {
       token_in: from,
       token_out: to,
       amount_in: amount,
@@ -301,51 +337,52 @@ server.tool(
 
 server.tool(
   "get_contract_events",
-  "Get the event log for a smart contract",
+  "Get stored events emitted by a smart contract, newest first. Page with `before` (block height); " +
+    "pass `tx` to get only the events of one transaction.",
   {
     address: z.string().describe("Contract address"),
-    limit: z.number().optional().default(50).describe("Max events to return"),
+    limit: z.number().int().min(1).max(1000).optional().default(50).describe("Max events to return (1-1000)"),
+    before: z.number().int().optional().describe("Only events from blocks below this height (older page)"),
+    tx: z.string().optional().describe("Only events emitted by this transaction hash"),
   },
-  async ({ address, limit }) => {
-    const data = await apiGet(`/contract/${address}/events?limit=${limit}`);
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  async ({ address, limit, before, tx }) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (before !== undefined) params.set("before", String(before));
+    if (tx) params.set("tx", tx);
+    const data = await apiGet(`/contract/${encodeURIComponent(normAddr(address))}/events?${params}`);
+    return ok(data);
   }
 );
 
 server.tool(
-  "deploy_contract",
-  "Deploy a WASM smart contract to RougeChain. Requires base64-encoded WASM bytecode.",
+  "query_contract",
+  "Call a contract method read-only: a free dry run against live state. Nothing is signed, " +
+    "charged or committed. Returns { success, returnData, gasUsed, events, error }. " +
+    "Use this for view methods and to preview a state-changing call before execute_contract.",
   {
-    wasm: z.string().describe("Base64-encoded WASM bytecode"),
-    deployer: z.string().describe("Deployer's public key hex"),
-    nonce: z.number().optional().default(0).describe("Nonce for deterministic address"),
+    address: z.string().describe("Contract address (hex)"),
+    method: z.string().describe("Method name"),
+    args: z.unknown().optional().describe("JSON arguments for the method (default {})"),
+    caller: z
+      .string()
+      .optional()
+      .describe("Public key the contract sees as the caller (defaults to the configured wallet, if any)"),
   },
-  async ({ wasm, deployer, nonce }) => {
-    const data = await apiPost("/v2/contract/deploy", { wasm, deployer, nonce });
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  async ({ address, method, args, caller }) => {
+    const body: Record<string, unknown> = { method, args: args ?? {} };
+    const who = caller ?? signer?.publicKey;
+    if (who) body.caller = who;
+    return ok(await postJson(`/contract/${encodeURIComponent(normAddr(address))}/query`, body));
   }
 );
 
 server.tool(
-  "call_contract",
-  "Call a method on a deployed WASM smart contract",
-  {
-    contractAddr: z.string().describe("Contract address (hex)"),
-    method: z.string().describe("Method name to call"),
-    caller: z.string().optional().describe("Caller's public key"),
-    args: z.record(z.unknown()).optional().describe("JSON arguments for the method"),
-    gasLimit: z.number().optional().describe("Gas limit (default 10M)"),
-  },
-  async ({ contractAddr, method, caller, args, gasLimit }) => {
-    const data = await apiPost("/v2/contract/call", {
-      contractAddr,
-      method,
-      caller,
-      args: args || {},
-      gasLimit,
-    });
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  }
+  "get_tx_receipt",
+  "Get the receipt of an included transaction: status is \"Success\" or {\"Failed\": \"<error>\"} " +
+    "(a contract call that reverted in its block is included, charged, and reported Failed). " +
+    "Returns 404-style { success: false } while the tx is still pending.",
+  { hash: z.string().describe("Transaction hash / txId") },
+  async ({ hash }) => ok(await getJson(`/tx/${encodeURIComponent(hash)}/receipt`))
 );
 
 // ── Governance ───────────────────────────────────────────────────────────────
@@ -546,6 +583,19 @@ server.tool(
 // WRITE / TRANSACTION TOOLS — registered only when a signing wallet is configured.
 // Every transaction is signed locally with ML-DSA-65 via @rougechain/sdk.
 // ══════════════════════════════════════════════════════════════════════════════
+
+/** Poll the receipt until the tx is included (or give up after `timeoutMs`). */
+async function waitReceipt(txId: string, timeoutMs = 60_000, intervalMs = 1_500): Promise<unknown> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const r = await getJson(`/tx/${encodeURIComponent(txId)}/receipt`);
+    if (r.receipt) return r.receipt;
+    if (Date.now() + intervalMs > deadline) {
+      return { pending: true, note: `not included within ${timeoutMs} ms; check get_tx_receipt later` };
+    }
+    await new Promise((res) => setTimeout(res, intervalMs));
+  }
+}
 
 async function tx(fn: () => Promise<unknown>) {
   try {
@@ -888,6 +938,89 @@ if (signer) {
     },
     async ({ amount, evmAddress, tokenSymbol, fee }) =>
       tx(() => rc.bridge.withdraw(w, { amount, evmAddress, tokenSymbol, fee })),
+  );
+
+  // ── WASM smart contracts (player-signed, GAME_READY) ─────────────────────────
+  // The configured wallet signs: it is the deployer / the caller the contract sees, and it pays.
+
+  server.tool(
+    "publish_contract",
+    `Publish (deploy) a WASM smart contract signed by the configured wallet. Costs ${CONTRACT_DEPLOY_FEE_XRGE} XRGE. ` +
+      "The contract is installed when the tx is mined; its address is known now (predictedAddress). " +
+      "Set wait=true to wait for the receipt.",
+    {
+      wasm: z.string().describe("Base64-encoded WASM bytecode (max 1 MiB, must export `memory`)"),
+      nonce: z
+        .string()
+        .min(8)
+        .optional()
+        .describe("Deployment nonce (>= 8 chars; random when omitted). Part of the address derivation."),
+      wait: z.boolean().optional().default(false).describe("Wait (up to 60 s) for the tx receipt"),
+    },
+    async ({ wasm, nonce, wait }) =>
+      tx(async () => {
+        const { signed, predictedAddress, nonce: n } = createSignedContractPublish(w, wasm, nonce);
+        const r = await postJson("/v2/contract/publish", signed);
+        const out: Record<string, unknown> = { ...r, predictedAddress, nonce: n };
+        if (wait && r.success === true && typeof r.txId === "string") out.receipt = await waitReceipt(r.txId);
+        return out;
+      }),
+  );
+
+  server.tool(
+    "execute_contract",
+    "Call a contract method as the configured wallet (a state-changing, fee-paying transaction; " +
+      "the contract sees this wallet via host_get_caller). Fee = gasLimit × 0.000001 XRGE. " +
+      "Without gasLimit the server queries first and signs ceil(gasUsed × 1.5) + 1000. " +
+      "The node dry-runs the call and refuses it if it would fail (nothing charged). " +
+      "Set wait=true to wait for the receipt: status \"Success\" or {\"Failed\": …} if it reverted in the block (fee still charged). " +
+      "For read-only calls use query_contract instead (free).",
+    {
+      address: z.string().describe("Contract address (hex)"),
+      method: z.string().describe("Method name"),
+      args: z.unknown().optional().describe("JSON arguments for the method (default {})"),
+      gasLimit: z
+        .number()
+        .int()
+        .min(1)
+        .max(CONTRACT_MAX_GAS)
+        .optional()
+        .describe(`Signed gas limit (1-${CONTRACT_MAX_GAS}); the fee is charged on this, not on gas used`),
+      accountNonce: z.number().int().optional().describe("Optional account nonce for durable replay protection"),
+      wait: z.boolean().optional().default(false).describe("Wait (up to 60 s) for the tx receipt"),
+    },
+    async ({ address, method, args, gasLimit, accountNonce, wait }) =>
+      tx(async () => {
+        const a = args ?? {};
+        let limit = gasLimit;
+        let preview: unknown;
+        if (limit === undefined) {
+          const q = await postJson(`/contract/${encodeURIComponent(normAddr(address))}/query`, {
+            method,
+            args: a,
+            caller: w.publicKey,
+          });
+          if (q.success !== true) {
+            return {
+              success: false,
+              error: (q.error as string) || "call would fail",
+              preview: { returnData: q.returnData, gasUsed: q.gasUsed, events: q.events },
+            };
+          }
+          limit = suggestGasLimit(Number(q.gasUsed ?? 0));
+          preview = { returnData: q.returnData, gasUsed: q.gasUsed, events: q.events };
+        }
+        const signed = createSignedContractCall(w, address, method, a, limit, accountNonce);
+        const r = await postJson("/v2/contract/execute", signed);
+        const out: Record<string, unknown> = {
+          ...r,
+          gasLimit: limit,
+          maxFee: contractCallFee(limit),
+        };
+        if (out.preview === undefined && preview !== undefined) out.preview = preview;
+        if (wait && r.success === true && typeof r.txId === "string") out.receipt = await waitReceipt(r.txId);
+        return out;
+      }),
   );
 }
 

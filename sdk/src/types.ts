@@ -846,6 +846,8 @@ export interface ContractEventsQuery {
   limit?: number;
   /** Only events from blocks strictly below this height (paging). */
   before?: number;
+  /** Only events emitted by this transaction (tx hash). */
+  tx?: string;
 }
 
 export type TxReceiptStatus = "Success" | { Failed: string };

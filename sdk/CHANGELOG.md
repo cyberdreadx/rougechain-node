@@ -7,9 +7,9 @@
   - `publish(wallet, wasm, { nonce? })` signs a `contract_deploy` (`POST /api/v2/contract/publish`, 10 XRGE). Returns the node's `address` plus a locally computed `predictedAddress` and the signed `nonce`.
   - `execute(wallet, addr, method, args?, { gasLimit?, accountNonce? })` signs a `contract_call` (`POST /api/v2/contract/execute`, fee `gasLimit × 0.000001` XRGE). With no `gasLimit`, it queries first and signs `min(ceil(gasUsed × 1.5) + 1000, 10_000_000)`. Node refusals ("call would fail: …") come back as `{ success: false, error }`.
   - `query(addr, method, args?, caller?)`: a free read-only call (`POST /api/contract/:addr/query`).
-  - `get`, `state(addr, key?)`, `events(addr, { limit, before })`, `list`.
+  - `get`, `state(addr, key?)`, `events(addr, { limit, before, tx })`, `list`.
   - `subscribe(addr, cb, { onStatus })`: live `contract_event` frames over one shared WebSocket, with auto-reconnect and resubscribe. Returns an unsubscribe function.
-  - `waitForReceipt(txId, { timeoutMs, intervalMs })` polls `GET /api/tx/:id/receipt` until the tx is included.
+  - `waitForReceipt(txId, { timeoutMs, intervalMs })` polls `GET /api/tx/:id/receipt` until the tx is included. A `contract_call` that reverted in its block is still included (fee charged) and reports `status: { Failed: "<error>" }`; a completed call reports `"Success"`.
   - `game(addr, wallet?)` returns a `{ call, query, state, on(topic | '*') }` handle for game code.
 - `predictContractAddress(from, nonce, wasm)`: the node's `contract_address_v2` derivation, tested against vectors from the Rust code.
 - Builders and helpers `createSignedContractCall`, `createSignedContractPublish`, `suggestGasLimit`, `contractCallFee`, `bytesToBase64`, `base64ToBytes`, constants `CONTRACT_MAX_GAS`, `CONTRACT_GAS_PRICE_XRGE`, `CONTRACT_DEPLOY_FEE_XRGE`.

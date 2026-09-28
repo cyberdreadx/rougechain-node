@@ -423,6 +423,7 @@ export class ContractsClient {
     const params = new URLSearchParams();
     if (q.limit !== undefined) params.set("limit", String(q.limit));
     if (q.before !== undefined) params.set("before", String(q.before));
+    if (q.tx !== undefined) params.set("tx", q.tx);
     const qs = params.toString();
     const r = await this.rc.get<{ success: boolean; events?: ContractEvent[]; error?: string }>(
       `/contract/${encodeURIComponent(normAddr(contractAddr))}/events${qs ? `?${qs}` : ""}`
@@ -451,8 +452,9 @@ export class ContractsClient {
   }
 
   /**
-   * Wait until `txId` is in a block and return its receipt. Inclusion only: a call whose
-   * contract reverted in the block still gets a receipt, so check your events/state.
+   * Wait until `txId` is in a block and return its receipt. A `contract_call` whose contract
+   * reverted in the block is still included (the fee is charged) and its receipt reports
+   * `status: { Failed: "<error>" }`; a call that ran to completion reports `"Success"`.
    */
   async waitForReceipt(
     txId: string,

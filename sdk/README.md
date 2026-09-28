@@ -572,6 +572,9 @@ await rc.contracts.waitForReceipt(pub.txId!);
 
 const q = await rc.contracts.query(addr, "get_score", { player: wallet.publicKey });  // free
 const r = await rc.contracts.execute(wallet, addr, "move", { x: 1 });  // gas auto-sized from a query
+const receipt = await rc.contracts.waitForReceipt(r.txId!);
+if (receipt.status !== "Success") console.error("reverted:", receipt.status.Failed);  // fee still charged
+const mine = await rc.contracts.events(addr, { tx: r.txId });  // events emitted by that tx
 const stop = rc.contracts.subscribe(addr, (e) => console.log(e.topic, e.data));
 
 // Game helper
