@@ -2957,7 +2957,11 @@ impl L1Node {
         let mut guard = self.validator_replay.lock().map_err(|_| "validator replay lock")?;
         let (base_h, base) = self.validator_replay_base();
         if !matches!(guard.as_ref(), Some(r) if r.height() + 1 <= height) {
-            *guard = Some(ValidatorReplay::new(base_h, base).with_missed_block_freeze(proposer_selection_activation_height()));
+            let retirement = crate::upgrades::current().validator_retirement
+                .map(|r| (r.height, r.validators.iter().map(|k| k.to_string()).collect()));
+            *guard = Some(ValidatorReplay::new(base_h, base)
+                .with_missed_block_freeze(proposer_selection_activation_height())
+                .with_retirement(retirement));
         }
         let replay = guard.as_mut().unwrap();
         let outcome = |_h: u64, _i: usize, tx: &TxV1| -> Option<bool> { self.get_receipt(&compute_single_tx_hash(tx)).ok().flatten().map(|rc| matches!(rc.status, TxStatus::Success)) };
@@ -5046,6 +5050,20 @@ impl L1Node {
 
         // Matured unbonding releases are part of the block's deterministic ledger effects and
         // MUST land before the state root is computed (producer and importer alike).
+        // One-time validator retirement (testnet schedule only): the stake goes back to the
+        // validator's balance before the state root; `apply_validator_block` zeroes the stake.
+        if let Some(r) = crate::upgrades::current().validator_retirement {
+            if r.height == block.header.height {
+                for k in r.validators {
+                    if let Some(st) = self.validator_store.get_validator(k)? {
+                        if st.stake > 0 {
+                            *balances.entry(canon_addr(k)).or_insert(0) += st.stake * crate::units::QUANTA_PER_XRGE;
+                            eprintln!("[node] retired validator {} at height {}: {} XRGE stake returned to its balance", &k[..16], block.header.height, st.stake);
+                        }
+                    }
+                }
+            }
+        }
         Self::release_matured_unbonding(&self.unbonding_queue, &mut balances, block.header.height)?;
 
         // Distribute only actually collected fees
@@ -7020,6 +7038,18 @@ impl L1Node {
         }
         // Matured unbonding is released inside apply_balance_block (BEFORE the state root is
         // sealed) — this post-root phase must never touch balances/token/LP maps.
+        // One-time validator retirement (testnet schedule only; the balance was credited pre-root).
+        // Same position as in the finality replay: after the block's txs, before missed blocks.
+        if let Some(r) = crate::upgrades::current().validator_retirement {
+            if r.height == block.header.height {
+                for k in r.validators {
+                    if let Some(mut st) = self.validator_store.get_validator(k)? {
+                        st.stake = 0;
+                        self.persist_validator_state(k, &st, block.header.height)?;
+                    }
+                }
+            }
+        }
         // Check missed blocks and auto-slash
         self.check_missed_blocks(block);
         Ok(())
