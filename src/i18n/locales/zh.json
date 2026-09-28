@@ -96,7 +96,7 @@
       "executeFailed": "无法执行兑换"
     },
     "info": {
-      "amm": "兑换通过自动做市商（AMM）完成，手续费为 0.3%。手续费归流动性提供者所有。",
+      "amm": "兑换通过自动做市商（AMM）完成，手续费为 0.3%。手续费归流动性提供者所有，可随时在资金池页面通过「Collect fees」提取收益。",
       "multiHop": "支持多跳兑换，可通过多个流动性池获得更优汇率。"
     }
   },
@@ -179,7 +179,7 @@
         },
         "contracts": {
           "title": "智能合约",
-          "desc": "部署 WASM 合约"
+          "desc": "WASM 合约与游戏"
         },
         "tokens": {
           "title": "代币",
@@ -263,15 +263,15 @@
     },
     "dev": {
       "title": "在 RougeChain 上构建",
-      "subtitle": "后量子密码学原语、类型化 SDK、WASM 合约，以及面向 AI 智能体的 MCP 集成。",
+      "subtitle": "后量子密码学原语、类型化 SDK、支持游戏的 WASM 合约（代币、NFT、随机数），以及面向 AI 智能体的 MCP 集成。",
       "links": {
         "quickstart": {
           "title": "快速开始",
           "desc": "约 5 分钟内运行节点并发送首笔交易"
         },
         "example": {
-          "title": "示例合约",
-          "desc": "ERC-20 模板（WASM）"
+          "title": "示例游戏合约",
+          "desc": "战利品掷骰：NFT、代币与骰子"
         },
         "sdk": {
           "title": "SDK 与 API 文档",
@@ -296,7 +296,7 @@
       "subtitle": "同一代币存在于两个地方。请根据操作选择正确的一个。",
       "native": {
         "title": "原生 XRGE——在 RougeChain 上",
-        "body": "支付手续费与燃气费，质押以运行验证者，并驱动链上应用：兑换、合约、代币、消息与邮件。"
+        "body": "支付手续费与燃气费，质押以运行验证者，并驱动链上应用：兑换、合约与游戏、代币、NFT、消息与邮件。"
       },
       "base": {
         "title": "XRGE（ERC-20）——在 Base 上",

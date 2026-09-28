@@ -96,7 +96,7 @@
       "executeFailed": "No se pudo ejecutar el swap"
     },
     "info": {
-      "amm": "Los swaps usan un creador de mercado automatizado (AMM) con una comisión del 0.3%. Las comisiones van a los proveedores de liquidez.",
+      "amm": "Los swaps usan un creador de mercado automatizado (AMM) con una comisión del 0.3%. Las comisiones van a los proveedores de liquidez, que pueden retirar sus ganancias cuando quieran con «Collect fees» en la página de Pools.",
       "multiHop": "Se admiten swaps de varios saltos para conseguir mejores tasas a través de varios pools."
     }
   },
@@ -179,7 +179,7 @@
         },
         "contracts": {
           "title": "Contratos inteligentes",
-          "desc": "Despliega contratos WASM"
+          "desc": "Contratos WASM y juegos"
         },
         "tokens": {
           "title": "Tokens",
@@ -263,15 +263,15 @@
     },
     "dev": {
       "title": "Construye en RougeChain",
-      "subtitle": "Primitivas post-cuánticas, un SDK tipado, contratos WASM y una integración MCP para agentes de IA.",
+      "subtitle": "Primitivas post-cuánticas, un SDK tipado, contratos WASM listos para juegos (tokens, NFTs, aleatoriedad) y una integración MCP para agentes de IA.",
       "links": {
         "quickstart": {
           "title": "Inicio rápido",
           "desc": "Corre un nodo y tu primera tx en ~5 min"
         },
         "example": {
-          "title": "Contrato de ejemplo",
-          "desc": "Plantilla ERC-20 (WASM)"
+          "title": "Contrato de juego de ejemplo",
+          "desc": "Loot roll: NFTs, tokens y dados"
         },
         "sdk": {
           "title": "Docs del SDK y la API",
@@ -296,7 +296,7 @@
       "subtitle": "El mismo token vive en dos lugares. Usa el correcto para cada acción.",
       "native": {
         "title": "XRGE nativo — en RougeChain",
-        "body": "Paga comisiones y gas, se pone en staking para operar validadores y hace funcionar las apps on-chain: swaps, contratos, tokens, mensajes y correo."
+        "body": "Paga comisiones y gas, se pone en staking para operar validadores y hace funcionar las apps on-chain: swaps, contratos y juegos, tokens, NFTs, mensajes y correo."
       },
       "base": {
         "title": "XRGE (ERC-20) — en Base",

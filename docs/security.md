@@ -35,8 +35,10 @@ externally audited.
 
 ## Finality
 
-Legacy finality is an informational indicator. Verified BFT finality
-([FINALITY_V2](staking/finality.md)) is implemented and tested but **not activated**.
+Verified BFT finality ([FINALITY_V2](staking/finality.md)) is **live since block 150**: every block
+carries a certificate of ML-DSA-65 precommits from more than two thirds of stake for its parent, and
+nodes reject blocks without one. Stake is still concentrated in few keys, which limits what any BFT
+guarantee means until the validator set broadens.
 
 ## Decentralization
 
