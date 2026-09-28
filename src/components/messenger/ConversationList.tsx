@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { MessageSquare, Users, Lock, Trash2, Loader2, StickyNote } from "lucide-react";
+import { MessageSquare, Users, Lock, Trash2, Loader2, StickyNote, BellOff, Inbox, Ban } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { StackedAvatars } from "./StackedAvatars";
+import { isGroupConversation, otherMembers } from "@/lib/messenger-prefs";
 import { Button } from "@/components/ui/button";
 import type { Conversation, WalletWithPrivateKeys } from "@/lib/pqc-messenger";
 import { deleteConversation } from "@/lib/pqc-messenger";
@@ -34,10 +37,19 @@ interface ConversationListProps {
   currentWalletName?: string;
   onSelect: (conversation: Conversation) => void;
   onDelete?: (conversationId: string) => void;
+  /** Message requests (1:1 chats from people I haven't accepted) — Qwalla's Requests tab. */
+  requests?: Conversation[];
+  onAcceptRequest?: (conversation: Conversation) => void;
+  onDeleteRequest?: (conversation: Conversation) => void;
+  onBlockRequest?: (conversation: Conversation) => void;
+  /** Muted conversation ids (bell-off icon in the row). */
+  muted?: Set<string>;
 }
 
-const ConversationList = ({ conversations, selectedId, wallet, currentWalletId, currentWalletKeys = [], currentWalletName, onSelect, onDelete }: ConversationListProps) => {
+const ConversationList = ({ conversations, selectedId, wallet, currentWalletId, currentWalletKeys = [], currentWalletName, onSelect, onDelete, requests = [], onAcceptRequest, onDeleteRequest, onBlockRequest, muted }: ConversationListProps) => {
+  const { t } = useTranslation();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [tab, setTab] = useState<"primary" | "requests">("primary");
 
   const myIds = new Set([currentWalletId, ...currentWalletKeys].filter(Boolean));
 
@@ -45,7 +57,7 @@ const ConversationList = ({ conversations, selectedId, wallet, currentWalletId, 
     e.stopPropagation();
     if (deletingId) return;
     
-    if (!confirm("Delete this conversation? This cannot be undone.")) return;
+    if (!confirm(t("chat.list.deleteConfirm"))) return;
     
     setDeletingId(conversationId);
     try {
@@ -82,8 +94,13 @@ const ConversationList = ({ conversations, selectedId, wallet, currentWalletId, 
     return other;
   };
 
+  const isGroup = (conversation: Conversation) => isGroupConversation(conversation, myIds);
+
   const getConversationName = (conversation: Conversation): string => {
     if (isSelfConversation(conversation)) return "Note to Self";
+    if (isGroup(conversation)) {
+      return conversation.name || t("chat.group.untitled", { count: otherMembers(conversation, myIds).length + 1 });
+    }
 
     const other = getOtherParticipant(conversation);
 
@@ -101,7 +118,7 @@ const ConversationList = ({ conversations, selectedId, wallet, currentWalletId, 
   };
   
   const getConversationPubkey = (conversation: Conversation): string | undefined => {
-    if (isSelfConversation(conversation)) return undefined;
+    if (isSelfConversation(conversation) || isGroup(conversation)) return undefined;
     const other = getOtherParticipant(conversation);
     if (!other) return undefined;
     return other.signingPublicKey || other.encryptionPublicKey || undefined;
@@ -114,23 +131,81 @@ const ConversationList = ({ conversations, selectedId, wallet, currentWalletId, 
     return <p className="font-medium truncate text-foreground">{displayName}</p>;
   };
 
+  const showRequests = tab === "requests" && requests.length > 0;
+
+  const tabs = requests.length > 0 && (
+    <div className="flex gap-1 p-2 border-b border-border">
+      {(["primary", "requests"] as const).map((k) => (
+        <button
+          key={k}
+          type="button"
+          onClick={() => setTab(k)}
+          className={`flex-1 rounded-md px-2 py-1.5 bubble-meta transition-colors ${tab === k || (k === "primary" && !showRequests) ? "bg-primary/15 text-foreground" : "text-muted-foreground hover:bg-muted/40"}`}
+        >
+          {k === "primary" ? t("chat.requests.primary") : `${t("chat.requests.tab")} (${requests.length})`}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (showRequests) {
+    return (
+      <div className="h-full overflow-y-auto">
+        {tabs}
+        <p className="px-4 pt-3 pb-1 text-xs text-muted-foreground">{t("chat.requests.hint")}</p>
+        <div className="divide-y divide-border">
+          {requests.map((conversation) => {
+            const other = getOtherParticipant(conversation);
+            return (
+              <div key={conversation.id} className="p-3 sm:p-4 flex items-center gap-3">
+                {other ? (
+                  <WalletAvatar id={other.id || other.signingPublicKey} uri={other.avatarUrl} name={getConversationName(conversation)} size={40} />
+                ) : (
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center bg-primary/20"><Inbox className="w-5 h-5 text-primary" /></div>
+                )}
+                <button type="button" onClick={() => onSelect(conversation)} className="flex-1 min-w-0 text-left">
+                  <ConversationNameDisplay name={getConversationName(conversation)} pubkey={getConversationPubkey(conversation)} />
+                  <p className="text-xs text-muted-foreground truncate">{t("chat.requests.wantsToMessage")}</p>
+                </button>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {onBlockRequest && (
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" title={t("chat.block.block")} onClick={() => onBlockRequest(conversation)}>
+                      <Ban className="w-4 h-4" />
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => onDeleteRequest?.(conversation)}>{t("chat.requests.delete")}</Button>
+                  <Button size="sm" className="h-8 px-2 text-xs" onClick={() => onAcceptRequest?.(conversation)}>{t("chat.requests.accept")}</Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   if (conversations.length === 0) {
     return (
-      <div className="h-full flex flex-col items-center justify-center p-6 text-center text-muted-foreground">
-        <Lock className="w-12 h-12 mb-4 opacity-50" />
-        <p className="font-medium">No conversations yet</p>
-        <p className="text-sm mt-1">Start a new chat to begin messaging</p>
+      <div className="h-full flex flex-col">
+        {tabs}
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-muted-foreground">
+          <Lock className="w-12 h-12 mb-4 opacity-50" />
+          <p className="font-medium">No conversations yet</p>
+          <p className="text-sm mt-1">Start a new chat to begin messaging</p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="p-3 border-b border-border">
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-          Conversations
-        </h2>
-      </div>
+      {tabs || (
+        <div className="p-3 border-b border-border">
+          <h2 className="hud-label">
+            {t("chat.list.title")}
+          </h2>
+        </div>
+      )}
       <div className="divide-y divide-border">
         {conversations.map((conversation, index) => (
           <motion.button
@@ -143,7 +218,9 @@ const ConversationList = ({ conversations, selectedId, wallet, currentWalletId, 
               selectedId === conversation.id ? "bg-muted" : ""
             }`}
           >
-            {!isSelfConversation(conversation) && !conversation.isGroup ? (
+            {isGroup(conversation) ? (
+              <StackedAvatars members={otherMembers(conversation, myIds)} size={40} />
+            ) : !isSelfConversation(conversation) ? (
               (() => {
                 const other = getOtherParticipant(conversation);
                 return other ? (
@@ -170,6 +247,9 @@ const ConversationList = ({ conversations, selectedId, wallet, currentWalletId, 
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <ConversationNameDisplay name={getConversationName(conversation)} pubkey={getConversationPubkey(conversation)} />
+                {muted?.has(conversation.id) && (
+                  <BellOff className="w-3.5 h-3.5 flex-shrink-0 text-muted-foreground" aria-label={t("chat.mute.muted")} />
+                )}
                 {(conversation.unreadCount ?? 0) > 0 && (
                   <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center">
                     {conversation.unreadCount! > 9 ? "9+" : conversation.unreadCount}

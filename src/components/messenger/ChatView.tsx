@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { applyEnvelopes, isNoteToSelf, parseEnvelope, parseTip } from "@/lib/messenger-envelope";
+import { applyEnvelopes, buildMsgEnvelope, isNoteToSelf, parseEnvelope, parseTip } from "@/lib/messenger-envelope";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint, Paperclip, Image as ImageIcon, Video, EyeOff, Eye, Ban, Trash2, DollarSign, Search, Reply } from "lucide-react";
+import { ArrowLeft, Send, Lock, Shield, CheckCircle2, XCircle, Timer, Loader2, Bot, Key, X, Copy, Check, FileKey2, Binary, Fingerprint, Paperclip, Image as ImageIcon, Video, EyeOff, Eye, Ban, Trash2, DollarSign, Search, Reply, MoreVertical, Bell, BellOff, Users, CheckCheck, Check as CheckIcon } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -9,7 +10,14 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Conversation, WalletWithPrivateKeys, Message, Wallet, MessageType } from "@/lib/pqc-messenger";
-import { getBotReply, getMessages, sendMessage, deleteMessage, isDemoBot, loadDemoBotWallet, registerWalletOnNode, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, isWalletBlocked, blockWallet, unblockWallet, keyFingerprint, checkTofu } from "@/lib/pqc-messenger";
+import { getBotReply, getMessages, sendMessage, deleteMessage, isDemoBot, loadDemoBotWallet, registerWalletOnNode, getWallets, fileToMediaPayload, MAX_MEDIA_SIZE, keyFingerprint, checkTofu, markMessagesRead } from "@/lib/pqc-messenger";
+import { acceptChat, blockWalletKeys, filterBlockedMessages, isAnyBlocked, isGroupConversation, lastSeenOwnMessageId, otherMembers, receiptStatus, setConversationMuted, unblockWalletKeys, walletKeys, type ReceiptStatus } from "@/lib/messenger-prefs";
+import { classifyBody, gifsEnabled } from "@/lib/messenger-content";
+import { useMessengerPrefs } from "./useMessengerPrefs";
+import { StackedAvatars } from "./StackedAvatars";
+import { GroupInfoSheet } from "./GroupInfoSheet";
+import { GifPicker } from "./GifPicker";
+import { RichBody } from "./RichBody";
 import { playNotificationSound, loadNotificationSettings } from "@/lib/notifications";
 import { useRougeAddress } from "@/hooks/useRougeAddress";
 import { subscribeNewMessage, isMessengerLive } from "@/hooks/use-blockchain-ws";
@@ -24,6 +32,13 @@ interface ChatViewProps {
   wallet: WalletWithPrivateKeys;
   onBack: () => void;
   onBlocked?: () => void;
+  /** Directory wallets (for adding group members). */
+  contacts?: Wallet[];
+  /** A group was renamed / grew: reload the conversation. */
+  onConversationChanged?: () => void;
+  /** A message request (1:1 I haven't accepted): no read receipts until accepted. */
+  isRequest?: boolean;
+  onAccepted?: () => void;
 }
 
 interface EncryptedPackage {
@@ -479,7 +494,18 @@ const EncryptionAnimation = ({
   );
 };
 
-const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) => {
+const ChatView = ({ conversation, wallet, onBack, onBlocked, contacts = [], onConversationChanged, isRequest = false, onAccepted }: ChatViewProps) => {
+  const { t } = useTranslation();
+  const prefs = useMessengerPrefs();
+  const [showGroupInfo, setShowGroupInfo] = useState(false);
+  const [showGifs, setShowGifs] = useState(false);
+  const markedReadRef = useRef<Set<string>>(new Set());
+  const isRequestRef = useRef(isRequest);
+  isRequestRef.current = isRequest;
+  const mutedRef = useRef(false);
+  mutedRef.current = prefs.muted.has(conversation.id);
+  const blockedRef = useRef(prefs.blocked);
+  blockedRef.current = prefs.blocked;
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [selfDestruct, setSelfDestruct] = useState(false);
@@ -504,15 +530,34 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
   const [showSearch, setShowSearch] = useState(false);
 
   const myIds = new Set([wallet.id, wallet.signingPublicKey, wallet.encryptionPublicKey].filter(Boolean));
+  const members = useMemo(() => otherMembers(conversation, myIds), [conversation, wallet.id, wallet.signingPublicKey]);
+  const isGroup = isGroupConversation(conversation, myIds);
+  const muted = prefs.muted.has(conversation.id);
 
-  // Aggregate reactions and filter system messages
-  const reactionMap = useMemo(() => aggregateReactions(messages, myIds), [messages]);
-  const messagesById = useMemo(() => new Map(messages.map(m => [m.id, m])), [messages]);
-  const visibleMessages = useMemo(() =>
-    messages.filter(m => !isSystemMessage(m.plaintext))
-      .filter(m => !searchQuery || m.plaintext?.toLowerCase().includes(searchQuery.toLowerCase())),
-    [messages, searchQuery]
+  /** Every id form of a message sender (resolved through the conversation members). */
+  const senderKeys = (senderId: string): string[] => {
+    const m = members.find(p => walletKeys(p).includes(senderId));
+    return m ? walletKeys(m) : [];
+  };
+  const isOwnMessage = (m: Message) => myIds.has(m.senderWalletId);
+
+  // Aggregate reactions and filter system messages; hide blocked senders (Qwalla: matched on any key).
+  const unblockedMessages = useMemo(
+    () => filterBlockedMessages(messages, prefs.blocked, myIds, (id) => {
+      const msg = messages.find(m => m.senderWalletId === id);
+      return [...senderKeys(id), ...(msg?.senderSigningPublicKey ? [msg.senderSigningPublicKey] : [])];
+    }),
+    [messages, prefs.version, members],
   );
+  const reactionMap = useMemo(() => aggregateReactions(unblockedMessages, myIds), [unblockedMessages]);
+  const messagesById = useMemo(() => new Map(unblockedMessages.map(m => [m.id, m])), [unblockedMessages]);
+  const visibleMessages = useMemo(() =>
+    unblockedMessages.filter(m => !isSystemMessage(m.plaintext))
+      .filter(m => !searchQuery || m.plaintext?.toLowerCase().includes(searchQuery.toLowerCase())),
+    [unblockedMessages, searchQuery]
+  );
+  // Read receipts: where the "Seen" label goes (newest of my messages with read_at).
+  const lastSeenId = useMemo(() => lastSeenOwnMessageId(visibleMessages, isOwnMessage), [visibleMessages]);
 
 
   const hasBot = conversation.name === "Quantum Bot" ||
@@ -526,13 +571,14 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
       );
   const isRecipientBot = recipient && !isSelfConversation ? isDemoBot(recipient.id) : false;
   const recipientMainId = recipient?.id || recipient?.signingPublicKey || "";
-  const [blocked, setBlocked] = useState(() => recipientMainId ? isWalletBlocked(recipientMainId) : false);
+  const recipientKeys = recipient ? walletKeys(recipient) : [];
+  const blocked = !isGroup && recipientKeys.length > 0 && isAnyBlocked(recipientKeys, prefs.blocked);
   const [tofuWarning, setTofuWarning] = useState(false);
   const [fingerprint, setFingerprint] = useState("");
   const { display: recipientRougeAddr } = useRougeAddress(recipientMainId || undefined);
 
   useEffect(() => {
-    if (!recipient || isRecipientBot || isSelfConversation) return;
+    if (!recipient || isRecipientBot || isSelfConversation || isGroup) return;
     (async () => {
       const tofu = await checkTofu(recipient);
       setTofuWarning(tofu.changed);
@@ -542,22 +588,32 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
   }, [recipient?.id, recipient?.signingPublicKey]);
 
   const handleToggleBlock = () => {
-    if (!recipientMainId) return;
+    if (recipientKeys.length === 0) return;
+    const name = recipient?.displayName || t("chat.common.anonymous");
     if (blocked) {
-      unblockWallet(recipientMainId);
-      setBlocked(false);
-      toast.success(`Unblocked ${recipient?.displayName || "user"}`);
+      unblockWalletKeys(recipientKeys);
+      toast.success(t("chat.block.unblocked", { name }));
     } else {
-      if (!confirm(`Block ${recipient?.displayName || "this user"}? You won't see their messages or conversations.`)) return;
-      blockWallet(recipientMainId);
-      setBlocked(true);
-      toast.success(`Blocked ${recipient?.displayName || "user"}`);
+      if (!confirm(t("chat.block.confirm", { name }))) return;
+      blockWalletKeys(recipientKeys);
+      toast.success(t("chat.block.blocked", { name }));
       onBlocked?.();
     }
   };
 
+  const toggleMute = () => {
+    setConversationMuted(conversation.id, !muted);
+    toast.success(muted ? t("chat.mute.unmuted") : t("chat.mute.muted"));
+  };
+
+  const acceptRequest = () => {
+    acceptChat(conversation.id);
+    onAccepted?.();
+  };
+
   const getConversationName = (): string => {
     if (conversation.name) return conversation.name;
+    if (isGroup) return t("chat.group.untitled", { count: members.length + 1 });
     if (isSelfConversation) return "Note to Self";
     return recipient?.displayName || "Unknown";
   };
@@ -566,6 +622,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
   useEffect(() => {
     // Reset seen messages on conversation change
     seenMessageIdsRef.current = new Set();
+    markedReadRef.current = new Set();
     prevMessageCountRef.current = 0;
     setNewMessageIds(new Set());
     loadMessages(true);
@@ -602,7 +659,16 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
       const msgs = await getMessages(
         conversation.id,
         wallet,
-        conversation.participants || []
+        conversation.participants || [],
+        (unread) => {
+          // Read receipts (Qwalla: markRead for every unread incoming message while the chat is
+          // open). Not for message requests, and only while the page is actually visible.
+          if (isRequestRef.current || document.visibilityState !== "visible") return;
+          const fresh = unread.filter(id => !markedReadRef.current.has(id));
+          if (fresh.length === 0) return;
+          fresh.forEach(id => markedReadRef.current.add(id));
+          void markMessagesRead(wallet, conversation.id, fresh);
+        },
       );
 
       // Track new messages that arrived after initial load (not from current user)
@@ -617,7 +683,8 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
         if (newIds.size > 0) {
           setNewMessageIds(prev => new Set([...prev, ...newIds]));
           const settings = loadNotificationSettings();
-          if (settings.enabled && settings.sound) {
+          const fromBlocked = msgs.some(m => newIds.has(m.id) && isAnyBlocked([m.senderWalletId, ...(m.senderSigningPublicKey ? [m.senderSigningPublicKey] : [])], blockedRef.current));
+          if (settings.enabled && settings.sound && !mutedRef.current && !fromBlocked) {
             playNotificationSound();
           }
         }
@@ -739,6 +806,14 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
     setShowRequestMode(false);
   };
 
+  // GIFs go out exactly as Qwalla's sendGif: the GIPHY URL as the body of a msg envelope.
+  const handleSendGif = (url: string) => {
+    setShowGifs(false);
+    setEncryptingMessageType("text");
+    setEncryptingMessage(buildMsgEnvelope(url));
+    pendingMediaPayloadRef.current = null;
+  };
+
   const pendingMediaPayloadRef = useRef<string | null>(null);
 
   const handleEncryptionComplete = async () => {
@@ -750,6 +825,30 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
     setEncryptingMessage(null);
     setEncryptingMessageType("text");
     pendingMediaPayloadRef.current = null;
+
+    // Groups: encrypt for every other member (Qwalla's v2 wrapped-CEK package).
+    let groupKeys: string[] | null = null;
+    if (isGroup) {
+      let keys = members.map(m => m.encryptionPublicKey).filter((k): k is string => !!k);
+      if (keys.length < members.length) {
+        try {
+          const directory = await getWallets();
+          keys = members
+            .map(m => m.encryptionPublicKey || directory.find(w => walletKeys(m).some(k => walletKeys(w).includes(k)))?.encryptionPublicKey)
+            .filter((k): k is string => !!k);
+        } catch (error) {
+          console.warn("Failed to resolve group member keys:", error);
+        }
+      }
+      keys = [...new Set(keys)];
+      if (keys.length === 0) {
+        toast.error(t("chat.group.noKeys"));
+        setIsSending(false);
+        return;
+      }
+      if (keys.length < members.length) toast.warning(t("chat.group.someKeysMissing", { count: members.length - keys.length }));
+      groupKeys = keys;
+    }
 
     // Ensure recipient has the latest encryption key (fetch from server)
     let recipientEncryptionKey = recipient.encryptionPublicKey;
@@ -766,7 +865,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
         console.warn("Failed to refresh recipient keys:", error);
       }
     }
-    if (!recipientEncryptionKey) {
+    if (!recipientEncryptionKey && !groupKeys) {
       console.error("Recipient has no encryption key. Recipient:", recipient);
       alert("Cannot send message: recipient's encryption key is not available. Ask them to re-register their wallet.");
       setIsSending(false);
@@ -778,7 +877,7 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
         conversation.id,
         messageText,
         wallet,
-        recipientEncryptionKey,
+        groupKeys ?? recipientEncryptionKey!,
         selfDestruct,
         selfDestruct ? destructSeconds : undefined,
         currentMessageType,
@@ -827,17 +926,21 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
       {/* Chat header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-card/50">
+      <div className="flex items-center gap-2 sm:gap-3 px-2 sm:px-4 py-3 border-b border-border bg-card/50 min-w-0">
         <Button
           variant="ghost"
           size="icon"
           onClick={onBack}
-          className="sm:hidden"
+          className="sm:hidden flex-shrink-0"
         >
           <ArrowLeft className="w-5 h-5" />
         </Button>
-        {isRecipientBot || !recipient ? (
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isRecipientBot
+        {isGroup ? (
+          <button type="button" onClick={() => setShowGroupInfo(true)} className="flex-shrink-0 rounded-full" aria-label={t("chat.group.info")}>
+            <StackedAvatars members={members} size={40} />
+          </button>
+        ) : isRecipientBot || !recipient ? (
+          <div className={`w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center ${isRecipientBot
             ? "bg-gradient-to-br from-primary to-accent"
             : "bg-primary/20"
             }`}>
@@ -852,24 +955,35 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 min-w-0">
-            <p className="font-medium text-foreground truncate">{getConversationName()}</p>
+            {isGroup ? (
+              <button type="button" onClick={() => setShowGroupInfo(true)} className="font-medium text-foreground truncate text-left hover:underline">
+                {getConversationName()}
+              </button>
+            ) : (
+              <p className="font-medium text-foreground truncate">{getConversationName()}</p>
+            )}
+            {muted && <BellOff className="w-3.5 h-3.5 flex-shrink-0 text-amber-500" aria-label={t("chat.mute.muted")} />}
             {isRecipientBot && (
               <span className="px-1.5 py-0.5 text-xs rounded bg-primary/20 text-primary">
                 AI
               </span>
             )}
-            {tofuWarning && !isRecipientBot && (
+            {!isGroup && tofuWarning && !isRecipientBot && (
               <span className="px-1.5 py-0.5 text-xs rounded bg-destructive/20 text-destructive font-medium" title="This contact's keys have changed since you first communicated">
                 Key Changed
               </span>
             )}
-            {fingerprint && !isRecipientBot && !tofuWarning && (
-              <span className="px-1.5 py-0.5 text-xs rounded bg-green-500/20 text-green-600 dark:text-green-400 font-mono" title={`Fingerprint: ${fingerprint}`}>
+            {!isGroup && fingerprint && !isRecipientBot && !tofuWarning && (
+              <span className="hidden sm:inline px-1.5 py-0.5 text-xs rounded bg-green-500/20 text-green-600 dark:text-green-400 font-mono" title={`Fingerprint: ${fingerprint}`}>
                 {fingerprint.substring(0, 9)}
               </span>
             )}
           </div>
-          {recipient && !isRecipientBot && (
+          {isGroup ? (
+            <button type="button" onClick={() => setShowGroupInfo(true)} className="bubble-meta text-muted-foreground hover:text-foreground truncate block max-w-full text-left">
+              {t("chat.group.memberCount", { count: members.length + 1 })}
+            </button>
+          ) : recipient && !isRecipientBot && (
             <button
               className="text-xs sm:text-xs text-muted-foreground font-mono hover:text-foreground transition-colors flex items-center gap-1 w-full"
               onClick={() => {
@@ -890,18 +1004,50 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
             ML-KEM-768 + ML-DSA-65
           </p>
         </div>
-        {recipient && !isRecipientBot && !isSelfConversation && (
-          <Button
-            variant={blocked ? "destructive" : "ghost"}
-            size="icon"
-            onClick={handleToggleBlock}
-            title={blocked ? "Unblock user" : "Block user"}
-            className="flex-shrink-0"
-          >
-            <Ban className="w-4 h-4" />
-          </Button>
+        {blocked && (
+          <span className="hidden sm:inline px-1.5 py-0.5 text-xs rounded bg-destructive/20 text-destructive font-medium flex-shrink-0">
+            {t("chat.block.blockedBadge")}
+          </span>
         )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="flex-shrink-0" title={t("chat.menu.title")}>
+              <MoreVertical className="w-4 h-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuItem onClick={() => setShowSearch(true)}>
+              <Search className="w-4 h-4 mr-2" /> {t("chat.menu.search")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={toggleMute}>
+              {muted ? <Bell className="w-4 h-4 mr-2" /> : <BellOff className="w-4 h-4 mr-2" />}
+              {muted ? t("chat.mute.unmute") : t("chat.mute.mute")}
+            </DropdownMenuItem>
+            {isGroup && (
+              <DropdownMenuItem onClick={() => setShowGroupInfo(true)}>
+                <Users className="w-4 h-4 mr-2" /> {t("chat.group.info")}
+              </DropdownMenuItem>
+            )}
+            {!isGroup && recipient && !isRecipientBot && !isSelfConversation && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleToggleBlock} className={blocked ? "" : "text-destructive focus:text-destructive"}>
+                  <Ban className="w-4 h-4 mr-2" /> {blocked ? t("chat.block.unblock") : t("chat.block.block")}
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
+
+      {/* Message request banner (Qwalla: accept, or delete = block) */}
+      {isRequest && (
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-border bg-primary/5">
+          <p className="text-xs text-muted-foreground flex-1 min-w-[160px]">{t("chat.requests.banner", { name: getConversationName() || t("chat.common.anonymous") })}</p>
+          <Button size="sm" variant="ghost" className="h-7 text-destructive" onClick={handleToggleBlock}>{t("chat.block.block")}</Button>
+          <Button size="sm" className="h-7" onClick={acceptRequest}>{t("chat.requests.accept")}</Button>
+        </div>
+      )}
 
       {/* Search bar */}
       <AnimatePresence>
@@ -973,6 +1119,8 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
                     quotedPreview={msg.replyTo ? previewText(messagesById.get(msg.replyTo)) : undefined}
                     onAcceptRequest={getRequestData(msg) && !isOwn ? () => setShowPaymentDialog(true) : undefined}
                     onImageClick={(url) => setLightboxUrl(url)}
+                    receipt={isOwn ? receiptStatus(msg) : undefined}
+                    seen={isOwn && msg.id === lastSeenId}
                   />
                 </div>
               );
@@ -990,8 +1138,14 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
         <div ref={messagesEndRef} />
       </div>
 
+      <AnimatePresence>
+        {showGifs && gifsEnabled() && (
+          <GifPicker key="gifs" onSelect={handleSendGif} onClose={() => setShowGifs(false)} />
+        )}
+      </AnimatePresence>
+
       {/* Message input */}
-      <div className="p-4 border-t border-border bg-card/50">
+      <div className="p-3 sm:p-4 border-t border-border bg-card/50">
         {/* Self-destruct toggle */}
         <div className="flex items-center justify-between mb-3 text-sm">
           <div className="flex items-center gap-2">
@@ -1068,8 +1222,22 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
           >
             <Paperclip className="w-4 h-4" />
           </Button>
-          {/* Payment button */}
-          {!isSelfConversation && !isRecipientBot && (
+          {/* GIF picker (Qwalla GifPicker; hidden when no GIPHY key is configured) */}
+          {gifsEnabled() && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowGifs(v => !v)}
+              disabled={isSending || !!encryptingMessage}
+              title={t("chat.gif.button")}
+              aria-pressed={showGifs}
+              className={`flex-shrink-0 font-mono text-[10px] font-bold ${showGifs ? "text-[hsl(var(--hologram))]" : ""}`}
+            >
+              GIF
+            </Button>
+          )}
+          {/* Payment button (1:1 only, like Qwalla's tip) */}
+          {!isSelfConversation && !isRecipientBot && !isGroup && (
             <Button
               variant="ghost"
               size="icon"
@@ -1081,16 +1249,6 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
               <DollarSign className="w-4 h-4" />
             </Button>
           )}
-          {/* Search toggle */}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setShowSearch(!showSearch)}
-            title="Search messages"
-            className="flex-shrink-0"
-          >
-            <Search className="w-4 h-4" />
-          </Button>
           <Input
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
@@ -1135,6 +1293,19 @@ const ChatView = ({ conversation, wallet, onBack, onBlocked }: ChatViewProps) =>
                 toast.error("Failed to delete message");
               }
             }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showGroupInfo && isGroup && (
+          <GroupInfoSheet
+            key="group-info"
+            conversation={conversation}
+            wallet={wallet}
+            contacts={contacts}
+            onClose={() => setShowGroupInfo(false)}
+            onChanged={() => onConversationChanged?.()}
           />
         )}
       </AnimatePresence>
@@ -1393,6 +1564,8 @@ const MessageBubble = ({
   onAcceptRequest,
   onImageClick,
   quotedPreview,
+  receipt,
+  seen = false,
 }: {
   message: Message;
   isOwn: boolean;
@@ -1409,6 +1582,10 @@ const MessageBubble = ({
   onImageClick?: (url: string) => void;
   /** Quote of the message this one replies to (envelope replyTo); "" if it isn't loaded. */
   quotedPreview?: string;
+  /** Read receipt for my own messages (Qwalla's check / double-check). */
+  receipt?: ReceiptStatus;
+  /** Show "Seen" under this message (the newest of mine the recipient opened). */
+  seen?: boolean;
 }) => {
   const { t } = useTranslation();
   const [showDecryptAnimation, setShowDecryptAnimation] = useState(isNew && !isOwn);
@@ -1573,6 +1750,9 @@ const MessageBubble = ({
                 if (tip) {
                   return <TipBubble amount={tip.amount} symbol={tip.symbol} isOwn={isOwn} />;
                 }
+                if (!replyData && classifyBody(message.plaintext) !== "text") {
+                  return <RichBody body={message.plaintext} blurred={isSpoiler} onImageClick={onImageClick} />;
+                }
                 if (replyData) {
                   return (
                     <p className={`text-sm whitespace-pre-wrap break-words min-w-0 transition-all duration-300 ${isSpoiler ? "blur-md" : ""}`}>
@@ -1609,7 +1789,18 @@ const MessageBubble = ({
             ) : (
               <XCircle className="w-3 h-3 text-destructive" />
             )}
+            {receipt && (
+              receipt === "sent" ? (
+                <CheckIcon className="w-3.5 h-3.5 opacity-70" aria-label={t("chat.receipts.sent")} />
+              ) : (
+                <CheckCheck
+                  className={`w-3.5 h-3.5 ${receipt === "read" ? "text-[hsl(var(--hologram))] drop-shadow-[0_0_4px_hsl(var(--hologram))]" : "opacity-70"}`}
+                  aria-label={receipt === "read" ? t("chat.receipts.read") : t("chat.receipts.delivered")}
+                />
+              )
+            )}
           </div>
+          {seen && <p className="bubble-meta mt-0.5 text-right text-[hsl(var(--hologram))]">{t("chat.receipts.seen")}</p>}
           <p className="bubble-meta opacity-40 mt-0.5 text-right">Tap for details</p>
         </motion.div>
       </div>
