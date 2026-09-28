@@ -261,6 +261,8 @@ impl WasmRuntime {
                             view: std::sync::Arc::new(game::OverlayView::new(g.view.clone(), &merged_effects)),
                             seed: game::sub_call_seed(&g.seed, sub_index),
                             block_hashes: g.block_hashes,
+                            payable: g.payable,
+                            attached: None, // a payment goes to the called contract only
                         }),
                     ) {
                         Ok(sub_result) => {
@@ -473,6 +475,9 @@ impl WasmRuntime {
             game::register_game_functions(&mut linker)?;
             if env.game.as_ref().map_or(false, |g| g.ext.block_hashes) {
                 game::register_block_hash_function(&mut linker)?;
+            }
+            if env.game.as_ref().map_or(false, |g| g.ext.payable) {
+                game::register_payable_functions(&mut linker)?;
             }
         }
 

@@ -365,9 +365,35 @@ const s = await game.state();
 off();
 ```
 
+**Payable calls** (SDK 1.10.0; the node accepts them from the payable-calls upgrade, block
+190). A call can pay the contract in XRGE or a token. The amount is an **integer**:
+quanta for XRGE (1 XRGE = 1,000,000,000 quanta), raw units for tokens. The payment moves only if
+the call succeeds. A failing or trapping call leaves it with you, but the gas fee is still charged.
+
+```typescript
+import { xrgeToQuanta, quantaToXrge } from '@rougechain/sdk';
+
+const attach = { symbol: 'XRGE', amount: xrgeToQuanta('0.5') };   // 500_000_000n (exact, no floats)
+
+// Free preview of the paid call. The contract sees the payment. Needs a caller.
+const p = await rc.contracts.query(addr, 'roll', {}, wallet.publicKey, { attach });
+
+// Signed, paid call. Without gasLimit, gas is sized from a preview that includes the payment.
+const r = await rc.contracts.execute(wallet, addr, 'roll', {}, { attach });
+// → { success, txId, fee, gasLimit, attach: { symbol: 'XRGE', amount: 500000000 } }
+
+await game.call('buy', { item: 3 }, { attach: { symbol: 'GOLD', amount: 25 } });  // token units
+quantaToXrge(1_500_000_000n);  // "1.5"
+```
+
+`amount` may be a `bigint`, a safe-integer `number` or a digit string. The SDK throws, or returns
+`{ success: false, error }`, for a non-integer, zero, negative or `> Number.MAX_SAFE_INTEGER` amount,
+because the node reads it as an exact JSON integer. The node refuses the call if you can't cover
+`fee + XRGE payment`, or the token amount.
+
 Lower-level builders are exported too: `createSignedContractCall`,
 `createSignedContractPublish`, `predictContractAddress`, `suggestGasLimit`,
-`contractCallFee`. On Node versions without a global `WebSocket`, pass one:
+`contractCallFee`, `normalizeContractAttach`, `xrgeToQuanta`, `quantaToXrge`. On Node versions without a global `WebSocket`, pass one:
 `new RougeChain(url, { WebSocket: (await import('ws')).default })`.
 
 > The old `rc.shielded.deployContract` / `callContract` helpers used node-signed

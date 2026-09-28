@@ -14,6 +14,10 @@ import {
   bytesToHex,
   bytesToBase64,
   base64ToBytes,
+  xrgeToQuanta,
+  quantaToXrge,
+  normalizeContractAttach,
+  QUANTA_PER_XRGE,
 } from "../dist/index.js";
 
 const WASM_HEADER = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
@@ -292,4 +296,132 @@ test("game() helper: call needs a wallet, on() filters by topic, '*' gets all", 
   await g.query("board");
   assert.equal(calls.at(-1).body.caller, keys.publicKey);
   off1(); off2();
+});
+
+// ─── payable calls ──────────────────────────────────────────────────────────
+
+test("xrgeToQuanta converts decimals exactly (no float math)", () => {
+  assert.equal(QUANTA_PER_XRGE, 1_000_000_000n);
+  assert.equal(xrgeToQuanta("0.5"), 500_000_000n);
+  assert.equal(xrgeToQuanta("1"), 1_000_000_000n);
+  assert.equal(xrgeToQuanta(2), 2_000_000_000n);
+  assert.equal(xrgeToQuanta(0.1), 100_000_000n);
+  assert.equal(xrgeToQuanta(0.3), 300_000_000n); // 0.1+0.2 style float noise must not leak in
+  assert.equal(xrgeToQuanta("0.000000001"), 1n);
+  assert.equal(xrgeToQuanta(".25"), 250_000_000n);
+  assert.equal(xrgeToQuanta("3."), 3_000_000_000n);
+  assert.equal(xrgeToQuanta("1.500000000000"), 1_500_000_000n); // trailing zeros are fine
+  assert.equal(xrgeToQuanta("1e-9"), 1n);
+  assert.equal(xrgeToQuanta(1e-7), 100n);
+  assert.equal(xrgeToQuanta("1_000"), 1_000_000_000_000n);
+  assert.equal(xrgeToQuanta("123456789.123456789"), 123456789123456789n);
+  assert.equal(xrgeToQuanta("0"), 0n);
+  assert.throws(() => xrgeToQuanta("0.0000000001"), /more than 9 decimal/);
+  assert.throws(() => xrgeToQuanta("-1"), /negative/);
+  assert.throws(() => xrgeToQuanta("abc"), /invalid XRGE/);
+  assert.throws(() => xrgeToQuanta(""), /invalid XRGE/);
+  assert.throws(() => xrgeToQuanta("."), /invalid XRGE/);
+  assert.throws(() => xrgeToQuanta(NaN), /invalid XRGE/);
+  assert.throws(() => xrgeToQuanta(Infinity), /invalid XRGE/);
+});
+
+test("quantaToXrge formats exactly and round-trips", () => {
+  assert.equal(quantaToXrge(500_000_000n), "0.5");
+  assert.equal(quantaToXrge(1n), "0.000000001");
+  assert.equal(quantaToXrge(0), "0");
+  assert.equal(quantaToXrge("12000000000"), "12");
+  assert.equal(quantaToXrge(123456789123456789n), "123456789.123456789");
+  for (const x of ["0.5", "1.000000001", "9007199.254740991", "42"]) {
+    assert.equal(quantaToXrge(xrgeToQuanta(x)), x);
+  }
+  assert.throws(() => quantaToXrge(1.5), /integer/);
+});
+
+test("normalizeContractAttach validates symbol and integer amount", () => {
+  assert.deepEqual(normalizeContractAttach({ symbol: " xrge ", amount: 500_000_000n }), { symbol: "XRGE", amount: 500_000_000 });
+  assert.deepEqual(normalizeContractAttach({ symbol: "GOLD", amount: "25" }), { symbol: "GOLD", amount: 25 });
+  assert.deepEqual(normalizeContractAttach({ symbol: "q-USD_1", amount: 7 }), { symbol: "Q-USD_1", amount: 7 });
+  assert.deepEqual(
+    normalizeContractAttach({ symbol: "XRGE", amount: BigInt(Number.MAX_SAFE_INTEGER) }),
+    { symbol: "XRGE", amount: Number.MAX_SAFE_INTEGER }
+  );
+  assert.throws(() => normalizeContractAttach({ symbol: "XRGE", amount: 0.5 }), /integer .*xrgeToQuanta/);
+  assert.throws(() => normalizeContractAttach({ symbol: "XRGE", amount: "0.5" }), /positive integer/);
+  assert.throws(() => normalizeContractAttach({ symbol: "XRGE", amount: 0 }), /greater than 0/);
+  assert.throws(() => normalizeContractAttach({ symbol: "XRGE", amount: -5 }), /greater than 0/);
+  assert.throws(() => normalizeContractAttach({ symbol: "XRGE", amount: "-5" }), /positive integer/);
+  assert.throws(() => normalizeContractAttach({ symbol: "XRGE", amount: 2 ** 53 }), /MAX_SAFE_INTEGER/);
+  assert.throws(
+    () => normalizeContractAttach({ symbol: "XRGE", amount: BigInt(Number.MAX_SAFE_INTEGER) + 1n }),
+    /MAX_SAFE_INTEGER/
+  );
+  assert.throws(() => normalizeContractAttach({ symbol: "", amount: 1 }), /symbol/);
+  assert.throws(() => normalizeContractAttach({ symbol: "BAD SYM", amount: 1 }), /symbol/);
+  assert.throws(() => normalizeContractAttach({ symbol: "X".repeat(33), amount: 1 }), /symbol/);
+  assert.throws(() => normalizeContractAttach(undefined), /attach must be/);
+});
+
+test("createSignedContractCall signs the attach as a JSON integer inside the payload", () => {
+  const tx = createSignedContractCall(keys, "aa".repeat(20), "roll", {}, 5000, undefined, {
+    symbol: "xrge", amount: xrgeToQuanta("0.5"),
+  });
+  assert.deepEqual(tx.payload.attach, { symbol: "XRGE", amount: 500000000 });
+  assert.ok(verifyTransaction(tx));
+  const bytes = Buffer.from(tx.payload_bytes_hex, "hex").toString("utf8");
+  assert.ok(bytes.includes('"attach":{"amount":500000000,"symbol":"XRGE"}'), bytes);
+  // no attach → no field (old encoding unchanged)
+  const plain = createSignedContractCall(keys, "aa".repeat(20), "roll", {}, 5000);
+  assert.equal("attach" in plain.payload, false);
+  assert.throws(
+    () => createSignedContractCall(keys, "aa".repeat(20), "roll", {}, 5000, undefined, { symbol: "XRGE", amount: 1.5 }),
+    /integer/
+  );
+});
+
+test("execute with attach queries WITH the attach, then signs it", async () => {
+  const addr = "ab".repeat(20);
+  const { fn, calls } = mockFetch({
+    [`/contract/${addr}/query`]: [200, { success: true, returnData: null, gasUsed: 3000, events: [] }],
+    "/v2/contract/execute": [200, { success: true, txId: "tp", fee: 0.0055 }],
+  });
+  const rc = new RougeChain("http://node/api", { fetch: fn });
+  const r = await rc.contracts.execute(keys, addr, "roll", {}, { attach: { symbol: "XRGE", amount: 500_000_000n } });
+  assert.equal(r.success, true);
+  assert.deepEqual(r.attach, { symbol: "XRGE", amount: 500000000 });
+  assert.deepEqual(calls[0].body, {
+    method: "roll", args: {}, caller: keys.publicKey, attach: { symbol: "XRGE", amount: 500000000 },
+  });
+  assert.equal(r.gasLimit, 5500);
+  const sent = calls[1].body;
+  assert.deepEqual(sent.payload.attach, { symbol: "XRGE", amount: 500000000 });
+  assert.ok(verifyTransaction(sent));
+  assert.equal(sent.payload_bytes_hex, bytesToHex(serializePayload(sent.payload)));
+});
+
+test("execute/query reject a bad attach before touching the network", async () => {
+  const addr = "ac".repeat(20);
+  const { fn, calls } = mockFetch({});
+  const rc = new RougeChain("http://node/api", { fetch: fn });
+  const r = await rc.contracts.execute(keys, addr, "roll", {}, { attach: { symbol: "XRGE", amount: 0.5 } });
+  assert.equal(r.success, false);
+  assert.match(r.error, /integer/);
+  const q = await rc.contracts.query(addr, "roll", {}, undefined, { attach: { symbol: "XRGE", amount: 1 } });
+  assert.equal(q.success, false);
+  assert.match(q.error, /needs the caller/);
+  assert.equal(calls.length, 0);
+});
+
+test("game().call/query pass the attach through", async () => {
+  const addr = "ad".repeat(20);
+  const { fn, calls } = mockFetch({
+    [`/contract/${addr}/query`]: [200, { success: true, gasUsed: 1, events: [] }],
+    "/v2/contract/execute": [200, { success: true, txId: "tg" }],
+  });
+  const rc = new RougeChain("http://node/api", { fetch: fn });
+  const g = rc.contracts.game(addr, keys);
+  await g.query("roll", {}, { attach: { symbol: "GOLD", amount: 3 } });
+  assert.deepEqual(calls[0].body.attach, { symbol: "GOLD", amount: 3 });
+  const r = await g.call("roll", {}, { gasLimit: 2000, attach: { symbol: "gold", amount: "3" } });
+  assert.equal(r.txId, "tg");
+  assert.deepEqual(calls[1].body.payload.attach, { symbol: "GOLD", amount: 3 });
 });

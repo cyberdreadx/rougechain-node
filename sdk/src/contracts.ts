@@ -15,6 +15,9 @@ import type {
   PublishContractResult,
   ExecuteContractOptions,
   ExecuteContractResult,
+  ContractAttach,
+  NormalizedContractAttach,
+  QueryContractOptions,
   TxReceipt,
 } from "./types.js";
 
@@ -116,6 +119,102 @@ export function contractCallFee(gasLimit: number): number {
   return gasLimit * CONTRACT_GAS_PRICE_XRGE;
 }
 
+// ─── payable calls: exact XRGE ⇄ quanta, attach validation ────────────────
+
+/** Quanta per XRGE (XRGE has 9 decimals). */
+export const QUANTA_PER_XRGE = 1_000_000_000n;
+const XRGE_DECIMALS = 9;
+
+/**
+ * Convert an XRGE amount to integer quanta exactly (decimal string arithmetic, no float math).
+ * Accepts `"1.5"`, `"0.000000001"`, `2`, `0.1`, `"1e-3"`. At most 9 decimal places; negative,
+ * non-finite and malformed input throws.
+ *
+ * @example xrgeToQuanta("0.5") === 500_000_000n
+ */
+export function xrgeToQuanta(xrge: number | string): bigint {
+  let str: string;
+  if (typeof xrge === "number") {
+    if (!Number.isFinite(xrge)) throw new Error(`invalid XRGE amount: ${xrge}`);
+    str = String(xrge); // shortest round-trip form — the decimal the caller wrote
+  } else if (typeof xrge === "string") {
+    str = xrge.trim().replace(/_/g, "");
+  } else {
+    throw new Error("XRGE amount must be a number or a decimal string");
+  }
+  const m = /^(\+)?(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(str);
+  if (!m || (m[2] === "" && (m[3] ?? "") === "")) {
+    throw new Error(`invalid XRGE amount: "${str}"${str.startsWith("-") ? " (must not be negative)" : ""}`);
+  }
+  let digits = m[2] + (m[3] ?? "");
+  let scale = (m[3] ?? "").length - (m[4] ? parseInt(m[4], 10) : 0); // value = digits × 10^-scale
+  // strip trailing zeros that only add precision
+  while (scale > 0 && digits.length > 0 && digits.endsWith("0")) { digits = digits.slice(0, -1); scale--; }
+  if (scale > XRGE_DECIMALS) throw new Error(`XRGE amount "${str}" has more than ${XRGE_DECIMALS} decimal places`);
+  if (scale < -1000) throw new Error(`XRGE amount "${str}" is too large`);
+  const n = BigInt(digits === "" ? "0" : digits);
+  return n * 10n ** BigInt(XRGE_DECIMALS - scale);
+}
+
+/**
+ * Format integer quanta as an exact XRGE decimal string (no trailing zeros), e.g.
+ * `quantaToXrge(1_500_000_000n) === "1.5"`.
+ */
+export function quantaToXrge(quanta: bigint | number | string): string {
+  const q = toBigIntStrict(quanta, "quanta");
+  const neg = q < 0n;
+  const a = neg ? -q : q;
+  const whole = a / QUANTA_PER_XRGE;
+  const frac = (a % QUANTA_PER_XRGE).toString().padStart(XRGE_DECIMALS, "0").replace(/0+$/, "");
+  return `${neg ? "-" : ""}${whole}${frac ? `.${frac}` : ""}`;
+}
+
+function toBigIntStrict(v: bigint | number | string, what: string): bigint {
+  if (typeof v === "bigint") return v;
+  if (typeof v === "number") {
+    if (!Number.isInteger(v)) throw new Error(`${what} must be an integer, got ${v}`);
+    if (!Number.isSafeInteger(v)) throw new Error(`${what} ${v} is not a safe integer; pass a bigint or string`);
+    return BigInt(v);
+  }
+  if (typeof v === "string" && /^-?\d+$/.test(v.trim())) return BigInt(v.trim());
+  throw new Error(`${what} must be an integer, got ${JSON.stringify(v)}`);
+}
+
+const MAX_ATTACH = BigInt(Number.MAX_SAFE_INTEGER);
+
+/**
+ * Validate an attachment and normalize it to what is signed: an upper-cased symbol and a
+ * positive integer amount that fits a JSON number exactly (≤ `Number.MAX_SAFE_INTEGER`).
+ * Throws a descriptive error otherwise.
+ */
+export function normalizeContractAttach(attach: ContractAttach): NormalizedContractAttach {
+  if (!attach || typeof attach !== "object") throw new Error("attach must be { symbol, amount }");
+  const symbol = typeof attach.symbol === "string" ? attach.symbol.trim().toUpperCase() : "";
+  if (!/^[A-Z0-9_-]{1,32}$/.test(symbol)) {
+    throw new Error("attach.symbol must be \"XRGE\" or a token symbol (1-32 letters, digits, _ or -)");
+  }
+  const raw = attach.amount;
+  let amount: bigint;
+  if (typeof raw === "bigint") {
+    amount = raw;
+  } else if (typeof raw === "number") {
+    if (!Number.isInteger(raw)) {
+      throw new Error(`attach.amount must be an integer (${symbol === "XRGE" ? "quanta — use xrgeToQuanta()" : "raw token units"}), got ${raw}`);
+    }
+    if (!Number.isSafeInteger(raw)) throw new Error(`attach.amount ${raw} exceeds Number.MAX_SAFE_INTEGER`);
+    amount = BigInt(raw);
+  } else if (typeof raw === "string" && /^\d+$/.test(raw.trim())) {
+    amount = BigInt(raw.trim());
+  } else {
+    throw new Error(`attach.amount must be a positive integer (${symbol === "XRGE" ? "quanta — use xrgeToQuanta()" : "raw token units"}), got ${JSON.stringify(raw)}`);
+  }
+  if (amount <= 0n) throw new Error("attach.amount must be greater than 0");
+  if (amount > MAX_ATTACH) {
+    throw new Error(`attach.amount ${amount} exceeds Number.MAX_SAFE_INTEGER (${Number.MAX_SAFE_INTEGER}); the node needs it as an exact JSON integer`);
+  }
+  return { symbol, amount: Number(amount) };
+}
+
 function normAddr(addr: string): string {
   return addr.trim().toLowerCase();
 }
@@ -155,6 +254,8 @@ export function createSignedContractPublish(
 /**
  * Build a signed `contract_call` request (`POST /api/v2/contract/execute`).
  * `args` defaults to `{}` (what the block executor uses when none are signed).
+ * `attach` (payable calls) is validated with {@link normalizeContractAttach} and signed as
+ * `{"symbol": "XRGE", "amount": <integer>}`; this throws on an invalid attachment.
  */
 export function createSignedContractCall(
   wallet: WalletKeys,
@@ -162,11 +263,13 @@ export function createSignedContractCall(
   method: string,
   args: unknown,
   gasLimit: number,
-  accountNonce?: number
+  accountNonce?: number,
+  attach?: ContractAttach
 ) {
   if (!Number.isInteger(gasLimit) || gasLimit < 1 || gasLimit > CONTRACT_MAX_GAS) {
     throw new Error(`gasLimit must be an integer between 1 and ${CONTRACT_MAX_GAS}`);
   }
+  const att = attach === undefined ? undefined : normalizeContractAttach(attach);
   const payload: Record<string, unknown> = {
     type: "contract_call",
     from: wallet.publicKey,
@@ -178,6 +281,7 @@ export function createSignedContractCall(
     nonce: generateNonce(),
   };
   if (accountNonce !== undefined) payload.account_nonce = accountNonce;
+  if (att) payload.attach = att;
   return signWithBytes(wallet, payload);
 }
 
@@ -282,10 +386,10 @@ class ContractEventStream {
 /** A game-dev-friendly handle on one contract. See {@link ContractsClient.game}. */
 export interface GameContract {
   readonly address: string;
-  /** Signed, fee-paying call (requires the wallet given to `game()`). */
+  /** Signed, fee-paying call (requires the wallet given to `game()`). Pay with `{ attach }`. */
   call(method: string, args?: unknown, opts?: ExecuteContractOptions): Promise<ExecuteContractResult>;
   /** Free read-only call. The caller is the game wallet's key when one was given. */
-  query(method: string, args?: unknown): Promise<ContractQueryResult>;
+  query(method: string, args?: unknown, opts?: QueryContractOptions): Promise<ContractQueryResult>;
   /** Whole storage (no key) or one key. */
   state(): Promise<Record<string, string>>;
   state(key: string | Uint8Array): Promise<ContractStateValue>;
@@ -332,6 +436,11 @@ export class ContractsClient {
    * Call a contract method as `wallet` (the contract sees it via `host_get_caller`). The node
    * dry-runs the call and refuses it if it would fail, so a failing call costs nothing.
    * Without `opts.gasLimit`, the SDK queries first and signs `ceil(gasUsed × 1.5) + 1000`.
+   *
+   * `opts.attach` pays the contract (payable calls): `{ symbol: "XRGE", amount: xrgeToQuanta("0.5") }`
+   * or `{ symbol: "TOKEN", amount: <raw units> }`. The payment moves only if the call succeeds; a
+   * failing call keeps it with the caller (the gas fee is still charged). The node refuses the call
+   * up front if `wallet` can't cover the gas fee plus an XRGE payment (or the token amount).
    */
   async execute(
     wallet: WalletKeys,
@@ -340,9 +449,15 @@ export class ContractsClient {
     args: unknown = {},
     opts: ExecuteContractOptions = {}
   ): Promise<ExecuteContractResult> {
+    let attach: NormalizedContractAttach | undefined;
+    try {
+      attach = opts.attach === undefined ? undefined : normalizeContractAttach(opts.attach);
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
     let gasLimit = opts.gasLimit;
     if (gasLimit === undefined) {
-      const q = await this.query(contractAddr, method, args, wallet.publicKey);
+      const q = await this.query(contractAddr, method, args, wallet.publicKey, { attach });
       if (!q.success) {
         return {
           success: false,
@@ -354,9 +469,9 @@ export class ContractsClient {
     }
     let signed;
     try {
-      signed = createSignedContractCall(wallet, contractAddr, method, args, gasLimit, opts.accountNonce);
+      signed = createSignedContractCall(wallet, contractAddr, method, args, gasLimit, opts.accountNonce, attach);
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e), gasLimit };
+      return { success: false, error: e instanceof Error ? e.message : String(e), gasLimit, attach };
     }
     const r = await this.send("/v2/contract/execute", signed);
     return {
@@ -365,19 +480,32 @@ export class ContractsClient {
       txId: r.txId as string | undefined,
       fee: r.fee as number | undefined,
       gasLimit,
+      attach,
       preview: r.preview as ExecuteContractResult["preview"],
     };
   }
 
-  /** Read-only call: no signature, no fee, nothing is committed. */
+  /**
+   * Read-only call: no signature, no fee, nothing is committed. With `opts.attach` (and a
+   * `caller`) it previews a paid call: the contract sees the payment as it would in a block.
+   */
   async query(
     contractAddr: string,
     method: string,
     args: unknown = {},
-    caller?: string
+    caller?: string,
+    opts: QueryContractOptions = {}
   ): Promise<ContractQueryResult> {
     const body: Record<string, unknown> = { method, args };
     if (caller) body.caller = caller;
+    if (opts.attach !== undefined) {
+      try {
+        if (!caller) throw new Error("previewing an attached payment needs the caller");
+        body.attach = normalizeContractAttach(opts.attach);
+      } catch (e) {
+        return { success: false, gasUsed: 0, events: [], error: e instanceof Error ? e.message : String(e) };
+      }
+    }
     const r = await this.send(`/contract/${encodeURIComponent(normAddr(contractAddr))}/query`, body);
     return {
       success: r.success === true,
@@ -487,6 +615,7 @@ export class ContractsClient {
    * const g = rc.contracts.game(addr, wallet);
    * const off = g.on("move", (e) => render(JSON.parse(e.data)));
    * await g.call("move", { x: 1, y: 2 });
+   * await g.call("roll", {}, { attach: { symbol: "XRGE", amount: xrgeToQuanta("0.5") } }); // paid
    */
   game(contractAddr: string, wallet?: WalletKeys): GameContract {
     const address = normAddr(contractAddr);
@@ -497,8 +626,8 @@ export class ContractsClient {
         if (!wallet) return Promise.reject(new Error("game(): pass a wallet to make signed calls"));
         return self.execute(wallet, address, method, args, opts);
       },
-      query(method, args = {}) {
-        return self.query(address, method, args, wallet?.publicKey);
+      query(method, args = {}, opts) {
+        return self.query(address, method, args, wallet?.publicKey, opts);
       },
       state(key?: string | Uint8Array) {
         return key === undefined ? self.state(address) : self.state(address, key);

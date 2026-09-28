@@ -51,6 +51,17 @@ function ContractTxView({ details, sending }: { details: ContractTxDetails; send
                     <Code2 className="w-4 h-4" />
                     <span>{sending ? "Call a smart contract" : "Sign a smart contract call"}</span>
                 </div>
+                {details.attach && (
+                    <div className="rounded-xl border-2 border-amber-500/60 bg-amber-500/10 p-4 text-center space-y-1">
+                        <p className="text-base font-bold text-amber-300 break-all">
+                            Pays {details.attach.display} {details.attach.symbol} to the contract
+                        </p>
+                        <p className="text-xs text-amber-200/80">(only if the call succeeds)</p>
+                        {details.attach.symbol !== "XRGE" && (
+                            <p className="text-[10px] text-muted-foreground">Raw token units, as signed.</p>
+                        )}
+                    </div>
+                )}
                 <div className="rounded-xl border border-border bg-card/30 p-4 space-y-2.5">
                     <Row label="Contract" title={details.contractAddr}>
                         <span className="font-mono text-xs">{shortAddr(details.contractAddr)}</span>
@@ -61,6 +72,17 @@ function ContractTxView({ details, sending }: { details: ContractTxDetails; send
                         {details.gasLimitDefaulted && <span className="block text-[10px] text-amber-400">not set: node default</span>}
                     </Row>
                     <Row label="Max fee"><span className="font-semibold">{formatXrge(details.maxFeeXrge)} XRGE</span></Row>
+                    {details.attach && (
+                        <Row label="Payment">
+                            <span className="font-semibold">{details.attach.display} {details.attach.symbol}</span>
+                        </Row>
+                    )}
+                    {details.attach?.symbol === "XRGE" && (
+                        <Row label="Max total cost">
+                            <span className="font-semibold">{details.maxTotalXrge} XRGE</span>
+                            <span className="block text-[10px] text-muted-foreground">gas fee + payment</span>
+                        </Row>
+                    )}
                 </div>
                 <div className="space-y-1">
                     <p className="text-xs text-muted-foreground">
@@ -75,6 +97,7 @@ function ContractTxView({ details, sending }: { details: ContractTxDetails; send
                 </div>
                 <p className="text-[11px] text-muted-foreground text-center">
                     The fee is gas limit × 0.000001 XRGE, charged up front. The contract sees this wallet as the caller.
+                    {details.attach && " If the call fails, the payment stays with you but the fee is still charged."}
                 </p>
             </div>
         );

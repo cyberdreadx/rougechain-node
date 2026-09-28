@@ -97,6 +97,8 @@ export interface TransactionPayload {
   method?: string;
   args?: unknown;
   gasLimit?: number;
+  /** Payable call: {symbol, amount} — integer quanta for XRGE, raw units for tokens. */
+  attach?: { symbol: string; amount: number };
   /** base64 WASM (contract_deploy) */
   wasm?: string;
 }

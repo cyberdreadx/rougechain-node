@@ -4,6 +4,16 @@ All notable changes to RougeChain.
 
 ---
 
+## Payable contract calls (block 190) — 2026-09-28
+
+- A contract call can carry a signed payment: `attach: {"symbol": "XRGE" | TOKEN, "amount": N}` (integer:
+  quanta for XRGE, raw units for tokens). It moves to the contract **only if the call succeeds**; a
+  contract refuses a payment by failing the call. Contracts read it with `host_get_attached_amount` /
+  `host_get_attached_symbol`. Enables entry fees and shops. Mandatory node upgrade before block 190.
+- `loot_roll`'s `roll` now costs 0.5 XRGE, so its treasury can't be drained by free rolls.
+- SDK **1.10.0** (`attach`, `xrgeToQuanta`), extension **1.5.0** (approval shows the payment), MCP
+  server **1.3.0**, site contract page "Attach payment".
+
 ## Node fix: exact JSON number parsing — 2026-09-28
 
 - Contract-call fees (`gasLimit × 0.000001`) could print with more digits than the previous JSON parser
