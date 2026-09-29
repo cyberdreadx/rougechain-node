@@ -53,7 +53,7 @@ export function AppHeader({ product }: { product: string }) {
       }
       network={
         <Status state={n.state}>
-          {n.state === "live" ? "Live API" : n.state} · Mainnet
+          {n.state === "live" ? "Live API" : n.state} · {n.network.label}
         </Status>
       }
       globalNavigation={<AppSwitcher current={app} />}
@@ -92,7 +92,7 @@ export function WorkspaceHeader() {
       }
       network={
         <Status state={n.state}>
-          {n.state === "live" ? "Live API" : n.state} · Mainnet
+          {n.state === "live" ? "Live API" : n.state} · {n.network.label}
         </Status>
       }
       globalNavigation={<AppSwitcher />}

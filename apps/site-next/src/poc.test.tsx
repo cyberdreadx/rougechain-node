@@ -170,7 +170,7 @@ it("preserves a stale successful response when refresh fails", async () => {
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   client.setQueryData(
-    ["network"],
+    ["network", "mainnet"],
     { ...demoSnapshot, height: 777 },
     { updatedAt: Date.now() - 120000 },
   );

@@ -13,16 +13,21 @@ import {
 } from "@rougechain/chain-readonly";
 import { Status, Metric, Button } from "@rougechain/ui";
 import { RefreshCw } from "lucide-react";
+import { useChain } from "./explorer/chain";
 function useNetworkData() {
-  const [mode, setMode] = useState<"LIVE" | "DEMO">("LIVE");
+  const chain = useChain();
+  // The saved snapshot is a MAINNET capture: it is never offered for another network.
+  const snapshotAllowed = chain.network === "mainnet";
+  const [requestedMode, setMode] = useState<"LIVE" | "DEMO">("LIVE");
+  const mode = snapshotAllowed ? requestedMode : "LIVE";
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 15000);
     return () => window.clearInterval(timer);
   }, []);
   const query = useQuery({
-    queryKey: ["network"],
-    queryFn: getNetwork,
+    queryKey: ["network", chain.network],
+    queryFn: () => getNetwork(chain.network),
     enabled: mode === "LIVE",
     retry: false,
     networkMode: "always",
@@ -30,18 +35,24 @@ function useNetworkData() {
     refetchInterval: 60000,
     refetchOnWindowFocus: true,
   });
-  const state = deriveNetworkState({
+  const derived = deriveNetworkState({
     mode,
     loading: query.isPending,
     error: query.isError,
     hasData: !!query.data,
     expired: !!query.data && now - query.dataUpdatedAt > 90000,
   });
+  const state: "demo" | "loading" | "stale" | "live" | "unavailable" =
+    derived === "demo" && !snapshotAllowed ? "unavailable" : derived;
   const data =
-    mode === "DEMO" || (!query.data && query.isError)
+    state === "demo"
       ? demoSnapshot
-      : query.data;
+      : state === "unavailable"
+        ? undefined
+        : query.data;
   return {
+    network: chain.config,
+    snapshotAllowed,
     mode,
     setMode,
     data,
@@ -77,13 +88,15 @@ export function NetworkControls() {
         >
           Live data
         </Button>
-        <Button
-          variant={n.mode === "DEMO" ? "secondary small" : "ghost small"}
-          aria-pressed={n.mode === "DEMO"}
-          onClick={() => n.setMode("DEMO")}
-        >
-          Snapshot
-        </Button>
+        {n.snapshotAllowed && (
+          <Button
+            variant={n.mode === "DEMO" ? "secondary small" : "ghost small"}
+            aria-pressed={n.mode === "DEMO"}
+            onClick={() => n.setMode("DEMO")}
+          >
+            Snapshot
+          </Button>
+        )}
       </div>
       <Button
         variant="ghost icon"
@@ -107,10 +120,14 @@ export function DataNote() {
             ? "Demo · saved snapshot"
             : n.state === "stale"
               ? "Stale · last successful read"
-              : "Loading network data"}
+              : n.state === "unavailable"
+                ? "Unavailable"
+                : "Loading network data"}
       </Status>
       <span>
-        {n.error && n.mode === "LIVE" ? "Network data unavailable. " : ""}
+        {n.error && n.mode === "LIVE"
+          ? `${n.network.label} data unavailable. `
+          : ""}
         {n.data
           ? `${n.state === "demo" ? "Captured" : "Last read"} ${new Date(n.data.capturedAt).toLocaleString()}.`
           : ""}{" "}
@@ -139,7 +156,9 @@ export function NetworkMetrics() {
               ? "Live API"
               : n.state === "demo"
                 ? "Snapshot"
-                : n.state}
+                : n.state === "unavailable"
+                  ? "Unavailable"
+                  : n.state}
           </Status>
         }
       />
