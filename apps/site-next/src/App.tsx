@@ -1,3 +1,4 @@
+import "./wallet/wallet.css";
 import WorkspacePage from "./WorkspacePage";
 import Architecture from "./Architecture";
 import SwapSections from "./SwapSections";
