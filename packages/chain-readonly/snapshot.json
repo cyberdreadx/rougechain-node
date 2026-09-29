@@ -1,0 +1,57 @@
+{
+  "height": 200,
+  "peers": 2,
+  "validators": 3,
+  "chainId": "rougechain-mainnet-1",
+  "capturedAt": "2026-09-29T15:07:33.593164+00:00",
+  "blocks": [
+    {
+      "height": 200,
+      "hash": "9fa0d19867ab678372081e480ea4ca017285831622b5c967ec049742dd682329",
+      "transactions": 1,
+      "timestamp": 1790638511876
+    },
+    {
+      "height": 199,
+      "hash": "c999d5ae2633e0372e1af0f4370de799e64bdc80bb2d1a25ae422993c65b7d29",
+      "transactions": 1,
+      "timestamp": 1790637929994
+    },
+    {
+      "height": 198,
+      "hash": "db615145645f00df1f282db8112fb7f8f38bc4b800e653e5190afd26a7c8e24c",
+      "transactions": 1,
+      "timestamp": 1790636583823
+    },
+    {
+      "height": 197,
+      "hash": "43aabd67a7c9dbeeb43f866a891c2bfbcfd8381f974ca529d5fe102a3613c829",
+      "transactions": 1,
+      "timestamp": 1790589527098
+    },
+    {
+      "height": 196,
+      "hash": "6e00303853714b73d8542db2c327a153d4f98a50b11debc1d58bfafb9019763e",
+      "transactions": 1,
+      "timestamp": 1790589475830
+    },
+    {
+      "height": 195,
+      "hash": "e49e793c590dcf3bf492840da4c4aaac6ed44ed515987fb4edf7286fb1500463",
+      "transactions": 1,
+      "timestamp": 1790589475653
+    },
+    {
+      "height": 194,
+      "hash": "28f40dd2a391d6cecc296682071fdfd99f80660257688c04bbcd85f417da2203",
+      "transactions": 1,
+      "timestamp": 1790589475485
+    },
+    {
+      "height": 193,
+      "hash": "435aac5f08f053c7923c7e3a7665c960756b3a07a3c334f0b1c52aa224d6a000",
+      "transactions": 1,
+      "timestamp": 1790589475274
+    }
+  ]
+}

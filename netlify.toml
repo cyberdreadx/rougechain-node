@@ -1,6 +1,8 @@
 [build]
+  # Monorepo: the site lives in apps/web. npm installs all workspaces from the root;
+  # `npm run build` runs apps/web's build (vite + OG images + prerender).
   command = "npm run build"
-  publish = "dist"
+  publish = "apps/web/dist"
 
 [[headers]]
   for = "/assets/*"

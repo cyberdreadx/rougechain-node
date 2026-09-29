@@ -27,7 +27,7 @@ RougeChain provides browser extensions that serve as quantum-resistant wallets, 
 ### From Source
 
 ```bash
-cd browser-extension
+cd apps/extension
 npm install
 npm run build
 ```
@@ -35,19 +35,19 @@ npm run build
 1. Open `chrome://extensions` (or `edge://extensions`, `brave://extensions`)
 2. Enable **Developer mode**
 3. Click **Load unpacked**
-4. Select the `browser-extension/dist` folder
+4. Select the `apps/extension/dist` folder
 
 ### Firefox
 
 ```bash
-cd browser-extension
+cd apps/extension
 npm install
 npm run build
 ```
 
 1. Open `about:debugging#/runtime/this-firefox`
 2. Click **Load Temporary Add-on**
-3. Select `browser-extension/dist/manifest.json`
+3. Select `apps/extension/dist/manifest.json`
 
 ## DApp Integration
 

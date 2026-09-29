@@ -12,8 +12,8 @@
  */
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { readFileSync, writeFileSync, existsSync, chmodSync } from "fs";
-import { createSignedBridgeWithdraw, createSignedFaucetRequest } from "../src/lib/pqc-signer";
-import { pubkeyToAddress } from "../src/lib/address";
+import { createSignedBridgeWithdraw, createSignedFaucetRequest } from "../apps/web/src/lib/pqc-signer";
+import { pubkeyToAddress } from "../apps/web/src/lib/address";
 
 const API = (process.env.CORE_API_URL || "http://localhost:5101").replace(/\/$/, "");
 const KEY_FILE = process.env.WD_WALLET_FILE || ".btc-wd-wallet.testnet.json";

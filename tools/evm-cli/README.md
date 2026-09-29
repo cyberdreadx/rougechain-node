@@ -2,7 +2,7 @@
 
 Derives your **Base (EVM) account from the same 24-word mnemonic** as the RougeChain
 wallet extension, using the standard Ethereum path `m/44'/60'/0'/0/0` (identical to
-`browser-extension/src/lib/evm-wallet.ts`). The address it prints is the same one the
+`apps/extension/src/lib/evm-wallet.ts`). The address it prints is the same one the
 extension's "Base Wallet (EVM)" card shows. Signing uses the audited `micro-eth-signer`
 library — no hand-rolled RLP.
 

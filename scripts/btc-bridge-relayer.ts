@@ -16,9 +16,13 @@
  *   • DRY-RUN BY DEFAULT. Nothing is broadcast unless BTC_RELAYER_LIVE=true. Testnet-verify
  *     the whole round-trip first (QV_BRIDGE_BTC_NETWORK=testnet), then flip to live.
  *   • Per-payout satoshi cap (BTC_MAX_WITHDRAW_SATS) bounds the blast radius of any single bug.
- *   • Idempotency: a persisted state file maps withdrawal txId → broadcast btcTxid, and before
- *     broadcasting we also scan custody's own transactions for an existing payment to the
- *     destination (adopt-if-present) so a crash-after-broadcast cannot double-pay.
+ *   • Idempotency (scripts/btc-relayer-core.ts): a payout is signed ONCE and its txid + raw bytes
+ *     are saved BEFORE broadcast; after that only the same bytes are ever re-sent, so a lost
+ *     response or crash cannot produce a second, different payment. Before any new payout we also
+ *     scan custody's own transactions for an existing payment to the destination (adopt), and
+ *     anything ambiguous stops that withdrawal for manual review instead of paying again.
+ *   • No new payouts while GET /api/bridge/health reports degraded bridge state.
+ *   • Dry-run persists nothing (no attempts, no plans), so testing never blocks later payouts.
  *   • Run as a SINGLETON. Two relayers against one custody wallet can double-spend UTXOs.
  *
  * Env:
@@ -43,6 +47,13 @@ import { HDKey } from "@scure/bip32";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { readFileSync, writeFileSync, existsSync, renameSync } from "fs";
 import { join } from "path";
+import {
+  processBtcWithdrawal,
+  classifyBroadcastResponse,
+  type BtcState,
+  type BtcPayoutDeps,
+  type BroadcastResult,
+} from "./btc-relayer-core";
 
 // ── Config ──
 const CORE_API_URL = (process.env.CORE_API_URL || "http://localhost:5101").replace(/\/$/, "");
@@ -102,8 +113,7 @@ function hdAddress(index: number): { address: string; priv: Uint8Array; script: 
 }
 
 // ── Idempotency state ──
-type StateEntry = { btcTxid?: string; broadcasting?: boolean; attempts: number; dest: string; sats: string };
-type State = Record<string, StateEntry>;
+type State = BtcState;
 
 function loadState(): State {
   try {
@@ -155,14 +165,44 @@ async function getFeeRate(): Promise<number> {
     return 5; // conservative fallback sat/vB
   }
 }
-async function txConfirmations(txid: string): Promise<number> {
+/** Confirmations: 0 = mempool/not mined, null = could not read (never guess). */
+async function txConfirmations(txid: string): Promise<number | null> {
   try {
     const tx = await esploraJson<EsTx>(`/tx/${txid}`);
     if (!tx.status?.confirmed || tx.status.block_height == null) return 0;
     const tip = await tipHeight();
     return tip - tx.status.block_height + 1;
   } catch {
-    return 0;
+    return null;
+  }
+}
+/** Whether the network knows a txid (mempool or chain): 404 → false, other failures → null. */
+async function txKnown(txid: string): Promise<boolean | null> {
+  try {
+    const r = await fetch(`${ESPLORA}/tx/${txid}/status`, { headers: { "User-Agent": "RougeChain-btc-relayer/1.0" } });
+    if (r.status === 404) return false;
+    if (!r.ok) return null;
+    return true;
+  } catch {
+    return null;
+  }
+}
+function isValidDest(addr: string): boolean {
+  try {
+    btc.Address(NETWORK).decode(addr);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function daemonHealthOk(): Promise<boolean> {
+  try {
+    const r = await fetch(`${CORE_API_URL}/api/bridge/health`);
+    if (r.status !== 200) return false;
+    const b = (await r.json()) as { degraded?: unknown };
+    return b.degraded === false;
+  } catch {
+    return false;
   }
 }
 /** Scan custody's recent txs for one that already pays `dest` at least `sats`, and is not the
@@ -185,7 +225,8 @@ async function findExistingPayout(dest: string, sats: bigint, knownTxids: Set<st
       if (paid >= sats) return tx.txid;
     }
   } catch (e) {
-    console.error("[adopt] scan failed:", (e as Error).message);
+    // Never treat "could not look" as "nothing there": the caller must not pay on a failed scan.
+    throw new Error(`custody history scan failed: ${(e as Error).message}`);
   }
   return null;
 }
@@ -196,8 +237,9 @@ function estFeeSats(nIn: number, nOut: number, feeRate: number): bigint {
   return BigInt(Math.ceil((nIn * 68 + nOut * 31 + 11) * feeRate));
 }
 
-async function buildAndBroadcast(dest: string, sats: bigint): Promise<string> {
-  const utxos = (await getUtxos(CUSTODY_ADDRESS)).filter((u) => u.status.confirmed);
+/** Build + sign (NOT broadcast) a custody payout, never spending `exclude` ("txid:vout"). */
+async function buildPayout(dest: string, sats: bigint, exclude: Set<string>): Promise<{ txid: string; rawHex: string; inputs: string[] }> {
+  const utxos = (await getUtxos(CUSTODY_ADDRESS)).filter((u) => u.status.confirmed && !exclude.has(`${u.txid}:${u.vout}`));
   if (utxos.length === 0) throw new Error("no confirmed custody UTXOs available");
   utxos.sort((a, b) => b.value - a.value);
   const feeRate = await getFeeRate();
@@ -227,23 +269,20 @@ async function buildAndBroadcast(dest: string, sats: bigint): Promise<string> {
   if (change > DUST) tx.addOutputAddress(CUSTODY_ADDRESS, change, NETWORK);
   tx.sign(PRIV);
   tx.finalize();
-  const rawHex = tx.hex;
-  const localTxid = tx.id;
+  return { txid: tx.id, rawHex: tx.hex, inputs: selected.map((u) => `${u.txid}:${u.vout}`) };
+}
 
-  if (!LIVE) {
-    console.log(`  [DRY-RUN] built payout ${localTxid} (${sats} sats → ${dest}, fee ${fee}). Not broadcasting.`);
-    console.log(`  [DRY-RUN] set BTC_RELAYER_LIVE=true to broadcast. raw: ${rawHex.slice(0, 40)}…`);
-    throw new Error("DRY_RUN"); // signal caller: do not record as broadcast
+async function broadcastRaw(rawHex: string, expectedTxid: string): Promise<BroadcastResult> {
+  try {
+    const r = await fetch(`${ESPLORA}/tx`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain", "User-Agent": "RougeChain-btc-relayer/1.0" },
+      body: rawHex,
+    });
+    return classifyBroadcastResponse(r.status, await r.text(), expectedTxid);
+  } catch (e) {
+    return classifyBroadcastResponse(null, (e as Error).message, expectedTxid);
   }
-
-  const r = await fetch(`${ESPLORA}/tx`, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain", "User-Agent": "RougeChain-btc-relayer/1.0" },
-    body: rawHex,
-  });
-  const body = (await r.text()).trim();
-  if (!r.ok || !/^[0-9a-f]{64}$/.test(body)) throw new Error(`broadcast rejected: ${body}`);
-  return body;
 }
 
 // ── Daemon API ──
@@ -263,67 +302,33 @@ async function fulfill(txId: string, btcTxid: string): Promise<boolean> {
     headers: { "x-bridge-relayer-secret": RELAYER_SECRET, "Content-Type": "application/json" },
     body: JSON.stringify({ btcTxid }),
   });
-  const d = (await r.json()) as { success?: boolean; error?: string };
+  let d: { success?: boolean; error?: string } = {};
+  try { d = (await r.json()) as typeof d; } catch { d = { success: false, error: `HTTP ${r.status}` }; }
   if (!d.success) console.error(`  [fulfill] daemon refused ${txId}: ${d.error}`);
   return !!d.success;
 }
 
 // ── Main loop ──
+const DEPS: BtcPayoutDeps = {
+  live: LIVE,
+  minConfirmations: MIN_CONFIRMATIONS,
+  maxSats: MAX_SATS,
+  maxRetries: MAX_RETRIES,
+  dust: DUST,
+  healthOk: daemonHealthOk,
+  isValidDest,
+  confirmations: txConfirmations,
+  txKnown,
+  findExistingPayout,
+  build: buildPayout,
+  broadcast: broadcastRaw,
+  fulfill,
+  save: () => saveState(STATE),
+  log: (m) => console.log(m),
+};
+
 async function processOne(w: { txId: string; evmAddress: string; amountUnits: number }) {
-  const dest = w.evmAddress;
-  const sats = BigInt(w.amountUnits);
-  const st = STATE[w.txId] || { attempts: 0, dest, sats: sats.toString() };
-  STATE[w.txId] = st;
-
-  if (MAX_SATS > 0n && sats > MAX_SATS) {
-    console.error(`  [cap] ${w.txId}: ${sats} sats exceeds BTC_MAX_WITHDRAW_SATS ${MAX_SATS} — skipping.`);
-    return;
-  }
-
-  // Already broadcast? Just wait for confirmations, then fulfill.
-  if (st.btcTxid) {
-    const confs = await txConfirmations(st.btcTxid);
-    if (confs >= MIN_CONFIRMATIONS) {
-      if (await fulfill(w.txId, st.btcTxid)) {
-        console.log(`  ✓ fulfilled ${w.txId} via ${st.btcTxid} (${confs} confs)`);
-      }
-    } else {
-      console.log(`  … ${w.txId} payout ${st.btcTxid} at ${confs}/${MIN_CONFIRMATIONS} confs`);
-    }
-    return;
-  }
-
-  // Crash-recovery: did a payout to this dest already go out?
-  const known = new Set(Object.values(STATE).map((e) => e.btcTxid).filter(Boolean) as string[]);
-  const existing = await findExistingPayout(dest, sats, known);
-  if (existing) {
-    console.warn(`  [adopt] found existing custody payout ${existing} to ${dest} — adopting instead of re-paying.`);
-    st.btcTxid = existing;
-    saveState(STATE);
-    return;
-  }
-
-  if (st.attempts >= MAX_RETRIES) {
-    console.error(`  [give-up] ${w.txId} exceeded ${MAX_RETRIES} attempts.`);
-    return;
-  }
-
-  // Broadcast. Mark "broadcasting" BEFORE the network call so a crash is detectable.
-  st.attempts += 1;
-  st.broadcasting = true;
-  saveState(STATE);
-  try {
-    const btcTxid = await buildAndBroadcast(dest, sats);
-    st.btcTxid = btcTxid;
-    st.broadcasting = false;
-    saveState(STATE);
-    console.log(`  → broadcast ${w.txId}: ${btcTxid} (${sats} sats → ${dest})`);
-  } catch (e) {
-    st.broadcasting = false;
-    saveState(STATE);
-    const msg = (e as Error).message;
-    if (msg !== "DRY_RUN") console.error(`  [broadcast] ${w.txId} failed (attempt ${st.attempts}): ${msg}`);
-  }
+  await processBtcWithdrawal(w, STATE, DEPS);
 }
 
 // ── HD deposit pool + sweep ──
