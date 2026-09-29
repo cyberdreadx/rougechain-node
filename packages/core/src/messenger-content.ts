@@ -11,6 +11,8 @@
  * GIFs are sent exactly as Qwalla's sendGif does: sendContent(url) → {"v":1,"k":"msg","b":"<url>"}.
  */
 
+import { envGiphyApiKey } from "./env";
+
 export type BodyKind = "voice" | "tip" | "gif" | "image" | "sticker" | "emoji" | "text";
 
 const EMOJI_ONLY_RE = /^[\p{Emoji}\p{Emoji_Component}\s]{1,12}$/u;
@@ -77,7 +79,7 @@ const GIPHY_TRENDING = "https://api.giphy.com/v1/gifs/trending";
 
 /** GIPHY API key from the build env (VITE_GIPHY_API_KEY). The picker is hidden when unset. */
 export function giphyKey(): string {
-  const k = (import.meta.env?.VITE_GIPHY_API_KEY as string | undefined) ?? "";
+  const k = envGiphyApiKey() ?? "";
   return k.trim();
 }
 

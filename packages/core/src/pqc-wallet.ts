@@ -1,5 +1,6 @@
 import { Block } from "./pqc-blockchain";
 import { getActiveNetwork, getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
+import { envIsDev } from "./env";
 import { l1TokenDecimals, rawToHuman } from "./token-decimals";
 
 // RougeChain constants
@@ -404,7 +405,7 @@ export async function getAllTransactions(): Promise<{ tx: Transaction; block: Bl
       const transactions = parseNodeBlocks(data.blocks);
 
       // Debug logging (only in development)
-      if (import.meta.env.DEV) {
+      if (envIsDev()) {
         console.log(`[Wallet] Loaded ${transactions.length} transactions from ${data.blocks.length} blocks`);
       }
 
