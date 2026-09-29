@@ -15,6 +15,8 @@ export const CONTRACT_ADDR = /^[0-9a-f]{40}$/;
 export const TOKEN_SYMBOL = /^[A-Za-z0-9_-]{1,32}$/;
 export const POOL_ID = /^[A-Za-z0-9_]{1,32}-[A-Za-z0-9_]{1,32}$/;
 export const COLLECTION_ID = /^col:[0-9a-f]{16}:[A-Za-z0-9_-]{1,32}$/;
+/** Bridge activity cursor: `<height>` or `<height>-<index>` (as the node returns it). */
+export const BRIDGE_CURSOR = /^(0|[1-9]\d{0,15})(-(0|[1-9]\d{0,5}))?$/;
 const SMALL_INT = (max: number) => (v: string) =>
   /^(0|[1-9]\d{0,9})$/.test(v) && Number(v) <= max;
 const POSITIVE_INT = (max: number) => (v: string) =>
@@ -98,6 +100,21 @@ export const READ_ROUTES: readonly RouteSpec[] = Object.freeze<RouteSpec[]>([
     segments: ["contract", p("addr", CONTRACT_ADDR), "events"],
     query: { limit: POSITIVE_INT(100), before: HEIGHT },
   },
+  // Bridge (public GETs only; every POST/DELETE bridge route stays unreachable).
+  { id: "bridgeConfig", segments: ["bridge", "config"] },
+  {
+    id: "bridgeActivity",
+    segments: ["bridge", "activity"],
+    query: { limit: POSITIVE_INT(100), before: BRIDGE_CURSOR },
+  },
+  {
+    id: "bridgeActivityItem",
+    segments: ["bridge", "activity", p("txId", HASH64)],
+  },
+  // Fallback while a node does not serve /bridge/activity: the relayers' pending lists.
+  { id: "bridgeWithdrawals", segments: ["bridge", "withdrawals"] },
+  { id: "bridgeBtcWithdrawals", segments: ["bridge", "btc", "withdrawals"] },
+  { id: "bridgeXrgeWithdrawals", segments: ["bridge", "xrge", "withdrawals"] },
 ]);
 
 export type ReadRouteId =
@@ -123,7 +140,13 @@ export type ReadRouteId =
   | "contracts"
   | "contract"
   | "contractState"
-  | "contractEvents";
+  | "contractEvents"
+  | "bridgeConfig"
+  | "bridgeActivity"
+  | "bridgeActivityItem"
+  | "bridgeWithdrawals"
+  | "bridgeBtcWithdrawals"
+  | "bridgeXrgeWithdrawals";
 
 function passes(check: Check, value: string) {
   return typeof check === "function" ? check(value) : check.test(value);

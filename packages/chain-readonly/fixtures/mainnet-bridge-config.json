@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "custodyAddress": "0x0c09C764AdC024497729cd452ECfeE8869d35d83",
+  "chainId": 8453,
+  "supportedTokens": [
+    "ETH",
+    "USDC",
+    "BTC"
+  ],
+  "btcCustodyAddress": "bc1q4963wmznu5xjqq623v5d34ne0w78p0g0e83vvc",
+  "btcNetwork": "mainnet"
+}

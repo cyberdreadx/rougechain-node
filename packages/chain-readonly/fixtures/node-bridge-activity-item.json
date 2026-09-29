@@ -1,0 +1,21 @@
+{
+  "kind": "withdrawal",
+  "asset": "qBTC",
+  "externalAsset": "BTC",
+  "amountUnits": 5000,
+  "decimals": 8,
+  "fromChain": "rougechain",
+  "toChain": "bitcoin",
+  "rougechainTxId": "d7df36b845ad0d147af6d717c2a8860026bbdb442c5375990a32e0efe6eb4c2c",
+  "rougechainAddress": "rouge1aw424sfk3w9h2grllyhwpgjsngcu8cegyuksdfdgtye05lmwrpjqg8dk4n",
+  "blockHeight": 202,
+  "externalChainId": "bitcoin",
+  "externalNetwork": "mainnet",
+  "externalAddress": "bc1qvt4r5dazmystwspgp62vh9ve5tutw5av4atjcz",
+  "externalTxHash": "91d306fcedfc15ce8cb8f1c547c5c2d403a20d138a74cc66fbb4a5e104259b84",
+  "status": "paid",
+  "statusReason": "payout_verified",
+  "timestamp": 1790716492488,
+  "statusUpdatedAt": 1790717000000,
+  "cursor": "202-0"
+}
