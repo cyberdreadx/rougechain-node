@@ -1,0 +1,9 @@
+# site-next: the new RougeChain frontend (Anders' approved design), built out alongside
+# apps/web until it reaches feature parity. For a Netlify site with
+# Base directory = (empty, repo root) and Package directory = apps/site-next.
+[build]
+  command = "npm run build -w @rougechain/site-next"
+  publish = "apps/site-next/dist"
+
+[build.environment]
+  NODE_VERSION = "20.19.0"

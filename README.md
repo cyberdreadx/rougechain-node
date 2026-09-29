@@ -155,7 +155,9 @@ quantum-vault/
 │   └── p2p/               # TCP gossip scaffolding
 ├── apps/                  # Frontends (npm workspaces — run npm commands from the repo root)
 │   ├── web/               # rougechain.io + testnet.rougechain.io (Vite + React + TypeScript)
+│   ├── site-next/         # New frontend (Anders' design) — being built out to replace web
 │   └── extension/         # Browser wallet extension (MV3)
+├── packages/              # Shared frontend packages (brand, ui, chain-readonly)
 ├── sdk/                   # TypeScript SDK (@rougechain/sdk)
 ├── mcp-server/            # MCP server for AI agents
 ├── docs/                  # Documentation (mdBook format)
@@ -165,7 +167,8 @@ quantum-vault/
 
 Frontend commands (from the repo root): `npm install` once, then `npm run dev` (site),
 `npm run build` (site → `apps/web/dist`), `npm test` (site tests), `npm run build:extension`
-(extension → `apps/extension/dist`), `npm run test:scripts` (relayer tests).
+(extension → `apps/extension/dist`), `npm run test:scripts` (relayer tests),
+`npm run dev:next` / `build:next` / `test:next` (the new frontend in `apps/site-next`).
 ```
 
 ## Technologies
