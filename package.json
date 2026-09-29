@@ -8,12 +8,14 @@
     "apps/site-next",
     "packages/brand",
     "packages/ui",
-    "packages/chain-readonly"
+    "packages/chain-readonly",
+    "packages/core"
   ],
   "scripts": {
     "dev": "npm run dev -w @rougechain/web",
     "build": "npm run build -w @rougechain/web",
     "test": "npm run test -w @rougechain/web",
+    "test:core": "npm run test -w @rougechain/core",
     "lint": "npm run lint -w @rougechain/web",
     "build:extension": "npm run build -w rougechain-wallet-ext",
     "dev:next": "npm run dev -w @rougechain/site-next",
