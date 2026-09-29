@@ -2,7 +2,7 @@
  * Header wallet control + shared identity across shells. Replaces the POC's demo-wallet tests
  * (DemoWalletProvider / synthetic identity) now that the control drives the real wallet.
  */
-import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Link, Routes, Route, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -146,4 +146,44 @@ it("keeps working with unavailable storage (no wallet, no crash)", async () => {
   vi.stubGlobal("sessionStorage", { getItem: deny, setItem: deny, removeItem: deny, key: deny, length: 0, clear: deny });
   wrap(<WalletControl />);
   expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
+});
+
+// The extension injects window.rougechain a moment after the page starts and then fires
+// `rougechain#initialized`; a fast page renders first. Detection must catch up.
+function injectExtensionLater(connect = vi.fn(async () => ({ publicKey: "ab".repeat(1952), displayName: "Ext" }))) {
+  act(() => {
+    Object.defineProperty(window, "rougechain", { configurable: true, value: { isRougeChain: true, connect } });
+    window.dispatchEvent(new Event("rougechain#initialized"));
+  });
+  return connect;
+}
+
+it("detects an extension that loads after the page has rendered", async () => {
+  delete (window as { rougechain?: unknown }).rougechain;
+  wrap(<WalletControl />);
+  await userEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+  const dialog = screen.getByRole("dialog", { name: "Connect to RougeChain" });
+  expect(within(dialog).getByText("Browser extension · not detected")).toBeInTheDocument();
+  injectExtensionLater();
+  expect(await within(dialog).findByText("Extension detected")).toBeInTheDocument();
+  delete (window as { rougechain?: unknown }).rougechain;
+});
+
+it("auto-connects a late-loading extension when there is no local wallet", async () => {
+  delete (window as { rougechain?: unknown }).rougechain;
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+      <WalletProvider autoRegister>
+        <MemoryRouter>
+          <WalletControl />
+        </MemoryRouter>
+      </WalletProvider>
+    </QueryClientProvider>,
+  );
+  expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
+  const connect = injectExtensionLater();
+  const address = await pubkeyToAddress("ab".repeat(1952));
+  expect(await screen.findByRole("button", { name: `Wallet ${address}` })).toBeInTheDocument();
+  expect(connect).toHaveBeenCalledTimes(1);
+  delete (window as { rougechain?: unknown }).rougechain;
 });

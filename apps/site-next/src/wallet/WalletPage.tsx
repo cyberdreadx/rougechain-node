@@ -20,11 +20,10 @@ import { Button } from "@rougechain/ui";
 import { describeAsset } from "@rougechain/core/asset-display";
 import { formatUsd } from "@rougechain/core/price-service";
 import { getNetworkLabel } from "@rougechain/core/network";
-import { getRougeChainProvider } from "@rougechain/core/extension-bridge";
 import type { WalletTransaction } from "@rougechain/core/pqc-wallet";
 import { NetworkBadge, PageHeading } from "../explorer/ui";
 import { useWallet } from "./WalletProvider";
-import { MASKED_AMOUNT, useHideBalances, useMajorPrices, useRougeAddress, useTokenMetadata, useTokenPrices, useWalletData, useXrgePrice } from "./hooks";
+import { MASKED_AMOUNT, useExtensionProvider, useHideBalances, useMajorPrices, useRougeAddress, useTokenMetadata, useTokenPrices, useWalletData, useXrgePrice } from "./hooks";
 import { CopyText, TokenIcon, UnlockForm } from "./parts";
 import { SendDialog } from "./SendDialog";
 import { ReceiveDialog } from "./ReceiveDialog";
@@ -44,6 +43,7 @@ function WalletMain({ children }: { children: React.ReactNode }) {
 }
 
 function Welcome() {
+  const extensionProvider = useExtensionProvider();
   const w = useWallet();
   const [params] = useSearchParams();
   const [importing, setImporting] = useState(params.get("import") === "1");
@@ -80,7 +80,7 @@ function Welcome() {
       </section>
       <section className="surface">
         <h2>RougeChain extension</h2>
-        <p>{getRougeChainProvider() ? "Extension detected. Your keys stay in the extension; it asks you to approve each signature." : "Not detected in this browser. Install it, or open this page in Qwalla."}</p>
+        <p>{extensionProvider ? "Extension detected. Your keys stay in the extension; it asks you to approve each signature." : "Not detected in this browser. Install it, or open this page in Qwalla."}</p>
         <div className="actions">
           <Button variant="outline" disabled={busy} onClick={() => run(w.connectExtension, "Couldn't connect the extension")}>
             Connect extension

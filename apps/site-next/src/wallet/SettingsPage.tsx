@@ -12,11 +12,10 @@ import { siteUrlFor, type NetworkType } from "@rougechain/core/network";
 import { loadNotificationSettings, requestNotificationPermission, saveNotificationSettings, type NotificationSettings } from "@rougechain/core/notifications";
 import { getPrivacySettings, registerWalletOnNode, savePrivacySettings } from "@rougechain/core/pqc-messenger";
 import { getMessagingIdentity } from "@rougechain/core/profile";
-import { getRougeChainProvider } from "@rougechain/core/extension-bridge";
 import { useChain } from "../explorer/chain";
 import { PageHeading } from "../explorer/ui";
 import { useWallet } from "./WalletProvider";
-import { useHideBalances } from "./hooks";
+import { useExtensionProvider, useHideBalances } from "./hooks";
 import { SettingRow, Toggle } from "./parts";
 import { AvatarEditor, MailNameEditor, NameEditor } from "./profile";
 import { BackupDialog } from "./BackupDialog";
@@ -48,6 +47,7 @@ function savedLanguage(): string {
 }
 
 export default function SettingsPage() {
+  const extensionProvider = useExtensionProvider();
   const w = useWallet();
   const chain = useChain();
   const { hidden, setHidden } = useHideBalances();
@@ -234,9 +234,9 @@ export default function SettingsPage() {
         <Section id="connected" icon={Puzzle} title="Connected">
           <SettingRow
             title="RougeChain extension"
-            hint={w.isExtension ? "This wallet is connected through the extension." : getRougeChainProvider() ? "Extension detected in this browser." : "Not detected in this browser."}
+            hint={w.isExtension ? "This wallet is connected through the extension." : extensionProvider ? "Extension detected in this browser." : "Not detected in this browser."}
           >
-            <span className={`status ${w.isExtension || getRougeChainProvider() ? "live" : "loading"}`}>{w.isExtension || getRougeChainProvider() ? "Detected" : "None"}</span>
+            <span className={`status ${w.isExtension || extensionProvider ? "live" : "loading"}`}>{w.isExtension || extensionProvider ? "Detected" : "None"}</span>
           </SettingRow>
           <SettingRow title="Base" hint="Your Base address comes from the same recovery phrase. Send and receive on the Wallet page.">
             <Link className="button ghost small" to="/wallet">

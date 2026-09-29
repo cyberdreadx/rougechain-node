@@ -3,9 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { Wallet } from "lucide-react";
 import { Dialog, Button } from "@rougechain/ui";
 import { formatPubkey } from "@rougechain/core/address";
-import { getRougeChainProvider } from "@rougechain/core/extension-bridge";
 import { useWallet } from "./WalletProvider";
-import { useRougeAddress } from "./hooks";
+import { useExtensionProvider, useRougeAddress } from "./hooks";
 import { CopyText, UnlockForm } from "./parts";
 import { toast } from "./toast";
 
@@ -13,6 +12,7 @@ const NETWORK_LABEL = { mainnet: "Mainnet", testnet: "Testnet" } as const;
 
 /** Header wallet control: connect / create / import / unlock / lock, address + copy, network. */
 export function WalletControl() {
+  const extensionProvider = useExtensionProvider();
   const w = useWallet();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -101,7 +101,7 @@ export function WalletControl() {
             <button className="provider-option" onClick={connectExtension} disabled={busy}>
               <span>
                 <strong>RougeChain Wallet</strong>
-                <small>{getRougeChainProvider() ? "Extension detected" : "Browser extension · not detected"}</small>
+                <small>{extensionProvider ? "Extension detected" : "Browser extension · not detected"}</small>
               </span>
               <span>Connect →</span>
             </button>
