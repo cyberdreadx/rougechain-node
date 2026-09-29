@@ -33,3 +33,30 @@ HTMLDialogElement.prototype.close = function () {
   this.removeAttribute("open");
   this.dispatchEvent(new Event("close"));
 };
+
+// jsdom realm fix (tests only): under vitest's jsdom environment `ArrayBuffer` is jsdom's, and
+// Node's WebCrypto rejects a jsdom ArrayBuffer (core passes `salt.buffer` to PBKDF2 and an
+// ArrayBuffer slice to SHA-256). Browsers accept both; re-wrap them as views so core's real
+// vault / address code runs unchanged in tests.
+{
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle) {
+    const digest = subtle.digest.bind(subtle);
+    Object.defineProperty(subtle, "digest", {
+      configurable: true,
+      value: (algorithm: AlgorithmIdentifier, data: BufferSource) =>
+        digest(algorithm, data instanceof ArrayBuffer ? new Uint8Array(data) : data),
+    });
+    const deriveKey = subtle.deriveKey.bind(subtle);
+    Object.defineProperty(subtle, "deriveKey", {
+      configurable: true,
+      value: (algorithm: AlgorithmIdentifier & { salt?: unknown }, ...rest: unknown[]) => {
+        const alg =
+          typeof algorithm === "object" && algorithm.salt instanceof ArrayBuffer
+            ? { ...algorithm, salt: new Uint8Array(algorithm.salt) }
+            : algorithm;
+        return (deriveKey as (...a: unknown[]) => Promise<CryptoKey>)(alg, ...rest);
+      },
+    });
+  }
+}

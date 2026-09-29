@@ -1,0 +1,301 @@
+import { act, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { pubkeyToAddress } from "@rougechain/core/address";
+import { PROFILE_CHANGED_EVENT } from "@rougechain/core/avatar";
+import { verifyTransaction, generateNonce } from "@rougechain/core/pqc-signer";
+import {
+  hasEncryptedWallet,
+  isWalletLocked,
+  lockUnifiedWallet,
+  saveUnifiedWallet,
+  saveVaultSettings,
+  unlockUnifiedWallet,
+} from "@rougechain/core/unified-wallet";
+import { WalletProvider, useSigner, useWallet, useWalletIdentity, normalizeRecoveryPhrase, type WalletContextValue, type Signer } from "./WalletProvider";
+import { readWalletSnapshot } from "./store";
+import { dumpStorage, mockFetch, resetBrowserState, seedAppsWebLockedWallet, seedAppsWebWallet } from "./test-utils";
+
+let ctx: WalletContextValue;
+let signer: Signer | null;
+function Probe() {
+  ctx = useWallet();
+  signer = useSigner();
+  const id = useWalletIdentity();
+  return (
+    <div>
+      <span data-testid="status">{ctx.status}</span>
+      <span data-testid="pubkey">{ctx.publicKey ?? ""}</span>
+      <span data-testid="name">{ctx.displayName ?? ""}</span>
+      <span data-testid="address">{id.address ?? ""}</span>
+    </div>
+  );
+}
+const status = () => screen.getByTestId("status").textContent;
+
+function mount(autoRegister = false) {
+  return render(
+    <WalletProvider autoRegister={autoRegister}>
+      <Probe />
+    </WalletProvider>,
+  );
+}
+
+beforeEach(() => {
+  resetBrowserState();
+  mockFetch({ "/messenger/wallets": () => ({ success: true, wallets: [] }) });
+});
+
+describe("same-origin continuity with apps/web", () => {
+  it("reads an apps/web wallet (saveUnifiedWallet) as unlocked with the same address, writing nothing", async () => {
+    const w = seedAppsWebWallet();
+    const beforeLocal = dumpStorage(localStorage);
+    const beforeSession = dumpStorage(sessionStorage);
+
+    mount(true); // with apps/web's auto-register behaviour on
+    expect(status()).toBe("unlocked");
+    expect(screen.getByTestId("pubkey").textContent).toBe(w.signingPublicKey);
+    const expected = await pubkeyToAddress(w.signingPublicKey);
+    await waitFor(() => expect(screen.getByTestId("address").textContent).toBe(expected));
+    expect(ctx.wallet?.signingPrivateKey).toBe(w.signingPrivateKey);
+    expect(ctx.wallet?.mnemonic).toBe(w.mnemonic);
+
+    expect(dumpStorage(localStorage)).toEqual(beforeLocal);
+    expect(dumpStorage(sessionStorage)).toEqual(beforeSession);
+  });
+
+  it("reads an apps/web locked vault (lockUnifiedWallet) as locked, then unlocks it to the same wallet", async () => {
+    const w = await seedAppsWebLockedWallet("hunter2-hunter2");
+    const beforeLocal = dumpStorage(localStorage);
+    const beforeSession = dumpStorage(sessionStorage);
+    expect(Object.keys(beforeSession)).toHaveLength(0); // private keys are gone
+
+    mount(true);
+    expect(status()).toBe("locked");
+    expect(screen.getByTestId("pubkey").textContent).toBe(w.signingPublicKey);
+    expect(screen.getByTestId("name").textContent).toBe("My Wallet");
+    expect(ctx.wallet).toBeNull();
+    expect(dumpStorage(localStorage)).toEqual(beforeLocal);
+    expect(dumpStorage(sessionStorage)).toEqual(beforeSession);
+
+    await expect(act(() => ctx.unlock("wrong password"))).rejects.toThrow("Wrong password");
+    expect(status()).toBe("locked");
+
+    // Reference: what apps/web's own unlock (core unlockUnifiedWallet) leaves in storage.
+    await unlockUnifiedWallet("hunter2-hunter2");
+    const referenceLocal = Object.keys(dumpStorage(localStorage)).sort();
+    const referenceSession = Object.keys(dumpStorage(sessionStorage)).sort();
+    localStorage.clear();
+    sessionStorage.clear();
+    for (const [k, v] of Object.entries(beforeLocal)) localStorage.setItem(k, v);
+
+    await act(() => ctx.unlock("hunter2-hunter2"));
+    expect(status()).toBe("unlocked");
+    expect(ctx.wallet?.signingPublicKey).toBe(w.signingPublicKey);
+    expect(ctx.wallet?.signingPrivateKey).toBe(w.signingPrivateKey);
+    // site-next's unlock is core's unlock: exactly the same keys, nothing of its own.
+    expect(Object.keys(dumpStorage(localStorage)).sort()).toEqual(referenceLocal);
+    expect(Object.keys(dumpStorage(sessionStorage)).sort()).toEqual(referenceSession);
+    expect(localStorage.getItem("pqc-unified-wallet-locked:mainnet")).toBe("false");
+  });
+
+  it("uses apps/web's network-scoped keys (a testnet wallet is not the mainnet wallet)", () => {
+    localStorage.setItem("rougechain-network", "testnet");
+    const w = seedAppsWebWallet();
+    expect(Object.keys(dumpStorage(localStorage))).toContain("pqc-unified-wallet:testnet");
+    mount();
+    expect(status()).toBe("unlocked");
+    expect(ctx.network).toBe("testnet");
+    act(() => {
+      localStorage.setItem("rougechain-network", "mainnet");
+      window.dispatchEvent(new StorageEvent("storage", { key: "rougechain-network" }));
+    });
+    expect(status()).toBe("none");
+    act(() => {
+      localStorage.setItem("rougechain-network", "testnet");
+      window.dispatchEvent(new StorageEvent("storage", { key: "rougechain-network" }));
+    });
+    expect(screen.getByTestId("pubkey").textContent).toBe(w.signingPublicKey);
+  });
+
+  it("treats a vault with no session keys in this tab (unlocked in another tab) as locked", async () => {
+    await seedAppsWebLockedWallet("pw-123456");
+    await unlockUnifiedWallet("pw-123456"); // tab A
+    sessionStorage.clear(); // a new tab has no session copy
+    expect(isWalletLocked()).toBe(false);
+    mount();
+    expect(status()).toBe("locked");
+  });
+});
+
+describe("provider state machine", () => {
+  it("none → create → password → lock → unlock → disconnect", async () => {
+    mount();
+    expect(status()).toBe("none");
+    await act(() => ctx.create());
+    expect(status()).toBe("unlocked");
+    expect(ctx.flow).toEqual({ mode: "create", step: "seed" });
+    expect(ctx.wallet?.mnemonic?.split(" ")).toHaveLength(24);
+    expect(ctx.hasPassword).toBe(false);
+    // Stored by core under apps/web's key.
+    expect(JSON.parse(localStorage.getItem("pqc-unified-wallet:mainnet")!).signingPublicKey).toBe(ctx.publicKey);
+
+    const pub = ctx.publicKey;
+    await act(() => ctx.setPassword("s3cret-pass"));
+    expect(ctx.hasPassword).toBe(true);
+    expect(hasEncryptedWallet()).toBe(true);
+    expect(localStorage.getItem("pqc-unified-wallet:mainnet")).toBeNull(); // plaintext copy removed by core
+    expect(status()).toBe("unlocked");
+
+    act(() => ctx.lock());
+    expect(status()).toBe("locked");
+    expect(ctx.publicKey).toBe(pub);
+
+    await act(() => ctx.unlock("s3cret-pass"));
+    expect(status()).toBe("unlocked");
+    expect(ctx.publicKey).toBe(pub);
+
+    act(() => ctx.disconnect());
+    expect(status()).toBe("none");
+    expect(Object.keys(dumpStorage(localStorage)).filter((k) => k.startsWith("pqc-unified-wallet:") || k.startsWith("pqc-unified-wallet-encrypted"))).toEqual([]);
+  });
+
+  it("imports a recovery phrase deterministically and asks for a password", async () => {
+    const w = seedAppsWebWallet();
+    resetBrowserState();
+    mockFetch();
+    mount();
+    await act(() => ctx.importMnemonic(`  ${w.mnemonic!.toUpperCase()}  `));
+    expect(ctx.publicKey).toBe(w.signingPublicKey);
+    expect(ctx.displayName).toBe("Recovered Wallet");
+    expect(ctx.flow).toEqual({ mode: "import", step: "password" });
+    await expect(ctx.importMnemonic("abandon abandon")).rejects.toThrow("12 or 24 words");
+    expect(() => normalizeRecoveryPhrase(Array(12).fill("zzzz").join(" "))).toThrow("Invalid seed phrase");
+  });
+
+  it("imports an encrypted .pqcbackup made by core's encryptWallet (apps/web export)", async () => {
+    const { encryptWallet } = await import("@rougechain/core/unified-wallet");
+    const w = seedAppsWebWallet({ displayName: "Backed up" });
+    const blob = await encryptWallet(w, "backup-pass");
+    resetBrowserState();
+    mockFetch();
+    mount();
+    await expect(ctx.importBackup(blob, "nope")).rejects.toThrow("wrong password");
+    await act(() => ctx.importBackup(blob, "backup-pass"));
+    expect(ctx.publicKey).toBe(w.signingPublicKey);
+    expect(ctx.displayName).toBe("Backed up");
+  });
+
+  it("connects an injected extension like apps/web (empty private key) and signs through it", async () => {
+    const w = seedAppsWebWallet();
+    resetBrowserState();
+    mockFetch();
+    const signTransaction = vi.fn(async () => ({ signature: "ab".repeat(8) }));
+    Object.defineProperty(window, "rougechain", {
+      configurable: true,
+      value: { isRougeChain: true, connect: async () => ({ publicKey: w.signingPublicKey, displayName: "Ext" }), signTransaction },
+    });
+    mount();
+    await act(() => ctx.connectExtension());
+    expect(status()).toBe("unlocked");
+    expect(ctx.isExtension).toBe(true);
+    expect(ctx.wallet?.signingPrivateKey).toBe("");
+    expect(signer?.kind).toBe("extension");
+    const signed = await signer!.sign({ type: "transfer", from: w.signingPublicKey, timestamp: 1, nonce: "n" });
+    expect(signTransaction).toHaveBeenCalledWith(expect.objectContaining({ serializedHex: expect.any(String) }));
+    expect(signed.public_key).toBe(w.signingPublicKey);
+  });
+
+  it("auto-connects an injected extension on load when there is no wallet (WalletAutoRegister)", async () => {
+    Object.defineProperty(window, "rougechain", {
+      configurable: true,
+      value: { isRougeChain: true, connect: async () => ({ publicKey: "ab".repeat(1952) }) },
+    });
+    mount(true);
+    await waitFor(() => expect(status()).toBe("unlocked"));
+    expect(ctx.displayName).toBe("Extension Wallet");
+  });
+
+  it("re-registers an unlocked local wallet in the messenger directory on load", async () => {
+    seedAppsWebWallet();
+    const { calls } = mockFetch({ "/messenger/wallets": () => ({ success: true, wallets: [] }) });
+    mount(true);
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/v2/messenger/wallets/register") && c.init?.method === "POST")).toBe(true));
+  });
+
+  it("signs locally through core with a verifiable ML-DSA-65 signature", () => {
+    const w = seedAppsWebWallet();
+    mount();
+    expect(signer?.kind).toBe("local");
+    return signer!.sign({ type: "transfer", from: w.signingPublicKey, to: "x", amount: 1, fee: 0.1, token: "XRGE", timestamp: 1, nonce: generateNonce() }).then((tx) => {
+      expect(verifyTransaction(tx)).toBe(true);
+    });
+  });
+
+  it("auto-locks after the configured inactivity", async () => {
+    seedAppsWebWallet();
+    await lockUnifiedWallet("pw-autolock");
+    await unlockUnifiedWallet("pw-autolock");
+    saveVaultSettings({ autoLockMinutes: 1 });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      mount();
+      expect(status()).toBe("unlocked");
+      expect(ctx.autoLockMinutes).toBe(1);
+      act(() => {
+        vi.advanceTimersByTime(61_000);
+      });
+      expect(status()).toBe("locked");
+      expect(isWalletLocked()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("cross-tab sync", () => {
+  it("picks up a wallet created in another tab (storage event on a wallet key)", () => {
+    mount();
+    expect(status()).toBe("none");
+    const w = seedAppsWebWallet(); // another tab wrote localStorage
+    act(() => {
+      window.dispatchEvent(new StorageEvent("storage", { key: "pqc-unified-wallet:mainnet" }));
+    });
+    expect(status()).toBe("unlocked");
+    expect(screen.getByTestId("pubkey").textContent).toBe(w.signingPublicKey);
+  });
+
+  it("locks when another tab locks, and drops this tab's session copy of the keys", async () => {
+    seedAppsWebWallet();
+    await lockUnifiedWallet("pw-crosstab");
+    await unlockUnifiedWallet("pw-crosstab");
+    mount();
+    expect(status()).toBe("unlocked");
+    act(() => {
+      localStorage.setItem("pqc-unified-wallet-locked:mainnet", "true"); // other tab's autoLockWallet
+      window.dispatchEvent(new StorageEvent("storage", { key: "pqc-unified-wallet-locked:mainnet" }));
+    });
+    expect(status()).toBe("locked");
+    expect(sessionStorage.getItem("pqc-unified-wallet:mainnet")).toBeNull();
+  });
+
+  it("ignores unrelated storage keys and follows rougechain:profile-changed", () => {
+    const w = seedAppsWebWallet();
+    mount();
+    const before = ctx;
+    act(() => {
+      window.dispatchEvent(new StorageEvent("storage", { key: "something-else" }));
+    });
+    expect(ctx.wallet).toBe(before.wallet);
+    saveUnifiedWallet({ ...w, displayName: "Renamed" });
+    act(() => {
+      window.dispatchEvent(new CustomEvent(PROFILE_CHANGED_EVENT));
+    });
+    expect(screen.getByTestId("name").textContent).toBe("Renamed");
+  });
+});
+
+it("snapshot precedence matches apps/web: the locked flag wins over a session wallet", () => {
+  seedAppsWebWallet();
+  localStorage.setItem("pqc-unified-wallet-locked:mainnet", "true");
+  expect(readWalletSnapshot().status).toBe("locked");
+});
