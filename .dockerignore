@@ -6,5 +6,5 @@ target
 .env
 .env.*
 contracts/.env
-browser-extension/dist
+apps/extension/dist
 sdk/dist

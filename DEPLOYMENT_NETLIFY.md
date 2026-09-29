@@ -23,7 +23,7 @@
    ```
    Base directory: (leave empty)
    Build command: npm run build
-   Publish directory: dist
+   Publish directory: apps/web/dist
    ```
 
 4. **Add Environment Variables**

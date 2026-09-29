@@ -153,13 +153,19 @@ quantum-vault/
 │   ├── storage/           # Chain, validator, pool persistence
 │   ├── vm/                # WASM smart contract engine (wasmi)
 │   └── p2p/               # TCP gossip scaffolding
+├── apps/                  # Frontends (npm workspaces — run npm commands from the repo root)
+│   ├── web/               # rougechain.io + testnet.rougechain.io (Vite + React + TypeScript)
+│   └── extension/         # Browser wallet extension (MV3)
 ├── sdk/                   # TypeScript SDK (@rougechain/sdk)
 ├── mcp-server/            # MCP server for AI agents
-├── src/                   # React frontend (Vite + TypeScript)
 ├── docs/                  # Documentation (mdBook format)
-├── scripts/               # Bridge relayer scripts
-├── contracts/             # WASM smart contract templates
-└── browser-extension/     # Browser wallet extension (MV3)
+├── scripts/               # Bridge relayer scripts (run from the repo root)
+└── contracts/             # WASM smart contract templates
+```
+
+Frontend commands (from the repo root): `npm install` once, then `npm run dev` (site),
+`npm run build` (site → `apps/web/dist`), `npm test` (site tests), `npm run build:extension`
+(extension → `apps/extension/dist`), `npm run test:scripts` (relayer tests).
 ```
 
 ## Technologies
