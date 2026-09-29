@@ -16,21 +16,22 @@ export interface ChainNetwork {
   chainId: string;
 }
 
-export const NETWORKS: Readonly<Record<NetworkId, ChainNetwork>> = Object.freeze({
-  mainnet: Object.freeze({
-    id: "mainnet",
-    label: "Mainnet",
-    apiBase: "https://api.rougechain.io/api",
-    chainId: "rougechain-mainnet-1",
-  }),
-  testnet: Object.freeze({
-    id: "testnet",
-    label: "Testnet",
-    apiBase: "https://testnet.rougechain.io/api",
-    // The public testnet node reports the devnet chain id (see apps/web/src/test/testnet.test.ts).
-    chainId: "rougechain-devnet-1",
-  }),
-});
+export const NETWORKS: Readonly<Record<NetworkId, ChainNetwork>> =
+  Object.freeze({
+    mainnet: Object.freeze({
+      id: "mainnet",
+      label: "Mainnet",
+      apiBase: "https://api.rougechain.io/api",
+      chainId: "rougechain-mainnet-1",
+    }),
+    testnet: Object.freeze({
+      id: "testnet",
+      label: "Testnet",
+      apiBase: "https://testnet.rougechain.io/api",
+      // The public testnet node reports the devnet chain id (see apps/web/src/test/testnet.test.ts).
+      chainId: "rougechain-devnet-1",
+    }),
+  });
 
 /** Same storage key as apps/web, so a visitor's saved choice carries over. */
 export const NETWORK_STORAGE_KEY = "rougechain-network";

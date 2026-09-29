@@ -15,8 +15,10 @@ export const CONTRACT_ADDR = /^[0-9a-f]{40}$/;
 export const TOKEN_SYMBOL = /^[A-Za-z0-9_-]{1,32}$/;
 export const POOL_ID = /^[A-Za-z0-9_]{1,32}-[A-Za-z0-9_]{1,32}$/;
 export const COLLECTION_ID = /^col:[0-9a-f]{16}:[A-Za-z0-9_-]{1,32}$/;
-const SMALL_INT = (max: number) => (v: string) => /^(0|[1-9]\d{0,9})$/.test(v) && Number(v) <= max;
-const POSITIVE_INT = (max: number) => (v: string) => /^[1-9]\d{0,9}$/.test(v) && Number(v) <= max;
+const SMALL_INT = (max: number) => (v: string) =>
+  /^(0|[1-9]\d{0,9})$/.test(v) && Number(v) <= max;
+const POSITIVE_INT = (max: number) => (v: string) =>
+  /^[1-9]\d{0,9}$/.test(v) && Number(v) <= max;
 const ADDRESS = (v: string) => ROUGE1.test(v) || PUBKEY_HEX.test(v);
 
 type Check = RegExp | ((value: string) => boolean);
@@ -38,10 +40,18 @@ export const READ_ROUTES: readonly RouteSpec[] = Object.freeze<RouteSpec[]>([
   {
     id: "blocks",
     segments: ["blocks"],
-    query: { limit: POSITIVE_INT(100), page: POSITIVE_INT(1_000_000_000), per_page: POSITIVE_INT(100) },
+    query: {
+      limit: POSITIVE_INT(100),
+      page: POSITIVE_INT(1_000_000_000),
+      per_page: POSITIVE_INT(100),
+    },
   },
   { id: "block", segments: ["block", p("height", HEIGHT)] },
-  { id: "txs", segments: ["txs"], query: { limit: POSITIVE_INT(200), offset: SMALL_INT(1_000_000) } },
+  {
+    id: "txs",
+    segments: ["txs"],
+    query: { limit: POSITIVE_INT(200), offset: SMALL_INT(1_000_000) },
+  },
   { id: "tx", segments: ["tx", p("hash", HASH64)] },
   { id: "resolve", segments: ["resolve", p("address", ROUGE1)] },
   { id: "balance", segments: ["balance", p("address", ADDRESS)] },
@@ -52,8 +62,14 @@ export const READ_ROUTES: readonly RouteSpec[] = Object.freeze<RouteSpec[]>([
   },
   { id: "nftOwner", segments: ["nft", "owner", p("pubkey", PUBKEY_HEX)] },
   { id: "tokens", segments: ["tokens"] },
-  { id: "tokenMetadata", segments: ["token", p("symbol", TOKEN_SYMBOL), "metadata"] },
-  { id: "tokenHolders", segments: ["token", p("symbol", TOKEN_SYMBOL), "holders"] },
+  {
+    id: "tokenMetadata",
+    segments: ["token", p("symbol", TOKEN_SYMBOL), "metadata"],
+  },
+  {
+    id: "tokenHolders",
+    segments: ["token", p("symbol", TOKEN_SYMBOL), "holders"],
+  },
   {
     id: "tokenTxs",
     segments: ["token", p("symbol", TOKEN_SYMBOL), "transactions"],
@@ -62,7 +78,10 @@ export const READ_ROUTES: readonly RouteSpec[] = Object.freeze<RouteSpec[]>([
   { id: "pools", segments: ["pools"] },
   { id: "poolPrices", segments: ["pool", p("poolId", POOL_ID), "prices"] },
   { id: "nftCollections", segments: ["nft", "collections"] },
-  { id: "nftCollection", segments: ["nft", "collection", p("id", COLLECTION_ID)] },
+  {
+    id: "nftCollection",
+    segments: ["nft", "collection", p("id", COLLECTION_ID)],
+  },
   {
     id: "nftCollectionTokens",
     segments: ["nft", "collection", p("id", COLLECTION_ID), "tokens"],
@@ -70,7 +89,10 @@ export const READ_ROUTES: readonly RouteSpec[] = Object.freeze<RouteSpec[]>([
   },
   { id: "contracts", segments: ["contracts"] },
   { id: "contract", segments: ["contract", p("addr", CONTRACT_ADDR)] },
-  { id: "contractState", segments: ["contract", p("addr", CONTRACT_ADDR), "state"] },
+  {
+    id: "contractState",
+    segments: ["contract", p("addr", CONTRACT_ADDR), "state"],
+  },
   {
     id: "contractEvents",
     segments: ["contract", p("addr", CONTRACT_ADDR), "events"],
@@ -79,10 +101,29 @@ export const READ_ROUTES: readonly RouteSpec[] = Object.freeze<RouteSpec[]>([
 ]);
 
 export type ReadRouteId =
-  | "stats" | "validators" | "blocks" | "block" | "txs" | "tx" | "resolve" | "balance"
-  | "addressTxs" | "nftOwner" | "tokens" | "tokenMetadata" | "tokenHolders" | "tokenTxs"
-  | "pools" | "poolPrices" | "nftCollections" | "nftCollection" | "nftCollectionTokens"
-  | "contracts" | "contract" | "contractState" | "contractEvents";
+  | "stats"
+  | "validators"
+  | "blocks"
+  | "block"
+  | "txs"
+  | "tx"
+  | "resolve"
+  | "balance"
+  | "addressTxs"
+  | "nftOwner"
+  | "tokens"
+  | "tokenMetadata"
+  | "tokenHolders"
+  | "tokenTxs"
+  | "pools"
+  | "poolPrices"
+  | "nftCollections"
+  | "nftCollection"
+  | "nftCollectionTokens"
+  | "contracts"
+  | "contract"
+  | "contractState"
+  | "contractEvents";
 
 function passes(check: Check, value: string) {
   return typeof check === "function" ? check(value) : check.test(value);
@@ -97,7 +138,8 @@ export class NotAllowlistedError extends Error {
 
 function decodeSegment(raw: string): string {
   // Encoded separators could smuggle a different route past the matcher.
-  if (/%(2f|5c|2e|3f|23)/i.test(raw)) throw new NotAllowlistedError("encoded separator");
+  if (/%(2f|5c|2e|3f|23)/i.test(raw))
+    throw new NotAllowlistedError("encoded separator");
   try {
     return decodeURIComponent(raw);
   } catch {
@@ -110,9 +152,14 @@ function decodeSegment(raw: string): string {
  * Returns the matched route id, or throws NotAllowlistedError.
  */
 export function matchReadRoute(path: string): ReadRouteId {
-  if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//"))
+  if (
+    typeof path !== "string" ||
+    !path.startsWith("/") ||
+    path.startsWith("//")
+  )
     throw new NotAllowlistedError("not a relative path");
-  if (/[\s#\\]/.test(path) || path.length > 9000) throw new NotAllowlistedError("invalid characters");
+  if (/[\s#\\]/.test(path) || path.length > 9000)
+    throw new NotAllowlistedError("invalid characters");
   const q = path.indexOf("?");
   const pathname = q === -1 ? path : path.slice(0, q);
   const search = q === -1 ? "" : path.slice(q + 1);
@@ -123,7 +170,9 @@ export function matchReadRoute(path: string): ReadRouteId {
   for (const route of READ_ROUTES) {
     if (route.segments.length !== segments.length) continue;
     const ok = route.segments.every((seg, i) =>
-      typeof seg === "string" ? seg === segments[i] : passes(seg.check, segments[i]),
+      typeof seg === "string"
+        ? seg === segments[i]
+        : passes(seg.check, segments[i]),
     );
     if (!ok) continue;
     checkQuery(route, search);
@@ -166,7 +215,8 @@ export function buildReadPath(
   const parts = route.segments.map((seg) => {
     if (typeof seg === "string") return seg;
     const value = String(params[seg.param] ?? "");
-    if (!passes(seg.check, value)) throw new NotAllowlistedError(`bad ${seg.param}`);
+    if (!passes(seg.check, value))
+      throw new NotAllowlistedError(`bad ${seg.param}`);
     return encodeURIComponent(value);
   });
   const search = Object.entries(query)
@@ -174,6 +224,7 @@ export function buildReadPath(
     .map(([k, v]) => `${k}=${String(v)}`)
     .join("&");
   const path = `/${parts.join("/")}${search ? `?${search}` : ""}`;
-  if (matchReadRoute(path) !== id) throw new NotAllowlistedError("route mismatch");
+  if (matchReadRoute(path) !== id)
+    throw new NotAllowlistedError("route mismatch");
   return path;
 }

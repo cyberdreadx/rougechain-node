@@ -40,9 +40,14 @@ export function normalizeNetwork(
   const s = obj(stats),
     v = obj(validators),
     b = obj(blocks);
-  if (v.success !== true || !Array.isArray(v.validators) || !Array.isArray(b.blocks))
+  if (
+    v.success !== true ||
+    !Array.isArray(v.validators) ||
+    !Array.isArray(b.blocks)
+  )
     throw new Error("Unexpected network response");
-  if (s.chain_id !== expectedChainId) throw new ChainMismatchError(expectedChainId, s.chain_id);
+  if (s.chain_id !== expectedChainId)
+    throw new ChainMismatchError(expectedChainId, s.chain_id);
   return {
     height: uint(s.network_height),
     peers: uint(s.connected_peers),
@@ -67,8 +72,12 @@ export function normalizeNetwork(
   };
 }
 
-export async function getNetwork(network: NetworkId = "mainnet"): Promise<Network> {
-  const [s, v, b] = await Promise.all(ENDPOINTS.map((e) => readOnlyGet(e, "GET", network)));
+export async function getNetwork(
+  network: NetworkId = "mainnet",
+): Promise<Network> {
+  const [s, v, b] = await Promise.all(
+    ENDPOINTS.map((e) => readOnlyGet(e, "GET", network)),
+  );
   return normalizeNetwork(s, v, b, networkConfig(network).chainId);
 }
 
@@ -96,7 +105,8 @@ export function deriveNetworkState({
  * Provenance of one query's data, for the truthful live / stale / unavailable labels.
  * `staleAfterMs` is how old a successful read may get before it is no longer called live.
  */
-export type ReadState = "loading" | "live" | "stale" | "unavailable" | "not-found";
+export type ReadState =
+  "loading" | "live" | "stale" | "unavailable" | "not-found";
 export function deriveReadState({
   pending,
   error,

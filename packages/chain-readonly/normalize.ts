@@ -28,7 +28,8 @@ export class NotFoundError extends Error {
 type Obj = Record<string, unknown>;
 
 export function obj(value: unknown, what = "object"): Obj {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new ShapeError(what);
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new ShapeError(what);
   return value as Obj;
 }
 function arr(value: unknown, what: string): unknown[] {
@@ -36,11 +37,13 @@ function arr(value: unknown, what: string): unknown[] {
   return value;
 }
 export function uint(value: unknown, what = "integer"): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new ShapeError(what);
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+    throw new ShapeError(what);
   return value;
 }
 function num(value: unknown, what: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) throw new ShapeError(what);
+  if (typeof value !== "number" || !Number.isFinite(value))
+    throw new ShapeError(what);
   return value;
 }
 function nonNegative(value: unknown, what: string): number {
@@ -66,11 +69,14 @@ function optNum(value: unknown, what: string): number | null {
 }
 function hex(value: unknown, what: string, length?: number): string {
   const s = text(value, what);
-  if (!/^[0-9a-f]+$/.test(s) || (length !== undefined && s.length !== length)) throw new ShapeError(what);
+  if (!/^[0-9a-f]+$/.test(s) || (length !== undefined && s.length !== length))
+    throw new ShapeError(what);
   return s;
 }
 function optHex(value: unknown, what: string, length?: number): string | null {
-  return value === null || value === undefined ? null : hex(value, what, length);
+  return value === null || value === undefined
+    ? null
+    : hex(value, what, length);
 }
 function bool(value: unknown, what: string): boolean {
   if (typeof value !== "boolean") throw new ShapeError(what);
@@ -96,16 +102,26 @@ export interface ChainStats {
   nodeName: string | null;
 }
 
-export function normalizeStats(raw: unknown, expectedChainId: string): ChainStats {
+export function normalizeStats(
+  raw: unknown,
+  expectedChainId: string,
+): ChainStats {
   const s = obj(raw, "stats");
-  if (s.chain_id !== expectedChainId) throw new ChainMismatchError(expectedChainId, s.chain_id);
+  if (s.chain_id !== expectedChainId)
+    throw new ChainMismatchError(expectedChainId, s.chain_id);
   return {
     chainId: expectedChainId,
     height: uint(s.network_height, "stats.network_height"),
-    finalizedHeight: s.finalized_height === undefined ? null : uint(s.finalized_height, "stats.finalized_height"),
+    finalizedHeight:
+      s.finalized_height === undefined
+        ? null
+        : uint(s.finalized_height, "stats.finalized_height"),
     peers: uint(s.connected_peers, "stats.connected_peers"),
     baseFee: optNum(s.base_fee, "stats.base_fee"),
-    totalFeesCollected: optNum(s.total_fees_collected, "stats.total_fees_collected"),
+    totalFeesCollected: optNum(
+      s.total_fees_collected,
+      "stats.total_fees_collected",
+    ),
     totalFeesBurned: optNum(s.total_fees_burned, "stats.total_fees_burned"),
     nodeName: optText(s.node_name, "stats.node_name"),
   };
@@ -150,7 +166,10 @@ function normalizeTxBody(raw: unknown, what: string): RawTx {
   const t = obj(raw, what);
   const type = text(t.tx_type, `${what}.tx_type`);
   if (!/^[a-z0-9_]{1,40}$/.test(type)) throw new ShapeError(`${what}.tx_type`);
-  const payload = t.payload === null || t.payload === undefined ? {} : obj(t.payload, `${what}.payload`);
+  const payload =
+    t.payload === null || t.payload === undefined
+      ? {}
+      : obj(t.payload, `${what}.payload`);
   return {
     type,
     from: textOrEmpty(t.from_pub_key, `${what}.from_pub_key`),
@@ -168,13 +187,21 @@ function txView(
   const p = body.payload;
   const faucet = p.faucet === true;
   const type = faucet ? "faucet" : body.type;
-  const to = typeof p.to_pub_key_hex === "string" && p.to_pub_key_hex
-    ? p.to_pub_key_hex
-    : typeof p.target_pub_key === "string" && p.target_pub_key
-      ? p.target_pub_key
-      : null;
+  const to =
+    typeof p.to_pub_key_hex === "string" && p.to_pub_key_hex
+      ? p.to_pub_key_hex
+      : typeof p.target_pub_key === "string" && p.target_pub_key
+        ? p.target_pub_key
+        : null;
   const swap = type === "swap" ? swapSides(p) : null;
-  const amount = swap?.amountIn ?? (typeof p.amount === "number" && Number.isFinite(p.amount) ? p.amount : null);
+  // contract_deploy reuses `amount` for the WASM size in bytes; it is not a value transfer.
+  const amount =
+    type === "contract_deploy"
+      ? null
+      : (swap?.amountIn ??
+        (typeof p.amount === "number" && Number.isFinite(p.amount)
+          ? p.amount
+          : null));
   return {
     id,
     blockHeight: block.height,
@@ -195,13 +222,18 @@ function txView(
 /** One item of /txs or /address/:a/transactions ({ txId, blockHeight, blockHash, blockTime, tx }). */
 export function normalizeTxItem(raw: unknown, what = "tx"): TxView {
   const item = obj(raw, what);
-  const view = txView(hex(item.txId, `${what}.txId`, 64), normalizeTxBody(item.tx, `${what}.tx`), {
-    height: uint(item.blockHeight, `${what}.blockHeight`),
-    hash: hex(item.blockHash, `${what}.blockHash`, 64),
-    time: uint(item.blockTime, `${what}.blockTime`),
-  });
+  const view = txView(
+    hex(item.txId, `${what}.txId`, 64),
+    normalizeTxBody(item.tx, `${what}.tx`),
+    {
+      height: uint(item.blockHeight, `${what}.blockHeight`),
+      hash: hex(item.blockHash, `${what}.blockHash`, 64),
+      time: uint(item.blockTime, `${what}.blockTime`),
+    },
+  );
   if (item.direction !== undefined) {
-    if (item.direction !== "in" && item.direction !== "out") throw new ShapeError(`${what}.direction`);
+    if (item.direction !== "in" && item.direction !== "out")
+      throw new ShapeError(`${what}.direction`);
     view.direction = item.direction;
   }
   return view;
@@ -224,7 +256,9 @@ export function normalizeAddressTxs(raw: unknown): TxPage {
   const r = obj(raw, "address transactions");
   successFlag(r, "address transactions");
   return {
-    txs: arr(r.transactions, "transactions").map((t, i) => normalizeTxItem(t, `transactions[${i}]`)),
+    txs: arr(r.transactions, "transactions").map((t, i) =>
+      normalizeTxItem(t, `transactions[${i}]`),
+    ),
     total: uint(r.total, "transactions.total"),
   };
 }
@@ -247,22 +281,40 @@ export function normalizeReceipt(raw: unknown): Receipt {
   let status: Receipt["status"];
   let failReason: string | null = null;
   if (r.status === "Success") status = "success";
-  else if (r.status && typeof r.status === "object" && "Success" in (r.status as Obj)) status = "success";
-  else if (r.status && typeof r.status === "object" && "Failed" in (r.status as Obj)) {
+  else if (
+    r.status &&
+    typeof r.status === "object" &&
+    "Success" in (r.status as Obj)
+  )
+    status = "success";
+  else if (
+    r.status &&
+    typeof r.status === "object" &&
+    "Failed" in (r.status as Obj)
+  ) {
     status = "failed";
     failReason = optText((r.status as Obj).Failed, "receipt.status.Failed");
   } else throw new ShapeError("receipt.status");
-  const logs = r.logs === undefined || r.logs === null ? [] : arr(r.logs, "receipt.logs");
+  const logs =
+    r.logs === undefined || r.logs === null ? [] : arr(r.logs, "receipt.logs");
   return {
     status,
     failReason,
     feePaid: optNum(r.fee_paid, "receipt.fee_paid"),
-    gasUsed: r.gas_used === undefined || r.gas_used === null ? null : uint(r.gas_used, "receipt.gas_used"),
+    gasUsed:
+      r.gas_used === undefined || r.gas_used === null
+        ? null
+        : uint(r.gas_used, "receipt.gas_used"),
     logs: logs.map((l, i) => {
       const log = obj(l, `receipt.logs[${i}]`);
-      const topics = log.topics === undefined || log.topics === null ? [] : arr(log.topics, "topics");
+      const topics =
+        log.topics === undefined || log.topics === null
+          ? []
+          : arr(log.topics, "topics");
       return {
-        event: optText(log.event ?? log.event_type, `receipt.logs[${i}].event`) ?? "—",
+        event:
+          optText(log.event ?? log.event_type, `receipt.logs[${i}].event`) ??
+          "—",
         topics: topics.map((t) => textOrEmpty(t, "topic")),
         data: log.data ?? null,
       };
@@ -282,8 +334,12 @@ export function normalizeTxDetail(raw: unknown): TxDetail {
   const tx = obj(r.tx, "tx detail.tx");
   return {
     ...view,
-    receipt: r.receipt === null || r.receipt === undefined ? null : normalizeReceipt(r.receipt),
-    signatureBytes: typeof tx.sig === "string" ? Math.floor(tx.sig.length / 2) : null,
+    receipt:
+      r.receipt === null || r.receipt === undefined
+        ? null
+        : normalizeReceipt(r.receipt),
+    signatureBytes:
+      typeof tx.sig === "string" ? Math.floor(tx.sig.length / 2) : null,
   };
 }
 
@@ -301,10 +357,15 @@ export interface BlockSummary {
 }
 
 /** BlockV1 as returned by /blocks (header + txs + proposer_sig + hash). */
-export function normalizeBlockV1(raw: unknown, expectedChainId: string, what = "block"): BlockSummary {
+export function normalizeBlockV1(
+  raw: unknown,
+  expectedChainId: string,
+  what = "block",
+): BlockSummary {
   const b = obj(raw, what);
   const h = obj(b.header, `${what}.header`);
-  if (h.chain_id !== expectedChainId) throw new ChainMismatchError(expectedChainId, h.chain_id);
+  if (h.chain_id !== expectedChainId)
+    throw new ChainMismatchError(expectedChainId, h.chain_id);
   return {
     height: uint(h.height, `${what}.height`),
     hash: hex(b.hash, `${what}.hash`, 64),
@@ -324,10 +385,15 @@ export interface BlocksPage {
   totalPages: number;
 }
 
-export function normalizeBlocksPage(raw: unknown, expectedChainId: string): BlocksPage {
+export function normalizeBlocksPage(
+  raw: unknown,
+  expectedChainId: string,
+): BlocksPage {
   const r = obj(raw, "blocks");
   return {
-    blocks: arr(r.blocks, "blocks.blocks").map((b, i) => normalizeBlockV1(b, expectedChainId, `blocks[${i}]`)),
+    blocks: arr(r.blocks, "blocks.blocks").map((b, i) =>
+      normalizeBlockV1(b, expectedChainId, `blocks[${i}]`),
+    ),
     totalHeight: uint(r.total_height, "blocks.total_height"),
     page: uint(r.page, "blocks.page"),
     totalPages: uint(r.total_pages, "blocks.total_pages"),
@@ -349,11 +415,15 @@ export function normalizeBlockDetail(raw: unknown): BlockDetail {
   const time = uint(b.time, "block.time");
   const transactions = arr(b.transactions, "block.transactions").map((t, i) => {
     const item = obj(t, `block.transactions[${i}]`);
-    return txView(hex(item.txId, "block.transactions.txId", 64), normalizeTxBody(item.tx, `block.transactions[${i}].tx`), {
-      height,
-      hash,
-      time,
-    });
+    return txView(
+      hex(item.txId, "block.transactions.txId", 64),
+      normalizeTxBody(item.tx, `block.transactions[${i}].tx`),
+      {
+        height,
+        hash,
+        time,
+      },
+    );
   });
   const txCount = uint(b.txCount, "block.txCount");
   if (txCount !== transactions.length) throw new ShapeError("block.txCount");
@@ -382,7 +452,10 @@ export function normalizeResolve(raw: unknown): ResolvedAddress {
   const r = obj(raw, "resolve");
   if (r.success === false) throw new NotFoundError("Address not found");
   successFlag(r, "resolve");
-  return { address: text(r.address, "resolve.address"), publicKey: hex(r.publicKey, "resolve.publicKey") };
+  return {
+    address: text(r.address, "resolve.address"),
+    publicKey: hex(r.publicKey, "resolve.publicKey"),
+  };
 }
 
 export interface Balances {
@@ -449,7 +522,9 @@ export function normalizeToken(raw: unknown, what = "token"): TokenInfo {
 export function normalizeTokens(raw: unknown): TokenInfo[] {
   const r = obj(raw, "tokens");
   successFlag(r, "tokens");
-  return arr(r.tokens, "tokens.tokens").map((t, i) => normalizeToken(t, `tokens[${i}]`));
+  return arr(r.tokens, "tokens.tokens").map((t, i) =>
+    normalizeToken(t, `tokens[${i}]`),
+  );
 }
 
 export function normalizeTokenMetadata(raw: unknown): TokenInfo {
@@ -480,7 +555,10 @@ export function normalizeTokenHolders(raw: unknown): TokenHolders {
       };
     }),
     totalSupply: nonNegative(r.total_supply, "total_supply"),
-    circulatingSupply: nonNegative(r.circulating_supply ?? r.total_supply, "circulating_supply"),
+    circulatingSupply: nonNegative(
+      r.circulating_supply ?? r.total_supply,
+      "circulating_supply",
+    ),
     shieldedSupply: nonNegative(r.shielded_supply ?? 0, "shielded_supply"),
     burnedSupply: nonNegative(r.burned_supply ?? 0, "burned_supply"),
   };
@@ -497,7 +575,10 @@ export interface TokenActivity {
   blockHeight: number;
 }
 
-export function normalizeTokenTxs(raw: unknown): { transactions: TokenActivity[]; total: number } {
+export function normalizeTokenTxs(raw: unknown): {
+  transactions: TokenActivity[];
+  total: number;
+} {
   const r = obj(raw, "token transactions");
   successFlag(r, "token transactions");
   return {
@@ -582,7 +663,10 @@ export interface NftCollection {
   createdAt: number;
 }
 
-export function normalizeCollection(raw: unknown, what = "collection"): NftCollection {
+export function normalizeCollection(
+  raw: unknown,
+  what = "collection",
+): NftCollection {
   const c = obj(raw, what);
   if (c.success === false) throw new NotFoundError("Collection not found");
   return {
@@ -592,11 +676,17 @@ export function normalizeCollection(raw: unknown, what = "collection"): NftColle
     creator: textOrEmpty(c.creator, `${what}.creator`),
     description: optText(c.description, `${what}.description`),
     image: optText(c.image, `${what}.image`),
-    maxSupply: c.max_supply === null || c.max_supply === undefined ? null : uint(c.max_supply, `${what}.max_supply`),
+    maxSupply:
+      c.max_supply === null || c.max_supply === undefined
+        ? null
+        : uint(c.max_supply, `${what}.max_supply`),
     minted: uint(c.minted, `${what}.minted`),
     frozen: optBool(c.frozen, `${what}.frozen`),
     publicMint: optBool(c.public_mint, `${what}.public_mint`),
-    royaltyBps: c.royalty_bps === null || c.royalty_bps === undefined ? 0 : uint(c.royalty_bps, `${what}.royalty_bps`),
+    royaltyBps:
+      c.royalty_bps === null || c.royalty_bps === undefined
+        ? 0
+        : uint(c.royalty_bps, `${what}.royalty_bps`),
     mintPrice: optNum(c.mint_price, `${what}.mint_price`),
     createdAt: uint(c.created_at, `${what}.created_at`),
   };
@@ -604,7 +694,9 @@ export function normalizeCollection(raw: unknown, what = "collection"): NftColle
 
 export function normalizeCollections(raw: unknown): NftCollection[] {
   const r = obj(raw, "collections");
-  return arr(r.collections, "collections.collections").map((c, i) => normalizeCollection(c, `collections[${i}]`));
+  return arr(r.collections, "collections.collections").map((c, i) =>
+    normalizeCollection(c, `collections[${i}]`),
+  );
 }
 
 export interface NftToken {
@@ -622,8 +714,18 @@ export interface NftToken {
 
 export function normalizeNftToken(raw: unknown, what = "nft"): NftToken {
   const t = obj(raw, what);
-  const attrs = t.attributes && typeof t.attributes === "object" && !Array.isArray(t.attributes) ? (t.attributes as Obj) : {};
-  const image = typeof attrs.image === "string" ? attrs.image : typeof attrs.coverUrl === "string" ? attrs.coverUrl : null;
+  const attrs =
+    t.attributes &&
+    typeof t.attributes === "object" &&
+    !Array.isArray(t.attributes)
+      ? (t.attributes as Obj)
+      : {};
+  const image =
+    typeof attrs.image === "string"
+      ? attrs.image
+      : typeof attrs.coverUrl === "string"
+        ? attrs.coverUrl
+        : null;
   return {
     collectionId: text(t.collection_id, `${what}.collection_id`),
     tokenId: uint(t.token_id, `${what}.token_id`),
@@ -632,15 +734,23 @@ export function normalizeNftToken(raw: unknown, what = "nft"): NftToken {
     creator: textOrEmpty(t.creator ?? "", `${what}.creator`),
     image,
     metadataUri: optText(t.metadata_uri, `${what}.metadata_uri`),
-    mintedAt: t.minted_at === undefined || t.minted_at === null ? null : uint(t.minted_at, `${what}.minted_at`),
+    mintedAt:
+      t.minted_at === undefined || t.minted_at === null
+        ? null
+        : uint(t.minted_at, `${what}.minted_at`),
     locked: optBool(t.locked, `${what}.locked`),
   };
 }
 
-export function normalizeCollectionTokens(raw: unknown): { tokens: NftToken[]; total: number } {
+export function normalizeCollectionTokens(raw: unknown): {
+  tokens: NftToken[];
+  total: number;
+} {
   const r = obj(raw, "collection tokens");
   return {
-    tokens: arr(r.tokens, "tokens").map((t, i) => normalizeNftToken(t, `tokens[${i}]`)),
+    tokens: arr(r.tokens, "tokens").map((t, i) =>
+      normalizeNftToken(t, `tokens[${i}]`),
+    ),
     total: uint(r.total, "tokens.total"),
   };
 }
@@ -661,7 +771,10 @@ export interface ContractInfo {
   wasmSize: number;
 }
 
-export function normalizeContractInfo(raw: unknown, what = "contract"): ContractInfo {
+export function normalizeContractInfo(
+  raw: unknown,
+  what = "contract",
+): ContractInfo {
   const c = obj(raw, what);
   return {
     address: hex(c.address, `${what}.address`, 40),
@@ -674,7 +787,9 @@ export function normalizeContractInfo(raw: unknown, what = "contract"): Contract
 
 export function normalizeContracts(raw: unknown): ContractInfo[] {
   const r = obj(raw, "contracts");
-  return arr(r.contracts, "contracts.contracts").map((c, i) => normalizeContractInfo(c, `contracts[${i}]`));
+  return arr(r.contracts, "contracts.contracts").map((c, i) =>
+    normalizeContractInfo(c, `contracts[${i}]`),
+  );
 }
 
 export function normalizeContract(raw: unknown): ContractInfo {
@@ -684,14 +799,21 @@ export function normalizeContract(raw: unknown): ContractInfo {
   return normalizeContractInfo(r.contract);
 }
 
-export function normalizeContractState(raw: unknown): { entries: [string, string][]; count: number } {
+export function normalizeContractState(raw: unknown): {
+  entries: [string, string][];
+  count: number;
+} {
   const r = obj(raw, "contract state");
-  if (r.success === false) throw new NotFoundError("Contract state unavailable");
+  if (r.success === false)
+    throw new NotFoundError("Contract state unavailable");
   successFlag(r, "contract state");
   const entries = Object.entries(obj(r.state, "contract state.state")).map(
     ([k, v]) => [k, textOrEmpty(v, `state.${k}`)] as [string, string],
   );
-  return { entries: entries.sort((a, b) => a[0].localeCompare(b[0])), count: uint(r.count, "contract state.count") };
+  return {
+    entries: entries.sort((a, b) => a[0].localeCompare(b[0])),
+    count: uint(r.count, "contract state.count"),
+  };
 }
 
 export interface ContractEvent {
@@ -709,7 +831,8 @@ export function normalizeContractEvents(raw: unknown): ContractEvent[] {
     return {
       blockHeight: uint(o.block_height, "event.block_height"),
       topic: textOrEmpty(o.topic, "event.topic"),
-      data: typeof o.data === "string" ? o.data : JSON.stringify(o.data ?? null),
+      data:
+        typeof o.data === "string" ? o.data : JSON.stringify(o.data ?? null),
       txHash: optHex(o.tx_hash, "event.tx_hash", 64),
     };
   });

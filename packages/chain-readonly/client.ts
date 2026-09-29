@@ -3,7 +3,12 @@
  * credentials, no redirects, bounded time, strict normalizers. There is no write transport:
  * nothing here can POST, sign, or submit.
  */
-import { buildReadPath, matchReadRoute, NotAllowlistedError, type ReadRouteId } from "./allowlist";
+import {
+  buildReadPath,
+  matchReadRoute,
+  NotAllowlistedError,
+  type ReadRouteId,
+} from "./allowlist";
 import { networkConfig, type NetworkId } from "./network";
 import * as n from "./normalize";
 
@@ -25,7 +30,8 @@ export async function readOnlyGet(
   method: "GET" = "GET",
   network: NetworkId = "mainnet",
 ): Promise<unknown> {
-  if (method !== "GET") throw new NotAllowlistedError("read-only client: GET only");
+  if (method !== "GET")
+    throw new NotAllowlistedError("read-only client: GET only");
   matchReadRoute(path);
   const { apiBase } = networkConfig(network);
   const response = await fetch(`${apiBase}${path}`, {
@@ -49,7 +55,9 @@ async function get<T>(
   query: Record<string, string | number | undefined>,
   normalize: (raw: unknown) => T,
 ): Promise<T> {
-  return normalize(await readOnlyGet(buildReadPath(id, params, query), "GET", network));
+  return normalize(
+    await readOnlyGet(buildReadPath(id, params, query), "GET", network),
+  );
 }
 
 /** Typed reads for one network. Each method validates its input and normalises its output. */
@@ -58,34 +66,70 @@ export function createReadClient(network: NetworkId) {
   return {
     network,
     chainId,
-    stats: () => get(network, "stats", {}, {}, (r) => n.normalizeStats(r, chainId)),
-    validatorCount: () => get(network, "validators", {}, {}, n.normalizeValidatorCount),
+    stats: () =>
+      get(network, "stats", {}, {}, (r) => n.normalizeStats(r, chainId)),
+    validatorCount: () =>
+      get(network, "validators", {}, {}, n.normalizeValidatorCount),
     blocksPage: (page: number, perPage: number) =>
-      get(network, "blocks", {}, { page, per_page: perPage }, (r) => n.normalizeBlocksPage(r, chainId)),
-    block: (height: number) => get(network, "block", { height }, {}, n.normalizeBlockDetail),
-    txs: (limit: number, offset = 0) => get(network, "txs", {}, { limit, offset }, n.normalizeTxs),
+      get(network, "blocks", {}, { page, per_page: perPage }, (r) =>
+        n.normalizeBlocksPage(r, chainId),
+      ),
+    block: (height: number) =>
+      get(network, "block", { height }, {}, n.normalizeBlockDetail),
+    txs: (limit: number, offset = 0) =>
+      get(network, "txs", {}, { limit, offset }, n.normalizeTxs),
     tx: (hash: string) => get(network, "tx", { hash }, {}, n.normalizeTxDetail),
-    resolve: (address: string) => get(network, "resolve", { address }, {}, n.normalizeResolve),
-    balance: (address: string) => get(network, "balance", { address }, {}, n.normalizeBalance),
+    resolve: (address: string) =>
+      get(network, "resolve", { address }, {}, n.normalizeResolve),
+    balance: (address: string) =>
+      get(network, "balance", { address }, {}, n.normalizeBalance),
     addressTxs: (address: string, limit: number, offset = 0) =>
-      get(network, "addressTxs", { address }, { limit, offset }, n.normalizeAddressTxs),
-    ownerNfts: (pubkey: string) => get(network, "nftOwner", { pubkey }, {}, n.normalizeOwnerNfts),
+      get(
+        network,
+        "addressTxs",
+        { address },
+        { limit, offset },
+        n.normalizeAddressTxs,
+      ),
+    ownerNfts: (pubkey: string) =>
+      get(network, "nftOwner", { pubkey }, {}, n.normalizeOwnerNfts),
     tokens: () => get(network, "tokens", {}, {}, n.normalizeTokens),
-    tokenMetadata: (symbol: string) => get(network, "tokenMetadata", { symbol }, {}, n.normalizeTokenMetadata),
-    tokenHolders: (symbol: string) => get(network, "tokenHolders", { symbol }, {}, n.normalizeTokenHolders),
+    tokenMetadata: (symbol: string) =>
+      get(network, "tokenMetadata", { symbol }, {}, n.normalizeTokenMetadata),
+    tokenHolders: (symbol: string) =>
+      get(network, "tokenHolders", { symbol }, {}, n.normalizeTokenHolders),
     tokenTxs: (symbol: string, limit: number) =>
       get(network, "tokenTxs", { symbol }, { limit }, n.normalizeTokenTxs),
     pools: () => get(network, "pools", {}, {}, n.normalizePools),
-    poolPrices: (poolId: string) => get(network, "poolPrices", { poolId }, {}, n.normalizePoolPrices),
-    collections: () => get(network, "nftCollections", {}, {}, n.normalizeCollections),
-    collection: (id: string) => get(network, "nftCollection", { id }, {}, (r) => n.normalizeCollection(r)),
+    poolPrices: (poolId: string) =>
+      get(network, "poolPrices", { poolId }, {}, n.normalizePoolPrices),
+    collections: () =>
+      get(network, "nftCollections", {}, {}, n.normalizeCollections),
+    collection: (id: string) =>
+      get(network, "nftCollection", { id }, {}, (r) =>
+        n.normalizeCollection(r),
+      ),
     collectionTokens: (id: string, limit: number, offset = 0) =>
-      get(network, "nftCollectionTokens", { id }, { limit, offset }, n.normalizeCollectionTokens),
+      get(
+        network,
+        "nftCollectionTokens",
+        { id },
+        { limit, offset },
+        n.normalizeCollectionTokens,
+      ),
     contracts: () => get(network, "contracts", {}, {}, n.normalizeContracts),
-    contract: (addr: string) => get(network, "contract", { addr }, {}, n.normalizeContract),
-    contractState: (addr: string) => get(network, "contractState", { addr }, {}, n.normalizeContractState),
+    contract: (addr: string) =>
+      get(network, "contract", { addr }, {}, n.normalizeContract),
+    contractState: (addr: string) =>
+      get(network, "contractState", { addr }, {}, n.normalizeContractState),
     contractEvents: (addr: string, limit: number, before?: number) =>
-      get(network, "contractEvents", { addr }, { limit, before }, n.normalizeContractEvents),
+      get(
+        network,
+        "contractEvents",
+        { addr },
+        { limit, before },
+        n.normalizeContractEvents,
+      ),
   };
 }
 
