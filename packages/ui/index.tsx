@@ -177,7 +177,7 @@ export function RougeAppShell({
       {(localNavigation || proposedHost) && (
         <div className="container shell-subnav">
           {localNavigation}
-          <span className="proposed-host">PROPOSED · {proposedHost}</span>
+          {proposedHost && <span className="proposed-host">{proposedHost}</span>}
         </div>
       )}
     </header>

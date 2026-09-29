@@ -15,8 +15,6 @@ export default defineConfig({
       "@tanstack/react-query",
       "framer-motion",
       "lucide-react",
-      "@danfessler/trellis",
-      "@danfessler/trellis-react",
     ],
   },
 });

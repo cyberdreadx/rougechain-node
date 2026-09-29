@@ -36,7 +36,7 @@ export default mergeConfig(
       setupFiles: [path.join(here, "src/test-setup.ts")],
       // Process React-rendering test libraries through Vite so resolve.dedupe gives them this
       // app's React 19 (Node resolution alone would find the repo root's React 18 for apps/web).
-      server: { deps: { inline: [/@testing-library\//, /@danfessler\//, /react-router/, /framer-motion/, /lucide-react/, /@tanstack\//] } },
+      server: { deps: { inline: [/@testing-library\//, /react-router/, /framer-motion/, /lucide-react/, /@tanstack\//] } },
     },
   }),
 );
