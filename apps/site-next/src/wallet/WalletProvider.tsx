@@ -41,7 +41,7 @@ import {
   type WalletSnapshot,
 } from "./store";
 import { setOnboardingActive } from "./tour";
-import { useRougeAddress } from "./hooks";
+import { useExtensionProvider, useRougeAddress } from "./hooks";
 import { toast } from "./toast";
 
 export type OnboardingMode = "create" | "import";
@@ -113,11 +113,12 @@ function extensionWallet(result: { publicKey: string; displayName?: string; encr
  */
 export function useWalletAutoRegister(enabled: boolean): void {
   const done = useRef(false);
+  const extension = useExtensionProvider();
   useEffect(() => {
     if (!enabled || done.current || isWalletLocked()) return;
-    done.current = true;
     const w = loadUnifiedWallet();
     if (w?.signingPublicKey) {
+      done.current = true;
       if (w.encryptionPublicKey && w.signingPrivateKey) {
         registerWalletOnNode({
           id: w.id,
@@ -129,8 +130,10 @@ export function useWalletAutoRegister(enabled: boolean): void {
       }
       return;
     }
-    const provider = getRougeChainProvider();
+    // No local wallet: wait for the extension (it may announce itself after this first run).
+    const provider = extension;
     if (!provider) return;
+    done.current = true;
     (async () => {
       try {
         const result = await provider.connect();
@@ -142,7 +145,7 @@ export function useWalletAutoRegister(enabled: boolean): void {
         /* extension auto-connect failed silently (as in apps/web) */
       }
     })();
-  }, [enabled]);
+  }, [enabled, extension]);
 }
 
 export function WalletProvider({ children, autoRegister = true }: { children: ReactNode; autoRegister?: boolean }) {

@@ -4,6 +4,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { getRougeChainProvider } from "@rougechain/core/extension-bridge";
 import { pubkeyToAddress, formatAddress } from "@rougechain/core/address";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@rougechain/core/network";
 import { fetchXRGEPrice } from "@rougechain/core/price-service";
@@ -270,4 +271,19 @@ export function useNewBlocks(network: string, onNewBlock: (height: number) => vo
       }
     };
   }, [enabled, network]);
+}
+
+/**
+ * The RougeChain browser extension injects `window.rougechain` a moment AFTER the page starts
+ * (its provider script loads asynchronously) and then fires `rougechain#initialized`. Reading
+ * `window.rougechain` once at render therefore misses it on a fast page. This hook re-renders
+ * when the extension announces itself.
+ */
+export const EXTENSION_READY_EVENT = "rougechain#initialized";
+function subscribeExtension(onChange: () => void): () => void {
+  window.addEventListener(EXTENSION_READY_EVENT, onChange);
+  return () => window.removeEventListener(EXTENSION_READY_EVENT, onChange);
+}
+export function useExtensionProvider(): ReturnType<typeof getRougeChainProvider> {
+  return useSyncExternalStore(subscribeExtension, getRougeChainProvider, () => null);
 }
