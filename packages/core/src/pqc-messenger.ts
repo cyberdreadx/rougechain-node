@@ -1125,7 +1125,8 @@ export async function getConversations(walletId: string, currentWallet?: Wallet 
   const apiBase = getMessengerApiBase();
   if (!apiBase) return [];
 
-  let rawConversations: unknown[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- node JSON, shaped by the map below
+  let rawConversations: any[];
   const privKey = (currentWallet as WalletWithPrivateKeys)?.signingPrivateKey;
   if (privKey && currentWallet?.signingPublicKey) {
     const signed = buildSignedRequest({}, privKey, currentWallet.signingPublicKey);
