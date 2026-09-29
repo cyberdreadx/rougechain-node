@@ -8,6 +8,7 @@ export * from "./allowlist";
 export * from "./client";
 export * from "./normalize";
 export * from "./format";
+export * from "./bridge";
 
 /** Mainnet API base (kept for the POC surfaces; use networkConfig(id).apiBase instead). */
 export const API_BASE = networkConfig("mainnet").apiBase;

@@ -1,4 +1,4 @@
-import { DemoWalletProvider } from "./wallet/DemoWalletProvider";
+import { WalletProvider } from "./wallet/WalletProvider";
 import { MemoryRouter } from "react-router-dom";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -18,11 +18,11 @@ function wrap(children: React.ReactNode) {
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Unavailable")));
   return render(
     <QueryClientProvider client={client}>
-      <DemoWalletProvider>
+      <WalletProvider autoRegister={false}>
         <NetworkProvider>
           <MemoryRouter>{children}</MemoryRouter>
         </NetworkProvider>
-      </DemoWalletProvider>
+      </WalletProvider>
     </QueryClientProvider>,
   );
 }
@@ -180,14 +180,14 @@ it("preserves a stale successful response when refresh fails", async () => {
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Offline")));
   render(
     <QueryClientProvider client={client}>
-      <DemoWalletProvider>
+      <WalletProvider autoRegister={false}>
         <NetworkProvider>
           <MemoryRouter>
             <DataNote />
             <Explorer />
           </MemoryRouter>
         </NetworkProvider>
-      </DemoWalletProvider>
+      </WalletProvider>
     </QueryClientProvider>,
   );
   await waitFor(() =>

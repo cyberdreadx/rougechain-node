@@ -57,7 +57,7 @@ export async function createWalletViaNode(): Promise<NodeWallet> {
   return {
     publicKey: data.publicKey,
     privateKey: data.privateKey,
-    algorithm: data.algorithm,
+    algorithm: data.algorithm as string,
   };
 }
 

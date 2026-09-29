@@ -1,0 +1,12 @@
+{
+    "enabled": false,
+    "custodyAddress": null,
+    "chainId": null,
+    "supportedTokens": [
+        "ETH",
+        "USDC",
+        "BTC"
+    ],
+    "btcCustodyAddress": "tb1q4gyj9n7aq3vkwtd98rxj4wag025jy30gn2d4jw",
+    "btcNetwork": "testnet"
+}

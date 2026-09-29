@@ -17,6 +17,7 @@ mod websocket;
 mod jsonrpc;
 mod indexer;
 mod bridge_btc;
+mod bridge_activity;
 mod push;
 mod fork;
 mod fork_tables;
@@ -1014,6 +1015,9 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/bridge/claim", post(bridge_claim))
         .route("/api/bridge/withdraw", post(bridge_withdraw))
         .route("/api/bridge/health", get(bridge_health))
+        // Public, read-only bridge activity feed (deposits + withdrawals, sanitized statuses).
+        .route("/api/bridge/activity", get(bridge_activity_list))
+        .route("/api/bridge/activity/:tx_id", get(bridge_activity_get))
         .route("/api/bridge/withdrawals", get(bridge_withdrawals))
         .route("/api/bridge/withdrawals/:tx_id", delete(bridge_withdrawal_fulfill))
         .route("/api/bridge/withdrawals/:tx_id/failure", post(bridge_withdrawal_report_failure))
@@ -7968,9 +7972,115 @@ async fn bridge_health(State(state): State<AppState>) -> (StatusCode, Json<serde
     (if degraded { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK }, Json(body))
 }
 
+/// Withdrawals a relayer may act on: the node's pending list minus anything already REFUNDED on
+/// RougeChain. A refund reserves the `refund:{tx_id}` nullifier in the claim store before minting,
+/// so this holds even if the payout record itself was lost or re-created as Pending (e.g. by the
+/// startup rebuild). A refunded withdrawal must never also be paid out on Base or Bitcoin.
+fn withhold_refunded(list: Vec<PendingWithdrawal>, refunded: impl Fn(&str) -> bool) -> Vec<PendingWithdrawal> {
+    list.into_iter()
+        .filter(|w| {
+            let r = refunded(&w.tx_id);
+            if r {
+                eprintln!("[bridge] ALERT: withdrawal {} was refunded but is pending in the payout store — withheld from relayers", w.tx_id);
+            }
+            !r
+        })
+        .collect()
+}
+
+async fn relayer_payable_withdrawals(state: &AppState) -> Result<Vec<PendingWithdrawal>, String> {
+    let list = state.node.relayer_pending_withdrawals()?;
+    let mut refunded = std::collections::HashSet::new();
+    for w in &list {
+        if state.bridge_claim_store.contains(&format!("refund:{}", w.tx_id)).await {
+            refunded.insert(w.tx_id.clone());
+        }
+    }
+    Ok(withhold_refunded(list, |id| refunded.contains(id)))
+}
+
+/// `bridge_activity::ActivitySource` over the live node + stores. Blocking reads only; always
+/// used from `spawn_blocking` (the claim store is async, so its lookup is driven via the handle).
+struct NodeActivitySource {
+    node: Arc<L1Node>,
+    withdraws: Arc<BridgeWithdrawStore>,
+    claims: Arc<BridgeClaimStore>,
+    rt: tokio::runtime::Handle,
+}
+
+impl bridge_activity::ActivitySource for NodeActivitySource {
+    fn degraded(&self) -> bool { self.node.bridge_store_degraded() }
+    fn tip_height(&self) -> Result<u64, String> { self.node.get_tip_height() }
+    fn block(&self, height: u64) -> Result<Option<quantum_vault_types::BlockV1>, String> { self.node.get_block(height) }
+    fn tx_height(&self, tx_id: &str) -> Result<Option<u64>, String> { self.node.store_ref().lookup_tx_height(tx_id) }
+    fn receipt_ok(&self, tx_id: &str) -> Option<bool> {
+        match self.node.get_receipt(tx_id) {
+            Ok(Some(r)) => Some(matches!(r.status, quantum_vault_types::TxStatus::Success)),
+            _ => None,
+        }
+    }
+    fn mempool(&self) -> Vec<quantum_vault_types::TxV1> { self.node.get_mempool_snapshot() }
+    fn withdraw_record(&self, store_tx_id: &str) -> Option<bridge_activity::WithdrawRecordView> {
+        self.withdraws.get(store_tx_id).ok().flatten().as_ref().map(bridge_activity::WithdrawRecordView::from)
+    }
+    fn refunded(&self, store_tx_id: &str) -> bool {
+        self.rt.block_on(self.claims.contains(&format!("refund:{}", store_tx_id)))
+    }
+    fn external(&self) -> bridge_activity::ExternalConfig {
+        bridge_activity::ExternalConfig {
+            base_chain_id: configured_bridge_chain_id(),
+            btc_network: bridge_btc::btc_network(),
+        }
+    }
+}
+
+fn bridge_activity_source(state: &AppState) -> NodeActivitySource {
+    NodeActivitySource {
+        node: state.node.clone(),
+        withdraws: state.bridge_withdraw_store.clone(),
+        claims: state.bridge_claim_store.clone(),
+        rt: tokio::runtime::Handle::current(),
+    }
+}
+
+/// Incremental scan of bridge txs in accepted blocks, shared by every activity request.
+static BRIDGE_ACTIVITY_SCAN: std::sync::OnceLock<std::sync::Mutex<bridge_activity::ChainScan>> = std::sync::OnceLock::new();
+
+/// GET /api/bridge/activity?limit=&before= — public, read-only, newest first. 503 while the
+/// derived bridge state is degraded (same fail-closed rule as /api/bridge/health).
+async fn bridge_activity_list(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let src = bridge_activity_source(&state);
+    let result = tokio::task::spawn_blocking(move || {
+        let lock = BRIDGE_ACTIVITY_SCAN.get_or_init(|| std::sync::Mutex::new(bridge_activity::ChainScan::default()));
+        let mut scan = match lock.lock() { Ok(g) => g, Err(p) => p.into_inner() };
+        bridge_activity::activity_page(&src, &mut scan, q.get("limit").map(|s| s.as_str()), q.get("before").map(|s| s.as_str()))
+    })
+    .await
+    .unwrap_or(Err(bridge_activity::ActivityError::Unavailable));
+    match result {
+        Ok(page) => Json(page).into_response(),
+        Err(e) => e.into_response().into_response(),
+    }
+}
+
+/// GET /api/bridge/activity/:tx_id — one bridge transfer by its RougeChain tx id.
+async fn bridge_activity_get(State(state): State<AppState>, Path(tx_id): Path<String>) -> Response {
+    let src = bridge_activity_source(&state);
+    let result = tokio::task::spawn_blocking(move || bridge_activity::activity_item(&src, &tx_id))
+        .await
+        .unwrap_or(Err(bridge_activity::ActivityError::Unavailable));
+    match result {
+        Ok(item) => Json(item).into_response(),
+        Err(e) => e.into_response().into_response(),
+    }
+}
+
 async fn bridge_withdrawals(State(state): State<AppState>) -> Result<Json<BridgeWithdrawalsResponse>, (StatusCode, Json<serde_json::Value>)> {
     // Fail closed while derived bridge state is degraded — the relayer must get NO list.
-    let list = state.node.relayer_pending_withdrawals()
+    let list = relayer_payable_withdrawals(&state).await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({ "error": e, "degraded": true }))))?;
     Ok(Json(BridgeWithdrawalsResponse {
         withdrawals: list
@@ -8365,7 +8475,7 @@ async fn bridge_btc_claim(
 /// GET /api/bridge/btc/withdrawals — pending qBTC withdrawals for the BTC relayer to pay out.
 async fn bridge_btc_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdrawalsResponse> {
     // Fail closed while derived bridge state is degraded: the BTC relayer gets an EMPTY list.
-    let list = match state.node.relayer_pending_withdrawals() { Ok(v) => v, Err(e) => { eprintln!("[bridge] btc withdrawals list refused: {}", e); return Json(BridgeWithdrawalsResponse { withdrawals: Vec::new() }); } };
+    let list = match relayer_payable_withdrawals(&state).await { Ok(v) => v, Err(e) => { eprintln!("[bridge] btc withdrawals list refused: {}", e); return Json(BridgeWithdrawalsResponse { withdrawals: Vec::new() }); } };
     Json(BridgeWithdrawalsResponse {
         withdrawals: list
             .into_iter()
@@ -8823,7 +8933,7 @@ async fn xrge_bridge_withdraw(
 }
 
 async fn xrge_bridge_withdrawals(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let list = match state.node.relayer_pending_withdrawals() { Ok(v) => v, Err(e) => return Json(serde_json::json!({ "withdrawals": [], "degraded": true, "error": e })) };
+    let list = match relayer_payable_withdrawals(&state).await { Ok(v) => v, Err(e) => return Json(serde_json::json!({ "withdrawals": [], "degraded": true, "error": e })) };
     let xrge_withdrawals: Vec<_> = list.into_iter()
         .filter(is_xrge_withdrawal)
         .map(|w| serde_json::json!({
@@ -9163,10 +9273,17 @@ async fn bridge_withdrawal_refund(
     {
         Ok(tx) => {
             let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
-            let _ = state
+            // KEEP the record as Refunded (like Fulfilled): deleting it let the startup rebuild
+            // (`rebuild_bridge_withdraw_store`) re-create it from chain history as Pending, so a
+            // refunded withdrawal went back to the relayer and could ALSO be paid out. If this
+            // status write fails, the `refund:{id}` nullifier reserved above still withholds it
+            // from every relayer list (`relayer_payable_withdrawals`).
+            if let Err(e) = state
                 .bridge_withdraw_store
-                .set_status(&tx_id, WithdrawalStatus::Refunded);
-            let _ = state.bridge_withdraw_store.remove(&tx_id);
+                .set_status(&tx_id, WithdrawalStatus::Refunded)
+            {
+                eprintln!("[bridge] ALERT: refunded {} but could not persist status Refunded: {} — withheld from relayers by its refund nullifier", tx_id, e);
+            }
             Json(serde_json::json!({
                 "success": true,
                 "txId": id,
@@ -10718,6 +10835,41 @@ mod image_guard_tests {
 // ─────────────────────────────────────────────────────────────────────────────
 // R1B/R1D — daemon-side unit tests for the bridge payout helpers (no network).
 // ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod bridge_refund_withhold_tests {
+    use super::*;
+
+    fn pw(tx_id: &str) -> PendingWithdrawal {
+        PendingWithdrawal {
+            tx_id: tx_id.to_string(),
+            evm_address: "bc1qvt4r5dazmystwspgp62vh9ve5tutw5av4atjcz".to_string(),
+            amount_units: 5000,
+            created_at: 0,
+            owner_pubkey: "ab".repeat(8),
+            token_symbol: "qBTC".to_string(),
+            status: WithdrawalStatus::Pending,
+            attempts: 0,
+            last_error: None,
+            updated_at: 0,
+            payout_tx_hash: None,
+        }
+    }
+
+    #[test]
+    fn refunded_withdrawals_never_reach_a_relayer() {
+        let list = vec![pw("a1"), pw("xrge:b2"), pw("c3")];
+        let kept = withhold_refunded(list, |id| id == "xrge:b2");
+        let ids: Vec<_> = kept.iter().map(|w| w.tx_id.as_str()).collect();
+        assert_eq!(ids, vec!["a1", "c3"]);
+    }
+
+    #[test]
+    fn nothing_refunded_passes_everything_through() {
+        let kept = withhold_refunded(vec![pw("a1"), pw("c3")], |_| false);
+        assert_eq!(kept.len(), 2);
+    }
+}
+
 #[cfg(test)]
 mod bridge_r1_helper_tests {
     use super::*;

@@ -1,0 +1,369 @@
+/**
+ * Production wallet provider for site-next. All storage, crypto and signing go through
+ * @rougechain/core — the same code apps/web runs — so an apps/web wallet (same origin) is read
+ * back as-is: same keys, vault format, lock state and address.
+ */
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import {
+  autoLockWallet,
+  clearUnifiedWallet,
+  decryptWallet,
+  getVaultSettings,
+  hasEncryptedWallet,
+  isWalletLocked,
+  loadUnifiedWallet,
+  lockUnifiedWallet,
+  saveUnifiedWallet,
+  saveVaultSettings,
+  unlockUnifiedWallet,
+  type UnifiedWallet,
+} from "@rougechain/core/unified-wallet";
+import { generateMnemonic, keypairFromMnemonic, validateMnemonic } from "@rougechain/core/mnemonic";
+import { generateEncryptionKeypair, registerWalletOnNode } from "@rougechain/core/pqc-messenger";
+import { getRougeChainProvider, signViaExtension } from "@rougechain/core/extension-bridge";
+import { signTransaction, type SignedTransaction, type TransactionPayload } from "@rougechain/core/pqc-signer";
+import { useChain } from "../explorer/chain";
+import {
+  SERVER_SNAPSHOT,
+  getWalletSnapshot,
+  notifyWalletChanged,
+  subscribeWallet,
+  type WalletSnapshot,
+} from "./store";
+import { setOnboardingActive } from "./tour";
+import { useRougeAddress } from "./hooks";
+import { toast } from "./toast";
+
+export type OnboardingMode = "create" | "import";
+/** Post-create / post-import steps shown on /wallet (same order as apps/web). */
+export type FlowStep = "seed" | "password" | "onboarding";
+export interface WalletFlow {
+  mode: OnboardingMode;
+  step: FlowStep;
+}
+
+export interface WalletContextValue extends WalletSnapshot {
+  flow: WalletFlow | null;
+  autoLockMinutes: number;
+  create(): Promise<void>;
+  importMnemonic(phrase: string): Promise<void>;
+  importBackup(data: string, password: string): Promise<void>;
+  connectExtension(): Promise<void>;
+  /** First password (encrypts the vault) — same as apps/web: lock with it, then unlock. */
+  setPassword(password: string): Promise<void>;
+  unlock(password: string): Promise<void>;
+  lock(): void;
+  disconnect(): void;
+  setAutoLockMinutes(minutes: number): void;
+  advanceFlow(step: FlowStep | null): void;
+  refresh(): void;
+}
+
+const WalletContext = createContext<WalletContextValue | null>(null);
+
+/** Activity that postpones auto-lock (same events as apps/web). */
+const ACTIVITY_EVENTS = ["mousemove", "keydown", "touchstart"] as const;
+
+export class WalletError extends Error {}
+
+function readAutoLockMinutes(): number {
+  try {
+    return getVaultSettings().autoLockMinutes;
+  } catch {
+    return 0; // storage unavailable
+  }
+}
+
+/** Parse + validate a recovery phrase exactly like apps/web's WalletBackup "Recover". */
+export function normalizeRecoveryPhrase(phrase: string): string {
+  const trimmed = phrase.trim().toLowerCase().split(/\s+/).join(" ");
+  const words = trimmed ? trimmed.split(" ") : [];
+  if (words.length !== 12 && words.length !== 24) throw new WalletError("Seed phrase must be 12 or 24 words");
+  if (!validateMnemonic(trimmed)) throw new WalletError("Invalid seed phrase — check for typos");
+  return trimmed;
+}
+
+function extensionWallet(result: { publicKey: string; displayName?: string; encryptionPublicKey?: string }): UnifiedWallet {
+  // Same shape apps/web saves for an extension / Qwalla dApp-browser wallet (empty private keys).
+  return {
+    id: `ext-${Date.now()}`,
+    displayName: result.displayName || "Extension Wallet",
+    createdAt: Date.now(),
+    signingPublicKey: result.publicKey,
+    signingPrivateKey: "",
+    encryptionPublicKey: result.encryptionPublicKey || "",
+    encryptionPrivateKey: "",
+    version: 2,
+  };
+}
+
+/**
+ * apps/web's App.tsx `WalletAutoRegister`: once per page load, (re-)register an unlocked local
+ * wallet in the messenger directory, or auto-connect an injected extension when there is none.
+ */
+export function useWalletAutoRegister(enabled: boolean): void {
+  const done = useRef(false);
+  useEffect(() => {
+    if (!enabled || done.current || isWalletLocked()) return;
+    done.current = true;
+    const w = loadUnifiedWallet();
+    if (w?.signingPublicKey) {
+      if (w.encryptionPublicKey && w.signingPrivateKey) {
+        registerWalletOnNode({
+          id: w.id,
+          displayName: w.displayName,
+          signingPublicKey: w.signingPublicKey,
+          signingPrivateKey: w.signingPrivateKey,
+          encryptionPublicKey: w.encryptionPublicKey,
+        }).catch(() => {});
+      }
+      return;
+    }
+    const provider = getRougeChainProvider();
+    if (!provider) return;
+    (async () => {
+      try {
+        const result = await provider.connect();
+        if (result?.publicKey) {
+          saveUnifiedWallet(extensionWallet(result));
+          notifyWalletChanged();
+        }
+      } catch {
+        /* extension auto-connect failed silently (as in apps/web) */
+      }
+    })();
+  }, [enabled]);
+}
+
+export function WalletProvider({ children, autoRegister = true }: { children: ReactNode; autoRegister?: boolean }) {
+  const snapshot = useSyncExternalStore(subscribeWallet, getWalletSnapshot, () => SERVER_SNAPSHOT);
+  const { network: chainNetwork } = useChain();
+  const [flow, setFlow] = useState<WalletFlow | null>(null);
+  const [autoLockMinutes, setAutoLockState] = useState(readAutoLockMinutes);
+
+  // The explorer's network switch writes the shared `rougechain-network` key in this tab:
+  // core scopes the wallet keys per network, so re-read.
+  useEffect(() => {
+    notifyWalletChanged();
+  }, [chainNetwork]);
+  useEffect(() => {
+    setAutoLockState(readAutoLockMinutes());
+  }, [snapshot.network]);
+
+  useWalletAutoRegister(autoRegister);
+
+  // A lock in another tab (storage event) also drops THIS tab's session copy of the keys.
+  const prevStatus = useRef(snapshot.status);
+  useEffect(() => {
+    if (prevStatus.current === "unlocked" && snapshot.status === "locked" && isWalletLocked()) autoLockWallet();
+    prevStatus.current = snapshot.status;
+  }, [snapshot.status]);
+
+  // Auto-lock after inactivity (vault settings are per network, set in Settings).
+  const [lastActivity, setLastActivity] = useState(() => Date.now());
+  useEffect(() => {
+    if (snapshot.status !== "unlocked") return;
+    const onActivity = () => setLastActivity(Date.now());
+    ACTIVITY_EVENTS.forEach((e) => window.addEventListener(e, onActivity));
+    return () => ACTIVITY_EVENTS.forEach((e) => window.removeEventListener(e, onActivity));
+  }, [snapshot.status]);
+  useEffect(() => {
+    if (snapshot.status !== "unlocked" || !snapshot.hasPassword || autoLockMinutes <= 0) return;
+    const id = window.setTimeout(() => {
+      autoLockWallet();
+      notifyWalletChanged();
+      toast.info("Wallet locked", { description: "Locked after inactivity. Unlock with your password." });
+    }, autoLockMinutes * 60_000);
+    return () => window.clearTimeout(id);
+  }, [snapshot.status, snapshot.hasPassword, autoLockMinutes, lastActivity]);
+
+  // Keep the tour from auto-opening while a create / import flow runs.
+  useEffect(() => {
+    setOnboardingActive(flow !== null);
+  }, [flow]);
+
+  const create = useCallback(async () => {
+    const mnemonic = generateMnemonic();
+    const { publicKey, secretKey } = keypairFromMnemonic(mnemonic);
+    const enc = generateEncryptionKeypair();
+    const wallet: UnifiedWallet = {
+      id: `wallet-${Date.now()}`,
+      displayName: "My Wallet",
+      createdAt: Date.now(),
+      signingPublicKey: publicKey,
+      signingPrivateKey: secretKey,
+      encryptionPublicKey: enc.publicKey,
+      encryptionPrivateKey: enc.privateKey,
+      version: 2,
+      mnemonic,
+    };
+    saveUnifiedWallet(wallet);
+    notifyWalletChanged();
+    registerWalletOnNode({
+      id: wallet.id,
+      displayName: wallet.displayName,
+      signingPublicKey: wallet.signingPublicKey,
+      encryptionPublicKey: wallet.encryptionPublicKey,
+    }).catch(() => {});
+    setFlow({ mode: "create", step: "seed" });
+  }, []);
+
+  const afterImport = useCallback((wallet: UnifiedWallet) => {
+    saveUnifiedWallet(wallet);
+    notifyWalletChanged();
+    setFlow({ mode: "import", step: hasEncryptedWallet() ? "onboarding" : "password" });
+  }, []);
+
+  const importMnemonic = useCallback(
+    async (phrase: string) => {
+      const mnemonic = normalizeRecoveryPhrase(phrase);
+      const { publicKey, secretKey } = keypairFromMnemonic(mnemonic);
+      const enc = generateEncryptionKeypair();
+      afterImport({
+        id: `wallet-${Date.now()}`,
+        displayName: "Recovered Wallet",
+        createdAt: Date.now(),
+        signingPublicKey: publicKey,
+        signingPrivateKey: secretKey,
+        encryptionPublicKey: enc.publicKey,
+        encryptionPrivateKey: enc.privateKey,
+        version: 2,
+        mnemonic,
+      });
+    },
+    [afterImport],
+  );
+
+  const importBackup = useCallback(
+    async (data: string, password: string) => {
+      if (!data.trim()) throw new WalletError("Paste your backup data or choose a .pqcbackup file");
+      if (!password) throw new WalletError("Enter the password used when creating the backup");
+      let wallet: UnifiedWallet;
+      try {
+        wallet = await decryptWallet(data.trim(), password);
+      } catch {
+        throw new WalletError("Invalid backup data or wrong password");
+      }
+      afterImport(wallet);
+    },
+    [afterImport],
+  );
+
+  const connectExtension = useCallback(async () => {
+    const provider = getRougeChainProvider();
+    if (!provider) throw new WalletError("RougeChain extension not found — install it, or open this page in Qwalla");
+    const result = await provider.connect();
+    if (!result?.publicKey) throw new WalletError("The extension did not return a public key");
+    saveUnifiedWallet(extensionWallet(result));
+    notifyWalletChanged();
+  }, []);
+
+  const setPassword = useCallback(async (password: string) => {
+    await lockUnifiedWallet(password);
+    await unlockUnifiedWallet(password);
+    notifyWalletChanged();
+  }, []);
+
+  const unlock = useCallback(async (password: string) => {
+    try {
+      await unlockUnifiedWallet(password);
+    } catch {
+      throw new WalletError("Wrong password");
+    } finally {
+      notifyWalletChanged();
+    }
+  }, []);
+
+  const lock = useCallback(() => {
+    autoLockWallet(); // no-op without a password vault (as in apps/web)
+    notifyWalletChanged();
+  }, []);
+
+  const disconnect = useCallback(() => {
+    clearUnifiedWallet();
+    setFlow(null);
+    notifyWalletChanged();
+  }, []);
+
+  const setAutoLockMinutes = useCallback((minutes: number) => {
+    saveVaultSettings({ ...getVaultSettings(), autoLockMinutes: minutes });
+    setAutoLockState(minutes);
+  }, []);
+
+  const advanceFlow = useCallback((step: FlowStep | null) => {
+    setFlow((f) => (f && step ? { ...f, step } : null));
+  }, []);
+
+  const value = useMemo<WalletContextValue>(
+    () => ({
+      ...snapshot,
+      flow,
+      autoLockMinutes,
+      create,
+      importMnemonic,
+      importBackup,
+      connectExtension,
+      setPassword,
+      unlock,
+      lock,
+      disconnect,
+      setAutoLockMinutes,
+      advanceFlow,
+      refresh: notifyWalletChanged,
+    }),
+    [snapshot, flow, autoLockMinutes, create, importMnemonic, importBackup, connectExtension, setPassword, unlock, lock, disconnect, setAutoLockMinutes, advanceFlow],
+  );
+  return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
+}
+
+export function useWallet(): WalletContextValue {
+  const ctx = useContext(WalletContext);
+  if (!ctx) throw new Error("WalletProvider is required");
+  return ctx;
+}
+
+export interface Signer {
+  kind: "local" | "extension";
+  publicKey: string;
+  sign(payload: TransactionPayload): Promise<SignedTransaction>;
+}
+
+/**
+ * Signing for the unlocked wallet, through core only: local ML-DSA-65 keys, or the extension /
+ * Qwalla provider when the wallet has no local private key. null when nothing can sign.
+ */
+export function useSigner(): Signer | null {
+  const { wallet } = useWallet();
+  return useMemo(() => {
+    if (!wallet) return null;
+    const publicKey = wallet.signingPublicKey;
+    if (wallet.signingPrivateKey) {
+      const priv = wallet.signingPrivateKey;
+      return { kind: "local", publicKey, sign: async (p) => signTransaction(p, priv, publicKey) };
+    }
+    return { kind: "extension", publicKey, sign: (p) => signViaExtension(p, publicKey) };
+  }, [wallet]);
+}
+
+/** Display identity for shells / previews: connected (unlocked), locked, short rouge1 address. */
+export function useWalletIdentity(): { connected: boolean; locked: boolean; short: string; address: string | null; networkLabel: string } {
+  const { status, publicKey, network } = useWallet();
+  const { full, display } = useRougeAddress(publicKey);
+  return {
+    connected: status === "unlocked",
+    locked: status === "locked",
+    short: display,
+    address: full,
+    networkLabel: network === "mainnet" ? "Mainnet" : "Testnet",
+  };
+}

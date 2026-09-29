@@ -16,6 +16,7 @@ import {
 import { useChain } from "./chain";
 import { useRead, useStats } from "./read";
 import { TxTable } from "./tables";
+import { BridgeTransferPanel } from "./Bridge";
 import {
   AddressLink,
   Amount,
@@ -537,6 +538,9 @@ function TxBody({ tx: t }: { tx: TxDetail }) {
             ]}
           />
         </Section>
+      )}
+      {(t.type === "bridge_withdraw" || t.type === "bridge_mint") && (
+        <BridgeTransferPanel txId={t.id} />
       )}
       {t.receipt && t.receipt.logs.length > 0 && (
         <Section

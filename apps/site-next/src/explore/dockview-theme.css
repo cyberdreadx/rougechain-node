@@ -1,0 +1,290 @@
+/* RougeChain theme for dockview, built from the brand tokens (packages/brand/tokens.css) to match
+   the approved workspace (https://rougechain-design-poc-545a5a1.netlify.app/ — homepage Explore
+   and /workspace). Measured from the approved page: panes are separate --surface cards (8px
+   radius, 1px --border ring) with a 6px gap on a --bg canvas; 40px #13101b header with a hairline
+   bottom rule; 36px tabs (7px top radius, 0 10px padding, 12px/500 Space Grotesk) lifted to the
+   pane surface; a violet accent on the focused pane's tab; muted ⛶ / − glyph buttons and an ink
+   "…" menu. Every dockview colour variable is overridden so no default grey/blue remains.
+   Loaded only with the lazy desktop workspace chunk. */
+.dockview-theme-rougechain {
+  color-scheme: dark;
+  --dv-group-view-background-color: var(--surface);
+  --dv-tabs-and-actions-container-background-color: #13101b;
+  --dv-tabs-and-actions-container-height: 40px;
+  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-tab-font-size: 12px;
+  --dv-activegroup-visiblepanel-tab-background-color: var(--surface);
+  --dv-activegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--surface);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-activegroup-visiblepanel-tab-color: var(--ink);
+  --dv-activegroup-hiddenpanel-tab-color: var(--muted);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--ink);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--muted);
+  --dv-tab-divider-color: transparent;
+  --dv-separator-border: transparent;
+  --dv-paneview-header-border-color: var(--border);
+  --dv-paneview-active-outline-color: var(--violet);
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: color-mix(in srgb, var(--violet) 55%, transparent);
+  --dv-drag-over-background-color: color-mix(
+    in srgb,
+    var(--violet) 12%,
+    transparent
+  );
+  --dv-drag-over-border-color: var(--violet);
+  --dv-drag-over-border: 1px solid var(--violet);
+  --dv-edge-dock-indicator-color: var(--violet);
+  --dv-icon-hover-background-color: var(--raised);
+  --dv-tabs-container-scrollbar-color: var(--border);
+  --dv-scrollbar-background-color: var(--border);
+  --dv-border-radius: 8px;
+  --dv-tab-border-radius: 7px 7px 0 0;
+  --dv-dropdown-border-radius: 8px;
+  --dv-sash-border-radius: 4px;
+  --dv-tab-margin: 0;
+  --dv-tab-margin-inline: 0;
+  --dv-tab-margin-block: 0;
+  --dv-spacing-padding: 0px;
+  --dv-tab-close-icon-size: 12px;
+  --dv-floating-box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.35);
+  --dv-floating-border: 1px solid var(--border);
+  --dv-floating-group-border: 1px solid var(--border);
+  --dv-floating-titlebar-background-color: #13101b;
+  --dv-floating-titlebar-border-bottom: 1px solid var(--border);
+  --dv-floating-group-dragging-opacity: 0.85;
+  --dv-overlay-z-index: 30;
+  --dv-tab-group-color-grey: var(--muted);
+  --dv-tab-group-color-blue: var(--violet);
+  --dv-tab-group-color-red: var(--red);
+  --dv-tab-group-color-yellow: var(--warning);
+  --dv-tab-group-color-green: var(--live);
+  --dv-tab-group-color-pink: var(--magenta);
+  --dv-tab-group-color-purple: var(--violet);
+  --dv-tab-group-color-cyan: var(--live);
+  --dv-tab-group-color-orange: var(--warning);
+  font-family: var(--font);
+  font-size: 12px;
+  line-height: 1.3;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* Pane cards: the hairline ring is an overlay so dockview's clipping never hides it. */
+.dockview-theme-rougechain .dv-groupview {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.dockview-theme-rougechain .dv-groupview::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 4;
+}
+.dockview-theme-rougechain .dv-tabs-and-actions-container {
+  border-radius: 8px 8px 0 0;
+  box-shadow: inset 0 -1px 0 var(--border);
+  padding-right: 2px;
+}
+.dockview-theme-rougechain .dv-tabs-container {
+  padding: 4px 7px 0 4px;
+  align-items: flex-end;
+}
+
+/* Tabs. */
+.dockview-theme-rougechain .dv-tab {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 7px 7px 0 0;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.dockview-theme-rougechain .dv-tab.dv-active-tab {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 7%, transparent);
+}
+.dockview-theme-rougechain .dv-tab.dv-inactive-tab:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+}
+/* No dockview tab dividers; the ::before slot carries the focused-pane accent instead. */
+.dockview-theme-rougechain .dv-tabs-container .dv-tab::before {
+  content: none;
+}
+.dockview-theme-rougechain
+  .dv-groupview.dv-active-group
+  .dv-tab.dv-active-tab::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 3px;
+  right: 3px;
+  width: auto;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--violet);
+  z-index: 1;
+}
+.dockview-theme-rougechain .dv-tab:focus-visible::after,
+.dockview-theme-rougechain .dv-tab:has(:focus-visible)::after {
+  outline: 2px solid var(--violet) !important;
+  outline-offset: -2px;
+  border-radius: 7px 7px 0 0;
+}
+.dockview-theme-rougechain .dv-default-tab {
+  gap: 6px;
+}
+.dockview-theme-rougechain .dv-default-tab-action {
+  color: var(--muted);
+  border-radius: 5px;
+  padding: 2px;
+}
+.dockview-theme-rougechain .dv-default-tab-action:hover {
+  color: var(--ink);
+  background: var(--raised);
+}
+
+/* Header actions: ⛶ and − glyphs (muted), then the ink "…" menu button. */
+.dockview-theme-rougechain .dv-right-actions-container,
+.dockview-theme-rougechain .dv-right-actions-container > .dv-react-part {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+.dockview-theme-rougechain .panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding-right: 6px;
+}
+.dockview-theme-rougechain .panel-actions button {
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 5px 7px;
+  font: 12px var(--font);
+  line-height: 16px;
+}
+.dockview-theme-rougechain .panel-actions .panel-menu-button {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--ink);
+}
+.dockview-theme-rougechain .panel-actions button:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--raised);
+}
+.dockview-theme-rougechain .panel-actions button:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 0;
+}
+.dockview-theme-rougechain .panel-actions button[aria-pressed="true"] {
+  color: var(--violet);
+}
+
+/* Tab overflow dropdown. */
+.dockview-theme-rougechain .dv-tabs-overflow-dropdown-default {
+  color: var(--muted);
+  font-family: var(--font);
+}
+.dockview-theme-rougechain .dv-tabs-overflow-container {
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--ink);
+}
+
+/* Drag and drop: violet drop target, never dockview's default blue. */
+.dockview-theme-rougechain .dv-drop-target-anchor,
+.dockview-theme-rougechain
+  .dv-drop-target
+  > .dv-drop-target-dropzone
+  > .dv-drop-target-selection {
+  background-color: color-mix(in srgb, var(--violet) 12%, transparent);
+  border: 1px solid var(--violet);
+  border-radius: 4px;
+}
+.dockview-theme-rougechain .dv-sash:hover,
+.dockview-theme-rougechain .dv-sash.dv-active {
+  background-color: color-mix(in srgb, var(--violet) 55%, transparent);
+}
+
+/* Floating windows (full /workspace only). */
+.dockview-theme-rougechain .dv-resize-container {
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  box-shadow: var(--dv-floating-box-shadow);
+}
+.dockview-theme-rougechain .dv-resize-container .dv-groupview {
+  box-shadow: none;
+}
+
+/* "…" panel menu (portalled to body so pane overflow never clips it). */
+.panel-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 170px;
+  display: grid;
+  padding: 5px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+.panel-menu button {
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  font: 12px var(--font);
+  text-align: left;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.panel-menu button:hover:not(:disabled),
+.panel-menu button:focus-visible {
+  background: var(--surface);
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--violet);
+}
+
+/* Portalled view content fills the panel and scrolls inside it. */
+.dock-view-slot,
+.dock-view-host {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.dock-view-host > .explore-content {
+  height: 100%;
+}
+.dock-watermark {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 24px;
+  text-align: center;
+}
+.dockview-theme-rougechain .dv-default-tab-action svg {
+  width: 10px;
+  height: 10px;
+}

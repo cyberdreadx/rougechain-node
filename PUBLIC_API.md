@@ -536,6 +536,108 @@ Get total burned amounts for all tokens.
 }
 ```
 
+## Bridge Activity (public, read-only)
+
+Every cross-chain bridge transfer (deposits into RougeChain and withdrawals out of it) with its
+status and the transaction on both chains. Built only from accepted blocks, the mempool and
+the node's existing bridge stores; nothing is written. No signature or relayer secret
+is involved, and no relayer internals are returned.
+
+### List Bridge Activity
+
+```
+GET /api/bridge/activity?limit=25&before=202-0
+```
+
+| Query | Meaning |
+|-------|---------|
+| `limit` | 1–100, default 25. |
+| `before` | Pagination cursor: `<height>-<index>` (from `cursor` / `nextCursor`) or a bare `<height>` (everything below that block). Omit for the newest page. |
+
+Newest first. Transactions still in the mempool lead the first page (with `blockHeight`,
+`timestamp` and `cursor` = `null`); pages read with `before` contain only transactions in blocks.
+
+```json
+{
+  "items": [
+    {
+      "kind": "withdrawal",
+      "asset": "qBTC",
+      "externalAsset": "BTC",
+      "amountUnits": 5000,
+      "decimals": 8,
+      "fromChain": "rougechain",
+      "toChain": "bitcoin",
+      "rougechainTxId": "d7df36b845ad0d147af6d717c2a8860026bbdb442c5375990a32e0efe6eb4c2c",
+      "rougechainAddress": "rouge1…",
+      "blockHeight": 202,
+      "externalChainId": "bitcoin",
+      "externalNetwork": "mainnet",
+      "externalAddress": "bc1qvt4r5dazmystwspgp62vh9ve5tutw5av4atjcz",
+      "externalTxHash": "91d306fcedfc15ce8cb8f1c547c5c2d403a20d138a74cc66fbb4a5e104259b84",
+      "status": "paid",
+      "statusReason": "payout_verified",
+      "timestamp": 1790716492488,
+      "statusUpdatedAt": 1790717000000,
+      "cursor": "202-0"
+    }
+  ],
+  "nextCursor": "198-1",
+  "limit": 25
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `kind` | `deposit` (a `bridge_mint`) or `withdrawal` (a `bridge_withdraw`). |
+| `asset` / `externalAsset` | Token on RougeChain (`qETH`, `qUSDC`, `qBTC`, `XRGE`) and on the external chain (`ETH`, `USDC`, `BTC`, `XRGE`; `null` for a non-bridge token). |
+| `amountUnits` / `decimals` | Raw on-chain amount and its decimals: qBTC 8 (1 unit = 1 sat), qETH / qUSDC 6, XRGE 0. |
+| `fromChain` / `toChain` | `rougechain`, `base`, `base-sepolia`, `bitcoin`, `bitcoin-testnet`, or `unknown`. |
+| `rougechainTxId` / `blockHeight` / `timestamp` | The RougeChain transaction, its block and block time (ms). |
+| `rougechainAddress` | rouge1 address of the withdrawal sender or the deposit recipient. |
+| `externalChainId` | `"8453"` (Base), `"84532"` (Base Sepolia), `"bitcoin"`, or `null` when the node has no Base chain configured. |
+| `externalNetwork` | `base`, `base-sepolia`, or for Bitcoin `mainnet` / `testnet`. |
+| `externalAddress` | Withdrawals: the destination signed in the transaction (0x… or a Bitcoin address). Deposits: `null`. |
+| `externalTxHash` | Withdrawals: the payout transaction, only once the payout was verified (`paid`). Deposits: `null`. |
+| `status` / `statusReason` | See below. |
+| `statusUpdatedAt` | When the node's payout record last changed (withdrawals), else `null`. |
+| `cursor` | This item's pagination position (`null` in the mempool). |
+
+**Status**
+
+| `status` | `statusReason` | Meaning |
+|----------|----------------|---------|
+| `pending` | `in_mempool` | Submitted, not in a block yet. |
+| `queued` | `awaiting_payout` | Withdrawal accepted on-chain, waiting for the relayer to pay out. |
+| `paid` | `payout_verified` | Withdrawal paid; the payout was verified on the external chain. |
+| `paid` | `minted` | Deposit minted on RougeChain. |
+| `failed` | `rejected_on_chain` | The transaction's receipt is failed (nothing was burned or minted). |
+| `failed` | `payout_retrying` | Payout attempts have failed so far; the relayer keeps retrying (or refunds). |
+| `refunded` | `refunded_on_rougechain` | The payout could not complete and the tokens were minted back to the sender. |
+| `unknown` | `no_payout_record` | The node holds no payout record for this withdrawal (e.g. before the payout store existed). |
+
+**Always `null` (not recorded by the node, never guessed):** the external source transaction
+and sender of a deposit. The daemon's claim store keeps source hashes only as a replay-protection
+set without a link to the mint transaction. Every `bridge_mint` is listed as a deposit, which
+includes refund mints and testnet test mints.
+
+**Not exposed:** relayer error strings, attempt counters, owner public keys, secrets. A payout
+hash or address that is not in the expected format for its chain is returned as `null`.
+
+**Errors:** `400` for a bad `limit` / `before`; `503` `{"error":"bridge state degraded","degraded":true}`
+while the derived bridge payout state is degraded (the same fail-closed rule as
+`/api/bridge/health`); `503` `{"error":"bridge activity unavailable"}` on an internal read failure.
+
+### Get One Bridge Transfer
+
+```
+GET /api/bridge/activity/:txId
+```
+
+`txId` is the 64-character lowercase hex RougeChain transaction id (an `xrge:` prefix is
+accepted). Returns a single item (same fields as above), `404` when the transaction is not a
+bridge transaction or is unknown, `400` for a malformed id, `503` as above.
+
 ---
 
 ## Secure v2 API Endpoints

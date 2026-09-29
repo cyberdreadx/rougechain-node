@@ -11,6 +11,7 @@ import {
 } from "./allowlist";
 import { networkConfig, type NetworkId } from "./network";
 import * as n from "./normalize";
+import * as b from "./bridge";
 
 export const READ_TIMEOUT_MS = 8000;
 
@@ -129,6 +130,33 @@ export function createReadClient(network: NetworkId) {
         { addr },
         { limit, before },
         n.normalizeContractEvents,
+      ),
+    // Bridge (public reads only).
+    bridgeConfig: () =>
+      get(network, "bridgeConfig", {}, {}, b.normalizeBridgeConfig),
+    bridgeActivity: (limit: number, before?: string) =>
+      get(
+        network,
+        "bridgeActivity",
+        {},
+        { limit, before },
+        b.normalizeBridgeActivityPage,
+      ),
+    bridgeActivityItem: (txId: string) =>
+      get(network, "bridgeActivityItem", { txId }, {}, (r) =>
+        b.normalizeBridgeActivityItem(r),
+      ),
+    bridgeWithdrawals: () =>
+      get(network, "bridgeWithdrawals", {}, {}, (r) =>
+        b.normalizeBridgeWithdrawals(r, "bridge withdrawals"),
+      ),
+    bridgeBtcWithdrawals: () =>
+      get(network, "bridgeBtcWithdrawals", {}, {}, (r) =>
+        b.normalizeBridgeWithdrawals(r, "btc withdrawals"),
+      ),
+    bridgeXrgeWithdrawals: () =>
+      get(network, "bridgeXrgeWithdrawals", {}, {}, (r) =>
+        b.normalizeBridgeWithdrawals(r, "xrge withdrawals"),
       ),
   };
 }

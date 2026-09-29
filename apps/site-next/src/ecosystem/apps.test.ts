@@ -11,7 +11,7 @@ describe("ecosystem registry", () => {
   });
   it("keeps proposed hosts separate from destinations", () => {
     expect(appHref(appById("wallet")!)).not.toContain("wallet.rougechain.io");
-    expect(appById("explorer")!.localNavigation).toHaveLength(6);
+    expect(appById("explorer")!.localNavigation).toHaveLength(7);
     expect(appById("swap")!.localNavigation).toHaveLength(3);
   });
 });

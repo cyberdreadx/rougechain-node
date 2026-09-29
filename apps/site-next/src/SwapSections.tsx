@@ -1,11 +1,11 @@
-import { useDemoWallet, DEMO_SHORT_ADDRESS } from "./wallet/DemoWalletProvider";
+import { useWalletIdentity } from "./wallet/WalletProvider";
 import { DemoBadge, Button, EmptyState } from "@rougechain/ui";
 export default function SwapSections({
   section,
 }: {
   section: "pools" | "positions";
 }) {
-  const wallet = useDemoWallet();
+  const wallet = useWalletIdentity();
   return (
     <main id="main" className="app-main">
       <div className="container">
@@ -39,8 +39,8 @@ export default function SwapSections({
           >
             <span>
               {wallet.connected
-                ? `Demo account: ${DEMO_SHORT_ADDRESS}. No positions are fetched.`
-                : "Preview a shared identity using Connect Wallet in the header."}
+                ? `Account: ${wallet.short}. No positions are fetched.`
+                : "Connect a wallet using Connect Wallet in the header."}
             </span>
           </EmptyState>
         )}

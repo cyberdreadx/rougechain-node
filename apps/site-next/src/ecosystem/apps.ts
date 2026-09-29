@@ -39,8 +39,13 @@ export const apps: EcosystemApp[] = [
     description: "Your assets, secured for tomorrow.",
     proposedHost: "wallet.rougechain.io",
     icon: "wallet",
-    status: "preview",
+    status: "live",
+    pocRoute: "/wallet",
     workspaceView: "Wallet",
+    localNavigation: [
+      { label: "Wallet", path: "/wallet" },
+      { label: "Settings", path: "/settings" },
+    ],
   },
   {
     id: "wallet-extension",
@@ -174,6 +179,13 @@ export const apps: EcosystemApp[] = [
         label: "Contracts",
         path: "/contracts",
         match: ["/contracts", "/contract"],
+      },
+      {
+        label: "Bridge",
+        path: "/explorer/bridge",
+        // "/bridge" only lights this up on explorer.rougechain.io; on the main site /bridge is
+        // the Bridge app, which never renders the Explorer header.
+        match: ["/explorer/bridge", "/bridge-activity", "/bridge"],
       },
     ],
   },

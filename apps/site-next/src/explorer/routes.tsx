@@ -8,6 +8,7 @@ import {
   TransactionsPage,
 } from "./Lists";
 import { BlockDetailPage, TxDetailPage } from "./BlockTx";
+import { BridgeActivityPage, BridgeTransferPage } from "./Bridge";
 import {
   AddressDetailPage,
   ContractDetailPage,
@@ -31,6 +32,8 @@ export const EXPLORER_PREFIXES = [
   "/nfts",
   "/contracts",
   "/contract",
+  // Bridge activity lives under /explorer/bridge; /bridge is the Bridge app on the main site.
+  "/bridge-activity",
 ];
 
 export function matchesPrefix(pathname: string, prefix: string) {
@@ -70,6 +73,21 @@ export const explorerRoutes = [
     key="contract"
     path="/contract/:addr"
     element={<ContractDetailPage />}
+  />,
+  <Route
+    key="bridge-activity"
+    path="/explorer/bridge"
+    element={<BridgeActivityPage />}
+  />,
+  <Route
+    key="bridge-activity-alias"
+    path="/bridge-activity"
+    element={<BridgeActivityPage />}
+  />,
+  <Route
+    key="bridge-transfer"
+    path="/explorer/bridge/:txId"
+    element={<BridgeTransferPage />}
   />,
   // POC section paths now point at the real pages.
   ...["transactions", "tokens", "nfts", "contracts"].map((s) => (

@@ -9936,6 +9936,39 @@ mod bridge_store_hardening_tests {
     }
 
     #[test]
+    fn refunded_withdrawal_stays_refunded_across_restart_rebuild() {
+        use quantum_vault_storage::bridge_withdraw_store::WithdrawalStatus;
+        let (d, node, store, _user, expected_id) = accept_withdraw_with_broken_store();
+        set_readonly(&d.0.join("bridge_withdrawals.json"), false);
+        node.rebuild_bridge_withdraw_store_from(1).unwrap();
+        assert_eq!(node.relayer_pending_withdrawals().unwrap().len(), 1);
+        // The refund path now KEEPS the record as Refunded (it used to delete it).
+        assert!(store.set_status(&expected_id, WithdrawalStatus::Refunded).unwrap());
+        assert!(node.relayer_pending_withdrawals().unwrap().is_empty(), "refunded never reaches a relayer");
+        drop(node);
+        // Restart: new store handle over the same file + a new node whose init() rebuilds.
+        let store2 = std::sync::Arc::new(BridgeWithdrawStore::new(&d.0).unwrap());
+        let node2 = L1Node::new(NodeOptions {
+            data_dir: d.0.clone(),
+            chain: ChainConfig { chain_id: "test".to_string(), genesis_time: 0, block_time_ms: 1000 },
+            mine: false,
+            bridge_withdraw_store: Some(store2.clone()),
+            bridge_authority_keys: Vec::new(),
+            genesis_allocations: Vec::new(), genesis_validators: Vec::new(),
+        }).unwrap();
+        node2.init().unwrap();
+        assert_eq!(node2.rebuild_bridge_withdraw_store_from(1).unwrap(), 0, "nothing re-created");
+        let rec = store2.get(&expected_id).unwrap().expect("record kept");
+        assert!(matches!(rec.status, WithdrawalStatus::Refunded), "still Refunded after restart");
+        assert!(node2.relayer_pending_withdrawals().unwrap().is_empty(), "no payout instruction after restart");
+        // Regression record: DELETING the record (old behaviour) is exactly what let the rebuild
+        // re-create it as Pending — i.e. payable on top of the refund.
+        assert!(store2.remove(&expected_id).unwrap());
+        assert_eq!(node2.rebuild_bridge_withdraw_store_from(1).unwrap(), 1);
+        assert_eq!(node2.relayer_pending_withdrawals().unwrap().len(), 1, "deleted refund comes back as Pending (why we keep it)");
+    }
+
+    #[test]
     fn restart_reconstructs_missing_record_from_history() {
         let (d, node, _store, user, expected_id) = accept_withdraw_with_broken_store();
         set_readonly(&d.0.join("bridge_withdrawals.json"), false);
