@@ -5,6 +5,8 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  // .env files stay at the repo root (monorepo): same place as before the move.
+  envDir: path.resolve(__dirname, "../.."),
   server: {
     host: "0.0.0.0", // Use IPv4 to avoid localhost connection issues on Windows
     port: 5173,       // Vite default; 8080 may be blocked by other software
