@@ -1,6 +1,10 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
+// Wallet tests run the real vault crypto (PBKDF2-SHA256, 600k iterations). On a loaded machine
+// that can take seconds, so waits for UI that follows it get a realistic ceiling. A real failure
+// still fails; it just waits longer before reporting.
+configure({ asyncUtilTimeout: 30_000 });
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();

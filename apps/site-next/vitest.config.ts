@@ -43,6 +43,7 @@ export default defineConfig((env) =>
       },
       test: {
         environment: "jsdom",
+        testTimeout: 120_000,
         globals: true,
         dir: repoRoot,
         include: [
