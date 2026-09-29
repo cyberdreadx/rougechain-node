@@ -17,6 +17,7 @@ mod websocket;
 mod jsonrpc;
 mod indexer;
 mod bridge_btc;
+mod bridge_activity;
 mod push;
 mod fork;
 mod fork_tables;
@@ -1014,6 +1015,9 @@ fn build_http_router(state: AppState) -> Router {
         .route("/api/bridge/claim", post(bridge_claim))
         .route("/api/bridge/withdraw", post(bridge_withdraw))
         .route("/api/bridge/health", get(bridge_health))
+        // Public, read-only bridge activity feed (deposits + withdrawals, sanitized statuses).
+        .route("/api/bridge/activity", get(bridge_activity_list))
+        .route("/api/bridge/activity/:tx_id", get(bridge_activity_get))
         .route("/api/bridge/withdrawals", get(bridge_withdrawals))
         .route("/api/bridge/withdrawals/:tx_id", delete(bridge_withdrawal_fulfill))
         .route("/api/bridge/withdrawals/:tx_id/failure", post(bridge_withdrawal_report_failure))
@@ -7966,6 +7970,85 @@ async fn bridge_health(State(state): State<AppState>) -> (StatusCode, Json<serde
         "pending": state.bridge_withdraw_store.list_pending().map(|v| v.len()).unwrap_or(0),
     });
     (if degraded { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK }, Json(body))
+}
+
+/// `bridge_activity::ActivitySource` over the live node + stores. Blocking reads only; always
+/// used from `spawn_blocking` (the claim store is async, so its lookup is driven via the handle).
+struct NodeActivitySource {
+    node: Arc<L1Node>,
+    withdraws: Arc<BridgeWithdrawStore>,
+    claims: Arc<BridgeClaimStore>,
+    rt: tokio::runtime::Handle,
+}
+
+impl bridge_activity::ActivitySource for NodeActivitySource {
+    fn degraded(&self) -> bool { self.node.bridge_store_degraded() }
+    fn tip_height(&self) -> Result<u64, String> { self.node.get_tip_height() }
+    fn block(&self, height: u64) -> Result<Option<quantum_vault_types::BlockV1>, String> { self.node.get_block(height) }
+    fn tx_height(&self, tx_id: &str) -> Result<Option<u64>, String> { self.node.store_ref().lookup_tx_height(tx_id) }
+    fn receipt_ok(&self, tx_id: &str) -> Option<bool> {
+        match self.node.get_receipt(tx_id) {
+            Ok(Some(r)) => Some(matches!(r.status, quantum_vault_types::TxStatus::Success)),
+            _ => None,
+        }
+    }
+    fn mempool(&self) -> Vec<quantum_vault_types::TxV1> { self.node.get_mempool_snapshot() }
+    fn withdraw_record(&self, store_tx_id: &str) -> Option<bridge_activity::WithdrawRecordView> {
+        self.withdraws.get(store_tx_id).ok().flatten().as_ref().map(bridge_activity::WithdrawRecordView::from)
+    }
+    fn refunded(&self, store_tx_id: &str) -> bool {
+        self.rt.block_on(self.claims.contains(&format!("refund:{}", store_tx_id)))
+    }
+    fn external(&self) -> bridge_activity::ExternalConfig {
+        bridge_activity::ExternalConfig {
+            base_chain_id: configured_bridge_chain_id(),
+            btc_network: bridge_btc::btc_network(),
+        }
+    }
+}
+
+fn bridge_activity_source(state: &AppState) -> NodeActivitySource {
+    NodeActivitySource {
+        node: state.node.clone(),
+        withdraws: state.bridge_withdraw_store.clone(),
+        claims: state.bridge_claim_store.clone(),
+        rt: tokio::runtime::Handle::current(),
+    }
+}
+
+/// Incremental scan of bridge txs in accepted blocks, shared by every activity request.
+static BRIDGE_ACTIVITY_SCAN: std::sync::OnceLock<std::sync::Mutex<bridge_activity::ChainScan>> = std::sync::OnceLock::new();
+
+/// GET /api/bridge/activity?limit=&before= — public, read-only, newest first. 503 while the
+/// derived bridge state is degraded (same fail-closed rule as /api/bridge/health).
+async fn bridge_activity_list(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let src = bridge_activity_source(&state);
+    let result = tokio::task::spawn_blocking(move || {
+        let lock = BRIDGE_ACTIVITY_SCAN.get_or_init(|| std::sync::Mutex::new(bridge_activity::ChainScan::default()));
+        let mut scan = match lock.lock() { Ok(g) => g, Err(p) => p.into_inner() };
+        bridge_activity::activity_page(&src, &mut scan, q.get("limit").map(|s| s.as_str()), q.get("before").map(|s| s.as_str()))
+    })
+    .await
+    .unwrap_or(Err(bridge_activity::ActivityError::Unavailable));
+    match result {
+        Ok(page) => Json(page).into_response(),
+        Err(e) => e.into_response().into_response(),
+    }
+}
+
+/// GET /api/bridge/activity/:tx_id — one bridge transfer by its RougeChain tx id.
+async fn bridge_activity_get(State(state): State<AppState>, Path(tx_id): Path<String>) -> Response {
+    let src = bridge_activity_source(&state);
+    let result = tokio::task::spawn_blocking(move || bridge_activity::activity_item(&src, &tx_id))
+        .await
+        .unwrap_or(Err(bridge_activity::ActivityError::Unavailable));
+    match result {
+        Ok(item) => Json(item).into_response(),
+        Err(e) => e.into_response().into_response(),
+    }
 }
 
 async fn bridge_withdrawals(State(state): State<AppState>) -> Result<Json<BridgeWithdrawalsResponse>, (StatusCode, Json<serde_json::Value>)> {

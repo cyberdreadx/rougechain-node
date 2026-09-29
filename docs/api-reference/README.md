@@ -189,6 +189,8 @@ The `payload` is JSON-serialized with keys sorted alphabetically, then signed wi
 | `/api/bridge/claim` | POST | Claim bridge deposit |
 | `/api/bridge/withdraw` | POST | Withdraw to EVM |
 | `/api/bridge/withdrawals` | GET | List pending withdrawals |
+| `/api/bridge/activity` | GET | Public bridge activity (deposits + withdrawals, paginated) |
+| `/api/bridge/activity/:txId` | GET | One bridge transfer by RougeChain tx id |
 | `/api/bridge/withdrawals/:txId` | DELETE | Fulfill withdrawal |
 | `/api/bridge/xrge/config` | GET | XRGE bridge config |
 | `/api/bridge/xrge/claim` | POST | Claim XRGE deposit |
