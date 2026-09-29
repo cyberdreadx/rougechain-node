@@ -6,6 +6,7 @@ import "@fontsource/space-grotesk/latin-600.css";
 import "@fontsource/ibm-plex-mono/latin-400.css";
 import "@rougechain/brand/tokens.css";
 import "./style.css";
+import "./wallet/wallet.css";
 import App from "./App";
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

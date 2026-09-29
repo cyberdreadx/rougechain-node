@@ -2,10 +2,7 @@ import { useRef, useState } from "react";
 import { Menu } from "lucide-react";
 import { Dialog } from "@rougechain/ui";
 import { DOCS_URL } from "./apps";
-import {
-  useDemoWallet,
-  DEMO_SHORT_ADDRESS,
-} from "../wallet/DemoWalletProvider";
+import { useWalletIdentity } from "../wallet/WalletProvider";
 export const marketingSections = [
   "Technology",
   "Explore",
@@ -17,7 +14,7 @@ export const marketingSections = [
 export function ProjectNavigation() {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const wallet = useDemoWallet();
+  const wallet = useWalletIdentity();
   const close = () => {
     setOpen(false);
     window.requestAnimationFrame(() => trigger.current?.focus());
@@ -46,7 +43,7 @@ export function ProjectNavigation() {
         </nav>
         <p className="wallet-disclaimer">
           {wallet.connected
-            ? `Demo connected · ${DEMO_SHORT_ADDRESS}`
+            ? `Wallet connected · ${wallet.short}`
             : "Wallet disconnected · use Connect Wallet in the header."}
         </p>
       </Dialog>

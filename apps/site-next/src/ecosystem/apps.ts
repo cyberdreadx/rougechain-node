@@ -39,8 +39,13 @@ export const apps: EcosystemApp[] = [
     description: "Your assets, secured for tomorrow.",
     proposedHost: "wallet.rougechain.io",
     icon: "wallet",
-    status: "preview",
+    status: "live",
+    pocRoute: "/wallet",
     workspaceView: "Wallet",
+    localNavigation: [
+      { label: "Wallet", path: "/wallet" },
+      { label: "Settings", path: "/settings" },
+    ],
   },
   {
     id: "wallet-extension",
