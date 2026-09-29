@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { vi } from "vitest";
-import { DemoWalletProvider } from "../wallet/DemoWalletProvider";
+import { WalletProvider } from "../wallet/WalletProvider";
 import { NetworkProvider } from "../Network";
 export function wrap(children: ReactNode) {
   const client = new QueryClient({
@@ -13,11 +13,11 @@ export function wrap(children: ReactNode) {
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Unavailable")));
   return render(
     <QueryClientProvider client={client}>
-      <DemoWalletProvider>
+      <WalletProvider autoRegister={false}>
         <NetworkProvider>
           <MemoryRouter>{children}</MemoryRouter>
         </NetworkProvider>
-      </DemoWalletProvider>
+      </WalletProvider>
     </QueryClientProvider>,
   );
 }

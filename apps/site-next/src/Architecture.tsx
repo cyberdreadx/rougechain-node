@@ -141,14 +141,13 @@ export default function Architecture() {
           <article className="surface">
             <h3>What the POC demonstrates</h3>
             <p>
-              DemoWalletProvider shares one synthetic identity across routes and
-              workspace previews. Session storage retains only a demo flag,
-              synthetic address and selected source.
+              WalletProvider shares the real browser wallet across routes and
+              workspace previews, through @rougechain/core: the same storage
+              keys, vault format and signing as the current rougechain.io.
             </p>
             <p>
-              No provider, permissions, keys or signing are involved. This
-              single-origin demo does not prove cross-origin wallet
-              connectivity.
+              It is single-origin: this does not prove cross-origin wallet
+              connectivity for separately hosted apps.
             </p>
           </article>
           <article className="surface">

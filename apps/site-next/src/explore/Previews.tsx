@@ -1,48 +1,40 @@
-import {
-  useDemoWallet,
-  DEMO_SHORT_ADDRESS,
-} from "../wallet/DemoWalletProvider";
+import { useWalletIdentity } from "../wallet/WalletProvider";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Button, Status, CodeBlock } from "@rougechain/ui";
 import { useNetwork } from "../Network";
 import { DOCS_URL } from "../ecosystem/apps";
 import { quote } from "../Swap";
-// POC ONLY: these previews simulate UI state, not wallet, messaging or transaction services.
+// Swap / Bridge / Messenger / Validators previews simulate UI state (no services behind them).
+// The wallet preview reflects the real wallet and links to /wallet.
 export function WalletPreview() {
-  const wallet = useDemoWallet();
+  const wallet = useWalletIdentity();
   return (
     <div className="explore-content">
-      <Status state="demo">Wallet preview</Status>
+      <Status state={wallet.connected ? "live" : "loading"}>
+        {wallet.connected ? "Wallet connected" : wallet.locked ? "Wallet locked" : "No wallet"}
+      </Status>
       <h3>Your assets</h3>
       {wallet.connected ? (
         <p>
-          <strong>{DEMO_SHORT_ADDRESS}</strong>
+          <strong>{wallet.short}</strong>
           <br />
-          <span className="muted">Demo connected · synthetic identity</span>
+          <span className="muted">{wallet.networkLabel}</span>
         </p>
       ) : (
-        <p>No wallet connected.</p>
+        <p>{wallet.locked ? "Unlock your wallet to see balances." : "No wallet connected."}</p>
       )}
-      {["XRGE", "qETH", "qUSDC"].map((t) => (
-        <div className="preview-row" key={t}>
-          <strong>{t}</strong>
-          <span>—</span>
-        </div>
-      ))}
       <div className="preview-actions">
-        <Button disabled>Send</Button>
-        <Button disabled variant="outline">
-          Receive
-        </Button>
+        <Link className="button" to="/wallet">
+          Open Wallet
+        </Link>
       </div>
-      <p className="pane-note">
-        No keys, account access or signing in this demo.
-      </p>
+      <p className="pane-note">Keys stay in this browser; signing happens on the Wallet page.</p>
     </div>
   );
 }
 export function SwapPreview() {
-  const wallet = useDemoWallet();
+  const wallet = useWalletIdentity();
   const [amount, setAmount] = useState("100");
   return (
     <div className="explore-content">
@@ -50,8 +42,8 @@ export function SwapPreview() {
       <h3>Swap assets</h3>
       <p className="pane-note">
         {wallet.connected
-          ? `Demo account: ${DEMO_SHORT_ADDRESS}`
-          : "Connect Wallet in the header to preview a shared identity."}
+          ? `Account: ${wallet.short}`
+          : "Connect Wallet in the header to use your identity."}
       </p>
       <label className="preview-label">
         Pay · XRGE
@@ -77,14 +69,14 @@ export function SwapPreview() {
   );
 }
 export function BridgePreview() {
-  const wallet = useDemoWallet();
+  const wallet = useWalletIdentity();
   const [reverse, setReverse] = useState(false);
   return (
     <div className="explore-content">
       <Status state="demo">Bridge preview</Status>
       <p className="pane-note">
         {wallet.connected
-          ? `Demo account: ${DEMO_SHORT_ADDRESS}`
+          ? `Account: ${wallet.short}`
           : "No wallet connected."}
       </p>
       <h3>{reverse ? "RougeChain → Base" : "Base → RougeChain"}</h3>
@@ -101,7 +93,7 @@ export function BridgePreview() {
   );
 }
 export function MessengerPreview() {
-  const wallet = useDemoWallet();
+  const wallet = useWalletIdentity();
   const [tab, setTab] = useState("Conversations");
   return (
     <div className="explore-content">
@@ -121,7 +113,7 @@ export function MessengerPreview() {
       <h3>{tab === "Contacts" ? "No contacts yet" : "Your conversations"}</h3>
       <p>
         {wallet.connected
-          ? "Demo identity available. Messaging identity has not been initialized."
+          ? "Wallet connected. Messaging is not available on this site yet."
           : "No account connected. Messages would appear here."}
       </p>
       <Button disabled>Compose unavailable</Button>
@@ -154,7 +146,7 @@ export function MailPreview() {
   );
 }
 export function ValidatorsPreview() {
-  const wallet = useDemoWallet();
+  const wallet = useWalletIdentity();
   const n = useNetwork();
   return (
     <div className="explore-content">
@@ -164,7 +156,7 @@ export function ValidatorsPreview() {
       <h3>Network validators</h3>
       {wallet.connected && (
         <p className="pane-note">
-          Wallet preview connected · no staking account loaded
+          Wallet connected · no staking account loaded
         </p>
       )}
       <div className="network-height">{n.data?.validators ?? "—"}</div>

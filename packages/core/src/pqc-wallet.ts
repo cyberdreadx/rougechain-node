@@ -837,7 +837,7 @@ export async function mintTokens(
   recipientPublicKey: string,
   amount: number = 100,
   symbol: string = "XRGE"
-): Promise<Block> {
+): Promise<Block | undefined> {
   // Try node API first (for public deployment)
   const NODE_API_URL = getCoreApiBaseUrl();
   if (!NODE_API_URL) {

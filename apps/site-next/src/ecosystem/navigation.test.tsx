@@ -1,4 +1,4 @@
-import { DemoWalletProvider } from "../wallet/DemoWalletProvider";
+import { WalletProvider } from "../wallet/WalletProvider";
 import { render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
@@ -20,11 +20,11 @@ function wrap(child: React.ReactNode, path = "/") {
         })
       }
     >
-      <DemoWalletProvider>
+      <WalletProvider autoRegister={false}>
         <NetworkProvider>
           <MemoryRouter initialEntries={[path]}>{child}</MemoryRouter>
         </NetworkProvider>
-      </DemoWalletProvider>
+      </WalletProvider>
     </QueryClientProvider>,
   );
 }
@@ -45,7 +45,7 @@ it.each(["marketing", "Explorer", "Swap", "Workspace"])(
     const dialog = screen.getByRole("dialog", { name: "RougeChain apps" });
     expect(
       within(dialog).getByRole("link", { name: /Web Wallet/ }),
-    ).toHaveAttribute("href", "/workspace?open=wallet");
+    ).toHaveAttribute("href", "/wallet");
     expect(
       within(dialog).getByRole("link", { name: /Qwalla/ }),
     ).toHaveAttribute("href", "https://qwalla.io");
