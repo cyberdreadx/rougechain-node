@@ -9,7 +9,7 @@ export default function WorkspacePage() {
     <main id="main" className="workspace-page container">
       <div className="app-page-heading">
         <div>
-          <div className="eyebrow">Your ecosystem / Design workspace</div>
+          <div className="eyebrow">Your ecosystem / Workspace</div>
           <h1>Make room for possibility.</h1>
           <p>Open an app. Bring the network into focus.</p>
         </div>

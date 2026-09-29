@@ -9,7 +9,7 @@ import { DOCS_URL, SOURCE_URL, appById } from "./ecosystem/apps";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { matchesPrefix } from "./explorer/routes";
 import { ArrowUpRight } from "lucide-react";
-import { DemoBadge, TextLink, RougeAppShell, Status } from "@rougechain/ui";
+import { TextLink, RougeAppShell, Status } from "@rougechain/ui";
 export const DOCS = DOCS_URL;
 export const GITHUB = SOURCE_URL;
 export function MarketingHeader() {
@@ -62,7 +62,7 @@ export function AppHeader({ product }: { product: string }) {
   return (
     <RougeAppShell
       product={app.name}
-      proposedHost={app.proposedHost}
+      proposedHost=""
       brand={
         <Link className="wordmark" to="/">
           <img src="/xrge-logo.webp" alt="" />
@@ -161,7 +161,6 @@ export function Footer() {
         </div>
         <div className="footer-bottom">
           <span>© {new Date().getFullYear()} RougeChain</span>
-          <DemoBadge />
           <span>Post-quantum from genesis.</span>
         </div>
       </div>

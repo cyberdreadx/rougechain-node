@@ -82,7 +82,7 @@ it("uses keyboard-navigable mobile tabs and shared content", async () => {
   await userEvent.keyboard("{Home}{ArrowRight}");
   expect(screen.getByRole("tab", { name: "Explorer" })).toHaveFocus();
 });
-it("keeps the functional launcher if Trellis throws", () => {
+it("keeps the functional launcher if the workspace throws", () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   function Broken(): never {
     throw new Error("chunk failed");
@@ -93,7 +93,7 @@ it("keeps the functional launcher if Trellis throws", () => {
     </ExploreBoundary>,
   );
   expect(
-    screen.getByText(/Interactive layout unavailable/),
+    screen.getByText(/Workspace unavailable/),
   ).toBeInTheDocument();
   for (const name of ["Network", "Explorer", "Ecosystem", "Build", "Security"])
     expect(

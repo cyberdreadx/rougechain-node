@@ -60,7 +60,7 @@ it("shares local route and proposed-host state through the shell", () => {
     "aria-current",
     "page",
   );
-  expect(screen.getByText(/PROPOSED · explorer/)).toBeInTheDocument();
+  expect(screen.queryByText(/PROPOSED/)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeEnabled();
 });
 it("opens a preview from a reloadable query parameter", async () => {

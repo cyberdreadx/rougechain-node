@@ -17,5 +17,6 @@ Stack: React 19, Vite 7, Tailwind 4, React Router 7 — newer than `apps/web` (R
 Router 6) in the same npm workspace. `vite.config.ts` (`resolve.dedupe`) and `vitest.config.ts`
 (aliases) keep exactly one React 19 in this app's bundle and tests.
 
-Before rougechain.io switches to this app: Trellis (`@danfessler/trellis*`, the homepage/workspace
-window manager) needs a commercial licence (GitHub sponsorship for <=10 developers) or replacing.
+Trellis (the draggable window workspace in Anders' POC) was removed on 2026-09-29 to avoid its
+commercial licence ($100/month studio sponsorship + attribution). The homepage "Explore" section and
+/workspace use the tabbed CompactWorkspace (same content). Restore from git history if sponsored.
