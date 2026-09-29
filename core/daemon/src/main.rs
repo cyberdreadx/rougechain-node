@@ -7968,9 +7968,36 @@ async fn bridge_health(State(state): State<AppState>) -> (StatusCode, Json<serde
     (if degraded { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK }, Json(body))
 }
 
+/// Withdrawals a relayer may act on: the node's pending list minus anything already REFUNDED on
+/// RougeChain. A refund reserves the `refund:{tx_id}` nullifier in the claim store before minting,
+/// so this holds even if the payout record itself was lost or re-created as Pending (e.g. by the
+/// startup rebuild). A refunded withdrawal must never also be paid out on Base or Bitcoin.
+fn withhold_refunded(list: Vec<PendingWithdrawal>, refunded: impl Fn(&str) -> bool) -> Vec<PendingWithdrawal> {
+    list.into_iter()
+        .filter(|w| {
+            let r = refunded(&w.tx_id);
+            if r {
+                eprintln!("[bridge] ALERT: withdrawal {} was refunded but is pending in the payout store — withheld from relayers", w.tx_id);
+            }
+            !r
+        })
+        .collect()
+}
+
+async fn relayer_payable_withdrawals(state: &AppState) -> Result<Vec<PendingWithdrawal>, String> {
+    let list = state.node.relayer_pending_withdrawals()?;
+    let mut refunded = std::collections::HashSet::new();
+    for w in &list {
+        if state.bridge_claim_store.contains(&format!("refund:{}", w.tx_id)).await {
+            refunded.insert(w.tx_id.clone());
+        }
+    }
+    Ok(withhold_refunded(list, |id| refunded.contains(id)))
+}
+
 async fn bridge_withdrawals(State(state): State<AppState>) -> Result<Json<BridgeWithdrawalsResponse>, (StatusCode, Json<serde_json::Value>)> {
     // Fail closed while derived bridge state is degraded — the relayer must get NO list.
-    let list = state.node.relayer_pending_withdrawals()
+    let list = relayer_payable_withdrawals(&state).await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({ "error": e, "degraded": true }))))?;
     Ok(Json(BridgeWithdrawalsResponse {
         withdrawals: list
@@ -8365,7 +8392,7 @@ async fn bridge_btc_claim(
 /// GET /api/bridge/btc/withdrawals — pending qBTC withdrawals for the BTC relayer to pay out.
 async fn bridge_btc_withdrawals(State(state): State<AppState>) -> Json<BridgeWithdrawalsResponse> {
     // Fail closed while derived bridge state is degraded: the BTC relayer gets an EMPTY list.
-    let list = match state.node.relayer_pending_withdrawals() { Ok(v) => v, Err(e) => { eprintln!("[bridge] btc withdrawals list refused: {}", e); return Json(BridgeWithdrawalsResponse { withdrawals: Vec::new() }); } };
+    let list = match relayer_payable_withdrawals(&state).await { Ok(v) => v, Err(e) => { eprintln!("[bridge] btc withdrawals list refused: {}", e); return Json(BridgeWithdrawalsResponse { withdrawals: Vec::new() }); } };
     Json(BridgeWithdrawalsResponse {
         withdrawals: list
             .into_iter()
@@ -8823,7 +8850,7 @@ async fn xrge_bridge_withdraw(
 }
 
 async fn xrge_bridge_withdrawals(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let list = match state.node.relayer_pending_withdrawals() { Ok(v) => v, Err(e) => return Json(serde_json::json!({ "withdrawals": [], "degraded": true, "error": e })) };
+    let list = match relayer_payable_withdrawals(&state).await { Ok(v) => v, Err(e) => return Json(serde_json::json!({ "withdrawals": [], "degraded": true, "error": e })) };
     let xrge_withdrawals: Vec<_> = list.into_iter()
         .filter(is_xrge_withdrawal)
         .map(|w| serde_json::json!({
@@ -9163,10 +9190,17 @@ async fn bridge_withdrawal_refund(
     {
         Ok(tx) => {
             let id = bytes_to_hex(&sha256(&encode_tx_v1(&tx)));
-            let _ = state
+            // KEEP the record as Refunded (like Fulfilled): deleting it let the startup rebuild
+            // (`rebuild_bridge_withdraw_store`) re-create it from chain history as Pending, so a
+            // refunded withdrawal went back to the relayer and could ALSO be paid out. If this
+            // status write fails, the `refund:{id}` nullifier reserved above still withholds it
+            // from every relayer list (`relayer_payable_withdrawals`).
+            if let Err(e) = state
                 .bridge_withdraw_store
-                .set_status(&tx_id, WithdrawalStatus::Refunded);
-            let _ = state.bridge_withdraw_store.remove(&tx_id);
+                .set_status(&tx_id, WithdrawalStatus::Refunded)
+            {
+                eprintln!("[bridge] ALERT: refunded {} but could not persist status Refunded: {} — withheld from relayers by its refund nullifier", tx_id, e);
+            }
             Json(serde_json::json!({
                 "success": true,
                 "txId": id,
@@ -10718,6 +10752,41 @@ mod image_guard_tests {
 // ─────────────────────────────────────────────────────────────────────────────
 // R1B/R1D — daemon-side unit tests for the bridge payout helpers (no network).
 // ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod bridge_refund_withhold_tests {
+    use super::*;
+
+    fn pw(tx_id: &str) -> PendingWithdrawal {
+        PendingWithdrawal {
+            tx_id: tx_id.to_string(),
+            evm_address: "bc1qvt4r5dazmystwspgp62vh9ve5tutw5av4atjcz".to_string(),
+            amount_units: 5000,
+            created_at: 0,
+            owner_pubkey: "ab".repeat(8),
+            token_symbol: "qBTC".to_string(),
+            status: WithdrawalStatus::Pending,
+            attempts: 0,
+            last_error: None,
+            updated_at: 0,
+            payout_tx_hash: None,
+        }
+    }
+
+    #[test]
+    fn refunded_withdrawals_never_reach_a_relayer() {
+        let list = vec![pw("a1"), pw("xrge:b2"), pw("c3")];
+        let kept = withhold_refunded(list, |id| id == "xrge:b2");
+        let ids: Vec<_> = kept.iter().map(|w| w.tx_id.as_str()).collect();
+        assert_eq!(ids, vec!["a1", "c3"]);
+    }
+
+    #[test]
+    fn nothing_refunded_passes_everything_through() {
+        let kept = withhold_refunded(vec![pw("a1"), pw("c3")], |_| false);
+        assert_eq!(kept.len(), 2);
+    }
+}
+
 #[cfg(test)]
 mod bridge_r1_helper_tests {
     use super::*;
