@@ -12,6 +12,7 @@ import { ChainProvider } from "./explorer/chain";
 import { NetworkProvider, useNetwork } from "./Network";
 import Overview from "./explorer/Overview";
 import { explorerRoutes, matchesPrefix } from "./explorer/routes";
+import { BridgeActivityPage } from "./explorer/Bridge";
 import { DOCS_URL, SOURCE_URL, appById } from "./ecosystem/apps";
 
 /**
@@ -126,6 +127,8 @@ export function ExplorerRoutes() {
   return (
     <Routes>
       <Route path="/" element={<Overview />} />
+      {/* On explorer.rougechain.io there is no Bridge app, so /bridge is the bridge activity. */}
+      <Route path="/bridge" element={<BridgeActivityPage />} />
       {explorerRoutes}
       <Route
         path="*"

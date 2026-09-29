@@ -1,0 +1,57 @@
+/* Bridge activity (Explorer). Kept out of style.css; uses the brand tokens only. */
+.bridge-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.bridge-status.tone-good {
+  color: var(--live);
+  border-color: color-mix(in srgb, var(--live) 40%, var(--border));
+}
+.bridge-status.tone-wait {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
+}
+.bridge-status.tone-bad {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 40%, var(--border));
+}
+.bridge-status.tone-neutral {
+  color: var(--muted);
+}
+.bridge-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+.bridge-direction {
+  white-space: nowrap;
+}
+.bridge-table td {
+  vertical-align: middle;
+}
+.external-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  overflow-wrap: anywhere;
+}
+.external-link svg {
+  flex: none;
+  opacity: 0.75;
+}
+.bridge-fallback {
+  display: block;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border));
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.bridge-fallback strong {
+  color: var(--warning);
+  font-weight: 500;
+}

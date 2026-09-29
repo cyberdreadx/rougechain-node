@@ -175,6 +175,13 @@ export const apps: EcosystemApp[] = [
         path: "/contracts",
         match: ["/contracts", "/contract"],
       },
+      {
+        label: "Bridge",
+        path: "/explorer/bridge",
+        // "/bridge" only lights this up on explorer.rougechain.io; on the main site /bridge is
+        // the Bridge app, which never renders the Explorer header.
+        match: ["/explorer/bridge", "/bridge-activity", "/bridge"],
+      },
     ],
   },
   {
