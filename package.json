@@ -4,7 +4,11 @@
   "type": "module",
   "workspaces": [
     "apps/web",
-    "apps/extension"
+    "apps/extension",
+    "apps/site-next",
+    "packages/brand",
+    "packages/ui",
+    "packages/chain-readonly"
   ],
   "scripts": {
     "dev": "npm run dev -w @rougechain/web",
@@ -12,6 +16,9 @@
     "test": "npm run test -w @rougechain/web",
     "lint": "npm run lint -w @rougechain/web",
     "build:extension": "npm run build -w rougechain-wallet-ext",
+    "dev:next": "npm run dev -w @rougechain/site-next",
+    "build:next": "npm run build -w @rougechain/site-next",
+    "test:next": "npm run test -w @rougechain/site-next",
     "test:scripts": "vitest run --config scripts/vitest.config.ts",
     "relayer": "tsx scripts/bridge-relayer.ts",
     "relayer:btc": "tsx scripts/btc-bridge-relayer.ts",
