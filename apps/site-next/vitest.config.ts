@@ -60,6 +60,7 @@ export default defineConfig((env) =>
               /framer-motion/,
               /lucide-react/,
               /@tanstack\//,
+              /dockview/,
             ],
           },
         },

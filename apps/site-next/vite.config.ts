@@ -39,6 +39,9 @@ export default defineConfig(({ mode }) => ({
       "@tanstack/react-query",
       "framer-motion",
       "lucide-react",
+      "dockview-react",
+      "dockview",
+      "dockview-core",
     ],
   },
 }));
