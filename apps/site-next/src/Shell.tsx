@@ -6,7 +6,8 @@ import { WalletControl } from "./wallet/WalletControl";
 import { useNetwork } from "./Network";
 import { AppSwitcher } from "./ecosystem/AppSwitcher";
 import { DOCS_URL, SOURCE_URL, appById } from "./ecosystem/apps";
-import { Link, NavLink } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
+import { matchesPrefix } from "./explorer/routes";
 import { ArrowUpRight } from "lucide-react";
 import { DemoBadge, TextLink, RougeAppShell, Status } from "@rougechain/ui";
 export const DOCS = DOCS_URL;
@@ -38,9 +39,26 @@ export function MarketingHeader() {
     </header>
   );
 }
+/** The local-nav item whose `match` prefixes best fit the path (so detail pages light up their section). */
+function activeLocalItem(
+  pathname: string,
+  items: { path: string; match?: string[] }[],
+) {
+  let best: string | null = null;
+  let score = 0;
+  for (const item of items)
+    for (const prefix of item.match ?? [])
+      if (matchesPrefix(pathname, prefix) && prefix.length > score) {
+        best = item.path;
+        score = prefix.length;
+      }
+  return best;
+}
 export function AppHeader({ product }: { product: string }) {
   const app = appById(product.toLowerCase())!;
   const n = useNetwork();
+  const { pathname } = useLocation();
+  const active = activeLocalItem(pathname, app.localNavigation ?? []);
   return (
     <RougeAppShell
       product={app.name}
@@ -68,11 +86,22 @@ export function AppHeader({ product }: { product: string }) {
       }
       localNavigation={
         <nav className="local-nav" aria-label={`${app.name} navigation`}>
-          {app.localNavigation?.map((item) => (
-            <NavLink end key={item.path} to={item.path}>
-              {item.label}
-            </NavLink>
-          ))}
+          {app.localNavigation?.map((item) =>
+            item.match ? (
+              <Link
+                key={item.path}
+                to={item.path}
+                className={active === item.path ? "active" : undefined}
+                aria-current={active === item.path ? "page" : undefined}
+              >
+                {item.label}
+              </Link>
+            ) : (
+              <NavLink end key={item.path} to={item.path}>
+                {item.label}
+              </NavLink>
+            ),
+          )}
         </nav>
       }
     />

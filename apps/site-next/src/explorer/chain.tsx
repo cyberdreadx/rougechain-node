@@ -1,4 +1,10 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   createReadClient,
   networkConfig,
@@ -39,8 +45,16 @@ export type ChainContextValue = ReturnType<typeof makeValue>;
 const fallback = makeValue(initialNetwork(), () => {});
 const ChainContext = createContext<ChainContextValue>(fallback);
 
-export function ChainProvider({ children, network: forced }: { children: ReactNode; network?: NetworkId }) {
-  const [network, setState] = useState<NetworkId>(() => forced ?? initialNetwork());
+export function ChainProvider({
+  children,
+  network: forced,
+}: {
+  children: ReactNode;
+  network?: NetworkId;
+}) {
+  const [network, setState] = useState<NetworkId>(
+    () => forced ?? initialNetwork(),
+  );
   const value = useMemo(
     () =>
       makeValue(network, (next) => {
@@ -54,7 +68,9 @@ export function ChainProvider({ children, network: forced }: { children: ReactNo
       }),
     [network],
   );
-  return <ChainContext.Provider value={value}>{children}</ChainContext.Provider>;
+  return (
+    <ChainContext.Provider value={value}>{children}</ChainContext.Provider>
+  );
 }
 
 export function useChain(): ChainContextValue {

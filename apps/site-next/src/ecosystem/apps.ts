@@ -10,11 +10,11 @@ export interface EcosystemApp {
   description: string;
   proposedHost: string;
   icon: string;
-  status: "demo" | "preview" | "future" | "external";
+  status: "live" | "demo" | "preview" | "future" | "external";
   pocRoute?: string;
   externalUrl?: string;
   workspaceView?: string;
-  localNavigation?: { label: string; path: string }[];
+  localNavigation?: { label: string; path: string; match?: string[] }[];
 }
 export const DOCS_URL = "https://docs.rougechain.io/";
 export const WHITEPAPER_URL = "https://rougechain.io/RougeChain-Whitepaper.pdf";
@@ -148,20 +148,34 @@ export const apps: EcosystemApp[] = [
     description: "The network, in detail.",
     proposedHost: "explorer.rougechain.io",
     icon: "box",
-    status: "demo",
+    status: "live",
     pocRoute: "/explorer",
     workspaceView: "Explorer",
+    // Legacy rougechain.io paths; `match` marks the section active on its detail pages too.
     localNavigation: [
-      "Overview",
-      "Blocks",
-      "Transactions",
-      "Tokens",
-      "NFTs",
-      "Contracts",
-    ].map((label, i) => ({
-      label,
-      path: i ? "/explorer/" + label.toLowerCase() : "/explorer",
-    })),
+      {
+        label: "Overview",
+        path: "/explorer",
+        match: ["/explorer", "/blockchain"],
+      },
+      {
+        label: "Blocks",
+        path: "/explorer/blocks",
+        match: ["/explorer/blocks", "/block"],
+      },
+      {
+        label: "Transactions",
+        path: "/transactions",
+        match: ["/transactions", "/tx"],
+      },
+      { label: "Tokens", path: "/tokens", match: ["/tokens", "/token"] },
+      { label: "NFTs", path: "/nfts", match: ["/nfts"] },
+      {
+        label: "Contracts",
+        path: "/contracts",
+        match: ["/contracts", "/contract"],
+      },
+    ],
   },
   {
     id: "validators",

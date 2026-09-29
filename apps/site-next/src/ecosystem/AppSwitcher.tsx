@@ -120,13 +120,15 @@ export function AppSwitcher({ current }: { current?: EcosystemApp }) {
                             {a.externalUrl ? " ↗" : ""}
                           </span>
                           <small>
-                            {a.status === "preview"
-                              ? "Preview"
-                              : a.status === "demo"
-                                ? "Demo"
-                                : a.status === "external"
-                                  ? "External"
-                                  : "Planned"}
+                            {a.status === "live"
+                              ? "Live"
+                              : a.status === "preview"
+                                ? "Preview"
+                                : a.status === "demo"
+                                  ? "Demo"
+                                  : a.status === "external"
+                                    ? "External"
+                                    : "Planned"}
                           </small>
                         </Link>
                       ),

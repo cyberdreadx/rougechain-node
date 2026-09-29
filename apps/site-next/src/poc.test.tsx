@@ -41,16 +41,19 @@ it("renders the complete homepage with honest fallback", async () => {
   );
   expect(screen.queryByText("MAINNET LIVE")).not.toBeInTheDocument();
 });
-it("renders Explorer and filters only the recent block list", async () => {
+it("renders the Explorer with a labelled snapshot and no synthetic data", async () => {
   wrap(<Explorer />);
   expect(screen.getByRole("heading", { name: "Explorer" })).toBeInTheDocument();
   await screen.findAllByText("200");
-  await userEvent.type(
-    screen.getByLabelText("Filter recent blocks by height or hash"),
-    "impossible-block",
-  );
-  expect(screen.getByText("No matching blocks")).toBeInTheDocument();
-  expect(screen.getByText("Synthetic demo")).toBeInTheDocument();
+  expect(screen.getAllByText("Snapshot").length).toBeGreaterThan(0);
+  expect(
+    screen.getByText(/From the saved snapshot. Not live data./),
+  ).toBeInTheDocument();
+  expect(
+    await screen.findByText("Transactions unavailable"),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Synthetic demo")).not.toBeInTheDocument();
+  expect(screen.queryByText(/rc_demo_/)).not.toBeInTheDocument();
 });
 it("renders the design system and its modal", async () => {
   wrap(<DesignSystem />);
@@ -179,8 +182,10 @@ it("preserves a stale successful response when refresh fails", async () => {
     <QueryClientProvider client={client}>
       <DemoWalletProvider>
         <NetworkProvider>
-          <DataNote />
-          <Explorer />
+          <MemoryRouter>
+            <DataNote />
+            <Explorer />
+          </MemoryRouter>
         </NetworkProvider>
       </DemoWalletProvider>
     </QueryClientProvider>,

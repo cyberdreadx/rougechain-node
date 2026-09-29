@@ -8,7 +8,7 @@ import { NetworkProvider } from "../Network";
 import { AppHeader, MarketingHeader, WorkspaceHeader } from "../Shell";
 import WorkspacePage from "../WorkspacePage";
 import CompactWorkspace from "../explore/CompactWorkspace";
-import Explorer from "../Explorer";
+import { explorerRoutes } from "../explorer/routes";
 import SwapSections from "../SwapSections";
 function wrap(child: React.ReactNode, path = "/") {
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(Error("offline")));
@@ -104,15 +104,14 @@ it("opens captured block data locally in compact mode", async () => {
 });
 it.each(["blocks", "transactions", "tokens", "nfts", "contracts"])(
   "renders explorer %s with scoped content",
-  (section) => {
-    wrap(<Explorer section={section} />);
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+  async (section) => {
+    wrap(<Routes>{explorerRoutes}</Routes>, `/explorer/${section}`);
+    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent(
       new RegExp(section, "i"),
     );
-    if (section !== "blocks")
-      expect(
-        screen.queryByLabelText("Filter recent blocks by height or hash"),
-      ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Filter recent blocks by height or hash"),
+    ).not.toBeInTheDocument();
   },
 );
 it.each(["pools", "positions"] as const)("renders safe swap %s", (section) => {
