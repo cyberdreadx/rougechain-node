@@ -85,7 +85,7 @@ Content-Type: application/json
 | Requirement | Value |
 |-------------|-------|
 | Minimum stake | 10,000 XRGE |
-| Fee | 0.1 XRGE |
+| Fee | 1 XRGE (fixed for stake and unstake) |
 
 ---
 

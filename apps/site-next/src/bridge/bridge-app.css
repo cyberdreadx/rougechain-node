@@ -1,0 +1,444 @@
+/* Bridge app (/bridge). Tokens from @rougechain/brand; shares the wallet's form classes. */
+
+.bridge-heading {
+  align-items: flex-start;
+}
+.bridge-heading .status {
+  margin-top: 6px;
+}
+
+.bridge-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.bridge-side {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* main panel */
+.bridge-panel {
+  padding: 0;
+  overflow: hidden;
+  min-width: 0;
+}
+.bridge-panel-body {
+  display: grid;
+  gap: 18px;
+  padding: 24px 28px 28px;
+}
+.bridge-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--border);
+}
+.bridge-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 52px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font: 500 14px var(--font);
+  cursor: pointer;
+  transition:
+    color var(--motion),
+    border-color var(--motion);
+}
+.bridge-tabs button:hover {
+  color: var(--ink);
+}
+.bridge-tabs button.active {
+  color: var(--ink);
+  border-bottom-color: var(--magenta);
+  background: #d843a60f;
+}
+.bridge-assets .chip {
+  min-width: 64px;
+  cursor: pointer;
+}
+
+/* amount */
+.bridge-amount {
+  position: relative;
+  display: block;
+}
+.bridge-amount .input {
+  font-size: 20px;
+  padding-right: 76px;
+}
+.bridge-unit {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  font: 12px var(--mono);
+  color: var(--muted);
+  pointer-events: none;
+}
+.bridge-to {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.bridge-to strong {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.bridge-max {
+  justify-self: start;
+  margin-top: -8px;
+}
+.bridge-sub {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.bridge-sub.warning,
+.warning-text {
+  color: var(--warning);
+}
+.error-text {
+  color: var(--error);
+}
+.bridge-step-title {
+  font-size: 15px;
+  font-weight: 500;
+  margin: 0;
+}
+.bridge-inline-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Base wallet */
+.bridge-connect {
+  display: grid;
+  gap: 10px;
+}
+.bridge-connect .button {
+  width: 100%;
+  white-space: normal;
+  text-align: center;
+}
+.bridge-local-button {
+  border-color: #d843a666 !important;
+}
+.bridge-wallet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.bridge-wallet-chip img {
+  border-radius: 4px;
+}
+.bridge-connected {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.bridge-connected .form-error {
+  flex-basis: 100%;
+}
+.bridge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--live);
+}
+
+/* notices */
+.bridge-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.bridge-callout svg {
+  flex: none;
+  margin-top: 3px;
+}
+.bridge-callout.warning {
+  border-color: #5a4a2f;
+  background: #e5bb7812;
+  color: var(--warning);
+}
+.bridge-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink);
+}
+.spin-dot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--magenta);
+  animation: bridge-spin 0.9s linear infinite;
+}
+@keyframes bridge-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin-dot {
+    animation: none;
+    border-top-color: var(--border);
+    background: var(--magenta);
+  }
+}
+.bridge-blocked {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+  max-width: 640px;
+  margin: 0 auto;
+}
+.bridge-blocked h2 {
+  font-size: 20px;
+  margin: 0;
+}
+.bridge-blocked p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.bridge-blocked.tone-muted svg {
+  color: var(--muted);
+}
+.bridge-blocked.tone-warning {
+  border-color: #5a4a2f;
+}
+.bridge-blocked.tone-warning svg {
+  color: var(--warning);
+}
+.bridge-blocked.tone-error {
+  border-color: #5c2a35;
+}
+.bridge-blocked.tone-error svg {
+  color: var(--error);
+}
+
+/* BTC deposit */
+.bridge-deposit-address,
+.bridge-steps li {
+  display: grid;
+  gap: 12px;
+}
+.bridge-qr {
+  justify-self: center;
+  width: 176px;
+  height: 176px;
+  border-radius: 8px;
+  background: #fff;
+  padding: 6px;
+}
+.bridge-received {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  text-align: center;
+  border: 1px solid #2f5a50;
+  background: #69d9bf12;
+  border-radius: 8px;
+  padding: 18px;
+}
+.bridge-received svg {
+  color: var(--live);
+}
+.bridge-watching {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bridge-advanced {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  display: grid;
+  gap: 12px;
+}
+.bridge-advanced-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 4px 0;
+  color: var(--muted);
+  font: 12px var(--font);
+  cursor: pointer;
+  text-align: left;
+}
+.bridge-advanced-toggle:hover {
+  color: var(--ink);
+}
+.bridge-advanced-toggle svg {
+  flex: none;
+  transition: transform var(--motion);
+}
+.bridge-advanced-toggle svg.open {
+  transform: rotate(180deg);
+}
+.bridge-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 18px;
+}
+.bridge-steps strong {
+  font-weight: 500;
+  font-size: 14px;
+}
+.bridge-btc-fee dd {
+  font-size: 12px;
+}
+.bridge-sign-message {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  max-height: 192px;
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+/* status cards */
+.bridge-card {
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  min-width: 0;
+}
+.bridge-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.bridge-card-title {
+  font-size: 15px;
+  font-weight: 500;
+  margin: 0;
+}
+.bridge-card .empty-state {
+  padding: 12px 0;
+}
+.bridge-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+.bridge-rows li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+  min-width: 0;
+}
+.bridge-rows li:first-child {
+  border-top: 0;
+}
+.bridge-row-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13px;
+}
+.bridge-row-link {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.bridge-row-link:hover {
+  color: #c1afda;
+}
+.bridge-row-end {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  font-size: 13px;
+  text-align: right;
+}
+.bridge-in {
+  color: var(--live);
+}
+.bridge-out {
+  color: var(--violet);
+}
+.bridge-main .pill.tone-ok {
+  color: var(--live);
+}
+.bridge-main .pill.tone-warning {
+  color: var(--warning);
+}
+.bridge-main .pill.tone-info {
+  color: var(--violet);
+}
+
+@media (max-width: 960px) {
+  .bridge-layout {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 560px) {
+  .bridge-panel-body {
+    padding: 18px 16px 22px;
+  }
+  .bridge-card {
+    padding: 18px 16px;
+  }
+  .bridge-heading {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .bridge-rows li {
+    align-items: flex-start;
+  }
+}
+
+/* Copy buttons inside the shared .wallet-form grid keep their icon size. */
+.bridge-main .copy-text .button {
+  width: auto;
+  flex: none;
+}

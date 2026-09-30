@@ -1,8 +1,7 @@
 import "./wallet/wallet.css";
 import WorkspacePage from "./WorkspacePage";
 import Architecture from "./Architecture";
-import SwapSections from "./SwapSections";
-import Swap from "./Swap";
+import { featureRoutes, featureHeaderProduct } from "./features";
 import { explorerRoutes, isExplorerPath } from "./explorer/routes";
 import { ChainProvider } from "./explorer/chain";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -34,12 +33,9 @@ function Header() {
   const { pathname } = useLocation();
   if (pathname === "/workspace") return <WorkspaceHeader />;
   if (WALLET_PATHS.includes(pathname)) return <AppHeader product="Wallet" />;
-  const explorer = isExplorerPath(pathname);
-  return explorer || pathname.startsWith("/swap") ? (
-    <AppHeader product={explorer ? "Explorer" : "Swap"} />
-  ) : (
-    <MarketingHeader />
-  );
+  if (isExplorerPath(pathname)) return <AppHeader product="Explorer" />;
+  const product = featureHeaderProduct(pathname);
+  return product ? <AppHeader product={product} /> : <MarketingHeader />;
 }
 export default function App() {
   return (
@@ -57,16 +53,9 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Home />} />
                 <Route path="/workspace" element={<WorkspacePage />} />
-                <Route path="/swap" element={<Swap />} />
-                <Route
-                  path="/swap/pools"
-                  element={<SwapSections section="pools" />}
-                />
-                <Route
-                  path="/swap/positions"
-                  element={<SwapSections section="positions" />}
-                />
                 {explorerRoutes}
+                {/* Feature areas (swap, bridge, messenger/mail, validators & pages): src/features/ */}
+                {featureRoutes}
                 <Route
                   path="/wallet"
                   element={

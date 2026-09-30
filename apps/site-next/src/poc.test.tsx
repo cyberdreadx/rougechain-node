@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { vi, it, expect } from "vitest";
 import Home from "./Home";
 import Explorer from "./Explorer";
-import Swap, { quote } from "./Swap";
+import { quote } from "./Swap";
 import DesignSystem from "./DesignSystem";
 import { NetworkProvider, NetworkControls, DataNote } from "./Network";
 import { WorkspaceBoundary as ExploreBoundary } from "./explore/WorkspaceExperience";
@@ -178,46 +178,6 @@ it("switches to explicit snapshot mode", async () => {
   expect(
     screen.getByRole("button", { name: "Refresh network data" }),
   ).toBeDisabled();
-});
-it("Swap review and token changes never perform a request", async () => {
-  const fetchMock = vi.fn();
-  vi.stubGlobal("fetch", fetchMock);
-  render(<Swap />);
-  expect(screen.getByRole("heading", { name: "Swap" })).toBeInTheDocument();
-  await userEvent.selectOptions(
-    screen.getByLabelText("Receive token"),
-    "qUSDC",
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Review swap" }));
-  expect(screen.getByRole("dialog")).toBeInTheDocument();
-  expect(screen.getByText(/All values are synthetic/)).toBeInTheDocument();
-  await userEvent.click(
-    screen.getByRole("button", { name: "Demo only — close preview" }),
-  );
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(fetchMock).not.toHaveBeenCalled();
-});
-it.each(["Loading quote", "Insufficient balance", "Network unavailable"])(
-  "disables review for %s",
-  async (state) => {
-    render(<Swap />);
-    await userEvent.selectOptions(
-      screen.getByLabelText("Preview an interface state"),
-      state,
-    );
-    expect(screen.getByRole("button", { name: "Review swap" })).toBeDisabled();
-  },
-);
-it("shows high impact warning both before and during review", async () => {
-  render(<Swap />);
-  await userEvent.selectOptions(
-    screen.getByLabelText("Preview an interface state"),
-    "High price impact",
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Review swap" }));
-  expect(screen.getByRole("dialog")).toHaveTextContent(
-    "High price impact: 8.2%",
-  );
 });
 it.each(["-1", "NaN", "Infinity", "0", "1000000000001"])(
   "rejects invalid illustrative amount %s",
