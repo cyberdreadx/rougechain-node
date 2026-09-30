@@ -130,7 +130,8 @@ export const apps: EcosystemApp[] = [
     description: "A connection between networks.",
     proposedHost: "bridge.rougechain.io",
     icon: "bridge",
-    status: "preview",
+    status: "live",
+    pocRoute: "/bridge",
     workspaceView: "Bridge",
   },
   {
