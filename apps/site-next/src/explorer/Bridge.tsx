@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { ArrowRight, ArrowUpRight, RotateCcw } from "lucide-react";
 import { Button, EmptyState } from "@rougechain/ui";
 import {
@@ -7,7 +9,6 @@ import {
   CHAIN_LABELS,
   HASH64,
   STATUS_EXPLANATIONS,
-  directionLabel,
   externalAddressUrl,
   externalExplorer,
   externalTxUrl,
@@ -21,6 +22,7 @@ import {
   statusTone,
   tokenDecimals,
   type BridgeActivityView,
+  type BridgeChain,
   type BridgeTransfer,
   type LinkContext,
 } from "@rougechain/chain-readonly";
@@ -43,6 +45,7 @@ import {
   Timestamp,
   usePageParam,
 } from "./ui";
+import { fmtInt } from "../i18n/format";
 import "./bridge.css";
 
 export const BRIDGE_PAGE_SIZE = 25;
@@ -51,13 +54,57 @@ export function bridgeDetailPath(txId: string) {
   return `/explorer/bridge/${txId}`;
 }
 
+// Labels from @rougechain/chain-readonly are English; they are translated here by key, with the
+// package's English as the fallback for anything new.
+
+/** "Base → RougeChain" etc. in the current language. */
+function chainLabel(tr: TFunction, chain: BridgeChain) {
+  return tr(`explorer:bridge.chain.${chain}`, {
+    defaultValue: CHAIN_LABELS[chain],
+  });
+}
+
+/** As directionLabel(), with translated chain names. */
+function directionText(tr: TFunction, t: BridgeTransfer) {
+  return `${chainLabel(tr, t.fromChain)} → ${chainLabel(tr, t.toChain)}`;
+}
+
+function statusText(tr: TFunction, t: BridgeTransfer) {
+  const key =
+    t.status === "paid" && t.kind === "deposit" ? "minted" : t.status;
+  return tr(`explorer:bridge.status.${key}`, { defaultValue: statusLabel(t) });
+}
+
+function explanation(tr: TFunction, t: BridgeTransfer) {
+  return tr(`explorer:bridge.reason.${t.statusReason}`, {
+    defaultValue: STATUS_EXPLANATIONS[t.statusReason],
+  });
+}
+
+const MISSING_KEYS: Record<string, string> = {
+  "Source transaction not recorded by the node": "sourceNotRecorded",
+  "External tx link available after node update": "afterUpdate",
+  "No payout (refunded)": "refunded",
+  "No payout (rejected on RougeChain)": "rejected",
+  "Payout hash not recorded by the node": "payoutHashNotRecorded",
+  "Payout not recorded by the node": "payoutNotRecorded",
+  "Not paid out yet": "notPaidYet",
+};
+
+function missingReason(tr: TFunction, t: BridgeTransfer) {
+  const english = missingExternalTxReason(t);
+  const key = MISSING_KEYS[english];
+  return key ? tr(`explorer:bridge.missing.${key}`) : english;
+}
+
 export function BridgeStatusPill({ t }: { t: BridgeTransfer }) {
+  const { t: tr } = useTranslation("explorer");
   return (
     <span
       className={`pill bridge-status tone-${statusTone(t.status)}`}
-      title={STATUS_EXPLANATIONS[t.statusReason]}
+      title={explanation(tr, t)}
     >
-      {statusLabel(t)}
+      {statusText(tr, t)}
     </span>
   );
 }
@@ -105,14 +152,18 @@ export function ExternalTx({
   ctx: LinkContext;
   full?: boolean;
 }) {
+  const { t: tr } = useTranslation("explorer");
   const url = externalTxUrl(t, ctx);
   const explorer = externalExplorer(t, ctx);
   if (!url || !t.externalTxHash || !explorer)
-    return <span className="bridge-note">{missingExternalTxReason(t)}</span>;
+    return <span className="bridge-note">{missingReason(tr, t)}</span>;
   return (
     <ExternalLink
       href={url}
-      label={`View ${t.externalTxHash} on ${explorer.name}`}
+      label={tr("bridge.viewOn", {
+        id: t.externalTxHash,
+        explorer: explorer.name,
+      })}
     >
       {full ? t.externalTxHash : shorten(t.externalTxHash, 10, 6)}
     </ExternalLink>
@@ -128,17 +179,24 @@ function ExternalAddress({
   ctx: LinkContext;
   full?: boolean;
 }) {
+  const { t: tr } = useTranslation("explorer");
   if (!t.externalAddress)
     return (
       <span className="bridge-note">
-        {t.kind === "deposit" ? "Sender not recorded" : "—"}
+        {t.kind === "deposit" ? tr("bridge.senderNotRecorded") : "—"}
       </span>
     );
   const url = externalAddressUrl(t, ctx);
   const text = full ? t.externalAddress : shorten(t.externalAddress, 8, 6);
   const explorer = externalExplorer(t, ctx);
   return url && explorer ? (
-    <ExternalLink href={url} label={`View ${t.externalAddress} on ${explorer.name}`}>
+    <ExternalLink
+      href={url}
+      label={tr("bridge.viewOn", {
+        id: t.externalAddress,
+        explorer: explorer.name,
+      })}
+    >
       {text}
     </ExternalLink>
   ) : (
@@ -155,10 +213,11 @@ function RougeParty({ t, full = false }: { t: BridgeTransfer; full?: boolean }) 
 }
 
 function When({ t }: { t: BridgeTransfer }) {
+  const { t: tr } = useTranslation("explorer");
   return t.timestamp !== null ? (
     <Age ts={t.timestamp} />
   ) : (
-    <span className="bridge-note">In mempool</span>
+    <span className="bridge-note">{tr("bridge.inMempool")}</span>
   );
 }
 
@@ -169,51 +228,50 @@ export function BridgeTable({
   items: BridgeTransfer[];
   ctx: LinkContext;
 }) {
+  const { t: tr } = useTranslation("explorer");
   if (!items.length)
     return (
-      <EmptyState title="No bridge transfers">
-        No deposits or withdrawals were found here.
-      </EmptyState>
+      <EmptyState title={tr("bridge.none")}>{tr("bridge.noneBody")}</EmptyState>
     );
   return (
     <div className="table-scroll">
       <table className="stack-table bridge-table">
         <thead>
           <tr>
-            <th>Time</th>
-            <th>Direction</th>
-            <th>Amount</th>
-            <th>From → To</th>
-            <th>Status</th>
-            <th>RougeChain tx</th>
-            <th>External tx</th>
+            <th>{tr("col.time")}</th>
+            <th>{tr("col.direction")}</th>
+            <th>{tr("col.amount")}</th>
+            <th>{tr("col.fromTo")}</th>
+            <th>{tr("col.status")}</th>
+            <th>{tr("bridge.rougechainTx")}</th>
+            <th>{tr("bridge.externalTx")}</th>
           </tr>
         </thead>
         <tbody>
           {items.map((t) => (
             <tr key={t.rougechainTxId}>
-              <td data-label="Time">
+              <td data-label={tr("col.time")}>
                 <When t={t} />
               </td>
-              <td data-label="Direction">
+              <td data-label={tr("col.direction")}>
                 <Link
                   className="bridge-direction address-link"
                   to={bridgeDetailPath(t.rougechainTxId)}
                 >
-                  {directionLabel(t)}
+                  {directionText(tr, t)}
                 </Link>
               </td>
-              <td data-label="Amount">
+              <td data-label={tr("col.amount")}>
                 <BridgeAmount t={t} />
               </td>
-              <td data-label="From → To" className="from-to">
+              <td data-label={tr("col.fromTo")} className="from-to">
                 {t.kind === "withdrawal" ? (
                   <>
                     <RougeParty t={t} />
                     <span className="muted" aria-hidden="true">
                       {" → "}
                     </span>
-                    <span className="sr-only"> to </span>
+                    <span className="sr-only"> {tr("tables.to")} </span>
                     <ExternalAddress t={t} ctx={ctx} />
                   </>
                 ) : (
@@ -222,15 +280,15 @@ export function BridgeTable({
                     <span className="muted" aria-hidden="true">
                       {" → "}
                     </span>
-                    <span className="sr-only"> to </span>
+                    <span className="sr-only"> {tr("tables.to")} </span>
                     <RougeParty t={t} />
                   </>
                 )}
               </td>
-              <td data-label="Status">
+              <td data-label={tr("col.status")}>
                 <BridgeStatusPill t={t} />
               </td>
-              <td data-label="RougeChain tx">
+              <td data-label={tr("bridge.rougechainTx")}>
                 <Link
                   className="mono address-link"
                   to={`/tx/${t.rougechainTxId}`}
@@ -239,7 +297,7 @@ export function BridgeTable({
                   {shorten(t.rougechainTxId, 10, 6)}
                 </Link>
               </td>
-              <td data-label="External tx">
+              <td data-label={tr("bridge.externalTx")}>
                 <ExternalTx t={t} ctx={ctx} />
               </td>
             </tr>
@@ -251,17 +309,16 @@ export function BridgeTable({
 }
 
 function FallbackNote({ data }: { data: BridgeActivityView }) {
+  const { t } = useTranslation("explorer");
   return (
     <div className="data-note bridge-fallback" role="note">
-      <strong>Reduced detail.</strong>{" "}
+      <strong>{t("bridge.reduced")}</strong>{" "}
       <span>
-        This node does not serve bridge history yet, so this list is rebuilt
-        from on-chain bridge transactions in the node's recent-block index (
-        {(data.scanned ?? 0).toLocaleString()} transactions scanned).{" "}
+        {t("bridge.fallbackRebuilt", { n: fmtInt(data.scanned ?? 0) })}{" "}
         {data.pendingListsRead
-          ? "Withdrawals still in the node's pending-payout lists are shown as Pending; the rest as Completed."
-          : "The pending-payout lists could not be read, so withdrawal status is Unknown."}{" "}
-        External tx links will be available after the node update.
+          ? t("bridge.fallbackPending")
+          : t("bridge.fallbackUnknown")}{" "}
+        {t("bridge.afterUpdate")}
       </span>
     </div>
   );
@@ -273,6 +330,7 @@ function validCursor(value: string | null): string | undefined {
 
 /** /explorer/bridge (also /bridge-activity, and /bridge on explorer.rougechain.io). */
 export function BridgeActivityPage() {
+  const { t } = useTranslation("explorer");
   const { network } = useChain();
   const [params, setParams] = useSearchParams();
   const before = validCursor(params.get("before"));
@@ -292,25 +350,29 @@ export function BridgeActivityPage() {
     });
   return (
     <ExplorerMain>
-      <PageHeading eyebrow="Explorer" title="Bridge activity">
-        Deposits into RougeChain and withdrawals out of it, across Base and
-        Bitcoin, with the transaction on both sides.
+      <PageHeading
+        eyebrow={t("eyebrow.explorer")}
+        title={t("what.bridgeActivity")}
+      >
+        {t("bridge.intro")}
       </PageHeading>
       <ExplorerSearch />
       <Section
         id="bridge-transfers"
-        title="Bridge transfers"
+        title={t("bridge.transfers")}
         meta={
           read.data?.source === "node"
-            ? "Newest first, from the node's bridge activity feed."
+            ? t("bridge.nodeFeed")
             : read.data
-              ? `${read.data.items.length.toLocaleString()} found in recent blocks.`
+              ? t("bridge.foundRecent", {
+                  n: fmtInt(read.data.items.length),
+                })
               : undefined
         }
       >
-        <SourceNote read={read} what="Bridge activity" />
+        <SourceNote read={read} what={t("what.bridgeActivity")} />
         {read.data?.source === "chain" && <FallbackNote data={read.data} />}
-        <ReadGate read={read} what="Bridge activity">
+        <ReadGate read={read} what={t("what.bridgeActivity")}>
           {(data) => {
             const ctx = linkContext(network, data.config);
             if (data.source === "node")
@@ -318,20 +380,25 @@ export function BridgeActivityPage() {
                 <>
                   <BridgeTable items={data.items} ctx={ctx} />
                   {(before || data.nextCursor) && (
-                    <nav className="pager" aria-label="Bridge activity pages">
+                    <nav
+                      className="pager"
+                      aria-label={t("pager.aria", {
+                        label: t("what.bridgeActivity"),
+                      })}
+                    >
                       <Button
                         variant="outline small"
                         disabled={!before}
                         onClick={() => setBefore(null)}
                       >
-                        <RotateCcw size={14} /> Newest
+                        <RotateCcw size={14} /> {t("bridge.newest")}
                       </Button>
                       <Button
                         variant="outline small"
                         disabled={!data.nextCursor}
                         onClick={() => setBefore(data.nextCursor)}
                       >
-                        Older <ArrowRight size={14} />
+                        {t("pager.older")} <ArrowRight size={14} />
                       </Button>
                     </nav>
                   )}
@@ -355,7 +422,7 @@ export function BridgeActivityPage() {
                   page={current}
                   totalPages={totalPages}
                   onChange={setPage}
-                  label="Bridge activity"
+                  label={t("what.bridgeActivity")}
                 />
               </>
             );
@@ -374,41 +441,53 @@ function useBridgeTransfer(txId: string, enabled = true) {
   );
 }
 
-function externalChainLabel(t: BridgeTransfer, ctx: LinkContext) {
+function externalChainLabel(tr: TFunction, t: BridgeTransfer, ctx: LinkContext) {
   const external = t.kind === "withdrawal" ? t.toChain : t.fromChain;
   const explorer = externalExplorer(t, ctx);
-  const id = t.externalChainId ? ` · chain id ${t.externalChainId}` : "";
-  return `${CHAIN_LABELS[external]}${id}${explorer ? ` · ${explorer.name}` : ""}`;
+  const id = t.externalChainId
+    ? ` · ${tr("explorer:bridge.chainId", { id: t.externalChainId })}`
+    : "";
+  return `${chainLabel(tr, external)}${id}${explorer ? ` · ${explorer.name}` : ""}`;
 }
 
 function TransferDetails({ t, ctx }: { t: BridgeTransfer; ctx: LinkContext }) {
+  const { t: tr } = useTranslation("explorer");
   const rows: [string, ReactNode][] = [
     [
-      "Status",
+      tr("col.status"),
       <span key="s" className="inline-row">
         <BridgeStatusPill t={t} />{" "}
-        <span className="muted">{STATUS_EXPLANATIONS[t.statusReason]}</span>
+        <span className="muted">{explanation(tr, t)}</span>
       </span>,
     ],
     [
-      "Direction",
-      `${directionLabel(t)} (${t.kind === "deposit" ? "deposit" : "withdrawal"})`,
+      tr("col.direction"),
+      `${directionText(tr, t)} (${t.kind === "deposit" ? tr("bridge.deposit") : tr("bridge.withdrawal")})`,
     ],
     [
-      "Amount",
+      tr("col.amount"),
       <span key="a">
         <BridgeAmount t={t} />
         {t.externalAsset && t.externalAsset !== t.asset && (
-          <span className="muted"> · {t.externalAsset} on {CHAIN_LABELS[t.kind === "withdrawal" ? t.toChain : t.fromChain]}</span>
+          <span className="muted">
+            {" · "}
+            {tr("bridge.assetOn", {
+              asset: t.externalAsset,
+              chain: chainLabel(
+                tr,
+                t.kind === "withdrawal" ? t.toChain : t.fromChain,
+              ),
+            })}
+          </span>
         )}
       </span>,
     ],
     [
-      "RougeChain tx",
+      tr("bridge.rougechainTx"),
       <CopyHash
         key="tx"
         hash={t.rougechainTxId}
-        label="transaction hash"
+        label={tr("copy.txHash")}
         display={
           <Link className="mono address-link break" to={`/tx/${t.rougechainTxId}`}>
             {t.rougechainTxId}
@@ -417,46 +496,52 @@ function TransferDetails({ t, ctx }: { t: BridgeTransfer; ctx: LinkContext }) {
       />,
     ],
     [
-      "Block",
+      tr("col.block"),
       t.blockHeight !== null ? (
         <BlockLink key="b" height={t.blockHeight} />
       ) : (
         <span key="b" className="bridge-note">
-          In mempool
+          {tr("bridge.inMempool")}
         </span>
       ),
     ],
     [
-      "Time",
+      tr("col.time"),
       t.timestamp !== null ? <Timestamp key="t" ts={t.timestamp} /> : "—",
     ],
     [
-      t.kind === "withdrawal" ? "From (RougeChain)" : "To (RougeChain)",
+      t.kind === "withdrawal"
+        ? tr("bridge.fromRougechain")
+        : tr("bridge.toRougechain"),
       <RougeParty key="p" t={t} full />,
     ],
-    ["External chain", externalChainLabel(t, ctx)],
+    [tr("bridge.externalChain"), externalChainLabel(tr, t, ctx)],
     [
-      t.kind === "withdrawal" ? "To (external)" : "From (external)",
+      t.kind === "withdrawal"
+        ? tr("bridge.toExternal")
+        : tr("bridge.fromExternal"),
       <ExternalAddress key="ea" t={t} ctx={ctx} full />,
     ],
     [
-      t.kind === "withdrawal" ? "Payout tx" : "Source tx",
+      t.kind === "withdrawal" ? tr("bridge.payoutTx") : tr("bridge.sourceTx"),
       <ExternalTx key="et" t={t} ctx={ctx} full />,
     ],
   ];
   if (t.statusUpdatedAt !== null)
-    rows.push(["Status updated", <Timestamp key="u" ts={t.statusUpdatedAt} />]);
+    rows.push([
+      tr("bridge.statusUpdated"),
+      <Timestamp key="u" ts={t.statusUpdatedAt} />,
+    ]);
   return <DetailList rows={rows} />;
 }
 
 function ChainSourceNote() {
+  const { t } = useTranslation("explorer");
   return (
     <div className="data-note bridge-fallback" role="note">
-      <strong>Reduced detail.</strong>{" "}
+      <strong>{t("bridge.reduced")}</strong>{" "}
       <span>
-        This node does not serve bridge history yet: the transfer is read from
-        its RougeChain transaction and the node's pending-payout lists. External
-        tx links will be available after the node update.
+        {t("bridge.chainSource")} {t("bridge.afterUpdate")}
       </span>
     </div>
   );
@@ -464,37 +549,39 @@ function ChainSourceNote() {
 
 /** /explorer/bridge/:txId */
 export function BridgeTransferPage() {
+  const { t } = useTranslation("explorer");
   const { network } = useChain();
   const { txId: param = "" } = useParams();
   const txId = param.toLowerCase();
   const valid = HASH64.test(txId);
   const read = useBridgeTransfer(txId, valid);
-  const back = { to: "/explorer/bridge", label: "View bridge activity" };
+  const back = { to: "/explorer/bridge", label: t("bridge.viewActivity") };
   return (
     <ExplorerMain>
-      <PageHeading eyebrow="Bridge" title="Bridge transfer" />
+      <PageHeading
+        eyebrow={t("bridge.eyebrow")}
+        title={t("what.bridgeTransfer")}
+      />
       {!valid ? (
-        <NotFoundState title="Not a transaction id" back={back}>
-          A bridge transfer is identified by its 64-character RougeChain
-          transaction hash.
+        <NotFoundState title={t("bridge.notTxId")} back={back}>
+          {t("bridge.notTxIdBody")}
         </NotFoundState>
       ) : (
         <>
-          <SourceNote read={read} what="Bridge transfer" />
+          <SourceNote read={read} what={t("what.bridgeTransfer")} />
           <ReadGate
             read={read}
-            what="Bridge transfer"
+            what={t("what.bridgeTransfer")}
             notFound={
-              <NotFoundState title="Not a bridge transfer" back={back}>
-                This transaction is not a bridge deposit or withdrawal on this
-                network, or it does not exist.
+              <NotFoundState title={t("bridge.notTransfer")} back={back}>
+                {t("bridge.notTransferBody")}
               </NotFoundState>
             }
           >
             {({ transfer, config }) => (
               <>
                 {transfer.source === "chain" && <ChainSourceNote />}
-                <Section id="bridge-transfer" title="Transfer">
+                <Section id="bridge-transfer" title={t("bridge.transfer")}>
                   <TransferDetails
                     t={transfer}
                     ctx={linkContext(network, config)}
@@ -511,43 +598,41 @@ export function BridgeTransferPage() {
 
 /** The "Bridge transfer" panel on /tx/:hash for bridge_withdraw / bridge_mint transactions. */
 export function BridgeTransferPanel({ txId }: { txId: string }) {
+  const { t } = useTranslation("explorer");
   const { network } = useChain();
   const read = useBridgeTransfer(txId);
   const data = read.data;
   return (
     <Section
       id="tx-bridge"
-      title="Bridge transfer"
+      title={t("what.bridgeTransfer")}
       aside={
         <Link className="address-link" to={bridgeDetailPath(txId)}>
-          Bridge details
+          {t("bridge.details")}
         </Link>
       }
     >
       {data ? (
         <>
           {data.transfer.source === "chain" && (
-            <p className="bridge-note">
-              Reduced detail until the node update: status from the node's
-              pending-payout lists.
-            </p>
+            <p className="bridge-note">{t("bridge.panelReduced")}</p>
           )}
           <DetailList
             rows={[
               [
-                "Status",
+                t("col.status"),
                 <span key="s" className="inline-row">
                   <BridgeStatusPill t={data.transfer} />{" "}
                   <span className="muted">
-                    {STATUS_EXPLANATIONS[data.transfer.statusReason]}
+                    {explanation(t, data.transfer)}
                   </span>
                 </span>,
               ],
-              ["Direction", directionLabel(data.transfer)],
+              [t("col.direction"), directionText(t, data.transfer)],
               [
                 data.transfer.kind === "withdrawal"
-                  ? "To (external)"
-                  : "From (external)",
+                  ? t("bridge.toExternal")
+                  : t("bridge.fromExternal"),
                 <ExternalAddress
                   key="a"
                   t={data.transfer}
@@ -556,7 +641,9 @@ export function BridgeTransferPanel({ txId }: { txId: string }) {
                 />,
               ],
               [
-                data.transfer.kind === "withdrawal" ? "Payout tx" : "Source tx",
+                data.transfer.kind === "withdrawal"
+                  ? t("bridge.payoutTx")
+                  : t("bridge.sourceTx"),
                 <ExternalTx
                   key="x"
                   t={data.transfer}
@@ -570,10 +657,10 @@ export function BridgeTransferPanel({ txId }: { txId: string }) {
       ) : (
         <p className="bridge-note" role="status">
           {read.state === "loading"
-            ? "Reading the bridge status…"
+            ? t("bridge.panelLoading")
             : read.state === "not-found"
-              ? "The node does not recognise this as a bridge transfer."
-              : "The bridge status could not be read from the node."}
+              ? t("bridge.panelNotFound")
+              : t("bridge.panelUnavailable")}
         </p>
       )}
     </Section>

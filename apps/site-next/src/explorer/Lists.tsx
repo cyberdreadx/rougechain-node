@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { EmptyState } from "@rougechain/ui";
 import { shorten } from "@rougechain/chain-readonly";
-import { useChain } from "./chain";
 import { useRead } from "./read";
 import { BlockTable, TxTable } from "./tables";
 import {
@@ -17,12 +17,15 @@ import {
   Section,
   SourceNote,
   usePageParam,
+  useNetworkLabel,
 } from "./ui";
+import { fmtInt } from "../i18n/format";
 
 const BLOCKS_PER_PAGE = 20;
 const TXS_PER_PAGE = 25;
 
 export function BlocksPage() {
+  const { t } = useTranslation("explorer");
   const [page, setPage] = usePageParam();
   const blocks = useRead(
     ["blocks", page, BLOCKS_PER_PAGE],
@@ -34,21 +37,23 @@ export function BlocksPage() {
   );
   return (
     <ExplorerMain>
-      <PageHeading eyebrow="Explorer" title="Blocks">
-        Every block, newest first.
+      <PageHeading eyebrow={t("eyebrow.explorer")} title={t("lists.blocks.title")}>
+        {t("lists.blocks.intro")}
       </PageHeading>
       <ExplorerSearch />
       <Section
         id="blocks"
-        title="Blocks"
+        title={t("lists.blocks.title")}
         meta={
           blocks.data
-            ? `Chain height ${blocks.data.totalHeight.toLocaleString()}.`
+            ? t("lists.blocks.meta", {
+                height: fmtInt(blocks.data.totalHeight),
+              })
             : undefined
         }
       >
-        <SourceNote read={blocks} what="Blocks" />
-        <ReadGate read={blocks} what="Blocks">
+        <SourceNote read={blocks} what={t("what.blocks")} />
+        <ReadGate read={blocks} what={t("what.blocks")}>
           {(data) => (
             <>
               <BlockTable blocks={data.blocks} />
@@ -56,7 +61,7 @@ export function BlocksPage() {
                 page={data.page}
                 totalPages={data.totalPages}
                 onChange={setPage}
-                label="Blocks"
+                label={t("what.blocks")}
               />
             </>
           )}
@@ -67,6 +72,7 @@ export function BlocksPage() {
 }
 
 export function TransactionsPage() {
+  const { t } = useTranslation("explorer");
   const [page, setPage] = usePageParam();
   const offset = (page - 1) * TXS_PER_PAGE;
   const txs = useRead(
@@ -82,35 +88,40 @@ export function TransactionsPage() {
     : 1;
   return (
     <ExplorerMain>
-      <PageHeading eyebrow="Explorer" title="Transactions">
-        Transfers, swaps, contract calls and every other transaction, newest
-        first.
+      <PageHeading
+        eyebrow={t("eyebrow.explorer")}
+        title={t("lists.txs.title")}
+      >
+        {t("lists.txs.intro")}
       </PageHeading>
       <ExplorerSearch />
       <Section
         id="transactions"
-        title="Transactions"
+        title={t("lists.txs.title")}
         meta={
           txs.data
-            ? `${txs.data.total.toLocaleString()} transactions in the node's recent-block index (latest 500 blocks).`
+            ? t("lists.txs.meta", {
+                count: txs.data.total,
+                n: fmtInt(txs.data.total),
+              })
             : undefined
         }
       >
-        <SourceNote read={txs} what="Transactions" />
-        <ReadGate read={txs} what="Transactions">
+        <SourceNote read={txs} what={t("what.transactions")} />
+        <ReadGate read={txs} what={t("what.transactions")}>
           {(data) => (
             <>
               <TxTable
                 txs={data.txs}
                 empty={
-                  page > 1 ? "No transactions on this page" : "No transactions"
+                  page > 1 ? t("lists.txs.emptyPage") : t("tables.noTxs")
                 }
               />
               <Pager
                 page={page}
                 totalPages={totalPages}
                 onChange={setPage}
-                label="Transactions"
+                label={t("what.transactions")}
               />
             </>
           )}
@@ -148,95 +159,99 @@ function FilterInput({
 }
 
 export function TokensPage() {
+  const { t } = useTranslation("explorer");
   const tokens = useRead(["tokens"], (c) => c.tokens(), { refetchMs: 300_000 });
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (tokens.data ?? []).filter(
-      (t) =>
+      (tok) =>
         !q ||
-        t.symbol.toLowerCase().includes(q) ||
-        t.name.toLowerCase().includes(q) ||
-        (t.description ?? "").toLowerCase().includes(q),
+        tok.symbol.toLowerCase().includes(q) ||
+        tok.name.toLowerCase().includes(q) ||
+        (tok.description ?? "").toLowerCase().includes(q),
     );
   }, [tokens.data, query]);
   return (
     <ExplorerMain>
-      <PageHeading eyebrow="Explorer" title="Tokens">
-        The native token, bridged assets and every token created on RougeChain.
+      <PageHeading eyebrow={t("eyebrow.explorer")} title={t("lists.tokens.title")}>
+        {t("lists.tokens.intro")}
       </PageHeading>
       <Section
         id="tokens"
-        title="Token directory"
+        title={t("lists.tokens.directory")}
         meta={
           tokens.data
-            ? `${tokens.data.length} tokens reported by the node.`
+            ? t("lists.tokens.meta", {
+                count: tokens.data.length,
+                n: fmtInt(tokens.data.length),
+              })
             : undefined
         }
         aside={
           <FilterInput
             id="token-filter"
-            label="Filter tokens"
+            label={t("lists.tokens.filter")}
             value={query}
             onChange={setQuery}
           />
         }
       >
-        <SourceNote read={tokens} what="Tokens" />
-        <ReadGate read={tokens} what="Tokens">
+        <SourceNote read={tokens} what={t("what.tokens")} />
+        <ReadGate read={tokens} what={t("what.tokens")}>
           {() =>
             filtered.length === 0 ? (
-              <EmptyState title="No matching tokens">
-                Try a different symbol or name.
+              <EmptyState title={t("lists.tokens.noMatch")}>
+                {t("lists.tokens.noMatchBody")}
               </EmptyState>
             ) : (
               <div className="table-scroll">
                 <table className="stack-table">
                   <thead>
                     <tr>
-                      <th>Token</th>
-                      <th>Decimals</th>
-                      <th>Creator</th>
-                      <th>Description</th>
+                      <th>{t("col.token")}</th>
+                      <th>{t("col.decimals")}</th>
+                      <th>{t("col.creator")}</th>
+                      <th>{t("col.description")}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((t) => (
-                      <tr key={t.symbol}>
-                        <td data-label="Token">
+                    {filtered.map((tok) => (
+                      <tr key={tok.symbol}>
+                        <td data-label={t("col.token")}>
                           <Link
                             className="token-cell"
-                            to={`/token/${encodeURIComponent(t.symbol)}`}
+                            to={`/token/${encodeURIComponent(tok.symbol)}`}
                           >
                             <SafeImage
                               className="token-mark"
-                              src={t.image}
+                              src={tok.image}
                               alt=""
-                              fallback={t.symbol}
+                              fallback={tok.symbol}
                             />
                             <span>
-                              <strong>{t.symbol}</strong>
-                              <small className="muted">{t.name}</small>
+                              <strong>{tok.symbol}</strong>
+                              <small className="muted">{tok.name}</small>
                             </span>
                           </Link>
                         </td>
-                        <td data-label="Decimals">{t.decimals}</td>
-                        <td data-label="Creator">
-                          {t.creator ? (
-                            <AddressLink identity={t.creator} />
+                        <td data-label={t("col.decimals")}>{tok.decimals}</td>
+                        <td data-label={t("col.creator")}>
+                          {tok.creator ? (
+                            <AddressLink identity={tok.creator} />
                           ) : (
-                            <span className="muted">Protocol</span>
+                            <span className="muted">{t("lists.tokens.protocol")}</span>
                           )}
                         </td>
                         <td
-                          data-label="Description"
+                          data-label={t("col.description")}
                           className="description-cell"
                         >
-                          {t.description ? (
-                            t.description.length > 90 ? (
-                              `${t.description.slice(0, 89)}…`
+                          {tok.description ? (
+                            tok.description.length > 90 ? (
+                              `${tok.description.slice(0, 89)}…`
                             ) : (
-                              t.description
+                              tok.description
                             )
                           ) : (
                             <span className="muted">—</span>
@@ -256,6 +271,7 @@ export function TokensPage() {
 }
 
 export function NftsPage() {
+  const { t } = useTranslation("explorer");
   const collections = useRead(["nft-collections"], (c) => c.collections(), {
     refetchMs: 120_000,
   });
@@ -271,37 +287,41 @@ export function NftsPage() {
   });
   return (
     <ExplorerMain>
-      <PageHeading eyebrow="Explorer" title="NFTs">
-        Collections minted on RougeChain. Only images are displayed; other media
-        is never loaded.
+      <PageHeading eyebrow={t("eyebrow.explorer")} title={t("lists.nfts.title")}>
+        {t("lists.nfts.intro")}
       </PageHeading>
       <Section
         id="collections"
-        title="Collections"
+        title={t("lists.nfts.collections")}
         meta={
           collections.data
-            ? `${collections.data.length} collections.`
+            ? t("lists.nfts.meta", {
+                count: collections.data.length,
+                n: fmtInt(collections.data.length),
+              })
             : undefined
         }
         aside={
           <FilterInput
             id="nft-filter"
-            label="Filter collections"
+            label={t("lists.nfts.filter")}
             value={query}
             onChange={setQuery}
           />
         }
       >
-        <SourceNote read={collections} what="Collections" />
-        <ReadGate read={collections} what="Collections">
+        <SourceNote read={collections} what={t("what.collections")} />
+        <ReadGate read={collections} what={t("what.collections")}>
           {() =>
             filtered.length === 0 ? (
               <EmptyState
-                title={query ? "No matching collections" : "No collections yet"}
+                title={
+                  query ? t("lists.nfts.noMatch") : t("lists.nfts.none")
+                }
               >
                 {query
-                  ? "Try a different name or symbol."
-                  : "No NFT collection has been created on this network."}
+                  ? t("lists.nfts.noMatchBody")
+                  : t("lists.nfts.noneBody")}
               </EmptyState>
             ) : (
               <div className="asset-grid">
@@ -321,11 +341,13 @@ export function NftsPage() {
                       <strong>{c.name || c.symbol}</strong>
                       <span className="mono muted">{c.symbol}</span>
                       <span className="asset-meta">
-                        {c.minted.toLocaleString()} minted
                         {c.maxSupply !== null
-                          ? ` of ${c.maxSupply.toLocaleString()}`
-                          : ""}
-                        {c.frozen ? " · frozen" : ""}
+                          ? t("lists.nfts.mintedOf", {
+                              minted: fmtInt(c.minted),
+                              max: fmtInt(c.maxSupply),
+                            })
+                          : t("lists.nfts.minted", { minted: fmtInt(c.minted) })}
+                        {c.frozen ? ` · ${t("lists.nfts.frozen")}` : ""}
                       </span>
                     </div>
                   </Link>
@@ -343,7 +365,8 @@ export function ContractsPage() {
   const contracts = useRead(["contracts"], (c) => c.contracts(), {
     refetchMs: 120_000,
   });
-  const { config } = useChain();
+  const { t } = useTranslation("explorer");
+  const network = useNetworkLabel();
   const [query, setQuery] = useState("");
   const filtered = (contracts.data ?? [])
     .filter((c) => {
@@ -358,54 +381,61 @@ export function ContractsPage() {
     .sort((a, b) => b.createdAt - a.createdAt);
   return (
     <ExplorerMain>
-      <PageHeading eyebrow="Explorer" title="Contracts">
-        WASM contracts deployed on RougeChain {config.label.toLowerCase()}.
-        Read-only: nothing here calls or executes a contract.
+      <PageHeading
+        eyebrow={t("eyebrow.explorer")}
+        title={t("lists.contracts.title")}
+      >
+        {t("lists.contracts.intro", { network: network.toLowerCase() })}
       </PageHeading>
       <Section
         id="contracts"
-        title="Deployed contracts"
+        title={t("lists.contracts.deployed")}
         meta={
-          contracts.data ? `${contracts.data.length} contracts.` : undefined
+          contracts.data
+            ? t("lists.contracts.meta", {
+                count: contracts.data.length,
+                n: fmtInt(contracts.data.length),
+              })
+            : undefined
         }
         aside={
           <FilterInput
             id="contract-filter"
-            label="Filter by address or code hash"
+            label={t("lists.contracts.filter")}
             value={query}
             onChange={setQuery}
           />
         }
       >
-        <SourceNote read={contracts} what="Contracts" />
-        <ReadGate read={contracts} what="Contracts">
+        <SourceNote read={contracts} what={t("what.contracts")} />
+        <ReadGate read={contracts} what={t("what.contracts")}>
           {() =>
             filtered.length === 0 ? (
               <EmptyState
                 title={
-                  query ? "No matching contracts" : "No contracts deployed"
+                  query ? t("lists.contracts.noMatch") : t("lists.contracts.none")
                 }
               >
                 {query
-                  ? "Try a different address."
-                  : "No contract has been deployed on this network."}
+                  ? t("lists.contracts.noMatchBody")
+                  : t("lists.contracts.noneBody")}
               </EmptyState>
             ) : (
               <div className="table-scroll">
                 <table className="stack-table">
                   <thead>
                     <tr>
-                      <th>Contract</th>
-                      <th>Code hash</th>
-                      <th>Deployer</th>
-                      <th>Deployed</th>
-                      <th>WASM size</th>
+                      <th>{t("col.contract")}</th>
+                      <th>{t("col.codeHash")}</th>
+                      <th>{t("col.deployer")}</th>
+                      <th>{t("col.deployed")}</th>
+                      <th>{t("col.wasmSize")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filtered.map((c) => (
                       <tr key={c.address}>
-                        <td data-label="Contract">
+                        <td data-label={t("col.contract")}>
                           <Link
                             className="mono address-link"
                             to={`/contract/${c.address}`}
@@ -414,19 +444,19 @@ export function ContractsPage() {
                             {shorten(c.address, 10, 6)}
                           </Link>
                         </td>
-                        <td data-label="Code hash">
+                        <td data-label={t("col.codeHash")}>
                           <span className="mono" title={c.codeHash}>
                             {shorten(c.codeHash, 10, 6)}
                           </span>
                         </td>
-                        <td data-label="Deployer">
+                        <td data-label={t("col.deployer")}>
                           <AddressLink identity={c.deployer} />
                         </td>
-                        <td data-label="Deployed">
+                        <td data-label={t("col.deployed")}>
                           <BlockLink height={c.createdAt} />
                         </td>
-                        <td data-label="WASM size">
-                          {c.wasmSize.toLocaleString()} bytes
+                        <td data-label={t("col.wasmSize")}>
+                          {t("bytes", { n: fmtInt(c.wasmSize) })}
                         </td>
                       </tr>
                     ))}

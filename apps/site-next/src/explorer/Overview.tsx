@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { ArrowRight, Box } from "lucide-react";
 import { EmptyState, Status } from "@rougechain/ui";
 import {
@@ -7,7 +8,6 @@ import {
   DataNote,
   useNetwork,
 } from "../Network";
-import { useChain } from "./chain";
 import { useRead } from "./read";
 import { TxTable } from "./tables";
 import {
@@ -19,23 +19,29 @@ import {
   ReadGate,
   Section,
   SourceNote,
+  useNetworkLabel,
 } from "./ui";
+import { fmtInt } from "../i18n/format";
 
 /** Explorer overview: live network figures, latest blocks, latest transactions and search. */
 export default function Overview() {
+  const { t } = useTranslation("explorer");
   const n = useNetwork();
-  const { config } = useChain();
+  const network = useNetworkLabel();
   const txs = useRead(["txs", 8, 0], (c) => c.txs(8, 0), { refetchMs: 30_000 });
   const blocks = n.data?.blocks;
   return (
     <ExplorerMain>
-      <PageHeading eyebrow="The network, in detail" title="Explorer">
-        A clear view into RougeChain {config.label.toLowerCase()}.
+      <PageHeading
+        eyebrow={t("overview.eyebrow")}
+        title={t("overview.title")}
+      >
+        {t("overview.intro", { network: network.toLowerCase() })}
       </PageHeading>
       <ExplorerSearch />
       <div className="app-toolbar">
         <span className="mono muted">
-          ROUGECHAIN {config.label.toUpperCase()}
+          ROUGECHAIN {network.toUpperCase()}
         </span>
         <NetworkControls />
       </div>
@@ -43,19 +49,21 @@ export default function Overview() {
       <DataNote />
       <Section
         id="latest-blocks"
-        title="Latest blocks"
+        title={t("overview.latestBlocks")}
         meta={
           n.state === "demo"
-            ? "From the saved snapshot. Not live data."
-            : `The latest ${blocks?.length ?? "—"} blocks returned by the public API.`
+            ? t("overview.snapshotNote")
+            : t("overview.latestBlocksMeta", {
+                n: blocks ? fmtInt(blocks.length) : "—",
+              })
         }
         aside={
           <Status state={n.state}>
             {n.state === "demo"
-              ? "Snapshot"
+              ? t("overview.snapshot")
               : n.state === "live"
-                ? "Live"
-                : n.state}
+                ? t("state.live")
+                : t(`state.${n.state}`)}
           </Status>
         }
       >
@@ -63,23 +71,23 @@ export default function Overview() {
           <EmptyState
             title={
               n.state === "unavailable"
-                ? "Blocks unavailable"
-                : "Loading network data"
+                ? t("overview.blocksUnavailable")
+                : t("overview.loadingNetwork")
             }
           >
             {n.state === "unavailable"
-              ? `The ${config.label} API could not be read.`
-              : "Reading the latest blocks from the public API."}
+              ? t("overview.apiUnreadable", { network })
+              : t("overview.readingBlocks")}
           </EmptyState>
         ) : (
           <div className="table-scroll">
             <table className="block-table">
               <thead>
                 <tr>
-                  <th>Height</th>
-                  <th>Block hash</th>
-                  <th>Transactions</th>
-                  <th>Block time</th>
+                  <th>{t("col.height")}</th>
+                  <th>{t("col.blockHash")}</th>
+                  <th>{t("col.transactions")}</th>
+                  <th>{t("col.blockTime")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -91,13 +99,13 @@ export default function Overview() {
                         to={`/block/${b.height}`}
                       >
                         <Box size={14} />
-                        {b.height.toLocaleString()}
+                        {fmtInt(b.height)}
                       </Link>
                     </td>
                     <td>
                       <HashLink hash={b.hash} to={`/block/${b.height}`} />
                     </td>
-                    <td>{b.transactions}</td>
+                    <td>{fmtInt(b.transactions)}</td>
                     <td>
                       <Age ts={b.timestamp} />
                     </td>
@@ -108,20 +116,20 @@ export default function Overview() {
           </div>
         )}
         <Link className="text-link section-more" to="/explorer/blocks">
-          All blocks <ArrowRight size={14} />
+          {t("overview.allBlocks")} <ArrowRight size={14} />
         </Link>
       </Section>
       <Section
         id="latest-transactions"
-        title="Latest transactions"
-        meta="Most recent transactions indexed by the node."
+        title={t("overview.latestTxs")}
+        meta={t("overview.latestTxsMeta")}
       >
-        <SourceNote read={txs} what="Transactions" />
-        <ReadGate read={txs} what="Transactions">
+        <SourceNote read={txs} what={t("what.transactions")} />
+        <ReadGate read={txs} what={t("what.transactions")}>
           {(page) => <TxTable txs={page.txs} />}
         </ReadGate>
         <Link className="text-link section-more" to="/transactions">
-          All transactions <ArrowRight size={14} />
+          {t("overview.allTxs")} <ArrowRight size={14} />
         </Link>
       </Section>
     </ExplorerMain>

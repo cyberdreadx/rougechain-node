@@ -8,6 +8,7 @@ import { ChainProvider } from "./chain";
 import { NetworkProvider } from "../Network";
 import { explorerRoutes, isExplorerPath } from "./routes";
 import { resolveSearch } from "./search";
+import i18n from "../i18n";
 import stats from "../../../../packages/chain-readonly/fixtures/mainnet-stats.json";
 import testnetStats from "../../../../packages/chain-readonly/fixtures/testnet-stats.json";
 import blocksPage from "../../../../packages/chain-readonly/fixtures/mainnet-blocks-page.json";
@@ -435,5 +436,35 @@ describe("network awareness", () => {
       "/tokenomics",
     ])
       expect(isExplorerPath(p)).toBe(false);
+  });
+});
+
+describe("explorer in other languages", () => {
+  it("renders the blocks list in Chinese", async () => {
+    await i18n.changeLanguage("zh");
+    mockNode();
+    renderAt("/explorer/blocks");
+    expect(
+      screen.getByRole("heading", { level: 1, name: "区块" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("链高度 200。")).toBeInTheDocument();
+    expect(
+      screen.getByRole("navigation", { name: "区块分页" }),
+    ).toHaveTextContent("第 1 / 67 页");
+    expect(screen.getByRole("columnheader", { name: "提议者" })).toBeInTheDocument();
+  });
+
+  it("renders the overview in Spanish, with translated transaction types", async () => {
+    await i18n.changeLanguage("es");
+    mockNode();
+    renderAt("/explorer");
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Explorador" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Una vista clara de RougeChain mainnet.")).toBeInTheDocument();
+    const latest = screen.getByRole("region", { name: "Últimas transacciones" });
+    expect(await within(latest).findByText("Transferencia")).toBeInTheDocument();
+    expect(within(latest).getByText("Llamada a contrato")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Buscar" })).toBeInTheDocument();
   });
 });

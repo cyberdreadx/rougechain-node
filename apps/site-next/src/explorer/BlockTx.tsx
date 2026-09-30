@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
   ArrowRight,
@@ -13,7 +14,6 @@ import {
   swapSides,
   type TxDetail,
 } from "@rougechain/chain-readonly";
-import { useChain } from "./chain";
 import { useRead, useStats } from "./read";
 import { TxTable } from "./tables";
 import { BridgeTransferPanel } from "./Bridge";
@@ -32,24 +32,28 @@ import {
   Timestamp,
   TypePill,
   Xrge,
+  useNetworkLabel,
 } from "./ui";
+import { fmtInt } from "../i18n/format";
 
 function Finality({ height }: { height: number }) {
+  const { t } = useTranslation("explorer");
   const stats = useStats();
   const finalized = stats.data?.finalizedHeight;
   if (finalized === null || finalized === undefined)
-    return <span className="muted">Unknown</span>;
+    return <span className="muted">{t("block.finalityUnknown")}</span>;
   return height <= finalized ? (
-    <span className="pill ok">Finalized</span>
+    <span className="pill ok">{t("block.finalized")}</span>
   ) : (
     <span className="pill">
-      Not yet finalized (finalized height {finalized.toLocaleString()})
+      {t("block.notFinalized", { height: fmtInt(finalized) })}
     </span>
   );
 }
 
 /** /block/:height. A 64-hex block hash is resolved to its height through /tx/:hash. */
 export function BlockDetailPage() {
+  const { t } = useTranslation("explorer");
   const { height: param = "" } = useParams();
   if (HASH64.test(param.toLowerCase()))
     return <BlockByHash hash={param.toLowerCase()} />;
@@ -57,10 +61,10 @@ export function BlockDetailPage() {
     return (
       <ExplorerMain>
         <NotFoundState
-          title="Not a block height"
-          back={{ to: "/explorer/blocks", label: "View all blocks" }}
+          title={t("block.notHeight")}
+          back={{ to: "/explorer/blocks", label: t("block.viewAll") }}
         >
-          “{param}” is not a block height or block hash.
+          {t("block.notHeightBody", { param })}
         </NotFoundState>
       </ExplorerMain>
     );
@@ -68,24 +72,24 @@ export function BlockDetailPage() {
 }
 
 function BlockByHash({ hash }: { hash: string }) {
+  const { t } = useTranslation("explorer");
   const lookup = useRead(["tx", hash], (c) => c.tx(hash));
   if (lookup.data?.blockHash === hash)
     return <Navigate replace to={`/block/${lookup.data.blockHeight}`} />;
   if (lookup.data) return <Navigate replace to={`/tx/${hash}`} />;
   return (
     <ExplorerMain>
-      <PageHeading eyebrow="Block" title="Finding block" />
-      <SourceNote read={lookup} what="Block" />
+      <PageHeading eyebrow={t("block.eyebrow")} title={t("block.finding")} />
+      <SourceNote read={lookup} what={t("what.block")} />
       <ReadGate
         read={lookup}
-        what="Block"
+        what={t("what.block")}
         notFound={
           <NotFoundState
-            title="Block not found"
-            back={{ to: "/explorer/blocks", label: "View all blocks" }}
+            title={t("block.notFound")}
+            back={{ to: "/explorer/blocks", label: t("block.viewAll") }}
           >
-            No recent block or transaction has this hash. Only blocks that
-            contain a transaction can be found by hash.
+            {t("block.hashNotFoundBody")}
           </NotFoundState>
         }
       >
@@ -96,48 +100,48 @@ function BlockByHash({ hash }: { hash: string }) {
 }
 
 function BlockByHeight({ height }: { height: number }) {
-  const { config } = useChain();
+  const { t } = useTranslation("explorer");
+  const network = useNetworkLabel();
   const block = useRead(["block", height], (c) => c.block(height));
   return (
     <ExplorerMain>
       <PageHeading
-        eyebrow={`Block · ${config.label}`}
-        title={`Block #${height.toLocaleString()}`}
+        eyebrow={`${t("block.eyebrow")} · ${network}`}
+        title={t("block.title", { height: fmtInt(height) })}
       >
         <span className="heading-actions">
           {height > 0 && (
             <Link className="button outline small" to={`/block/${height - 1}`}>
-              <ArrowLeft size={14} /> Previous
+              <ArrowLeft size={14} /> {t("block.previous")}
             </Link>
           )}
           <Link className="button outline small" to={`/block/${height + 1}`}>
-            Next <ArrowRight size={14} />
+            {t("block.next")} <ArrowRight size={14} />
           </Link>
         </span>
       </PageHeading>
-      <SourceNote read={block} what="Block" />
+      <SourceNote read={block} what={t("what.block")} />
       <ReadGate
         read={block}
-        what="Block"
+        what={t("what.block")}
         notFound={
           <NotFoundState
-            title="Block not found"
-            back={{ to: "/explorer/blocks", label: "View all blocks" }}
+            title={t("block.notFound")}
+            back={{ to: "/explorer/blocks", label: t("block.viewAll") }}
           >
-            Block #{height.toLocaleString()} does not exist on {config.label}{" "}
-            yet.
+            {t("block.heightNotFoundBody", { height: fmtInt(height), network })}
           </NotFoundState>
         }
       >
         {(b) => (
           <>
-            <Section id="block-overview" title="Overview">
+            <Section id="block-overview" title={t("detail.overview")}>
               <DetailList
                 rows={[
-                  ["Height", b.height.toLocaleString()],
-                  ["Finality", <Finality key="f" height={b.height} />],
+                  [t("col.height"), fmtInt(b.height)],
+                  [t("block.finality"), <Finality key="f" height={b.height} />],
                   [
-                    "Block hash",
+                    t("col.blockHash"),
                     <CopyHash
                       key="h"
                       hash={b.hash}
@@ -145,7 +149,7 @@ function BlockByHeight({ height }: { height: number }) {
                     />,
                   ],
                   [
-                    "Parent hash",
+                    t("block.parentHash"),
                     b.height > 0 ? (
                       <Link
                         className="mono address-link break"
@@ -157,15 +161,15 @@ function BlockByHeight({ height }: { height: number }) {
                       <span className="mono">{b.prevHash}</span>
                     ),
                   ],
-                  ["Timestamp", <Timestamp key="t" ts={b.time} />],
+                  [t("detail.timestamp"), <Timestamp key="t" ts={b.time} />],
                   [
-                    "Proposer",
+                    t("col.proposer"),
                     <AddressLink key="p" identity={b.proposer} full />,
                   ],
-                  ["Transactions", b.txCount.toLocaleString()],
-                  ["Total fees", <Xrge key="x" amount={b.totalFees} />],
+                  [t("col.transactions"), fmtInt(b.txCount)],
+                  [t("block.totalFees"), <Xrge key="x" amount={b.totalFees} />],
                   [
-                    "Transactions root",
+                    t("block.txRoot"),
                     b.txHash ? (
                       <code className="mono break">{b.txHash}</code>
                     ) : (
@@ -173,13 +177,11 @@ function BlockByHeight({ height }: { height: number }) {
                     ),
                   ],
                   [
-                    "State root",
+                    t("block.stateRoot"),
                     b.stateRoot ? (
                       <code className="mono break">{b.stateRoot}</code>
                     ) : (
-                      <span className="muted">
-                        Not committed (before the state-root fork)
-                      </span>
+                      <span className="muted">{t("block.noStateRoot")}</span>
                     ),
                   ],
                 ]}
@@ -187,13 +189,13 @@ function BlockByHeight({ height }: { height: number }) {
             </Section>
             <Section
               id="block-transactions"
-              title="Transactions"
-              meta={`${b.txCount} in this block.`}
+              title={t("col.transactions")}
+              meta={t("block.txMeta", { n: fmtInt(b.txCount) })}
             >
               <TxTable
                 txs={b.transactions}
                 showBlock={false}
-                empty="No transactions in this block"
+                empty={t("block.noTxs")}
               />
             </Section>
           </>
@@ -204,15 +206,19 @@ function BlockByHeight({ height }: { height: number }) {
 }
 
 function StatusBanner({ tx }: { tx: TxDetail }) {
+  const { t } = useTranslation("explorer");
+  const block = fmtInt(tx.blockHeight);
   if (tx.receipt?.status === "failed")
     return (
       <div className="status-banner failed" role="status">
         <XCircle size={20} />
         <div>
-          <strong>Failed</strong>
+          <strong>{t("tx.failed")}</strong>
           <p>
-            Included in block #{tx.blockHeight.toLocaleString()} but execution
-            failed: {tx.receipt.failReason ?? "no reason recorded"}.
+            {t("tx.failedBody", {
+              block,
+              reason: tx.receipt.failReason ?? t("tx.noReason"),
+            })}
           </p>
         </div>
       </div>
@@ -222,11 +228,8 @@ function StatusBanner({ tx }: { tx: TxDetail }) {
       <div className="status-banner success" role="status">
         <CheckCircle2 size={20} />
         <div>
-          <strong>Success</strong>
-          <p>
-            Included in block #{tx.blockHeight.toLocaleString()} with a
-            successful receipt.
-          </p>
+          <strong>{t("tx.success")}</strong>
+          <p>{t("tx.successBody", { block })}</p>
         </div>
       </div>
     );
@@ -234,11 +237,8 @@ function StatusBanner({ tx }: { tx: TxDetail }) {
     <div className="status-banner" role="status">
       <CircleDashed size={20} />
       <div>
-        <strong>Included</strong>
-        <p>
-          Included in block #{tx.blockHeight.toLocaleString()}. The node
-          recorded no execution receipt for it.
-        </p>
+        <strong>{t("tx.included")}</strong>
+        <p>{t("tx.includedBody", { block })}</p>
       </div>
     </div>
   );
@@ -257,6 +257,7 @@ function payloadJson(payload: Record<string, unknown>) {
 }
 
 export function TxDetailPage() {
+  const { t } = useTranslation("explorer");
   const { hash: param = "" } = useParams();
   const hash = param.toLowerCase();
   const valid = HASH64.test(hash);
@@ -265,10 +266,10 @@ export function TxDetailPage() {
     return (
       <ExplorerMain>
         <NotFoundState
-          title="Not a transaction hash"
-          back={{ to: "/transactions", label: "View all transactions" }}
+          title={t("tx.notHash")}
+          back={{ to: "/transactions", label: t("tx.viewAll") }}
         >
-          A transaction hash is 64 hexadecimal characters.
+          {t("tx.notHashBody")}
         </NotFoundState>
       </ExplorerMain>
     );
@@ -278,103 +279,103 @@ export function TxDetailPage() {
   return (
     <ExplorerMain>
       <PageHeading
-        eyebrow="Transaction"
-        title="Transaction details"
+        eyebrow={t("col.transaction")}
+        title={t("tx.title")}
         aside={tx.data ? <TypePill type={tx.data.type} /> : undefined}
       />
-      <SourceNote read={tx} what="Transaction" />
+      <SourceNote read={tx} what={t("what.transaction")} />
       <ReadGate
         read={tx}
-        what="Transaction"
+        what={t("what.transaction")}
         notFound={
           <NotFoundState
-            title="Transaction not found"
-            back={{ to: "/transactions", label: "View all transactions" }}
+            title={t("tx.notFound")}
+            back={{ to: "/transactions", label: t("tx.viewAll") }}
           >
-            This transaction does not exist on this network, or has not been
-            included in a block yet.
+            {t("tx.notFoundBody")}
           </NotFoundState>
         }
       >
-        {(t) => <TxBody tx={t} />}
+        {(data) => <TxBody tx={data} />}
       </ReadGate>
     </ExplorerMain>
   );
 }
 
-function TxBody({ tx: t }: { tx: TxDetail }) {
-  const p = t.payload;
+function TxBody({ tx }: { tx: TxDetail }) {
+  const { t } = useTranslation("explorer");
+  const p = tx.payload;
   const swap = swapSides(p);
   const isAmm = ["create_pool", "add_liquidity", "remove_liquidity"].includes(
-    t.type,
+    tx.type,
   );
-  const isContract = t.type === "contract_deploy" || t.type === "contract_call";
+  const isContract = tx.type === "contract_deploy" || tx.type === "contract_call";
   const contractAddr = str(p.contract_addr);
-  const gasUsed = t.receipt?.gasUsed ?? numOrNull(p.contract_gas_limit);
+  const gasUsed = tx.receipt?.gasUsed ?? numOrNull(p.contract_gas_limit);
   const collectionId = str(p.nft_collection_id);
   return (
     <>
-      <StatusBanner tx={t} />
-      <Section id="tx-overview" title="Overview">
+      <StatusBanner tx={tx} />
+      <Section id="tx-overview" title={t("detail.overview")}>
         <DetailList
           rows={[
             [
-              "Transaction hash",
+              t("tx.hash"),
               <CopyHash
                 key="h"
-                hash={t.id}
-                display={<code className="mono break">{t.id}</code>}
+                hash={tx.id}
+                display={<code className="mono break">{tx.id}</code>}
               />,
             ],
             [
-              "Block",
+              t("col.block"),
               <span key="b" className="inline-row">
-                <BlockLink height={t.blockHeight} />{" "}
-                <Finality height={t.blockHeight} />
+                <BlockLink height={tx.blockHeight} />{" "}
+                <Finality height={tx.blockHeight} />
               </span>,
             ],
-            ["Timestamp", <Timestamp key="t" ts={t.blockTime} />],
-            ["Type", <TypePill key="ty" type={t.type} />],
+            [t("detail.timestamp"), <Timestamp key="t" ts={tx.blockTime} />],
+            [t("col.type"), <TypePill key="ty" type={tx.type} />],
             [
-              "From",
-              t.faucet ? (
-                <span className="muted">Faucet</span>
+              t("tx.from"),
+              tx.faucet ? (
+                <span className="muted">{t("tables.faucet")}</span>
               ) : (
-                <AddressLink key="f" identity={t.from} full />
+                <AddressLink key="f" identity={tx.from} full />
               ),
             ],
-            ...(t.to
+            ...(tx.to
               ? ([
-                  ["To", <AddressLink key="to" identity={t.to} full />],
+                  [t("tx.to"), <AddressLink key="to" identity={tx.to} full />],
                 ] as Rows)
               : []),
-            ...(t.amount !== null
+            ...(tx.amount !== null
               ? ([
                   [
-                    "Amount",
-                    <Amount key="a" raw={t.amount} symbol={t.symbol} />,
+                    t("col.amount"),
+                    <Amount key="a" raw={tx.amount} symbol={tx.symbol} />,
                   ],
                 ] as Rows)
               : []),
-            ["Fee", <Xrge key="fee" amount={t.receipt?.feePaid ?? t.fee} />],
-            ...(t.nonce !== null ? ([["Nonce", String(t.nonce)]] as Rows) : []),
-            ...(t.signatureBytes
+            [t("col.fee"), <Xrge key="fee" amount={tx.receipt?.feePaid ?? tx.fee} />],
+            ...(tx.nonce !== null ? ([[t("tx.nonce"), String(tx.nonce)]] as Rows) : []),
+            ...(tx.signatureBytes
               ? ([
                   [
-                    "Signature",
-                    `ML-DSA-65 · ${t.signatureBytes.toLocaleString()} bytes`,
+                    t("tx.signature"),
+                    `ML-DSA-65 · ${t("bytes", { n: fmtInt(tx.signatureBytes) })}`,
                   ],
                 ] as Rows)
               : []),
           ]}
         />
       </Section>
-      {t.type === "swap" && (swap.tokenIn || swap.tokenOut) && (
-        <Section id="tx-swap" title="Swap">
+      {tx.type === "swap" && (swap.tokenIn || swap.tokenOut) && (
+        <Section id="tx-swap" title={t("tx.swap")}>
           <DetailList
             rows={[
               [
-                "Token in",
+                t("tx.tokenIn"),
                 swap.tokenIn ? (
                   <Amount
                     key="in"
@@ -386,7 +387,7 @@ function TxBody({ tx: t }: { tx: TxDetail }) {
                 ),
               ],
               [
-                "Token out (minimum)",
+                t("tx.tokenOutMin"),
                 swap.tokenOut ? (
                   <Amount
                     key="out"
@@ -397,20 +398,20 @@ function TxBody({ tx: t }: { tx: TxDetail }) {
                   "—"
                 ),
               ],
-              ["Pool", swap.poolId ?? "—"],
+              [t("col.pool"), swap.poolId ?? "—"],
             ]}
           />
         </Section>
       )}
       {isAmm && (
-        <Section id="tx-amm" title="Liquidity">
+        <Section id="tx-amm" title={t("tx.liquidity")}>
           <DetailList
             rows={[
-              ["Pool", str(p.pool_id) ?? "—"],
+              [t("col.pool"), str(p.pool_id) ?? "—"],
               ...(str(p.token_a_symbol)
                 ? ([
                     [
-                      "Token A",
+                      t("tx.tokenA"),
                       <Amount
                         key="a"
                         raw={numOrNull(p.amount_a)}
@@ -422,7 +423,7 @@ function TxBody({ tx: t }: { tx: TxDetail }) {
               ...(str(p.token_b_symbol)
                 ? ([
                     [
-                      "Token B",
+                      t("tx.tokenB"),
                       <Amount
                         key="b"
                         raw={numOrNull(p.amount_b)}
@@ -433,7 +434,7 @@ function TxBody({ tx: t }: { tx: TxDetail }) {
                 : []),
               ...(numOrNull(p.lp_amount) !== null
                 ? ([
-                    ["LP units", numOrNull(p.lp_amount)!.toLocaleString()],
+                    [t("col.lpUnits"), fmtInt(numOrNull(p.lp_amount)!)],
                   ] as Rows)
                 : []),
             ]}
@@ -444,15 +445,15 @@ function TxBody({ tx: t }: { tx: TxDetail }) {
         <Section
           id="tx-contract"
           title={
-            t.type === "contract_deploy"
-              ? "Contract deployment"
-              : "Contract call"
+            tx.type === "contract_deploy"
+              ? t("tx.contractDeploy")
+              : t("tx.contractCall")
           }
         >
           <DetailList
             rows={[
               [
-                "Contract",
+                t("col.contract"),
                 contractAddr ? (
                   <Link
                     key="c"
@@ -468,7 +469,7 @@ function TxBody({ tx: t }: { tx: TxDetail }) {
               ...(str(p.contract_method)
                 ? ([
                     [
-                      "Method",
+                      t("tx.method"),
                       <code key="m" className="mono">
                         {str(p.contract_method)}()
                       </code>,
@@ -478,16 +479,16 @@ function TxBody({ tx: t }: { tx: TxDetail }) {
               ...(gasUsed !== null
                 ? ([
                     [
-                      t.receipt?.gasUsed != null ? "Gas used" : "Gas limit",
-                      gasUsed.toLocaleString(),
+                      tx.receipt?.gasUsed != null ? t("tx.gasUsed") : t("tx.gasLimit"),
+                      fmtInt(gasUsed),
                     ],
                   ] as Rows)
                 : []),
-              ...(t.type === "contract_deploy" && numOrNull(p.amount) !== null
+              ...(tx.type === "contract_deploy" && numOrNull(p.amount) !== null
                 ? ([
                     [
-                      "WASM size",
-                      `${numOrNull(p.amount)!.toLocaleString()} bytes`,
+                      t("col.wasmSize"),
+                      t("bytes", { n: fmtInt(numOrNull(p.amount)!) }),
                     ],
                   ] as Rows)
                 : []),
@@ -496,11 +497,11 @@ function TxBody({ tx: t }: { tx: TxDetail }) {
         </Section>
       )}
       {collectionId && (
-        <Section id="tx-nft" title="NFT">
+        <Section id="tx-nft" title={t("tx.nft")}>
           <DetailList
             rows={[
               [
-                "Collection",
+                t("tx.collection"),
                 <Link
                   key="c"
                   className="address-link"
@@ -510,18 +511,18 @@ function TxBody({ tx: t }: { tx: TxDetail }) {
                 </Link>,
               ],
               ...(str(p.nft_token_name)
-                ? ([["Token", str(p.nft_token_name)!]] as Rows)
+                ? ([[t("col.token"), str(p.nft_token_name)!]] as Rows)
                 : []),
             ]}
           />
         </Section>
       )}
-      {t.type === "create_token" && str(p.token_symbol) && (
-        <Section id="tx-token" title="Token created">
+      {tx.type === "create_token" && str(p.token_symbol) && (
+        <Section id="tx-token" title={t("tx.tokenCreated")}>
           <DetailList
             rows={[
               [
-                "Token",
+                t("col.token"),
                 <Link
                   key="t"
                   className="address-link"
@@ -530,26 +531,29 @@ function TxBody({ tx: t }: { tx: TxDetail }) {
                   {str(p.token_symbol)}
                 </Link>,
               ],
-              ["Name", str(p.token_name) ?? "—"],
+              [t("tx.name"), str(p.token_name) ?? "—"],
               [
-                "Initial supply",
-                numOrNull(p.token_total_supply)?.toLocaleString() ?? "—",
+                t("tx.initialSupply"),
+                (() => {
+                  const supply = numOrNull(p.token_total_supply);
+                  return supply === null ? "—" : fmtInt(supply);
+                })(),
               ],
             ]}
           />
         </Section>
       )}
-      {(t.type === "bridge_withdraw" || t.type === "bridge_mint") && (
-        <BridgeTransferPanel txId={t.id} />
+      {(tx.type === "bridge_withdraw" || tx.type === "bridge_mint") && (
+        <BridgeTransferPanel txId={tx.id} />
       )}
-      {t.receipt && t.receipt.logs.length > 0 && (
+      {tx.receipt && tx.receipt.logs.length > 0 && (
         <Section
           id="tx-logs"
-          title="Event logs"
-          meta={`${t.receipt.logs.length} emitted.`}
+          title={t("tx.logs")}
+          meta={t("tx.logsMeta", { n: fmtInt(tx.receipt.logs.length) })}
         >
           <ol className="log-list">
-            {t.receipt.logs.map((log, i) => (
+            {tx.receipt.logs.map((log, i) => (
               <li key={i} className="surface">
                 <div className="log-head">
                   <span className="mono muted">#{i}</span>
@@ -573,7 +577,7 @@ function TxBody({ tx: t }: { tx: TxDetail }) {
         </Section>
       )}
       <details className="raw-payload">
-        <summary>Raw payload</summary>
+        <summary>{t("tx.rawPayload")}</summary>
         <pre className="code">{payloadJson(p)}</pre>
       </details>
     </>
