@@ -17,6 +17,7 @@ import { mockFetch, resetBrowserState, seedAppsWebLockedWallet, seedAppsWebWalle
 import { featureHeaderProduct, featureRoutes } from "../features";
 import { PAGES_PATHS } from "../features/pages";
 import { checkStake, checkUnstake, maxStake } from "./validators-data";
+import i18n from "../i18n";
 
 const OTHER = "ab".repeat(1952);
 
@@ -378,5 +379,39 @@ describe("other pages", () => {
     const squash = (x: string) => x.replace(/[\s(){}]/g, "");
     const flat = squash(rendered);
     for (const x of sentences) expect(flat).toContain(squash(x));
+  });
+});
+
+describe("pages i18n", () => {
+  it("renders /status in Spanish (heading, labels and route title)", async () => {
+    mockFetch({
+      "/api/stats": () => ({ network_height: 1200, finalized_height: 1198, connected_peers: 2, state_root: "ab".repeat(32), base_fee: 0.1, total_fees_burned: 1.5, chain_id: "rougechain-mainnet-1" }),
+      "/api/validators": () => ({ validators: [{ publicKey: OTHER, stake: 100_000, jailedUntil: 0 }] }),
+      "/api/peers": () => ({ peers: [] }),
+    });
+    await i18n.changeLanguage("es");
+    renderAt("/status");
+    expect(await screen.findByRole("heading", { level: 1, name: "Estado de la red" })).toBeInTheDocument();
+    expect(screen.getByText("Validadores (activos / total)")).toBeInTheDocument();
+    expect(await screen.findByText("1200")).toBeInTheDocument(); // es-ES groups from 5 digits: fmtInt
+    await waitFor(() => expect(document.title).toBe("Estado de la red — RougeChain"));
+  });
+
+  it("renders /validators in Chinese, with localized staking errors", async () => {
+    validatorRoutes([{ publicKey: OTHER, stake: 150_000 }]);
+    await i18n.changeLanguage("zh");
+    renderAt("/validators");
+    expect(await screen.findByRole("heading", { level: 1, name: "验证者" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "验证者排行榜" })).toBeInTheDocument();
+    expect(checkStake("10.5", 50_000, 0)).toEqual({ ok: false, error: "请输入整数数量的 XRGE。" });
+  });
+
+  it("keeps the privacy policy body in English with a translated notice", async () => {
+    mockFetch();
+    await i18n.changeLanguage("ja");
+    renderAt("/privacy");
+    expect(await screen.findByRole("heading", { level: 1, name: "プライバシーポリシー" })).toBeInTheDocument();
+    expect(screen.getByText(/このポリシーは英語で提供されています/)).toBeInTheDocument();
+    expect(screen.getByText(/is committed to/)).toBeInTheDocument();
   });
 });

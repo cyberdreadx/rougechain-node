@@ -4,6 +4,7 @@
  */
 import { useEffect, useSyncExternalStore } from "react";
 import { CheckCircle2, Info, TriangleAlert, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 export type ToastKind = "success" | "error" | "info";
 export interface ToastItem {
@@ -56,6 +57,9 @@ function useToasts(): ToastItem[] {
 }
 
 function ToastView({ item }: { item: ToastItem }) {
+  // No Suspense here: the toaster sits outside the route boundaries (and the explorer build does
+  // not preload `wallet`); the label settles once the namespace has loaded.
+  const { t } = useTranslation("wallet", { useSuspense: false });
   useEffect(() => {
     const id = window.setTimeout(() => dismissToast(item.id), DURATION_MS);
     return () => window.clearTimeout(id);
@@ -68,7 +72,7 @@ function ToastView({ item }: { item: ToastItem }) {
         <strong>{item.title}</strong>
         {item.description && <span>{item.description}</span>}
       </div>
-      <button type="button" className="toast-close" aria-label="Dismiss notification" onClick={() => dismissToast(item.id)}>
+      <button type="button" className="toast-close" aria-label={t("toast.dismiss")} onClick={() => dismissToast(item.id)}>
         <X size={14} />
       </button>
     </div>

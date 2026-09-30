@@ -9,7 +9,7 @@
  * floors a fractional XRGE swap (`Math.floor(humanToRaw(1.5))` → 1); we say so instead.
  */
 import { formatTokenAmount, l1TokenDecimals } from "@rougechain/core/token-decimals";
-import { S } from "./strings";
+import i18n from "../i18n";
 
 export type ParsedAmount = { ok: true; raw: number } | { ok: false; error: string };
 
@@ -24,25 +24,25 @@ export function tokenDecimals(symbol: string): number {
 export function parseTokenAmount(input: string, symbol: string): ParsedAmount {
   const text = input.trim().replace(",", ".");
   const m = /^(\d+)(?:\.(\d+))?$/.exec(text);
-  if (!m) return { ok: false, error: S.errors.invalidAmount };
+  if (!m) return { ok: false, error: i18n.t("swap:errors.invalidAmount") };
   const d = tokenDecimals(symbol);
   const frac = m[2] ?? "";
   if (frac.replace(/0+$/, "").length > d) {
-    return { ok: false, error: d === 0 ? S.errors.wholeUnits(symbol) : S.errors.tooManyDecimals(symbol, d) };
+    return { ok: false, error: d === 0 ? i18n.t("swap:errors.wholeUnits", { symbol }) : i18n.t("swap:errors.tooManyDecimals", { symbol, decimals: d }) };
   }
   const raw = BigInt(m[1]) * 10n ** BigInt(d) + BigInt((frac + "0".repeat(d)).slice(0, d) || "0");
-  if (raw <= 0n) return { ok: false, error: S.errors.invalidAmount };
-  if (raw > BigInt(Number.MAX_SAFE_INTEGER)) return { ok: false, error: S.errors.tooLarge };
+  if (raw <= 0n) return { ok: false, error: i18n.t("swap:errors.invalidAmount") };
+  if (raw > BigInt(Number.MAX_SAFE_INTEGER)) return { ok: false, error: i18n.t("swap:errors.tooLarge") };
   return { ok: true, raw: Number(raw) };
 }
 
 /** LP tokens are whole raw units (daemon `lp_amount: u64`). */
 export function parseLpAmount(input: string): ParsedAmount {
   const text = input.trim();
-  if (!/^\d+$/.test(text)) return { ok: false, error: /^\d*[.,]\d+$/.test(text) ? S.errors.wholeUnits("LP") : S.errors.invalidAmount };
+  if (!/^\d+$/.test(text)) return { ok: false, error: /^\d*[.,]\d+$/.test(text) ? i18n.t("swap:errors.wholeUnits", { symbol: "LP" }) : i18n.t("swap:errors.invalidAmount") };
   const raw = BigInt(text);
-  if (raw <= 0n) return { ok: false, error: S.errors.invalidAmount };
-  if (raw > BigInt(Number.MAX_SAFE_INTEGER)) return { ok: false, error: S.errors.tooLarge };
+  if (raw <= 0n) return { ok: false, error: i18n.t("swap:errors.invalidAmount") };
+  if (raw > BigInt(Number.MAX_SAFE_INTEGER)) return { ok: false, error: i18n.t("swap:errors.tooLarge") };
   return { ok: true, raw: Number(raw) };
 }
 

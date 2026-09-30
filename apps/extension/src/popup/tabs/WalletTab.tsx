@@ -132,6 +132,13 @@ export default function WalletTab({ wallet }: Props) {
 
     const handleSend = async () => {
         if (!sendTo || !sendAmount || isSending) return;
+        // The node stores a wallet transfer amount as a whole number (v2 binding: amount as u64):
+        // refuse fractional XRGE instead of letting the chain silently drop the fraction.
+        const amountNum = Number(sendAmount);
+        if (!Number.isInteger(amountNum) || amountNum <= 0) {
+            showToast("XRGE amounts must be whole numbers");
+            return;
+        }
         setIsSending(true);
         try {
             // v2 client-side signed transfer (the v1 /tx/submit endpoint is retired — 410 Gone).
@@ -143,7 +150,7 @@ export default function WalletTab({ wallet }: Props) {
             await signAndPostV2(wallet, "/v2/transfer", {
                 type: "transfer",
                 to: sendTo,
-                amount: parseFloat(sendAmount),
+                amount: amountNum,
                 token: TOKEN_SYMBOL,
             }, { withNonce: true });
 

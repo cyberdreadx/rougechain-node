@@ -6,11 +6,16 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useTranslation } from "react-i18next";
 import CompactWorkspace from "./CompactWorkspace";
 import type { WorkspaceView } from "./model";
 // Desktop-only chunk: dockview and its stylesheet download only when the interactive view renders.
 const DockviewWorkspace = lazy(() => import("./DockviewWorkspace"));
 export const DESKTOP_QUERY = "(min-width: 900px)";
+function UnavailableNote() {
+  const { t } = useTranslation("common");
+  return <p role="status">{t("workspace.unavailable")}</p>;
+}
 export class WorkspaceBoundary extends Component<
   { children: ReactNode; requested?: WorkspaceView },
   { failed: boolean }
@@ -22,9 +27,7 @@ export class WorkspaceBoundary extends Component<
   render() {
     return this.state.failed ? (
       <>
-        <p role="status">
-          Workspace unavailable. Use the compact workspace below.
-        </p>
+        <UnavailableNote />
         <CompactWorkspace requested={this.props.requested} />
       </>
     ) : (
@@ -39,6 +42,7 @@ export default function WorkspaceExperience({
   embedded?: boolean;
   requested?: WorkspaceView;
 }) {
+  const { t } = useTranslation("common");
   const [desktop, setDesktop] = useState(false),
     [simple, setSimple] = useState(false);
   useEffect(() => {
@@ -52,7 +56,7 @@ export default function WorkspaceExperience({
     <>
       <div className="workspace-toolbar">
         <span className="mono muted">
-          OPEN · ARRANGE · TAB · FOCUS · HIDE · RESTORE
+          {t("workspace.toolbar")}
         </span>
         {desktop && (
           <button
@@ -60,7 +64,7 @@ export default function WorkspaceExperience({
             className="button ghost small"
             onClick={() => setSimple(!simple)}
           >
-            {simple ? "Interactive view" : "Simple view"}
+            {simple ? t("workspace.interactive") : t("workspace.simple")}
           </button>
         )}
       </div>

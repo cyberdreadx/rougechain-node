@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { BarChart3, Coins, Minus, Plus } from "lucide-react";
 import { Button, Metric } from "@rougechain/ui";
 import { formatUsd } from "@rougechain/core/price-service";
@@ -6,10 +7,10 @@ import { canCollect, type LpEarnings, type Pool } from "./api";
 import { poolShare } from "./amm";
 import { fmtAmount, fmtLp } from "./amounts";
 import { PairIcons } from "./parts";
-import { S } from "./strings";
+import { fmtNum } from "../i18n/format";
 
 export function feePct(pool: Pick<Pool, "fee_rate">): string {
-  return `${((pool.fee_rate || 0.003) * 100).toFixed(1)}%`;
+  return `${fmtNum((pool.fee_rate || 0.003) * 100, 1, { minimumFractionDigits: 1 })}%`;
 }
 
 export function tvlText(pool: Pool, usd: Record<string, number>): string {
@@ -33,14 +34,15 @@ export function EarningsRow({
   canSign: boolean;
   onCollect: () => void;
 }) {
+  const { t } = useTranslation("swap");
   return (
     <div className="dex-earnings">
       <div>
-        <small>{S.pools.uncollected}</small>
+        <small>{t("pools.uncollected")}</small>
         {earned === undefined ? (
-          <span className="muted">{S.pools.calculating}</span>
+          <span className="muted">{t("pools.calculating")}</span>
         ) : earned === null ? (
-          <span className="muted">{S.pools.unavailable}</span>
+          <span className="muted">{t("pools.unavailable")}</span>
         ) : (
           <strong className="mono">
             {fmtAmount(earned.earnedA, pool.token_a)} {pool.token_a} + {fmtAmount(earned.earnedB, pool.token_b)} {pool.token_b}
@@ -48,7 +50,7 @@ export function EarningsRow({
         )}
       </div>
       <Button variant="small" disabled={!canSign || !canCollect(earned ?? null)} onClick={onCollect}>
-        <Coins size={14} aria-hidden="true" /> {S.pools.collect}
+        <Coins size={14} aria-hidden="true" /> {t("pools.collect")}
       </Button>
     </div>
   );
@@ -75,6 +77,7 @@ export function PoolCard({
   onRemove: () => void;
   onCollect: () => void;
 }) {
+  const { t } = useTranslation("swap");
   const pair = `${pool.token_a}/${pool.token_b}`;
   return (
     <article className="surface dex-pool" aria-label={pair}>
@@ -84,23 +87,23 @@ export function PoolCard({
           <h2>
             <Link to={`/pool/${encodeURIComponent(pool.pool_id)}`}>{pair}</Link>
           </h2>
-          <span className="pill">{S.pools.fee(feePct(pool))}</span>
+          <span className="pill">{t("pools.fee", { pct: feePct(pool) })}</span>
         </div>
         <div className="dex-pool-tvl">
-          <small>{S.pools.tvl}</small>
+          <small>{t("pools.tvl")}</small>
           <strong className="mono">{tvlText(pool, usd)}</strong>
         </div>
       </header>
       <div className="dex-metrics">
-        <Metric label={S.pools.reserve(pool.token_a)} value={<span className="mono">{fmtAmount(pool.reserve_a, pool.token_a)}</span>} />
-        <Metric label={S.pools.reserve(pool.token_b)} value={<span className="mono">{fmtAmount(pool.reserve_b, pool.token_b)}</span>} />
-        <Metric label={S.pools.lpSupply} value={<span className="mono">{fmtLp(pool.total_lp_supply)}</span>} />
+        <Metric label={t("pools.reserve", { symbol: pool.token_a })} value={<span className="mono">{fmtAmount(pool.reserve_a, pool.token_a)}</span>} />
+        <Metric label={t("pools.reserve", { symbol: pool.token_b })} value={<span className="mono">{fmtAmount(pool.reserve_b, pool.token_b)}</span>} />
+        <Metric label={t("pools.lpSupply")} value={<span className="mono">{fmtLp(pool.total_lp_supply)}</span>} />
         <Metric
-          label={S.pools.yourLp}
+          label={t("pools.yourLp")}
           value={
             <span className="mono">
               {fmtLp(lp)}
-              {lp > 0 && <small> · {(poolShare(lp, pool) * 100).toFixed(2)}%</small>}
+              {lp > 0 && <small> · {fmtNum(poolShare(lp, pool) * 100, 2, { minimumFractionDigits: 2 })}%</small>}
             </span>
           }
         />
@@ -108,13 +111,13 @@ export function PoolCard({
       {lp > 0 && <EarningsRow pool={pool} earned={earned} canSign={canSign} onCollect={onCollect} />}
       <div className="dex-pool-actions">
         <Link className="button secondary small" to={`/pool/${encodeURIComponent(pool.pool_id)}`}>
-          <BarChart3 size={14} aria-hidden="true" /> {S.pools.details}
+          <BarChart3 size={14} aria-hidden="true" /> {t("pools.details")}
         </Link>
-        <Button variant="outline small" disabled={!canSign} onClick={onAdd} aria-label={`${S.pools.add} · ${pair}`}>
-          <Plus size={14} aria-hidden="true" /> {S.pools.add}
+        <Button variant="outline small" disabled={!canSign} onClick={onAdd} aria-label={`${t("pools.add")} · ${pair}`}>
+          <Plus size={14} aria-hidden="true" /> {t("pools.add")}
         </Button>
-        <Button variant="outline small" disabled={!canSign || lp <= 0} onClick={onRemove} aria-label={`${S.pools.remove} · ${pair}`}>
-          <Minus size={14} aria-hidden="true" /> {S.pools.remove}
+        <Button variant="outline small" disabled={!canSign || lp <= 0} onClick={onRemove} aria-label={`${t("pools.remove")} · ${pair}`}>
+          <Minus size={14} aria-hidden="true" /> {t("pools.remove")}
         </Button>
       </div>
     </article>

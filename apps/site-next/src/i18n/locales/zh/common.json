@@ -1,0 +1,422 @@
+{
+  "meta": {
+    "title": "RougeChain — 从创世起即后量子安全。",
+    "description": "RougeChain — 基于 NIST 标准化格密码构建的后量子 Layer 1 区块链。",
+    "explorerTitle": "RougeChain 浏览器 — 区块、交易、地址和代币",
+    "explorerDescription": "探索后量子 Layer 1 区块链 RougeChain：区块、交易、地址、代币、NFT 和合约。"
+  },
+  "language": {
+    "label": "语言"
+  },
+  "loading": "加载中…",
+  "skipToContent": "跳到主要内容",
+  "ui": {
+    "closeDialog": "关闭对话框",
+    "designDemo": "设计演示"
+  },
+  "header": {
+    "mainNav": "主导航",
+    "docs": "文档",
+    "localNav": "{{name}}导航",
+    "workspace": "工作区"
+  },
+  "sections": {
+    "technology": "技术",
+    "build": "构建",
+    "security": "安全",
+    "ecosystem": "生态",
+    "regenerate": "再生计划",
+    "explore": "探索"
+  },
+  "footer": {
+    "tagline": "为未来而建。",
+    "docs": "文档",
+    "community": "社区",
+    "designSystem": "设计系统",
+    "architecture": "架构",
+    "motto": "从创世起即抗量子。"
+  },
+  "explorerSite": {
+    "wordmark": "RougeChain 区块浏览器",
+    "tagline": "RougeChain 上的每个区块、每笔交易和每个地址。"
+  },
+  "notFound": {
+    "title": "页面未找到。",
+    "body": "使用“应用”菜单浏览可用页面。",
+    "home": "返回 RougeChain",
+    "explorerBody": "搜索区块、交易、地址、代币或合约。",
+    "explorerHome": "浏览器首页"
+  },
+  "projectNav": {
+    "label": "项目导航",
+    "title": "探索 RougeChain",
+    "sections": "项目栏目",
+    "home": "RougeChain 首页",
+    "walletConnected": "钱包已连接 · {{address}}",
+    "walletDisconnected": "钱包未连接 · 请使用页眉中的“连接钱包”。"
+  },
+  "switcher": {
+    "apps": "应用",
+    "dialog": "RougeChain 应用",
+    "home": "RougeChain 首页",
+    "closeLabel": "关闭应用菜单",
+    "close": "关闭",
+    "localNav": "{{name}}移动端导航",
+    "global": "全部应用",
+    "comingSoon": "即将推出",
+    "extensionLabel": "RougeChain 钱包扩展 ↗",
+    "workspace": "完整工作区"
+  },
+  "appStatus": {
+    "live": "已上线",
+    "preview": "预览",
+    "demo": "演示",
+    "external": "外部",
+    "future": "规划中"
+  },
+  "appGroups": {
+    "Hold": "持有",
+    "Trade": "交易",
+    "Play": "娱乐",
+    "Talk": "交流",
+    "Explore": "探索",
+    "Build": "构建",
+    "Community": "社区"
+  },
+  "appNav": {
+    "wallet": "钱包",
+    "settings": "设置",
+    "swap": "Swap",
+    "pools": "流动性池",
+    "positions": "仓位",
+    "overview": "概览",
+    "blocks": "区块",
+    "transactions": "交易",
+    "tokens": "代币",
+    "nfts": "NFT",
+    "contracts": "合约",
+    "bridgeActivity": "跨链桥",
+    "validators": "验证者",
+    "genesis": "创世计划",
+    "status": "状态"
+  },
+  "apps": {
+    "qwalla": {
+      "name": "Qwalla 移动钱包",
+      "description": "探索 Qwalla 生态。"
+    },
+    "wallet": {
+      "name": "网页钱包",
+      "description": "你的资产，为未来而守护。"
+    },
+    "wallet-extension": {
+      "name": "钱包扩展",
+      "description": "RougeChain 钱包浏览器扩展。"
+    },
+    "rougee": {
+      "name": "Rougee",
+      "description": "探索 Rougee。"
+    },
+    "qwave": {
+      "name": "qWave",
+      "description": "探索 qWave。"
+    },
+    "arcade": {
+      "name": "游戏厅",
+      "description": "游戏即将推出。"
+    },
+    "messenger": {
+      "name": "消息",
+      "description": "后量子加密的聊天、群组和支付。"
+    },
+    "mail": {
+      "name": "邮件",
+      "description": "@rouge.quant 与 @qwalla.mail 加密邮件。"
+    },
+    "swap": {
+      "name": "Swap",
+      "description": "兑换资产，探索可能。"
+    },
+    "bridge": {
+      "name": "跨链桥",
+      "description": "连接不同网络。"
+    },
+    "liquidity": {
+      "name": "流动性",
+      "description": "提供流动性，赚取兑换手续费。"
+    },
+    "explorer": {
+      "name": "区块浏览器",
+      "description": "网络全貌，细节尽现。"
+    },
+    "validators": {
+      "name": "验证者",
+      "description": "守护网络安全的参与者。"
+    },
+    "network": {
+      "name": "网络状态",
+      "description": "只读的公共 API 遥测数据。"
+    },
+    "build": {
+      "name": "开发者门户",
+      "description": "在 RougeChain 上构建的工具。"
+    },
+    "docs": {
+      "name": "文档",
+      "description": "阅读最新文档。"
+    },
+    "sdk": {
+      "name": "SDK",
+      "description": "开发者工具预览。"
+    },
+    "mcp": {
+      "name": "MCP / 智能体",
+      "description": "让 AI 智能体读取和使用区块链。"
+    },
+    "node": {
+      "name": "运行节点",
+      "description": "命令、前置条件与在线节点。"
+    },
+    "regenerate": {
+      "name": "再生计划",
+      "description": "了解社区使命。"
+    },
+    "community": {
+      "name": "RougeChain 社区",
+      "description": "与社区保持联系。"
+    }
+  },
+  "network": {
+    "names": {
+      "mainnet": "Mainnet",
+      "testnet": "Testnet"
+    },
+    "state": {
+      "live": "实时 API",
+      "demo": "演示",
+      "loading": "加载中",
+      "stale": "已过期",
+      "unavailable": "不可用"
+    },
+    "dataState": {
+      "live": "实时 API 数据",
+      "demo": "演示 · 已保存快照",
+      "stale": "已过期 · 上次成功读取",
+      "unavailable": "不可用",
+      "loading": "正在加载网络数据"
+    },
+    "source": {
+      "live": "实时 API",
+      "demo": "快照",
+      "unavailable": "不可用",
+      "loading": "加载中",
+      "stale": "已过期"
+    },
+    "controls": {
+      "mode": "网络数据模式",
+      "live": "实时数据",
+      "snapshot": "快照",
+      "refresh": "刷新网络数据"
+    },
+    "note": {
+      "unavailable": "{{network}} 数据不可用。",
+      "captured": "采集于 {{date}}。",
+      "lastRead": "上次读取：{{date}}。",
+      "liveness": "API 可访问并不代表链正在出块。"
+    },
+    "metrics": {
+      "height": "区块高度",
+      "validators": "报告的验证者",
+      "peers": "已连接节点",
+      "source": "数据来源"
+    }
+  },
+  "workspacePage": {
+    "eyebrow": "你的生态 / 工作区",
+    "title": "为可能性留出空间。",
+    "lead": "打开一个应用，聚焦网络。",
+    "unknownPreview": "该预览不可用。请在下方选择一个应用。"
+  },
+  "explore": {
+    "eyebrow": "08 / 探索 RougeChain",
+    "title": "探索 RougeChain",
+    "subtitle": "网络、工具与无限可能，随你定制。",
+    "openWorkspace": "打开完整工作区",
+    "paneNote": "从三个窗格开始，可在启动器中打开更多。"
+  },
+  "workspace": {
+    "views": {
+      "Network": "网络",
+      "Explorer": "浏览器",
+      "Ecosystem": "生态",
+      "Wallet": "钱包",
+      "Swap": "Swap",
+      "Bridge": "跨链桥",
+      "Messenger": "消息",
+      "Mail": "邮件",
+      "Validators": "验证者",
+      "Build": "构建",
+      "Security": "安全"
+    },
+    "groups": {
+      "Network": "网络",
+      "Use": "使用",
+      "Trade": "交易",
+      "Build": "构建"
+    },
+    "state": {
+      "notOpened": "未打开",
+      "hidden": "已隐藏",
+      "focused": "当前",
+      "open": "已打开"
+    },
+    "launcher": "工作区启动器",
+    "developer": "开发者",
+    "openView": "打开{{name}}",
+    "hideView": "隐藏{{name}}",
+    "panels": "工作区面板",
+    "reset": "重置工作区",
+    "compactNote": "紧凑工作区 · 面板状态仅在本次访问中保留。",
+    "unavailable": "工作区不可用。请使用下方的紧凑工作区。",
+    "toolbar": "打开 · 排列 · 标签 · 聚焦 · 隐藏 · 恢复",
+    "interactive": "交互视图",
+    "simple": "简洁视图"
+  },
+  "dock": {
+    "menu": "面板菜单",
+    "menuFor": "{{name}}面板菜单",
+    "panel": "{{name}}面板",
+    "openApp": "打开完整应用",
+    "restoreLayout": "恢复布局",
+    "maximize": "最大化",
+    "newColumn": "移到新列",
+    "dock": "停靠",
+    "float": "浮动",
+    "hide": "隐藏",
+    "close": "关闭",
+    "restoreView": "还原{{name}}",
+    "maximizeView": "最大化{{name}}",
+    "closeView": "关闭{{name}}",
+    "dockToMaximize": "停靠此面板后才能最大化",
+    "maximizePanel": "最大化面板",
+    "hideTitle": "隐藏面板（可在启动器中恢复）",
+    "watermark": "在启动器中选择一个应用以恢复工作区。",
+    "status": {
+      "mainnet": "MAINNET",
+      "open_other": "已打开 {{count}} 个",
+      "saveOn": "布局自动保存：开",
+      "saveOff": "布局存储不可用"
+    },
+    "overview": "总览",
+    "region": "RougeChain 交互式工作区"
+  },
+  "block": {
+    "title": "区块 #{{height}}",
+    "liveAtSelection": "选择时为实时 API 数据",
+    "dataAtSelection": "选择时的数据（{{source}}）",
+    "hash": "哈希",
+    "transactions": "交易",
+    "timestamp": "时间",
+    "note": "取自当前区块列表，未请求详情接口。",
+    "openExplorer": "打开完整浏览器"
+  },
+  "views": {
+    "network": {
+      "kicker": "ROUGECHAIN MAINNET",
+      "connected": "API 已连接",
+      "latest": "最新报告区块",
+      "validators": "验证者",
+      "noteDemo": "已保存的公共 API 快照。",
+      "noteLive": "公共网络数据的只读视图。",
+      "noteStale": "上次成功获取的数据；暂时无法刷新。",
+      "noteLoading": "正在请求公共网络数据。"
+    },
+    "explorer": {
+      "kicker": "最新区块",
+      "open": "打开浏览器",
+      "txs_other": "{{count}} 笔交易",
+      "loading": "正在加载网络数据…",
+      "publicData": "公共 GET 数据",
+      "note": "无需连接钱包即可查看网络。"
+    },
+    "ecosystem": {
+      "intro": "你的生态，一个工作区。",
+      "openPreview": "打开预览",
+      "architecture": "探索生态架构"
+    },
+    "build": {
+      "intro": "在全新基础上构建。",
+      "sdk": "SDK 与文档",
+      "wasm": "WASM 合约",
+      "agents": "MCP / 智能体与运行节点",
+      "source": "源代码"
+    },
+    "security": {
+      "intro": "后量子密码原语。",
+      "signatures": "后量子签名",
+      "kem": "后量子密钥封装",
+      "aead": "认证加密",
+      "hashing": "哈希 / 证明承诺",
+      "stack": "密码学技术栈"
+    }
+  },
+  "previews": {
+    "account": "账户：{{address}}",
+    "noWallet": "未连接钱包。",
+    "compose": "暂不可撰写",
+    "developer": "SDK · WASM · MCP / 智能体 · 运行节点",
+    "wallet": {
+      "connected": "钱包已连接",
+      "locked": "钱包已锁定",
+      "none": "无钱包",
+      "title": "你的资产",
+      "unlock": "解锁钱包以查看余额。",
+      "open": "打开钱包",
+      "note": "密钥保存在此浏览器中；签名在钱包页面完成。"
+    },
+    "swap": {
+      "status": "模拟报价",
+      "title": "兑换资产",
+      "connect": "在页眉中连接钱包以使用你的身份。",
+      "pay": "支付",
+      "receive": "收到",
+      "unavailable": "暂不可兑换",
+      "note": "汇率仅供示意，不提供报价或交易服务。",
+      "open": "打开完整 Swap"
+    },
+    "bridge": {
+      "status": "跨链桥预览",
+      "reverse": "切换方向",
+      "assets": "资产",
+      "activity": "跨链活动",
+      "unavailable": "跨链桥不可用",
+      "note": "不进行授权、存入或提取。"
+    },
+    "messenger": {
+      "status": "消息预览",
+      "conversations": "会话",
+      "contacts": "联系人",
+      "noContacts": "暂无联系人",
+      "yours": "你的会话",
+      "connected": "钱包已连接。本站暂不支持消息功能。",
+      "disconnected": "未连接账户。消息将显示在这里。",
+      "note": "不会发送消息，也不执行加密。"
+    },
+    "mail": {
+      "status": "邮件预览",
+      "inbox": "收件箱",
+      "sent": "已发送",
+      "empty": "{{folder}}为空",
+      "noAccount": "未连接邮件账户。",
+      "note": "不会获取或发送邮件。"
+    },
+    "validators": {
+      "title": "网络验证者",
+      "connected": "钱包已连接 · 未加载质押账户",
+      "reported": "由公共 API 报告 · Mainnet",
+      "nodeDocs": "运行节点文档",
+      "staking": "质押架构提案",
+      "unavailable": "暂不可质押"
+    }
+  }
+}

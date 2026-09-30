@@ -17,7 +17,9 @@ import { getVaultSettings, lockUnifiedWallet, unlockUnifiedWallet } from "@rouge
 import { useHideBalances as useAppsWebHideBalances } from "../../../web/src/hooks/use-hide-balances";
 import { HIDE_BALANCES_KEY, MASKED_AMOUNT, useHideBalances } from "./hooks";
 import { OPEN_TOUR_EVENT, TOUR_SECTIONS, TOUR_SEEN_KEY, hasSeenTour, markTourSeen } from "./tour";
-import { AUTO_LOCK_OPTIONS, LANGUAGE_STORAGE_KEY } from "./SettingsPage";
+import { AUTO_LOCK_OPTIONS } from "./SettingsPage";
+import { LANGUAGE_STORAGE_KEY } from "../i18n";
+import enWallet from "../i18n/locales/en/wallet.json";
 import SettingsPage from "./SettingsPage";
 import { WalletProvider } from "./WalletProvider";
 import { mockFetch, resetBrowserState, seedAppsWebWallet } from "./test-utils";
@@ -66,8 +68,13 @@ describe("tour / onboarding flags", () => {
     const src = webSource("lib/tour.ts");
     const ids = [...src.matchAll(/\{ id: "([a-z]+)"/g)].map((m) => m[1]);
     expect(TOUR_SECTIONS.map((s) => s.id)).toEqual(ids);
-    const en = JSON.parse(webSource("i18n/locales/en.json")).tour.sections;
-    for (const s of TOUR_SECTIONS) expect({ title: s.title, body: s.body }).toEqual(en[s.id]);
+    // Tour copy lives in the `wallet` namespace and is apps/web's `tour` block, in every language.
+    for (const lng of ["en", "es", "zh", "ja"]) {
+      const web = JSON.parse(webSource(`i18n/locales/${lng}.json`)).tour;
+      const ours = JSON.parse(readFileSync(path.resolve(__dirname, `../i18n/locales/${lng}/wallet.json`), "utf8")).tour;
+      expect(ours).toEqual(web);
+    }
+    for (const s of TOUR_SECTIONS) expect(Object.keys(enWallet.tour.sections)).toContain(s.id);
   });
 });
 
@@ -100,7 +107,8 @@ describe("settings persistence", () => {
     expect(screen.getByRole("switch", { name: "Sound" })).toHaveAttribute("aria-checked", "false");
     expect(screen.getByRole("switch", { name: "Discoverable" })).toHaveAttribute("aria-checked", "false");
     expect(screen.getByRole("button", { name: "15 min" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByText("Español")).toBeInTheDocument();
+    // The language selector (EN / ES / 中文 / 日本語) writes the same key apps/web reads.
+    expect(screen.getByRole("radio", { name: "ES" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("switch", { name: "Sound" }));
     await user.click(screen.getByRole("switch", { name: "Discoverable" }));

@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Box } from "lucide-react";
 import { EmptyState } from "@rougechain/ui";
 import type { BlockSummary, TxView } from "@rougechain/chain-readonly";
@@ -11,18 +12,20 @@ import {
   TypePill,
   Xrge,
 } from "./ui";
+import { fmtInt } from "../i18n/format";
 
 export function BlockTable({
   blocks,
-  empty = "No blocks",
+  empty,
 }: {
   blocks: BlockSummary[];
   empty?: string;
 }) {
+  const { t } = useTranslation("explorer");
   if (!blocks.length)
     return (
-      <EmptyState title={empty}>
-        The node returned no blocks for this range.
+      <EmptyState title={empty ?? t("tables.noBlocks")}>
+        {t("tables.noBlocksBody")}
       </EmptyState>
     );
   return (
@@ -30,33 +33,33 @@ export function BlockTable({
       <table className="stack-table">
         <thead>
           <tr>
-            <th>Height</th>
-            <th>Block hash</th>
-            <th>Transactions</th>
-            <th>Proposer</th>
-            <th>Block time</th>
+            <th>{t("col.height")}</th>
+            <th>{t("col.blockHash")}</th>
+            <th>{t("col.transactions")}</th>
+            <th>{t("col.proposer")}</th>
+            <th>{t("col.blockTime")}</th>
           </tr>
         </thead>
         <tbody>
           {blocks.map((b) => (
             <tr key={b.hash}>
-              <td data-label="Height">
+              <td data-label={t("col.height")}>
                 <Link
                   className="block-height address-link"
                   to={`/block/${b.height}`}
                 >
                   <Box size={14} />
-                  {b.height.toLocaleString()}
+                  {fmtInt(b.height)}
                 </Link>
               </td>
-              <td data-label="Hash">
+              <td data-label={t("col.hash")}>
                 <HashLink hash={b.hash} to={`/block/${b.height}`} />
               </td>
-              <td data-label="Transactions">{b.txCount}</td>
-              <td data-label="Proposer">
+              <td data-label={t("col.transactions")}>{fmtInt(b.txCount)}</td>
+              <td data-label={t("col.proposer")}>
                 <AddressLink identity={b.proposer} />
               </td>
-              <td data-label="Time">
+              <td data-label={t("col.time")}>
                 <Age ts={b.time} />
               </td>
             </tr>
@@ -70,79 +73,80 @@ export function BlockTable({
 export function TxTable({
   txs,
   showBlock = true,
-  empty = "No transactions",
+  empty,
 }: {
   txs: TxView[];
   showBlock?: boolean;
   empty?: string;
 }) {
+  const { t } = useTranslation("explorer");
   if (!txs.length)
     return (
-      <EmptyState title={empty}>
-        The node returned no transactions here.
+      <EmptyState title={empty ?? t("tables.noTxs")}>
+        {t("tables.noTxsBody")}
       </EmptyState>
     );
-  const direction = txs.some((t) => t.direction);
+  const direction = txs.some((tx) => tx.direction);
   return (
     <div className="table-scroll">
       <table className="stack-table tx-table">
         <thead>
           <tr>
-            <th>Transaction</th>
-            <th>Type</th>
-            {direction && <th>Direction</th>}
-            <th>From → To</th>
-            <th>Amount</th>
-            <th>Fee</th>
-            {showBlock && <th>Block</th>}
-            <th>Age</th>
+            <th>{t("col.transaction")}</th>
+            <th>{t("col.type")}</th>
+            {direction && <th>{t("col.direction")}</th>}
+            <th>{t("col.fromTo")}</th>
+            <th>{t("col.amount")}</th>
+            <th>{t("col.fee")}</th>
+            {showBlock && <th>{t("col.block")}</th>}
+            <th>{t("col.age")}</th>
           </tr>
         </thead>
         <tbody>
-          {txs.map((t) => (
-            <tr key={`${t.id}-${t.blockHeight}`}>
-              <td data-label="Transaction">
-                <HashLink hash={t.id} to={`/tx/${t.id}`} />
+          {txs.map((tx) => (
+            <tr key={`${tx.id}-${tx.blockHeight}`}>
+              <td data-label={t("col.transaction")}>
+                <HashLink hash={tx.id} to={`/tx/${tx.id}`} />
               </td>
-              <td data-label="Type">
-                <TypePill type={t.type} />
+              <td data-label={t("col.type")}>
+                <TypePill type={tx.type} />
               </td>
               {direction && (
-                <td data-label="Direction">
-                  <span className={`pill direction-${t.direction}`}>
-                    {t.direction === "in" ? "In" : "Out"}
+                <td data-label={t("col.direction")}>
+                  <span className={`pill direction-${tx.direction}`}>
+                    {tx.direction === "in" ? t("tables.in") : t("tables.out")}
                   </span>
                 </td>
               )}
-              <td data-label="From → To" className="from-to">
-                {t.faucet ? (
-                  <span className="muted">Faucet</span>
+              <td data-label={t("col.fromTo")} className="from-to">
+                {tx.faucet ? (
+                  <span className="muted">{t("tables.faucet")}</span>
                 ) : (
-                  <AddressLink identity={t.from} />
+                  <AddressLink identity={tx.from} />
                 )}
-                {t.to && (
+                {tx.to && (
                   <>
                     <span className="muted" aria-hidden="true">
                       {" → "}
                     </span>
-                    <span className="sr-only"> to </span>
-                    <AddressLink identity={t.to} />
+                    <span className="sr-only"> {t("tables.to")} </span>
+                    <AddressLink identity={tx.to} />
                   </>
                 )}
               </td>
-              <td data-label="Amount">
-                <Amount raw={t.amount} symbol={t.symbol} />
+              <td data-label={t("col.amount")}>
+                <Amount raw={tx.amount} symbol={tx.symbol} />
               </td>
-              <td data-label="Fee">
-                <Xrge amount={t.fee} />
+              <td data-label={t("col.fee")}>
+                <Xrge amount={tx.fee} />
               </td>
               {showBlock && (
-                <td data-label="Block">
-                  <BlockLink height={t.blockHeight} />
+                <td data-label={t("col.block")}>
+                  <BlockLink height={tx.blockHeight} />
                 </td>
               )}
-              <td data-label="Age">
-                <Age ts={t.blockTime} />
+              <td data-label={t("col.age")}>
+                <Age ts={tx.blockTime} />
               </td>
             </tr>
           ))}

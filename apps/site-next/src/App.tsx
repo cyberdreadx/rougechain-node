@@ -12,18 +12,22 @@ import Home from "./Home";
 import { MarketingHeader, AppHeader, WorkspaceHeader, Footer } from "./Shell";
 import { WalletProvider } from "./wallet/WalletProvider";
 import { lazy, Suspense } from "react";
+import { useTranslation } from "react-i18next";
+import { UiText } from "./i18n/UiText";
 // Wallet pages load on demand (Base / viem, QR and the dialogs stay out of the landing bundle).
 const WalletPage = lazy(() => import("./wallet/WalletPage"));
 const SettingsPage = lazy(() => import("./wallet/SettingsPage"));
 function PageFallback() {
+  const { t } = useTranslation("common");
   return (
     <main id="main" className="app-main">
       <div className="container">
-        <p className="muted">Loading…</p>
+        <p className="muted">{t("loading")}</p>
       </div>
     </main>
   );
 }
+
 import { IncomingTransferWatcher } from "./wallet/IncomingTransferWatcher";
 import { TourHost } from "./wallet/TourHost";
 import { Toaster } from "./wallet/toast";
@@ -38,57 +42,68 @@ function Header() {
   return product ? <AppHeader product={product} /> : <MarketingHeader />;
 }
 export default function App() {
+  const { t } = useTranslation("common");
   return (
     <QueryClientProvider client={queryClient}>
       <ChainProvider>
         <WalletProvider>
           <NetworkProvider>
             <BrowserRouter>
-              <a className="skip" href="#main">
-                Skip to content
-              </a>
-              <Header />
-              <IncomingTransferWatcher />
-              <TourHost />
-              <Routes>
-                <Route path="/" element={<Home />} />
-                <Route path="/workspace" element={<WorkspacePage />} />
-                {explorerRoutes}
-                {/* Feature areas (swap, bridge, messenger/mail, validators & pages): src/features/ */}
-                {featureRoutes}
-                <Route
-                  path="/wallet"
-                  element={
-                    <Suspense fallback={<PageFallback />}>
-                      <WalletPage />
-                    </Suspense>
-                  }
-                />
-                <Route
-                  path="/settings"
-                  element={
-                    <Suspense fallback={<PageFallback />}>
-                      <SettingsPage />
-                    </Suspense>
-                  }
-                />
-                <Route path="/architecture" element={<Architecture />} />
-                <Route path="/design-system" element={<DesignSystem />} />
-                <Route
-                  path="*"
-                  element={
-                    <main id="main" className="container page-intro">
-                      <h1>Page not found.</h1>
-                      <p>Use Apps to explore the available review routes.</p>
-                      <a className="button" href="/">
-                        Return to RougeChain
-                      </a>
-                    </main>
-                  }
-                />
-              </Routes>
-              <Footer />
-              <Toaster />
+              <UiText>
+                <a className="skip" href="#main">
+                  {t("skipToContent")}
+                </a>
+                <Header />
+                {/* Background UI: may wait for its namespace without blanking the page. */}
+                <Suspense fallback={null}>
+                  <IncomingTransferWatcher />
+                  <TourHost />
+                </Suspense>
+                {/* Pages load their locale namespace on first visit (explorer, pages, …). */}
+                <Suspense fallback={<PageFallback />}>
+                  <Routes>
+                    <Route path="/" element={<Home />} />
+                    <Route path="/workspace" element={<WorkspacePage />} />
+                    {explorerRoutes}
+                    {/* Feature areas (swap, bridge, messenger/mail, validators & pages): src/features/ */}
+                    {featureRoutes}
+                    <Route
+                      path="/wallet"
+                      element={
+                        <Suspense fallback={<PageFallback />}>
+                          <WalletPage />
+                        </Suspense>
+                      }
+                    />
+                    <Route
+                      path="/settings"
+                      element={
+                        <Suspense fallback={<PageFallback />}>
+                          <SettingsPage />
+                        </Suspense>
+                      }
+                    />
+                    <Route path="/architecture" element={<Architecture />} />
+                    <Route path="/design-system" element={<DesignSystem />} />
+                    <Route
+                      path="*"
+                      element={
+                        <main id="main" className="container page-intro">
+                          <h1>{t("notFound.title")}</h1>
+                          <p>{t("notFound.body")}</p>
+                          <a className="button" href="/">
+                            {t("notFound.home")}
+                          </a>
+                        </main>
+                      }
+                    />
+                  </Routes>
+                </Suspense>
+                <Footer />
+                <Suspense fallback={null}>
+                  <Toaster />
+                </Suspense>
+              </UiText>
             </BrowserRouter>
           </NetworkProvider>
         </WalletProvider>

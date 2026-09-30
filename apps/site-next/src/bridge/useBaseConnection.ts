@@ -4,6 +4,7 @@
  * every transaction / signature approved in ApprovalDialog) — exactly as apps/web's Bridge page.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { createLocalBaseProvider, type LocalBaseRequest } from "@rougechain/core/base-local-provider";
 import { getBaseChainConfig } from "@rougechain/core/bridge";
 import { deriveBaseAddress, hasBaseAccount } from "@rougechain/core/evm-wallet";
@@ -21,7 +22,6 @@ import {
   type Eip6963Detail,
 } from "./evm";
 import { errorMessage } from "./flows";
-import { S, fmt } from "./strings";
 
 export interface PendingApproval {
   req: LocalBaseRequest;
@@ -61,6 +61,7 @@ function mnemonicNow(): string | undefined {
 
 export function useBaseConnection(opts: { chainId: number; network: NetworkType; mnemonic: string | null | undefined; onConnected?: (address: string) => void }): BaseConnection {
   const { chainId, network, mnemonic, onConnected } = opts;
+  const { t } = useTranslation("bridge");
   const discovered = useEip6963Wallets();
   const [selectedRdns, setSelectedRdns] = useState<string | null>(null);
   const [mode, setMode] = useState<"injected" | "local" | null>(null);
@@ -74,7 +75,7 @@ export function useBaseConnection(opts: { chainId: number; network: NetworkType;
   const localAvailable = useMemo(() => hasBaseAccount(mnemonic), [mnemonic]);
   const selected = pickWallet(discovered, selectedRdns);
   const legacy = legacyEthereum();
-  const walletName = selected?.info.name ?? legacyWalletName(legacy) ?? S.form.baseWallet;
+  const walletName = selected?.info.name ?? legacyWalletName(legacy) ?? t("form.baseWallet");
 
   const localProvider = useMemo(() => {
     if (mode !== "local") return null;
@@ -115,7 +116,7 @@ export function useBaseConnection(opts: { chainId: number; network: NetworkType;
     setError(null);
     const p = injected;
     if (!p) {
-      setError(S.form.noProvider);
+      setError(t("form.noProvider"));
       return;
     }
     setConnecting(true);
@@ -129,40 +130,40 @@ export function useBaseConnection(opts: { chainId: number; network: NetworkType;
         });
       });
       const accounts = (await p.request({ method: "eth_requestAccounts" })) as string[];
-      if (!accounts?.[0]) throw new Error(S.errors.connectFailed);
+      if (!accounts?.[0]) throw new Error(t("errors.connectFailed"));
       const actual = await readChainId(p);
       setWalletChainId(actual);
       if (actual !== chainId) {
         // Refuse: the wallet stayed on another chain (switch declined / unsupported).
-        setError(fmt(S.form.wrongChain, { actual: actual ?? "unknown", expected: chainId, chain: cfg.name }));
+        setError(t("form.wrongChain", { actual: actual ?? t("unknownChain"), expected: chainId, chain: cfg.name }));
         return;
       }
       setMode("injected");
       setAddress(accounts[0]);
       onConnected?.(accounts[0]);
     } catch (e) {
-      setError(errorMessage(e, S.errors.connectFailed));
+      setError(errorMessage(e, t("errors.connectFailed")));
     } finally {
       setConnecting(false);
     }
-  }, [injected, chainId, onConnected]);
+  }, [injected, chainId, onConnected, t]);
 
   const connectLocal = useCallback(() => {
     setError(null);
     if (localChain.chainId !== chainId) {
-      setError(S.errors.networkNotConfirmed);
+      setError(t("errors.networkNotConfirmed"));
       return;
     }
     const addr = deriveBaseAddress(mnemonicNow());
     if (!addr) {
-      setError(S.errors.connectRougeFirst);
+      setError(t("errors.connectRougeFirst"));
       return;
     }
     setMode("local");
     setAddress(addr);
     setWalletChainId(localChain.chainId);
     onConnected?.(addr);
-  }, [chainId, localChain, onConnected]);
+  }, [chainId, localChain, onConnected, t]);
 
   const disconnect = useCallback(() => {
     setMode(null);

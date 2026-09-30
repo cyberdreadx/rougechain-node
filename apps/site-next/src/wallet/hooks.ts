@@ -6,11 +6,17 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useQuery } from "@tanstack/react-query";
 import { getRougeChainProvider } from "@rougechain/core/extension-bridge";
 import { pubkeyToAddress, formatAddress } from "@rougechain/core/address";
-import { getCoreApiBaseUrl, getCoreApiHeaders } from "@rougechain/core/network";
+import { getCoreApiBaseUrl, getCoreApiHeaders, type NetworkType } from "@rougechain/core/network";
 import { fetchXRGEPrice } from "@rougechain/core/price-service";
 import { getAllTokenMetadata, type TokenMetadata } from "@rougechain/core/secure-api";
 import { setTokenDecimalsCache, type MajorPrices } from "@rougechain/core/token-decimals";
 import { getWalletBalance, getWalletTransactions, type WalletBalance, type WalletTransaction } from "@rougechain/core/pqc-wallet";
+import i18n from "../i18n";
+
+/** "Mainnet" / "Testnet" in the current language (ja: メインネット / テストネット). Call at render. */
+export function networkLabel(network: NetworkType): string {
+  return i18n.t(network === "mainnet" ? "wallet:network.mainnet" : "wallet:network.testnet");
+}
 
 // ---------- hide balances (same key + format as apps/web's use-hide-balances) ----------
 
@@ -196,7 +202,7 @@ export function useWalletData(publicKey: string | null, rougeAddress: string | n
     balances: q.data?.balances ?? [],
     transactions: q.data?.transactions ?? [],
     loaded: q.data !== undefined,
-    error: q.isError ? (q.error instanceof Error ? q.error.message : "Couldn't load wallet") : null,
+    error: q.isError ? (q.error instanceof Error ? q.error.message : i18n.t("wallet:dashboard.loadFailed")) : null,
     refreshing: q.isFetching,
     updatedAt: q.dataUpdatedAt || null,
     refresh: () => void q.refetch(),

@@ -1,17 +1,17 @@
 import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Wallet } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Dialog, Button } from "@rougechain/ui";
 import { formatPubkey } from "@rougechain/core/address";
 import { useWallet } from "./WalletProvider";
-import { useExtensionProvider, useRougeAddress } from "./hooks";
+import { networkLabel, useExtensionProvider, useRougeAddress } from "./hooks";
 import { CopyText, UnlockForm } from "./parts";
 import { toast } from "./toast";
 
-const NETWORK_LABEL = { mainnet: "Mainnet", testnet: "Testnet" } as const;
-
 /** Header wallet control: connect / create / import / unlock / lock, address + copy, network. */
 export function WalletControl() {
+  const { t } = useTranslation("wallet");
   const extensionProvider = useExtensionProvider();
   const w = useWallet();
   const navigate = useNavigate();
@@ -29,23 +29,23 @@ export function WalletControl() {
   };
 
   const label =
-    w.status === "unlocked" ? display || "Wallet" : w.status === "locked" ? "Locked" : "Connect Wallet";
-  const compact = w.status === "unlocked" ? "Wallet" : w.status === "locked" ? "Locked" : "Connect";
+    w.status === "unlocked" ? display || t("control.wallet") : w.status === "locked" ? t("control.locked") : t("control.connectWallet");
+  const compact = w.status === "unlocked" ? t("control.wallet") : w.status === "locked" ? t("control.locked") : t("control.connect");
   const ariaLabel =
     w.status === "unlocked"
-      ? `Wallet ${full ?? display}`
+      ? t("control.walletAria", { address: full ?? display })
       : w.status === "locked"
-        ? "Wallet locked — unlock"
-        : "Connect Wallet";
+        ? t("control.lockedAria")
+        : t("control.connectWallet");
 
   const connectExtension = async () => {
     setBusy(true);
     try {
       await w.connectExtension();
-      toast.success("Extension wallet connected");
+      toast.success(t("control.extensionConnected"));
       close();
     } catch (e) {
-      toast.error("Couldn't connect the extension", { description: e instanceof Error ? e.message : undefined });
+      toast.error(t("welcome.connectFailed"), { description: e instanceof Error ? e.message : undefined });
     } finally {
       setBusy(false);
     }
@@ -57,7 +57,7 @@ export function WalletControl() {
       await w.create();
       go("/wallet");
     } catch (e) {
-      toast.error("Couldn't create a wallet", { description: e instanceof Error ? e.message : undefined });
+      toast.error(t("welcome.createFailed"), { description: e instanceof Error ? e.message : undefined });
     } finally {
       setBusy(false);
     }
@@ -81,40 +81,40 @@ export function WalletControl() {
       </button>
 
       {w.status === "none" && (
-        <Dialog open={open} onClose={close} title="Connect to RougeChain">
-          <p className="muted">A post-quantum wallet in this browser, or the RougeChain extension.</p>
+        <Dialog open={open} onClose={close} title={t("control.connectTitle")}>
+          <p className="muted">{t("control.connectBody")}</p>
           <div className="provider-options">
             <button className="provider-option" onClick={create} disabled={busy}>
               <span>
-                <strong>Create a new wallet</strong>
-                <small>ML-DSA-65 keys from a 24-word recovery phrase</small>
+                <strong>{t("control.createTitle")}</strong>
+                <small>{t("control.createBody")}</small>
               </span>
-              <span>Create →</span>
+              <span>{t("control.createCta")}</span>
             </button>
             <button className="provider-option" onClick={() => go("/wallet?import=1")} disabled={busy}>
               <span>
-                <strong>Import a wallet</strong>
-                <small>Recovery phrase or .pqcbackup file</small>
+                <strong>{t("welcome.importTitle")}</strong>
+                <small>{t("control.importBody")}</small>
               </span>
-              <span>Import →</span>
+              <span>{t("control.importCta")}</span>
             </button>
             <button className="provider-option" onClick={connectExtension} disabled={busy}>
               <span>
-                <strong>RougeChain Wallet</strong>
-                <small>{extensionProvider ? "Extension detected" : "Browser extension · not detected"}</small>
+                <strong>{t("control.extensionTitle")}</strong>
+                <small>{extensionProvider ? t("control.extensionDetected") : t("control.extensionMissing")}</small>
               </span>
-              <span>Connect →</span>
+              <span>{t("control.connectCta")}</span>
             </button>
           </div>
-          <p className="wallet-disclaimer">Keys are generated and kept in this browser. They are never sent to a server.</p>
+          <p className="wallet-disclaimer">{t("control.disclaimer")}</p>
         </Dialog>
       )}
 
       {w.status === "locked" && (
-        <Dialog open={open} onClose={close} title="Unlock wallet">
+        <Dialog open={open} onClose={close} title={t("control.unlockTitle")}>
           <div className="account-identity">
-            <strong>{w.displayName || "Your wallet"}</strong>
-            <span>{NETWORK_LABEL[w.network]} · locked</span>
+            <strong>{w.displayName || t("control.yourWallet")}</strong>
+            <span>{t("control.networkLocked", { network: networkLabel(w.network) })}</span>
             {w.publicKey && <small className="mono">{formatPubkey(w.publicKey, 12, 6)}</small>}
           </div>
           <UnlockForm onUnlocked={close} />
@@ -122,24 +122,24 @@ export function WalletControl() {
       )}
 
       {w.status === "unlocked" && (
-        <Dialog open={open} onClose={close} title="Your wallet">
+        <Dialog open={open} onClose={close} title={t("control.yourWallet")}>
           <div className="account-identity">
-            <strong>{w.displayName || "My Wallet"}</strong>
+            <strong>{w.displayName || t("myWallet")}</strong>
             <span>
-              {NETWORK_LABEL[w.network]} · {w.isExtension ? "RougeChain extension" : "This browser"}
+              {networkLabel(w.network)} · {w.isExtension ? t("welcome.extensionTitle") : t("control.thisBrowser")}
             </span>
           </div>
-          {full ? <CopyText value={full} label="address" /> : <small className="muted">Deriving address…</small>}
+          {full ? <CopyText value={full} label={t("copy.address")} /> : <small className="muted">{t("dashboard.deriving")}</small>}
           <div className="account-actions">
             <Link className="button" to="/wallet" onClick={close}>
-              Open Wallet
+              {t("control.openWallet")}
             </Link>
             <Link className="button outline" to="/settings" onClick={close}>
-              Settings
+              {t("page.settings")}
             </Link>
             {full && (
               <Link className="button ghost" to={`/address/${full}`} onClick={close}>
-                View in Explorer
+                {t("control.viewInExplorer")}
               </Link>
             )}
           </div>
@@ -149,15 +149,15 @@ export function WalletControl() {
                 variant="outline"
                 onClick={() => {
                   w.lock();
-                  toast.info("Wallet locked");
+                  toast.info(t("lock.locked"));
                   close();
                 }}
               >
-                Lock
+                {t("control.lock")}
               </Button>
             ) : (
               <Link className="text-link" to="/settings#security" onClick={close}>
-                Set a password to enable lock
+                {t("control.setPassword")}
               </Link>
             )}
           </div>

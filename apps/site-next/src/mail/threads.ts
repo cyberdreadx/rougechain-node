@@ -1,5 +1,7 @@
 /** Mail threading + device-local mail settings, ported unchanged from apps/web's pages/Mail.tsx. */
 import type { MailItem } from "@rougechain/core/pqc-mail";
+import i18n from "../i18n";
+import { fmtDate, fmtTime } from "../i18n/format";
 
 /** apps/web's key; same shape, so the signature survives the switch to site-next. */
 export const MAIL_SETTINGS_KEY = "pqc_mail_settings";
@@ -87,10 +89,10 @@ export function groupByThread(items: MailItem[]): ThreadGroup[] {
     const root = byId.get(rootId);
     out.push({
       rootId,
-      subject: root?.message.subject || latest.message.subject || "(No subject)",
+      subject: root?.message.subject || latest.message.subject || i18n.t("messenger:mail.noSubject"),
       latestItem: latest,
       messages: msgs,
-      participants: [...new Set(msgs.map((m) => m.message.senderName || "Unknown"))],
+      participants: [...new Set(msgs.map((m) => m.message.senderName || i18n.t("messenger:common.unknown")))],
       hasUnread: msgs.some((m) => !m.label.isRead),
       latestDate: latest.message.createdAt,
     });
@@ -101,6 +103,6 @@ export function groupByThread(items: MailItem[]): ThreadGroup[] {
 export function formatMailDate(input: string, now = new Date()): string {
   const d = new Date(input);
   if (isNaN(d.getTime())) return "";
-  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  if (d.toDateString() === now.toDateString()) return fmtTime(d);
+  return fmtDate(d, { month: "short", day: "numeric" });
 }

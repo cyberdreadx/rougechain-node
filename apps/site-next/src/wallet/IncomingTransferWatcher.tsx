@@ -12,6 +12,7 @@ import { formatAddress, pubkeyToAddress } from "@rougechain/core/address";
 import { useWallet } from "./WalletProvider";
 import { useNewBlocks, useRougeAddress } from "./hooks";
 import { toast } from "./toast";
+import i18n from "../i18n";
 
 /** Tolerance for node vs browser clock when ignoring transfers older than the watch start. */
 const CLOCK_SLACK_MS = 2 * 60_000;
@@ -56,9 +57,9 @@ export function IncomingTransferWatcher() {
       if (settings.sound) playNotificationSound();
       for (const tx of fresh) {
         void shortSender(tx.from).then((sender) => {
-          const body = `Received ${tx.amount} ${tx.symbol} from ${sender}`;
+          const body = i18n.t("wallet:incoming.body", { amount: tx.amount, symbol: tx.symbol, sender });
           toast.success(body);
-          if (settings.desktopEnabled && document.hidden) showDesktopNotification("Transfer received", body);
+          if (settings.desktopEnabled && document.hidden) showDesktopNotification(i18n.t("wallet:incoming.title"), body);
         });
       }
     },

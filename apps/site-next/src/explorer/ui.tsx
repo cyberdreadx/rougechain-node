@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -23,25 +24,44 @@ import { useChain } from "./chain";
 import type { Read } from "./read";
 import { useRead, useTokenDecimals } from "./read";
 import { resolveSearch } from "./search";
+import i18n from "../i18n";
+import { fmtDateTime, fmtInt, fmtTime } from "../i18n/format";
 
+/** Compact "x ago" in the current language (translated at call time). */
 export function age(timestamp: number) {
   const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86400)}d ago`;
+  const ago = (unit: string, n: number) =>
+    i18n.t(`explorer:age.${unit}`, { n: fmtInt(n) });
+  if (seconds < 60) return ago("seconds", seconds);
+  if (seconds < 3600) return ago("minutes", Math.floor(seconds / 60));
+  if (seconds < 86400) return ago("hours", Math.floor(seconds / 3600));
+  return ago("days", Math.floor(seconds / 86400));
+}
+
+/** The network's display name ("Mainnet" / "Testnet", メインネット in Japanese). */
+export function useNetworkLabel(): string {
+  const { t } = useTranslation("explorer");
+  const { network } = useChain();
+  return t(`network.${network}`);
+}
+
+/** Lower-case a noun for use mid-sentence, leaving acronyms such as "NFTs" alone. */
+function midSentence(what: string) {
+  return /[A-Z]{2}/.test(what) ? what : what.toLowerCase();
 }
 
 /** Shortened identifier with a copy button; exposes the full value if the clipboard is denied. */
 export function CopyHash({
   hash,
-  label = "hash",
+  label: labelProp,
   display,
 }: {
   hash: string;
   label?: string;
   display?: ReactNode;
 }) {
+  const { t } = useTranslation("explorer");
+  const label = labelProp ?? t("copy.hash");
   const [copied, setCopied] = useState(false),
     [failed, setFailed] = useState(false);
   return (
@@ -53,7 +73,7 @@ export function CopyHash({
       )}
       <Button
         variant="ghost icon copy-button"
-        aria-label={`Copy ${label} ${hash}`}
+        aria-label={t("copy.aria", { label, hash })}
         onClick={async () => {
           try {
             await navigator.clipboard.writeText(hash);
@@ -70,9 +90,11 @@ export function CopyHash({
       </Button>
       <span className="sr-only" role="status">
         {copied
-          ? `${label[0].toUpperCase()}${label.slice(1)} copied`
+          ? t("copy.copied", {
+              label: `${label[0].toUpperCase()}${label.slice(1)}`,
+            })
           : failed
-            ? `Clipboard unavailable. Select the full ${label} below.`
+            ? t("copy.failed", { label })
             : ""}
       </span>
       {failed && <code className="copy-fallback">{hash}</code>}
@@ -80,17 +102,18 @@ export function CopyHash({
   );
 }
 
-const STATE_LABEL: Record<ReadState, string> = {
-  live: "Live",
-  stale: "Stale",
-  loading: "Loading",
-  unavailable: "Unavailable",
-  "not-found": "Not found",
+const STATE_KEY: Record<ReadState, string> = {
+  live: "state.live",
+  stale: "state.stale",
+  loading: "state.loading",
+  unavailable: "state.unavailable",
+  "not-found": "state.notFound",
 };
 
 export function ReadStatus({ read }: { read: Pick<Read<unknown>, "state"> }) {
+  const { t } = useTranslation("explorer");
   const state = read.state === "not-found" ? "unavailable" : read.state;
-  return <Status state={state}>{STATE_LABEL[read.state]}</Status>;
+  return <Status state={state}>{t(STATE_KEY[read.state])}</Status>;
 }
 
 /** Provenance line: where the data came from and how fresh it is. */
@@ -101,29 +124,35 @@ export function SourceNote({
   read: Read<unknown>;
   what: string;
 }) {
-  const { config } = useChain();
-  const when = read.updatedAt
-    ? new Date(read.updatedAt).toLocaleTimeString()
+  const { t } = useTranslation("explorer");
+  const network = useNetworkLabel();
+  const time = read.updatedAt
+    ? fmtTime(read.updatedAt, {
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+      })
     : null;
+  const whatLower = midSentence(what);
   return (
     <div className="data-note explorer-source" role="status">
       <ReadStatus read={read} />
       <span>
-        {read.state === "live" &&
-          `${what} read from the ${config.label} API at ${when}.`}
+        {read.state === "live" && t("source.live", { what, network, time })}
         {read.state === "stale" &&
-          `Stale: showing the last successful read (${when}). The latest refresh ${read.error ? "failed" : "is overdue"}.`}
+          t(read.error ? "source.staleFailed" : "source.staleOverdue", {
+            time,
+          })}
         {read.state === "loading" &&
-          `Reading ${what.toLowerCase()} from the ${config.label} API…`}
+          t("source.loading", { what: whatLower, network })}
         {read.state === "unavailable" &&
-          `${what} unavailable: the ${config.label} API could not be read.`}
-        {read.state === "not-found" &&
-          `The ${config.label} node has no record of this.`}
+          t("source.unavailable", { what, network })}
+        {read.state === "not-found" && t("source.notFound", { network })}
       </span>
       {read.state !== "loading" && read.state !== "not-found" && (
         <Button
           variant="ghost icon copy-button"
-          aria-label={`Refresh ${what.toLowerCase()}`}
+          aria-label={t("source.refresh", { what: whatLower })}
           disabled={read.isFetching}
           onClick={read.refetch}
         >
@@ -146,29 +175,30 @@ export function ReadGate<T>({
   notFound?: ReactNode;
   children: (data: T) => ReactNode;
 }) {
+  const { t } = useTranslation("explorer");
   if (read.data !== undefined) return <>{children(read.data)}</>;
   if (read.state === "not-found")
     return (
       <>
         {notFound ?? (
-          <EmptyState title={`${what} not found`}>
-            The node has no record of this.
+          <EmptyState title={t("gate.notFoundTitle", { what })}>
+            {t("gate.notFoundBody")}
           </EmptyState>
         )}
       </>
     );
   if (read.state === "unavailable")
     return (
-      <EmptyState title={`${what} unavailable`}>
-        The public API could not be read. Nothing is shown rather than guessing.{" "}
+      <EmptyState title={t("gate.unavailableTitle", { what })}>
+        {t("gate.unavailableBody")}{" "}
         <button className="inline-link" onClick={read.refetch}>
-          Try again
+          {t("gate.tryAgain")}
         </button>
       </EmptyState>
     );
   return (
-    <EmptyState title={`Loading ${what.toLowerCase()}`}>
-      Reading the public API…
+    <EmptyState title={t("gate.loadingTitle", { what: midSentence(what) })}>
+      {t("gate.loadingBody")}
     </EmptyState>
   );
 }
@@ -198,10 +228,11 @@ export function PageHeading({
 
 /** Network indicator, with an in-page switch only when the deploy is not pinned. */
 export function NetworkBadge() {
-  const { network, config, locked, setNetwork } = useChain();
-  if (locked) return <span className="pill">{config.label}</span>;
+  const { t } = useTranslation("explorer");
+  const { network, locked, setNetwork } = useChain();
+  if (locked) return <span className="pill">{t(`network.${network}`)}</span>;
   return (
-    <div className="mode-switch" role="group" aria-label="Network">
+    <div className="mode-switch" role="group" aria-label={t("network.label")}>
       {(["mainnet", "testnet"] as const).map((id) => (
         <Button
           key={id}
@@ -209,7 +240,7 @@ export function NetworkBadge() {
           aria-pressed={network === id}
           onClick={() => setNetwork(id)}
         >
-          {id === "mainnet" ? "Mainnet" : "Testnet"}
+          {t(`network.${id}`)}
         </Button>
       ))}
     </div>
@@ -217,6 +248,7 @@ export function NetworkBadge() {
 }
 
 export function ExplorerSearch({ autoFocus = false }: { autoFocus?: boolean }) {
+  const { t } = useTranslation("explorer");
   const navigate = useNavigate();
   const [value, setValue] = useState("");
   const [miss, setMiss] = useState(false);
@@ -225,7 +257,7 @@ export function ExplorerSearch({ autoFocus = false }: { autoFocus?: boolean }) {
     e.preventDefault();
     const target = resolveSearch(
       value,
-      tokens.data?.map((t) => t.symbol),
+      tokens.data?.map((tok) => tok.symbol),
     );
     setMiss(!target);
     if (target) navigate(target.path);
@@ -235,13 +267,12 @@ export function ExplorerSearch({ autoFocus = false }: { autoFocus?: boolean }) {
       <div className="explorer-search">
         <Search size={18} />
         <label className="sr-only" htmlFor="explorer-search">
-          Search by block height, transaction or block hash, address, contract
-          or token
+          {t("search.label")}
         </label>
         <input
           id="explorer-search"
           autoFocus={autoFocus}
-          placeholder="Block height, tx / block hash, rouge1 address, public key, contract, token"
+          placeholder={t("search.placeholder")}
           value={value}
           autoComplete="off"
           spellCheck={false}
@@ -251,33 +282,39 @@ export function ExplorerSearch({ autoFocus = false }: { autoFocus?: boolean }) {
           }}
         />
         <Button variant="secondary small" type="submit">
-          Search
+          {t("search.submit")}
         </Button>
       </div>
       {miss && (
         <p className="search-hint" role="alert">
-          Nothing matches that. Try a block height, a 64-character hash, a
-          rouge1 address, a 40-character contract address or a token symbol.
+          {t("search.miss")}
         </p>
       )}
     </form>
   );
 }
 
+const FULL_TIME: Intl.DateTimeFormatOptions = {
+  dateStyle: "medium",
+  timeStyle: "medium",
+};
+
 export function Age({ ts }: { ts: number }) {
+  useTranslation("explorer"); // re-render on a language change
   const date = new Date(ts);
   return (
-    <time dateTime={date.toISOString()} title={date.toLocaleString()}>
+    <time dateTime={date.toISOString()} title={fmtDateTime(date, FULL_TIME)}>
       {age(ts)}
     </time>
   );
 }
 
 export function Timestamp({ ts }: { ts: number }) {
+  useTranslation("explorer"); // re-render on a language change
   const date = new Date(ts);
   return (
     <span>
-      <time dateTime={date.toISOString()}>{date.toLocaleString()}</time>{" "}
+      <time dateTime={date.toISOString()}>{fmtDateTime(date, FULL_TIME)}</time>{" "}
       <span className="muted">({age(ts)})</span>
     </span>
   );
@@ -294,8 +331,10 @@ export function AddressLink({
   identity: string;
   full?: boolean;
 }) {
+  const { t } = useTranslation("explorer");
   if (!identity) return <span className="muted">—</span>;
-  if (identity === "genesis") return <span className="muted">Genesis</span>;
+  if (identity === "genesis")
+    return <span className="muted">{t("genesis")}</span>;
   let address: string | null = null;
   try {
     address = toRougeAddress(identity);
@@ -325,17 +364,19 @@ export function HashLink({ hash, to }: { hash: string; to: string }) {
 }
 
 export function BlockLink({ height }: { height: number }) {
+  useTranslation("explorer"); // re-render on a language change
   return (
     <Link className="address-link" to={`/block/${height}`}>
-      #{height.toLocaleString()}
+      #{fmtInt(height)}
     </Link>
   );
 }
 
 export function TypePill({ type }: { type: string }) {
+  const { t } = useTranslation("explorer");
   return (
     <span className={`pill type-${type.replace(/[^a-z_]/g, "")}`}>
-      {txTypeLabel(type)}
+      {t(`txType.${type}`, { defaultValue: txTypeLabel(type) })}
     </span>
   );
 }
@@ -444,25 +485,26 @@ export function Pager({
   onChange: (page: number) => void;
   label: string;
 }) {
+  const { t } = useTranslation("explorer");
   if (totalPages <= 1) return null;
   return (
-    <nav className="pager" aria-label={`${label} pages`}>
+    <nav className="pager" aria-label={t("pager.aria", { label })}>
       <Button
         variant="outline small"
         disabled={page <= 1}
         onClick={() => onChange(page - 1)}
       >
-        <ArrowLeft size={14} /> Newer
+        <ArrowLeft size={14} /> {t("pager.newer")}
       </Button>
       <span className="mono muted">
-        Page {page.toLocaleString()} of {totalPages.toLocaleString()}
+        {t("pager.page", { page: fmtInt(page), total: fmtInt(totalPages) })}
       </span>
       <Button
         variant="outline small"
         disabled={page >= totalPages}
         onClick={() => onChange(page + 1)}
       >
-        Older <ArrowRight size={14} />
+        {t("pager.older")} <ArrowRight size={14} />
       </Button>
     </nav>
   );

@@ -14,7 +14,7 @@ import { UnlockForm } from "../wallet/parts";
 import { toast } from "../wallet/toast";
 import { useWallet } from "../wallet/WalletProvider";
 import { useMessagingIdentity } from "./hooks";
-import { S, fmt } from "./strings";
+import { useTranslation } from "react-i18next";
 
 export interface GateReady {
   wallet: UnifiedWallet;
@@ -23,10 +23,11 @@ export interface GateReady {
 }
 
 function GateShell({ product, children }: { product: "messenger" | "mail"; children: ReactNode }) {
+  const { t } = useTranslation("messenger");
   return (
     <main id="main" className="app-main msg-gate">
       <div className="container">
-        <PageHeading eyebrow={`Talk / ${product === "mail" ? S.gate.mailTitle : S.gate.title}`} title={product === "mail" ? S.gate.mailTitle : S.gate.title} aside={<NetworkBadge />} />
+        <PageHeading eyebrow={t("gate.eyebrow", { product: product === "mail" ? t("gate.mailTitle") : t("gate.title") })} title={product === "mail" ? t("gate.mailTitle") : t("gate.title")} aside={<NetworkBadge />} />
         {children}
       </div>
     </main>
@@ -34,6 +35,7 @@ function GateShell({ product, children }: { product: "messenger" | "mail"; child
 }
 
 export function WalletGate({ product, children }: { product: "messenger" | "mail"; children: (ready: GateReady) => ReactNode }) {
+  const { t } = useTranslation("messenger");
   const w = useWallet();
   const extension = useExtensionProvider();
   const id = useMessagingIdentity(w.status === "unlocked" ? w.wallet : null);
@@ -43,8 +45,8 @@ export function WalletGate({ product, children }: { product: "messenger" | "mail
       <GateShell product={product}>
         <section className="surface unlock-card msg-gate-card">
           <Lock size={22} aria-hidden="true" />
-          <h2>{w.displayName ? fmt(S.gate.locked, { name: w.displayName }) : S.gate.lockedGeneric}</h2>
-          <p>{S.gate.lockedHint}</p>
+          <h2>{w.displayName ? t("gate.locked", { name: w.displayName }) : t("gate.lockedGeneric")}</h2>
+          <p>{t("gate.lockedHint")}</p>
           {w.publicKey && <p className="mono break">{`${w.publicKey.slice(0, 32)}…${w.publicKey.slice(-12)}`}</p>}
           <UnlockForm />
         </section>
@@ -56,10 +58,10 @@ export function WalletGate({ product, children }: { product: "messenger" | "mail
       <GateShell product={product}>
         <section className="surface msg-gate-card">
           <MessageSquare size={22} aria-hidden="true" />
-          <h2>{product === "mail" ? S.gate.noWalletMail : S.gate.noWallet}</h2>
+          <h2>{product === "mail" ? t("gate.noWalletMail") : t("gate.noWallet")}</h2>
           <div className="actions">
             <Link className="button" to="/wallet">
-              {S.gate.openWallet}
+              {t("gate.openWallet")}
             </Link>
             {extension && (
               <button
@@ -69,11 +71,11 @@ export function WalletGate({ product, children }: { product: "messenger" | "mail
                   try {
                     await w.connectExtension();
                   } catch (e) {
-                    toast.error(e instanceof Error ? e.message : "Couldn't connect the extension");
+                    toast.error(e instanceof Error ? e.message : t("gate.extensionFailed"));
                   }
                 }}
               >
-                Connect extension
+                {t("gate.connectExtension")}
               </button>
             )}
           </div>
@@ -85,10 +87,10 @@ export function WalletGate({ product, children }: { product: "messenger" | "mail
     return (
       <GateShell product={product}>
         <section className="surface msg-gate-card">
-          <h2>{S.gate.resolveFailed}</h2>
+          <h2>{t("gate.resolveFailed")}</h2>
           <p className="form-error">{id.error}</p>
           <button type="button" className="button outline" onClick={() => window.location.reload()}>
-            {S.common.retry}
+            {t("common.retry")}
           </button>
         </section>
       </GateShell>
@@ -98,7 +100,7 @@ export function WalletGate({ product, children }: { product: "messenger" | "mail
     return (
       <main id="main" className="msg-loading" aria-busy="true">
         <Loader2 size={22} className="spin" aria-hidden="true" />
-        <span>{S.gate.resolving}</span>
+        <span>{t("gate.resolving")}</span>
       </main>
     );
 

@@ -5,6 +5,7 @@ import {
   useParams,
   useSearchParams,
 } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { EmptyState, Metric } from "@rougechain/ui";
 import {
   COLLECTION_ID,
@@ -20,7 +21,6 @@ import {
   shorten,
   type NftToken,
 } from "@rougechain/chain-readonly";
-import { useChain } from "./chain";
 import { useRead, useTokenDecimals } from "./read";
 import { TxTable } from "./tables";
 import {
@@ -40,7 +40,9 @@ import {
   Timestamp,
   TypePill,
   usePageParam,
+  useNetworkLabel,
 } from "./ui";
+import { fmtInt, fmtNum } from "../i18n/format";
 
 const ACTIVITY_PER_PAGE = 25;
 const NFTS_PER_PAGE = 24;
@@ -54,6 +56,7 @@ const EVENTS_PER_PAGE = 25;
  * only for the NFT lookup, which the node indexes by public key).
  */
 export function AddressDetailPage() {
+  const { t } = useTranslation("explorer");
   const { pubkey: param = "" } = useParams();
   const location = useLocation();
   const raw = param.trim();
@@ -95,10 +98,10 @@ export function AddressDetailPage() {
     return (
       <ExplorerMain>
         <NotFoundState
-          title="Not a RougeChain address"
-          back={{ to: "/explorer", label: "Back to Explorer" }}
+          title={t("address.invalid")}
+          back={{ to: "/explorer", label: t("address.back") }}
         >
-          Addresses start with rouge1, or are ML-DSA public keys in hexadecimal.
+          {t("address.invalidBody")}
         </NotFoundState>
       </ExplorerMain>
     );
@@ -106,62 +109,62 @@ export function AddressDetailPage() {
   return (
     <ExplorerMain>
       <PageHeading
-        eyebrow="Address"
+        eyebrow={t("address.eyebrow")}
         title={<span className="address-title">{shorten(address, 14, 8)}</span>}
       />
       <DetailList
         rows={[
           [
-            "Address",
+            t("address.eyebrow"),
             <CopyHash
               key="a"
               hash={address}
-              label="address"
+              label={t("copy.address")}
               display={<code className="mono break">{address}</code>}
             />,
           ],
           [
-            "Public key",
+            t("address.publicKey"),
             pubkey ? (
               <details key="pk" className="pubkey">
                 <summary className="mono">
                   {shorten(pubkey, 16, 8)} ·{" "}
-                  {(pubkey.length / 2).toLocaleString()} bytes
+                  {t("bytes", { n: fmtInt(pubkey.length / 2) })}
                 </summary>
                 <CopyHash
                   hash={pubkey}
-                  label="public key"
+                  label={t("copy.publicKey")}
                   display={<code className="mono break">{pubkey}</code>}
                 />
               </details>
             ) : resolved.state === "loading" ? (
-              <span className="muted">Resolving…</span>
+              <span className="muted">{t("address.resolving")}</span>
             ) : (
-              <span className="muted">
-                Not yet revealed on-chain (the address has not sent a
-                transaction).
-              </span>
+              <span className="muted">{t("address.keyUnrevealed")}</span>
             ),
           ],
         ]}
       />
-      <Section id="balances" title="Balances">
-        <SourceNote read={balance} what="Balances" />
-        <ReadGate read={balance} what="Balances">
+      <Section id="balances" title={t("what.balances")}>
+        <SourceNote read={balance} what={t("what.balances")} />
+        <ReadGate read={balance} what={t("what.balances")}>
           {() => (
             <div className="metrics">
-              <Metric label="XRGE balance" value={formatXrge(b!.xrge)} />
               <Metric
-                label="Tokens held"
-                value={b!.tokens.filter(([, v]) => v > 0).length}
+                label={t("address.xrgeBalance")}
+                value={formatXrge(b!.xrge)}
               />
               <Metric
-                label="LP positions"
-                value={b!.lp.filter(([, v]) => v > 0).length}
+                label={t("address.tokensHeld")}
+                value={fmtInt(b!.tokens.filter(([, v]) => v > 0).length)}
               />
               <Metric
-                label="Transactions"
-                value={activity.data?.total.toLocaleString() ?? "—"}
+                label={t("address.lpPositions")}
+                value={fmtInt(b!.lp.filter(([, v]) => v > 0).length)}
+              />
+              <Metric
+                label={t("col.transactions")}
+                value={activity.data ? fmtInt(activity.data.total) : "—"}
               />
             </div>
           )}
@@ -171,8 +174,8 @@ export function AddressDetailPage() {
             <table className="stack-table">
               <thead>
                 <tr>
-                  <th>Token</th>
-                  <th>Balance</th>
+                  <th>{t("col.token")}</th>
+                  <th>{t("col.balance")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -180,7 +183,7 @@ export function AddressDetailPage() {
                   .filter(([, v]) => v > 0)
                   .map(([symbol, raw]) => (
                     <tr key={symbol}>
-                      <td data-label="Token">
+                      <td data-label={t("col.token")}>
                         <Link
                           className="address-link"
                           to={`/token/${encodeURIComponent(symbol)}`}
@@ -188,7 +191,7 @@ export function AddressDetailPage() {
                           {symbol}
                         </Link>
                       </td>
-                      <td data-label="Balance" className="amount">
+                      <td data-label={t("col.balance")} className="amount">
                         {formatTokenAmount(raw, symbol, decimals)}
                       </td>
                     </tr>
@@ -202,8 +205,8 @@ export function AddressDetailPage() {
             <table className="stack-table">
               <thead>
                 <tr>
-                  <th>Liquidity pool</th>
-                  <th>LP units</th>
+                  <th>{t("address.liquidityPool")}</th>
+                  <th>{t("col.lpUnits")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -211,10 +214,10 @@ export function AddressDetailPage() {
                   .filter(([, v]) => v > 0)
                   .map(([pool, units]) => (
                     <tr key={pool}>
-                      <td data-label="Pool" className="mono">
+                      <td data-label={t("col.pool")} className="mono">
                         {pool}
                       </td>
-                      <td data-label="LP units">{units.toLocaleString()}</td>
+                      <td data-label={t("col.lpUnits")}>{fmtInt(units)}</td>
                     </tr>
                   ))}
               </tbody>
@@ -222,22 +225,23 @@ export function AddressDetailPage() {
           </div>
         )}
       </Section>
-      <Section id="nfts" title="NFTs owned">
+      <Section id="nfts" title={t("address.nftsOwned")}>
         {!pubkey ? (
-          <EmptyState title="NFTs unavailable">
-            The node indexes NFT owners by public key, and this address's key is
-            not known yet.
+          <EmptyState
+            title={t("gate.unavailableTitle", { what: t("what.nfts") })}
+          >
+            {t("address.nftsNoKey")}
           </EmptyState>
         ) : (
           <>
-            <SourceNote read={nfts} what="NFTs" />
-            <ReadGate read={nfts} what="NFTs">
+            <SourceNote read={nfts} what={t("what.nfts")} />
+            <ReadGate read={nfts} what={t("what.nfts")}>
               {(list) =>
                 list.length ? (
                   <NftGrid tokens={list} showCollection />
                 ) : (
-                  <EmptyState title="No NFTs">
-                    This address owns no NFTs.
+                  <EmptyState title={t("address.noNfts")}>
+                    {t("address.noNftsBody")}
                   </EmptyState>
                 )
               }
@@ -247,20 +251,23 @@ export function AddressDetailPage() {
       </Section>
       <Section
         id="activity"
-        title="Activity"
+        title={t("what.activity")}
         meta={
           activity.data
-            ? `${activity.data.total.toLocaleString()} transactions in the node's recent-block index.`
+            ? t("address.activityMeta", {
+                count: activity.data.total,
+                n: fmtInt(activity.data.total),
+              })
             : undefined
         }
       >
-        <SourceNote read={activity} what="Activity" />
-        <ReadGate read={activity} what="Activity">
+        <SourceNote read={activity} what={t("what.activity")} />
+        <ReadGate read={activity} what={t("what.activity")}>
           {(data) => (
             <>
               <TxTable
                 txs={data.txs}
-                empty="No transactions for this address"
+                empty={t("address.noTxs")}
               />
               <Pager
                 page={page}
@@ -269,7 +276,7 @@ export function AddressDetailPage() {
                   Math.ceil(data.total / ACTIVITY_PER_PAGE),
                 )}
                 onChange={setPage}
-                label="Activity"
+                label={t("what.activity")}
               />
             </>
           )}
@@ -282,6 +289,7 @@ export function AddressDetailPage() {
 // ─── Token ───────────────────────────────────────────────────────────────────
 
 export function TokenDetailPage() {
+  const { t } = useTranslation("explorer");
   const { symbol: param = "" } = useParams();
   const valid = TOKEN_SYMBOL.test(param);
   const meta = useRead(["token-meta", param], (c) => c.tokenMetadata(param), {
@@ -311,10 +319,10 @@ export function TokenDetailPage() {
     return (
       <ExplorerMain>
         <NotFoundState
-          title="Not a token symbol"
-          back={{ to: "/tokens", label: "View all tokens" }}
+          title={t("token.invalid")}
+          back={{ to: "/tokens", label: t("token.viewAll") }}
         >
-          “{param}” is not a valid token symbol.
+          {t("token.invalidBody", { param })}
         </NotFoundState>
       </ExplorerMain>
     );
@@ -322,7 +330,7 @@ export function TokenDetailPage() {
   return (
     <ExplorerMain>
       <PageHeading
-        eyebrow="Token"
+        eyebrow={t("col.token")}
         title={
           <span className="token-title">
             <SafeImage
@@ -337,53 +345,57 @@ export function TokenDetailPage() {
       >
         {meta.data?.description ?? undefined}
       </PageHeading>
-      <SourceNote read={meta} what="Token" />
+      <SourceNote read={meta} what={t("col.token")} />
       <ReadGate
         read={meta}
-        what="Token"
+        what={t("col.token")}
         notFound={
           <NotFoundState
-            title="Token not found"
-            back={{ to: "/tokens", label: "View all tokens" }}
+            title={t("token.notFound")}
+            back={{ to: "/tokens", label: t("token.viewAll") }}
           >
-            No token with the symbol “{param}” exists on this network.
+            {t("token.notFoundBody", { param })}
           </NotFoundState>
         }
       >
-        {(t) => (
+        {(tok) => (
           <>
             <DetailList
               rows={[
                 [
-                  "Symbol",
+                  t("token.symbol"),
                   <span key="s" className="mono">
-                    {t.symbol}
+                    {tok.symbol}
                   </span>,
                 ],
                 [
-                  "Decimals",
-                  `${t.decimals} (1 ${t.symbol} = ${(10 ** t.decimals).toLocaleString()} base units)`,
+                  t("col.decimals"),
+                  t("token.decimalsValue", {
+                    decimals: tok.decimals,
+                    symbol: tok.symbol,
+                    units: fmtInt(10 ** tok.decimals),
+                  }),
                 ],
                 [
-                  "Creator",
-                  t.creator ? (
-                    <AddressLink key="c" identity={t.creator} full />
+                  t("col.creator"),
+                  tok.creator ? (
+                    <AddressLink key="c" identity={tok.creator} full />
                   ) : (
-                    <span className="muted">Protocol asset</span>
+                    <span className="muted">{t("token.protocolAsset")}</span>
                   ),
                 ],
                 [
-                  "Created",
-                  t.createdAt ? (
-                    <Timestamp key="t" ts={t.createdAt} />
+                  t("token.created"),
+                  tok.createdAt ? (
+                    <Timestamp key="t" ts={tok.createdAt} />
                   ) : (
-                    <span className="muted">Genesis</span>
+                    <span className="muted">{t("genesis")}</span>
                   ),
                 ],
                 ...(website
                   ? ([
                       [
-                        "Website",
+                        t("token.website"),
                         <a
                           key="w"
                           className="address-link"
@@ -397,19 +409,21 @@ export function TokenDetailPage() {
                     ] as [string, ReactNode][])
                   : []),
                 [
-                  "Status",
-                  `${t.frozen ? "Frozen" : "Active"} · ${t.mintable ? "mintable" : "fixed supply"}`,
+                  t("col.status"),
+                  `${tok.frozen ? t("token.frozen") : t("token.active")} · ${tok.mintable ? t("token.mintable") : t("token.fixedSupply")}`,
                 ],
               ]}
             />
-            <Section id="supply" title="Supply">
-              <SourceNote read={holders} what="Holders" />
-              <ReadGate read={holders} what="Supply">
+            <Section id="supply" title={t("what.supply")}>
+              <SourceNote read={holders} what={t("what.holders")} />
+              <ReadGate read={holders} what={t("what.supply")}>
                 {(h) => (
                   <div className="metrics">
                     <Metric
                       label={
-                        h.totalSupply ? "Total supply" : "Circulating supply"
+                        h.totalSupply
+                          ? t("token.totalSupply")
+                          : t("token.circulatingSupply")
                       }
                       value={formatUnits(
                         h.totalSupply || h.circulatingSupply,
@@ -417,15 +431,15 @@ export function TokenDetailPage() {
                       )}
                     />
                     <Metric
-                      label="Holders"
-                      value={h.holders.length.toLocaleString()}
+                      label={t("what.holders")}
+                      value={fmtInt(h.holders.length)}
                     />
                     <Metric
-                      label="Shielded"
+                      label={t("token.shielded")}
                       value={formatUnits(h.shieldedSupply, decimals)}
                     />
                     <Metric
-                      label="Burned"
+                      label={t("token.burned")}
                       value={formatUnits(h.burnedSupply, decimals)}
                     />
                   </div>
@@ -433,14 +447,14 @@ export function TokenDetailPage() {
               </ReadGate>
             </Section>
             {holders.data && holders.data.holders.length > 0 && (
-              <Section id="holders" title="Holders">
+              <Section id="holders" title={t("what.holders")}>
                 <div className="table-scroll">
                   <table className="stack-table">
                     <thead>
                       <tr>
-                        <th>Holder</th>
-                        <th>Balance</th>
-                        <th>Share</th>
+                        <th>{t("token.holder")}</th>
+                        <th>{t("col.balance")}</th>
+                        <th>{t("token.share")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -450,15 +464,18 @@ export function TokenDetailPage() {
                           holders.data!.circulatingSupply;
                         return (
                           <tr key={h.address}>
-                            <td data-label="Holder">
+                            <td data-label={t("token.holder")}>
                               <AddressLink identity={h.address} />
                             </td>
-                            <td data-label="Balance" className="amount">
-                              {formatUnits(h.balance, decimals)} {t.symbol}
+                            <td data-label={t("col.balance")} className="amount">
+                              {formatUnits(h.balance, decimals)} {tok.symbol}
                             </td>
-                            <td data-label="Share">
+                            <td data-label={t("token.share")}>
                               {base
-                                ? `${((h.balance / base) * 100).toFixed(2)}%`
+                                ? fmtNum(h.balance / base, 2, {
+                                    style: "percent",
+                                    minimumFractionDigits: 2,
+                                  })
                                 : "—"}
                             </td>
                           </tr>
@@ -470,42 +487,42 @@ export function TokenDetailPage() {
               </Section>
             )}
             {tokenPools.length > 0 && (
-              <Section id="pools" title="Liquidity pools">
+              <Section id="pools" title={t("token.pools")}>
                 <div className="table-scroll">
                   <table className="stack-table">
                     <thead>
                       <tr>
-                        <th>Pool</th>
-                        <th>Reserves</th>
-                        <th>Price</th>
-                        <th>LP supply</th>
+                        <th>{t("col.pool")}</th>
+                        <th>{t("token.reserves")}</th>
+                        <th>{t("token.price")}</th>
+                        <th>{t("token.lpSupply")}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {tokenPools.map((p) => {
                         const other =
-                          p.tokenA === t.symbol ? p.tokenB : p.tokenA;
+                          p.tokenA === tok.symbol ? p.tokenB : p.tokenA;
                         const mine =
-                          p.tokenA === t.symbol ? p.reserveA : p.reserveB;
+                          p.tokenA === tok.symbol ? p.reserveA : p.reserveB;
                         const theirs =
-                          p.tokenA === t.symbol ? p.reserveB : p.reserveA;
+                          p.tokenA === tok.symbol ? p.reserveB : p.reserveA;
                         return (
                           <tr key={p.poolId}>
-                            <td data-label="Pool" className="mono">
+                            <td data-label={t("col.pool")} className="mono">
                               {p.poolId}
                             </td>
-                            <td data-label="Reserves">
+                            <td data-label={t("token.reserves")}>
                               {formatTokenAmount(p.reserveA, p.tokenA, known)}{" "}
                               {p.tokenA} ·{" "}
                               {formatTokenAmount(p.reserveB, p.tokenB, known)}{" "}
                               {p.tokenB}
                             </td>
-                            <td data-label="Price">
+                            <td data-label={t("token.price")}>
                               {mine > 0 ? (
                                 <PoolPrice
                                   mine={mine}
                                   theirs={theirs}
-                                  symbol={t.symbol}
+                                  symbol={tok.symbol}
                                   decimals={decimals}
                                   other={other}
                                 />
@@ -513,8 +530,8 @@ export function TokenDetailPage() {
                                 "—"
                               )}
                             </td>
-                            <td data-label="LP supply">
-                              {p.totalLpSupply.toLocaleString()}
+                            <td data-label={t("token.lpSupply")}>
+                              {fmtInt(p.totalLpSupply)}
                             </td>
                           </tr>
                         );
@@ -526,39 +543,43 @@ export function TokenDetailPage() {
             )}
             <Section
               id="token-activity"
-              title="Recent activity"
+              title={t("token.recentActivity")}
               meta={
                 activity.data
-                  ? `${activity.data.total.toLocaleString()} transactions involve ${t.symbol}. Latest 50 shown.`
+                  ? t("token.activityMeta", {
+                      count: activity.data.total,
+                      n: fmtInt(activity.data.total),
+                      symbol: tok.symbol,
+                    })
                   : undefined
               }
             >
-              <SourceNote read={activity} what="Activity" />
-              <ReadGate read={activity} what="Activity">
+              <SourceNote read={activity} what={t("what.activity")} />
+              <ReadGate read={activity} what={t("what.activity")}>
                 {(a) =>
                   a.transactions.length === 0 ? (
-                    <EmptyState title="No activity">
-                      No transactions involve this token yet.
+                    <EmptyState title={t("token.noActivity")}>
+                      {t("token.noActivityBody")}
                     </EmptyState>
                   ) : (
                     <div className="table-scroll">
                       <table className="stack-table">
                         <thead>
                           <tr>
-                            <th>Type</th>
-                            <th>From → To</th>
-                            <th>Amount</th>
-                            <th>Block</th>
-                            <th>Age</th>
+                            <th>{t("col.type")}</th>
+                            <th>{t("col.fromTo")}</th>
+                            <th>{t("col.amount")}</th>
+                            <th>{t("col.block")}</th>
+                            <th>{t("col.age")}</th>
                           </tr>
                         </thead>
                         <tbody>
                           {a.transactions.map((x, i) => (
                             <tr key={`${x.hashPrefix}-${i}`}>
-                              <td data-label="Type">
+                              <td data-label={t("col.type")}>
                                 <TypePill type={x.type} />
                               </td>
-                              <td data-label="From → To" className="from-to">
+                              <td data-label={t("col.fromTo")} className="from-to">
                                 <AddressLink identity={x.from} />
                                 {x.to && (
                                   <>
@@ -567,13 +588,13 @@ export function TokenDetailPage() {
                                   </>
                                 )}
                               </td>
-                              <td data-label="Amount" className="amount">
-                                {formatUnits(x.amount, decimals)} {t.symbol}
+                              <td data-label={t("col.amount")} className="amount">
+                                {formatUnits(x.amount, decimals)} {tok.symbol}
                               </td>
-                              <td data-label="Block">
+                              <td data-label={t("col.block")}>
                                 <BlockLink height={x.blockHeight} />
                               </td>
-                              <td data-label="Age">
+                              <td data-label={t("col.age")}>
                                 <Age ts={x.timestamp} />
                               </td>
                             </tr>
@@ -613,7 +634,7 @@ function PoolPrice({
     <span className="amount">
       1 {symbol} ≈{" "}
       {price >= 1
-        ? price.toLocaleString("en-US", { maximumFractionDigits: 4 })
+        ? fmtNum(price, 4)
         : price.toPrecision(4)}{" "}
       {other}
     </span>
@@ -629,37 +650,38 @@ function NftGrid({
   tokens: NftToken[];
   showCollection?: boolean;
 }) {
+  const { t } = useTranslation("explorer");
   return (
     <div className="asset-grid">
-      {tokens.map((t) => {
-        const metadata = safeExternalUrl(t.metadataUri);
+      {tokens.map((nft) => {
+        const metadata = safeExternalUrl(nft.metadataUri);
         return (
           <article
-            key={`${t.collectionId}-${t.tokenId}`}
+            key={`${nft.collectionId}-${nft.tokenId}`}
             className="asset-card"
           >
             <SafeImage
               className="asset-media"
-              src={t.image}
-              alt={t.name ? `${t.name} image` : ""}
-              fallback={t.name || "NFT"}
+              src={nft.image}
+              alt={nft.name ? t("nft.imageAlt", { name: nft.name }) : ""}
+              fallback={nft.name || "NFT"}
             />
             <div className="asset-body">
               <strong>
-                #{t.tokenId} {t.name}
+                #{nft.tokenId} {nft.name}
               </strong>
               {showCollection && (
                 <Link
                   className="mono address-link"
-                  to={`/nfts/${encodeURIComponent(t.collectionId)}`}
+                  to={`/nfts/${encodeURIComponent(nft.collectionId)}`}
                 >
-                  {t.collectionId}
+                  {nft.collectionId}
                 </Link>
               )}
               <span className="asset-meta">
-                Owner <AddressLink identity={t.owner} />
+                {t("nft.owner")} <AddressLink identity={nft.owner} />
               </span>
-              {t.locked && <span className="pill">Locked</span>}
+              {nft.locked && <span className="pill">{t("nft.locked")}</span>}
               {metadata && (
                 <a
                   className="asset-meta address-link"
@@ -667,7 +689,7 @@ function NftGrid({
                   target="_blank"
                   rel="noopener noreferrer nofollow"
                 >
-                  Metadata (external) ↗
+                  {t("nft.metadata")}
                 </a>
               )}
             </div>
@@ -679,6 +701,7 @@ function NftGrid({
 }
 
 export function NftCollectionPage() {
+  const { t } = useTranslation("explorer");
   const { collectionId: param = "" } = useParams();
   const valid = COLLECTION_ID.test(param);
   const [page, setPage] = usePageParam();
@@ -700,10 +723,10 @@ export function NftCollectionPage() {
     return (
       <ExplorerMain>
         <NotFoundState
-          title="Not a collection id"
-          back={{ to: "/nfts", label: "View all collections" }}
+          title={t("collection.invalid")}
+          back={{ to: "/nfts", label: t("collection.viewAll") }}
         >
-          Collection ids look like col:0123456789abcdef:SYMBOL.
+          {t("collection.invalidBody")}
         </NotFoundState>
       </ExplorerMain>
     );
@@ -711,21 +734,21 @@ export function NftCollectionPage() {
   return (
     <ExplorerMain>
       <PageHeading
-        eyebrow="NFT collection"
-        title={c?.name || c?.symbol || "Collection"}
+        eyebrow={t("collection.eyebrow")}
+        title={c?.name || c?.symbol || t("what.collection")}
       >
         {c?.description ?? undefined}
       </PageHeading>
-      <SourceNote read={collection} what="Collection" />
+      <SourceNote read={collection} what={t("what.collection")} />
       <ReadGate
         read={collection}
-        what="Collection"
+        what={t("what.collection")}
         notFound={
           <NotFoundState
-            title="Collection not found"
-            back={{ to: "/nfts", label: "View all collections" }}
+            title={t("collection.notFound")}
+            back={{ to: "/nfts", label: t("collection.viewAll") }}
           >
-            No collection with this id exists on this network.
+            {t("collection.notFoundBody")}
           </NotFoundState>
         }
       >
@@ -735,60 +758,70 @@ export function NftCollectionPage() {
               <SafeImage
                 className="asset-media"
                 src={col.image}
-                alt={`${col.name} cover`}
+                alt={t("collection.coverAlt", { name: col.name })}
                 fallback={col.symbol}
               />
               <DetailList
                 rows={[
                   [
-                    "Collection id",
+                    t("collection.id"),
                     <CopyHash
                       key="id"
                       hash={col.id}
-                      label="collection id"
+                      label={t("copy.collectionId")}
                       display={<code className="mono break">{col.id}</code>}
                     />,
                   ],
-                  ["Symbol", col.symbol],
+                  [t("token.symbol"), col.symbol],
                   [
-                    "Minted",
-                    `${col.minted.toLocaleString()}${col.maxSupply !== null ? ` of ${col.maxSupply.toLocaleString()}` : ""}`,
+                    t("collection.minted"),
+                    col.maxSupply !== null
+                      ? t("collection.mintedOf", {
+                          minted: fmtInt(col.minted),
+                          max: fmtInt(col.maxSupply),
+                        })
+                      : fmtInt(col.minted),
                   ],
                   [
-                    "Creator",
+                    t("col.creator"),
                     <AddressLink key="c" identity={col.creator} full />,
                   ],
-                  ["Royalty", `${(col.royaltyBps / 100).toLocaleString()}%`],
                   [
-                    "Minting",
-                    col.frozen
-                      ? "Frozen"
-                      : col.publicMint
-                        ? `Public${col.mintPrice !== null ? ` · ${formatXrge(col.mintPrice)} XRGE` : ""}`
-                        : "Creator only",
+                    t("collection.royalty"),
+                    fmtNum(col.royaltyBps / 10000, 2, { style: "percent" }),
                   ],
-                  ["Created", <Timestamp key="t" ts={col.createdAt} />],
+                  [
+                    t("collection.minting"),
+                    col.frozen
+                      ? t("token.frozen")
+                      : col.publicMint
+                        ? `${t("collection.public")}${col.mintPrice !== null ? ` · ${formatXrge(col.mintPrice)} XRGE` : ""}`
+                        : t("collection.creatorOnly"),
+                  ],
+                  [t("token.created"), <Timestamp key="t" ts={col.createdAt} />],
                 ]}
               />
             </div>
             <Section
               id="collection-tokens"
-              title="Tokens"
+              title={t("what.tokens")}
               meta={
                 tokens.data
-                  ? `${tokens.data.total.toLocaleString()} minted.`
+                  ? t("collection.tokensMeta", {
+                      n: fmtInt(tokens.data.total),
+                    })
                   : undefined
               }
             >
-              <SourceNote read={tokens} what="Tokens" />
-              <ReadGate read={tokens} what="Tokens">
+              <SourceNote read={tokens} what={t("what.tokens")} />
+              <ReadGate read={tokens} what={t("what.tokens")}>
                 {(data) => (
                   <>
                     {data.tokens.length ? (
                       <NftGrid tokens={data.tokens} />
                     ) : (
-                      <EmptyState title="Nothing minted yet">
-                        This collection has no tokens.
+                      <EmptyState title={t("collection.empty")}>
+                        {t("collection.emptyBody")}
                       </EmptyState>
                     )}
                     <Pager
@@ -798,7 +831,7 @@ export function NftCollectionPage() {
                         Math.ceil(data.total / NFTS_PER_PAGE),
                       )}
                       onChange={setPage}
-                      label="Tokens"
+                      label={t("what.tokens")}
                     />
                   </>
                 )}
@@ -840,15 +873,16 @@ export function ContractDetailPage() {
       keepPrevious: true,
     },
   );
-  const { config } = useChain();
+  const { t } = useTranslation("explorer");
+  const network = useNetworkLabel();
   if (!valid)
     return (
       <ExplorerMain>
         <NotFoundState
-          title="Not a contract address"
-          back={{ to: "/contracts", label: "View all contracts" }}
+          title={t("contract.invalid")}
+          back={{ to: "/contracts", label: t("contract.viewAll") }}
         >
-          Contract addresses are 40 hexadecimal characters.
+          {t("contract.invalidBody")}
         </NotFoundState>
       </ExplorerMain>
     );
@@ -856,21 +890,21 @@ export function ContractDetailPage() {
   return (
     <ExplorerMain>
       <PageHeading
-        eyebrow={`Contract · ${config.label}`}
+        eyebrow={`${t("col.contract")} · ${network}`}
         title={<span className="address-title">{shorten(addr, 10, 6)}</span>}
       >
-        Read-only view. Calls, queries and deployments are not available here.
+        {t("contract.intro")}
       </PageHeading>
-      <SourceNote read={contract} what="Contract" />
+      <SourceNote read={contract} what={t("col.contract")} />
       <ReadGate
         read={contract}
-        what="Contract"
+        what={t("col.contract")}
         notFound={
           <NotFoundState
-            title="Contract not found"
-            back={{ to: "/contracts", label: "View all contracts" }}
+            title={t("contract.notFound")}
+            back={{ to: "/contracts", label: t("contract.viewAll") }}
           >
-            No contract is deployed at this address on {config.label}.
+            {t("contract.notFoundBody", { network })}
           </NotFoundState>
         }
       >
@@ -879,67 +913,72 @@ export function ContractDetailPage() {
             <DetailList
               rows={[
                 [
-                  "Address",
+                  t("address.eyebrow"),
                   <CopyHash
                     key="a"
                     hash={c.address}
-                    label="address"
+                    label={t("copy.address")}
                     display={<code className="mono break">{c.address}</code>}
                   />,
                 ],
                 [
-                  "Code hash",
+                  t("col.codeHash"),
                   <code key="h" className="mono break">
                     {c.codeHash}
                   </code>,
                 ],
-                ["WASM size", `${c.wasmSize.toLocaleString()} bytes`],
+                [t("col.wasmSize"), t("bytes", { n: fmtInt(c.wasmSize) })],
                 [
-                  "Deployer",
+                  t("col.deployer"),
                   <AddressLink key="d" identity={c.deployer} full />,
                 ],
-                ["Deployed in", <BlockLink key="b" height={c.createdAt} />],
                 [
-                  "Verification",
+                  t("contract.deployedIn"),
+                  <BlockLink key="b" height={c.createdAt} />,
+                ],
+                [
+                  t("contract.verification"),
                   <span key="v" className="muted">
-                    Source verification is not available; the code hash
-                    identifies the deployed WASM.
+                    {t("contract.verificationBody")}
                   </span>,
                 ],
               ]}
             />
             <Section
               id="storage"
-              title="Storage"
+              title={t("what.storage")}
               meta={
                 storage.data
-                  ? `${storage.data.count.toLocaleString()} entries.`
+                  ? t("contract.storageMeta", {
+                      count: storage.data.count,
+                      n: fmtInt(storage.data.count),
+                    })
                   : undefined
               }
             >
-              <SourceNote read={storage} what="Storage" />
-              <ReadGate read={storage} what="Storage">
+              <SourceNote read={storage} what={t("what.storage")} />
+              <ReadGate read={storage} what={t("what.storage")}>
                 {(s) =>
                   s.entries.length === 0 ? (
-                    <EmptyState title="No storage">
-                      This contract has written no storage.
+                    <EmptyState title={t("contract.noStorage")}>
+                      {t("contract.noStorageBody")}
                     </EmptyState>
                   ) : (
                     <div className="table-scroll">
                       <table className="stack-table">
                         <thead>
                           <tr>
-                            <th>Key</th>
-                            <th>Value</th>
+                            <th>{t("contract.key")}</th>
+                            <th>{t("contract.value")}</th>
                           </tr>
                         </thead>
                         <tbody>
                           {s.entries.map(([k, v]) => (
                             <tr key={k}>
-                              <td data-label="Key" className="mono break">
+                              <td data-label={t("contract.key")} className="mono break">
                                 {k}
                               </td>
-                              <td data-label="Value" className="mono break">
+                              <td data-label={t("contract.value")} className="mono break">
                                 {v}
                               </td>
                             </tr>
@@ -953,46 +992,46 @@ export function ContractDetailPage() {
             </Section>
             <Section
               id="events"
-              title="Events"
+              title={t("what.events")}
               meta={
                 before
-                  ? `Events before block #${before.toLocaleString()}.`
-                  : "Newest first."
+                  ? t("contract.eventsBefore", { height: fmtInt(before) })
+                  : t("contract.newestFirst")
               }
             >
-              <SourceNote read={events} what="Events" />
-              <ReadGate read={events} what="Events">
+              <SourceNote read={events} what={t("what.events")} />
+              <ReadGate read={events} what={t("what.events")}>
                 {(list) =>
                   list.length === 0 ? (
-                    <EmptyState title="No events">
+                    <EmptyState title={t("contract.noEvents")}>
                       {before
-                        ? "No older events."
-                        : "This contract has emitted no events."}
+                        ? t("contract.noOlderEvents")
+                        : t("contract.noEventsBody")}
                     </EmptyState>
                   ) : (
                     <div className="table-scroll">
                       <table className="stack-table">
                         <thead>
                           <tr>
-                            <th>Block</th>
-                            <th>Topic</th>
-                            <th>Data</th>
-                            <th>Transaction</th>
+                            <th>{t("col.block")}</th>
+                            <th>{t("contract.topic")}</th>
+                            <th>{t("contract.data")}</th>
+                            <th>{t("col.transaction")}</th>
                           </tr>
                         </thead>
                         <tbody>
                           {list.map((e, i) => (
                             <tr key={`${e.txHash}-${i}`}>
-                              <td data-label="Block">
+                              <td data-label={t("col.block")}>
                                 <BlockLink height={e.blockHeight} />
                               </td>
-                              <td data-label="Topic">
+                              <td data-label={t("contract.topic")}>
                                 <span className="pill">{e.topic || "—"}</span>
                               </td>
-                              <td data-label="Data" className="mono break">
+                              <td data-label={t("contract.data")} className="mono break">
                                 {e.data}
                               </td>
-                              <td data-label="Transaction">
+                              <td data-label={t("col.transaction")}>
                                 {e.txHash ? (
                                   <Link
                                     className="mono address-link"
@@ -1012,13 +1051,13 @@ export function ContractDetailPage() {
                   )
                 }
               </ReadGate>
-              <nav className="pager" aria-label="Event pages">
+              <nav className="pager" aria-label={t("contract.eventPages")}>
                 {before && (
                   <button
                     className="button outline small"
                     onClick={() => setParams({})}
                   >
-                    Newest events
+                    {t("contract.newestEvents")}
                   </button>
                 )}
                 {last && events.data!.length >= EVENTS_PER_PAGE && (
@@ -1028,7 +1067,7 @@ export function ContractDetailPage() {
                       setParams({ before: String(last.blockHeight) })
                     }
                   >
-                    Older events
+                    {t("contract.olderEvents")}
                   </button>
                 )}
               </nav>

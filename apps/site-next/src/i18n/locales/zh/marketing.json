@@ -1,0 +1,365 @@
+{
+  "hero": {
+    "status": "Mainnet",
+    "kicker": "全新的密码学基础",
+    "title": "后量子<br/><grad>自创世起。</grad>",
+    "lead": "一条可编程的 Layer 1，<dbr/>围绕 NIST 标准化的后量子密码学构建。<dbr/>新时代，从底层开始。",
+    "explore": "探索 RougeChain",
+    "build": "开始构建",
+    "whitepaper": "白皮书",
+    "designedFor": "为不同的未来而设计",
+    "discover": "探索底层基础 ↓"
+  },
+  "proof": {
+    "signatures": "签名",
+    "kem": "密钥封装",
+    "contracts": "智能合约",
+    "programmable": "天生可编程",
+    "seeNetwork": "查看网络",
+    "exploreMainnet": "探索 Mainnet",
+    "readOnly": "只读网络浏览器"
+  },
+  "technology": {
+    "eyebrow": "01 / 不同的起点",
+    "title": "未来不应<br/>靠事后改装。",
+    "lead": "后量子密码学应当位于核心。<br/>RougeChain 从这里出发，<br/>进而开启可编程网络的无限可能。",
+    "pillars": {
+      "pq": {
+        "title": "后量子，\n自创世起。",
+        "body": "数字签名基于 ML-DSA-65 构建。为后量子时代设计的密码学基础。"
+      },
+      "programmable": {
+        "title": "天生\n可编程。",
+        "body": "WASM 智能合约为应用、代币和全新的链上体验提供空间。"
+      },
+      "ecosystem": {
+        "title": "生态，\n互联互通。",
+        "body": "从浏览器、兑换到加密通信。一个网络，不断扩展的可能。"
+      }
+    }
+  },
+  "build": {
+    "eyebrow": "02 / 为构建者而生",
+    "title": "你的下一个想法。<br/>全新的基础。",
+    "lead": "从第一次查询到可编程应用。<br/>探索 RougeChain 背后的工具。",
+    "sdkHeading": "从 SDK 开始",
+    "resources": {
+      "sdk": {
+        "title": "SDK 与 API",
+        "body": "将你的应用连接到网络。"
+      },
+      "wasm": {
+        "title": "WASM 合约",
+        "body": "构建可编程的链上体验。"
+      },
+      "node": {
+        "title": "运行节点",
+        "body": "了解网络基础设施。"
+      },
+      "mcp": {
+        "title": "面向智能体的 MCP",
+        "body": "探索智能体与网络的集成。"
+      }
+    },
+    "viewSource": "查看源代码",
+    "allDocs": "全部文档"
+  },
+  "security": {
+    "eyebrow": "03 / 安全与透明",
+    "title": "为新时代<br/>打造的密码学。<br/><muted>公开构建。</muted>",
+    "lead": "经过深思熟虑的密码学栈。公开的技术资料。<br/>探索协议背后的密码原语。",
+    "inspect": "审阅源代码",
+    "whitepaper": "白皮书",
+    "primitives": {
+      "signatures": "后量子数字签名",
+      "kem": "后量子密钥封装",
+      "aead": "认证数据加密",
+      "hashing": "哈希与证明承诺"
+    },
+    "note": "ML-KEM-768 用于建立或封装密钥；AES-256-GCM 用于加密数据。SHA-256 和 BLAKE3 是哈希原语，而非加密算法。标准仅标识所用原语，并不代表 RougeChain 经过外部审计。"
+  },
+  "ecosystem": {
+    "eyebrow": "04 / 超越链本身",
+    "title": "一个基础。<br/>无限可能。",
+    "lead": "持有。交易。转移。沟通。验证。构建。<br/>探索 RougeChain 上的无限可能。"
+  },
+  "xrge": {
+    "eyebrow": "05 / 原生资产",
+    "logoAlt": "XRGE 标志",
+    "title": "网络的一部分。<br/>效用的核心。",
+    "lead": "RougeChain 的原生资产。了解它在网络手续费、验证者质押以及更广泛生态中的作用。",
+    "understand": "了解 XRGE",
+    "swapDemo": "查看兑换设计演示"
+  },
+  "team": {
+    "eyebrow": "06 / 协议背后的人",
+    "title": "书写下一篇章。",
+    "lead": "工程、创意与社区。",
+    "about": "关于 {{name}}",
+    "members": {
+      "brandon": {
+        "role": "创始人 / 首席开发者",
+        "bio": "Brandon Menard，艺名 CyberDreadx，是常驻迈阿密的美国音乐制作人、AI 开发者和区块链创新者。作为 Rougee 和 RougeCoin 的创始人，他正在打造融合 Web3 所有权、流媒体与创作者赋能的新一代音乐平台。凭借 AI 与网络安全背景，Brandon 主导 Rougee 去中心化生态的技术愿景与开发，连接艺术、科技与表达自由。"
+      },
+      "andersen": {
+        "role": "增长与运营负责人",
+        "bio": "Andersen Scherberger 是拥有 15 年以上经验的音乐行业资深人士。他创办了荣获“Best of Miami”奖项的夜店，举办过无数音乐节和活动，并经纪过曾登上 EDC 等大型音乐节的艺人。他的 NFT 画廊曾登上 CBS 的《Destination Miami》节目，并与 Near、Bored Ape Yacht Club 和 NFT.com 等知名加密品牌建立了合作。"
+      },
+      "elijah": {
+        "role": "迈阿密-戴德县加密货币工作组主席",
+        "bio": "Elijah John Bowdre 担任迈阿密-戴德县加密货币工作组主席，同时是美国加密政策联盟（US Crypto Policy Alliance）总裁兼联合创始人。他起草了佛罗里达州首部州级区块链法案、迈阿密-戴德县区块链委员会条例以及迈阿密市加密支付政策，主持加密新闻节目 TheBitPoint，并曾于 2025 年竞选迈阿密市长。"
+      },
+      "teresa": {
+        "role": "Like Group Management CEO 兼联合创始人",
+        "bio": "Teresa Castagnino 是 Like Group Management 的 CEO 兼联合创始人，该公司是位于图卢姆、专注再生项目的加速器与孵化器；她也是 Tulum Crypto Fest 联合创始人，以及《福布斯墨西哥》加勒比地区负责人。凭借工业设计与建筑背景，她在整个玛雅海岸连接创始人、企业与投资者。"
+      },
+      "ghulam": {
+        "role": "数字营销策略师兼项目经理",
+        "bio": "Ghulam Abbas 博士是数字营销策略师和项目经理，拥有医疗背景，是持证顺势疗法医师（DHMS），并创办了 Eco Cure Clinic。他将数据驱动的数字策略、搜索优化内容和跨职能项目管理与专业医学知识相结合，专注于自然受众增长、品牌定位以及精简高效的运营流程，带来可持续、可衡量的成果。"
+      },
+      "brenda": {
+        "role": "记者，媒体与公关",
+        "bio": "Brenda Miranda 是佛罗里达国际大学 Caplin News 的多媒体记者和主播，也是 Kopenhaver 传播领域女性中心的媒体撰稿人。她现居图卢姆，报道社区、健康、艺术和人文故事。今年秋天，她将从 FIU 毕业，获得数字传播与媒体学士学位。"
+      }
+    }
+  },
+  "regenerate": {
+    "eyebrow": "07 / Regenerate",
+    "title": "科技应当改善<br/><muted>它所触及的土地。</muted>",
+    "body": "RougeChain Regenerate 将区块链基础设施与现实世界的社区发展相连接——为生态、基础设施、科技、艺术和社区领域透明、可衡量的本地项目提供资金。从图卢姆开始，项目资金、里程碑、证据与影响都可以通过 RougeChain 记录，让进展从资金到成果全程可见。",
+    "explore": "探索 Regenerate",
+    "propose": "提交项目提案"
+  },
+  "finalCta": {
+    "eyebrow": "新时代从这里开始",
+    "title": "在为后量子时代<br/>设计的链上构建。",
+    "explore": "探索网络",
+    "docs": "阅读文档"
+  },
+  "carousel": {
+    "tabsLabel": "RougeChain 的可能性",
+    "previous": "上一个",
+    "next": "下一个",
+    "trackLabel": "可滚动的生态用例",
+    "slideLabel": "{{n}} / {{total}}：{{name}}",
+    "hint": "拖动 / 滑动或使用方向键",
+    "slides": {
+      "qwalla": {
+        "short": "Qwalla",
+        "label": "持有",
+        "headline": "你的资产。<br/>为未来做好准备。",
+        "body": "Qwalla 将 RougeChain 生态装进你的口袋。在同一个移动应用中持有 XRGE、管理钱包、畅游网络。",
+        "primary": "了解 Qwalla"
+      },
+      "swap": {
+        "short": "兑换",
+        "label": "交易",
+        "headline": "交易。提供流动性。<br/>始终在链上。",
+        "body": "通过围绕网络构建的原生 DeFi 体验兑换资产、发现流动性，并参与 RougeChain 市场。",
+        "primary": "探索兑换",
+        "secondary": "查看流动性池"
+      },
+      "bridge": {
+        "short": "跨链桥",
+        "label": "转移",
+        "headline": "在链之间转移资产。<br/>带它们进入后量子时代。",
+        "body": "在 RougeChain 与已连接网络之间转移受支持的资产，将传统链上的价值带入围绕后量子安全设计的网络。",
+        "technical": "Base mainnet · ETH ↔ qETH · USDC ↔ qUSDC · XRGE",
+        "primary": "探索跨链桥"
+      },
+      "talk": {
+        "short": "通信",
+        "label": "通信",
+        "headline": "你的钱包<br/>也是私密身份。",
+        "emphasis": "消息。邮件。加密。<br/>钱包到钱包的后量子通信。",
+        "body": "在钱包身份之间直接发送后量子加密的消息和邮件。RougeChain 让钱包不止于交易——它还成为安全的通信层。",
+        "technical": "ML-KEM-768 密钥封装 · AES-256-GCM 认证加密",
+        "primary": "打开 Messenger",
+        "secondary": "探索 Mail"
+      },
+      "validate": {
+        "short": "验证",
+        "label": "验证",
+        "headline": "不只使用网络。<br/>更要守护它。",
+        "body": "一条命令，即可把一台全新的 Linux 服务器变成正在同步的 RougeChain 节点。质押至少 {{amount}} XRGE，确认验证者状态，直接参与网络共识。",
+        "technical": "一键安装 · systemd 服务 · 内置验证者状态检查 · VPS 要求不高",
+        "primary": "运行验证者",
+        "secondary": "探索验证者"
+      },
+      "build": {
+        "short": "构建",
+        "label": "构建",
+        "headline": "为开发者打造。<br/>为智能体就绪。",
+        "emphasis": "构建应用。构建智能体。将二者连接到链上。",
+        "body": "RougeChain 专为开发者并行构建应用与自主智能体的世界而设计。使用 WASM 智能合约和 RougeChain SDK 构建链上软件，再为 AI 智能体提供原生 MCP 工具，让它们理解网络、跨应用工作、协调工作流并执行经授权的链上操作。",
+        "technical": "WASM 智能合约 · RougeChain SDK · 原生 MCP 工具",
+        "primary": "开始构建",
+        "secondary": "探索面向智能体的 MCP"
+      }
+    },
+    "qwalla": {
+      "caption": "移动钱包 · MAINNET",
+      "imageAlt": "手机框中展示的 Qwalla 钱包应用",
+      "meta": "后量子钱包"
+    },
+    "swap": {
+      "label": "RougeChain 兑换界面示意",
+      "caption": "界面示意 · ROUGECHAIN DEX",
+      "title": "兑换",
+      "network": "MAINNET",
+      "pay": "支付",
+      "receive": "获得",
+      "route": "路径",
+      "liquidity": "流动性",
+      "amm": "原生 AMM",
+      "pools": "资金池"
+    },
+    "bridge": {
+      "caption": "BASE MAINNET ↔ ROUGECHAIN L1 · 支持的路径",
+      "label": "Base 与 RougeChain 之间支持的跨链路径",
+      "baseMainnet": "BASE MAINNET",
+      "chain": "链 ID {{id}}",
+      "bridge": "跨链桥",
+      "routes": "路径",
+      "rougechainL1": "ROUGECHAIN L1",
+      "pqNetwork": "后量子网络",
+      "asset": "资产",
+      "route": "路径",
+      "receive": "获得",
+      "forward": "BASE → ROUGE",
+      "twoWay": "双向",
+      "deposit": "存入 · 锁定 / 铸造",
+      "withdraw": "提取 · 释放 / 退款保护"
+    },
+    "talk": {
+      "caption": "钱包身份 · 私密通信",
+      "yourIdentity": "你的钱包身份",
+      "messenger": "MESSENGER",
+      "encrypted": "已加密",
+      "incoming": "你要参加验证者会议吗？",
+      "you": "你",
+      "outgoing": "参加——笔记马上发你。",
+      "mail": "MAIL",
+      "from": "发件人",
+      "subject": "主题",
+      "subjectValue": "验证者提案",
+      "encryptedFor": "加密接收方",
+      "kem": "密钥封装",
+      "aead": "认证加密"
+    },
+    "validate": {
+      "live": "实时网络数据",
+      "stale": "网络数据已过时",
+      "snapshot": "已保存的网络快照",
+      "caption": "验证者运营视图 · {{state}}",
+      "label": "RougeChain 验证者运营面板与设置流程",
+      "validator": "ROUGECHAIN 验证者",
+      "ready": "准备参与。",
+      "operatorFlow": "运营流程",
+      "targetStatus": "目标状态",
+      "producing": "正在出块",
+      "check": "内置的 <code>validator-status</code> 检查会在上线前逐项确认前提条件。",
+      "minStake": "最低质押",
+      "peers": "网络节点",
+      "latestBlock": "最新区块",
+      "networkHeight": "网络高度",
+      "setup": "设置",
+      "installer": "一键安装",
+      "steps": {
+        "install": {
+          "title": "安装节点",
+          "detail": "依赖、构建、systemd 服务"
+        },
+        "stake": {
+          "title": "充值并质押",
+          "detail": "质押至少 {{amount}} XRGE"
+        },
+        "verify": {
+          "title": "确认状态",
+          "detail": "已充值 · 已质押 · 活跃集合"
+        },
+        "produce": {
+          "title": "开始出块",
+          "detail": "开始参与共识"
+        }
+      },
+      "validators": "验证者 {{n}}",
+      "publicRead": "公开读取 · {{state}}"
+    },
+    "build": {
+      "caption": "真实的 SDK + MCP 集成 · MAINNET",
+      "label": "终端正在输入 RougeChain SDK 与 MCP 集成代码",
+      "footer": "SDK · WASM 合约 · MCP · 本地 ML-DSA-65 签名"
+    }
+  },
+  "architecture": {
+    "eyebrow": "生态 / 架构提案",
+    "title": "一个身份。<br/><muted>独立的应用。</muted>",
+    "lead": "共享的基础连接整个生态。每个应用各自拥有自己的路由、部署和发布周期。",
+    "status": "POC 拓扑 · 不迁移主机",
+    "seeWallet": "查看钱包提供方架构 ↓",
+    "comingSoon": "{{name}} · 即将推出",
+    "destinations": {
+      "eyebrow": "01 / 拟议目的地",
+      "title": "一个应用网络。",
+      "root": "营销 · 发现 · 全局应用菜单",
+      "proposed": "拟议目的地 · {{status}}"
+    },
+    "beyond": {
+      "eyebrow": "02 / 应用之外",
+      "title": "不同的问题。清晰的去处。",
+      "build": "构建",
+      "community": "社区",
+      "utilities": "工具",
+      "buildQuestion": "我能构建什么？",
+      "communityQuestion": "我能在哪里参与？",
+      "utilitiesQuestion": "我能查看什么？",
+      "note": "营销导航负责介绍项目。应用菜单将应用分为持有、交易、娱乐、交流和探索。本地导航属于当前 dApp。工作区启动器可打开各应用以及构建、安全和网络等工具。"
+    },
+    "wallet": {
+      "eyebrow": "03 / 共享钱包架构",
+      "title": "一个身份。一个经过审查的提供方边界。",
+      "lead": "每个 dApp 都通过通用的钱包提供方接口工作，而不是自行持有私钥。",
+      "figureLabel": "拟议的钱包提供方架构",
+      "extension": "RougeChain 浏览器钱包",
+      "extensionNote": "扩展程序提供方候选",
+      "qwallaNote": "移动端 / dApp 浏览器候选",
+      "contractNote": "拟议接口 · 账户 · 网络 · 权限",
+      "caption": "概念性的生产架构。最终的提供方与安全设计由首席开发者负责。",
+      "demonstratesTitle": "POC 展示了什么",
+      "demonstrates1": "WalletProvider 通过 @rougechain/core 在各路由和工作区预览之间共享真实的浏览器钱包：与当前 rougechain.io 使用相同的存储键、保险库格式和签名方式。",
+      "demonstrates2": "它是单一源的：这并不能证明分开托管的应用之间可以跨源连接钱包。",
+      "evaluateTitle": "生产环境必须评估什么",
+      "evaluate1": "RougeChain 浏览器扩展、Qwalla 以及一个权威的网页钱包源都是提供方候选。",
+      "evaluate2": "连接、账户/网络状态和交易权限需要一份经过审查的接口规范。此处未实现任何签名或交易方法。",
+      "noteTitle": "钱包身份/提供方 ≠ 原始私钥存储",
+      "note": "localStorage 不能跨源或跨子域。未来的提供方策略不得尝试在 dApp 之间共享原始保险库存储。在审慎的迁移方案获批之前，应保留对现有保险库的访问。"
+    },
+    "boundaries": {
+      "eyebrow": "04 / 边界",
+      "title": "共享语言。各自拥有产品。",
+      "implementedTitle": "本 POC 已实现",
+      "brand": "@rougechain/brand — 设计令牌与品牌标识",
+      "ui": "@rougechain/ui — 基础组件与 RougeAppShell",
+      "chainReadonly": "@rougechain/chain-readonly — 白名单 GET 数据",
+      "showcase": "Showcase 负责生态注册表、路由和工作区预览。",
+      "proposedTitle": "拟议的生产包",
+      "walletProvider": "@rougechain/wallet-provider 需要另行批准的信任与源架构。",
+      "independent": "独立部署使用带版本的包。本 POC 无需共享的运行时服务器。"
+    },
+    "transition": {
+      "eyebrow": "05 / 过渡",
+      "title": "稳步推进。",
+      "steps": {
+        "1": "在一个现有界面中采用共享的品牌与 UI 令牌。",
+        "2": "在明确归属后，抽取应用外壳和导航注册表。",
+        "3": "在独立主机上试点浏览器，并使用经过验证的数据接口。",
+        "4": "仅在钱包、签名和源边界获批后再迁移兑换。",
+        "5": "仅在各目的地部署并稳定后再重定向旧路径。"
+      },
+      "note": "全局切换器跨越应用和主机。本地导航停留在当前应用内。POC 路由在单一源上演示这些边界。",
+      "originTitle": "钱包源边界",
+      "origin": "localStorage 以源为作用域。rougechain.io 上的钱包资料不会自动转移到 wallet.rougechain.io。任何拆分之前，都需要完成钱包提供方设计、迁移策略和安全审查。本 POC 从不读取或存储钱包资料。"
+    }
+  }
+}

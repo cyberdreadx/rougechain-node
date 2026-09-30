@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   ArrowDownLeft,
@@ -19,11 +20,10 @@ import {
 import { Button } from "@rougechain/ui";
 import { describeAsset } from "@rougechain/core/asset-display";
 import { formatUsd } from "@rougechain/core/price-service";
-import { getNetworkLabel } from "@rougechain/core/network";
 import type { WalletTransaction } from "@rougechain/core/pqc-wallet";
 import { NetworkBadge, PageHeading } from "../explorer/ui";
 import { useWallet } from "./WalletProvider";
-import { MASKED_AMOUNT, useExtensionProvider, useHideBalances, useMajorPrices, useRougeAddress, useTokenMetadata, useTokenPrices, useWalletData, useXrgePrice } from "./hooks";
+import { MASKED_AMOUNT, networkLabel as netLabel, useExtensionProvider, useHideBalances, useMajorPrices, useRougeAddress, useTokenMetadata, useTokenPrices, useWalletData, useXrgePrice } from "./hooks";
 import { CopyText, TokenIcon, UnlockForm } from "./parts";
 import { SendDialog } from "./SendDialog";
 import { ReceiveDialog } from "./ReceiveDialog";
@@ -33,6 +33,7 @@ import { BaseWalletCard } from "./BaseWallet";
 import { OnboardingSteps, PasswordSetup, SeedReveal } from "./Onboarding";
 import { claimFaucet } from "./send";
 import { toast } from "./toast";
+import { fmtNum, fmtRelative } from "../i18n/format";
 
 function WalletMain({ children }: { children: React.ReactNode }) {
   return (
@@ -43,6 +44,7 @@ function WalletMain({ children }: { children: React.ReactNode }) {
 }
 
 function Welcome() {
+  const { t } = useTranslation("wallet");
   const extensionProvider = useExtensionProvider();
   const w = useWallet();
   const [params] = useSearchParams();
@@ -61,32 +63,32 @@ function Welcome() {
   return (
     <div className="wallet-welcome">
       <section className="surface">
-        <h2>Create a wallet</h2>
-        <p>ML-DSA-65 signing keys and ML-KEM-768 messaging keys, generated in this browser from a 24-word recovery phrase.</p>
-        <Button disabled={busy} onClick={() => run(w.create, "Couldn't create a wallet")}>
-          Create new wallet
+        <h2>{t("welcome.createTitle")}</h2>
+        <p>{t("welcome.createBody")}</p>
+        <Button disabled={busy} onClick={() => run(w.create, t("welcome.createFailed"))}>
+          {t("welcome.createButton")}
         </Button>
       </section>
       <section className="surface">
-        <h2>Import a wallet</h2>
-        <p>Restore from your recovery phrase or an encrypted .pqcbackup file.</p>
+        <h2>{t("welcome.importTitle")}</h2>
+        <p>{t("welcome.importBody")}</p>
         {importing ? (
           <ImportForm />
         ) : (
           <Button variant="outline" onClick={() => setImporting(true)}>
-            Import
+            {t("welcome.importButton")}
           </Button>
         )}
       </section>
       <section className="surface">
-        <h2>RougeChain extension</h2>
-        <p>{extensionProvider ? "Extension detected. Your keys stay in the extension; it asks you to approve each signature." : "Not detected in this browser. Install it, or open this page in Qwalla."}</p>
+        <h2>{t("welcome.extensionTitle")}</h2>
+        <p>{extensionProvider ? t("welcome.extensionDetected") : t("welcome.extensionMissing")}</p>
         <div className="actions">
-          <Button variant="outline" disabled={busy} onClick={() => run(w.connectExtension, "Couldn't connect the extension")}>
-            Connect extension
+          <Button variant="outline" disabled={busy} onClick={() => run(w.connectExtension, t("welcome.connectFailed"))}>
+            {t("welcome.connect")}
           </Button>
           <a className="text-link" href="https://chromewebstore.google.com/detail/rougechain-wallet/ilkbgjgphhaolfdjkfefdfiifipmhakj" target="_blank" rel="noreferrer">
-            Get the extension ↗
+            {t("welcome.getExtension")}
           </a>
         </div>
       </section>
@@ -94,21 +96,21 @@ function Welcome() {
   );
 }
 
-const TX_LABEL: Record<WalletTransaction["type"], string> = {
-  send: "Sent",
-  receive: "Received",
-  swap: "Swap",
-  create_token: "Token created",
-  fee: "Fee",
-  stake: "Staked",
-  unstake: "Unstaked",
-  add_liquidity: "Liquidity",
-  remove_liquidity: "Removed LP",
-  create_pool: "Pool created",
-  nft_mint: "NFT",
-  nft_transfer: "NFT transfer",
-  bridge: "Bridge",
-};
+const TX_TYPES: ReadonlySet<string> = new Set([
+  "send",
+  "receive",
+  "swap",
+  "create_token",
+  "fee",
+  "stake",
+  "unstake",
+  "add_liquidity",
+  "remove_liquidity",
+  "create_pool",
+  "nft_mint",
+  "nft_transfer",
+  "bridge",
+]);
 
 function TxIcon({ type }: { type: WalletTransaction["type"] }) {
   if (type === "send") return <ArrowUpRight size={16} aria-hidden="true" />;
@@ -119,18 +121,19 @@ function TxIcon({ type }: { type: WalletTransaction["type"] }) {
 }
 
 function History({ transactions, hidden, loaded }: { transactions: WalletTransaction[]; hidden: boolean; loaded: boolean }) {
+  const { t } = useTranslation("wallet");
   const [limit, setLimit] = useState(10);
   return (
     <section className="surface wallet-panel" aria-labelledby="wallet-history-title">
       <div className="panel-head">
-        <h2 id="wallet-history-title">Activity</h2>
+        <h2 id="wallet-history-title">{t("activity.title")}</h2>
       </div>
       {!loaded ? (
-        <p className="muted">Loading activity…</p>
+        <p className="muted">{t("activity.loading")}</p>
       ) : transactions.length === 0 ? (
         <div className="empty-state compact">
-          <h3>No transactions yet</h3>
-          <p>Transfers to and from this wallet appear here.</p>
+          <h3>{t("activity.emptyTitle")}</h3>
+          <p>{t("activity.emptyBody")}</p>
         </div>
       ) : (
         <>
@@ -141,10 +144,14 @@ function History({ transactions, hidden, loaded }: { transactions: WalletTransac
                   <TxIcon type={tx.type} />
                 </span>
                 <div className="tx-main">
-                  <strong>{TX_LABEL[tx.type] ?? tx.type}</strong>
+                  <strong>{TX_TYPES.has(tx.type) ? t(`activity.types.${tx.type}`) : tx.type}</strong>
                   <small title={tx.memo || undefined}>
-                    {tx.type === "send" ? "To " : tx.type === "receive" ? "From " : ""}
-                    {tx.address} · {tx.timeLabel}
+                    {tx.type === "send"
+                      ? t("activity.to", { address: tx.address })
+                      : tx.type === "receive"
+                        ? t("activity.from", { address: tx.address })
+                        : tx.address}{" "}
+                    · {tx.timestamp ? fmtRelative(tx.timestamp, Date.now(), "short") : tx.timeLabel}
                   </small>
                 </div>
                 <div className="tx-amount">
@@ -161,7 +168,7 @@ function History({ transactions, hidden, loaded }: { transactions: WalletTransac
           </ul>
           {transactions.length > limit && (
             <Button variant="ghost small" onClick={() => setLimit((l) => l + 20)}>
-              Show more
+              {t("activity.showMore")}
             </Button>
           )}
         </>
@@ -171,6 +178,7 @@ function History({ transactions, hidden, loaded }: { transactions: WalletTransac
 }
 
 function Dashboard() {
+  const { t } = useTranslation("wallet");
   const w = useWallet();
   const wallet = w.wallet!;
   const { full: address } = useRougeAddress(wallet.signingPublicKey);
@@ -184,7 +192,7 @@ function Dashboard() {
   const [sendSymbol, setSendSymbol] = useState<string | undefined>();
   const [faucetBusy, setFaucetBusy] = useState(false);
   const isMainnet = w.network === "mainnet";
-  const networkLabel = getNetworkLabel();
+  const networkLabel = netLabel(w.network);
 
   // `metadata` is a dependency: loading it fills core's decimals cache used by describeAsset.
   const assets = useMemo(
@@ -203,10 +211,10 @@ function Dashboard() {
     setFaucetBusy(true);
     try {
       await claimFaucet(wallet.signingPublicKey, token);
-      toast.success(token ? "Claimed 1,000 qUSDC" : "Claimed testnet XRGE", { description: "Your balance updates in a moment." });
+      toast.success(token ? t("faucet.claimedUsdc") : t("faucet.claimedXrge"), { description: t("faucet.claimedBody") });
       for (const ms of [800, 2400]) window.setTimeout(data.refresh, ms);
     } catch (e) {
-      toast.error("Faucet claim failed", { description: e instanceof Error ? e.message : undefined });
+      toast.error(t("faucet.failed"), { description: e instanceof Error ? e.message : undefined });
     } finally {
       setFaucetBusy(false);
     }
@@ -219,15 +227,15 @@ function Dashboard() {
           <section className="surface balance-card" aria-labelledby="balance-title">
             <div className="panel-head">
               <span id="balance-title" className="eyebrow">
-                {w.displayName || "My Wallet"} · {networkLabel}
+                {w.displayName || t("myWallet")} · {networkLabel}
               </span>
-              <Button variant="ghost icon" aria-label={hidden ? "Show balances" : "Hide balances"} aria-pressed={hidden} onClick={toggle}>
+              <Button variant="ghost icon" aria-label={hidden ? t("dashboard.showBalances") : t("dashboard.hideBalances")} aria-pressed={hidden} onClick={toggle}>
                 {hidden ? <EyeOff size={16} /> : <Eye size={16} />}
               </Button>
             </div>
             <div className="balance-total">
               {!data.loaded ? (
-                <span className="muted">Loading…</span>
+                <span className="muted">{t("loading")}</span>
               ) : hidden ? (
                 `$${MASKED_AMOUNT}`
               ) : total !== null ? (
@@ -242,59 +250,59 @@ function Dashboard() {
                 <span className={change24h >= 0 ? "up" : "down"}>
                   {" "}
                   {change24h >= 0 ? "+" : ""}
-                  {change24h.toFixed(2)}% 24h
+                  {t("dashboard.change24h", { value: fmtNum(change24h, 2, { minimumFractionDigits: 2 }) })}
                 </span>
               )}
             </p>
-            {address ? <CopyText value={address} label="address" /> : <small className="muted">Deriving address…</small>}
-            {w.isExtension && <p className="form-hint">Connected through the RougeChain extension — it approves each signature.</p>}
-            {data.error && <p className="form-hint error">Couldn't reach the {networkLabel} node: {data.error}</p>}
+            {address ? <CopyText value={address} label={t("copy.address")} /> : <small className="muted">{t("dashboard.deriving")}</small>}
+            {w.isExtension && <p className="form-hint">{t("dashboard.viaExtension")}</p>}
+            {data.error && <p className="form-hint error">{t("dashboard.nodeError", { network: networkLabel, error: data.error })}</p>}
           </section>
 
-          <nav className="quick-actions" aria-label="Wallet actions">
+          <nav className="quick-actions" aria-label={t("dashboard.actions")}>
             <button type="button" onClick={() => setDialog("send")} disabled={data.balances.length === 0}>
               <Send size={18} aria-hidden="true" />
-              Send
+              {t("dashboard.send")}
             </button>
             <button type="button" onClick={() => setDialog("receive")}>
               <ArrowDownLeft size={18} aria-hidden="true" />
-              Receive
+              {t("dashboard.receive")}
             </button>
             {!isMainnet && (
               <>
-                <button type="button" onClick={() => faucet()} disabled={faucetBusy} title="Testnet XRGE faucet">
+                <button type="button" onClick={() => faucet()} disabled={faucetBusy} title={t("faucet.xrgeTitle")}>
                   <Droplets size={18} aria-hidden="true" />
-                  Get XRGE
+                  {t("faucet.getXrge")}
                 </button>
-                <button type="button" onClick={() => faucet("qUSDC")} disabled={faucetBusy} title="Testnet qUSDC faucet">
+                <button type="button" onClick={() => faucet("qUSDC")} disabled={faucetBusy} title={t("faucet.usdcTitle")}>
                   <DollarSign size={18} aria-hidden="true" />
-                  Get qUSDC
+                  {t("faucet.getUsdc")}
                 </button>
               </>
             )}
             <button type="button" onClick={() => setDialog("create")}>
               <Plus size={18} aria-hidden="true" />
-              Create token
+              {t("dashboard.createToken")}
             </button>
             <button type="button" onClick={() => setDialog("backup")}>
               <FileKey2 size={18} aria-hidden="true" />
-              Backup
+              {t("dashboard.backup")}
             </button>
           </nav>
 
           <section className="surface wallet-panel" aria-labelledby="assets-title">
             <div className="panel-head">
-              <h2 id="assets-title">Assets</h2>
-              <Button variant="ghost icon" aria-label="Refresh balances" onClick={data.refresh} disabled={data.refreshing}>
+              <h2 id="assets-title">{t("assets.title")}</h2>
+              <Button variant="ghost icon" aria-label={t("assets.refresh")} onClick={data.refresh} disabled={data.refreshing}>
                 <RefreshCw size={15} className={data.refreshing ? "spin" : ""} />
               </Button>
             </div>
             {!data.loaded ? (
-              <p className="muted">Loading balances…</p>
+              <p className="muted">{t("assets.loading")}</p>
             ) : assets.length === 0 ? (
               <div className="empty-state compact">
-                <h3>No assets yet</h3>
-                <p>{isMainnet ? "Share your address to receive XRGE and tokens." : "Claim testnet XRGE from the faucet to get started."}</p>
+                <h3>{t("assets.emptyTitle")}</h3>
+                <p>{isMainnet ? t("assets.emptyMainnet") : t("assets.emptyTestnet")}</p>
               </div>
             ) : (
               <ul className="asset-rows">
@@ -313,7 +321,7 @@ function Dashboard() {
                     </div>
                     <Button
                       variant="ghost icon"
-                      aria-label={`Send ${b.symbol}`}
+                      aria-label={t("assets.send", { symbol: b.symbol })}
                       onClick={() => {
                         setSendSymbol(b.symbol);
                         setDialog("send");
@@ -365,6 +373,7 @@ function Dashboard() {
 }
 
 export default function WalletPage() {
+  const { t } = useTranslation("wallet");
   const w = useWallet();
   let body: React.ReactNode;
   if (w.flow && w.flow.step === "seed" && w.status === "unlocked") body = <SeedReveal />;
@@ -374,7 +383,7 @@ export default function WalletPage() {
     body = (
       <section className="surface unlock-card">
         <Lock size={22} aria-hidden="true" />
-        <h2>{w.displayName ? `${w.displayName} is locked` : "Your wallet is locked"}</h2>
+        <h2>{w.displayName ? t("page.namedLocked", { name: w.displayName }) : t("page.locked")}</h2>
         {w.publicKey && <p className="mono break">{`${w.publicKey.slice(0, 32)}…${w.publicKey.slice(-12)}`}</p>}
         <UnlockForm />
       </section>
@@ -385,20 +394,20 @@ export default function WalletPage() {
   return (
     <WalletMain>
       <PageHeading
-        eyebrow="Hold / Wallet"
-        title="Wallet"
+        eyebrow={t("page.eyebrow")}
+        title={t("page.title")}
         aside={
           <div className="heading-actions">
             <NetworkBadge />
             {w.status === "unlocked" && (
-              <Link className="button ghost icon" to="/settings" aria-label="Settings">
+              <Link className="button ghost icon" to="/settings" aria-label={t("page.settings")}>
                 <SettingsIcon size={16} />
               </Link>
             )}
           </div>
         }
       >
-        Post-quantum keys, kept in this browser.
+        {t("page.lede")}
       </PageHeading>
       {body}
     </WalletMain>

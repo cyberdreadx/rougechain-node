@@ -21,7 +21,7 @@ import {
 import { getWalletBalance } from "@rougechain/core/pqc-wallet";
 import { useChain } from "../explorer/chain";
 import { useNewBlocks } from "../wallet/hooks";
-import { staking as t } from "./strings";
+import i18n from "../i18n";
 
 /** Fee core's secureStake / secureUnstake put in the signed payload (their default). */
 export const STAKE_FEE = 1;
@@ -72,12 +72,15 @@ export function useValidatorsData(publicKey: string | null) {
 
 export type AmountCheck = { ok: true; amount: number } | { ok: false; error: string };
 
+/** Messages are translated at call time (validation runs during render). */
+const msg = (key: string, opts?: Record<string, unknown>) => i18n.t(`pages:staking.${key}`, opts ?? {});
+
 function parseWhole(input: string): AmountCheck {
   const s = input.trim();
-  if (!s) return { ok: false, error: t.enterAmount };
-  if (!/^\d+$/.test(s)) return { ok: false, error: t.wholeNumber };
+  if (!s) return { ok: false, error: msg("enterAmount") };
+  if (!/^\d+$/.test(s)) return { ok: false, error: msg("wholeNumber") };
   const amount = Number(s);
-  if (!Number.isSafeInteger(amount) || amount <= 0) return { ok: false, error: t.enterAmount };
+  if (!Number.isSafeInteger(amount) || amount <= 0) return { ok: false, error: msg("enterAmount") };
   return { ok: true, amount };
 }
 
@@ -91,17 +94,17 @@ export function checkStake(input: string, available: number, currentStake: numbe
   const p = parseWhole(input);
   if (!p.ok) return p;
   if (currentStake + p.amount < MIN_STAKE)
-    return { ok: false, error: t.minimum("standard", fmt(MIN_STAKE)) };
-  if (p.amount > available) return { ok: false, error: t.insufficient };
-  if (p.amount + STAKE_FEE > available) return { ok: false, error: t.insufficientFee(STAKE_FEE) };
+    return { ok: false, error: msg("minimum", { tier: i18n.t("pages:validators.tiers.standard").toLowerCase(), amount: fmt(MIN_STAKE) }) };
+  if (p.amount > available) return { ok: false, error: msg("insufficient") };
+  if (p.amount + STAKE_FEE > available) return { ok: false, error: msg("insufficientFee", { fee: STAKE_FEE }) };
   return p;
 }
 
 export function checkUnstake(input: string, staked: number, available: number): AmountCheck {
   const p = parseWhole(input);
   if (!p.ok) return p;
-  if (p.amount > staked) return { ok: false, error: t.overStaked(fmt(staked)) };
-  if (STAKE_FEE > available) return { ok: false, error: t.insufficientFee(STAKE_FEE) };
+  if (p.amount > staked) return { ok: false, error: msg("overStaked", { amount: fmt(staked) }) };
+  if (STAKE_FEE > available) return { ok: false, error: msg("insufficientFee", { fee: STAKE_FEE }) };
   return p;
 }
 

@@ -4,6 +4,7 @@
  */
 import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, ShieldAlert } from "lucide-react";
 import { Button, Status } from "@rougechain/ui";
@@ -31,7 +32,6 @@ import { ActivityCard, PendingWithdrawalsCard } from "./StatusCards";
 import { useBaseConnection, useEvmBalances } from "./useBaseConnection";
 import { WithdrawPanel, type L1Balances } from "./WithdrawPanel";
 import { ASSETS, type BridgeAsset, type BtcNetwork } from "./validate";
-import { S, fmt } from "./strings";
 import "./bridge-app.css";
 
 type Direction = "deposit" | "withdraw";
@@ -51,14 +51,15 @@ async function loadConfigs(): Promise<Configs> {
 }
 
 function Heading({ network }: { network: NetworkType }) {
+  const { t } = useTranslation("bridge");
   return (
     <div className="app-page-heading bridge-heading">
       <div>
-        <div className="eyebrow">{S.eyebrow}</div>
-        <h1>{S.title}</h1>
-        <p>{S.subtitle}</p>
+        <div className="eyebrow">{t("eyebrow")}</div>
+        <h1>{t("title")}</h1>
+        <p>{t("subtitle")}</p>
       </div>
-      <Status state={network === "mainnet" ? "live" : "warning"}>{S.networkBadge[network]}</Status>
+      <Status state={network === "mainnet" ? "live" : "warning"}>{t(`networkBadge.${network}`)}</Status>
     </div>
   );
 }
@@ -83,6 +84,7 @@ function Blocked({ tone, title, body, action }: { tone: "muted" | "warning" | "e
 }
 
 export default function BridgePage() {
+  const { t } = useTranslation("bridge");
   const { network } = useWallet();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["bridge", "config", network], queryFn: loadConfigs, retry: false, staleTime: 60_000 });
@@ -92,7 +94,7 @@ export default function BridgePage() {
       <Main>
         <Heading network={network} />
         <p className="form-hint" role="status">
-          {S.loading}
+          {t("loading")}
         </p>
       </Main>
     );
@@ -104,10 +106,10 @@ export default function BridgePage() {
         <Heading network={network} />
         <Blocked
           tone="muted"
-          body={S.notEnabled}
+          body={t("notEnabled")}
           action={
             <Button variant="outline small" onClick={() => void qc.invalidateQueries({ queryKey: ["bridge", "config", network] })}>
-              {S.retry}
+              {t("retry")}
             </Button>
           }
         />
@@ -120,7 +122,7 @@ export default function BridgePage() {
     return (
       <Main>
         <Heading network={network} />
-        <Blocked tone="warning" title={S.networkUnknown.title} body={S.networkUnknown.body} />
+        <Blocked tone="warning" title={t("networkUnknown.title")} body={t("networkUnknown.body")} />
       </Main>
     );
   }
@@ -131,12 +133,12 @@ export default function BridgePage() {
         <Heading network={network} />
         <Blocked
           tone="error"
-          title={S.networkMismatch.title}
-          body={fmt(S.networkMismatch.body, {
-            network,
+          title={t("networkMismatch.title")}
+          body={t("networkMismatch.body", {
+            network: t(`networkWord.${network}`),
             chainLabel: getBaseChainConfig(detected).name,
             chainId: detected,
-            assets: network === "testnet" ? S.networkMismatch.realMainnetAssets : S.networkMismatch.testnetAssets,
+            assets: network === "testnet" ? t("networkMismatch.realMainnetAssets") : t("networkMismatch.testnetAssets"),
           })}
         />
       </Main>
@@ -151,6 +153,7 @@ export default function BridgePage() {
 }
 
 function BridgeApp({ network, chainId, config, xrge }: { network: NetworkType; chainId: number; config: BridgeConfig; xrge: XrgeBridgeConfig }) {
+  const { t } = useTranslation("bridge");
   const w = useWallet();
   const qc = useQueryClient();
   const { full: rougeAddress } = useRougeAddress(w.publicKey);
@@ -164,7 +167,7 @@ function BridgeApp({ network, chainId, config, xrge }: { network: NetworkType; c
     chainId,
     chainLabel: chainCfg.name,
     usdcAddress: getUsdcAddress(chainId),
-    networkLabel: network === "mainnet" ? "RougeChain Mainnet" : "RougeChain Testnet",
+    networkLabel: `RougeChain ${t(`networkBadge.${network}`)}`,
   };
   const localChain = useMemo(() => getBaseChain(network), [network]);
   const btcNetwork: BtcNetwork = config.btcNetwork ?? (network === "mainnet" ? "mainnet" : "testnet");
@@ -203,14 +206,14 @@ function BridgeApp({ network, chainId, config, xrge }: { network: NetworkType; c
   const walletGate = !unlocked ? (
     w.status === "locked" ? (
       <div className="wallet-form">
-        <p className="bridge-callout">{S.wallet.locked}</p>
+        <p className="bridge-callout">{t("wallet.locked")}</p>
         <UnlockForm />
       </div>
     ) : (
       <div className="wallet-form">
-        <p className="bridge-callout">{S.wallet.none}</p>
+        <p className="bridge-callout">{t("wallet.none")}</p>
         <Link className="button" to="/wallet">
-          {S.wallet.open}
+          {t("wallet.open")}
         </Link>
       </div>
     )
@@ -219,19 +222,19 @@ function BridgeApp({ network, chainId, config, xrge }: { network: NetworkType; c
   const wallet = w.wallet;
   return (
     <div className="bridge-layout">
-      <section className="surface bridge-panel" aria-label={S.title}>
-        <div className="bridge-tabs" role="tablist" aria-label={S.title}>
+      <section className="surface bridge-panel" aria-label={t("title")}>
+        <div className="bridge-tabs" role="tablist" aria-label={t("title")}>
           {(["deposit", "withdraw"] as const).map((d) => (
             <button key={d} type="button" role="tab" aria-selected={direction === d} className={direction === d ? "active" : ""} onClick={() => setDirection(d)}>
               {d === "deposit" ? <ArrowDownToLine size={16} aria-hidden="true" /> : <ArrowUpFromLine size={16} aria-hidden="true" />}
-              {S.tabs[d]}
+              {t(`tabs.${d}`)}
             </button>
           ))}
         </div>
         <div className="bridge-panel-body">
           <div className="field">
-            <span>{S.asset}</span>
-            <div className="chip-row bridge-assets" role="group" aria-label={S.asset}>
+            <span>{t("asset")}</span>
+            <div className="chip-row bridge-assets" role="group" aria-label={t("asset")}>
               {visible.map((a) => (
                 <button key={a.id} type="button" className={`chip ${current === a.id ? "active" : ""}`} aria-pressed={current === a.id} onClick={() => setAsset(a.id)}>
                   {direction === "deposit" ? a.label : a.l1Label}
@@ -248,7 +251,7 @@ function BridgeApp({ network, chainId, config, xrge }: { network: NetworkType; c
           {walletGate ??
             (wallet && (
               <>
-                {w.isExtension && <p className="form-hint">{S.wallet.extension}</p>}
+                {w.isExtension && <p className="form-hint">{t("wallet.extension")}</p>}
                 {direction === "deposit" ? (
                   current === "BTC" ? (
                     <BtcDepositPanel key={`btc-${network}`} config={config} rougeAddress={rougeAddress} qbtcBalance={balances.qBTC} onDone={onDone} />

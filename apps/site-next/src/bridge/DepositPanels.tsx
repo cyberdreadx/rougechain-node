@@ -1,5 +1,6 @@
 /** Deposits into RougeChain: Base (ETH / USDC / XRGE), Bitcoin (per-user address + OP_RETURN fallback), and claims. */
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { AlertTriangle, Check, ChevronDown } from "lucide-react";
 import { Button } from "@rougechain/ui";
 import { getBtcDepositAddress, type BridgeConfig } from "@rougechain/core/bridge";
@@ -7,12 +8,12 @@ import { formatBaseUnits } from "@rougechain/core/base-wallet";
 import { CopyText } from "../wallet/parts";
 import { useQr } from "../wallet/ReceiveDialog";
 import { toast } from "../wallet/toast";
+import i18n from "../i18n";
 import { BaseConnect, shortAddr } from "./BaseConnect";
 import { claimBtcDeposit, claimExistingDeposit, depositFromBase, errorMessage, L1_SYMBOL, type FlowCtx, type FlowOutcome } from "./flows";
 import { WrongChainError } from "./evm";
 import type { BaseConnection, EvmBalances } from "./useBaseConnection";
 import { assetDef, formatUnits, isBaseTxHash, normalizeBtcTxid, parseDepositAmount, type DepositAmount } from "./validate";
-import { S, fmt } from "./strings";
 
 export interface ChainInfo {
   chainId: number;
@@ -30,7 +31,7 @@ function report(outcome: FlowOutcome) {
 }
 
 function flowError(e: unknown, fallback: string, chain: ChainInfo): string {
-  if (e instanceof WrongChainError) return fmt(S.errors.wrongChain, { actual: e.actual ?? "unknown", chain: chain.chainLabel, expected: e.expected });
+  if (e instanceof WrongChainError) return i18n.t("bridge:errors.wrongChain", { actual: e.actual ?? i18n.t("bridge:unknownChain"), chain: chain.chainLabel, expected: e.expected });
   return errorMessage(e, fallback);
 }
 
@@ -57,6 +58,7 @@ export function EvmDepositForm({
   recipientAddress: string | null;
   onDone: () => void;
 }) {
+  const { t } = useTranslation("bridge");
   const def = assetDef(asset);
   const [amount, setAmount] = useState("");
   const [stage, setStage] = useState<"form" | "review" | "running">("form");
@@ -81,11 +83,11 @@ export function EvmDepositForm({
 
   const review = () => {
     setError("");
-    if (!conn.address || !conn.provider) return setError(S.errors.connectBaseFirst);
-    if (conn.wrongChain) return setError(fmt(S.errors.wrongChain, { actual: conn.walletChainId ?? "unknown", chain: chain.chainLabel, expected: chain.chainId }));
+    if (!conn.address || !conn.provider) return setError(t("errors.connectBaseFirst"));
+    if (conn.wrongChain) return setError(t("errors.wrongChain", { actual: conn.walletChainId ?? t("unknownChain"), chain: chain.chainLabel, expected: chain.chainId }));
     const p = parseDepositAmount(asset, amount);
     if (!p.ok) return setError(p.error);
-    if (balance !== null && p.value.baseUnits > balance) return setError(fmt(S.errors.insufficientOnBase, { symbol: def.label }));
+    if (balance !== null && p.value.baseUnits > balance) return setError(t("errors.insufficientOnBase", { symbol: def.label }));
     setReviewed(p.value);
     setStage("review");
   };
@@ -114,64 +116,64 @@ export function EvmDepositForm({
       setStage("form");
       onDone();
     } catch (e) {
-      setError(flowError(e, S.errors.depositFailed, chain));
+      setError(flowError(e, t("errors.depositFailed"), chain));
       setStage("review");
     } finally {
       setStep("");
     }
   };
 
-  if (!configured) return <p className="bridge-callout">{asset === "XRGE" ? S.errors.xrgeNotConfigured : S.errors.notConfigured}</p>;
+  if (!configured) return <p className="bridge-callout">{asset === "XRGE" ? t("errors.xrgeNotConfigured") : t("errors.notConfigured")}</p>;
 
   if (stage !== "form" && reviewed) {
     const human = formatUnits(reviewed.baseUnits, baseDecimals);
     const receive = asset === "XRGE" ? reviewed.l1Units.toString() : formatUnits(reviewed.l1Units, 6);
     return (
       <div className="wallet-form" aria-live="polite">
-        <h3 className="bridge-step-title">{S.review.title}</h3>
+        <h3 className="bridge-step-title">{t("review.title")}</h3>
         <dl className="review-list">
           <div>
-            <dt>{S.review.youSend}</dt>
+            <dt>{t("review.youSend")}</dt>
             <dd className="mono">
               {human} {def.label} · {chain.chainLabel}
             </dd>
           </div>
           <div>
-            <dt>{S.review.youReceive}</dt>
+            <dt>{t("review.youReceive")}</dt>
             <dd className="mono">
               {receive} {def.l1Label} · RougeChain
             </dd>
           </div>
           <div>
-            <dt>{S.review.baseWallet}</dt>
+            <dt>{t("review.baseWallet")}</dt>
             <dd className="mono" title={conn.address ?? ""}>
               {conn.address ? shortAddr(conn.address) : "—"}
             </dd>
           </div>
           <div>
-            <dt>{S.review.recipient}</dt>
+            <dt>{t("review.recipient")}</dt>
             <dd className="mono" title={recipientPubkey}>
               {recipientAddress ?? `${recipientPubkey.slice(0, 10)}…`}
             </dd>
           </div>
           <div>
-            <dt>{S.review.network}</dt>
+            <dt>{t("review.network")}</dt>
             <dd>
               {chain.chainLabel} ({chain.chainId}) → {chain.networkLabel}
             </dd>
           </div>
           <div>
-            <dt>{S.review.steps}</dt>
-            <dd>{asset === "XRGE" ? S.review.depositXrgeSteps : asset === "ETH" ? S.review.depositEthSteps : S.review.depositUsdcSteps}</dd>
+            <dt>{t("review.steps")}</dt>
+            <dd>{asset === "XRGE" ? t("review.depositXrgeSteps") : asset === "ETH" ? t("review.depositEthSteps") : t("review.depositUsdcSteps")}</dd>
           </div>
         </dl>
         <p className="bridge-callout warning">
           <AlertTriangle size={15} aria-hidden="true" />
-          <span>{S.review.irreversible}</span>
+          <span>{t("review.irreversible")}</span>
         </p>
         {stage === "running" && (
           <p className="bridge-progress" role="status">
-            <span className="spin-dot" aria-hidden="true" /> {step || S.processing}
+            <span className="spin-dot" aria-hidden="true" /> {step || t("processing")}
           </p>
         )}
         {error && (
@@ -181,10 +183,10 @@ export function EvmDepositForm({
         )}
         <div className="actions">
           <Button variant="outline" type="button" disabled={stage === "running"} onClick={() => setStage("form")}>
-            {S.form.back}
+            {t("form.back")}
           </Button>
           <Button type="button" disabled={stage === "running"} onClick={() => void confirm()}>
-            {stage === "running" ? S.processing : S.review.confirmDeposit}
+            {stage === "running" ? t("processing") : t("review.confirmDeposit")}
           </Button>
         </div>
       </div>
@@ -202,16 +204,16 @@ export function EvmDepositForm({
       <BaseConnect conn={conn} chainLabel={chain.chainLabel} chainId={chain.chainId} />
       <label className="field">
         <span className="field-row">
-          {fmt(S.form.from, { chain: chain.chainLabel })}
+          {t("form.from", { chain: chain.chainLabel })}
           {conn.address && balance !== null && (
-            <span className="bridge-sub">{fmt(S.form.balance, { balance: `${formatBaseUnits(balance, baseDecimals, 6)} ${def.label}` })}</span>
+            <span className="bridge-sub">{t("form.balance", { balance: `${formatBaseUnits(balance, baseDecimals, 6)} ${def.label}` })}</span>
           )}
         </span>
         <span className="bridge-amount">
           <input
             className="input mono"
             inputMode="decimal"
-            aria-label={`${S.form.amount} (${def.label})`}
+            aria-label={t("form.amountAria", { symbol: def.label })}
             placeholder={def.decimals ? "0.0" : "0"}
             value={amount}
             onChange={(e) => {
@@ -224,9 +226,9 @@ export function EvmDepositForm({
         </span>
       </label>
       {parsed && !parsed.ok && <p className="form-hint error">{parsed.error}</p>}
-      {insufficient && <p className="form-hint error">{fmt(S.errors.insufficientOnBase, { symbol: def.label })}</p>}
+      {insufficient && <p className="form-hint error">{t("errors.insufficientOnBase", { symbol: def.label })}</p>}
       <div className="bridge-to">
-        <span>{fmt(S.form.to, { chain: "RougeChain" })}</span>
+        <span>{t("form.to", { chain: "RougeChain" })}</span>
         <strong className="mono">
           {parsed?.ok ? (asset === "XRGE" ? parsed.value.l1Units.toString() : formatUnits(parsed.value.l1Units, 6)) : "0"} {def.l1Label}
         </strong>
@@ -237,9 +239,9 @@ export function EvmDepositForm({
         </p>
       )}
       <Button type="submit" disabled={!conn.address || conn.wrongChain || !parsed?.ok || !!insufficient}>
-        {S.form.review}
+        {t("form.review")}
       </Button>
-      <p className="form-hint">{asset === "XRGE" ? S.info.depositXrge : fmt(S.info.depositEvm, { asset: def.label, l1: def.l1Label })}</p>
+      <p className="form-hint">{asset === "XRGE" ? t("info.depositXrge") : t("info.depositEvm", { asset: def.label, l1: def.l1Label })}</p>
     </form>
   );
 }
@@ -258,6 +260,7 @@ export function BtcDepositPanel({
   qbtcBalance: number | null;
   onDone: () => void;
 }) {
+  const { t } = useTranslation("bridge");
   const [addr, setAddr] = useState<{ for: string; address: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [addrError, setAddrError] = useState<string | null>(null);
@@ -282,10 +285,10 @@ export function BtcDepositPanel({
       else {
         setAddr(null);
         const err = res.error || "";
-        setAddrError(/pool/i.test(err) ? S.btc.addressWarmingUp : err || S.btc.addressFetchFailed);
+        setAddrError(/pool/i.test(err) ? t("btc.addressWarmingUp") : err || t("btc.addressFetchFailed"));
       }
     } catch (e) {
-      setAddrError(e instanceof Error ? e.message : S.btc.addressFetchFailed);
+      setAddrError(e instanceof Error ? e.message : t("btc.addressFetchFailed"));
     } finally {
       setLoading(false);
     }
@@ -301,19 +304,19 @@ export function BtcDepositPanel({
 
   const claim = async () => {
     setClaimError("");
-    const t = normalizeBtcTxid(txid);
-    if (!t) return setClaimError(S.errors.invalidBtcTxid);
-    if (!rougeAddress) return setClaimError(S.errors.connectRougeToReceive);
+    const id = normalizeBtcTxid(txid);
+    if (!id) return setClaimError(t("errors.invalidBtcTxid"));
+    if (!rougeAddress) return setClaimError(t("errors.connectRougeToReceive"));
     setClaimBusy(true);
     try {
-      const outcome = await claimBtcDeposit({ txid: t, rougeAddress }, { onStep: setClaimStep, sleep: flowTiming.sleep });
+      const outcome = await claimBtcDeposit({ txid: id, rougeAddress }, { onStep: setClaimStep, sleep: flowTiming.sleep });
       report(outcome);
       if (outcome.kind === "success") {
         setTxid("");
         onDone();
       }
     } catch (e) {
-      setClaimError(errorMessage(e, S.errors.btcClaimFailed));
+      setClaimError(errorMessage(e, t("errors.btcClaimFailed")));
     } finally {
       setClaimBusy(false);
       setClaimStep("");
@@ -323,37 +326,37 @@ export function BtcDepositPanel({
   return (
     <div className="wallet-form">
       {!rougeAddress ? (
-        <p className="bridge-callout">{S.btc.connectForAddress}</p>
+        <p className="bridge-callout">{t("btc.connectForAddress")}</p>
       ) : received !== null ? (
         <div className="bridge-received" role="status">
           <Check size={22} aria-hidden="true" />
-          <strong>{fmt(S.btc.received, { amount: formatUnits(received, 8) })}</strong>
-          <span className="form-hint">{S.btc.nowInWallet}</span>
+          <strong>{t("btc.received", { amount: formatUnits(received, 8) })}</strong>
+          <span className="form-hint">{t("btc.nowInWallet")}</span>
         </div>
       ) : (
         <div className="bridge-deposit-address">
-          <h3 className="bridge-step-title">{S.btc.yourDepositAddress}</h3>
+          <h3 className="bridge-step-title">{t("btc.yourDepositAddress")}</h3>
           {loading && (
             <p className="form-hint" role="status">
-              {S.btc.fetchingAddress}
+              {t("btc.fetchingAddress")}
             </p>
           )}
           {!loading && addrError && (
             <div className="wallet-form">
               <p className="form-hint error">{addrError}</p>
               <Button variant="outline small" type="button" onClick={() => void load(rougeAddress)}>
-                {S.btc.tryAgain}
+                {t("btc.tryAgain")}
               </Button>
             </div>
           )}
           {!loading && depositAddress && (
             <>
-              {qr && <img className="bridge-qr" src={qr} alt={S.btc.depositQrAlt} width={176} height={176} />}
-              <CopyText value={depositAddress} label={S.btc.depositAddressLabel} />
-              <p className="form-hint">{S.btc.sendFromAnyWallet}</p>
-              {testnet && <p className="form-hint warning-text">{S.btc.testnetOnly}</p>}
+              {qr && <img className="bridge-qr" src={qr} alt={t("btc.depositQrAlt")} width={176} height={176} />}
+              <CopyText value={depositAddress} label={t("btc.depositAddressLabel")} />
+              <p className="form-hint">{t("btc.sendFromAnyWallet")}</p>
+              {testnet && <p className="form-hint warning-text">{t("btc.testnetOnly")}</p>}
               <p className="form-hint bridge-watching">
-                <span className="spin-dot" aria-hidden="true" /> {S.btc.watching}
+                <span className="spin-dot" aria-hidden="true" /> {t("btc.watching")}
               </p>
             </>
           )}
@@ -363,33 +366,33 @@ export function BtcDepositPanel({
       {config.btcCustodyAddress && (
         <div className="bridge-advanced">
           <button type="button" className="bridge-advanced-toggle" aria-expanded={advanced} onClick={() => setAdvanced((v) => !v)}>
-            <span>{S.btc.advanced.title}</span>
+            <span>{t("btc.advanced.title")}</span>
             <ChevronDown size={16} aria-hidden="true" className={advanced ? "open" : ""} />
           </button>
           {advanced && (
             <div className="wallet-form">
-              <p className="form-hint">{S.btc.advanced.intro}</p>
+              <p className="form-hint">{t("btc.advanced.intro")}</p>
               <ol className="bridge-steps">
                 <li>
-                  <strong>{S.btc.advanced.step1}</strong>
-                  {custodyQr && <img className="bridge-qr" src={custodyQr} alt={S.btc.advanced.custodyQrAlt} width={176} height={176} />}
-                  <CopyText value={config.btcCustodyAddress} label={S.btc.advanced.custodyAddressLabel} />
-                  {testnet && <p className="form-hint warning-text">{S.btc.testnetOnly}</p>}
+                  <strong>{t("btc.advanced.step1")}</strong>
+                  {custodyQr && <img className="bridge-qr" src={custodyQr} alt={t("btc.advanced.custodyQrAlt")} width={176} height={176} />}
+                  <CopyText value={config.btcCustodyAddress} label={t("btc.advanced.custodyAddressLabel")} />
+                  {testnet && <p className="form-hint warning-text">{t("btc.testnetOnly")}</p>}
                 </li>
                 <li>
-                  <strong>{S.btc.advanced.step2}</strong>
-                  <p className="form-hint">{S.btc.advanced.step2Help}</p>
-                  {rougeAddress ? <CopyText value={rougeAddress} label={S.btc.advanced.rougeAddressLabel} /> : <p className="form-hint">{S.btc.connectForAddress}</p>}
-                  <p className="form-hint">{S.btc.advanced.opReturnWallets}</p>
+                  <strong>{t("btc.advanced.step2")}</strong>
+                  <p className="form-hint">{t("btc.advanced.step2Help")}</p>
+                  {rougeAddress ? <CopyText value={rougeAddress} label={t("btc.advanced.rougeAddressLabel")} /> : <p className="form-hint">{t("btc.connectForAddress")}</p>}
+                  <p className="form-hint">{t("btc.advanced.opReturnWallets")}</p>
                 </li>
                 <li>
-                  <strong>{S.btc.advanced.step3}</strong>
+                  <strong>{t("btc.advanced.step3")}</strong>
                   <label className="field">
-                    {S.btc.advanced.txidLabel}
+                    {t("btc.advanced.txidLabel")}
                     <input
                       className="input mono"
                       value={txid}
-                      placeholder={S.btc.advanced.txidPlaceholder}
+                      placeholder={t("btc.advanced.txidPlaceholder")}
                       onChange={(e) => setTxid(e.target.value)}
                       autoComplete="off"
                       spellCheck={false}
@@ -397,7 +400,7 @@ export function BtcDepositPanel({
                   </label>
                   {claimBusy && (
                     <p className="bridge-progress" role="status">
-                      <span className="spin-dot" aria-hidden="true" /> {claimStep || S.steps.waitingBitcoin}
+                      <span className="spin-dot" aria-hidden="true" /> {claimStep || t("steps.waitingBitcoin")}
                     </p>
                   )}
                   {claimError && (
@@ -406,9 +409,9 @@ export function BtcDepositPanel({
                     </p>
                   )}
                   <Button type="button" disabled={claimBusy || !txid.trim() || !rougeAddress} onClick={() => void claim()}>
-                    {claimBusy ? S.claim.claiming : S.btc.advanced.claimButton}
+                    {claimBusy ? t("claim.claiming") : t("btc.advanced.claimButton")}
                   </Button>
-                  <p className="form-hint">{S.btc.advanced.claimHelp}</p>
+                  <p className="form-hint">{t("btc.advanced.claimHelp")}</p>
                 </li>
               </ol>
             </div>
@@ -422,6 +425,7 @@ export function BtcDepositPanel({
 // ── Claim an existing ETH/USDC deposit ────────────────────────────────────────
 
 export function ClaimExistingCard({ conn, chain, recipientPubkey, onDone }: { conn: BaseConnection; chain: ChainInfo; recipientPubkey: string | null; onDone: () => void }) {
+  const { t } = useTranslation("bridge");
   const [txHash, setTxHash] = useState("");
   const [token, setToken] = useState<"ETH" | "USDC">("USDC");
   const [busy, setBusy] = useState(false);
@@ -430,9 +434,9 @@ export function ClaimExistingCard({ conn, chain, recipientPubkey, onDone }: { co
   const claim = async () => {
     setError("");
     const tx = txHash.trim();
-    if (!isBaseTxHash(tx)) return setError(S.errors.invalidBaseTxHash);
-    if (!conn.address || !conn.provider) return setError(S.errors.connectSendingBaseWallet);
-    if (!recipientPubkey) return setError(S.errors.connectRougeToReceive);
+    if (!isBaseTxHash(tx)) return setError(t("errors.invalidBaseTxHash"));
+    if (!conn.address || !conn.provider) return setError(t("errors.connectSendingBaseWallet"));
+    if (!recipientPubkey) return setError(t("errors.connectRougeToReceive"));
     setBusy(true);
     try {
       const outcome = await claimExistingDeposit(
@@ -443,7 +447,7 @@ export function ClaimExistingCard({ conn, chain, recipientPubkey, onDone }: { co
       setTxHash("");
       onDone();
     } catch (e) {
-      setError(flowError(e, S.errors.claimFailed, chain));
+      setError(flowError(e, t("errors.claimFailed"), chain));
     } finally {
       setBusy(false);
     }
@@ -452,9 +456,9 @@ export function ClaimExistingCard({ conn, chain, recipientPubkey, onDone }: { co
   return (
     <section className="surface bridge-card" aria-labelledby="bridge-claim-title">
       <h2 id="bridge-claim-title" className="bridge-card-title">
-        {S.claim.title}
+        {t("claim.title")}
       </h2>
-      <p className="form-hint">{S.claim.help}</p>
+      <p className="form-hint">{t("claim.help")}</p>
       <form
         className="wallet-form"
         onSubmit={(e) => {
@@ -463,13 +467,13 @@ export function ClaimExistingCard({ conn, chain, recipientPubkey, onDone }: { co
         }}
       >
         <label className="field">
-          {S.claim.txHashLabel}
+          {t("claim.txHashLabel")}
           <input className="input mono" value={txHash} onChange={(e) => setTxHash(e.target.value)} placeholder="0x…" autoComplete="off" spellCheck={false} />
         </label>
-        <div className="chip-row" role="group" aria-label={S.claim.token}>
-          {(["USDC", "ETH"] as const).map((t) => (
-            <button key={t} type="button" className={`chip ${token === t ? "active" : ""}`} aria-pressed={token === t} onClick={() => setToken(t)}>
-              {t} → {L1_SYMBOL[t]}
+        <div className="chip-row" role="group" aria-label={t("claim.token")}>
+          {(["USDC", "ETH"] as const).map((tok) => (
+            <button key={tok} type="button" className={`chip ${token === tok ? "active" : ""}`} aria-pressed={token === tok} onClick={() => setToken(tok)}>
+              {tok} → {L1_SYMBOL[tok]}
             </button>
           ))}
         </div>
@@ -480,7 +484,7 @@ export function ClaimExistingCard({ conn, chain, recipientPubkey, onDone }: { co
           </p>
         )}
         <Button type="submit" disabled={busy || !txHash.trim() || !conn.address || !recipientPubkey}>
-          {busy ? S.claim.claiming : S.claim.button}
+          {busy ? t("claim.claiming") : t("claim.button")}
         </Button>
       </form>
     </section>

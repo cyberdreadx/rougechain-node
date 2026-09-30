@@ -3,6 +3,7 @@
  * ports of apps/web's components/messenger/* on core's pqc-messenger / messenger-prefs.
  */
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { AlertCircle, Ban, Bot, Check, CheckCircle2, Loader2, MessageSquare, Pencil, Search, Shield, ShieldCheck, StickyNote, UserPlus, Users } from "lucide-react";
 import { isRougeAddress } from "@rougechain/core/address";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@rougechain/core/network";
@@ -26,9 +27,9 @@ import { loadNotificationSettings, requestNotificationPermission, saveNotificati
 import { setProfileDisplayName } from "@rougechain/core/profile";
 import { Toggle, SettingRow } from "../wallet/parts";
 import { notifyWalletChanged } from "../wallet/store";
+import i18n from "../i18n";
 import { toast } from "../wallet/toast";
 import { useMessengerPrefs } from "./hooks";
-import { S, fmt, plural } from "./strings";
 import { PeerAvatar, Sheet, StackedAvatars } from "./ui";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : undefined);
@@ -36,10 +37,10 @@ const errText = (e: unknown) => (e instanceof Error ? e.message : undefined);
 /** rouge1… address, `xrge:`-prefixed or raw public key (apps/web ContactPicker parseAddress). */
 export function parseContactAddress(input: string): { valid: boolean; publicKey: string; error?: string } {
   const trimmed = input.trim();
-  if (!trimmed) return { valid: false, publicKey: "", error: S.contacts.enterAddress };
+  if (!trimmed) return { valid: false, publicKey: "", error: i18n.t("messenger:contacts.enterAddress") };
   if (isRougeAddress(trimmed)) return { valid: true, publicKey: trimmed };
   const raw = /^xrge:/i.test(trimmed) ? trimmed.slice(5) : trimmed;
-  if (raw.length < 100) return { valid: false, publicKey: raw, error: S.contacts.tooShort };
+  if (raw.length < 100) return { valid: false, publicKey: raw, error: i18n.t("messenger:contacts.tooShort") };
   return { valid: true, publicKey: raw };
 }
 
@@ -76,13 +77,14 @@ export function ContactPicker({
   onCreated: (c: Conversation) => void;
   onNewGroup: () => void;
 }) {
+  const { t } = useTranslation("messenger");
   const [busy, setBusy] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [manual, setManual] = useState(false);
   const [address, setAddress] = useState("");
   const [detected, setDetected] = useState<Wallet | null>(null);
   const [lookingUp, setLookingUp] = useState(false);
-  const [manualError, setManualError] = useState("");
+  const [manualError, setManualError] = useState<"" | "contacts.self">("");
   const check = address ? parseContactAddress(address) : null;
 
   useEffect(() => {
@@ -92,7 +94,7 @@ export function ContactPicker({
     if (!parsed?.valid) return;
     let pk = parsed.publicKey;
     if (pk === identity.signingPublicKey || pk === identity.encryptionPublicKey) {
-      setManualError(S.contacts.self);
+      setManualError("contacts.self");
       return;
     }
     let cancelled = false;
@@ -123,7 +125,7 @@ export function ContactPicker({
     try {
       onCreated(await make());
     } catch (e) {
-      toast.error(S.contacts.failed, { description: errText(e) });
+      toast.error(t("contacts.failed"), { description: errText(e) });
     } finally {
       setBusy(null);
     }
@@ -163,15 +165,15 @@ export function ContactPicker({
   );
 
   return (
-    <Sheet title={S.contacts.title} icon={<MessageSquare size={16} className="accent" />} onClose={onClose}>
+    <Sheet title={t("contacts.title")} icon={<MessageSquare size={16} className="accent" />} onClose={onClose}>
       <div className="msg-sheet-pad msg-stack-gap">
         <button type="button" className="msg-option featured" disabled={busy !== null} onClick={() => void bot()}>
           <span className="msg-glyph bot">{busy === "bot" ? <Loader2 size={18} className="spin" /> : <Bot size={18} />}</span>
           <span>
             <strong>
-              {S.contacts.bot} <span className="pill">{S.chat.ai}</span>
+              {t("contacts.bot")} <span className="pill">{t("chat.ai")}</span>
             </strong>
-            <small>{S.contacts.botHint}</small>
+            <small>{t("contacts.botHint")}</small>
           </span>
         </button>
         <button type="button" className="msg-option" onClick={onNewGroup}>
@@ -179,31 +181,31 @@ export function ContactPicker({
             <Users size={18} />
           </span>
           <span>
-            <strong>{S.group.new}</strong>
-            <small>{S.group.newHint}</small>
+            <strong>{t("group.new")}</strong>
+            <small>{t("group.newHint")}</small>
           </span>
         </button>
         <button type="button" className="msg-option" disabled={busy !== null} onClick={() => void note()}>
           <span className="msg-glyph note">{busy === "note" ? <Loader2 size={18} className="spin" /> : <StickyNote size={18} />}</span>
           <span>
-            <strong>{S.list.noteToSelf}</strong>
-            <small>{S.contacts.noteHint}</small>
+            <strong>{t("list.noteToSelf")}</strong>
+            <small>{t("contacts.noteHint")}</small>
           </span>
         </button>
 
         {!manual ? (
           <button type="button" className="msg-option dashed" onClick={() => setManual(true)}>
-            <UserPlus size={16} /> <span>{S.contacts.addByAddress}</span>
+            <UserPlus size={16} /> <span>{t("contacts.addByAddress")}</span>
           </button>
         ) : (
           <div className="msg-manual">
             <label className="field">
-              {S.contacts.addressLabel}
+              {t("contacts.addressLabel")}
               <span className="msg-input-wrap">
                 <input
                   className="input mono"
                   value={address}
-                  placeholder={S.contacts.addressPlaceholder}
+                  placeholder={t("contacts.addressPlaceholder")}
                   onChange={(e) => setAddress(e.target.value)}
                   autoFocus
                   spellCheck={false}
@@ -218,12 +220,12 @@ export function ContactPicker({
               <p className="msg-found">
                 <PeerAvatar id={detected.id || detected.signingPublicKey} uri={detected.avatarUrl} name={detected.displayName} size={24} />
                 <span>
-                  <strong>{detected.displayName || S.common.unknown}</strong> · {S.contacts.found}
+                  <strong>{detected.displayName || t("common.unknown")}</strong> · {t("contacts.found")}
                 </span>
               </p>
             )}
-            {manualError && <p className="form-error">{manualError}</p>}
-            {check?.valid && !detected && !lookingUp && !manualError && <p className="msg-hint warn">{S.contacts.notRegistered}</p>}
+            {manualError && <p className="form-error">{t(manualError)}</p>}
+            {check?.valid && !detected && !lookingUp && !manualError && <p className="msg-hint warn">{t("contacts.notRegistered")}</p>}
             <button
               type="button"
               className="button small"
@@ -231,20 +233,20 @@ export function ContactPicker({
               onClick={() => detected && void withContact(detected)}
             >
               {busy && detected && busy === (detected.id || detected.signingPublicKey) ? <Loader2 size={14} className="spin" /> : <MessageSquare size={14} />}
-              {S.contacts.start}
+              {t("contacts.start")}
             </button>
           </div>
         )}
 
         <label className="msg-search">
           <Search size={14} aria-hidden="true" />
-          <input className="input" value={query} placeholder={S.contacts.search} aria-label={S.contacts.search} onChange={(e) => setQuery(e.target.value)} />
+          <input className="input" value={query} placeholder={t("contacts.search")} aria-label={t("contacts.search")} onChange={(e) => setQuery(e.target.value)} />
         </label>
       </div>
       {list.length === 0 ? (
         <div className="msg-center msg-empty small">
-          <strong>{S.contacts.none}</strong>
-          <span>{S.contacts.noneHint}</span>
+          <strong>{t("contacts.none")}</strong>
+          <span>{t("contacts.noneHint")}</span>
         </div>
       ) : (
         <ul className="msg-rows">
@@ -255,7 +257,7 @@ export function ContactPicker({
                 <button type="button" className="msg-row-main with-avatar" disabled={busy !== null} onClick={() => void withContact(c)}>
                   <PeerAvatar id={c.id || c.signingPublicKey} uri={c.avatarUrl} name={c.displayName} size={36} />
                   <span className="msg-row-text">
-                    <span className="msg-row-name">{c.displayName || S.common.unknown}</span>
+                    <span className="msg-row-name">{c.displayName || t("common.unknown")}</span>
                     <span className="msg-row-preview mono">{(c.signingPublicKey || c.id).slice(0, 20)}…</span>
                   </span>
                   {busy === key ? <Loader2 size={16} className="spin" /> : <MessageSquare size={16} className="muted-icon" />}
@@ -278,6 +280,7 @@ function MemberPicker({
   selected: Set<string>;
   onToggle: (key: string) => void;
 }) {
+  const { t } = useTranslation("messenger");
   return (
     <ul className="msg-rows">
       {candidates.map((c) => {
@@ -288,7 +291,7 @@ function MemberPicker({
               <span className={`msg-check ${on ? "on" : ""}`}>{on && <Check size={13} />}</span>
               <PeerAvatar id={c.id || c.signingPublicKey} uri={c.avatarUrl} name={c.displayName} size={32} />
               <span className="msg-row-text">
-                <span className="msg-row-name">{c.displayName || S.common.anonymous}</span>
+                <span className="msg-row-name">{c.displayName || t("common.anonymous")}</span>
                 <span className="msg-row-preview mono">{c.signingPublicKey.slice(0, 20)}…</span>
               </span>
             </button>
@@ -310,6 +313,7 @@ export function NewGroupSheet({
   onClose: () => void;
   onCreated: (c: Conversation) => void;
 }) {
+  const { t } = useTranslation("messenger");
   const [name, setName] = useState("");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -326,7 +330,7 @@ export function NewGroupSheet({
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else if (next.size + 1 < MAX_GROUP_MEMBERS) next.add(key);
-      else toast.error(fmt(S.group.maxMembers, { max: MAX_GROUP_MEMBERS }));
+      else toast.error(t("group.maxMembers", { max: MAX_GROUP_MEMBERS }));
       return next;
     });
 
@@ -335,10 +339,10 @@ export function NewGroupSheet({
     setCreating(true);
     try {
       const conv = await createGroupConversation(identity, [...selected], name);
-      toast.success(S.group.created);
+      toast.success(t("group.created"));
       onCreated(conv);
     } catch (e) {
-      toast.error(S.group.createFailed, { description: errText(e) });
+      toast.error(t("group.createFailed"), { description: errText(e) });
     } finally {
       setCreating(false);
     }
@@ -346,29 +350,29 @@ export function NewGroupSheet({
 
   return (
     <Sheet
-      title={S.group.new}
+      title={t("group.new")}
       icon={<Users size={16} className="accent" />}
       onClose={onClose}
       footer={
         <button type="button" className="button full" onClick={() => void create()} disabled={selected.size < 2 || creating}>
           {creating ? <Loader2 size={16} className="spin" /> : <Users size={16} />}
-          {creating ? S.group.creating : plural(selected.size + 1, S.group.create_one, S.group.create_other)}
+          {creating ? t("group.creating") : t("group.create", { count: selected.size + 1 })}
         </button>
       }
     >
       <div className="msg-sheet-pad msg-stack-gap">
-        <input className="input" value={name} maxLength={100} placeholder={S.group.namePlaceholder} aria-label={S.group.name} onChange={(e) => setName(e.target.value.slice(0, 100))} autoFocus />
+        <input className="input" value={name} maxLength={100} placeholder={t("group.namePlaceholder")} aria-label={t("group.name")} onChange={(e) => setName(e.target.value.slice(0, 100))} autoFocus />
         <div className="msg-split">
-          <span className="eyebrow">{S.group.members}</span>
-          <span className="msg-hint">{plural(selected.size, S.group.selected_one, S.group.selected_other)}</span>
+          <span className="eyebrow">{t("group.members")}</span>
+          <span className="msg-hint">{t("group.selected", { count: selected.size })}</span>
         </div>
         <label className="msg-search">
           <Search size={14} aria-hidden="true" />
-          <input className="input" value={query} placeholder={S.group.searchContacts} aria-label={S.group.searchContacts} onChange={(e) => setQuery(e.target.value)} />
+          <input className="input" value={query} placeholder={t("group.searchContacts")} aria-label={t("group.searchContacts")} onChange={(e) => setQuery(e.target.value)} />
         </label>
-        {selected.size < 2 && <p className="msg-hint">{S.group.pickTwo}</p>}
+        {selected.size < 2 && <p className="msg-hint">{t("group.pickTwo")}</p>}
       </div>
-      {candidates.length === 0 ? <p className="msg-hint center">{S.group.noContacts}</p> : <MemberPicker candidates={candidates} selected={selected} onToggle={toggle} />}
+      {candidates.length === 0 ? <p className="msg-hint center">{t("group.noContacts")}</p> : <MemberPicker candidates={candidates} selected={selected} onToggle={toggle} />}
     </Sheet>
   );
 }
@@ -386,6 +390,7 @@ export function GroupInfoSheet({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const { t } = useTranslation("messenger");
   const prefs = useMessengerPrefs();
   const myIds = useMemo(() => new Set(walletKeys(identity)), [identity]);
   const members = useMemo(() => otherMembers(conversation, myIds), [conversation, myIds]);
@@ -406,10 +411,10 @@ export function GroupInfoSheet({
     setRenaming(true);
     try {
       await renameConversation(identity, conversation.id, next);
-      toast.success(next ? fmt(S.group.renamed, { name: next }) : S.group.nameCleared);
+      toast.success(next ? t("group.renamed", { name: next }) : t("group.nameCleared"));
       onChanged();
     } catch (e) {
-      toast.error(S.group.renameFailed, { description: errText(e) });
+      toast.error(t("group.renameFailed"), { description: errText(e) });
     } finally {
       setRenaming(false);
     }
@@ -420,12 +425,12 @@ export function GroupInfoSheet({
     setAdding(true);
     try {
       await addConversationParticipants(identity, conversation.id, [...selected]);
-      toast.success(plural(selected.size, S.group.added_one, S.group.added_other));
+      toast.success(t("group.added", { count: selected.size }));
       setSelected(new Set());
       setShowAdd(false);
       onChanged();
     } catch (e) {
-      toast.error(S.group.addFailed, { description: errText(e) });
+      toast.error(t("group.addFailed"), { description: errText(e) });
     } finally {
       setAdding(false);
     }
@@ -436,26 +441,26 @@ export function GroupInfoSheet({
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else if (next.size < room) next.add(key);
-      else toast.error(fmt(S.group.maxMembers, { max: MAX_GROUP_MEMBERS }));
+      else toast.error(t("group.maxMembers", { max: MAX_GROUP_MEMBERS }));
       return next;
     });
 
   const toggleBlock = (m: (typeof members)[number]) => {
     const keys = walletKeys(m);
-    const who = m.displayName || S.common.anonymous;
+    const who = m.displayName || t("common.anonymous");
     if (isAnyBlocked(keys, prefs.blocked)) {
       unblockWalletKeys(keys);
-      toast.success(fmt(S.block.unblocked, { name: who }));
+      toast.success(t("block.unblocked", { name: who }));
     } else {
-      if (!window.confirm(fmt(S.block.confirmMember, { name: who }))) return;
+      if (!window.confirm(t("block.confirmMember", { name: who }))) return;
       blockWalletKeys(keys);
-      toast.success(fmt(S.block.blocked, { name: who }));
+      toast.success(t("block.blocked", { name: who }));
     }
   };
 
   return (
     <Sheet
-      title={showAdd ? S.group.addMembers : S.group.info}
+      title={showAdd ? t("group.addMembers") : t("group.info")}
       icon={<Users size={16} className="accent" />}
       onClose={onClose}
       footer={
@@ -469,11 +474,11 @@ export function GroupInfoSheet({
                 setSelected(new Set());
               }}
             >
-              {S.common.cancel}
+              {t("common.cancel")}
             </button>
             <button type="button" className="button" onClick={() => void add()} disabled={selected.size === 0 || adding}>
               {adding ? <Loader2 size={16} className="spin" /> : <UserPlus size={16} />}
-              {plural(selected.size, S.group.addCount_one, S.group.addCount_other)}
+              {t("group.addCount", { count: selected.size })}
             </button>
           </div>
         ) : undefined
@@ -481,9 +486,9 @@ export function GroupInfoSheet({
     >
       {showAdd ? (
         <>
-          <p className="msg-hint msg-sheet-pad">{S.group.addHint}</p>
+          <p className="msg-hint msg-sheet-pad">{t("group.addHint")}</p>
           {candidates.length === 0 ? (
-            <p className="msg-hint center">{S.group.noOneToAdd}</p>
+            <p className="msg-hint center">{t("group.noOneToAdd")}</p>
           ) : (
             <MemberPicker candidates={candidates} selected={selected} onToggle={toggleSelected} />
           )}
@@ -492,39 +497,39 @@ export function GroupInfoSheet({
         <div className="msg-sheet-pad msg-stack-gap">
           <div className="msg-group-hero">
             <StackedAvatars members={members} size={64} />
-            <strong>{conversation.name || plural(total, S.group.untitled_one, S.group.untitled_other)}</strong>
-            <span className="msg-hint">{plural(total, S.group.memberCount_one, S.group.memberCount_other)}</span>
+            <strong>{conversation.name || t("group.untitled", { count: total })}</strong>
+            <span className="msg-hint">{t("group.memberCount", { count: total })}</span>
           </div>
           <label className="field">
-            {S.group.name}
+            {t("group.name")}
             <span className="field-row">
               <input
                 className="input"
                 value={name}
                 maxLength={100}
-                placeholder={S.group.namePlaceholder}
+                placeholder={t("group.namePlaceholder")}
                 onChange={(e) => setName(e.target.value.slice(0, 100))}
                 onKeyDown={(e) => e.key === "Enter" && void rename()}
               />
-              <button type="button" className="button outline icon" aria-label={S.group.rename} onClick={() => void rename()} disabled={renaming || name.trim() === (conversation.name ?? "")}>
+              <button type="button" className="button outline icon" aria-label={t("group.rename")} onClick={() => void rename()} disabled={renaming || name.trim() === (conversation.name ?? "")}>
                 {renaming ? <Loader2 size={16} className="spin" /> : <Pencil size={16} />}
               </button>
             </span>
           </label>
-          <SettingRow title={S.mute.label} hint={S.mute.hint}>
-            <Toggle checked={muted} label={S.mute.label} onChange={(v) => setConversationMuted(conversation.id, v)} />
+          <SettingRow title={t("mute.label")} hint={t("mute.hint")}>
+            <Toggle checked={muted} label={t("mute.label")} onChange={(v) => setConversationMuted(conversation.id, v)} />
           </SettingRow>
           <div className="msg-split">
-            <span className="eyebrow">{S.group.members}</span>
+            <span className="eyebrow">{t("group.members")}</span>
             <button type="button" className="button ghost small" onClick={() => setShowAdd(true)} disabled={room <= 0}>
-              <UserPlus size={14} /> {S.group.addMembers}
+              <UserPlus size={14} /> {t("group.addMembers")}
             </button>
           </div>
           <ul className="msg-members">
             <li>
               <PeerAvatar id={identity.id || identity.signingPublicKey} name={identity.displayName} size={32} />
-              <span className="grow">{identity.displayName || S.common.anonymous}</span>
-              <span className="pill">{S.common.you}</span>
+              <span className="grow">{identity.displayName || t("common.anonymous")}</span>
+              <span className="pill">{t("common.you")}</span>
             </li>
             {members.map((m) => {
               const blocked = isAnyBlocked(walletKeys(m), prefs.blocked);
@@ -537,8 +542,8 @@ export function GroupInfoSheet({
                   <button
                     type="button"
                     className={`button ghost icon msg-icon ${blocked ? "danger" : ""}`}
-                    aria-label={blocked ? S.block.unblock : S.block.block}
-                    title={blocked ? S.block.unblock : S.block.block}
+                    aria-label={blocked ? t("block.unblock") : t("block.block")}
+                    title={blocked ? t("block.unblock") : t("block.block")}
                     onClick={() => toggleBlock(m)}
                   >
                     <Ban size={15} />
@@ -547,7 +552,7 @@ export function GroupInfoSheet({
               );
             })}
           </ul>
-          <p className="msg-hint">{S.group.e2eNote}</p>
+          <p className="msg-hint">{t("group.e2eNote")}</p>
         </div>
       )}
     </Sheet>
@@ -555,6 +560,7 @@ export function GroupInfoSheet({
 }
 
 export function BlockedSheet({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation("messenger");
   const { blocked } = useMessengerPrefs();
   const [directory, setDirectory] = useState<Wallet[]>([]);
   useEffect(() => {
@@ -566,20 +572,20 @@ export function BlockedSheet({ onClose }: { onClose: () => void }) {
   const unblock = (key: string) => {
     const w = lookup(key);
     unblockWalletKeys(w ? [key, ...walletKeys(w)] : [key]);
-    toast.success(fmt(S.block.unblocked, { name: w?.displayName || S.common.anonymous }));
+    toast.success(t("block.unblocked", { name: w?.displayName || t("common.anonymous") }));
   };
   const keys = [...blocked];
   return (
-    <Sheet title={S.block.title} icon={<Ban size={16} className="accent" />} onClose={onClose}>
+    <Sheet title={t("block.title")} icon={<Ban size={16} className="accent" />} onClose={onClose}>
       {keys.length === 0 ? (
         <div className="msg-center msg-empty">
           <ShieldCheck size={32} aria-hidden="true" />
-          <strong>{S.block.emptyTitle}</strong>
-          <span>{S.block.emptyBody}</span>
+          <strong>{t("block.emptyTitle")}</strong>
+          <span>{t("block.emptyBody")}</span>
         </div>
       ) : (
         <div className="msg-sheet-pad">
-          <p className="msg-hint">{S.block.hint}</p>
+          <p className="msg-hint">{t("block.hint")}</p>
           <ul className="msg-members">
             {keys.map((key) => {
               const w = lookup(key);
@@ -587,11 +593,11 @@ export function BlockedSheet({ onClose }: { onClose: () => void }) {
                 <li key={key}>
                   <PeerAvatar id={w?.id || key} uri={w?.avatarUrl} name={w?.displayName} size={32} />
                   <span className="grow">
-                    {w?.displayName || S.common.anonymous}
+                    {w?.displayName || t("common.anonymous")}
                     <small className="mono">{key.slice(0, 24)}…</small>
                   </span>
                   <button type="button" className="button outline small" onClick={() => unblock(key)}>
-                    {S.block.unblock}
+                    {t("block.unblock")}
                   </button>
                 </li>
               );
@@ -605,6 +611,7 @@ export function BlockedSheet({ onClose }: { onClose: () => void }) {
 
 /** Privacy & notifications (apps/web PrivacySettings + the page's notification toggle). */
 export function PrivacySheet({ displayName, onClose }: { displayName: string; onClose: () => void }) {
+  const { t } = useTranslation("messenger");
   const [settings, setSettings] = useState(getPrivacySettings);
   const [notif, setNotif] = useState(loadNotificationSettings);
   const [name, setName] = useState(displayName);
@@ -621,7 +628,7 @@ export function PrivacySheet({ displayName, onClose }: { displayName: string; on
   };
 
   return (
-    <Sheet title={S.privacy.title} icon={<Shield size={16} className="accent" />} onClose={onClose}>
+    <Sheet title={t("privacy.title")} icon={<Shield size={16} className="accent" />} onClose={onClose}>
       <div className="msg-sheet-pad msg-stack-gap">
         <form
           className="field"
@@ -632,37 +639,37 @@ export function PrivacySheet({ displayName, onClose }: { displayName: string; on
             try {
               await setProfileDisplayName(name);
               notifyWalletChanged();
-              toast.success(S.privacy.profileSaved);
+              toast.success(t("privacy.profileSaved"));
             } catch (err) {
-              toast.error(S.privacy.profileFailed, { description: errText(err) });
+              toast.error(t("privacy.profileFailed"), { description: errText(err) });
             } finally {
               setSaving(false);
             }
           }}
         >
-          {S.privacy.displayName}
+          {t("privacy.displayName")}
           <span className="field-row">
             <input className="input" value={name} maxLength={50} onChange={(e) => setName(e.target.value)} />
             <button type="submit" className="button outline" disabled={saving || !name.trim() || name.trim() === displayName}>
-              {saving ? <Loader2 size={15} className="spin" /> : S.common.save}
+              {saving ? <Loader2 size={15} className="spin" /> : t("common.save")}
             </button>
           </span>
         </form>
-        <SettingRow title={S.privacy.discoverable} hint={S.privacy.discoverableHint}>
+        <SettingRow title={t("privacy.discoverable")} hint={t("privacy.discoverableHint")}>
           <Toggle
             checked={settings.discoverable}
-            label={S.privacy.discoverable}
+            label={t("privacy.discoverable")}
             onChange={(v) => {
               // Takes effect on the next registration (page load or "Re-register"), as in apps/web.
               savePrivacy({ ...settings, discoverable: v });
             }}
           />
         </SettingRow>
-        <SettingRow title={S.privacy.storeSent} hint={S.privacy.storeSentHint}>
+        <SettingRow title={t("privacy.storeSent")} hint={t("privacy.storeSentHint")}>
           <Toggle
             checked={settings.storeSentMessages}
-            label={S.privacy.storeSent}
-            onChange={(v) => savePrivacy({ ...settings, storeSentMessages: v }, v ? S.privacy.storeOn : S.privacy.storeOff)}
+            label={t("privacy.storeSent")}
+            onChange={(v) => savePrivacy({ ...settings, storeSentMessages: v }, v ? t("privacy.storeOn") : t("privacy.storeOff"))}
           />
         </SettingRow>
         <button
@@ -670,23 +677,23 @@ export function PrivacySheet({ displayName, onClose }: { displayName: string; on
           className="button outline small"
           onClick={() => {
             clearStoredSentMessages();
-            toast.success(S.privacy.cleared);
+            toast.success(t("privacy.cleared"));
           }}
         >
-          {S.privacy.clearSent}
+          {t("privacy.clearSent")}
         </button>
-        <SettingRow title={S.privacy.notifications} hint={S.privacy.notificationsHint}>
+        <SettingRow title={t("privacy.notifications")} hint={t("privacy.notificationsHint")}>
           <Toggle
             checked={notif.enabled}
-            label={S.privacy.notifications}
+            label={t("privacy.notifications")}
             onChange={(v) => {
               saveNotif({ ...notif, enabled: v });
               if (v) void requestNotificationPermission();
             }}
           />
         </SettingRow>
-        <SettingRow title={S.privacy.sound}>
-          <Toggle checked={notif.sound} label={S.privacy.sound} disabled={!notif.enabled} onChange={(v) => saveNotif({ ...notif, sound: v })} />
+        <SettingRow title={t("privacy.sound")}>
+          <Toggle checked={notif.sound} label={t("privacy.sound")} disabled={!notif.enabled} onChange={(v) => saveNotif({ ...notif, sound: v })} />
         </SettingRow>
       </div>
     </Sheet>

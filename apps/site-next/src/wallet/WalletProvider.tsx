@@ -41,7 +41,8 @@ import {
   type WalletSnapshot,
 } from "./store";
 import { setOnboardingActive } from "./tour";
-import { useRougeAddress } from "./hooks";
+import { networkLabel, useRougeAddress } from "./hooks";
+import i18n from "../i18n";
 import { toast } from "./toast";
 
 export type OnboardingMode = "create" | "import";
@@ -88,8 +89,8 @@ function readAutoLockMinutes(): number {
 export function normalizeRecoveryPhrase(phrase: string): string {
   const trimmed = phrase.trim().toLowerCase().split(/\s+/).join(" ");
   const words = trimmed ? trimmed.split(" ") : [];
-  if (words.length !== 12 && words.length !== 24) throw new WalletError("Seed phrase must be 12 or 24 words");
-  if (!validateMnemonic(trimmed)) throw new WalletError("Invalid seed phrase — check for typos");
+  if (words.length !== 12 && words.length !== 24) throw new WalletError(i18n.t("wallet:import.errors.phraseLength"));
+  if (!validateMnemonic(trimmed)) throw new WalletError(i18n.t("wallet:import.errors.phraseInvalid"));
   return trimmed;
 }
 
@@ -169,7 +170,7 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
     const id = window.setTimeout(() => {
       autoLockWallet();
       notifyWalletChanged();
-      toast.info("Wallet locked", { description: "Locked after inactivity. Unlock with your password." });
+      toast.info(i18n.t("wallet:lock.locked"), { description: i18n.t("wallet:lock.autoLocked") });
     }, autoLockMinutes * 60_000);
     return () => window.clearTimeout(id);
   }, [snapshot.status, snapshot.hasPassword, autoLockMinutes, lastActivity]);
@@ -233,13 +234,13 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
 
   const importBackup = useCallback(
     async (data: string, password: string) => {
-      if (!data.trim()) throw new WalletError("Paste your backup data or choose a .pqcbackup file");
-      if (!password) throw new WalletError("Enter the password used when creating the backup");
+      if (!data.trim()) throw new WalletError(i18n.t("wallet:import.errors.noData"));
+      if (!password) throw new WalletError(i18n.t("wallet:import.errors.noPassword"));
       let wallet: UnifiedWallet;
       try {
         wallet = await decryptWallet(data.trim(), password);
       } catch {
-        throw new WalletError("Invalid backup data or wrong password");
+        throw new WalletError(i18n.t("wallet:import.errors.badBackup"));
       }
       afterImport(wallet);
     },
@@ -248,9 +249,9 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
 
   const connectExtension = useCallback(async () => {
     const provider = getRougeChainProvider();
-    if (!provider) throw new WalletError("RougeChain extension not found — install it, or open this page in Qwalla");
+    if (!provider) throw new WalletError(i18n.t("wallet:extension.notFound"));
     const result = await provider.connect();
-    if (!result?.publicKey) throw new WalletError("The extension did not return a public key");
+    if (!result?.publicKey) throw new WalletError(i18n.t("wallet:extension.noKey"));
     saveUnifiedWallet(extensionWallet(result));
     notifyWalletChanged();
   }, []);
@@ -265,7 +266,7 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
     try {
       await unlockUnifiedWallet(password);
     } catch {
-      throw new WalletError("Wrong password");
+      throw new WalletError(i18n.t("wallet:unlock.wrongPassword"));
     } finally {
       notifyWalletChanged();
     }
@@ -351,6 +352,6 @@ export function useWalletIdentity(): { connected: boolean; locked: boolean; shor
     locked: status === "locked",
     short: display,
     address: full,
-    networkLabel: network === "mainnet" ? "Mainnet" : "Testnet",
+    networkLabel: networkLabel(network),
   };
 }

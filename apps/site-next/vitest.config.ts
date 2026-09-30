@@ -62,6 +62,7 @@ export default defineConfig((env) =>
               /lucide-react/,
               /@tanstack\//,
               /dockview/,
+              /react-i18next/,
             ],
           },
         },

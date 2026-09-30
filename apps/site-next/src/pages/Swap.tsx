@@ -4,6 +4,7 @@
  * `secureSwap` (POST /v2/swap/execute), locally or via the extension.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router-dom";
 import { ArrowDown, ArrowRight, Info, ShieldCheck, SlidersHorizontal, Route as RouteIcon } from "lucide-react";
 import { Button, Dialog } from "@rougechain/ui";
@@ -16,7 +17,7 @@ import { DEFAULT_SLIPPAGE, PRICE_IMPACT_WARN, executionRate, fmtPrice, minReceiv
 import { fmtAmount, parseTokenAmount, rawToInput } from "../swap/amounts";
 import { balanceOf, useDexBalances, usePools, useRefreshAfterWrite, useSignState, useSwapQuote, useTokenImages, useUsdPrices } from "../swap/hooks";
 import { DetailRows, ErrorLine, SignGate, SignNote, SlippageControl, TokenPicker } from "../swap/parts";
-import { S } from "../swap/strings";
+import { fmtNum } from "../i18n/format";
 import "../swap/swap.css";
 
 interface Review {
@@ -29,7 +30,17 @@ interface Review {
 
 const upper = (s: string | null) => (s ? s.trim() : "");
 
+/** Display-only percentage (price impact), in the current locale. */
+const pctText = (v: number) => `${fmtNum(v, 2, { minimumFractionDigits: 2 })}%`;
+
+const PRINCIPLES = [
+  [ShieldCheck, "swap.principles.review"],
+  [SlidersHorizontal, "swap.principles.settings"],
+  [Info, "swap.principles.feedback"],
+] as const;
+
 export default function Swap() {
+  const { t } = useTranslation("swap");
   const [params] = useSearchParams();
   const { network } = useWallet();
   const pools = usePools();
@@ -39,7 +50,7 @@ export default function Swap() {
   const sign = useSignState();
   const refresh = useRefreshAfterWrite();
 
-  const networkLabel = network === "testnet" ? "Testnet" : "Mainnet";
+  const networkLabel = network === "testnet" ? t("common.testnet") : t("common.mainnet");
   const [tokenIn, setTokenIn] = useState(() => upper(params.get("tokenIn")) || "XRGE");
   const [tokenOut, setTokenOut] = useState(() => {
     const out = upper(params.get("tokenOut"));
@@ -111,18 +122,18 @@ export default function Swap() {
 
   const usdOf = (raw: number | null, symbol: string) => {
     const p = usd[symbol];
-    return raw && p ? S.swap.usd(formatUsd(raw * p)) : "";
+    return raw && p ? t("swap.usd", { value: formatUsd(raw * p) }) : "";
   };
 
   let action: string;
-  if (!tokenOut) action = S.swap.button.selectToken;
-  else if (!amount.trim()) action = S.swap.button.enterAmount;
+  if (!tokenOut) action = t("swap.button.selectToken");
+  else if (!amount.trim()) action = t("swap.button.enterAmount");
   else if (parsed && !parsed.ok) action = parsed.error;
-  else if (insufficient) action = S.swap.button.insufficient(tokenIn);
-  else if (quote.loading) action = S.swap.button.quoting;
-  else if (!q) action = S.swap.button.noRoute;
-  else action = S.swap.button.review;
-  const canReview = action === S.swap.button.review && sign.state === "ready";
+  else if (insufficient) action = t("swap.button.insufficient", { symbol: tokenIn });
+  else if (quote.loading) action = t("swap.button.quoting");
+  else if (!q) action = t("swap.button.noRoute");
+  else action = t("swap.button.review");
+  const canReview = action === t("swap.button.review") && sign.state === "ready";
 
   const openReview = () => {
     if (!q || rawIn === null) return;
@@ -137,14 +148,19 @@ export default function Swap() {
     try {
       await submitSwap(sign.wallet, review.tokenIn, review.tokenOut, review.rawIn, minReceived(review.quote.amount_out, review.slippage));
       toast.success(
-        S.toasts.swapped(fmtAmount(review.rawIn, review.tokenIn), review.tokenIn, fmtAmount(review.quote.amount_out, review.tokenOut), review.tokenOut),
-        { description: S.common.submittedNextBlock },
+        t("toasts.swapped", {
+          amountIn: fmtAmount(review.rawIn, review.tokenIn),
+          tokenIn: review.tokenIn,
+          amountOut: fmtAmount(review.quote.amount_out, review.tokenOut),
+          tokenOut: review.tokenOut,
+        }),
+        { description: t("common.submittedNextBlock") },
       );
       setReview(null);
       setAmount("");
       refresh();
     } catch (e) {
-      setSignError(e instanceof Error ? e.message : S.toasts.swapFailed);
+      setSignError(e instanceof Error ? e.message : t("toasts.swapFailed"));
     } finally {
       setSigning(false);
     }
@@ -158,34 +174,34 @@ export default function Swap() {
       <div className="container">
         <div className="swap-layout">
           <div className="swap-editorial">
-            <div className="eyebrow">{S.swap.eyebrow}</div>
+            <div className="eyebrow">{t("swap.eyebrow")}</div>
             <h1>
-              {S.swap.heading[0]}
+              {t("swap.heading1")}
               <br />
-              {S.swap.heading[1]}
+              {t("swap.heading2")}
             </h1>
-            <p>{S.swap.intro}</p>
+            <p>{t("swap.intro")}</p>
             <div className="swap-principles">
-              {[ShieldCheck, SlidersHorizontal, Info].map((Icon, i) => (
-                <div key={S.swap.principles[i]}>
+              {PRINCIPLES.map(([Icon, key]) => (
+                <div key={key}>
                   <Icon size={17} />
-                  <span>{S.swap.principles[i]}</span>
+                  <span>{t(key)}</span>
                 </div>
               ))}
             </div>
             <div className="swap-safety dex-safety">
               <NetworkBadge />
               <p>
-                {S.swap.ammInfo}
+                {t("swap.ammInfo")}
                 <br />
-                {S.swap.multiHop}
+                {t("swap.multiHop")}
               </p>
               <div className="dex-links">
                 <Link className="text-link" to="/pools">
-                  {S.swap.poolsLink} <ArrowRight size={14} />
+                  {t("swap.poolsLink")} <ArrowRight size={14} />
                 </Link>
                 <Link className="text-link" to="/buy">
-                  {S.swap.buyLink} <ArrowRight size={14} />
+                  {t("swap.buyLink")} <ArrowRight size={14} />
                 </Link>
               </div>
             </div>
@@ -193,18 +209,18 @@ export default function Swap() {
           <div>
             <section className="swap-card" aria-labelledby="swap-heading">
               <div className="swap-card-heading">
-                <h2 id="swap-heading">{S.swap.title}</h2>
-                <Button variant="ghost icon" aria-label={S.swap.settings} aria-expanded={settings} onClick={() => setSettings(!settings)}>
+                <h2 id="swap-heading">{t("swap.title")}</h2>
+                <Button variant="ghost icon" aria-label={t("swap.settings")} aria-expanded={settings} onClick={() => setSettings(!settings)}>
                   <SlidersHorizontal size={19} />
                 </Button>
               </div>
               {settings && <SlippageControl value={slippage} onChange={setSlippage} />}
               <div className="token-input">
                 <div className="token-label">
-                  <label htmlFor="pay-amount">{S.swap.youPay}</label>
+                  <label htmlFor="pay-amount">{t("swap.youPay")}</label>
                   {balances.data && (
                     <button type="button" className="inline-link" onClick={() => setAmount(rawToInput(balIn, tokenIn))}>
-                      {S.swap.balance(fmtAmount(balIn, tokenIn))} · {S.swap.max}
+                      {t("swap.balance", { balance: fmtAmount(balIn, tokenIn) })} · {t("swap.max")}
                     </button>
                   )}
                 </div>
@@ -219,54 +235,54 @@ export default function Swap() {
                     aria-describedby="amount-feedback"
                     onChange={(e) => setAmount(e.target.value.replace(",", "."))}
                   />
-                  <TokenPicker label={S.swap.payToken} selected={tokenIn} balances={heldMap} poolTokens={poolTokens} image={image} onSelect={(s) => pick("in", s)} />
+                  <TokenPicker label={t("swap.payToken")} selected={tokenIn} balances={heldMap} poolTokens={poolTokens} image={image} onSelect={(s) => pick("in", s)} />
                 </div>
                 <div className="fiat-hint">{usdOf(rawIn, tokenIn) || " "}</div>
               </div>
               <div className="switch-row">
-                <Button variant="secondary icon" aria-label={S.swap.reverse} onClick={flip}>
+                <Button variant="secondary icon" aria-label={t("swap.reverse")} onClick={flip}>
                   <ArrowDown size={18} />
                 </Button>
               </div>
               <div className="token-input">
                 <div className="token-label">
-                  <label htmlFor="receive-amount">{S.swap.youReceive}</label>
+                  <label htmlFor="receive-amount">{t("swap.youReceive")}</label>
                   <span>
-                    {balances.data && tokenOut ? `${S.swap.balance(fmtAmount(balOut, tokenOut))} · ` : ""}
-                    {S.swap.estimated}
+                    {balances.data && tokenOut ? `${t("swap.balance", { balance: fmtAmount(balOut, tokenOut) })} · ` : ""}
+                    {t("swap.estimated")}
                   </span>
                 </div>
                 <div className="amount-row">
                   <output id="receive-amount" aria-live="polite">
                     {quote.loading ? "…" : q ? fmtAmount(q.amount_out, tokenOut) : "—"}
                   </output>
-                  <TokenPicker label={S.swap.receiveToken} selected={tokenOut} balances={heldMap} poolTokens={poolTokens} image={image} onSelect={(s) => pick("out", s)} />
+                  <TokenPicker label={t("swap.receiveToken")} selected={tokenOut} balances={heldMap} poolTokens={poolTokens} image={image} onSelect={(s) => pick("out", s)} />
                 </div>
                 <div className="fiat-hint">{(q && usdOf(q.amount_out, tokenOut)) || " "}</div>
               </div>
               <div id="amount-feedback" role="status">
                 {parsed && !parsed.ok && <p className="quote-alert">{parsed.error}</p>}
-                {insufficient && <p className="quote-alert">{S.swap.button.insufficient(tokenIn)}</p>}
-                {quote.loading && <p className="quote-alert neutral">{S.swap.gettingQuote}</p>}
+                {insufficient && <p className="quote-alert">{t("swap.button.insufficient", { symbol: tokenIn })}</p>}
+                {quote.loading && <p className="quote-alert neutral">{t("swap.gettingQuote")}</p>}
                 {!quote.loading && noRoute && <p className="quote-alert">{noRoute}</p>}
                 {!quote.loading && quote.error && (
                   <p className="quote-alert">
-                    {S.swap.quoteUnavailable}{" "}
+                    {t("swap.quoteUnavailable")}{" "}
                     <button type="button" className="inline-link" onClick={quote.refetch}>
-                      {S.common.retry}
+                      {t("common.retry")}
                     </button>
                   </p>
                 )}
-                {impactHigh && q && <p className="quote-alert">{S.swap.highImpact(`${q.price_impact.toFixed(2)}%`)}</p>}
+                {impactHigh && q && <p className="quote-alert">{t("swap.highImpact", { pct: pctText(q.price_impact) })}</p>}
               </div>
               {q && rawIn !== null && (
                 <DetailRows
                   rows={[
-                    [S.swap.rate, rateText({ rawIn, tokenIn, amountOut: q.amount_out, tokenOut })],
-                    [S.swap.priceImpact, <span className={impactHigh ? "dex-bad" : undefined}>{q.price_impact.toFixed(2)}%</span>],
-                    [S.swap.minReceived, `${fmtAmount(minReceived(q.amount_out, slippage), tokenOut)} ${tokenOut}`],
-                    [S.swap.slippage, `${slippage}%`],
-                    [S.swap.route, <span className="dex-route"><RouteIcon size={12} aria-hidden="true" /> {q.path.join(" → ")}</span>],
+                    [t("swap.rate"), rateText({ rawIn, tokenIn, amountOut: q.amount_out, tokenOut })],
+                    [t("swap.priceImpact"), <span className={impactHigh ? "dex-bad" : undefined}>{pctText(q.price_impact)}</span>],
+                    [t("swap.minReceived"), `${fmtAmount(minReceived(q.amount_out, slippage), tokenOut)} ${tokenOut}`],
+                    [t("swap.slippage"), `${fmtNum(slippage)}%`],
+                    [t("swap.route"), <span className="dex-route"><RouteIcon size={12} aria-hidden="true" /> {q.path.join(" → ")}</span>],
                   ]}
                 />
               )}
@@ -277,17 +293,17 @@ export default function Swap() {
               ) : (
                 <SignGate sign={sign} compact />
               )}
-              <p className="swap-card-note">{networkLabel} · {S.swap.ammInfo}</p>
+              <p className="swap-card-note">{networkLabel} · {t("swap.ammInfo")}</p>
             </section>
           </div>
         </div>
       </div>
-      <Dialog open={!!review} onClose={() => !signing && setReview(null)} title={S.swap.review}>
+      <Dialog open={!!review} onClose={() => !signing && setReview(null)} title={t("swap.review")}>
         {review && (
           <>
             <div className="review-amounts">
               <div>
-                <span>{S.swap.youPay}</span>
+                <span>{t("swap.youPay")}</span>
                 <strong>
                   {fmtAmount(review.rawIn, review.tokenIn)} {review.tokenIn}
                 </strong>
@@ -295,7 +311,7 @@ export default function Swap() {
               <ArrowDown size={20} />
               <div>
                 <span>
-                  {S.swap.youReceive} · {S.swap.estimated.toLowerCase()}
+                  {t("swap.youReceive")} · {t("swap.estimatedInline")}
                 </span>
                 <strong>
                   {fmtAmount(review.quote.amount_out, review.tokenOut)} {review.tokenOut}
@@ -303,27 +319,27 @@ export default function Swap() {
               </div>
             </div>
             {review.quote.price_impact > PRICE_IMPACT_WARN && (
-              <p className="quote-alert">{S.swap.highImpact(`${review.quote.price_impact.toFixed(2)}%`)}</p>
+              <p className="quote-alert">{t("swap.highImpact", { pct: pctText(review.quote.price_impact) })}</p>
             )}
             <DetailRows
               rows={[
-                [S.swap.rate, rateText({ rawIn: review.rawIn, tokenIn: review.tokenIn, amountOut: review.quote.amount_out, tokenOut: review.tokenOut })],
-                [S.swap.priceImpact, `${review.quote.price_impact.toFixed(2)}%`],
-                [S.swap.minReceived, `${fmtAmount(minReceived(review.quote.amount_out, review.slippage), review.tokenOut)} ${review.tokenOut}`],
-                [S.swap.slippage, `${review.slippage}%`],
-                [S.swap.route, review.quote.path.join(" → ")],
-                [S.swap.networkLabel, networkLabel],
+                [t("swap.rate"), rateText({ rawIn: review.rawIn, tokenIn: review.tokenIn, amountOut: review.quote.amount_out, tokenOut: review.tokenOut })],
+                [t("swap.priceImpact"), pctText(review.quote.price_impact)],
+                [t("swap.minReceived"), `${fmtAmount(minReceived(review.quote.amount_out, review.slippage), review.tokenOut)} ${review.tokenOut}`],
+                [t("swap.slippage"), `${fmtNum(review.slippage)}%`],
+                [t("swap.route"), review.quote.path.join(" → ")],
+                [t("swap.networkLabel"), networkLabel],
               ]}
             />
-            <p className="form-hint">{S.swap.reviewNote}</p>
+            <p className="form-hint">{t("swap.reviewNote")}</p>
             {sign.state === "ready" && <SignNote kind={sign.kind} />}
             <ErrorLine>{signError}</ErrorLine>
             <div className="actions dex-actions">
               <Button variant="outline" disabled={signing} onClick={() => setReview(null)}>
-                {S.common.back}
+                {t("common.back")}
               </Button>
               <Button disabled={signing || sign.state !== "ready"} onClick={confirm}>
-                {signing ? S.swap.button.signing : S.swap.button.sign}
+                {signing ? t("swap.button.signing") : t("swap.button.sign")}
               </Button>
             </div>
           </>

@@ -12,7 +12,7 @@
  * the user never bridges a different amount than the one they reviewed.
  */
 import { toBaseUnits, checkBaseAddress } from "@rougechain/core/base-wallet";
-import { S, fmt } from "./strings";
+import i18n from "../i18n";
 
 export type BridgeAsset = "ETH" | "USDC" | "XRGE" | "BTC";
 export type BtcNetwork = "mainnet" | "testnet";
@@ -48,12 +48,12 @@ export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 
 function units(input: string, asset: AssetDef): Parsed<bigint> {
   const s = input.trim().replace(",", ".");
-  if (!/^\d*\.?\d*$/.test(s) || s === "" || s === ".") return { ok: false, error: S.errors.invalidAmount };
+  if (!/^\d*\.?\d*$/.test(s) || s === "" || s === ".") return { ok: false, error: i18n.t("bridge:errors.invalidAmount") };
   const frac = s.split(".")[1] ?? "";
   if (frac.replace(/0+$/, "").length > asset.decimals) {
     return {
       ok: false,
-      error: asset.decimals === 0 ? S.errors.wholeXrge : fmt(S.errors.tooManyDecimals, { symbol: asset.label, decimals: asset.decimals }),
+      error: asset.decimals === 0 ? i18n.t("bridge:errors.wholeXrge") : i18n.t("bridge:errors.tooManyDecimals", { symbol: asset.label, decimals: asset.decimals }),
     };
   }
   // Trailing zeros past the precision are harmless ("1.50" XRGE is not whole, "2.0" is).
@@ -62,9 +62,9 @@ function units(input: string, asset: AssetDef): Parsed<bigint> {
   try {
     v = toBaseUnits(trimmed, asset.decimals);
   } catch {
-    return { ok: false, error: S.errors.invalidAmount };
+    return { ok: false, error: i18n.t("bridge:errors.invalidAmount") };
   }
-  if (v <= 0n) return { ok: false, error: S.errors.invalidAmount };
+  if (v <= 0n) return { ok: false, error: i18n.t("bridge:errors.invalidAmount") };
   return { ok: true, value: v };
 }
 
@@ -77,7 +77,7 @@ export interface DepositAmount {
 
 /** Deposit amount (Base → RougeChain) for ETH / USDC / XRGE. */
 export function parseDepositAmount(asset: BridgeAsset, input: string): Parsed<DepositAmount> {
-  if (asset === "BTC") return { ok: false, error: S.errors.invalidAmount };
+  if (asset === "BTC") return { ok: false, error: i18n.t("bridge:errors.invalidAmount") };
   const r = units(input, assetDef(asset));
   if (!r.ok) return r;
   if (asset === "ETH") return { ok: true, value: { baseUnits: r.value * WEI_PER_QETH_UNIT, l1Units: r.value } };
@@ -90,7 +90,7 @@ export function parseWithdrawAmount(asset: BridgeAsset, input: string): Parsed<n
   const r = units(input, assetDef(asset));
   if (!r.ok) return r;
   const n = Number(r.value);
-  if (!Number.isSafeInteger(n)) return { ok: false, error: S.errors.invalidAmount };
+  if (!Number.isSafeInteger(n)) return { ok: false, error: i18n.t("bridge:errors.invalidAmount") };
   return { ok: true, value: n };
 }
 
@@ -113,7 +113,7 @@ export function parseEvmAddress(input: string): Parsed<`0x${string}`> {
   const withPrefix = s.startsWith("0x") || s.startsWith("0X") ? `0x${s.slice(2)}` : `0x${s}`;
   const check = checkBaseAddress(withPrefix);
   if (check === "ok") return { ok: true, value: withPrefix as `0x${string}` };
-  return { ok: false, error: check === "bad-checksum" ? S.errors.badChecksum : S.errors.invalidEvmAddress };
+  return { ok: false, error: check === "bad-checksum" ? i18n.t("bridge:errors.badChecksum") : i18n.t("bridge:errors.invalidEvmAddress") };
 }
 
 const BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
@@ -161,7 +161,7 @@ function isValidSegwit(addr: string, hrp: string): boolean {
  */
 export function parseBtcAddress(input: string, network: BtcNetwork): Parsed<string> {
   const s = input.trim();
-  const bad = { ok: false as const, error: fmt(S.errors.invalidBtcAddress, { network: network === "mainnet" ? "mainnet" : "testnet" }) };
+  const bad = { ok: false as const, error: i18n.t("bridge:errors.invalidBtcAddress", { network: i18n.t(network === "mainnet" ? "bridge:networkWord.mainnet" : "bridge:networkWord.testnet") }) };
   if (s.length < 14) return bad;
   const hrp = network === "mainnet" ? "bc" : "tb";
   if (s.toLowerCase().startsWith(`${hrp}1`)) return isValidSegwit(s, hrp) ? { ok: true, value: s } : bad;

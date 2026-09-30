@@ -13,7 +13,14 @@ export const CHAIN_ID = "rougechain-1";
 export const EXPLORER_URL = "https://rougechain.io";
 
 // Fee constants
-export const BASE_TRANSFER_FEE = 0.1; // 0.1 XRGE per transfer
+export const BASE_TRANSFER_FEE = 0.1; // 0.1 XRGE per transfer (legacy /tx/submit path)
+/**
+ * Fee the node charges for a wallet-signed transfer (POST /v2/transfer, what every wallet uses).
+ * Fixed by the node's signed-transaction binding (core/daemon/src/v2_binding.rs: "transfer" → 1.0),
+ * regardless of the fee field in the payload. That binding also stores the amount as a whole
+ * number (`amount as u64`), so XRGE transfers must be whole XRGE — fractions would be dropped.
+ */
+export const WALLET_TRANSFER_FEE = 1;
 export const TOKEN_CREATION_FEE = 100; // 100 XRGE to create a token
 export const MINT_FEE = 1; // 1 XRGE per mint operation
 

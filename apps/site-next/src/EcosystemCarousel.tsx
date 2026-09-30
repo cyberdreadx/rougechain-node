@@ -9,29 +9,36 @@ import {
   Terminal,
 } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { useNetwork } from "./Network";
 import { DOCS_URL, appById, appHref } from "./ecosystem/apps";
+import { fmtInt, fmtNum } from "./i18n/format";
 
+// Copy lives in the `marketing` namespace under carousel.slides.<id> (short, label, headline, …).
 const slides = [
-  { id: "qwalla", number: "01", label: "HOLD", short: "Qwalla" },
-  { id: "swap", number: "02", label: "TRADE", short: "Swap" },
-  { id: "bridge", number: "03", label: "MOVE", short: "Bridge" },
-  { id: "talk", number: "04", label: "TALK", short: "Talk" },
-  { id: "validate", number: "05", label: "VALIDATE", short: "Validate" },
-  { id: "build", number: "06", label: "BUILD", short: "Build" },
+  { id: "qwalla", number: "01" },
+  { id: "swap", number: "02" },
+  { id: "bridge", number: "03" },
+  { id: "talk", number: "04" },
+  { id: "validate", number: "05" },
+  { id: "build", number: "06" },
 ] as const;
+
+const MIN_VALIDATOR_STAKE = 10_000;
+const BR = { br: <br /> };
 
 type SlideId = (typeof slides)[number]["id"];
 
 function QwallaVisual() {
+  const { t } = useTranslation("marketing");
   return (
     <div className="possibility-visual possibility-qwalla">
-      <div className="visual-caption mono">MOBILE WALLET · MAINNET</div>
+      <div className="visual-caption mono">{t("carousel.qwalla.caption")}</div>
       <div className="qwalla-phone">
         <div className="qwalla-phone-speaker" aria-hidden="true" />
         <img
           src="/qwalla-app.jpg"
-          alt="Qwalla wallet application shown in a phone frame"
+          alt={t("carousel.qwalla.imageAlt")}
           width="1206"
           height="2459"
           loading="lazy"
@@ -40,30 +47,29 @@ function QwallaVisual() {
       </div>
       <div className="visual-meta visual-meta-left">
         <span>XRGE</span>
-        <span>POST-QUANTUM WALLET</span>
+        <span>{t("carousel.qwalla.meta")}</span>
       </div>
     </div>
   );
 }
 
 function SwapVisual() {
+  const { t } = useTranslation("marketing");
   return (
     <div
       className="possibility-visual possibility-swap"
-      aria-label="Illustrative RougeChain swap interface"
+      aria-label={t("carousel.swap.label")}
     >
-      <div className="visual-caption mono">
-        ILLUSTRATIVE UI · ROUGECHAIN DEX
-      </div>
+      <div className="visual-caption mono">{t("carousel.swap.caption")}</div>
       <div className="swap-showcase">
         <div className="swap-showcase-top">
-          <span>SWAP</span>
-          <span className="mono muted">MAINNET</span>
+          <span>{t("carousel.swap.title")}</span>
+          <span className="mono muted">{t("carousel.swap.network")}</span>
         </div>
         <div className="swap-showcase-field">
           <div>
-            <span className="mono muted">PAY</span>
-            <strong>1,250</strong>
+            <span className="mono muted">{t("carousel.swap.pay")}</span>
+            <strong>{fmtInt(1250)}</strong>
           </div>
           <div className="swap-token">
             <img src="/xrge-logo.webp" alt="" />
@@ -75,8 +81,8 @@ function SwapVisual() {
         </div>
         <div className="swap-showcase-field">
           <div>
-            <span className="mono muted">RECEIVE</span>
-            <strong>0.41</strong>
+            <span className="mono muted">{t("carousel.swap.receive")}</span>
+            <strong>{fmtNum(0.41)}</strong>
           </div>
           <div className="swap-token">
             <span className="token-orb">q</span>
@@ -84,16 +90,16 @@ function SwapVisual() {
           </div>
         </div>
         <div className="swap-showcase-details">
-          <span>Route</span>
+          <span>{t("carousel.swap.route")}</span>
           <strong>XRGE → qETH</strong>
-          <span>Liquidity</span>
-          <strong>Native AMM</strong>
+          <span>{t("carousel.swap.liquidity")}</span>
+          <strong>{t("carousel.swap.amm")}</strong>
         </div>
       </div>
       <div className="pool-strip">
         <span>XRGE / qETH</span>
         <span>XRGE / qUSDC</span>
-        <span className="mono">POOLS</span>
+        <span className="mono">{t("carousel.swap.pools")}</span>
       </div>
     </div>
   );
@@ -111,44 +117,43 @@ function BaseSquareLogo() {
 }
 
 function BridgeVisual() {
+  const { t } = useTranslation("marketing");
   return (
     <div className="possibility-visual possibility-bridge">
-      <div className="visual-caption mono">
-        BASE MAINNET ↔ ROUGECHAIN L1 · SUPPORTED ROUTES
-      </div>
+      <div className="visual-caption mono">{t("carousel.bridge.caption")}</div>
 
       <div
         className="bridge-routing-panel"
-        aria-label="Supported Base and RougeChain bridge routes"
+        aria-label={t("carousel.bridge.label")}
       >
         <div className="bridge-routing-header">
           <div className="bridge-endpoint">
             <BaseSquareLogo />
             <div>
-              <strong>BASE MAINNET</strong>
-              <small>CHAIN 8453</small>
+              <strong>{t("carousel.bridge.baseMainnet")}</strong>
+              <small>{t("carousel.bridge.chain", { id: 8453 })}</small>
             </div>
           </div>
 
           <div className="bridge-routing-status mono">
-            <span>BRIDGE</span>
+            <span>{t("carousel.bridge.bridge")}</span>
             <span className="bridge-status-dot" aria-hidden="true" />
-            <strong>ROUTES</strong>
+            <strong>{t("carousel.bridge.routes")}</strong>
           </div>
 
           <div className="bridge-endpoint bridge-endpoint-destination">
             <img src="/xrge-logo.webp" alt="" />
             <div>
-              <strong>ROUGECHAIN L1</strong>
-              <small>POST-QUANTUM NETWORK</small>
+              <strong>{t("carousel.bridge.rougechainL1")}</strong>
+              <small>{t("carousel.bridge.pqNetwork")}</small>
             </div>
           </div>
         </div>
 
         <div className="bridge-table-head mono" aria-hidden="true">
-          <span>ASSET</span>
-          <span>ROUTE</span>
-          <span>RECEIVE</span>
+          <span>{t("carousel.bridge.asset")}</span>
+          <span>{t("carousel.bridge.route")}</span>
+          <span>{t("carousel.bridge.receive")}</span>
         </div>
 
         <div className="bridge-route-table">
@@ -156,7 +161,7 @@ function BridgeVisual() {
             <span className="bridge-asset">ETH</span>
             <span className="bridge-flow bridge-flow-forward">
               <span className="bridge-flow-line" />
-              <span className="bridge-flow-label mono">BASE → ROUGE</span>
+              <span className="bridge-flow-label mono">{t("carousel.bridge.forward")}</span>
             </span>
             <span className="bridge-asset bridge-asset-receive">qETH</span>
           </div>
@@ -165,7 +170,7 @@ function BridgeVisual() {
             <span className="bridge-asset">USDC</span>
             <span className="bridge-flow bridge-flow-forward">
               <span className="bridge-flow-line" />
-              <span className="bridge-flow-label mono">BASE → ROUGE</span>
+              <span className="bridge-flow-label mono">{t("carousel.bridge.forward")}</span>
             </span>
             <span className="bridge-asset bridge-asset-receive">qUSDC</span>
           </div>
@@ -174,15 +179,15 @@ function BridgeVisual() {
             <span className="bridge-asset">XRGE</span>
             <span className="bridge-flow bridge-flow-bidirectional">
               <span className="bridge-flow-line" />
-              <span className="bridge-flow-label mono">TWO-WAY</span>
+              <span className="bridge-flow-label mono">{t("carousel.bridge.twoWay")}</span>
             </span>
             <span className="bridge-asset bridge-asset-receive">XRGE</span>
           </div>
         </div>
 
         <div className="bridge-routing-footer mono">
-          <span>DEPOSIT · LOCK / MINT</span>
-          <span>WITHDRAW · RELEASE / REFUND PROTECTION</span>
+          <span>{t("carousel.bridge.deposit")}</span>
+          <span>{t("carousel.bridge.withdraw")}</span>
         </div>
       </div>
     </div>
@@ -190,54 +195,53 @@ function BridgeVisual() {
 }
 
 function TalkVisual() {
+  const { t } = useTranslation("marketing");
   return (
     <div className="possibility-visual possibility-talk">
-      <div className="visual-caption mono">
-        WALLET IDENTITY · PRIVATE COMMUNICATION
-      </div>
+      <div className="visual-caption mono">{t("carousel.talk.caption")}</div>
       <div className="identity-line">
         <ShieldCheck size={15} />
         <span className="mono">rouge1c4…92da</span>
-        <small>YOUR WALLET IDENTITY</small>
+        <small>{t("carousel.talk.yourIdentity")}</small>
       </div>
       <div className="talk-windows">
         <div className="talk-window messenger-window">
           <div className="talk-window-title">
             <MessageCircle size={14} />
-            <span>MESSENGER</span>
-            <small>ENCRYPTED</small>
+            <span>{t("carousel.talk.messenger")}</span>
+            <small>{t("carousel.talk.encrypted")}</small>
           </div>
           <div className="message-row">
             <span className="message-dot" />
             <div>
               <small>rouge1f8…63ab</small>
-              <p>Are you joining the validator call?</p>
+              <p>{t("carousel.talk.incoming")}</p>
             </div>
           </div>
           <div className="message-row outgoing">
             <div>
-              <small>YOU</small>
-              <p>Yep — sending the notes now.</p>
+              <small>{t("carousel.talk.you")}</small>
+              <p>{t("carousel.talk.outgoing")}</p>
             </div>
           </div>
         </div>
         <div className="talk-window mail-window">
           <div className="talk-window-title">
             <Mail size={14} />
-            <span>MAIL</span>
-            <small>ENCRYPTED</small>
+            <span>{t("carousel.talk.mail")}</span>
+            <small>{t("carousel.talk.encrypted")}</small>
           </div>
           <dl>
             <div>
-              <dt>FROM</dt>
+              <dt>{t("carousel.talk.from")}</dt>
               <dd>rouge1d2…882e</dd>
             </div>
             <div>
-              <dt>SUBJECT</dt>
-              <dd>Validator proposal</dd>
+              <dt>{t("carousel.talk.subject")}</dt>
+              <dd>{t("carousel.talk.subjectValue")}</dd>
             </div>
             <div>
-              <dt>ENCRYPTED FOR</dt>
+              <dt>{t("carousel.talk.encryptedFor")}</dt>
               <dd>rouge1c4…92da</dd>
             </div>
           </dl>
@@ -245,86 +249,91 @@ function TalkVisual() {
       </div>
       <div className="crypto-ribbon mono">
         <span>ML-KEM-768</span>
-        <span>KEY ENCAPSULATION</span>
+        <span>{t("carousel.talk.kem")}</span>
         <span>AES-256-GCM</span>
-        <span>AUTHENTICATED ENCRYPTION</span>
+        <span>{t("carousel.talk.aead")}</span>
       </div>
     </div>
   );
 }
 
 function ValidateVisual() {
+  const { t } = useTranslation("marketing");
   const network = useNetwork();
   const data = network.data;
   const stateLabel =
     network.state === "live"
-      ? "LIVE NETWORK DATA"
+      ? t("carousel.validate.live")
       : network.state === "stale"
-        ? "STALE NETWORK READ"
-        : "SAVED NETWORK SNAPSHOT";
+        ? t("carousel.validate.stale")
+        : t("carousel.validate.snapshot");
 
   return (
     <div className="possibility-visual possibility-validate">
       <div className="visual-caption mono">
-        VALIDATOR OPERATOR VIEW · {stateLabel}
+        {t("carousel.validate.caption", { state: stateLabel })}
       </div>
 
       <div
         className="validator-operator"
-        aria-label="RougeChain validator operator dashboard and setup flow"
+        aria-label={t("carousel.validate.label")}
       >
         <div className="validator-operator-head">
           <div>
-            <span className="mono">ROUGECHAIN VALIDATOR</span>
-            <strong>Ready to participate.</strong>
+            <span className="mono">{t("carousel.validate.validator")}</span>
+            <strong>{t("carousel.validate.ready")}</strong>
           </div>
           <div className="validator-online">
             <span className="validator-online-dot" aria-hidden="true" />
-            <span className="mono">OPERATOR FLOW</span>
+            <span className="mono">{t("carousel.validate.operatorFlow")}</span>
           </div>
         </div>
 
         <div className="validator-overview-grid">
           <div className="validator-overview-primary">
-            <span className="mono">TARGET STATUS</span>
-            <strong>Producing blocks</strong>
+            <span className="mono">{t("carousel.validate.targetStatus")}</span>
+            <strong>{t("carousel.validate.producing")}</strong>
             <small>
-              The built-in <code>validator-status</code> check confirms each
-              prerequisite before you go live.
+              <Trans
+                t={t}
+                i18nKey="carousel.validate.check"
+                components={{ code: <code /> }}
+              />
             </small>
           </div>
 
           <div className="validator-stat">
-            <span>MINIMUM STAKE</span>
-            <strong>10,000</strong>
+            <span>{t("carousel.validate.minStake")}</span>
+            <strong>{fmtInt(MIN_VALIDATOR_STAKE)}</strong>
             <small>XRGE</small>
           </div>
 
           <div className="validator-stat">
-            <span>NETWORK PEERS</span>
-            <strong>{data?.peers ?? "—"}</strong>
+            <span>{t("carousel.validate.peers")}</span>
+            <strong>{data ? fmtInt(data.peers) : "—"}</strong>
             <small>{stateLabel}</small>
           </div>
 
           <div className="validator-stat">
-            <span>LATEST BLOCK</span>
-            <strong>{data?.height.toLocaleString() ?? "—"}</strong>
-            <small>NETWORK HEIGHT</small>
+            <span>{t("carousel.validate.latestBlock")}</span>
+            <strong>{data ? fmtInt(data.height) : "—"}</strong>
+            <small>{t("carousel.validate.networkHeight")}</small>
           </div>
         </div>
 
         <div className="validator-setup">
           <div className="validator-setup-title mono">
-            <span>SETUP</span>
-            <span>ONE-COMMAND INSTALLER</span>
+            <span>{t("carousel.validate.setup")}</span>
+            <span>{t("carousel.validate.installer")}</span>
           </div>
 
-          {[
-            ["01", "Install node", "Dependencies, build, systemd service"],
-            ["02", "Fund & stake", "Stake at least 10,000 XRGE"],
-            ["03", "Verify status", "Funded · Staked · Active set"],
-            ["04", "Produce blocks", "Start participating in consensus"],
-          ].map(([step, title, detail]) => (
+          {(["install", "stake", "verify", "produce"] as const).map((id, i) => [
+            `0${i + 1}`,
+            t(`carousel.validate.steps.${id}.title`),
+            t(`carousel.validate.steps.${id}.detail`, {
+              amount: fmtInt(MIN_VALIDATOR_STAKE),
+            }),
+          ]).map(([step, title, detail]) => (
             <div className="validator-step" key={step}>
               <span className="validator-step-number mono">{step}</span>
               <div>
@@ -346,24 +355,27 @@ function ValidateVisual() {
       </div>
 
       <div className="validator-network-footer mono">
-        <span>VALIDATORS {data?.validators ?? "—"}</span>
-        <span>PUBLIC READ · {stateLabel}</span>
+        <span>
+          {t("carousel.validate.validators", {
+            n: data ? fmtInt(data.validators) : "—",
+          })}
+        </span>
+        <span>{t("carousel.validate.publicRead", { state: stateLabel })}</span>
       </div>
     </div>
   );
 }
 
 function BuildVisual({ active }: { active: boolean }) {
+  const { t } = useTranslation("marketing");
   return (
     <div
       className={`possibility-visual possibility-build ${active ? "is-active" : ""}`}
     >
-      <div className="visual-caption mono">
-        REAL SDK + MCP INTEGRATION · MAINNET
-      </div>
+      <div className="visual-caption mono">{t("carousel.build.caption")}</div>
       <div
         className="build-code-terminal"
-        aria-label="Terminal typing a RougeChain SDK and MCP integration"
+        aria-label={t("carousel.build.label")}
       >
         <div className="build-terminal-title">
           <div className="terminal-dots" aria-hidden="true">
@@ -420,9 +432,7 @@ function BuildVisual({ active }: { active: boolean }) {
           </div>
         </div>
       </div>
-      <div className="build-terminal-footer mono">
-        SDK · WASM CONTRACTS · MCP · LOCAL ML-DSA-65 SIGNING
-      </div>
+      <div className="build-terminal-footer mono">{t("carousel.build.footer")}</div>
     </div>
   );
 }
@@ -436,115 +446,43 @@ function SlideVisual({ id, active }: { id: SlideId; active: boolean }) {
   return <BuildVisual active={active} />;
 }
 
-const slideCopy: Record<
+/** Links and layout per slide; the copy is carousel.slides.<id>.* in the marketing namespace. */
+const slideLinks: Record<
   SlideId,
   {
-    headline: React.ReactNode;
-    emphasis?: React.ReactNode;
-    body: React.ReactNode;
-    technical?: string;
-    primary: { label: string; href: string };
-    secondary?: { label: string; href: string };
+    emphasis?: boolean;
+    technical?: boolean;
+    primary: string;
+    secondary?: string;
     reverse?: boolean;
   }
 > = {
-  qwalla: {
-    headline: (
-      <>
-        Your assets.
-        <br />
-        Ready for what’s next.
-      </>
-    ),
-    body: "Qwalla brings the RougeChain ecosystem into your pocket. Hold XRGE, manage your wallet, and move through the network from one mobile experience.",
-    primary: { label: "Discover Qwalla", href: appHref(appById("qwalla")!) },
-  },
-  swap: {
-    headline: (
-      <>
-        Trade. Provide liquidity.
-        <br />
-        Stay onchain.
-      </>
-    ),
-    body: "Swap assets, discover liquidity, and participate in RougeChain markets through a native DeFi experience built around the network.",
-    primary: { label: "Explore Swap", href: "/swap" },
-    secondary: { label: "View liquidity pools", href: "/swap/pools" },
-    reverse: true,
-  },
-  bridge: {
-    headline: (
-      <>
-        Move assets between chains.
-        <br />
-        Bring them into the post-quantum era.
-      </>
-    ),
-    body: "Move supported assets between RougeChain and connected networks, bringing value from conventional chains into a network designed around post-quantum security.",
-    technical: "Base mainnet · ETH ↔ qETH · USDC ↔ qUSDC · XRGE",
-    primary: { label: "Explore Bridge", href: appHref(appById("bridge")!) },
-  },
+  qwalla: { primary: appHref(appById("qwalla")!) },
+  swap: { primary: "/swap", secondary: "/swap/pools", reverse: true },
+  bridge: { technical: true, primary: appHref(appById("bridge")!) },
   talk: {
-    headline: (
-      <>
-        Your wallet is also
-        <br />a private identity.
-      </>
-    ),
-    emphasis: (
-      <>
-        Message. Email. Encrypt.
-        <br />
-        Post-quantum communication, wallet to wallet.
-      </>
-    ),
-    body: "Send post-quantum encrypted messages and email directly between wallet identities. RougeChain turns the wallet into more than a way to transact—it becomes a secure communication layer.",
-    technical:
-      "ML-KEM-768 key encapsulation · AES-256-GCM authenticated encryption",
-    primary: { label: "Open Messenger", href: appHref(appById("messenger")!) },
-    secondary: { label: "Explore Mail", href: appHref(appById("mail")!) },
+    emphasis: true,
+    technical: true,
+    primary: appHref(appById("messenger")!),
+    secondary: appHref(appById("mail")!),
     reverse: true,
   },
   validate: {
-    headline: (
-      <>
-        Don’t just use the network.
-        <br />
-        Help secure it.
-      </>
-    ),
-    body: "From a fresh Linux server to a syncing RougeChain node in one command. Stake at least 10,000 XRGE, verify your validator status, and start participating directly in network consensus.",
-    technical:
-      "One-command installer · systemd service · built-in validator status · modest VPS requirements",
-    primary: {
-      label: "Run a Validator",
-      href: "https://docs.rougechain.io/staking/becoming-validator",
-    },
-    secondary: {
-      label: "Explore Validators",
-      href: appHref(appById("validators")!),
-    },
+    technical: true,
+    primary: "https://docs.rougechain.io/staking/becoming-validator",
+    secondary: appHref(appById("validators")!),
   },
   build: {
-    headline: (
-      <>
-        Built for developers.
-        <br />
-        Ready for agents.
-      </>
-    ),
-    emphasis: (
-      <>Build the application. Build the agent. Connect both to the chain.</>
-    ),
-    body: "RougeChain was designed for a world where developers build applications and autonomous agents side by side. Use WASM smart contracts and the RougeChain SDK to build onchain software, then give AI agents native MCP tools to understand the network, work across applications, coordinate workflows, and perform authorized onchain actions.",
-    technical: "WASM smart contracts · RougeChain SDK · native MCP tooling",
-    primary: { label: "Start Building", href: "#build" },
-    secondary: { label: "Explore MCP for Agents", href: DOCS_URL },
+    emphasis: true,
+    technical: true,
+    primary: "#build",
+    secondary: DOCS_URL,
     reverse: true,
   },
 };
 
 export default function EcosystemCarousel() {
+  const { t } = useTranslation("marketing");
   const [active, setActive] = useState(0);
   const [entered, setEntered] = useState(false);
   const carouselRef = useRef<HTMLDivElement>(null);
@@ -643,7 +581,7 @@ export default function EcosystemCarousel() {
         <div
           className="possibilities-tabs"
           role="tablist"
-          aria-label="RougeChain possibilities"
+          aria-label={t("carousel.tabsLabel")}
         >
           {slides.map((slide, index) => (
             <button
@@ -654,7 +592,7 @@ export default function EcosystemCarousel() {
               onClick={() => goTo(index)}
             >
               <span>{slide.number}</span>
-              {slide.short}
+              {t(`carousel.slides.${slide.id}.short`)}
             </button>
           ))}
         </div>
@@ -664,13 +602,13 @@ export default function EcosystemCarousel() {
             {String(slides.length).padStart(2, "0")}
           </span>
           <button
-            aria-label="Previous possibility"
+            aria-label={t("carousel.previous")}
             onClick={() => goTo(active - 1)}
           >
             <ArrowLeft size={16} />
           </button>
           <button
-            aria-label="Next possibility"
+            aria-label={t("carousel.next")}
             onClick={() => goTo(active + 1)}
           >
             <ArrowRight size={16} />
@@ -683,38 +621,51 @@ export default function EcosystemCarousel() {
         ref={trackRef}
         tabIndex={0}
         onKeyDown={onKeyDown}
-        aria-label="Scrollable ecosystem use cases"
+        aria-label={t("carousel.trackLabel")}
       >
         {slides.map((slide, index) => {
-          const copy = slideCopy[slide.id];
+          const copy = slideLinks[slide.id];
+          const key = `carousel.slides.${slide.id}`;
           return (
             <article
               id={`possibility-${slide.id}`}
               key={slide.id}
               className={`possibility-slide ${copy.reverse ? "reverse" : ""}`}
               aria-roledescription="slide"
-              aria-label={`${slide.number} of ${slides.length}: ${slide.short}`}
+              aria-label={t("carousel.slideLabel", {
+                n: slide.number,
+                total: slides.length,
+                name: t(`${key}.short`),
+              })}
             >
               <SlideVisual id={slide.id} active={active === index} />
               <div className="possibility-copy">
                 <span className="possibility-eyebrow mono">
-                  {slide.number} / {slide.label}
+                  {slide.number} / {t(`${key}.label`)}
                 </span>
-                <h3>{copy.headline}</h3>
+                <h3>
+                  <Trans t={t} i18nKey={`${key}.headline`} components={BR} />
+                </h3>
                 {copy.emphasis && (
-                  <p className="possibility-emphasis">{copy.emphasis}</p>
+                  <p className="possibility-emphasis">
+                    <Trans t={t} i18nKey={`${key}.emphasis`} components={BR} />
+                  </p>
                 )}
-                <p>{copy.body}</p>
+                <p>
+                  {t(`${key}.body`, { amount: fmtInt(MIN_VALIDATOR_STAKE) })}
+                </p>
                 {copy.technical && (
-                  <p className="possibility-technical mono">{copy.technical}</p>
+                  <p className="possibility-technical mono">
+                    {t(`${key}.technical`)}
+                  </p>
                 )}
                 <div className="possibility-actions">
-                  <a className="text-link" href={copy.primary.href}>
-                    {copy.primary.label} <ArrowUpRight size={15} />
+                  <a className="text-link" href={copy.primary}>
+                    {t(`${key}.primary`)} <ArrowUpRight size={15} />
                   </a>
                   {copy.secondary && (
-                    <a className="text-link muted" href={copy.secondary.href}>
-                      {copy.secondary.label} <ArrowUpRight size={15} />
+                    <a className="text-link muted" href={copy.secondary}>
+                      {t(`${key}.secondary`)} <ArrowUpRight size={15} />
                     </a>
                   )}
                 </div>
@@ -726,7 +677,7 @@ export default function EcosystemCarousel() {
 
       <div className="possibilities-hint mono">
         <span>
-          DRAG / SWIPE OR USE ARROWS <span aria-hidden="true">→</span>
+          {t("carousel.hint")} <span aria-hidden="true">→</span>
         </span>
         <span aria-hidden="true">
           {String(active + 1).padStart(2, "0")} /{" "}

@@ -4,6 +4,7 @@
  * ML-DSA-65 signature verdict per mail. Everything goes through core's pqc-mail / mail-name.
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
   AtSign,
@@ -46,13 +47,13 @@ import {
 import { getMyMailName, mailAddresses } from "@rougechain/core/mail-name";
 import { registerWalletOnNode, type WalletWithPrivateKeys } from "@rougechain/core/pqc-messenger";
 import type { UnifiedWallet } from "@rougechain/core/unified-wallet";
+import { fmtNum } from "../i18n/format";
 import { Toggle } from "../wallet/parts";
 import { MailNameEditor } from "../wallet/profile";
 import { toast } from "../wallet/toast";
 import { useWallet } from "../wallet/WalletProvider";
 import { WalletGate } from "../messenger/Gate";
 import { useFillHeight } from "../messenger/hooks";
-import { MAIL, S, fmt, plural } from "../messenger/strings";
 import { PeerAvatar } from "../messenger/ui";
 import { buildThread, formatMailDate, groupByThread, loadMailSettings, saveMailSettings, signatureBlock, type MailSettings } from "./threads";
 import "../messenger/messenger.css";
@@ -67,8 +68,9 @@ export default function MailPage() {
 }
 
 function SignatureBadge({ valid, size = 14 }: { valid: boolean | null | undefined; size?: number }) {
+  const { t } = useTranslation("messenger");
   const [Icon, cls, label] =
-    valid === true ? [CheckCircle2, "ok-icon", MAIL.sigValid] : valid === false ? [XCircle, "danger-icon", MAIL.sigInvalid] : [ShieldQuestion, "muted-icon", MAIL.sigUnknown];
+    valid === true ? [CheckCircle2, "ok-icon", t("mail.sigValid")] : valid === false ? [XCircle, "danger-icon", t("mail.sigInvalid")] : [ShieldQuestion, "muted-icon", t("mail.sigUnknown")];
   return (
     <span className={`mail-sig-icon ${cls}`} role="img" aria-label={label} title={label}>
       <Icon size={size} aria-hidden="true" />
@@ -77,6 +79,7 @@ function SignatureBadge({ valid, size = 14 }: { valid: boolean | null | undefine
 }
 
 function Mail({ wallet, identity }: { wallet: UnifiedWallet; identity: WalletWithPrivateKeys }) {
+  const { t } = useTranslation("messenger");
   const { network } = useWallet();
   const [fillRef, height] = useFillHeight<HTMLElement>();
   const [folder, setFolder] = useState<Folder>("inbox");
@@ -122,7 +125,7 @@ function Mail({ wallet, identity }: { wallet: UnifiedWallet; identity: WalletWit
   }, [loadFolder, network]);
 
   const threads = useMemo(() => groupByThread(items), [items]);
-  const unread = folder === "inbox" ? threads.filter((t) => t.hasUnread).length : 0;
+  const unread = folder === "inbox" ? threads.filter((th) => th.hasUnread).length : 0;
 
   const open = async (item: MailItem) => {
     setSelected(item);
@@ -155,7 +158,7 @@ function Mail({ wallet, identity }: { wallet: UnifiedWallet; identity: WalletWit
         onSave={(s) => {
           saveMailSettings(s);
           setSettings(s);
-          toast.success(MAIL.settingsSaved);
+          toast.success(t("mail.settingsSaved"));
           setView("list");
         }}
       />
@@ -195,14 +198,14 @@ function Mail({ wallet, identity }: { wallet: UnifiedWallet; identity: WalletWit
           </div>
           <div className="msg-bar-actions">
             {!myName && (
-              <button type="button" className={`button ghost icon msg-icon ${showClaim ? "active" : ""}`} aria-label={MAIL.claim} title={MAIL.claim} aria-expanded={showClaim} onClick={() => setShowClaim((v) => !v)}>
+              <button type="button" className={`button ghost icon msg-icon ${showClaim ? "active" : ""}`} aria-label={t("mail.claim")} title={t("mail.claim")} aria-expanded={showClaim} onClick={() => setShowClaim((v) => !v)}>
                 <AtSign size={16} />
               </button>
             )}
-            <button type="button" className="button ghost icon msg-icon" aria-label={MAIL.settings} title={MAIL.settings} onClick={() => setView("settings")}>
+            <button type="button" className="button ghost icon msg-icon" aria-label={t("mail.settings")} title={t("mail.settings")} onClick={() => setView("settings")}>
               <Settings size={16} />
             </button>
-            <button type="button" className="button ghost icon msg-icon" aria-label={MAIL.refresh} title={MAIL.refresh} onClick={() => void loadFolder()}>
+            <button type="button" className="button ghost icon msg-icon" aria-label={t("mail.refresh")} title={t("mail.refresh")} onClick={() => void loadFolder()}>
               <RefreshCw size={16} />
             </button>
             <button
@@ -213,13 +216,13 @@ function Mail({ wallet, identity }: { wallet: UnifiedWallet; identity: WalletWit
                 setView("compose");
               }}
             >
-              <Plus size={15} /> {MAIL.compose}
+              <Plus size={15} /> {t("mail.compose")}
             </button>
           </div>
         </div>
         {showClaim && !myName && (
           <div className="mail-claim">
-            <p className="msg-hint">{fmt(MAIL.claimHint, { a: MAIL_DOMAIN, b: MAIL_DOMAIN_ALT })}</p>
+            <p className="msg-hint">{t("mail.claimHint", { a: MAIL_DOMAIN, b: MAIL_DOMAIN_ALT })}</p>
             <MailNameEditor
               wallet={wallet}
               allowChange={false}
@@ -233,9 +236,9 @@ function Mail({ wallet, identity }: { wallet: UnifiedWallet; identity: WalletWit
         <div className="msg-tabs mail-tabs" role="tablist">
           {(
             [
-              ["inbox", MAIL.inbox, Inbox],
-              ["sent", MAIL.sent, SendHorizonal],
-              ["trash", MAIL.trash, Trash2],
+              ["inbox", t("mail.inbox"), Inbox],
+              ["sent", t("mail.sent"), SendHorizonal],
+              ["trash", t("mail.trash"), Trash2],
             ] as const
           ).map(([id, label, Icon]) => (
             <button key={id} type="button" role="tab" aria-selected={folder === id} className={folder === id ? "active" : ""} onClick={() => setFolder(id)}>
@@ -247,34 +250,34 @@ function Mail({ wallet, identity }: { wallet: UnifiedWallet; identity: WalletWit
         <div className="mail-list">
           {loading ? (
             <div className="msg-center">
-              <Loader2 size={20} className="spin" aria-label={S.common.loading} />
+              <Loader2 size={20} className="spin" aria-label={t("common.loading")} />
             </div>
           ) : items.length === 0 ? (
             <div className="msg-center msg-empty">
               {folder === "trash" ? <Trash2 size={32} /> : folder === "sent" ? <SendHorizonal size={32} /> : <MailOpen size={32} />}
-              <strong>{MAIL.empty[`${folder}Title`]}</strong>
+              <strong>{t(`mail.empty.${folder}Title`)}</strong>
               <span>
                 {folder === "inbox"
                   ? myName
-                    ? fmt(MAIL.empty.inboxNamed, { a: mailAddresses(myName)[0], b: mailAddresses(myName)[1] })
-                    : fmt(MAIL.empty.inboxClaim, { a: MAIL_DOMAIN, b: MAIL_DOMAIN_ALT })
-                  : MAIL.empty[`${folder}Hint`]}
+                    ? t("mail.empty.inboxNamed", { a: mailAddresses(myName)[0], b: mailAddresses(myName)[1] })
+                    : t("mail.empty.inboxClaim", { a: MAIL_DOMAIN, b: MAIL_DOMAIN_ALT })
+                  : t(`mail.empty.${folder}Hint`)}
               </span>
             </div>
           ) : (
             <ul className="msg-rows">
-              {threads.map((t) => (
-                <li key={t.rootId} className={`msg-row ${t.hasUnread ? "unread" : ""}`}>
-                  <button type="button" className="msg-row-main with-avatar" onClick={() => void open(t.latestItem)}>
-                    <PeerAvatar id={t.latestItem.message.fromWalletId} name={t.latestItem.message.senderName} size={40} />
+              {threads.map((th) => (
+                <li key={th.rootId} className={`msg-row ${th.hasUnread ? "unread" : ""}`}>
+                  <button type="button" className="msg-row-main with-avatar" onClick={() => void open(th.latestItem)}>
+                    <PeerAvatar id={th.latestItem.message.fromWalletId} name={th.latestItem.message.senderName} size={40} />
                     <span className="msg-row-text">
                       <span className="msg-row-top">
-                        <span className="msg-row-name">{t.participants.join(", ")}</span>
-                        {t.messages.length > 1 && <small className="muted">({t.messages.length})</small>}
-                        <span className="msg-row-time">{formatMailDate(t.latestDate)}</span>
+                        <span className="msg-row-name">{th.participants.join(", ")}</span>
+                        {th.messages.length > 1 && <small className="muted">({th.messages.length})</small>}
+                        <span className="msg-row-time">{formatMailDate(th.latestDate)}</span>
                       </span>
-                      <span className="mail-subject">{t.subject}</span>
-                      <span className="msg-row-preview">{t.latestItem.message.body?.slice(0, 100) || ""}</span>
+                      <span className="mail-subject">{th.subject}</span>
+                      <span className="msg-row-preview">{th.latestItem.message.body?.slice(0, 100) || ""}</span>
                     </span>
                   </button>
                 </li>
@@ -293,9 +296,10 @@ function Mail({ wallet, identity }: { wallet: UnifiedWallet; identity: WalletWit
 }
 
 function ViewHead({ onBack, children }: { onBack: () => void; children: ReactNode }) {
+  const { t } = useTranslation("messenger");
   return (
     <div className="mail-view-head">
-      <button type="button" className="button ghost icon msg-icon" aria-label={S.common.back} onClick={onBack}>
+      <button type="button" className="button ghost icon msg-icon" aria-label={t("common.back")} onClick={onBack}>
         <ArrowLeft size={18} />
       </button>
       {children}
@@ -304,15 +308,16 @@ function ViewHead({ onBack, children }: { onBack: () => void; children: ReactNod
 }
 
 function Attachment({ a, compact }: { a: MailAttachment; compact?: boolean }) {
+  const { t } = useTranslation("messenger");
   const href = `data:${a.type};base64,${a.data}`;
   return (
     <div className="mail-attachment">
       <div className="msg-split">
         <span className="mail-attachment-name">
-          <Paperclip size={14} /> {a.name} <small className="muted">{(a.size / 1024).toFixed(1)} KB</small>
+          <Paperclip size={14} /> {a.name} <small className="muted">{fmtNum(a.size / 1024, 1, { minimumFractionDigits: 1 })} KB</small>
         </span>
         <a className="button ghost small" href={href} download={a.name}>
-          <Download size={14} /> {!compact && MAIL.download}
+          <Download size={14} /> {!compact && t("mail.download")}
         </a>
       </div>
       {a.type.startsWith("image/") && <img src={href} alt={a.name} />}
@@ -326,6 +331,7 @@ function MailBody({ message }: { message: MailMessage }) {
 }
 
 function ThreadMessage({ item, isLatest, defaultExpanded }: { item: MailItem; isLatest: boolean; defaultExpanded: boolean }) {
+  const { t } = useTranslation("messenger");
   const [expanded, setExpanded] = useState(defaultExpanded);
   const m = item.message;
   if (!expanded)
@@ -333,7 +339,7 @@ function ThreadMessage({ item, isLatest, defaultExpanded }: { item: MailItem; is
       <button type="button" className="mail-thread-collapsed" onClick={() => setExpanded(true)}>
         <PeerAvatar id={m.fromWalletId} name={m.senderName} size={32} />
         <span>
-          <strong>{m.senderName || S.common.unknown}</strong> <small className="muted">{formatMailDate(m.createdAt)}</small>
+          <strong>{m.senderName || t("common.unknown")}</strong> <small className="muted">{formatMailDate(m.createdAt)}</small>
           <small className="muted block">{m.body?.slice(0, 100)}</small>
         </span>
       </button>
@@ -343,12 +349,12 @@ function ThreadMessage({ item, isLatest, defaultExpanded }: { item: MailItem; is
       <header>
         <PeerAvatar id={m.fromWalletId} name={m.senderName} size={32} />
         <span className="grow">
-          <strong>{m.senderName || S.common.unknown}</strong> <SignatureBadge valid={m.signatureValid} />
+          <strong>{m.senderName || t("common.unknown")}</strong> <SignatureBadge valid={m.signatureValid} />
           <small className="muted block">{formatMailDate(m.createdAt)}</small>
         </span>
         {!isLatest && (
           <button type="button" className="button ghost small" onClick={() => setExpanded(false)}>
-            {MAIL.collapse}
+            {t("mail.collapse")}
           </button>
         )}
       </header>
@@ -373,49 +379,50 @@ function ReadView({
   onBack: () => void;
   onReply: () => void;
 }) {
+  const { t } = useTranslation("messenger");
   const m = item.message;
   const trash = async () => {
     try {
       if (folder === "trash") {
         await deleteMail(identity, m.id);
-        toast.success(MAIL.deletedForever);
+        toast.success(t("mail.deletedForever"));
       } else {
         await moveMail(identity, m.id, "trash");
-        toast.success(MAIL.moved);
+        toast.success(t("mail.moved"));
       }
       onBack();
     } catch {
-      toast.error(MAIL.actionFailed);
+      toast.error(t("mail.actionFailed"));
     }
   };
   const restore = async () => {
     try {
       await moveMail(identity, m.id, "inbox");
-      toast.success(MAIL.restored);
+      toast.success(t("mail.restored"));
       onBack();
     } catch {
-      toast.error(MAIL.actionFailed);
+      toast.error(t("mail.actionFailed"));
     }
   };
   const hasThread = thread.length > 1;
-  const sigText = m.signatureValid === true ? MAIL.sigValid : m.signatureValid === false ? MAIL.sigInvalid : MAIL.sigUnknown;
+  const sigText = m.signatureValid === true ? t("mail.sigValid") : m.signatureValid === false ? t("mail.sigInvalid") : t("mail.sigUnknown");
   return (
     <div className="mail-view">
       <ViewHead onBack={onBack}>
         <span className="grow mail-view-title">
-          <strong>{m.subject || MAIL.noSubject}</strong>
-          {hasThread && <small className="muted block">{plural(thread.length, MAIL.thread_one, MAIL.thread_other)}</small>}
+          <strong>{m.subject || t("mail.noSubject")}</strong>
+          {hasThread && <small className="muted block">{t("mail.thread", { count: thread.length })}</small>}
         </span>
         {folder === "trash" && (
-          <button type="button" className="button ghost icon msg-icon" aria-label={MAIL.restore} title={MAIL.restore} onClick={() => void restore()}>
+          <button type="button" className="button ghost icon msg-icon" aria-label={t("mail.restore")} title={t("mail.restore")} onClick={() => void restore()}>
             <Inbox size={16} />
           </button>
         )}
         <button
           type="button"
           className="button ghost icon msg-icon"
-          aria-label={folder === "trash" ? MAIL.deleteForever : MAIL.toTrash}
-          title={folder === "trash" ? MAIL.deleteForever : MAIL.toTrash}
+          aria-label={folder === "trash" ? t("mail.deleteForever") : t("mail.toTrash")}
+          title={folder === "trash" ? t("mail.deleteForever") : t("mail.toTrash")}
           onClick={() => void trash()}
         >
           <Trash2 size={16} />
@@ -423,17 +430,17 @@ function ReadView({
       </ViewHead>
       <div className="mail-scroll">
         {hasThread ? (
-          thread.map((t, i) => <ThreadMessage key={t.message.id} item={t} isLatest={t.message.id === m.id} defaultExpanded={i >= thread.length - 2} />)
+          thread.map((it, i) => <ThreadMessage key={it.message.id} item={it} isLatest={it.message.id === m.id} defaultExpanded={i >= thread.length - 2} />)
         ) : (
           <article className="mail-message latest">
             <header>
               <PeerAvatar id={m.fromWalletId} name={m.senderName} size={40} />
               <span className="grow">
-                <strong>{m.senderName || S.common.unknown}</strong>
+                <strong>{m.senderName || t("common.unknown")}</strong>
                 <small className="muted block">{formatMailDate(m.createdAt)}</small>
               </span>
             </header>
-            <h2 className="mail-subject-big">{m.subject || MAIL.noSubject}</h2>
+            <h2 className="mail-subject-big">{m.subject || t("mail.noSubject")}</h2>
             <MailBody message={m} />
             {m.attachmentData && <Attachment a={m.attachmentData} />}
           </article>
@@ -442,13 +449,13 @@ function ReadView({
           <SignatureBadge valid={m.signatureValid} /> {sigText}
         </p>
         <p className="msg-hint">
-          <Lock size={11} aria-hidden="true" /> {MAIL.e2e}
+          <Lock size={11} aria-hidden="true" /> {t("mail.e2e")}
         </p>
       </div>
       {folder !== "trash" && (
         <div className="mail-foot">
           <button type="button" className="button outline full" onClick={onReply}>
-            <Reply size={16} /> {MAIL.reply}
+            <Reply size={16} /> {t("mail.reply")}
           </button>
         </div>
       )}
@@ -469,6 +476,7 @@ function ComposeView({
   settings: MailSettings;
   onBack: () => void;
 }) {
+  const { t } = useTranslation("messenger");
   const [to, setTo] = useState(replyTo?.message.senderName || replyTo?.message.fromWalletId || "");
   const [subject, setSubject] = useState(replyTo ? `Re: ${replyTo.message.subject || ""}` : "");
   const [body, setBody] = useState(() => signatureBlock(settings));
@@ -483,7 +491,7 @@ function ComposeView({
     if (!to.trim()) return;
     setResolving(true);
     let cancelled = false;
-    const t = window.setTimeout(async () => {
+    const timer = window.setTimeout(async () => {
       try {
         const id = await resolveRecipient(to);
         if (!cancelled) setResolved(id);
@@ -495,7 +503,7 @@ function ComposeView({
     }, 500);
     return () => {
       cancelled = true;
-      window.clearTimeout(t);
+      window.clearTimeout(timer);
     };
   }, [to]);
 
@@ -506,14 +514,14 @@ function ComposeView({
     try {
       const recipientId = await resolveRecipient(to);
       if (!recipientId) {
-        setError(fmt(MAIL.unresolved, { to, a: MAIL_DOMAIN, b: MAIL_DOMAIN_ALT }));
+        setError(t("mail.unresolved", { to, a: MAIL_DOMAIN, b: MAIL_DOMAIN_ALT }));
         return;
       }
       await sendMail(identity, [recipientId], subject, body || "(empty)", replyTo?.message.id, attachment ?? undefined);
-      toast.success(MAIL.sentToast);
+      toast.success(t("mail.sentToast"));
       onBack();
     } catch (e) {
-      setError(e instanceof Error ? e.message : MAIL.sendFailed);
+      setError(e instanceof Error ? e.message : t("mail.sendFailed"));
     } finally {
       setSending(false);
     }
@@ -528,30 +536,30 @@ function ComposeView({
       }}
     >
       <ViewHead onBack={onBack}>
-        <strong className="grow">{MAIL.compose}</strong>
-        {myName && <small className="muted mono mail-from">{fmt(MAIL.from, { addr: `${myName}@${MAIL_DOMAIN}` })}</small>}
+        <strong className="grow">{t("mail.compose")}</strong>
+        {myName && <small className="muted mono mail-from">{t("mail.from", { addr: `${myName}@${MAIL_DOMAIN}` })}</small>}
       </ViewHead>
       <div className="mail-scroll mail-form">
         <label className="field">
-          {MAIL.to}
-          <input className="input" value={to} placeholder={fmt(MAIL.toPlaceholder, { a: MAIL_DOMAIN, b: MAIL_DOMAIN_ALT })} onChange={(e) => setTo(e.target.value)} autoComplete="off" spellCheck={false} />
+          {t("mail.to")}
+          <input className="input" value={to} placeholder={t("mail.toPlaceholder", { a: MAIL_DOMAIN, b: MAIL_DOMAIN_ALT })} onChange={(e) => setTo(e.target.value)} autoComplete="off" spellCheck={false} />
         </label>
         {to.trim() && (
           <p className={`msg-hint ${resolved ? "ok" : ""}`} role="status">
-            {resolved ? fmt(MAIL.resolved, { id: resolved.slice(0, 20) }) : resolving ? MAIL.resolving : fmt(MAIL.unresolved, { to, a: MAIL_DOMAIN, b: MAIL_DOMAIN_ALT })}
+            {resolved ? t("mail.resolved", { id: resolved.slice(0, 20) }) : resolving ? t("mail.resolving") : t("mail.unresolved", { to, a: MAIL_DOMAIN, b: MAIL_DOMAIN_ALT })}
           </p>
         )}
         <label className="field">
-          {MAIL.subject}
+          {t("mail.subject")}
           <input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} />
         </label>
         <label className="field">
-          {MAIL.message}
-          <textarea className="input mail-textarea" rows={10} value={body} placeholder={MAIL.messagePlaceholder} onChange={(e) => setBody(e.target.value)} />
+          {t("mail.message")}
+          <textarea className="input mail-textarea" rows={10} value={body} placeholder={t("mail.messagePlaceholder")} onChange={(e) => setBody(e.target.value)} />
         </label>
         <div className="mail-attach-row">
           <label className="button outline small">
-            <Paperclip size={14} /> {MAIL.attach}
+            <Paperclip size={14} /> {t("mail.attach")}
             <input
               type="file"
               hidden
@@ -559,7 +567,7 @@ function ComposeView({
                 const file = e.target.files?.[0];
                 e.target.value = "";
                 if (!file) return;
-                if (file.size > MAX_ATTACHMENT) return setError(MAIL.attachTooLarge);
+                if (file.size > MAX_ATTACHMENT) return setError(t("mail.attachTooLarge"));
                 const reader = new FileReader();
                 reader.onload = () => {
                   const base64 = String(reader.result).split(",")[1] ?? "";
@@ -570,14 +578,14 @@ function ComposeView({
               }}
             />
           </label>
-          <small className="muted">{MAIL.attachHint}</small>
+          <small className="muted">{t("mail.attachHint")}</small>
         </div>
         {attachment && (
           <div className="mail-staged">
             {attachment.type.startsWith("image/") ? <ImageIcon size={15} /> : <FileText size={15} />}
             <span className="grow">{attachment.name}</span>
-            <small className="muted">{(attachment.size / 1024).toFixed(1)} KB</small>
-            <button type="button" className="button ghost icon msg-icon" aria-label={MAIL.removeAttachment} onClick={() => setAttachment(null)}>
+            <small className="muted">{fmtNum(attachment.size / 1024, 1, { minimumFractionDigits: 1 })} KB</small>
+            <button type="button" className="button ghost icon msg-icon" aria-label={t("mail.removeAttachment")} onClick={() => setAttachment(null)}>
               <X size={14} />
             </button>
           </div>
@@ -590,7 +598,7 @@ function ComposeView({
       </div>
       <div className="mail-foot">
         <button type="submit" className="button full" disabled={!to.trim() || !subject.trim() || sending}>
-          {sending ? <Loader2 size={16} className="spin" /> : <Send size={16} />} {sending ? MAIL.sending : MAIL.send}
+          {sending ? <Loader2 size={16} className="spin" /> : <Send size={16} />} {sending ? t("mail.sending") : t("mail.send")}
         </button>
       </div>
     </form>
@@ -598,30 +606,31 @@ function ComposeView({
 }
 
 function SettingsView({ settings, onBack, onSave }: { settings: MailSettings; onBack: () => void; onSave: (s: MailSettings) => void }) {
+  const { t } = useTranslation("messenger");
   const [sig, setSig] = useState(settings.signature);
   const [enabled, setEnabled] = useState(settings.signatureEnabled);
   return (
     <div className="mail-view">
       <ViewHead onBack={onBack}>
-        <strong className="grow">{MAIL.settings}</strong>
+        <strong className="grow">{t("mail.settings")}</strong>
       </ViewHead>
       <div className="mail-scroll mail-form">
         <div className="msg-split">
-          <strong>{MAIL.signature}</strong>
-          <Toggle checked={enabled} label={MAIL.signature} onChange={setEnabled} />
+          <strong>{t("mail.signature")}</strong>
+          <Toggle checked={enabled} label={t("mail.signature")} onChange={setEnabled} />
         </div>
-        <p className="msg-hint">{MAIL.signatureHint}</p>
-        <textarea className="input mail-textarea" rows={5} value={sig} disabled={!enabled} placeholder={MAIL.signaturePlaceholder} aria-label={MAIL.signature} onChange={(e) => setSig(e.target.value)} />
+        <p className="msg-hint">{t("mail.signatureHint")}</p>
+        <textarea className="input mail-textarea" rows={5} value={sig} disabled={!enabled} placeholder={t("mail.signaturePlaceholder")} aria-label={t("mail.signature")} onChange={(e) => setSig(e.target.value)} />
         {enabled && sig.trim() && (
           <div className="mail-sig-preview">
-            <small className="muted">{MAIL.preview}</small>
+            <small className="muted">{t("mail.preview")}</small>
             <pre>{`--\n${sig.trim()}`}</pre>
           </div>
         )}
       </div>
       <div className="mail-foot">
         <button type="button" className="button full" onClick={() => onSave({ signature: sig, signatureEnabled: enabled })}>
-          {MAIL.saveSettings}
+          {t("mail.saveSettings")}
         </button>
       </div>
     </div>

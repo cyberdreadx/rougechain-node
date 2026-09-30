@@ -3,7 +3,7 @@ import { Check, Copy } from "lucide-react";
 import { Button } from "@rougechain/ui";
 import { useChain } from "../explorer/chain";
 import { PageHeading } from "../explorer/ui";
-import { common } from "./strings";
+import { useTranslation } from "react-i18next";
 import "./pages.css";
 
 /** Per-route title/description (SPA-safe: restored on unmount), as apps/web's useRouteSeo. */
@@ -49,6 +49,13 @@ export function PageFrame({
   );
 }
 
+/** "Mainnet" / "Testnet" / "Devnet" (core's getNetworkLabel()) in the current language. */
+export function useNetworkLabel() {
+  const { t } = useTranslation("pages");
+  return (label: string) =>
+    label === "Mainnet" ? t("common.mainnet") : label === "Testnet" ? t("common.testnet") : label === "Devnet" ? t("common.devnet") : label;
+}
+
 /** Testnet banner (nothing on mainnet). */
 export function TestnetNotice({ children }: { children: ReactNode }) {
   const { network } = useChain();
@@ -61,7 +68,8 @@ export function TestnetNotice({ children }: { children: ReactNode }) {
 }
 
 /** A command / config block with a copy button; the text stays selectable if the clipboard fails. */
-export function CopyCode({ text, label = "command" }: { text: string; label?: string }) {
+export function CopyCode({ text, label }: { text: string; label?: string }) {
+  const { t } = useTranslation("pages");
   const [copied, setCopied] = useState(false);
   return (
     <div className="rc-code">
@@ -70,7 +78,7 @@ export function CopyCode({ text, label = "command" }: { text: string; label?: st
       </pre>
       <Button
         variant="ghost icon small"
-        aria-label={`${common.copy} ${label}`}
+        aria-label={t("common.copyWhat", { what: label ?? t("common.command") })}
         onClick={() => {
           navigator.clipboard
             ?.writeText(text)

@@ -5,27 +5,29 @@
  */
 import { isRougeAddress } from "@rougechain/core/address";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@rougechain/core/network";
-import { BASE_TRANSFER_FEE, type WalletBalance } from "@rougechain/core/pqc-wallet";
+import { WALLET_TRANSFER_FEE, type WalletBalance } from "@rougechain/core/pqc-wallet";
 import { secureTransfer } from "@rougechain/core/secure-api";
 import { formatTokenAmount, humanToRaw, l1TokenDecimals, rawToHuman } from "@rougechain/core/token-decimals";
+import i18n from "../i18n";
 
 // ML-DSA-65 public key = 1952 bytes = 3904 hex chars (small tolerance, as apps/web).
 const ML_DSA65_PUBKEY_HEX_LEN = 3904;
 const MIN_ADDRESS_LEN = ML_DSA65_PUBKEY_HEX_LEN - 100;
-/** XRGE is fractional on-chain (the fee is 0.1 XRGE) but has no daemon decimals; cap input precision. */
-const XRGE_MAX_FRACTION_DIGITS = 8;
+/** The node stores a wallet transfer amount as a whole number (v2_binding: `amount as u64`), so XRGE
+ *  transfers are whole XRGE: a fraction would silently be dropped on-chain. */
+const XRGE_MAX_FRACTION_DIGITS = 0;
 
 export type RecipientCheck = { valid: true; address: string; isRouge: boolean } | { valid: false; error: string };
 
 /** Accepts a rouge1… address or a hex ML-DSA-65 public key (optionally `xrge:`-prefixed). */
 export function parseRecipient(input: string): RecipientCheck {
   const trimmed = input.trim();
-  if (!trimmed) return { valid: false, error: "Recipient address required" };
+  if (!trimmed) return { valid: false, error: i18n.t("wallet:send.errors.recipientRequired") };
   if (isRougeAddress(trimmed)) return { valid: true, address: trimmed, isRouge: true };
   const raw = /^xrge:/i.test(trimmed) ? trimmed.slice(5) : trimmed;
-  if (!/^[A-Fa-f0-9]+$/.test(raw)) return { valid: false, error: "Invalid address — use a rouge1… address or a hex public key" };
+  if (!/^[A-Fa-f0-9]+$/.test(raw)) return { valid: false, error: i18n.t("wallet:send.errors.invalidAddress") };
   if (raw.length < MIN_ADDRESS_LEN)
-    return { valid: false, error: `Address too short (${raw.length} chars) — use a rouge1… address or the full public key` };
+    return { valid: false, error: i18n.t("wallet:send.errors.addressTooShort", { length: raw.length }) };
   return { valid: true, address: raw, isRouge: false };
 }
 
@@ -41,23 +43,23 @@ export type AmountCheck = { valid: true; human: number; raw: number } | { valid:
 /** Human amount string → raw on-chain units, with decimals / balance / fee checks. */
 export function parseAmount(input: string, symbol: string, balances: WalletBalance[]): AmountCheck {
   const s = input.trim();
-  if (!s) return { valid: false, error: "Enter an amount" };
-  if (!/^(\d+\.?\d*|\.\d+)$/.test(s)) return { valid: false, error: "Invalid amount" };
+  if (!s) return { valid: false, error: i18n.t("wallet:send.errors.enterAmount") };
+  if (!/^(\d+\.?\d*|\.\d+)$/.test(s)) return { valid: false, error: i18n.t("wallet:send.errors.invalidAmount") };
   const frac = s.includes(".") ? s.split(".")[1].length : 0;
   const maxFrac = maxFractionDigits(symbol);
   if (frac > maxFrac)
-    return { valid: false, error: maxFrac === 0 ? `${symbol} amounts must be whole numbers` : `${symbol} supports at most ${maxFrac} decimal places` };
+    return { valid: false, error: maxFrac === 0 ? i18n.t("wallet:send.errors.wholeNumbers", { symbol }) : i18n.t("wallet:send.errors.maxDecimals", { symbol, count: maxFrac }) };
   const human = Number(s);
-  if (!Number.isFinite(human) || human <= 0) return { valid: false, error: "Amount must be greater than zero" };
+  if (!Number.isFinite(human) || human <= 0) return { valid: false, error: i18n.t("wallet:send.errors.amountPositive") };
   const raw = l1TokenDecimals(symbol) > 0 ? humanToRaw(human, symbol) : human;
-  if (!Number.isSafeInteger(Math.ceil(raw))) return { valid: false, error: "Amount is too large" };
+  if (!Number.isSafeInteger(Math.ceil(raw))) return { valid: false, error: i18n.t("wallet:send.errors.amountTooLarge") };
 
   const balanceRaw = balances.find((b) => b.symbol === symbol)?.balance ?? 0;
   if (raw > balanceRaw)
-    return { valid: false, error: `Insufficient ${symbol} balance. You have ${formatTokenAmount(balanceRaw, symbol)} ${symbol}` };
+    return { valid: false, error: i18n.t("wallet:send.errors.insufficientBalance", { symbol, balance: formatTokenAmount(balanceRaw, symbol) }) };
   const xrge = balances.find((b) => b.symbol === "XRGE")?.balance ?? 0;
-  const xrgeNeeded = symbol === "XRGE" ? raw + BASE_TRANSFER_FEE : BASE_TRANSFER_FEE;
-  if (xrgeNeeded > xrge) return { valid: false, error: `Insufficient XRGE for the fee. Sending needs ${BASE_TRANSFER_FEE} XRGE` };
+  const xrgeNeeded = symbol === "XRGE" ? raw + WALLET_TRANSFER_FEE : WALLET_TRANSFER_FEE;
+  if (xrgeNeeded > xrge) return { valid: false, error: i18n.t("wallet:send.errors.insufficientFee", { fee: WALLET_TRANSFER_FEE }) };
   return { valid: true, human, raw };
 }
 
@@ -68,9 +70,9 @@ export async function resolveRecipient(address: string): Promise<string> {
     const res = await fetch(`${getCoreApiBaseUrl()}/resolve/${encodeURIComponent(address)}`, { headers: getCoreApiHeaders() });
     data = await res.json();
   } catch {
-    throw new Error("Failed to resolve address — check your connection");
+    throw new Error(i18n.t("wallet:send.errors.resolveFailed"));
   }
-  if (!data?.success || !data.publicKey) throw new Error("Could not resolve address — recipient not found on chain");
+  if (!data?.success || !data.publicKey) throw new Error(i18n.t("wallet:send.errors.recipientNotFound"));
   return data.publicKey;
 }
 
@@ -83,23 +85,23 @@ export interface SendRequest {
 
 /** Sign (core) + submit. Throws with the node's message on failure. */
 export async function submitTransfer(req: SendRequest): Promise<void> {
-  if (req.recipientPublicKey === req.wallet.signingPublicKey) throw new Error("Cannot send to your own address");
+  if (req.recipientPublicKey === req.wallet.signingPublicKey) throw new Error(i18n.t("wallet:send.errors.ownAddress"));
   const result = await secureTransfer(
     req.wallet.signingPublicKey,
     req.wallet.signingPrivateKey,
     req.recipientPublicKey,
     req.raw,
-    BASE_TRANSFER_FEE,
+    WALLET_TRANSFER_FEE,
     req.symbol,
   );
-  if (!result.success) throw new Error(result.error || "Transfer failed");
+  if (!result.success) throw new Error(result.error || i18n.t("wallet:send.errors.transferFailed"));
 }
 
 export function displayAmount(raw: number, symbol: string): string {
   return l1TokenDecimals(symbol) > 0 ? formatTokenAmount(raw, symbol) : raw.toLocaleString(undefined, { maximumFractionDigits: 8 });
 }
 
-export { rawToHuman, BASE_TRANSFER_FEE };
+export { rawToHuman, WALLET_TRANSFER_FEE };
 
 /**
  * Testnet faucets — the same unsigned endpoints apps/web's Wallet page calls
@@ -118,7 +120,7 @@ export async function claimFaucet(publicKey: string, token?: "qUSDC" | "qETH"): 
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
-    throw new Error(res.ok ? "Invalid faucet response" : `Faucet request failed (${res.status})`);
+    throw new Error(res.ok ? i18n.t("wallet:faucet.invalidResponse") : i18n.t("wallet:faucet.requestFailed", { status: res.status }));
   }
-  if (!res.ok || !data?.success) throw new Error(data?.error || `Faucet request failed (${res.status})`);
+  if (!res.ok || !data?.success) throw new Error(data?.error || i18n.t("wallet:faucet.requestFailed", { status: res.status }));
 }

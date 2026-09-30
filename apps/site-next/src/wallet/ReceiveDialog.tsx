@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Dialog } from "@rougechain/ui";
 import { toDataURL } from "qrcode";
+import { useTranslation } from "react-i18next";
 import { CopyText } from "./parts";
 
 /** QR image (data URL) of `value`, generated locally. */
@@ -34,18 +35,19 @@ export function ReceiveDialog({
   publicKey: string;
   networkLabel: string;
 }) {
+  const { t } = useTranslation("wallet");
   const qr = useQr(open ? address : null);
   return (
-    <Dialog open={open} onClose={onClose} title="Receive">
+    <Dialog open={open} onClose={onClose} title={t("receive.title")}>
       <div className="receive-body">
         <div className="qr-frame">
-          {qr ? <img src={qr} alt="QR code of your rouge1 address" width={220} height={220} /> : <span className="muted">Generating…</span>}
+          {qr ? <img src={qr} alt={t("receive.qrAlt")} width={220} height={220} /> : <span className="muted">{t("receive.generating")}</span>}
         </div>
-        <p className="form-hint">Your {networkLabel} address. Share it to receive XRGE and RougeChain tokens.</p>
-        {address && <CopyText value={address} label="address" />}
+        <p className="form-hint">{t("receive.hint", { network: networkLabel })}</p>
+        {address && <CopyText value={address} label={t("copy.address")} />}
         <details className="pubkey-details">
-          <summary>Public key (legacy senders)</summary>
-          <CopyText value={publicKey} label="public key" display={`${publicKey.slice(0, 24)}…${publicKey.slice(-12)}`} />
+          <summary>{t("receive.publicKey")}</summary>
+          <CopyText value={publicKey} label={t("copy.publicKey")} display={`${publicKey.slice(0, 24)}…${publicKey.slice(-12)}`} />
         </details>
       </div>
     </Dialog>

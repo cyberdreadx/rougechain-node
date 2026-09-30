@@ -5,7 +5,7 @@
 import { isNoteToSelf } from "@rougechain/core/messenger-envelope";
 import { classifyConversation, isGroupConversation, otherMembers, type ParticipantLike } from "@rougechain/core/messenger-prefs";
 import type { Conversation, Wallet } from "@rougechain/core/pqc-messenger";
-import { S, plural } from "./strings";
+import i18n from "../i18n";
 
 export function idsOf(w: { id?: string; signingPublicKey?: string; encryptionPublicKey?: string } | null | undefined): string[] {
   if (!w) return [];
@@ -41,10 +41,10 @@ export function conversationTitle(
   myIds: Set<string>,
   opts: { myName?: string; nickname?: (p: ParticipantLike) => string | null } = {},
 ): string {
-  if (isSelfChat(c, myIds)) return S.list.noteToSelf;
+  if (isSelfChat(c, myIds)) return i18n.t("messenger:list.noteToSelf");
   if (isGroupConversation(c, myIds)) {
     const n = otherMembers(c, myIds).length + 1;
-    return c.name || plural(n, S.group.untitled_one, S.group.untitled_other);
+    return c.name || i18n.t("messenger:group.untitled", { count: n });
   }
   const other = otherParticipant(c, myIds, opts.myName);
   if (other) {
@@ -53,7 +53,7 @@ export function conversationTitle(
     return GENERIC_NAMES.has(other.displayName || "") ? "" : other.displayName || "";
   }
   if (c.name && c.name !== opts.myName) return c.name;
-  return c.isGroup ? c.name || "Group" : "";
+  return c.isGroup ? c.name || i18n.t("messenger:group.newShort") : "";
 }
 
 /** Primary vs Requests split (hidden = 1:1 with a blocked peer). */

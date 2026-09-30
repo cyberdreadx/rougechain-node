@@ -5,6 +5,7 @@
  * envelopes, media, GIFs, spoilers, self-destruct, search, block / mute and group info.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
   Ban,
@@ -74,6 +75,7 @@ import {
 } from "@rougechain/core/pqc-messenger";
 import { isV2Package } from "@rougechain/core/messenger-crypto-v2";
 import { loadNotificationSettings, playNotificationSound } from "@rougechain/core/notifications";
+import { fmtDateTime, fmtInt } from "../i18n/format";
 import { useRougeAddress } from "../wallet/hooks";
 import { toast } from "../wallet/toast";
 import { Toggle } from "../wallet/parts";
@@ -100,7 +102,6 @@ import { useMessengerPrefs, useNicknames } from "./hooks";
 import { conversationTitle, isBotConversation, isSelfChat } from "./model";
 import { GifPicker, RichBody } from "./RichBody";
 import { GroupInfoSheet } from "./Sheets";
-import { S, fmt, plural } from "./strings";
 import { subscribeNewMessage, isMessengerLive } from "./ws";
 import { PeerAvatar, Sheet, StackedAvatars } from "./ui";
 
@@ -128,6 +129,7 @@ export function mergeMessages(prev: Message[], next: Message[]): Message[] {
 }
 
 export function ChatView({ conversation, identity, contacts, isRequest, onBack, onBlocked, onConversationChanged, onAccepted }: ChatViewProps) {
+  const { t } = useTranslation("messenger");
   const prefs = useMessengerPrefs();
   const { nicknameFor, setNickname } = useNicknames();
   const myIds = useMemo(() => new Set([identity.id, identity.signingPublicKey, identity.encryptionPublicKey].filter(Boolean)), [identity]);
@@ -143,7 +145,7 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
   const isRecipientBot = !!recipient && !isSelf && (isDemoBot(recipient.id) || (hasBot && !!recipient.id?.startsWith("bot-")));
   const recipientKeys = recipient ? walletKeys(recipient) : [];
   const blocked = !isGroup && recipientKeys.length > 0 && isAnyBlocked(recipientKeys, prefs.blocked);
-  const title = conversationTitle(conversation, myIds, { myName: identity.displayName, nickname: (p) => nicknameFor(p.signingPublicKey, p.id) }) || recipient?.displayName || S.common.unknown;
+  const title = conversationTitle(conversation, myIds, { myName: identity.displayName, nickname: (p) => nicknameFor(p.signingPublicKey, p.id) }) || recipient?.displayName || t("common.unknown");
   const recipientMainId = recipient?.id || recipient?.signingPublicKey || "";
   const { display: recipientAddr } = useRougeAddress(recipient?.signingPublicKey || recipientMainId || null);
 
@@ -190,10 +192,10 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
     let cancelled = false;
     (async () => {
       try {
-        const t = await checkTofu(recipient);
+        const tofu = await checkTofu(recipient);
         const fp = await keyFingerprint(recipientSigning);
         if (!cancelled) {
-          setTofuChanged(t.changed);
+          setTofuChanged(tofu.changed);
           setFingerprint(fp);
         }
       } catch {
@@ -328,11 +330,11 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
         }
         list = [...new Set(list)];
         if (list.length === 0) {
-          toast.error(S.group.noKeys);
+          toast.error(t("group.noKeys"));
           return;
         }
         if (list.length < members.length)
-          toast.info(plural(members.length - list.length, S.group.someKeysMissing_one, S.group.someKeysMissing_other));
+          toast.info(t("group.someKeysMissing", { count: members.length - list.length }));
         keys = list;
       } else {
         let key: string | undefined = recipient.encryptionPublicKey;
@@ -347,7 +349,7 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
           }
         }
         if (!key) {
-          toast.error(S.chat.noKey);
+          toast.error(t("chat.noKey"));
           return;
         }
         keys = key;
@@ -366,7 +368,7 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
       setMessages((prev) => applyEnvelopes([...prev, msg]));
       if (isRecipientBot) void botReply(plaintext);
     } catch (e) {
-      toast.error(S.chat.sendFailed, { description: e instanceof Error ? e.message : undefined });
+      toast.error(t("chat.sendFailed"), { description: e instanceof Error ? e.message : undefined });
     } finally {
       setPending(null);
     }
@@ -384,7 +386,7 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
       seenRef.current.add(msg.id);
       setMessages((prev) => applyEnvelopes([...prev, { ...msg, senderDisplayName: bot.displayName }]));
     } catch {
-      toast.error(S.chat.botFailed);
+      toast.error(t("chat.botFailed"));
     }
   };
 
@@ -397,7 +399,7 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
         clearStaged();
         await send(payload, messageType, name);
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : S.chat.mediaFailed);
+        toast.error(e instanceof Error ? e.message : t("chat.mediaFailed"));
       }
       return;
     }
@@ -417,8 +419,8 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    if (file.size > MAX_MEDIA_SIZE) return void toast.error(fmt(S.chat.tooLarge, { mb: MAX_MEDIA_SIZE / (1024 * 1024) }));
-    if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) return void toast.error(S.chat.onlyMedia);
+    if (file.size > MAX_MEDIA_SIZE) return void toast.error(t("chat.tooLarge", { mb: MAX_MEDIA_SIZE / (1024 * 1024) }));
+    if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) return void toast.error(t("chat.onlyMedia"));
     setStaged({ file, previewUrl: URL.createObjectURL(file) });
   };
   const clearStaged = () => {
@@ -443,31 +445,31 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
 
   const toggleBlock = () => {
     if (recipientKeys.length === 0) return;
-    const who = recipient?.displayName || S.common.anonymous;
+    const who = recipient?.displayName || t("common.anonymous");
     setMenuOpen(false);
     if (blocked) {
       unblockWalletKeys(recipientKeys);
-      toast.success(fmt(S.block.unblocked, { name: who }));
+      toast.success(t("block.unblocked", { name: who }));
     } else {
-      if (!window.confirm(fmt(S.block.confirm, { name: who }))) return;
+      if (!window.confirm(t("block.confirm", { name: who }))) return;
       blockWalletKeys(recipientKeys);
-      toast.success(fmt(S.block.blocked, { name: who }));
+      toast.success(t("block.blocked", { name: who }));
       onBlocked();
     }
   };
   const toggleMute = () => {
     setMenuOpen(false);
     setConversationMuted(conversation.id, !muted);
-    toast.success(muted ? S.mute.unmuted : S.mute.muted);
+    toast.success(muted ? t("mute.unmuted") : t("mute.muted"));
   };
   const editNickname = () => {
     setMenuOpen(false);
     if (!recipient) return;
     const key = recipient.signingPublicKey || recipient.id;
-    const next = window.prompt(fmt(S.chat.nicknamePrompt, { name: recipient.displayName || S.common.anonymous }), nicknameFor(key) ?? "");
+    const next = window.prompt(t("chat.nicknamePrompt", { name: recipient.displayName || t("common.anonymous") }), nicknameFor(key) ?? "");
     if (next === null) return;
     setNickname(key, next);
-    toast.success(S.chat.nicknameSaved);
+    toast.success(t("chat.nicknameSaved"));
   };
   const accept = () => {
     acceptChat(conversation.id);
@@ -477,29 +479,29 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
   };
 
   const removeMessage = async (m: Message) => {
-    if (!window.confirm(S.chat.deleteConfirm)) return;
+    if (!window.confirm(t("chat.deleteConfirm"))) return;
     try {
       await deleteMessage(identity, m.id, conversation.id);
       setMessages((prev) => prev.filter((x) => x.id !== m.id));
       setDetails(null);
-      toast.success(S.chat.deleted);
+      toast.success(t("chat.deleted"));
     } catch {
-      toast.error(S.chat.deleteFailed);
+      toast.error(t("chat.deleteFailed"));
     }
   };
 
   const canPay = !isSelf && !isRecipientBot && !isGroup && !!recipient;
   const composerDisabled = sending || blocked;
-  const placeholder = replyingTo ? S.chat.replyPlaceholder : staged ? S.chat.captionPlaceholder : S.chat.placeholder;
+  const placeholder = replyingTo ? t("chat.replyPlaceholder") : staged ? t("chat.captionPlaceholder") : t("chat.placeholder");
 
   return (
     <section className="msg-chat" aria-label={title}>
       <header className="msg-chat-head">
-        <button type="button" className="button ghost icon msg-icon msg-back" aria-label={S.common.back} onClick={onBack}>
+        <button type="button" className="button ghost icon msg-icon msg-back" aria-label={t("common.back")} onClick={onBack}>
           <ArrowLeft size={18} />
         </button>
         {isGroup ? (
-          <button type="button" className="msg-plain" aria-label={S.group.info} onClick={() => setShowGroupInfo(true)}>
+          <button type="button" className="msg-plain" aria-label={t("group.info")} onClick={() => setShowGroupInfo(true)}>
             <StackedAvatars members={members} size={38} />
           </button>
         ) : isRecipientBot || !recipient ? (
@@ -516,33 +518,33 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
             ) : (
               <strong>{title}</strong>
             )}
-            {muted && <BellOff size={13} className="warn-icon" aria-label={S.mute.muted} />}
-            {isRecipientBot && <span className="pill">{S.chat.ai}</span>}
+            {muted && <BellOff size={13} className="warn-icon" aria-label={t("mute.muted")} />}
+            {isRecipientBot && <span className="pill">{t("chat.ai")}</span>}
             {!isGroup && tofuChanged && !isRecipientBot && (
-              <span className="pill danger" title={S.chat.keyChangedHint}>
-                {S.chat.keyChanged}
+              <span className="pill danger" title={t("chat.keyChangedHint")}>
+                {t("chat.keyChanged")}
               </span>
             )}
             {!isGroup && fingerprint && !tofuChanged && !isRecipientBot && (
-              <span className="pill ok mono msg-fp" title={fmt(S.chat.fingerprint, { fp: fingerprint })}>
+              <span className="pill ok mono msg-fp" title={t("chat.fingerprint", { fp: fingerprint })}>
                 {fingerprint.slice(0, 9)}
               </span>
             )}
-            {blocked && <span className="pill danger">{S.block.blockedBadge}</span>}
+            {blocked && <span className="pill danger">{t("block.blockedBadge")}</span>}
           </div>
           {isGroup ? (
             <button type="button" className="msg-plain msg-chat-sub" onClick={() => setShowGroupInfo(true)}>
-              {plural(members.length + 1, S.group.memberCount_one, S.group.memberCount_other)}
+              {t("group.memberCount", { count: members.length + 1 })}
             </button>
           ) : recipient && !isRecipientBot ? (
             <button
               type="button"
               className="msg-plain msg-chat-sub mono"
-              title={S.header.copyAddress}
+              title={t("header.copyAddress")}
               onClick={async () => {
                 try {
                   await navigator.clipboard.writeText(recipient.signingPublicKey || recipient.encryptionPublicKey || "");
-                  toast.success(S.chat.recipientCopied);
+                  toast.success(t("chat.recipientCopied"));
                 } catch {
                   /* clipboard unavailable */
                 }
@@ -552,11 +554,11 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
             </button>
           ) : null}
           <span className="msg-chat-sub">
-            <Lock size={11} aria-hidden="true" /> {S.chat.cryptoLabel}
+            <Lock size={11} aria-hidden="true" /> {t("chat.cryptoLabel")}
           </span>
         </div>
         <div className="msg-menu-wrap">
-          <button type="button" className="button ghost icon msg-icon" aria-label={S.menu.title} aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)}>
+          <button type="button" className="button ghost icon msg-icon" aria-label={t("menu.title")} aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)}>
             <MoreVertical size={18} />
           </button>
           {menuOpen && (
@@ -572,12 +574,12 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
                       setMenuOpen(false);
                     }}
                   >
-                    <Search size={15} /> {S.menu.search}
+                    <Search size={15} /> {t("menu.search")}
                   </button>
                 </li>
                 <li>
                   <button type="button" role="menuitem" onClick={toggleMute}>
-                    {muted ? <Bell size={15} /> : <BellOff size={15} />} {muted ? S.mute.unmute : S.mute.mute}
+                    {muted ? <Bell size={15} /> : <BellOff size={15} />} {muted ? t("mute.unmute") : t("mute.mute")}
                   </button>
                 </li>
                 {isGroup && (
@@ -590,7 +592,7 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
                         setMenuOpen(false);
                       }}
                     >
-                      <Users size={15} /> {S.group.info}
+                      <Users size={15} /> {t("group.info")}
                     </button>
                   </li>
                 )}
@@ -598,12 +600,12 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
                   <>
                     <li>
                       <button type="button" role="menuitem" onClick={editNickname}>
-                        <Pencil size={15} /> {S.chat.nickname}
+                        <Pencil size={15} /> {t("chat.nickname")}
                       </button>
                     </li>
                     <li>
                       <button type="button" role="menuitem" className={blocked ? "" : "danger"} onClick={toggleBlock}>
-                        <Ban size={15} /> {blocked ? S.block.unblock : S.block.block}
+                        <Ban size={15} /> {blocked ? t("block.unblock") : t("block.block")}
                       </button>
                     </li>
                   </>
@@ -616,12 +618,12 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
 
       {isRequest && (
         <div className="msg-banner">
-          <p>{fmt(S.requests.banner, { name: title || S.common.anonymous })}</p>
+          <p>{t("requests.banner", { name: title || t("common.anonymous") })}</p>
           <button type="button" className="button ghost small danger" onClick={toggleBlock}>
-            {S.block.block}
+            {t("block.block")}
           </button>
           <button type="button" className="button small" onClick={accept}>
-            {S.requests.accept}
+            {t("requests.accept")}
           </button>
         </div>
       )}
@@ -629,12 +631,12 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
       {showSearch && (
         <div className="msg-searchbar">
           <Search size={15} aria-hidden="true" />
-          <input className="input" value={query} autoFocus placeholder={S.chat.searchPlaceholder} aria-label={S.menu.search} onChange={(e) => setQuery(e.target.value)} />
-          {query && <span className="msg-hint">{plural(visible.length, S.chat.results_one, S.chat.results_other)}</span>}
+          <input className="input" value={query} autoFocus placeholder={t("chat.searchPlaceholder")} aria-label={t("menu.search")} onChange={(e) => setQuery(e.target.value)} />
+          {query && <span className="msg-hint">{t("chat.results", { count: visible.length })}</span>}
           <button
             type="button"
             className="button ghost icon msg-icon"
-            aria-label={S.common.close}
+            aria-label={t("common.close")}
             onClick={() => {
               setShowSearch(false);
               setQuery("");
@@ -648,16 +650,16 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
       <div className="msg-scroll" onClick={() => setActiveId(null)}>
         {loading ? (
           <div className="msg-center">
-            <Loader2 size={20} className="spin" aria-label={S.common.loading} />
+            <Loader2 size={20} className="spin" aria-label={t("common.loading")} />
           </div>
         ) : visible.length === 0 && !pending ? (
           <div className="msg-center msg-empty">
             <Lock size={32} aria-hidden="true" />
-            <strong>{query ? S.chat.noMatchTitle : S.chat.startTitle}</strong>
-            <span>{query ? S.chat.noMatchHint : S.chat.startHint}</span>
+            <strong>{query ? t("chat.noMatchTitle") : t("chat.startTitle")}</strong>
+            <span>{query ? t("chat.noMatchHint") : t("chat.startHint")}</span>
             {loadError && (
               <button type="button" className="button outline small" onClick={() => void load(false)}>
-                {S.common.retry}
+                {t("common.retry")}
               </button>
             )}
           </div>
@@ -706,7 +708,7 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
                   receipt={own ? receiptStatus(m) : undefined}
                   seen={own && m.id === lastSeenId}
                   senderName={
-                    own ? S.common.you : nicknameFor(m.senderSigningPublicKey, m.senderWalletId) || m.senderDisplayName || S.common.unknown
+                    own ? t("common.you") : nicknameFor(m.senderSigningPublicKey, m.senderWalletId) || m.senderDisplayName || t("common.unknown")
                   }
                 />
               );
@@ -715,7 +717,7 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
               <li className="msg-item own">
                 <div className="msg-bubble own pending" aria-live="polite">
                   <span className="msg-pending-label">
-                    <Loader2 size={12} className="spin" /> {S.chat.encrypting}
+                    <Loader2 size={12} className="spin" /> {t("chat.encrypting")}
                   </span>
                   <span className="msg-text">{pending.media ? `🔒 ${pending.label}` : pending.label}</span>
                 </div>
@@ -733,10 +735,10 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
           <div className="msg-replying">
             <Reply size={14} aria-hidden="true" />
             <span>
-              <strong>{fmt(S.reply.replyingTo, { name: isOwn(replyingTo) ? S.common.you : replyingTo.senderDisplayName || S.common.unknown })}</strong>
+              <strong>{t("reply.replyingTo", { name: isOwn(replyingTo) ? t("common.you") : replyingTo.senderDisplayName || t("common.unknown") })}</strong>
               <small>{previewText(replyingTo)}</small>
             </span>
-            <button type="button" className="button ghost icon msg-icon" aria-label={S.reply.cancel} onClick={() => setReplyingTo(null)}>
+            <button type="button" className="button ghost icon msg-icon" aria-label={t("reply.cancel")} onClick={() => setReplyingTo(null)}>
               <X size={14} />
             </button>
           </div>
@@ -751,9 +753,9 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
               <img src={staged.previewUrl} alt="" />
             )}
             <small>
-              {staged.file.name} ({(staged.file.size / 1024).toFixed(0)} KB)
+              {t("chat.stagedFile", { name: staged.file.name, kb: fmtInt(staged.file.size / 1024) })}
             </small>
-            <button type="button" className="button ghost icon msg-icon" aria-label={S.common.cancel} onClick={clearStaged}>
+            <button type="button" className="button ghost icon msg-icon" aria-label={t("common.cancel")} onClick={clearStaged}>
               <X size={14} />
             </button>
           </div>
@@ -762,13 +764,13 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
           <div className="msg-options">
             <label>
               <Timer size={14} className={selfDestruct ? "danger-icon" : ""} />
-              <span>{selfDestruct ? fmt(S.chat.selfDestructOn, { s: DESTRUCT_SECONDS }) : S.chat.selfDestruct}</span>
-              <Toggle checked={selfDestruct} label={S.chat.selfDestruct} onChange={setSelfDestruct} />
+              <span>{selfDestruct ? t("chat.selfDestructOn", { s: DESTRUCT_SECONDS }) : t("chat.selfDestruct")}</span>
+              <Toggle checked={selfDestruct} label={t("chat.selfDestruct")} onChange={setSelfDestruct} />
             </label>
             <label>
               <EyeOff size={14} className={spoiler ? "warn-icon" : ""} />
-              <span>{spoiler ? S.chat.spoilerOn : S.chat.spoiler}</span>
-              <Toggle checked={spoiler} label={S.chat.spoiler} onChange={setSpoiler} />
+              <span>{spoiler ? t("chat.spoilerOn") : t("chat.spoiler")}</span>
+              <Toggle checked={spoiler} label={t("chat.spoiler")} onChange={setSpoiler} />
             </label>
           </div>
         )}
@@ -783,22 +785,22 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
           <button
             type="button"
             className={`button ghost icon msg-icon ${showOptions || selfDestruct || spoiler ? "active" : ""}`}
-            aria-label={S.chat.options}
-            title={S.chat.options}
+            aria-label={t("chat.options")}
+            title={t("chat.options")}
             aria-expanded={showOptions}
             onClick={() => setShowOptions((v) => !v)}
           >
             {selfDestruct ? <Timer size={17} /> : spoiler ? <EyeOff size={17} /> : <SmilePlus size={17} />}
           </button>
-          <button type="button" className="button ghost icon msg-icon" aria-label={S.chat.attach} title={S.chat.attach} disabled={composerDisabled} onClick={() => fileRef.current?.click()}>
+          <button type="button" className="button ghost icon msg-icon" aria-label={t("chat.attach")} title={t("chat.attach")} disabled={composerDisabled} onClick={() => fileRef.current?.click()}>
             <Paperclip size={17} />
           </button>
           {gifsEnabled() && (
             <button
               type="button"
               className={`button ghost icon msg-icon msg-gif ${showGifs ? "active" : ""}`}
-              aria-label={S.gif.button}
-              title={S.gif.button}
+              aria-label={t("gif.button")}
+              title={t("gif.button")}
               aria-pressed={showGifs}
               disabled={composerDisabled}
               onClick={() => setShowGifs((v) => !v)}
@@ -807,7 +809,7 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
             </button>
           )}
           {canPay && (
-            <button type="button" className="button ghost icon msg-icon msg-pay-btn" aria-label={S.chat.pay} title={S.chat.pay} disabled={composerDisabled} onClick={() => setPay({})}>
+            <button type="button" className="button ghost icon msg-icon msg-pay-btn" aria-label={t("chat.pay")} title={t("chat.pay")} disabled={composerDisabled} onClick={() => setPay({})}>
               <DollarSign size={17} />
             </button>
           )}
@@ -823,7 +825,7 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
           <button
             type="submit"
             className="button icon msg-send"
-            aria-label={replyingTo ? S.chat.sendReply : S.chat.send}
+            aria-label={replyingTo ? t("chat.sendReply") : t("chat.send")}
             disabled={(!text.trim() && !staged) || composerDisabled}
           >
             {sending ? <Loader2 size={17} className="spin" /> : replyingTo ? <Reply size={17} /> : <Send size={17} />}
@@ -846,11 +848,11 @@ export function ChatView({ conversation, identity, contacts, isRequest, onBack, 
         />
       )}
       {lightbox && (
-        <div className="msg-lightbox" role="dialog" aria-label={S.chat.lightbox} onClick={() => setLightbox(null)}>
-          <button type="button" className="button ghost icon" aria-label={S.common.close} onClick={() => setLightbox(null)}>
+        <div className="msg-lightbox" role="dialog" aria-label={t("chat.lightbox")} onClick={() => setLightbox(null)}>
+          <button type="button" className="button ghost icon" aria-label={t("common.close")} onClick={() => setLightbox(null)}>
             <X size={20} />
           </button>
-          <img src={lightbox} alt={S.chat.lightbox} onClick={(e) => e.stopPropagation()} />
+          <img src={lightbox} alt={t("chat.lightbox")} onClick={(e) => e.stopPropagation()} />
         </div>
       )}
     </section>
@@ -938,10 +940,11 @@ function Bubble({
   seen: boolean;
   senderName: string;
 }) {
+  const { t } = useTranslation("messenger");
   const [revealed, setRevealed] = useState(false);
   const hidden = !!message.spoiler && !revealed;
   const legacyReply = message.plaintext ? parseReplyMessage(message.plaintext) : null;
-  const quote = legacyReply ? legacyReply.replyPreview : message.replyTo !== undefined ? quotedPreview || S.reply.unavailable : null;
+  const quote = legacyReply ? legacyReply.replyPreview : message.replyTo !== undefined ? quotedPreview || t("reply.unavailable") : null;
   const payment = getPaymentData(message);
   const request = getRequestData(message);
   const tip = parseTip(message.plaintext);
@@ -955,7 +958,7 @@ function Bubble({
       <img
         className={`msg-media ${hidden ? "blurred" : ""}`}
         src={message.mediaUrl}
-        alt={message.mediaFileName || S.media.image}
+        alt={message.mediaFileName || t("media.image")}
         onClick={(e) => {
           e.stopPropagation();
           if (!hidden) onImage(message.mediaUrl!);
@@ -1005,7 +1008,7 @@ function Bubble({
         <span className="msg-body">
           {hidden && (
             <span className="msg-spoiler">
-              <EyeOff size={15} /> {S.chat.reveal}
+              <EyeOff size={15} /> {t("chat.reveal")}
             </span>
           )}
           {body}
@@ -1031,38 +1034,38 @@ function Bubble({
         )}
         <span className="msg-meta">
           <span>{formatMessageTime(message.createdAt)}</span>
-          {message.selfDestruct && <Timer size={11} className="danger-icon" aria-label={S.chat.selfDestruct} />}
+          {message.selfDestruct && <Timer size={11} className="danger-icon" aria-label={t("chat.selfDestruct")} />}
           {message.signatureValid ? (
-            <CheckCircle2 size={11} className="ok-icon" aria-label={S.details.valid} />
+            <CheckCircle2 size={11} className="ok-icon" aria-label={t("details.valid")} />
           ) : (
-            <XCircle size={11} className="danger-icon" aria-label={S.details.invalid} />
+            <XCircle size={11} className="danger-icon" aria-label={t("details.invalid")} />
           )}
           {receipt &&
             (receipt === "sent" ? (
-              <Check size={13} aria-label={S.receipts.sent} />
+              <Check size={13} aria-label={t("receipts.sent")} />
             ) : (
-              <CheckCheck size={13} className={receipt === "read" ? "read-icon" : ""} aria-label={receipt === "read" ? S.receipts.read : S.receipts.delivered} />
+              <CheckCheck size={13} className={receipt === "read" ? "read-icon" : ""} aria-label={receipt === "read" ? t("receipts.read") : t("receipts.delivered")} />
             ))}
         </span>
-        {seen && <span className="msg-seen">{S.receipts.seen}</span>}
+        {seen && <span className="msg-seen">{t("receipts.seen")}</span>}
       </div>
       {active && (
         <div className="msg-actions" onClick={(e) => e.stopPropagation()}>
           <button type="button" onClick={onReply}>
-            <Reply size={14} /> {S.chat.reply}
+            <Reply size={14} /> {t("chat.reply")}
           </button>
           <button type="button" onClick={onReactPicker} aria-expanded={reacting}>
-            <SmilePlus size={14} /> {S.chat.react}
+            <SmilePlus size={14} /> {t("chat.react")}
           </button>
           <button type="button" onClick={onDetails}>
-            <Info size={14} /> {S.chat.tapDetails}
+            <Info size={14} /> {t("chat.tapDetails")}
           </button>
         </div>
       )}
       {reacting && (
         <div className="msg-react-picker" role="menu" onClick={(e) => e.stopPropagation()}>
           {REACTION_EMOJIS.map((emoji) => (
-            <button key={emoji} type="button" role="menuitem" aria-label={`${S.chat.react} ${emoji}`} onClick={() => onReact(emoji)}>
+            <button key={emoji} type="button" role="menuitem" aria-label={t("chat.reactWith", { emoji })} onClick={() => onReact(emoji)}>
               {emoji}
             </button>
           ))}
@@ -1073,18 +1076,19 @@ function Bubble({
 }
 
 function HexField({ label, hint, value, max = 128 }: { label: string; hint?: string; value: string; max?: number }) {
+  const { t } = useTranslation("messenger");
   const [copied, setCopied] = useState(false);
   const shown = value.length <= max ? value : `${value.slice(0, max / 2)}…${value.slice(-max / 2)}`;
   return (
     <div className="msg-hex">
       <div className="msg-split">
         <strong>
-          {label} <small>{fmt(S.details.bytes, { n: Math.floor(value.length / 2) })}</small>
+          {label} <small>{t("details.bytes", { n: fmtInt(Math.floor(value.length / 2)) })}</small>
         </strong>
         <button
           type="button"
           className="button ghost icon msg-icon"
-          aria-label={`${S.common.copy} ${label}`}
+          aria-label={t("common.copyLabel", { label })}
           onClick={async () => {
             try {
               await navigator.clipboard.writeText(value);
@@ -1106,6 +1110,7 @@ function HexField({ label, hint, value, max = 128 }: { label: string; hint?: str
 
 /** Encryption details (apps/web EncryptionDetailsPanel) for 1:1 and group packages. */
 function DetailsSheet({ message, onClose, onDelete }: { message: Message; onClose: () => void; onDelete?: () => void }) {
+  const { t } = useTranslation("messenger");
   let pkg: { kemCipherText?: string; iv?: string; encryptedContent?: string; wrappedKeys?: Record<string, unknown> } | null = null;
   try {
     pkg = JSON.parse(message.encryptedContent);
@@ -1116,45 +1121,45 @@ function DetailsSheet({ message, onClose, onDelete }: { message: Message; onClos
   const created = new Date(message.createdAt);
   return (
     <Sheet
-      title={S.details.title}
+      title={t("details.title")}
       icon={<FileKey2 size={16} className="accent" />}
       onClose={onClose}
       wide
       footer={
         onDelete ? (
           <button type="button" className="button destructive small" onClick={onDelete}>
-            <Trash2 size={14} /> {S.details.delete}
+            <Trash2 size={14} /> {t("details.delete")}
           </button>
         ) : undefined
       }
     >
       <div className="msg-sheet-pad msg-stack-gap">
-        <p className="msg-hint">{S.details.subtitle}</p>
+        <p className="msg-hint">{t("details.subtitle")}</p>
         <dl className="msg-dl">
-          <dt>{S.details.messageId}</dt>
+          <dt>{t("details.messageId")}</dt>
           <dd className="mono">{message.id}</dd>
-          <dt>{S.details.timestamp}</dt>
-          <dd>{isNaN(created.getTime()) ? "—" : created.toLocaleString()}</dd>
+          <dt>{t("details.timestamp")}</dt>
+          <dd>{isNaN(created.getTime()) ? "—" : fmtDateTime(created)}</dd>
         </dl>
         {group && pkg ? (
           <>
-            <p className="msg-hint">{fmt(S.details.group, { count: Object.keys(pkg.wrappedKeys ?? {}).length })}</p>
-            <HexField label={S.details.iv} hint={S.details.ivHint} value={pkg.iv ?? ""} />
-            <HexField label={S.details.content} hint={S.details.contentHint} value={pkg.encryptedContent ?? ""} />
+            <p className="msg-hint">{t("details.group", { count: Object.keys(pkg.wrappedKeys ?? {}).length })}</p>
+            <HexField label={t("details.iv")} hint={t("details.ivHint")} value={pkg.iv ?? ""} />
+            <HexField label={t("details.content")} hint={t("details.contentHint")} value={pkg.encryptedContent ?? ""} />
           </>
         ) : pkg && pkg.kemCipherText ? (
           <>
-            <HexField label={S.details.kem} hint={S.details.kemHint} value={pkg.kemCipherText ?? ""} />
-            <HexField label={S.details.iv} hint={S.details.ivHint} value={pkg.iv ?? ""} />
-            <HexField label={S.details.content} hint={S.details.contentHint} value={pkg.encryptedContent ?? ""} />
+            <HexField label={t("details.kem")} hint={t("details.kemHint")} value={pkg.kemCipherText ?? ""} />
+            <HexField label={t("details.iv")} hint={t("details.ivHint")} value={pkg.iv ?? ""} />
+            <HexField label={t("details.content")} hint={t("details.contentHint")} value={pkg.encryptedContent ?? ""} />
           </>
         ) : (
-          <HexField label={S.details.raw} value={message.encryptedContent ?? ""} max={256} />
+          <HexField label={t("details.raw")} value={message.encryptedContent ?? ""} max={256} />
         )}
-        <HexField label={`${S.details.signature} · ${message.signatureValid ? S.details.valid : S.details.invalid}`} hint={S.details.signatureHint} value={message.signature ?? ""} />
+        <HexField label={`${t("details.signature")} · ${message.signatureValid ? t("details.valid") : t("details.invalid")}`} hint={t("details.signatureHint")} value={message.signature ?? ""} />
         {message.plaintext && !message.plaintext.startsWith("[") && (
           <div className="msg-hex ok">
-            <strong>{S.details.plaintext}</strong>
+            <strong>{t("details.plaintext")}</strong>
             <p>{message.plaintext}</p>
           </div>
         )}

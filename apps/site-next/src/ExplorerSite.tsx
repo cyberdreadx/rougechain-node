@@ -7,13 +7,16 @@ import {
   useLocation,
 } from "react-router-dom";
 import { ArrowUpRight } from "lucide-react";
-import { RougeAppShell, Status, TextLink } from "@rougechain/ui";
+import { RougeAppShell, TextLink } from "@rougechain/ui";
+import { useTranslation } from "react-i18next";
 import { ChainProvider } from "./explorer/chain";
-import { NetworkProvider, useNetwork } from "./Network";
+import { NetworkProvider, NetworkStatus } from "./Network";
 import Overview from "./explorer/Overview";
 import { explorerRoutes, matchesPrefix } from "./explorer/routes";
 import { BridgeActivityPage } from "./explorer/Bridge";
 import { DOCS_URL, SOURCE_URL, appById } from "./ecosystem/apps";
+import { LanguageSwitcher } from "./i18n/LanguageSwitcher";
+import { UiText } from "./i18n/UiText";
 
 /**
  * explorer.rougechain.io — the Explorer as a standalone, read-only site (VITE_APP_MODE=explorer).
@@ -43,14 +46,14 @@ export function activeExplorerItem(
 }
 
 function ExplorerHeader() {
+  const { t } = useTranslation("common");
   const app = appById("explorer")!;
-  const n = useNetwork();
   const { pathname } = useLocation();
   const items = app.localNavigation ?? [];
   const active = activeExplorerItem(pathname, items);
   return (
     <RougeAppShell
-      product="Explorer"
+      product={t("apps.explorer.name")}
       proposedHost=""
       brand={
         <Link className="wordmark" to="/">
@@ -58,11 +61,7 @@ function ExplorerHeader() {
           RougeChain
         </Link>
       }
-      network={
-        <Status state={n.state}>
-          {n.state === "live" ? "Live API" : n.state} · {n.network.label}
-        </Status>
-      }
+      network={<NetworkStatus />}
       globalNavigation={null}
       actions={
         <>
@@ -70,12 +69,12 @@ function ExplorerHeader() {
             rougechain.io <ArrowUpRight size={13} />
           </a>
           <a className="docs-link" href={DOCS_URL}>
-            Docs <ArrowUpRight size={13} />
+            {t("header.docs")} <ArrowUpRight size={13} />
           </a>
         </>
       }
       localNavigation={
-        <nav className="local-nav" aria-label="Explorer navigation">
+        <nav className="local-nav" aria-label={t("header.localNav", { name: t("apps.explorer.name") })}>
           {items.map((item) => {
             const to = item.path === "/explorer" ? "/" : item.path;
             return (
@@ -85,7 +84,7 @@ function ExplorerHeader() {
                 className={active === item.path ? "active" : undefined}
                 aria-current={active === item.path ? "page" : undefined}
               >
-                {item.label}
+                {t(`appNav.${item.key}`)}
               </Link>
             );
           })}
@@ -96,6 +95,7 @@ function ExplorerHeader() {
 }
 
 function ExplorerFooter() {
+  const { t } = useTranslation("common");
   return (
     <footer className="footer">
       <div className="container">
@@ -103,20 +103,23 @@ function ExplorerFooter() {
           <div>
             <Link className="wordmark" to="/">
               <img src="/xrge-logo.webp" alt="" />
-              RougeChain Explorer
+              {t("explorerSite.wordmark")}
             </Link>
-            <p>Every block, transaction and address on RougeChain.</p>
+            <p>{t("explorerSite.tagline")}</p>
           </div>
           <div className="footer-links">
             <TextLink href={MAIN_SITE_URL}>rougechain.io</TextLink>
-            <TextLink href={DOCS_URL}>Documentation</TextLink>
+            <TextLink href={DOCS_URL}>{t("footer.docs")}</TextLink>
             <TextLink href={SOURCE_URL}>GitHub</TextLink>
-            <TextLink href="https://x.com/rougecoin">Community</TextLink>
+            <TextLink href="https://x.com/rougecoin">
+              {t("footer.community")}
+            </TextLink>
           </div>
         </div>
         <div className="footer-bottom">
           <span>© {new Date().getFullYear()} RougeChain</span>
-          <span>Post-quantum from genesis.</span>
+          <LanguageSwitcher />
+          <span>{t("footer.motto")}</span>
         </div>
       </div>
     </footer>
@@ -124,6 +127,7 @@ function ExplorerFooter() {
 }
 
 export function ExplorerRoutes() {
+  const { t } = useTranslation("common");
   return (
     <Routes>
       <Route path="/" element={<Overview />} />
@@ -134,15 +138,24 @@ export function ExplorerRoutes() {
         path="*"
         element={
           <main id="main" className="container page-intro">
-            <h1>Page not found.</h1>
-            <p>Search for a block, transaction, address, token or contract.</p>
+            <h1>{t("notFound.title")}</h1>
+            <p>{t("notFound.explorerBody")}</p>
             <Link className="button" to="/">
-              Explorer home
+              {t("notFound.explorerHome")}
             </Link>
           </main>
         }
       />
     </Routes>
+  );
+}
+
+function SkipLink() {
+  const { t } = useTranslation("common");
+  return (
+    <a className="skip" href="#main">
+      {t("skipToContent")}
+    </a>
   );
 }
 
@@ -152,12 +165,12 @@ export default function ExplorerSite() {
       <ChainProvider>
         <NetworkProvider>
           <BrowserRouter>
-            <a className="skip" href="#main">
-              Skip to content
-            </a>
-            <ExplorerHeader />
-            <ExplorerRoutes />
-            <ExplorerFooter />
+            <UiText>
+              <SkipLink />
+              <ExplorerHeader />
+              <ExplorerRoutes />
+              <ExplorerFooter />
+            </UiText>
           </BrowserRouter>
         </NetworkProvider>
       </ChainProvider>

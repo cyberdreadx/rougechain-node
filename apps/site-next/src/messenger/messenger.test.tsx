@@ -11,7 +11,7 @@ import { buildMsgEnvelope, parseEnvelope } from "@rougechain/core/messenger-enve
 import { decryptMessage, encryptMessage, saveWalletLocally } from "@rougechain/core/pqc-messenger";
 import { isV2Package } from "@rougechain/core/messenger-crypto-v2";
 import { ACCEPTED_KEY, BLOCKED_KEY, MUTED_KEY, REQUESTS_MIGRATED_KEY } from "@rougechain/core/messenger-prefs";
-import { BASE_TRANSFER_FEE } from "@rougechain/core/pqc-wallet";
+import { WALLET_TRANSFER_FEE } from "@rougechain/core/pqc-wallet";
 import { saveUnifiedWallet, type UnifiedWallet } from "@rougechain/core/unified-wallet";
 import { mockFetch, resetBrowserState, seedAppsWebLockedWallet, seedAppsWebWallet } from "../wallet/test-utils";
 import { FakeWebSocket, asPhone, dirEntry, hex, makePeer, qwallaDecryptV2, qwallaEncryptV2, renderRoute, signMessage, signedBody, unhex, type Peer } from "./test-helpers";
@@ -394,7 +394,7 @@ describe("wallet states", () => {
     await waitFor(() => expect(node.postsTo("/v2/transfer")).toHaveLength(1), WAIT);
     const tx = node.postsTo("/v2/transfer")[0].body as unknown as { payload: Raw; public_key: string };
     expect(tx.public_key).toBe(ext.signingPublicKey);
-    expect(tx.payload).toMatchObject({ type: "transfer", from: ext.signingPublicKey, to: bob.signingPublicKey, amount: 5, fee: BASE_TRANSFER_FEE, token: "XRGE" });
+    expect(tx.payload).toMatchObject({ type: "transfer", from: ext.signingPublicKey, to: bob.signingPublicKey, amount: 5, fee: WALLET_TRANSFER_FEE, token: "XRGE" });
     await waitFor(() => expect(node.postsTo("/v2/messenger/messages")).toHaveLength(1), WAIT);
     const sent = node.postsTo("/v2/messenger/messages")[0].body;
     expect(sent.public_key).toBe(local.signingPublicKey);
