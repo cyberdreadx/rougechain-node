@@ -71,21 +71,23 @@
   color: var(--ink);
 }
 
-/* Pane cards: the hairline ring is an overlay so dockview's clipping never hides it. */
+/* Pane cards, exactly as the approved Trellis workspace draws them: the hairline ring is a 1px
+   box-shadow OUTSIDE the card (measured: box-shadow 0 0 0 1px #2c2636), and the gaps between
+   cards show the --bg canvas. dockview clips split views by default, which would cut the outer
+   ring at the workspace edges, so the split containers are allowed to overflow here. */
+.dockview-theme-rougechain .dv-grid-view {
+  background: var(--bg);
+}
+.dockview-theme-rougechain .dv-split-view-container,
+.dockview-theme-rougechain .dv-split-view-container > .dv-view-container > .dv-view {
+  overflow: visible;
+}
 .dockview-theme-rougechain .dv-groupview {
   position: relative;
   border-radius: 8px;
   overflow: hidden;
   background: var(--surface);
-}
-.dockview-theme-rougechain .dv-groupview::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  pointer-events: none;
-  z-index: 4;
+  box-shadow: 0 0 0 1px var(--border);
 }
 .dockview-theme-rougechain .dv-tabs-and-actions-container {
   border-radius: 8px 8px 0 0;
@@ -167,7 +169,6 @@
   display: flex;
   align-items: center;
   gap: 3px;
-  padding-right: 6px;
 }
 .dockview-theme-rougechain .panel-actions button {
   border: 0;
@@ -180,12 +181,18 @@
   line-height: 16px;
 }
 .dockview-theme-rougechain .panel-actions .panel-menu-button {
+  margin-left: 1px; /* 4px before the "…" menu, as in the approved workspace */
   display: inline-grid;
   place-items: center;
   width: 20px;
   height: 20px;
   padding: 0;
-  color: var(--ink);
+  color: var(--muted); /* muted like the other header glyphs, as in the approved workspace */
+  opacity: 0.85; /* measured: the approved "…" renders at ~85% of --muted */
+}
+.dockview-theme-rougechain .panel-actions .panel-menu-button:hover:not(:disabled),
+.dockview-theme-rougechain .panel-actions .panel-menu-button:focus-visible {
+  opacity: 1;
 }
 .dockview-theme-rougechain .panel-actions button:hover:not(:disabled) {
   color: var(--ink);
