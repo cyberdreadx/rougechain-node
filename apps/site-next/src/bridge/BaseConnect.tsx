@@ -1,27 +1,28 @@
 /** Connect / show the Base wallet used for deposits and claims. */
 import { Wallet } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@rougechain/ui";
 import type { BaseConnection } from "./useBaseConnection";
-import { S, fmt } from "./strings";
 
 export function shortAddr(a: string): string {
   return `${a.slice(0, 6)}…${a.slice(-4)}`;
 }
 
 export function BaseConnect({ conn, chainLabel, chainId, compact = false }: { conn: BaseConnection; chainLabel: string; chainId: number; compact?: boolean }) {
+  const { t } = useTranslation("bridge");
   if (conn.address) {
     return (
       <div className="bridge-connected">
         <span className="bridge-dot" aria-hidden="true" />
         <span className="mono">
-          {conn.mode === "local" ? fmt(S.form.connectedLocal, { address: shortAddr(conn.address) }) : fmt(S.form.connectedAs, { address: shortAddr(conn.address) })}
+          {conn.mode === "local" ? t("form.connectedLocal", { address: shortAddr(conn.address) }) : t("form.connectedAs", { address: shortAddr(conn.address) })}
         </span>
         <button type="button" className="inline-link" onClick={conn.disconnect}>
-          {S.form.disconnect}
+          {t("form.disconnect")}
         </button>
         {conn.wrongChain && (
           <p className="form-error" role="alert">
-            {fmt(S.form.wrongChain, { actual: conn.walletChainId ?? "unknown", expected: chainId, chain: chainLabel })}
+            {t("form.wrongChain", { actual: conn.walletChainId ?? t("unknownChain"), expected: chainId, chain: chainLabel })}
           </p>
         )}
       </div>
@@ -31,8 +32,8 @@ export function BaseConnect({ conn, chainLabel, chainId, compact = false }: { co
     <div className="bridge-connect">
       {!compact && conn.discovered.length > 1 && (
         <div className="field">
-          <span>{S.form.chooseWallet}</span>
-          <div className="chip-row" role="group" aria-label={S.form.chooseWallet}>
+          <span>{t("form.chooseWallet")}</span>
+          <div className="chip-row" role="group" aria-label={t("form.chooseWallet")}>
             {conn.discovered.map((d) => (
               <button
                 key={d.info.rdns}
@@ -49,14 +50,14 @@ export function BaseConnect({ conn, chainLabel, chainId, compact = false }: { co
         </div>
       )}
       <Button variant="outline" type="button" disabled={conn.connecting} onClick={() => void conn.connectInjected()}>
-        <Wallet size={16} aria-hidden="true" /> {fmt(S.form.connectWallet, { wallet: conn.walletName, chain: chainLabel })}
+        <Wallet size={16} aria-hidden="true" /> {t("form.connectWallet", { wallet: conn.walletName, chain: chainLabel })}
       </Button>
       {conn.localAvailable && (
         <>
           <Button variant="outline" type="button" className="bridge-local-button" onClick={conn.connectLocal}>
-            <Wallet size={16} aria-hidden="true" /> {S.form.useLocal}
+            <Wallet size={16} aria-hidden="true" /> {t("form.useLocal")}
           </Button>
-          {!compact && <p className="form-hint">{S.form.useLocalHint}</p>}
+          {!compact && <p className="form-hint">{t("form.useLocalHint")}</p>}
         </>
       )}
       {conn.error && (

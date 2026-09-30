@@ -34,7 +34,7 @@ import {
   type Eip1193Provider,
 } from "./evm";
 import { BRIDGE_FEE_XRGE, type BridgeAsset, type DepositAmount } from "./validate";
-import { S, fmt } from "./strings";
+import i18n from "../i18n";
 
 export interface FlowCtx {
   /** Injected in tests so polling runs instantly. */
@@ -58,7 +58,7 @@ export const L1_SYMBOL: Record<BridgeAsset, string> = { ETH: "qETH", USDC: "qUSD
 /** User-facing message for a wallet / network error (EIP-1193 4001 = user rejected). */
 export function errorMessage(e: unknown, fallback: string): string {
   const code = (e as { code?: unknown } | null)?.code;
-  if (code === 4001) return S.errors.rejected;
+  if (code === 4001) return i18n.t("bridge:errors.rejected");
   return e instanceof Error && e.message ? e.message : fallback;
 }
 
@@ -79,10 +79,10 @@ async function pollEvmClaim(
     });
     if (claim.success) return { success: true };
     last = claim.error || "";
-    if (progress) ctx.onStep?.(fmt(S.steps.waitingBaseAttempt, { attempt: attempt + 1 }));
+    if (progress) ctx.onStep?.(i18n.t("bridge:steps.waitingBaseAttempt", { attempt: attempt + 1 }));
     await sleep(CLAIM_INTERVAL_MS);
   }
-  return { success: false, error: last || S.errors.baseTimeout };
+  return { success: false, error: last || i18n.t("bridge:errors.baseTimeout") };
 }
 
 async function waitReceipt(provider: Eip1193Provider, hash: string, sleep: (ms: number) => Promise<void>): Promise<{ status?: string } | null> {
@@ -111,56 +111,56 @@ export interface EvmDepositParams {
 export async function depositFromBase(p: EvmDepositParams, ctx: FlowCtx = {}): Promise<FlowOutcome> {
   const sleep = ctx.sleep ?? realSleep;
   const { provider, evmAddress } = p;
-  ctx.onStep?.(S.steps.checkingChain);
+  ctx.onStep?.(i18n.t("bridge:steps.checkingChain"));
   await assertChain(provider, p.chainId);
 
   if (p.asset === "XRGE") {
     const vaultAddr = p.xrge?.vaultAddress;
     const tokenAddr = p.xrge?.tokenAddress;
-    if (!vaultAddr || !tokenAddr) throw new Error(S.errors.xrgeNotConfigured);
+    if (!vaultAddr || !tokenAddr) throw new Error(i18n.t("bridge:errors.xrgeNotConfigured"));
     const amountWei = p.amount.baseUnits;
 
-    ctx.onStep?.(S.steps.approvingXrge);
+    ctx.onStep?.(i18n.t("bridge:steps.approvingXrge"));
     const approveTxHash = (await provider.request({
       method: "eth_sendTransaction",
       params: [{ from: evmAddress, to: tokenAddr, data: approveCalldata(vaultAddr, amountWei) }],
     })) as string;
 
-    ctx.onStep?.(S.steps.waitingApproval);
+    ctx.onStep?.(i18n.t("bridge:steps.waitingApproval"));
     const approveReceipt = await waitReceipt(provider, approveTxHash, sleep);
-    if (!approveReceipt || approveReceipt.status !== "0x1") throw new Error(S.errors.approvalFailed);
+    if (!approveReceipt || approveReceipt.status !== "0x1") throw new Error(i18n.t("bridge:errors.approvalFailed"));
 
     await assertChain(provider, p.chainId);
-    ctx.onStep?.(S.steps.depositingVault);
+    ctx.onStep?.(i18n.t("bridge:steps.depositingVault"));
     const depositTx = (await provider.request({
       method: "eth_sendTransaction",
       params: [{ from: evmAddress, to: vaultAddr, data: vaultDepositCalldata(amountWei, p.recipientPubkey), gas: VAULT_DEPOSIT_GAS }],
     })) as string;
 
-    ctx.onStep?.(S.steps.waitingDeposit);
+    ctx.onStep?.(i18n.t("bridge:steps.waitingDeposit"));
     const receipt = await waitReceipt(provider, depositTx, sleep);
-    if (!receipt || receipt.status !== "0x1") throw new Error(S.errors.depositTxFailed);
+    if (!receipt || receipt.status !== "0x1") throw new Error(i18n.t("bridge:errors.depositTxFailed"));
 
     // The claim is honored only after Base confirmations; it's idempotent, so poll.
-    ctx.onStep?.(S.steps.waitingBase);
+    ctx.onStep?.(i18n.t("bridge:steps.waitingBase"));
     const claimParams = { evmTxHash: depositTx, evmAddress, amount: amountWei.toString(), recipientRougechainPubkey: p.recipientPubkey };
     let lastError = "";
     for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt++) {
       const claim = await claimXrgeBridgeDeposit(claimParams);
       if (claim.success) {
-        return { kind: "success", message: fmt(S.toasts.bridgedXrge, { amount: p.amount.l1Units.toString() }), txHash: depositTx, txId: claim.txId };
+        return { kind: "success", message: i18n.t("bridge:toasts.bridgedXrge", { amount: p.amount.l1Units.toString() }), txHash: depositTx, txId: claim.txId };
       }
       lastError = claim.error || "";
-      ctx.onStep?.(fmt(S.steps.waitingBaseAttempt, { attempt: attempt + 1 }));
+      ctx.onStep?.(i18n.t("bridge:steps.waitingBaseAttempt", { attempt: attempt + 1 }));
       await sleep(CLAIM_INTERVAL_MS);
     }
     // Still unconfirmed after ~3 min: the deposit is valid and the node's auto-claim finishes it.
-    return { kind: "pending", message: `${S.toasts.xrgeArrivesAutomatically}${lastError ? ` (${lastError})` : ""}`, txHash: depositTx };
+    return { kind: "pending", message: `${i18n.t("bridge:toasts.xrgeArrivesAutomatically")}${lastError ? ` (${lastError})` : ""}`, txHash: depositTx };
   }
 
-  if (!p.custodyAddress) throw new Error(S.errors.notConfigured);
+  if (!p.custodyAddress) throw new Error(i18n.t("bridge:errors.notConfigured"));
   const token = p.asset;
-  ctx.onStep?.(fmt(S.steps.sendingToBridge, { symbol: token }));
+  ctx.onStep?.(i18n.t("bridge:steps.sendingToBridge", { symbol: token }));
   const txHash = (await provider.request({
     method: "eth_sendTransaction",
     params: [
@@ -171,7 +171,7 @@ export async function depositFromBase(p: EvmDepositParams, ctx: FlowCtx = {}): P
   })) as string;
   await sleep(5000);
 
-  ctx.onStep?.(S.steps.signingClaim);
+  ctx.onStep?.(i18n.t("bridge:steps.signingClaim"));
   let sig = "";
   try {
     sig = (await provider.request({ method: "personal_sign", params: [claimMessageHex(txHash, p.recipientPubkey), evmAddress] })) as string;
@@ -179,14 +179,14 @@ export async function depositFromBase(p: EvmDepositParams, ctx: FlowCtx = {}): P
     // Smart-contract wallets may not support personal_sign — the node handles an empty signature.
   }
 
-  ctx.onStep?.(S.steps.waitingBase);
+  ctx.onStep?.(i18n.t("bridge:steps.waitingBase"));
   const claim = await pollEvmClaim({ txHash, evmAddress, evmSignature: sig, recipient: p.recipientPubkey, token }, ctx, true);
   const l1 = L1_SYMBOL[token];
   if (claim.success) {
     const human = token === "ETH" ? p.amount.l1Units : p.amount.baseUnits;
-    return { kind: "success", message: fmt(S.toasts.bridgedEvm, { amount: formatSix(human), from: token, to: l1 }), txHash };
+    return { kind: "success", message: i18n.t("bridge:toasts.bridgedEvm", { amount: formatSix(human), from: token, to: l1 }), txHash };
   }
-  return { kind: "pending", message: `${fmt(S.toasts.depositSentPending, { token: l1, tx: txHash.slice(0, 12) })}${claim.error ? ` (${claim.error})` : ""}`, txHash };
+  return { kind: "pending", message: `${i18n.t("bridge:toasts.depositSentPending", { token: l1, tx: txHash.slice(0, 12) })}${claim.error ? ` (${claim.error})` : ""}`, txHash };
 }
 
 function formatSix(units: bigint): string {
@@ -205,11 +205,11 @@ export async function claimExistingDeposit(
   try {
     sig = (await p.provider.request({ method: "personal_sign", params: [claimMessageHex(p.txHash, p.recipientPubkey), p.evmAddress] })) as string;
   } catch {
-    throw new Error(S.errors.signatureRejected);
+    throw new Error(i18n.t("bridge:errors.signatureRejected"));
   }
   const claim = await pollEvmClaim({ txHash: p.txHash, evmAddress: p.evmAddress, evmSignature: sig, recipient: p.recipientPubkey, token: p.token }, ctx, false);
-  if (claim.success) return { kind: "success", message: fmt(S.toasts.claimed, { token: L1_SYMBOL[p.token] }), txHash: p.txHash };
-  throw new Error(claim.error || S.errors.claimFailed);
+  if (claim.success) return { kind: "success", message: i18n.t("bridge:toasts.claimed", { token: L1_SYMBOL[p.token] }), txHash: p.txHash };
+  throw new Error(claim.error || i18n.t("bridge:errors.claimFailed"));
 }
 
 /**
@@ -218,16 +218,16 @@ export async function claimExistingDeposit(
  */
 export async function claimBtcDeposit(p: { txid: string; rougeAddress: string }, ctx: FlowCtx = {}): Promise<FlowOutcome> {
   const sleep = ctx.sleep ?? realSleep;
-  ctx.onStep?.(S.steps.waitingBitcoin);
+  ctx.onStep?.(i18n.t("bridge:steps.waitingBitcoin"));
   let last = "";
   for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt++) {
     const claim = await claimBtcBridgeDeposit({ btcTxid: p.txid, recipientRougechainPubkey: p.rougeAddress || undefined });
-    if (claim.success) return { kind: "success", message: S.toasts.claimedQbtc };
+    if (claim.success) return { kind: "success", message: i18n.t("bridge:toasts.claimedQbtc") };
     last = claim.error || "";
-    ctx.onStep?.(fmt(S.steps.waitingBitcoinAttempt, { attempt: attempt + 1 }));
+    ctx.onStep?.(i18n.t("bridge:steps.waitingBitcoinAttempt", { attempt: attempt + 1 }));
     await sleep(CLAIM_INTERVAL_MS);
   }
-  return { kind: "pending", message: `${S.toasts.btcNotConfirmedYet}${last ? ` (${last})` : ` (${S.errors.bitcoinTimeout})`}` };
+  return { kind: "pending", message: `${i18n.t("bridge:toasts.btcNotConfirmedYet")}${last ? ` (${last})` : ` (${i18n.t("bridge:errors.bitcoinTimeout")})`}` };
 }
 
 export interface WithdrawWallet {
@@ -265,9 +265,9 @@ export async function withdrawFromRougeChain(
   ctx: FlowCtx = {},
 ): Promise<FlowOutcome & { txId?: string }> {
   const token = L1_SYMBOL[p.asset];
-  ctx.onStep?.(S.steps.signingWithdrawal);
+  ctx.onStep?.(i18n.t("bridge:steps.signingWithdrawal"));
   const signed = await signBridgeWithdraw(p.wallet, p.amountUnits, p.destination, token);
-  ctx.onStep?.(S.steps.submittingWithdrawal);
+  ctx.onStep?.(i18n.t("bridge:steps.submittingWithdrawal"));
   const payload = signed.payload as unknown as Record<string, unknown>;
   let result: BridgeWithdrawResult;
   if (p.asset === "XRGE") {
@@ -275,8 +275,8 @@ export async function withdrawFromRougeChain(
   } else {
     result = await bridgeWithdraw({ fromPublicKey: p.wallet.publicKey, amountUnits: p.amountUnits, evmAddress: p.destination, tokenSymbol: token, signature: signed.signature, payload });
   }
-  if (!result.success) throw new Error(result.error || S.errors.withdrawFailed);
+  if (!result.success) throw new Error(result.error || i18n.t("bridge:errors.withdrawFailed"));
   const message =
-    p.asset === "BTC" ? S.toasts.withdrawQueuedBtc : p.asset === "XRGE" ? S.toasts.withdrawSubmittedXrge : fmt(S.toasts.withdrawSubmittedEvm, { symbol: p.asset });
+    p.asset === "BTC" ? i18n.t("bridge:toasts.withdrawQueuedBtc") : p.asset === "XRGE" ? i18n.t("bridge:toasts.withdrawSubmittedXrge") : i18n.t("bridge:toasts.withdrawSubmittedEvm", { symbol: p.asset });
   return { kind: "success", message, txId: result.txId };
 }

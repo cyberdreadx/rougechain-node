@@ -1,5 +1,5 @@
 /** /bridge page: every gate state, and each write flow driven through the UI with mocked node + wallets. */
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -15,6 +15,8 @@ import BridgePage from "./BridgePage";
 import { flowTiming } from "./DepositPanels";
 import { bridgeArea } from "../features/bridge";
 import { API, instant, mockApi, mockProvider } from "./test-helpers";
+import i18n from "../i18n";
+import { parseBtcAddress } from "./validate";
 
 const CUSTODY = "0x1111111111111111111111111111111111111111";
 const EVM = "0x3333333333333333333333333333333333333333";
@@ -92,6 +94,27 @@ describe("feature slot", () => {
     expect(bridgeArea.headerProduct("/bridge")).toBe("Bridge");
     expect(bridgeArea.headerProduct("/explorer/bridge")).toBeNull();
     expect(bridgeArea.headerProduct("/swap")).toBeNull();
+  });
+});
+
+describe("language", () => {
+  it("renders the bridge in Chinese (heading, tabs, badge, call-time validator text)", async () => {
+    await act(() => i18n.changeLanguage("zh"));
+    testnet();
+    const w = seedAppsWebWallet();
+    nodeRoutes(w.signingPublicKey);
+    renderBridge();
+    expect(await screen.findByRole("heading", { level: 1, name: "跨链桥" })).toBeInTheDocument();
+    expect(screen.getByText("在 Base、比特币与 RougeChain 之间转移资产。")).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "存入" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "提取" })).toBeInTheDocument();
+    expect(screen.getByText("Testnet")).toBeInTheDocument();
+    expect(await screen.findByText("暂无跨链活动")).toBeInTheDocument();
+    const bad = parseBtcAddress("nope", "testnet");
+    expect(bad.ok ? "" : bad.error).toBe("请输入有效的 Testnet 比特币地址");
+    await act(() => i18n.changeLanguage("es"));
+    expect(await screen.findByRole("tab", { name: "Depositar" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Puente" })).toBeInTheDocument();
   });
 });
 

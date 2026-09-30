@@ -3,12 +3,12 @@
  * provider (apps/web's BaseApprovalDialog). Nothing is signed until the user presses Approve.
  */
 import { AlertTriangle, ShieldCheck } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { formatUnits } from "viem";
 import { Button, Dialog } from "@rougechain/ui";
 import { formatUsd } from "@rougechain/core/price-service";
 import { formatBaseUnits, type BaseChainInfo } from "@rougechain/core/base-wallet";
 import type { LocalBaseRequest } from "@rougechain/core/base-local-provider";
-import { S, fmt } from "./strings";
 
 const ACTIONS: Record<string, "approve" | "transfer" | "deposit"> = {
   "0x095ea7b3": "approve",
@@ -27,12 +27,13 @@ export function ApprovalDialog({
   ethPriceUsd: number | null;
   onResolve: (approved: boolean) => void;
 }) {
+  const { t } = useTranslation("bridge");
   const ethUsd = (wei: bigint) => (chain.isMainnet && ethPriceUsd != null ? formatUsd(Number(formatUnits(wei, 18)) * ethPriceUsd) : null);
   let body;
   if (request.kind === "sign") {
     body = (
       <div className="wallet-form">
-        <p className="form-hint">{S.approve.message}</p>
+        <p className="form-hint">{t("approve.message")}</p>
         <pre className="bridge-sign-message mono">{request.message}</pre>
       </div>
     );
@@ -43,22 +44,22 @@ export function ApprovalDialog({
     body = (
       <dl className="review-list">
         <div>
-          <dt>{S.approve.action}</dt>
-          <dd>{S.approve.actions[action]}</dd>
+          <dt>{t("approve.action")}</dt>
+          <dd>{t(`approve.actions.${action}`)}</dd>
         </div>
         <div>
-          <dt>{S.approve.to}</dt>
+          <dt>{t("approve.to")}</dt>
           <dd className="mono">{request.to}</dd>
         </div>
         <div>
-          <dt>{S.approve.value}</dt>
+          <dt>{t("approve.value")}</dt>
           <dd className="mono">
             {formatBaseUnits(request.value, 18, 8)} ETH
             {valueUsd && <span className="bridge-sub">≈ {valueUsd}</span>}
           </dd>
         </div>
         <div>
-          <dt>{S.approve.fee}</dt>
+          <dt>{t("approve.fee")}</dt>
           <dd className="mono">
             ~{formatBaseUnits(request.fee.totalFeeWei, 18, 8)} ETH
             {feeUsd && <span className="bridge-sub">≈ {feeUsd}</span>}
@@ -68,22 +69,22 @@ export function ApprovalDialog({
     );
   }
   return (
-    <Dialog open onClose={() => onResolve(false)} title={request.kind === "sign" ? S.approve.signTitle : fmt(S.approve.txTitle, { chain: chain.name })}>
+    <Dialog open onClose={() => onResolve(false)} title={request.kind === "sign" ? t("approve.signTitle") : t("approve.txTitle", { chain: chain.name })}>
       <div className="wallet-form">
         {body}
         <p className={`bridge-callout ${chain.isMainnet ? "warning" : ""}`}>
           <AlertTriangle size={15} aria-hidden="true" />
-          <span>{chain.isMainnet ? S.approve.mainnetWarning : S.approve.testnetWarning}</span>
+          <span>{chain.isMainnet ? t("approve.mainnetWarning") : t("approve.testnetWarning")}</span>
         </p>
         <p className="form-hint bridge-inline-icon">
           <ShieldCheck size={14} aria-hidden="true" />
-          {S.approve.localSign}
+          {t("approve.localSign")}
         </p>
         <div className="actions">
           <Button variant="outline" onClick={() => onResolve(false)}>
-            {S.approve.reject}
+            {t("approve.reject")}
           </Button>
-          <Button onClick={() => onResolve(true)}>{S.approve.approve}</Button>
+          <Button onClick={() => onResolve(true)}>{t("approve.approve")}</Button>
         </div>
       </div>
     </Dialog>
