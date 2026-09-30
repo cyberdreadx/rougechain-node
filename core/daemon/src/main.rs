@@ -8606,7 +8606,9 @@ async fn bridge_btc_withdrawal_fulfill(
             return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout not verified: {}", e)) });
         }
     }
-    match state.bridge_withdraw_store.mark_fulfilled(&tx_id, &payout_txid) {
+    // A Bitcoin payment carries no withdrawal id, so one payment must never settle two
+    // withdrawals (e.g. two equal withdrawals to the same address): enforced atomically in the store.
+    match state.bridge_withdraw_store.mark_fulfilled_unique_payout(&tx_id, &payout_txid) {
         Ok(true) => Json(BridgeFulfillResponse { success: true, error: None }),
         Ok(false) => Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found or already fulfilled".to_string()) }),
         Err(e) => Json(BridgeFulfillResponse { success: false, error: Some(e) }),
