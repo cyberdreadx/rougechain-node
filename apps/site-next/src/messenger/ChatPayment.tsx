@@ -10,7 +10,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUp, CheckCircle2, DollarSign, Loader2 } from "lucide-react";
-import { BASE_TRANSFER_FEE, getWalletBalance, type WalletBalance } from "@rougechain/core/pqc-wallet";
+import { WALLET_TRANSFER_FEE, getWalletBalance, type WalletBalance } from "@rougechain/core/pqc-wallet";
 import { secureTransfer } from "@rougechain/core/secure-api";
 import { useWallet } from "../wallet/WalletProvider";
 import { displayAmount, parseAmount } from "../wallet/send";
@@ -79,7 +79,7 @@ export function ChatPayment({
         wallet.signingPrivateKey,
         recipientPublicKey,
         check.raw,
-        BASE_TRANSFER_FEE,
+        WALLET_TRANSFER_FEE,
         token,
       );
       if (!result.success) throw new Error(result.error || "Transfer failed");
@@ -163,7 +163,7 @@ export function ChatPayment({
             ? S.pay.sending
             : fmt(mode === "send" ? S.pay.send : S.pay.request, { amount: amount || "", symbol: token }).replace(/\s+/g, " ")}
         </button>
-        {mode === "send" && <p className="msg-hint center">{fmt(isExtension ? S.pay.feeExtension : S.pay.fee, { fee: BASE_TRANSFER_FEE })}</p>}
+        {mode === "send" && <p className="msg-hint center">{fmt(isExtension ? S.pay.feeExtension : S.pay.fee, { fee: WALLET_TRANSFER_FEE })}</p>}
       </form>
     </Sheet>
   );
