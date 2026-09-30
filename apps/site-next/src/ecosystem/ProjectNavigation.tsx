@@ -5,11 +5,11 @@ import { DOCS_URL } from "./apps";
 import { useWalletIdentity } from "../wallet/WalletProvider";
 export const marketingSections = [
   "Technology",
-  "Explore",
   "Build",
-  "Ecosystem",
   "Security",
-  "Community",
+  "Ecosystem",
+  "Regenerate",
+  "Explore",
 ];
 export function ProjectNavigation() {
   const [open, setOpen] = useState(false);

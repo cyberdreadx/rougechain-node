@@ -1,18 +1,14 @@
-import { appHref, appById, WHITEPAPER_URL } from "./ecosystem/apps";
-import {
-  ArrowUpRight,
-  ArrowRight,
-  Terminal,
-  ShieldCheck,
-  Layers,
-} from "lucide-react";
+import { WHITEPAPER_URL } from "./ecosystem/apps";
+import { ArrowUpRight, ArrowRight, Terminal, ShieldCheck } from "lucide-react";
 import { Section, TextLink, CodeBlock } from "@rougechain/ui";
 import { DOCS, GITHUB } from "./Shell";
 import { team } from "./team";
+import EcosystemCarousel from "./EcosystemCarousel";
+import Explore from "./explore/Explore";
 export default function MarketingSections() {
   return (
     <>
-      <Section id="build" eyebrow="03 / Built for builders">
+      <Section id="build" eyebrow="02 / Built for builders">
         <div className="build-layout">
           <div>
             <h2>
@@ -71,73 +67,7 @@ export default function MarketingSections() {
           </div>
         </div>
       </Section>
-      <Section id="ecosystem" eyebrow="04 / Beyond the chain">
-        <div className="section-heading">
-          <h2>
-            One foundation.
-            <br />
-            Many possibilities.
-          </h2>
-          <TextLink href="#explore">Explore the ecosystem</TextLink>
-        </div>
-        <div className="ecosystem-feature">
-          <div className="qwalla-image">
-            <div className="qwalla-phone">
-              <div className="qwalla-phone-speaker" aria-hidden="true" />
-              <img
-                src="/qwalla-app.jpg"
-                alt="Full Qwalla wallet screen shown in a phone mockup"
-                width="1206"
-                height="2459"
-                loading="lazy"
-              />
-              <div className="qwalla-phone-home" aria-hidden="true" />
-            </div>
-          </div>
-          <div className="ecosystem-copy">
-            <span className="mono muted">IN THE ECOSYSTEM / QWALLA</span>
-            <h3>
-              Make the network
-              <br />
-              part of your everyday.
-            </h3>
-            <p>
-              Qwalla connects the RougeChain ecosystem to a broader application
-              experience. Discover how the pieces fit together.
-            </p>
-            <TextLink href={appHref(appById("qwalla")!)}>
-              Discover Qwalla
-            </TextLink>
-          </div>
-        </div>
-        <div className="ecosystem-row">
-          <a href={appHref(appById("wallet")!)}>
-            <Layers size={22} />
-            <div>
-              <h3>RougeChain Wallet</h3>
-              <p>Your entry to the ecosystem.</p>
-            </div>
-            <ArrowUpRight size={20} />
-          </a>
-          <a href="/explorer">
-            <Terminal size={22} />
-            <div>
-              <h3>See every layer</h3>
-              <p>Explore blocks and network activity.</p>
-            </div>
-            <ArrowUpRight size={20} />
-          </a>
-          <a href="/swap">
-            <ArrowRight size={22} />
-            <div>
-              <h3>A new exchange</h3>
-              <p>Preview the Swap design concept.</p>
-            </div>
-            <ArrowUpRight size={20} />
-          </a>
-        </div>
-      </Section>
-      <Section id="security" eyebrow="05 / Security & transparency">
+      <Section id="security" eyebrow="03 / Security & transparency">
         <div className="security-layout">
           <div>
             <ShieldCheck size={28} className="security-icon" />
@@ -160,9 +90,18 @@ export default function MarketingSections() {
           </div>
           <div className="crypto-list">
             {[
-              ["ML-DSA-65", "Digital signatures", "FIPS 204"],
-              ["ML-KEM-768", "Key encapsulation", "FIPS 203"],
-              ["SHA-256", "Cryptographic hashing", "FIPS 180-4"],
+              ["ML-DSA-65", "Post-quantum digital signatures", "FIPS 204"],
+              ["ML-KEM-768", "Post-quantum key encapsulation", "FIPS 203"],
+              [
+                "AES-256-GCM",
+                "Authenticated data encryption",
+                "FIPS 197 / SP 800-38D",
+              ],
+              [
+                "SHA-256 + BLAKE3",
+                "Hashing & proof commitments",
+                "FIPS 180-4 / BLAKE3",
+              ],
             ].map(([name, desc, fips]) => (
               <div key={name}>
                 <div>
@@ -173,13 +112,32 @@ export default function MarketingSections() {
               </div>
             ))}
             <p className="small-note">
-              Standards identify the cryptographic primitives. They do not imply
-              an external audit of RougeChain.
+              ML-KEM-768 establishes or wraps keys; AES-256-GCM encrypts data.
+              SHA-256 and BLAKE3 are hashing primitives, not encryption.
+              Standards identify the primitives; they do not imply an external
+              audit of RougeChain.
             </p>
           </div>
         </div>
       </Section>
-      <Section id="xrge" eyebrow="06 / The native asset">
+      <Section id="ecosystem" eyebrow="04 / Beyond the chain">
+        <div className="section-heading ecosystem-heading">
+          <div>
+            <h2>
+              One foundation.
+              <br />
+              Many possibilities.
+            </h2>
+            <p>
+              Hold. Trade. Move. Communicate. Validate. Build.
+              <br />
+              Explore what becomes possible on RougeChain.
+            </p>
+          </div>
+        </div>
+        <EcosystemCarousel />
+      </Section>
+      <Section id="xrge" eyebrow="05 / The native asset">
         <div className="token-section">
           <div className="token-identity">
             <img src="/xrge-logo.webp" alt="XRGE mark" loading="lazy" />
@@ -204,30 +162,7 @@ export default function MarketingSections() {
           </div>
         </div>
       </Section>
-      <Section id="community" eyebrow="07 / Regenerate">
-        <div className="community-layout">
-          <h2>
-            Technology moves forward.
-            <br />
-            <span className="muted">People give it direction.</span>
-          </h2>
-          <div>
-            <p>
-              Regenerate is part of the RougeChain story. Join the conversation
-              around a network, its community, and what comes next.
-            </p>
-            <div className="actions">
-              <TextLink href="https://discord.gg/Fn6CCrx8jP">
-                Join Discord
-              </TextLink>
-              <TextLink href="https://x.com/rougecoin">
-                Follow RougeChain
-              </TextLink>
-            </div>
-          </div>
-        </div>
-      </Section>
-      <Section id="team" eyebrow="08 / People behind the protocol">
+      <Section id="team" eyebrow="06 / People behind the protocol">
         <div className="section-heading">
           <h2>Building the next chapter.</h2>
           <p>Engineering, creativity, and community.</p>
@@ -249,6 +184,34 @@ export default function MarketingSections() {
           ))}
         </div>
       </Section>
+      <Section id="regenerate" eyebrow="07 / Regenerate">
+        <div className="community-layout">
+          <h2>
+            Technology should improve
+            <br />
+            <span className="muted">the territory it touches.</span>
+          </h2>
+          <div>
+            <p>
+              RougeChain Regenerate connects blockchain infrastructure with
+              real-world community development—funding transparent, measurable
+              local initiatives across ecology, infrastructure, technology, art,
+              and community. Starting in Tulum, project funding, milestones,
+              evidence, and impact can be recorded through RougeChain so
+              progress is visible from capital to outcome.
+            </p>
+            <div className="actions">
+              <TextLink href="https://rougechain.io/regenerate">
+                Explore Regenerate
+              </TextLink>
+              <TextLink href="https://rougechain.io/regenerate#propose">
+                Propose a Project
+              </TextLink>
+            </div>
+          </div>
+        </div>
+      </Section>
+      <Explore />
       <Section className="final-cta" eyebrow="The next era starts here">
         <h2>
           Build on a chain designed

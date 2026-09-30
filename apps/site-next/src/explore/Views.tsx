@@ -148,15 +148,19 @@ export function ExploreSecurityView() {
       <div className="security-primitives">
         <div>
           <strong>ML-DSA-65</strong>
-          <span>Signatures · FIPS 204</span>
+          <span>Post-quantum signatures · FIPS 204</span>
         </div>
         <div>
           <strong>ML-KEM-768</strong>
-          <span>Key encapsulation · FIPS 203</span>
+          <span>Post-quantum key encapsulation · FIPS 203</span>
         </div>
         <div>
-          <strong>SHA-256</strong>
-          <span>Hashing · FIPS 180-4</span>
+          <strong>AES-256-GCM</strong>
+          <span>Authenticated encryption · FIPS 197 / SP 800-38D</span>
+        </div>
+        <div>
+          <strong>SHA-256 + BLAKE3</strong>
+          <span>Hashing / proof commitments · FIPS 180-4 / BLAKE3</span>
         </div>
       </div>
       <TextLink href="/#security">The cryptographic stack</TextLink>
