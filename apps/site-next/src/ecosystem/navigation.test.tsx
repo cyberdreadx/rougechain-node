@@ -9,7 +9,7 @@ import { AppHeader, MarketingHeader, WorkspaceHeader } from "../Shell";
 import WorkspacePage from "../WorkspacePage";
 import CompactWorkspace from "../explore/CompactWorkspace";
 import { explorerRoutes } from "../explorer/routes";
-import SwapSections from "../SwapSections";
+import Pools from "../pages/Pools";
 function wrap(child: React.ReactNode, path = "/") {
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(Error("offline")));
   return render(
@@ -114,14 +114,18 @@ it.each(["blocks", "transactions", "tokens", "nfts", "contracts"])(
     ).not.toBeInTheDocument();
   },
 );
-it.each(["pools", "positions"] as const)("renders safe swap %s", (section) => {
-  wrap(<SwapSections section={section} />);
-  expect(
-    screen
-      .queryAllByRole("button")
-      .every((b) => (b as HTMLButtonElement).disabled),
-  ).toBe(true);
-});
+it.each(["pools", "positions"] as const)(
+  "renders swap %s with no write enabled without a wallet",
+  async (section) => {
+    wrap(<Pools view={section} />);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      section === "pools" ? "Liquidity pools" : "Your positions",
+    );
+    expect(screen.getByRole("button", { name: "New pool" })).toBeDisabled();
+    // Offline node: an honest error, never synthetic pools.
+    await screen.findByText("Couldn't load pools from the node.");
+  },
+);
 
 it("supports keyboard navigation in the compact workspace", async () => {
   wrap(<CompactWorkspace />);

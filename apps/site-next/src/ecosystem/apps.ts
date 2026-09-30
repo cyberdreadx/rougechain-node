@@ -113,13 +113,14 @@ export const apps: EcosystemApp[] = [
     description: "Exchange assets. Explore possibilities.",
     proposedHost: "swap.rougechain.io",
     icon: "arrows",
-    status: "demo",
+    status: "live",
     pocRoute: "/swap",
     workspaceView: "Swap",
+    // apps/web paths (/pools, /pool/:id, /buy) plus the /swap/* views; `match` lights the section.
     localNavigation: [
-      { label: "Swap", path: "/swap" },
-      { label: "Pools", path: "/swap/pools" },
-      { label: "Positions", path: "/swap/positions" },
+      { label: "Swap", path: "/swap", match: ["/swap", "/buy"] },
+      { label: "Pools", path: "/pools", match: ["/pools", "/pool", "/swap/pools"] },
+      { label: "Positions", path: "/swap/positions", match: ["/swap/positions"] },
     ],
   },
   {
@@ -139,11 +140,11 @@ export const apps: EcosystemApp[] = [
     kind: "utility",
     name: "Liquidity",
     group: "Trade",
-    description: "Explore pool designs.",
+    description: "Provide liquidity and earn swap fees.",
     proposedHost: "swap.rougechain.io/pools",
     icon: "layers",
-    status: "demo",
-    pocRoute: "/swap/pools",
+    status: "live",
+    pocRoute: "/pools",
     workspaceView: "Swap",
   },
   {
