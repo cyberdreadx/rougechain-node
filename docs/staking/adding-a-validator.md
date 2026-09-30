@@ -43,7 +43,7 @@ Two things combine:
 This mirrors [Becoming a Validator](becoming-validator.md), with the reason each step is load-bearing. Follow that guide for exact commands.
 
 1. **Generate the node identity and sync to the tip.** Your `node-keys.json` key is both your stake-holding key and your block-signing key — they must be the same key. Let the node fully sync first so your `stake` tx builds on the current tip.
-2. **Fund the key, then stake ≥ `min_stake` (10,000 XRGE).** The freshly-generated key starts empty — first send **≥ 10,000 XRGE (+ ~0.1 XRGE fee)** to the validator address, *then* submit the `stake` tx from that key and wait for it to be **included in a block**. (Staking from an unfunded key fails on the fee/balance check.) This is the step that puts your key into the on-chain validator set that every peer derives.
+2. **Fund the key, then stake ≥ `min_stake` (10,000 XRGE).** The freshly-generated key starts empty — first send **≥ 10,000 XRGE (+ 1 XRGE fee)** to the validator address, *then* submit the `stake` tx from that key and wait for it to be **included in a block**. (Staking from an unfunded key fails on the fee/balance check.) This is the step that puts your key into the on-chain validator set that every peer derives.
 3. **Confirm you are in the active set** before mining:
    ```bash
    rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json validator-status

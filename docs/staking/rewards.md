@@ -20,11 +20,15 @@ Validators earn rewards for producing blocks on RougeChain.
 
 | Transaction Type | Fee |
 |-----------------|-----|
-| Transfer | 0.1 XRGE |
+| Transfer (wallet-signed) | 1 XRGE |
 | Token creation | 100 XRGE |
 | Pool creation | 10 XRGE |
-| Swap | 0.3% (to LPs, not validators) |
-| Stake/Unstake | 0.1 XRGE |
+| Swap | 1 XRGE network fee, plus 0.3% of the input to liquidity providers |
+| Add / remove liquidity | 1 XRGE |
+| Stake / Unstake | 1 XRGE |
+| Bridge withdrawal | 0.1 XRGE |
+
+These are the fees the node binds to each signed transaction type (`core/daemon/src/v2_binding.rs`).
 
 The tip portion of these fees (after the base-fee burn) is split across the proposer, all validators (stake-weighted), and the treasury — see [How Rewards Work](#how-rewards-work). Swap fees go to liquidity providers, not validators.
 

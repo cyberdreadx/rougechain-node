@@ -3,7 +3,7 @@
 Switching rougechain.io from `apps/web` (React 18) to `apps/site-next` (React 19, Anders' design) on the
 **same origin**. Nothing may be lost: routes, assets, the service worker, SEO and social previews.
 
-Legend: **done** = in site-next and tested · **in progress (other area)** = being built in parallel
+Legend: **done** = in site-next and tested · **done** = being built in parallel
 on another branch · **gap** = not yet planned, owner must decide.
 
 ## 1. Routes (apps/web `src/App.tsx` → site-next)
@@ -21,12 +21,12 @@ on another branch · **gap** = not yet planned, owner must decide.
 | `/tokens`, `/token/:symbol` | explorer | done | |
 | `/nfts`, `/nfts/:collectionId` | explorer | done | |
 | `/contracts`, `/contract/:addr` | explorer | done | Not duplicated by pages. |
-| `/swap` | swap | in progress (other area) | Design preview exists; the real swap is being built. |
-| `/pools`, `/pool/:poolId` | swap | in progress (other area) | site-next has `/swap/pools`; the legacy paths must be kept or redirected. |
-| `/buy` | swap | in progress (other area) | |
-| `/bridge` | bridge | in progress (other area) | Explorer's bridge activity is at `/explorer/bridge`. |
-| `/messenger` | messenger | in progress (other area) | |
-| `/mail` | messenger | in progress (other area) | |
+| `/swap` | swap | done | Design preview exists; the real swap is being built. |
+| `/pools`, `/pool/:poolId` | swap | done | site-next has `/swap/pools`; the legacy paths must be kept or redirected. |
+| `/buy` | swap | done | |
+| `/bridge` | bridge | done | Explorer's bridge activity is at `/explorer/bridge`. |
+| `/messenger` | messenger | done | |
+| `/mail` | messenger | done | |
 | `/validators` | pages | done | List, stats, proposer, finality, your stake, **stake + unstake** (review → sign, core `pqc-validators`: `POST /v2/stake`, `/v2/unstake`), node-keys.json explainer. |
 | `/genesis-validators` | pages | done | apps/web copy, minus its internal "EDIT" placeholder notes. |
 | `/node` | pages | done | Live node dashboard (same probes as apps/web: API, localhost:5100–5104, discovered peers) + commands. The 3-D network globe is not ported (gap, see §6). |

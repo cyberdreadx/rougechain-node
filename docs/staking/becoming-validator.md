@@ -31,7 +31,7 @@ Your node stores this keypair at `<data-dir>/node-keys.json`. **The network reje
 
 ## Prerequisites
 
-- **≥ 10,000 XRGE** (+ ~0.1 XRGE fee) for the standard tier — see [tiers](#validator-tiers).
+- **≥ 10,000 XRGE** (+ 1 XRGE fee) for the standard tier — see [tiers](#validator-tiers).
 - A **server** — see [system requirements](../running-a-node/README.md#system-requirements) and [installation](../running-a-node/installation.md).
 - The **daemon** (`quantum-vault-daemon`) and the **CLI** (`rougechain`).
 
@@ -79,7 +79,7 @@ This prints your validator's public key + `rouge1…` address — confirm it mat
 
 ## Step 3 — Fund and stake
 
-Send **≥ 10,000 XRGE (+ ~0.1 XRGE fee)** to your validator address (from `whoami` above) from your main wallet. Then stake it:
+Send **≥ 10,000 XRGE (+ 1 XRGE fee)** to your validator address (from `whoami` above) from your main wallet. Then stake it:
 
 ```bash
 rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json stake 10000

@@ -178,7 +178,7 @@ describe("sitemap.xml", () => {
 
 /** Routes App.tsx defines itself; and apps/web routes other areas are porting in parallel. */
 const APP_PATHS = ["/", "/wallet", "/settings", "/workspace", "/architecture", "/design-system"];
-const IN_PROGRESS = ["/bridge", "/messenger", "/mail", "/buy", "/pools"];
+const IN_PROGRESS: string[] = []; // every area has landed (swap, bridge, messenger/mail, pages)
 function routePaths(): string[] {
   return [...featureRoutes, ...explorerRoutes].map((r) => (r as ReactElement<{ path: string }>).props.path);
 }
