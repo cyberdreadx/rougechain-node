@@ -436,3 +436,9 @@
     align-items: flex-start;
   }
 }
+
+/* Copy buttons inside the shared .wallet-form grid keep their icon size. */
+.bridge-main .copy-text .button {
+  width: auto;
+  flex: none;
+}
