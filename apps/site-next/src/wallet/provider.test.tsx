@@ -205,14 +205,17 @@ describe("provider state machine", () => {
     expect(signed.public_key).toBe(w.signingPublicKey);
   });
 
-  it("auto-connects an injected extension on load when there is no wallet (WalletAutoRegister)", async () => {
+  it("never calls the extension's connect() on load (no approval prompt before the user clicks)", async () => {
+    let connected = 0;
     Object.defineProperty(window, "rougechain", {
       configurable: true,
-      value: { isRougeChain: true, connect: async () => ({ publicKey: "ab".repeat(1952) }) },
+      value: { isRougeChain: true, connect: async () => { connected += 1; return { publicKey: "ab".repeat(1952) }; } },
     });
     mount(true);
-    await waitFor(() => expect(status()).toBe("unlocked"));
-    expect(ctx.displayName).toBe("Extension Wallet");
+    window.dispatchEvent(new Event("rougechain#initialized"));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(connected).toBe(0);
+    expect(status()).toBe("none");
   });
 
   it("re-registers an unlocked local wallet in the messenger directory on load", async () => {
