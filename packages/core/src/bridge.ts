@@ -141,6 +141,10 @@ export interface BridgeConfig {
   btcCustodyAddress?: string;
   /** Which Bitcoin network the custody address lives on — drives mempool.space links. */
   btcNetwork?: "mainnet" | "testnet";
+  /** Minimum qBTC withdrawal in sats (node QV_BRIDGE_BTC_MIN_WITHDRAW_SATS). */
+  btcMinWithdrawSats?: number;
+  /** Max Bitcoin network fee (sats) deducted from a qBTC payout (node QV_BRIDGE_BTC_MAX_NETWORK_FEE_SATS). */
+  btcMaxNetworkFeeSats?: number;
 }
 
 /**
@@ -169,6 +173,8 @@ export async function getBridgeConfig(): Promise<BridgeConfig> {
       supportedTokens: data.supportedTokens,
       btcCustodyAddress: typeof data.btcCustodyAddress === "string" ? data.btcCustodyAddress : undefined,
       btcNetwork: data.btcNetwork === "mainnet" || data.btcNetwork === "testnet" ? data.btcNetwork : undefined,
+      btcMinWithdrawSats: typeof data.btcMinWithdrawSats === "number" ? data.btcMinWithdrawSats : undefined,
+      btcMaxNetworkFeeSats: typeof data.btcMaxNetworkFeeSats === "number" ? data.btcMaxNetworkFeeSats : undefined,
     };
   } catch {
     return { enabled: false };
