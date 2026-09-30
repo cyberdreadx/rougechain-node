@@ -1,27 +1,20 @@
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { applySiteHead, siteHead } from "./src/pages/site-head";
 
-// Page title/description per build: the main site or explorer.rougechain.io (VITE_APP_MODE=explorer).
+// Page head per build: the main site, explorer.rougechain.io (VITE_APP_MODE=explorer), and a
+// testnet-pinned deploy (VITE_NETWORK_LOCK=testnet). The tag logic lives in
+// src/pages/site-head.ts (unit-tested); scripts/prerender-og.mjs then specialises it per route.
 function siteMeta(mode: string): Plugin {
   const env = loadEnv(mode, process.cwd(), "VITE_");
-  const explorer =
-    (process.env.VITE_APP_MODE ?? env.VITE_APP_MODE) === "explorer";
-  const title = explorer
-    ? "RougeChain Explorer — blocks, transactions, addresses and tokens"
-    : "RougeChain — Post-quantum from genesis.";
-  const description = explorer
-    ? "Explore RougeChain, the post-quantum Layer 1: blocks, transactions, addresses, tokens, NFTs and contracts."
-    : "RougeChain — a post-quantum Layer 1 blockchain built on NIST-standardized lattice cryptography.";
+  const explorer = (process.env.VITE_APP_MODE ?? env.VITE_APP_MODE) === "explorer";
+  const testnet = (process.env.VITE_NETWORK_LOCK ?? env.VITE_NETWORK_LOCK) === "testnet";
+  const head = siteHead({ explorer, testnet });
   return {
     name: "rougechain-site-meta",
     transformIndexHtml(html) {
-      return html
-        .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`)
-        .replace(
-          /(<meta\s+name="description"\s+content=")[^"]*(")/,
-          `$1${description}$2`,
-        );
+      return applySiteHead(html, head);
     },
   };
 }
