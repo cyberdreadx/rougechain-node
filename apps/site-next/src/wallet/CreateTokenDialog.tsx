@@ -1,19 +1,21 @@
 import { useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Dialog, Button } from "@rougechain/ui";
 import { TOKEN_CREATION_FEE, type WalletBalance } from "@rougechain/core/pqc-wallet";
 import { secureCreateToken } from "@rougechain/core/secure-api";
 import { fileToLogoDataUri } from "@rougechain/core/image-utils";
 import { useWallet } from "./WalletProvider";
 import { toast } from "./toast";
+import i18n from "../i18n";
 
 /** Validation used by the create-token form (same rules as apps/web's CreateTokenDialog). */
 export function checkTokenForm(f: { name: string; symbol: string; supply: string }, xrgeBalance: number): string | null {
-  if (!f.name.trim()) return "Token name is required";
-  if (!f.symbol.trim()) return "Token symbol is required";
-  if (f.symbol.trim().length > 10) return "Symbol must be 10 characters or less";
+  if (!f.name.trim()) return i18n.t("wallet:createToken.errors.nameRequired");
+  if (!f.symbol.trim()) return i18n.t("wallet:createToken.errors.symbolRequired");
+  if (f.symbol.trim().length > 10) return i18n.t("wallet:createToken.errors.symbolLength", { count: 10 });
   const supply = Number(f.supply);
-  if (!/^\d+$/.test(f.supply.trim()) || !Number.isSafeInteger(supply) || supply <= 0) return "Total supply must be a whole number above zero";
-  if (xrgeBalance < TOKEN_CREATION_FEE) return `Insufficient XRGE. Creating a token costs ${TOKEN_CREATION_FEE} XRGE`;
+  if (!/^\d+$/.test(f.supply.trim()) || !Number.isSafeInteger(supply) || supply <= 0) return i18n.t("wallet:createToken.errors.supply");
+  if (xrgeBalance < TOKEN_CREATION_FEE) return i18n.t("wallet:createToken.errors.insufficient", { fee: TOKEN_CREATION_FEE });
   return null;
 }
 
@@ -28,6 +30,7 @@ export function CreateTokenDialog({
   balances: WalletBalance[];
   onCreated: () => void;
 }) {
+  const { t } = useTranslation("wallet");
   const { wallet } = useWallet();
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("");
@@ -42,7 +45,7 @@ export function CreateTokenDialog({
   const submit = async () => {
     const problem = checkTokenForm({ name, symbol, supply }, xrge);
     if (problem) return setError(problem);
-    if (!wallet) return setError("Unlock your wallet first");
+    if (!wallet) return setError(t("send.errors.unlockFirst"));
     setBusy(true);
     setError("");
     try {
@@ -57,8 +60,8 @@ export function CreateTokenDialog({
         image.trim() || undefined,
         description.trim() || undefined,
       );
-      if (!r.success) throw new Error(r.error || "Token creation failed");
-      toast.success(`Token ${sym} created`, { description: "It appears in your wallet after the next block." });
+      if (!r.success) throw new Error(r.error || t("createToken.errors.failed"));
+      toast.success(t("createToken.created", { symbol: sym }), { description: t("createToken.createdBody") });
       setName("");
       setSymbol("");
       setSupply("");
@@ -66,14 +69,14 @@ export function CreateTokenDialog({
       setImage("");
       onCreated();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create token");
+      setError(e instanceof Error ? e.message : t("createToken.errors.createFailed"));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Dialog open={open} onClose={() => !busy && onClose()} title="Create a token">
+    <Dialog open={open} onClose={() => !busy && onClose()} title={t("createToken.title")}>
       <form
         className="wallet-form"
         onSubmit={(e) => {
@@ -82,33 +85,33 @@ export function CreateTokenDialog({
         }}
       >
         <label className="field">
-          Token name
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. My Awesome Token" />
+          {t("createToken.name")}
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("createToken.namePlaceholder")} />
         </label>
         <div className="two-fields">
           <label className="field">
-            Symbol
+            {t("createToken.symbol")}
             <input className="input mono" value={symbol} maxLength={10} onChange={(e) => setSymbol(e.target.value.toUpperCase())} placeholder="MAT" />
           </label>
           <label className="field">
-            Total supply
+            {t("createToken.supply")}
             <input className="input mono" inputMode="numeric" value={supply} onChange={(e) => setSupply(e.target.value)} placeholder="1000000" />
           </label>
         </div>
         <label className="field">
-          Description (optional)
+          {t("createToken.description")}
           <textarea className="input" rows={3} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />
         </label>
         <label className="field">
-          Logo URL or upload (optional)
+          {t("createToken.logo")}
           <span className="field-row">
-            <input className="input" value={image.startsWith("data:") ? "Uploaded image" : image} onChange={(e) => setImage(e.target.value)} placeholder="https://…" readOnly={image.startsWith("data:")} />
+            <input className="input" value={image.startsWith("data:") ? t("createToken.uploaded") : image} onChange={(e) => setImage(e.target.value)} placeholder="https://…" readOnly={image.startsWith("data:")} />
             <Button type="button" variant="outline small" onClick={() => file.current?.click()}>
-              Upload
+              {t("createToken.upload")}
             </Button>
             {image && (
               <Button type="button" variant="ghost small" onClick={() => setImage("")}>
-                Clear
+                {t("createToken.clear")}
               </Button>
             )}
           </span>
@@ -125,12 +128,12 @@ export function CreateTokenDialog({
             try {
               setImage(await fileToLogoDataUri(f));
             } catch (err) {
-              toast.error("Couldn't use that image", { description: err instanceof Error ? err.message : undefined });
+              toast.error(t("profile.imageFailed"), { description: err instanceof Error ? err.message : undefined });
             }
           }}
         />
         <p className="form-hint">
-          Fee {TOKEN_CREATION_FEE} XRGE · you have {xrge.toLocaleString()} XRGE. The whole supply goes to your wallet.
+          {t("createToken.feeHint", { fee: TOKEN_CREATION_FEE, balance: xrge.toLocaleString() })}
         </p>
         {error && (
           <p className="form-error" role="alert">
@@ -138,7 +141,7 @@ export function CreateTokenDialog({
           </p>
         )}
         <Button type="submit" disabled={busy}>
-          {busy ? "Signing…" : `Create token (${TOKEN_CREATION_FEE} XRGE)`}
+          {busy ? t("send.signing") : t("createToken.submit", { fee: TOKEN_CREATION_FEE })}
         </Button>
       </form>
     </Dialog>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Dialog, Button } from "@rougechain/ui";
 import { encryptWallet } from "@rougechain/core/unified-wallet";
 import { useWallet } from "./WalletProvider";
@@ -42,6 +43,7 @@ function download(data: string, fileName: string): boolean {
 
 /** Import from a recovery phrase or an encrypted .pqcbackup (apps/web's WalletBackup import logic via core). */
 export function ImportForm({ onDone }: { onDone?: () => void }) {
+  const { t } = useTranslation("wallet");
   const { importMnemonic, importBackup } = useWallet();
   const [mode, setMode] = useState<"phrase" | "backup">("phrase");
   const [phrase, setPhrase] = useState("");
@@ -58,10 +60,10 @@ export function ImportForm({ onDone }: { onDone?: () => void }) {
       setPhrase("");
       setData("");
       setPassword("");
-      toast.success(mode === "phrase" ? "Wallet recovered from recovery phrase" : "Wallet imported");
+      toast.success(mode === "phrase" ? t("import.recovered") : t("import.imported"));
       onDone?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Import failed");
+      setError(e instanceof Error ? e.message : t("import.failed"));
     } finally {
       setBusy(false);
     }
@@ -74,23 +76,23 @@ export function ImportForm({ onDone }: { onDone?: () => void }) {
         void submit();
       }}
     >
-      <div className="mode-switch" role="group" aria-label="Import from">
+      <div className="mode-switch" role="group" aria-label={t("import.from")}>
         <Button type="button" variant={mode === "phrase" ? "secondary small" : "ghost small"} aria-pressed={mode === "phrase"} onClick={() => setMode("phrase")}>
-          Recovery phrase
+          {t("import.phrase")}
         </Button>
         <Button type="button" variant={mode === "backup" ? "secondary small" : "ghost small"} aria-pressed={mode === "backup"} onClick={() => setMode("backup")}>
-          .pqcbackup file
+          {t("import.file")}
         </Button>
       </div>
       {mode === "phrase" ? (
         <label className="field">
-          12 or 24 words
+          {t("import.words")}
           <textarea className="input mono" rows={4} value={phrase} onChange={(e) => setPhrase(e.target.value)} autoComplete="off" spellCheck={false} />
         </label>
       ) : (
         <>
           <label className="field">
-            Backup file
+            {t("import.backupFile")}
             <input
               className="input"
               type="file"
@@ -102,11 +104,11 @@ export function ImportForm({ onDone }: { onDone?: () => void }) {
             />
           </label>
           <label className="field">
-            …or paste the backup data
+            {t("import.paste")}
             <textarea className="input mono" rows={3} value={data} onChange={(e) => setData(e.target.value)} spellCheck={false} />
           </label>
           <label className="field">
-            Backup password
+            {t("import.password")}
             <input className="input" type="password" autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} />
           </label>
         </>
@@ -117,7 +119,7 @@ export function ImportForm({ onDone }: { onDone?: () => void }) {
         </p>
       )}
       <Button type="submit" disabled={busy || (mode === "phrase" ? !phrase.trim() : !data.trim() || !password)}>
-        {busy ? "Importing…" : "Import wallet"}
+        {busy ? t("import.importing") : t("import.submit")}
       </Button>
     </form>
   );
@@ -125,6 +127,7 @@ export function ImportForm({ onDone }: { onDone?: () => void }) {
 
 /** Reveal the recovery phrase, export an encrypted .pqcbackup, or import. */
 export function BackupDialog({ open, onClose, initialTab }: { open: boolean; onClose: () => void; initialTab?: Tab }) {
+  const { t } = useTranslation("wallet");
   const { wallet } = useWallet();
   const hasPhrase = !!wallet?.mnemonic;
   const [tab, setTab] = useState<Tab>(initialTab ?? (hasPhrase ? "phrase" : wallet ? "export" : "import"));
@@ -144,56 +147,56 @@ export function BackupDialog({ open, onClose, initialTab }: { open: boolean; onC
 
   const exportBackup = async () => {
     if (!wallet) return;
-    if (pw.length < 8) return toast.error("Password must be at least 8 characters");
-    if (pw !== pw2) return toast.error("Passwords don't match");
+    if (pw.length < 8) return toast.error(t("backup.passwordMin", { count: 8 }));
+    if (pw !== pw2) return toast.error(t("backup.passwordMismatch"));
     setBusy(true);
     try {
       const encrypted = await encryptWallet(wallet, pw);
       const fileName = `xrge-wallet-backup-${wallet.displayName.replace(/\s+/g, "-")}-${Date.now()}.pqcbackup`;
-      if (download(encrypted, fileName)) toast.success("Backup exported", { description: "Keep the file and its password somewhere safe." });
+      if (download(encrypted, fileName)) toast.success(t("backup.exported"), { description: t("backup.exportedBody") });
       setExported(encrypted); // copy fallback (mobile browsers may block downloads)
       setPw("");
       setPw2("");
     } catch {
-      toast.error("Export failed");
+      toast.error(t("backup.exportFailed"));
     } finally {
       setBusy(false);
     }
   };
 
   const tabs: { id: Tab; label: string }[] = [
-    ...(hasPhrase ? [{ id: "phrase" as const, label: "Recovery phrase" }] : []),
-    ...(wallet ? [{ id: "export" as const, label: "Export backup" }] : []),
-    { id: "import", label: "Import" },
+    ...(hasPhrase ? [{ id: "phrase" as const, label: t("backup.tabPhrase") }] : []),
+    ...(wallet ? [{ id: "export" as const, label: t("backup.tabExport") }] : []),
+    { id: "import", label: t("backup.tabImport") },
   ];
 
   return (
-    <Dialog open={open} onClose={close} title="Backup & recovery">
-      <div className="mode-switch tabs" role="tablist" aria-label="Backup options">
-        {tabs.map((t) => (
-          <Button key={t.id} role="tab" aria-selected={tab === t.id} variant={tab === t.id ? "secondary small" : "ghost small"} onClick={() => setTab(t.id)}>
-            {t.label}
+    <Dialog open={open} onClose={close} title={t("backup.title")}>
+      <div className="mode-switch tabs" role="tablist" aria-label={t("backup.options")}>
+        {tabs.map((tb) => (
+          <Button key={tb.id} role="tab" aria-selected={tab === tb.id} variant={tab === tb.id ? "secondary small" : "ghost small"} onClick={() => setTab(tb.id)}>
+            {tb.label}
           </Button>
         ))}
       </div>
 
       {tab === "phrase" && wallet?.mnemonic && (
         <div className="wallet-form">
-          <p className="notice warning">Anyone with these words controls your funds. Never share them or type them into another site.</p>
+          <p className="notice warning">{t("backup.phraseWarning")}</p>
           {revealed ? (
             <>
               <PhraseGrid phrase={wallet.mnemonic} />
               <div className="actions">
-                <CopyText value={wallet.mnemonic} label="recovery phrase" display="Copy phrase" />
+                <CopyText value={wallet.mnemonic} label={t("copy.recoveryPhrase")} display={t("backup.copyPhrase")} />
                 <Button variant="outline small" onClick={() => setRevealed(false)}>
-                  Hide
+                  {t("backup.hide")}
                 </Button>
               </div>
             </>
           ) : (
-            <Button onClick={() => setRevealed(true)}>Reveal recovery phrase</Button>
+            <Button onClick={() => setRevealed(true)}>{t("backup.reveal")}</Button>
           )}
-          <p className="form-hint">The phrase restores your wallet and funds — not your chat history. Use an encrypted backup for that.</p>
+          <p className="form-hint">{t("backup.phraseHint")}</p>
         </div>
       )}
 
@@ -205,19 +208,19 @@ export function BackupDialog({ open, onClose, initialTab }: { open: boolean; onC
             void exportBackup();
           }}
         >
-          <p className="form-hint">An encrypted .pqcbackup file (AES-256-GCM, PBKDF2 600k) restores your wallet, funds and messages.</p>
+          <p className="form-hint">{t("backup.exportHint")}</p>
           <label className="field">
-            Backup password
+            {t("backup.password")}
             <input className="input" type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} />
           </label>
           <label className="field">
-            Confirm password
+            {t("backup.confirmPassword")}
             <input className="input" type="password" autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} />
           </label>
           <Button type="submit" disabled={busy || !pw || !pw2}>
-            {busy ? "Encrypting…" : "Export .pqcbackup"}
+            {busy ? t("backup.encrypting") : t("backup.export")}
           </Button>
-          {exported && <CopyText value={exported} label="backup data" display="Copy backup data" />}
+          {exported && <CopyText value={exported} label={t("copy.backupData")} display={t("backup.copyData")} />}
         </form>
       )}
 

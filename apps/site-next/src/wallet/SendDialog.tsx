@@ -2,8 +2,9 @@ import { useMemo, useState } from "react";
 import { Dialog, Button } from "@rougechain/ui";
 import { formatIdentity } from "@rougechain/core/address";
 import type { WalletBalance } from "@rougechain/core/pqc-wallet";
-import { getNetworkLabel } from "@rougechain/core/network";
+import { useTranslation } from "react-i18next";
 import { useWallet } from "./WalletProvider";
+import { networkLabel } from "./hooks";
 import { WALLET_TRANSFER_FEE, displayAmount, maxFractionDigits, parseAmount, parseRecipient, resolveRecipient, submitTransfer } from "./send";
 import { toast } from "./toast";
 
@@ -22,7 +23,8 @@ export function SendDialog({
   onClose: () => void;
   onSent: () => void;
 }) {
-  const { wallet } = useWallet();
+  const { t } = useTranslation("wallet");
+  const { wallet, network } = useWallet();
   const [symbol, setSymbol] = useState(initialSymbol ?? "XRGE");
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
@@ -53,14 +55,14 @@ export function SendDialog({
     if (!r.valid) return setError(r.error);
     const a = parseAmount(amount, symbol, balances);
     if (!a.valid) return setError(a.error);
-    if (!wallet) return setError("Unlock your wallet first");
+    if (!wallet) return setError(t("send.errors.unlockFirst"));
     try {
       const publicKey = r.isRouge ? await resolveRecipient(r.address) : r.address;
-      if (publicKey === wallet.signingPublicKey) return setError("Cannot send to your own address");
+      if (publicKey === wallet.signingPublicKey) return setError(t("send.errors.ownAddress"));
       setResolved({ publicKey, raw: a.raw, human: a.human });
       setStep("review");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't resolve the recipient");
+      setError(e instanceof Error ? e.message : t("send.errors.resolveRecipient"));
     }
   };
 
@@ -70,18 +72,18 @@ export function SendDialog({
     setError("");
     try {
       await submitTransfer({ wallet, recipientPublicKey: resolved.publicKey, raw: resolved.raw, symbol });
-      toast.success(`Sent ${displayAmount(resolved.raw, symbol)} ${symbol}`, { description: "Submitted — it confirms in the next block." });
+      toast.success(t("send.sentToast", { amount: displayAmount(resolved.raw, symbol), symbol }), { description: t("send.sentToastBody") });
       reset();
       setRecipient("");
       setAmount("");
       onSent();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Transaction failed");
+      setError(e instanceof Error ? e.message : t("send.errors.txFailed"));
       setStep("review");
     }
   };
 
-  const title = step === "form" ? "Send" : "Review and sign";
+  const title = step === "form" ? t("send.title") : t("send.reviewTitle");
   return (
     <Dialog open={open} onClose={close} title={title}>
       {step === "form" ? (
@@ -94,7 +96,7 @@ export function SendDialog({
         >
           {balances.length > 1 && (
             <label className="field">
-              Token
+              {t("send.token")}
               <select
                 value={symbol}
                 onChange={(e) => {
@@ -111,12 +113,12 @@ export function SendDialog({
             </label>
           )}
           <label className="field">
-            Recipient
+            {t("send.recipient")}
             <input
               className="input mono"
               value={recipient}
               onChange={(e) => setRecipient(e.target.value)}
-              placeholder="rouge1… or public key"
+              placeholder={t("send.recipientPlaceholder")}
               autoComplete="off"
               spellCheck={false}
             />
@@ -124,9 +126,9 @@ export function SendDialog({
           {recipientCheck && !recipientCheck.valid && <p className="form-hint error">{recipientCheck.error}</p>}
           <label className="field">
             <span className="field-row">
-              Amount
+              {t("send.amount")}
               <button type="button" className="inline-link" onClick={() => setAmount(maxSendable(balance, symbol))}>
-                Max {displayAmount(balance, symbol)} {symbol}
+                {t("send.max", { amount: displayAmount(balance, symbol), symbol })}
               </button>
             </span>
             <input
@@ -140,7 +142,7 @@ export function SendDialog({
           </label>
           {amountCheck && !amountCheck.valid && <p className="form-hint error">{amountCheck.error}</p>}
           <p className="form-hint">
-            Network fee {WALLET_TRANSFER_FEE} XRGE · {getNetworkLabel()}
+            {t("send.networkFee", { fee: WALLET_TRANSFER_FEE, network: networkLabel(network) })}
           </p>
           {error && (
             <p className="form-error" role="alert">
@@ -148,7 +150,7 @@ export function SendDialog({
             </p>
           )}
           <Button type="submit" disabled={!recipientCheck?.valid || !amountCheck?.valid}>
-            Review
+            {t("send.review")}
           </Button>
         </form>
       ) : (
@@ -156,30 +158,30 @@ export function SendDialog({
           <div className="wallet-form">
             <dl className="review-list">
               <div>
-                <dt>Send</dt>
+                <dt>{t("send.reviewSend")}</dt>
                 <dd className="mono">
                   {displayAmount(resolved.raw, symbol)} {symbol}
                 </dd>
               </div>
               <div>
-                <dt>To</dt>
+                <dt>{t("send.reviewTo")}</dt>
                 <dd className="mono" title={resolved.publicKey}>
                   {recipient.trim().toLowerCase().startsWith("rouge1") ? recipient.trim() : formatIdentity(resolved.publicKey)}
                 </dd>
               </div>
               <div>
-                <dt>Fee</dt>
+                <dt>{t("send.reviewFee")}</dt>
                 <dd className="mono">{WALLET_TRANSFER_FEE} XRGE</dd>
               </div>
               <div>
-                <dt>Network</dt>
-                <dd>{getNetworkLabel()}</dd>
+                <dt>{t("send.reviewNetwork")}</dt>
+                <dd>{networkLabel(network)}</dd>
               </div>
             </dl>
             <p className="form-hint">
               {wallet && !wallet.signingPrivateKey
-                ? "Your RougeChain extension will ask you to approve this transfer."
-                : "Signed in this browser with your ML-DSA-65 key. Your key never leaves this page."}
+                ? t("send.extensionApprove")
+                : t("send.signedLocally")}
             </p>
             {error && (
               <p className="form-error" role="alert">
@@ -188,10 +190,10 @@ export function SendDialog({
             )}
             <div className="actions">
               <Button variant="outline" onClick={reset} disabled={step === "sending"}>
-                Back
+                {t("send.back")}
               </Button>
               <Button onClick={send} disabled={step === "sending"}>
-                {step === "sending" ? "Signing…" : "Sign and send"}
+                {step === "sending" ? t("send.signing") : t("send.signAndSend")}
               </Button>
             </div>
           </div>

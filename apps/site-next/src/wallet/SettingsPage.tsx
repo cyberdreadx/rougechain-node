@@ -4,6 +4,7 @@
  * on apps/web carry over on the same origin.
  */
 import { useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { AtSign, Bell, Compass, Eye, Languages, Network, Puzzle, Shield, User } from "lucide-react";
 import { Button } from "@rougechain/ui";
@@ -21,11 +22,10 @@ import { AvatarEditor, MailNameEditor, NameEditor } from "./profile";
 import { BackupDialog } from "./BackupDialog";
 import { openTour } from "./tour";
 import { toast } from "./toast";
+import { networkLabel } from "./hooks";
+import { LanguageSelect } from "../i18n/LanguageSwitcher";
 
 export const AUTO_LOCK_OPTIONS = [0, 5, 15, 30, 60];
-/** apps/web's i18n language key (i18next localStorage detector). Read-only here until site-next has i18n. */
-export const LANGUAGE_STORAGE_KEY = "rougechain-lang";
-const LANGUAGES: Record<string, string> = { en: "English", es: "Español", zh: "中文", ja: "日本語" };
 
 function Section({ id, icon: Icon, title, children }: { id?: string; icon: typeof User; title: string; children: ReactNode }) {
   return (
@@ -38,15 +38,8 @@ function Section({ id, icon: Icon, title, children }: { id?: string; icon: typeo
   );
 }
 
-function savedLanguage(): string {
-  try {
-    return (localStorage.getItem(LANGUAGE_STORAGE_KEY) || navigator.language || "en").slice(0, 2);
-  } catch {
-    return "en";
-  }
-}
-
 export default function SettingsPage() {
+  const { t } = useTranslation("wallet");
   const extensionProvider = useExtensionProvider();
   const w = useWallet();
   const chain = useChain();
@@ -59,12 +52,11 @@ export default function SettingsPage() {
   const [pwBusy, setPwBusy] = useState(false);
   const [backup, setBackup] = useState(false);
   const wallet = w.wallet;
-  const lang = savedLanguage();
 
   const updateNotif = async (patch: Partial<NotificationSettings>) => {
     if (patch.desktopEnabled) {
       const granted = await requestNotificationPermission().catch(() => false);
-      if (!granted) toast.info("Your browser blocked notifications for this site.");
+      if (!granted) toast.info(t("settings.notificationsBlocked"));
     }
     const next = { ...notif, ...patch };
     setNotif(next);
@@ -86,22 +78,22 @@ export default function SettingsPage() {
   };
 
   const submitPassword = async () => {
-    if (pwNew.length < 8) return toast.error("Password must be at least 8 characters");
-    if (pwNew !== pwConfirm) return toast.error("Passwords don't match");
+    if (pwNew.length < 8) return toast.error(t("backup.passwordMin", { count: 8 }));
+    if (pwNew !== pwConfirm) return toast.error(t("backup.passwordMismatch"));
     setPwBusy(true);
     try {
       if (w.hasPassword) {
         await changeVaultPassword(pwCurrent, pwNew);
-        toast.success("Password changed");
+        toast.success(t("settings.passwordChanged"));
       } else {
         await w.setPassword(pwNew);
-        toast.success("Password set — your wallet is encrypted");
+        toast.success(t("settings.passwordSet"));
       }
       setPwCurrent("");
       setPwNew("");
       setPwConfirm("");
     } catch (e) {
-      toast.error("Couldn't update the password", { description: e instanceof Error ? e.message : undefined });
+      toast.error(t("settings.passwordFailed"), { description: e instanceof Error ? e.message : undefined });
     } finally {
       setPwBusy(false);
       w.refresh();
@@ -117,37 +109,37 @@ export default function SettingsPage() {
   return (
     <main id="main" className="app-main wallet-main">
       <div className="container settings-container">
-        <PageHeading eyebrow="Hold / Settings" title="Settings" aside={<span />}>
-          Profile, mail name, security and preferences in one place.
+        <PageHeading eyebrow={t("settings.eyebrow")} title={t("settings.title")} aside={<span />}>
+          {t("settings.lede")}
         </PageHeading>
 
         {!wallet && (
           <div className="notice">
-            <span>{w.status === "locked" ? "Your wallet is locked. Unlock it to edit your profile and security." : "Create or import a wallet to set up your profile."}</span>
+            <span>{w.status === "locked" ? t("settings.lockedNotice") : t("settings.noWalletNotice")}</span>
             <Link className="button small" to="/wallet">
-              Wallet
+              {t("page.title")}
             </Link>
           </div>
         )}
 
-        <Section id="profile" icon={User} title="Profile">
+        <Section id="profile" icon={User} title={t("settings.profile")}>
           <AvatarEditor />
           <NameEditor id="settings-name" />
         </Section>
 
-        <Section id="mail" icon={AtSign} title="Mail name">
-          <p className="form-hint">One name gives you two addresses for encrypted mail.</p>
+        <Section id="mail" icon={AtSign} title={t("mailName.label")}>
+          <p className="form-hint">{t("settings.mailHint")}</p>
           <MailNameEditor wallet={wallet} />
         </Section>
 
-        <Section id="security" icon={Shield} title="Security & backup">
-          <SettingRow title="Auto-lock" hint={w.hasPassword ? "Lock the wallet after this much inactivity." : "Set a password first."}>
+        <Section id="security" icon={Shield} title={t("settings.security")}>
+          <SettingRow title={t("settings.autoLock")} hint={w.hasPassword ? t("settings.autoLockHint") : t("settings.setPasswordFirst")}>
             <span />
           </SettingRow>
-          <div className="chip-row" role="group" aria-label="Auto-lock">
+          <div className="chip-row" role="group" aria-label={t("settings.autoLock")}>
             {AUTO_LOCK_OPTIONS.map((m) => (
               <button key={m} type="button" className={`chip ${w.autoLockMinutes === m ? "active" : ""}`} aria-pressed={w.autoLockMinutes === m} disabled={!w.hasPassword} onClick={() => w.setAutoLockMinutes(m)}>
-                {m === 0 ? "Never" : `${m} min`}
+                {m === 0 ? t("settings.never") : t("settings.minutes", { count: m })}
               </button>
             ))}
           </div>
@@ -158,97 +150,97 @@ export default function SettingsPage() {
               void submitPassword();
             }}
           >
-            <strong>{w.hasPassword ? "Change password" : "Set a password"}</strong>
+            <strong>{w.hasPassword ? t("settings.changePassword") : t("settings.setPassword")}</strong>
             {w.hasPassword && (
-              <input className="input" type="password" aria-label="Current password" placeholder="Current password" autoComplete="current-password" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} disabled={!wallet} />
+              <input className="input" type="password" aria-label={t("settings.currentPassword")} placeholder={t("settings.currentPassword")} autoComplete="current-password" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} disabled={!wallet} />
             )}
             <div className="two-fields">
-              <input className="input" type="password" aria-label="New password" placeholder="New password (8+ characters)" autoComplete="new-password" value={pwNew} onChange={(e) => setPwNew(e.target.value)} disabled={!wallet} />
-              <input className="input" type="password" aria-label="Confirm new password" placeholder="Confirm new password" autoComplete="new-password" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} disabled={!wallet} />
+              <input className="input" type="password" aria-label={t("settings.newPassword")} placeholder={t("settings.newPasswordPlaceholder")} autoComplete="new-password" value={pwNew} onChange={(e) => setPwNew(e.target.value)} disabled={!wallet} />
+              <input className="input" type="password" aria-label={t("settings.confirmNewPassword")} placeholder={t("settings.confirmNewPassword")} autoComplete="new-password" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} disabled={!wallet} />
             </div>
             <Button type="submit" variant="outline small" disabled={!wallet || pwBusy || !pwNew || !pwConfirm || (w.hasPassword && !pwCurrent)}>
-              {pwBusy ? "Saving…" : w.hasPassword ? "Change password" : "Set a password"}
+              {pwBusy ? t("profile.saving") : w.hasPassword ? t("settings.changePassword") : t("settings.setPassword")}
             </Button>
           </form>
           <div className="actions divider">
             <Button
               variant="outline small"
               disabled={!wallet || !w.hasPassword}
-              title={!w.hasPassword ? "Set a password first." : undefined}
+              title={!w.hasPassword ? t("settings.setPasswordFirst") : undefined}
               onClick={() => {
                 w.lock();
-                toast.success("Wallet locked");
+                toast.success(t("lock.locked"));
               }}
             >
-              Lock now
+              {t("settings.lockNow")}
             </Button>
             <Button variant="outline small" disabled={!wallet} onClick={() => setBackup(true)}>
-              Backup & recovery phrase
+              {t("settings.backupButton")}
             </Button>
           </div>
-          <p className="form-hint">Export an encrypted .pqcbackup file, reveal your recovery phrase, or restore a wallet.</p>
+          <p className="form-hint">{t("settings.backupHint")}</p>
         </Section>
 
-        <Section id="privacy" icon={Eye} title="Privacy">
-          <SettingRow title="Hide balances" hint="Mask amounts on the wallet page.">
-            <Toggle label="Hide balances" checked={hidden} onChange={setHidden} />
+        <Section id="privacy" icon={Eye} title={t("settings.privacy")}>
+          <SettingRow title={t("dashboard.hideBalances")} hint={t("settings.hideBalancesHint")}>
+            <Toggle label={t("dashboard.hideBalances")} checked={hidden} onChange={setHidden} />
           </SettingRow>
-          <SettingRow title="Discoverable" hint="Let people find you by name in New Chat.">
-            <Toggle label="Discoverable" checked={discoverable} onChange={toggleDiscoverable} />
-          </SettingRow>
-        </Section>
-
-        <Section id="notifications" icon={Bell} title="Notifications">
-          <SettingRow title="Notifications" hint="Incoming transfers, new messages and mail.">
-            <Toggle label="Notifications" checked={notif.enabled} onChange={(v) => updateNotif({ enabled: v })} />
-          </SettingRow>
-          <SettingRow title="Sound">
-            <Toggle label="Sound" checked={notif.sound} disabled={!notif.enabled} onChange={(v) => updateNotif({ sound: v })} />
-          </SettingRow>
-          <SettingRow title="Desktop alerts" hint="Uses your browser's notifications.">
-            <Toggle label="Desktop alerts" checked={notif.desktopEnabled} disabled={!notif.enabled} onChange={(v) => updateNotif({ desktopEnabled: v })} />
+          <SettingRow title={t("settings.discoverable")} hint={t("settings.discoverableHint")}>
+            <Toggle label={t("settings.discoverable")} checked={discoverable} onChange={toggleDiscoverable} />
           </SettingRow>
         </Section>
 
-        <Section id="network" icon={Network} title="Network">
-          <div className="mode-switch" role="group" aria-label="Network">
+        <Section id="notifications" icon={Bell} title={t("settings.notifications")}>
+          <SettingRow title={t("settings.notifications")} hint={t("settings.notificationsHint")}>
+            <Toggle label={t("settings.notifications")} checked={notif.enabled} onChange={(v) => updateNotif({ enabled: v })} />
+          </SettingRow>
+          <SettingRow title={t("settings.sound")}>
+            <Toggle label={t("settings.sound")} checked={notif.sound} disabled={!notif.enabled} onChange={(v) => updateNotif({ sound: v })} />
+          </SettingRow>
+          <SettingRow title={t("settings.desktop")} hint={t("settings.desktopHint")}>
+            <Toggle label={t("settings.desktop")} checked={notif.desktopEnabled} disabled={!notif.enabled} onChange={(v) => updateNotif({ desktopEnabled: v })} />
+          </SettingRow>
+        </Section>
+
+        <Section id="network" icon={Network} title={t("settings.network")}>
+          <div className="mode-switch" role="group" aria-label={t("settings.network")}>
             {(["mainnet", "testnet"] as const).map((n) => (
               <Button key={n} variant={chain.network === n ? "secondary small" : "ghost small"} aria-pressed={chain.network === n} onClick={() => switchTo(n)}>
-                {n === "mainnet" ? "Mainnet" : "Testnet"}
+                {networkLabel(n)}
               </Button>
             ))}
           </div>
           <p className="form-hint">
             {chain.locked
-              ? `This site is pinned to ${chain.config.label}; the other network opens on its own site.`
-              : "Each network keeps its own wallet, lock state and balances."}
+              ? t("settings.networkPinned", { network: networkLabel(chain.network) })
+              : t("settings.networkHint")}
           </p>
         </Section>
 
-        <Section id="language" icon={Languages} title="Language">
-          <SettingRow title={LANGUAGES[lang] ?? lang} hint="More languages are coming to this site. Your choice on the current site is kept.">
-            <span className="pill">{lang.toUpperCase()}</span>
+        <Section id="language" icon={Languages} title={t("settings.language")}>
+          <SettingRow title={t("settings.languageLabel")} hint={t("settings.languageHint")}>
+            <LanguageSelect />
           </SettingRow>
         </Section>
 
-        <Section id="connected" icon={Puzzle} title="Connected">
+        <Section id="connected" icon={Puzzle} title={t("settings.connected")}>
           <SettingRow
-            title="RougeChain extension"
-            hint={w.isExtension ? "This wallet is connected through the extension." : extensionProvider ? "Extension detected in this browser." : "Not detected in this browser."}
+            title={t("welcome.extensionTitle")}
+            hint={w.isExtension ? t("settings.extensionConnected") : extensionProvider ? t("settings.extensionDetected") : t("settings.extensionMissing")}
           >
-            <span className={`status ${w.isExtension || extensionProvider ? "live" : "loading"}`}>{w.isExtension || extensionProvider ? "Detected" : "None"}</span>
+            <span className={`status ${w.isExtension || extensionProvider ? "live" : "loading"}`}>{w.isExtension || extensionProvider ? t("settings.detected") : t("settings.none")}</span>
           </SettingRow>
-          <SettingRow title="Base" hint="Your Base address comes from the same recovery phrase. Send and receive on the Wallet page.">
+          <SettingRow title="Base" hint={t("settings.baseHint")}>
             <Link className="button ghost small" to="/wallet">
-              Wallet
+              {t("page.title")}
             </Link>
           </SettingRow>
         </Section>
 
-        <Section id="help" icon={Compass} title="Help">
-          <SettingRow title="Replay the tour" hint="Walk through what each part of RougeChain does.">
+        <Section id="help" icon={Compass} title={t("settings.help")}>
+          <SettingRow title={t("tour.replay")} hint={t("settings.tourHint")}>
             <Button variant="outline small" onClick={openTour}>
-              Replay the tour
+              {t("tour.replay")}
             </Button>
           </SettingRow>
         </Section>

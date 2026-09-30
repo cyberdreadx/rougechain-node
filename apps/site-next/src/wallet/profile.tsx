@@ -1,5 +1,6 @@
 /** Profile editors (name, photo, mail name) on core's profile / avatar / mail-name modules. */
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@rougechain/ui";
 import { avatarInitials, fitsAvatarLimit, isSafeAvatarUrl } from "@rougechain/core/avatar";
 import { fileToAvatarDataUri } from "@rougechain/core/avatar-image";
@@ -45,6 +46,7 @@ async function resolveNftImage(token: NftToken): Promise<string | undefined> {
 
 /** Upload (square crop, JPEG under 256 KB), pick an owned NFT, or remove your profile photo. */
 export function AvatarEditor({ size = 88 }: { size?: number }) {
+  const { t } = useTranslation("wallet");
   const { wallet, displayName, publicKey } = useWallet();
   const avatar = getProfileAvatar(wallet);
   const file = useRef<HTMLInputElement>(null);
@@ -79,27 +81,27 @@ export function AvatarEditor({ size = 88 }: { size?: number }) {
       await setProfileAvatar(url);
       toast.success(message);
     } catch (e) {
-      toast.error("Couldn't update your photo", { description: e instanceof Error ? e.message : undefined });
+      toast.error(t("profile.photoFailed"), { description: e instanceof Error ? e.message : undefined });
     } finally {
       notifyWalletChanged();
       setBusy(false);
     }
   };
 
-  if (!wallet) return <p className="muted">Unlock or create a wallet to set a photo.</p>;
+  if (!wallet) return <p className="muted">{t("profile.photoNoWallet")}</p>;
   return (
     <div className="avatar-editor">
       <Avatar uri={avatar} name={displayName} size={size} />
       <div className="actions">
         <Button variant="outline small" disabled={busy} onClick={() => file.current?.click()}>
-          {avatar ? "Change photo" : "Upload photo"}
+          {avatar ? t("profile.changePhoto") : t("profile.uploadPhoto")}
         </Button>
         <Button variant="ghost small" disabled={busy} onClick={() => setShowNfts((v) => !v)} aria-expanded={showNfts}>
-          Choose NFT
+          {t("profile.chooseNft")}
         </Button>
         {avatar && (
-          <Button variant="ghost small" disabled={busy} onClick={() => apply(null, "Profile photo removed")}>
-            Remove
+          <Button variant="ghost small" disabled={busy} onClick={() => apply(null, t("profile.photoRemoved"))}>
+            {t("profile.remove")}
           </Button>
         )}
       </div>
@@ -113,21 +115,21 @@ export function AvatarEditor({ size = 88 }: { size?: number }) {
           e.target.value = "";
           if (!f) return;
           try {
-            await apply(await fileToAvatarDataUri(f), "Profile photo updated");
+            await apply(await fileToAvatarDataUri(f), t("profile.photoUpdated"));
           } catch (err) {
-            toast.error("Couldn't use that image", { description: err instanceof Error ? err.message : undefined });
+            toast.error(t("profile.imageFailed"), { description: err instanceof Error ? err.message : undefined });
           }
         }}
       />
       {showNfts && (
         <div className="nft-picker">
           {nfts === null ? (
-            <p className="muted">Loading your NFTs…</p>
+            <p className="muted">{t("profile.loadingNfts")}</p>
           ) : nfts.length === 0 ? (
-            <p className="muted">No NFTs with an image in this wallet.</p>
+            <p className="muted">{t("profile.noNfts")}</p>
           ) : (
             nfts.map((n) => (
-              <button key={n.key} type="button" title={n.name} disabled={busy} onClick={() => apply(n.image, "Profile photo updated")}>
+              <button key={n.key} type="button" title={n.name} disabled={busy} onClick={() => apply(n.image, t("profile.photoUpdated"))}>
                 <img src={n.image} alt={n.name} referrerPolicy="no-referrer" />
               </button>
             ))
@@ -139,6 +141,7 @@ export function AvatarEditor({ size = 88 }: { size?: number }) {
 }
 
 export function NameEditor({ id = "profile-name" }: { id?: string }) {
+  const { t } = useTranslation("wallet");
   const { wallet, displayName } = useWallet();
   const [name, setName] = useState(displayName ?? "");
   const [busy, setBusy] = useState(false);
@@ -149,9 +152,9 @@ export function NameEditor({ id = "profile-name" }: { id?: string }) {
     setBusy(true);
     try {
       await setProfileDisplayName(clean);
-      toast.success("Display name updated");
+      toast.success(t("profile.nameUpdated"));
     } catch (e) {
-      toast.error("Couldn't update your name", { description: e instanceof Error ? e.message : undefined });
+      toast.error(t("profile.nameFailed"), { description: e instanceof Error ? e.message : undefined });
     } finally {
       notifyWalletChanged();
       setBusy(false);
@@ -166,12 +169,12 @@ export function NameEditor({ id = "profile-name" }: { id?: string }) {
       }}
     >
       <label className="field" htmlFor={id}>
-        Display name
+        {t("profile.displayName")}
       </label>
       <div className="field-row">
-        <input id={id} className="input" value={name} maxLength={50} placeholder="Your name" onChange={(e) => setName(e.target.value)} disabled={!wallet} />
+        <input id={id} className="input" value={name} maxLength={50} placeholder={t("profile.namePlaceholder")} onChange={(e) => setName(e.target.value)} disabled={!wallet} />
         <Button type="submit" variant="outline" disabled={!wallet || busy || !clean || clean === displayName}>
-          {busy ? "Saving…" : "Save"}
+          {busy ? t("profile.saving") : t("profile.save")}
         </Button>
       </div>
     </form>
@@ -180,6 +183,7 @@ export function NameEditor({ id = "profile-name" }: { id?: string }) {
 
 /** Claim or change your mail name (both @rouge.quant and @qwalla.mail addresses). */
 export function MailNameEditor({ wallet, allowChange = true, onClaimed }: { wallet: UnifiedWallet | null; allowChange?: boolean; onClaimed?: (name: string) => void }) {
+  const { t } = useTranslation("wallet");
   const [current, setCurrent] = useState<string | null>(null);
   const [loading, setLoading] = useState(!!wallet);
   const [editing, setEditing] = useState(false);
@@ -228,17 +232,17 @@ export function MailNameEditor({ wallet, allowChange = true, onClaimed }: { wall
       setEditing(false);
       setInput("");
       const [a, b] = mailAddresses(name);
-      toast.success(`Claimed ${a} and ${b}`);
+      toast.success(t("mailName.claimed", { a, b }));
       onClaimed?.(name);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't claim that name");
+      setError(e instanceof Error ? e.message : t("mailName.claimFailed"));
     } finally {
       setBusy(false);
     }
   };
 
-  if (!wallet) return <p className="muted">Unlock or create a wallet to claim a mail name.</p>;
-  if (loading) return <p className="muted">Loading…</p>;
+  if (!wallet) return <p className="muted">{t("mailName.noWallet")}</p>;
+  if (loading) return <p className="muted">{t("loading")}</p>;
   if (current && !editing)
     return (
       <div className="mail-names">
@@ -247,7 +251,7 @@ export function MailNameEditor({ wallet, allowChange = true, onClaimed }: { wall
         ))}
         {allowChange && (
           <Button variant="ghost small" onClick={() => setEditing(true)}>
-            Change name
+            {t("mailName.change")}
           </Button>
         )}
       </div>
@@ -261,9 +265,9 @@ export function MailNameEditor({ wallet, allowChange = true, onClaimed }: { wall
       }}
     >
       <label className="field">
-        Mail name
+        {t("mailName.label")}
         <span className="field-row">
-          <input className="input mono" value={input} placeholder="yourname" onChange={(e) => setInput(e.target.value)} autoComplete="off" spellCheck={false} />
+          <input className="input mono" value={input} placeholder={t("mailName.placeholder")} onChange={(e) => setInput(e.target.value)} autoComplete="off" spellCheck={false} />
         </span>
       </label>
       {clean && !invalid && (
@@ -271,17 +275,17 @@ export function MailNameEditor({ wallet, allowChange = true, onClaimed }: { wall
           {mailAddresses(clean)[0]} · {mailAddresses(clean)[1]}
         </p>
       )}
-      <p className={`form-hint ${invalid ? "error" : ""}`}>3–20 letters, numbers or underscores (not at the start or end).</p>
-      {current && <p className="form-hint">{current} will be released and anyone could claim it.</p>}
+      <p className={`form-hint ${invalid ? "error" : ""}`}>{t("mailName.rules")}</p>
+      {current && <p className="form-hint">{t("mailName.release", { name: current })}</p>}
       {error && <p className="form-error">{error}</p>}
       <div className="actions">
         {current && (
           <Button type="button" variant="ghost" onClick={() => setEditing(false)}>
-            Cancel
+            {t("mailName.cancel")}
           </Button>
         )}
         <Button type="submit" disabled={busy || !clean || !!invalid}>
-          {busy ? "Claiming…" : current ? "Save new name" : "Claim name"}
+          {busy ? t("mailName.claiming") : current ? t("mailName.saveNew") : t("mailName.claim")}
         </Button>
       </div>
     </form>

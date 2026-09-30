@@ -4,6 +4,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { Dialog, Button } from "@rougechain/ui";
 import { formatUnits, type Hex } from "viem";
 import { deriveBaseAddress, hasBaseAccount } from "@rougechain/core/evm-wallet";
@@ -65,6 +66,7 @@ export function BaseWalletCard({
   xrgePriceUsd: number | null;
   hidden: boolean;
 }) {
+  const { t } = useTranslation("wallet");
   const chain = useMemo(() => getBaseChain(network), [network]);
   const { address, ready, hasAccount } = useBaseAddress(mnemonic);
   const q = useQuery({
@@ -86,30 +88,27 @@ export function BaseWalletCard({
   return (
     <section className="surface wallet-panel" aria-labelledby="base-wallet-title">
       <div className="panel-head">
-        <h2 id="base-wallet-title">Base wallet</h2>
-        <span className={`pill ${chain.isMainnet ? "" : "warning"}`}>{chain.isMainnet ? chain.name : `${chain.name} · Testnet`}</span>
+        <h2 id="base-wallet-title">{t("base.title")}</h2>
+        <span className={`pill ${chain.isMainnet ? "" : "warning"}`}>{chain.isMainnet ? chain.name : t("base.testnetPill", { chain: chain.name })}</span>
         {total != null && !hidden && <span className="mono muted panel-total">{formatUsd(total)}</span>}
       </div>
       {!hasAccount ? (
         <div className="empty-state compact">
-          <h3>No Base account for this wallet</h3>
-          <p>
-            Base addresses are derived from a recovery phrase. This wallet was imported from raw keys or connected through the extension, so it has none here.
-            Recover it from its recovery phrase (or use Qwalla / the extension) to use Base.
-          </p>
+          <h3>{t("base.noAccountTitle")}</h3>
+          <p>{t("base.noAccountBody")}</p>
         </div>
       ) : !ready || !address ? (
-        <p className="muted">Deriving your Base address…</p>
+        <p className="muted">{t("base.deriving")}</p>
       ) : (
         <>
-          <CopyText value={address} label="Base address" />
+          <CopyText value={address} label={t("copy.baseAddress")} />
           <p className="form-hint">
-            Same recovery phrase as Qwalla — same Base address.{" "}
+            {t("base.sameAsQwalla")}{" "}
             <a className="inline-link" href={baseAddressUrl(chain, address)} target="_blank" rel="noreferrer">
-              View on BaseScan ↗
+              {t("base.viewOnBaseScan")}
             </a>
           </p>
-          {q.isError && <p className="form-hint error">Couldn't reach {chain.name} — showing the last known balances.</p>}
+          {q.isError && <p className="form-hint error">{t("base.unreachable", { chain: chain.name })}</p>}
           <ul className="asset-rows">
             {rows.map((r) => (
               <li key={r.asset.symbol}>
@@ -127,10 +126,10 @@ export function BaseWalletCard({
           </ul>
           <div className="actions">
             <Button variant="outline small" onClick={() => setDialog("send")} disabled={!balances}>
-              Send
+              {t("dashboard.send")}
             </Button>
             <Button variant="outline small" onClick={() => setDialog("receive")}>
-              Receive
+              {t("dashboard.receive")}
             </Button>
           </div>
           <BaseReceiveDialog open={dialog === "receive"} onClose={() => setDialog(null)} chain={chain} address={address} />
@@ -154,16 +153,17 @@ export function BaseWalletCard({
 }
 
 function BaseReceiveDialog({ open, onClose, chain, address }: { open: boolean; onClose: () => void; chain: BaseChainInfo; address: string }) {
+  const { t } = useTranslation("wallet");
   const qr = useQr(open ? address : null);
   return (
-    <Dialog open={open} onClose={onClose} title={`Receive on ${chain.name}`}>
+    <Dialog open={open} onClose={onClose} title={t("base.receiveTitle", { chain: chain.name })}>
       <div className="receive-body">
-        <div className="qr-frame">{qr ? <img src={qr} alt="Base address QR code" width={220} height={220} /> : <span className="muted">Generating…</span>}</div>
-        <CopyText value={address} label="Base address" />
+        <div className="qr-frame">{qr ? <img src={qr} alt={t("base.qrAlt")} width={220} height={220} /> : <span className="muted">{t("receive.generating")}</span>}</div>
+        <CopyText value={address} label={t("copy.baseAddress")} />
         <p className="notice warning">
           {chain.isMainnet
-            ? `Only send assets on the ${chain.name} network (ETH, XRGE, USDC and other Base tokens) to this address. Funds sent from another network may be lost.`
-            : `This is a ${chain.name} testnet address — don't send real funds to it.`}
+            ? t("base.receiveMainnet", { chain: chain.name })
+            : t("base.receiveTestnet", { chain: chain.name })}
         </p>
       </div>
     </Dialog>
@@ -195,6 +195,7 @@ export function BaseSendDialog({
   xrgePriceUsd: number | null;
   onSent?: (hash: string) => void;
 }) {
+  const { t } = useTranslation("wallet");
   const [symbol, setSymbol] = useState<BaseAssetSymbol>("ETH");
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
@@ -218,12 +219,12 @@ export function BaseSendDialog({
     }
   }, [amount, asset.decimals]);
   const amountError =
-    amount.trim() && (units == null || units <= 0n) ? "Enter an amount greater than zero." : units != null && units > balanceRaw ? `Not enough ${symbol}.` : null;
+    amount.trim() && (units == null || units <= 0n) ? t("base.errors.amountPositive") : units != null && units > balanceRaw ? t("base.errors.notEnough", { symbol }) : null;
   const recipientError =
     addrCheck === "invalid"
-      ? "Not a valid 0x address (0x + 40 hex characters)."
+      ? t("base.errors.invalidAddress")
       : addrCheck === "bad-checksum"
-        ? "Checksum mismatch — double-check this address (mixed case must match EIP-55)."
+        ? t("base.errors.checksum")
         : null;
   const canReview = addrCheck === "ok" && units != null && units > 0n && !amountError && !busy;
   const ethNeeded = (symbol === "ETH" ? (units ?? 0n) : 0n) + (fee?.totalFeeWei ?? 0n);
@@ -248,7 +249,7 @@ export function BaseSendDialog({
       const q = await quoteBaseFee(chain, address, buildSendCall(asset, addrCheck === "ok" ? recipient : address, 0n));
       const max = maxSendableEth(balanceRaw, q);
       setAmount(max > 0n ? formatUnits(max, 18) : "0");
-      if (max === 0n) setError(`Not enough ETH to pay the network fee (~${formatBaseUnits(q.totalFeeWei, 18, 8)} ETH).`);
+      if (max === 0n) setError(t("base.errors.feeShortBy", { fee: formatBaseUnits(q.totalFeeWei, 18, 8) }));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -264,7 +265,7 @@ export function BaseSendDialog({
     try {
       setFee(await quoteBaseFee(chain, address, buildSendCall(asset, recipient, units)));
     } catch (e) {
-      setError("Couldn't estimate the fee — this transfer would probably fail." + (e instanceof Error ? ` (${e.message})` : ""));
+      setError(t("base.errors.estimate") + (e instanceof Error ? ` (${e.message})` : ""));
     } finally {
       setBusy(false);
       setStep("review");
@@ -289,13 +290,13 @@ export function BaseSendDialog({
   const warning = (
     <p className="notice warning">
       {chain.isMainnet
-        ? "This is Base mainnet with real funds. Transactions can't be reversed — check the address."
-        : "Base Sepolia testnet — these tokens have no value."}
+        ? t("base.warnMainnet")
+        : t("base.warnTestnet")}
     </p>
   );
 
   return (
-    <Dialog open={open} onClose={close} title={step === "done" ? "Transaction sent" : step === "form" ? `Send on ${chain.name}` : "Confirm send"}>
+    <Dialog open={open} onClose={close} title={step === "done" ? t("base.sentTitle") : step === "form" ? t("base.sendTitle", { chain: chain.name }) : t("base.confirmTitle")}>
       {step === "form" && (
         <form
           className="wallet-form"
@@ -305,7 +306,7 @@ export function BaseSendDialog({
           }}
         >
           {warning}
-          <div className="mode-switch" role="group" aria-label="Asset">
+          <div className="mode-switch" role="group" aria-label={t("base.asset")}>
             {balances.map((b) => (
               <Button
                 type="button"
@@ -323,25 +324,25 @@ export function BaseSendDialog({
             ))}
           </div>
           <label className="field">
-            Recipient address
+            {t("base.recipient")}
             <input className="input mono" value={recipient} onChange={(e) => setRecipient(e.target.value.trim())} placeholder="0x…" autoComplete="off" spellCheck={false} />
           </label>
           {recipientError && <p className="form-hint error">{recipientError}</p>}
-          {addrCheck === "ok" && recipient.toLowerCase() === address.toLowerCase() && <p className="form-hint">That's your own Base address.</p>}
+          {addrCheck === "ok" && recipient.toLowerCase() === address.toLowerCase() && <p className="form-hint">{t("base.ownAddress")}</p>}
           <label className="field">
             <span className="field-row">
-              Amount
+              {t("send.amount")}
               <button type="button" className="inline-link" onClick={pickMax} disabled={busy}>
-                Max
+                {t("base.max")}
               </button>
             </span>
             <input className="input mono" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(",", "."))} placeholder="0.0" />
           </label>
           {amountError && <p className="form-hint error">{amountError}</p>}
-          {asset.token && <p className="form-hint">Network fees on Base are paid in ETH.</p>}
+          {asset.token && <p className="form-hint">{t("base.feesInEth")}</p>}
           {error && <p className="form-error">{error}</p>}
           <Button type="submit" disabled={!canReview}>
-            {busy ? "Estimating fee…" : "Review"}
+            {busy ? t("base.estimating") : t("send.review")}
           </Button>
         </form>
       )}
@@ -350,49 +351,49 @@ export function BaseSendDialog({
           {warning}
           <dl className="review-list">
             <div>
-              <dt>Send</dt>
+              <dt>{t("send.reviewSend")}</dt>
               <dd className="mono">
                 {formatBaseUnits(units, asset.decimals, 8)} {symbol}
                 {price != null && ` · ${formatUsd(Number(formatUnits(units, asset.decimals)) * price)}`}
               </dd>
             </div>
             <div>
-              <dt>From</dt>
+              <dt>{t("base.from")}</dt>
               <dd className="mono">{address}</dd>
             </div>
             <div>
-              <dt>To</dt>
+              <dt>{t("send.reviewTo")}</dt>
               <dd className="mono">{recipient}</dd>
             </div>
             <div>
-              <dt>Network</dt>
+              <dt>{t("send.reviewNetwork")}</dt>
               <dd>{chain.name}</dd>
             </div>
             <div>
-              <dt>Max network fee</dt>
+              <dt>{t("base.maxFee")}</dt>
               <dd className="mono">{fee ? `${formatBaseUnits(fee.totalFeeWei, 18, 8)} ETH` : "—"}</dd>
             </div>
           </dl>
-          {gasShort && <p className="form-error">Not enough ETH to pay the network fee.</p>}
+          {gasShort && <p className="form-error">{t("base.errors.feeShort")}</p>}
           {error && <p className="form-error">{error}</p>}
-          <p className="form-hint">Signed locally in your browser with the key derived from your recovery phrase. Nothing secret leaves this page.</p>
+          <p className="form-hint">{t("base.signedLocally")}</p>
           <div className="actions">
             <Button variant="outline" onClick={() => setStep("form")} disabled={step === "sending"}>
-              Back
+              {t("send.back")}
             </Button>
             <Button onClick={send} disabled={!fee || gasShort || step === "sending"}>
-              {step === "sending" ? "Sending…" : "Sign & send"}
+              {step === "sending" ? t("base.sending") : t("base.signAndSend")}
             </Button>
           </div>
         </div>
       )}
       {step === "done" && hash && (
         <div className="wallet-form">
-          <p>It will confirm on {chain.name} in a few seconds.</p>
+          <p>{t("base.confirmSoon", { chain: chain.name })}</p>
           <a className="inline-link mono" href={baseTxUrl(chain, hash)} target="_blank" rel="noreferrer">
             {hash.slice(0, 18)}… ↗
           </a>
-          <Button onClick={close}>Done</Button>
+          <Button onClick={close}>{t("base.done")}</Button>
         </div>
       )}
     </Dialog>

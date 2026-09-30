@@ -1,12 +1,14 @@
 /** Small shared wallet UI pieces, in the site-next design system's classes. */
 import { useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@rougechain/ui";
 import { SafeImage } from "../explorer/ui";
 import { useWallet } from "./WalletProvider";
 import { toast } from "./toast";
 
 export function CopyText({ value, label, display }: { value: string; label: string; display?: ReactNode }) {
+  const { t } = useTranslation("wallet");
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   return (
     <div className="copy-text">
@@ -15,7 +17,7 @@ export function CopyText({ value, label, display }: { value: string; label: stri
       </code>
       <Button
         variant="ghost icon copy-button"
-        aria-label={`Copy ${label}`}
+        aria-label={t("copy.copyLabel", { label })}
         onClick={async () => {
           try {
             await navigator.clipboard.writeText(value);
@@ -29,7 +31,7 @@ export function CopyText({ value, label, display }: { value: string; label: stri
         {state === "copied" ? <Check size={14} /> : <Copy size={14} />}
       </Button>
       <span className="sr-only" role="status">
-        {state === "copied" ? `${label[0].toUpperCase()}${label.slice(1)} copied` : state === "failed" ? "Clipboard unavailable — select the text" : ""}
+        {state === "copied" ? t("copy.copied", { label: `${label[0].toUpperCase()}${label.slice(1)}` }) : state === "failed" ? t("copy.unavailable") : ""}
       </span>
     </div>
   );
@@ -37,6 +39,7 @@ export function CopyText({ value, label, display }: { value: string; label: stri
 
 /** Password unlock through core's unlockUnifiedWallet (via the provider). */
 export function UnlockForm({ onUnlocked }: { onUnlocked?: () => void }) {
+  const { t } = useTranslation("wallet");
   const { unlock } = useWallet();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -46,23 +49,23 @@ export function UnlockForm({ onUnlocked }: { onUnlocked?: () => void }) {
       className="wallet-form"
       onSubmit={async (e) => {
         e.preventDefault();
-        if (!password) return setError("Enter your password");
+        if (!password) return setError(t("unlock.enterPassword"));
         setBusy(true);
         setError("");
         try {
           await unlock(password);
           setPassword("");
-          toast.success("Wallet unlocked");
+          toast.success(t("unlock.unlocked"));
           onUnlocked?.();
         } catch (err) {
-          setError(err instanceof Error ? err.message : "Unlock failed");
+          setError(err instanceof Error ? err.message : t("unlock.failed"));
         } finally {
           setBusy(false);
         }
       }}
     >
       <label className="field">
-        Password
+        {t("unlock.password")}
         <input
           className="input"
           type="password"
@@ -77,7 +80,7 @@ export function UnlockForm({ onUnlocked }: { onUnlocked?: () => void }) {
         </p>
       )}
       <Button type="submit" disabled={busy}>
-        {busy ? "Unlocking…" : "Unlock"}
+        {busy ? t("unlock.unlocking") : t("unlock.unlock")}
       </Button>
     </form>
   );

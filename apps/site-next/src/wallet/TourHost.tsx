@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Dialog, Button } from "@rougechain/ui";
 import { hasWallet } from "@rougechain/core/unified-wallet";
 import { OPEN_TOUR_EVENT, TOUR_SECTIONS, hasSeenTour, isOnboardingActive, markTourSeen } from "./tour";
@@ -9,6 +10,7 @@ import { OPEN_TOUR_EVENT, TOUR_SECTIONS, hasSeenTour, isOnboardingActive, markTo
  * onboarding) and once by itself on /wallet for a wallet holder who has never seen it.
  */
 export function TourHost() {
+  const { t } = useTranslation("wallet");
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [open, setOpen] = useState(false);
@@ -48,13 +50,13 @@ export function TourHost() {
   const last = TOUR_SECTIONS.length - 1;
   const section = TOUR_SECTIONS[Math.min(page, last)];
   return (
-    <Dialog open={open} onClose={close} title="How RougeChain works">
+    <Dialog open={open} onClose={close} title={t("tour.title")}>
       <div className="tour-body">
         <span className="mono muted">
-          {page + 1} / {TOUR_SECTIONS.length}
+          {t("tour.step", { current: page + 1, total: TOUR_SECTIONS.length })}
         </span>
-        <h3>{section.title}</h3>
-        <p className="tour-text">{section.body}</p>
+        <h3>{t(`tour.sections.${section.id}.title`)}</h3>
+        <p className="tour-text">{t(`tour.sections.${section.id}.body`)}</p>
         {section.to && section.to !== pathname && (
           <button
             type="button"
@@ -64,20 +66,20 @@ export function TourHost() {
               navigate(section.to!);
             }}
           >
-            Open →
+            {t("tour.open")} →
           </button>
         )}
         <div className="actions">
           <Button variant="ghost small" onClick={close}>
-            Skip
+            {t("tour.skip")}
           </Button>
           {page > 0 && (
             <Button variant="outline small" onClick={() => setPage((p) => p - 1)}>
-              Back
+              {t("tour.back")}
             </Button>
           )}
           <Button variant="small" onClick={() => (page >= last ? close() : setPage((p) => p + 1))}>
-            {page >= last ? "Get started" : "Next"}
+            {page >= last ? t("tour.done") : t("tour.next")}
           </Button>
         </div>
       </div>
