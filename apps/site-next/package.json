@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "build": "tsc --noEmit -p tsconfig.json && vite build && node scripts/gen-og.mjs && node scripts/prerender-og.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "lint": "eslint ."
@@ -29,6 +29,7 @@
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
+    "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/jest-dom": "6.9.1",
     "@testing-library/react": "16.3.3",
@@ -39,6 +40,7 @@
     "@vitejs/plugin-react": "5.2.0",
     "eslint": "9.39.5",
     "jsdom": "26.1.0",
+    "satori": "^0.33.4",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
     "typescript-eslint": "^8.46.0",

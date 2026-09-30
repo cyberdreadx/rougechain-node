@@ -3,14 +3,112 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#07060c" />
+    <title>RougeChain — Post-quantum from genesis.</title>
     <meta
       name="description"
-      content="RougeChain — a post-quantum Layer 1. Standalone frontend design proof of concept."
+      content="RougeChain — a post-quantum Layer 1 blockchain built on NIST-standardized lattice cryptography."
     />
-    <title>RougeChain — Post-quantum from genesis.</title>
+    <meta name="author" content="RougeChain" />
+    <meta name="keywords" content="blockchain, quantum-safe, post-quantum cryptography, ML-DSA, ML-KEM, CRYSTALS-Dilithium, quantum computing, cryptocurrency, XRGE, RougeChain" />
+    <meta name="theme-color" content="#07060c" />
+    <meta name="robots" content="index, follow" />
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/webp" href="/favicon.webp" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+    <!-- Canonical (vite.config.ts siteMeta rewrites the host for the explorer build) -->
+    <link rel="canonical" href="https://rougechain.io/" />
+
+    <!-- Open Graph / Facebook (per-route values: scripts/prerender-og.mjs) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="RougeChain" />
+    <meta property="og:url" content="https://rougechain.io/" />
+    <meta property="og:title" content="RougeChain — Post-quantum from genesis." />
+    <meta property="og:description" content="A post-quantum Layer 1 blockchain built on NIST-standardized ML-DSA-65. Wallet, DEX, NFTs, bridge, encrypted mail and messenger." />
+    <meta property="og:image" content="https://rougechain.io/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="RougeChain — Post-quantum from genesis." />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:url" content="https://rougechain.io/" />
+    <meta name="twitter:title" content="RougeChain — Post-quantum from genesis." />
+    <meta name="twitter:description" content="A post-quantum Layer 1 blockchain built on NIST-standardized ML-DSA-65. Wallet, DEX, NFTs, bridge, encrypted mail and messenger." />
+    <meta name="twitter:image" content="https://rougechain.io/og-image.png" />
+    <meta name="twitter:image:alt" content="RougeChain — Post-quantum from genesis." />
+
+    <!-- JSON-LD Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://rougechain.io/#org",
+          "name": "RougeChain",
+          "alternateName": ["RougeChain XRGE", "RougeCoin", "XRGE"],
+          "url": "https://rougechain.io",
+          "logo": "https://rougechain.io/og-image.png",
+          "description": "RougeChain is a post-quantum Layer 1 blockchain. XRGE is its native token (and an ERC-20 on Base at 0x147120faEC9277ec02d957584CFCD92B56A24317).",
+          "sameAs": [
+            "https://x.com/RougeCoin",
+            "https://discord.gg/wZKsHfhXxm",
+            "https://github.com/cyberdreadx/rougechain-node",
+            "https://dexscreener.com/base/0x147120faec9277ec02d957584cfcd92b56a24317",
+            "https://www.geckoterminal.com/base/pools/0x059e10d26c64a63d04e1814f46305210eddc447d",
+            "https://dex.coinmarketcap.com/token/Base/0x147120faec9277ec02d957584cfcd92b56a24317/",
+            "https://basescan.org/token/0x147120faec9277ec02d957584cfcd92b56a24317"
+          ]
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://rougechain.io/#website",
+          "url": "https://rougechain.io",
+          "name": "RougeChain",
+          "publisher": { "@id": "https://rougechain.io/#org" }
+        },
+        {
+          "@type": "WebApplication",
+          "name": "RougeChain",
+          "url": "https://rougechain.io",
+          "description": "Post-quantum Layer 1 blockchain secured by NIST-standardized ML-DSA-65 (CRYSTALS-Dilithium). Features include DEX, NFTs, bridge, encrypted mail, and end-to-end encrypted messenger.",
+          "applicationCategory": "Blockchain",
+          "operatingSystem": "Web",
+          "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+          "publisher": { "@id": "https://rougechain.io/#org" },
+          "softwareVersion": "1.0",
+          "browserRequirements": "Requires a modern web browser"
+        }
+      ]
+    }
+    </script>
   </head>
   <body>
+    <!-- Netlify Forms detection (build-time): the React UI posts to this form name. -->
+    <form name="email-signup" data-netlify="true" netlify-honeypot="bot-field" hidden>
+      <input type="email" name="email" />
+      <input type="text" name="bot-field" />
+    </form>
+    <form name="regenerate-proposal" data-netlify="true" netlify-honeypot="bot-field" hidden>
+      <input type="text" name="name" />
+      <input type="text" name="contact" />
+      <input type="text" name="project" />
+      <input type="text" name="location" />
+      <input type="text" name="category" />
+      <input type="text" name="requested_xrge" />
+      <input type="text" name="payout_address" />
+      <textarea name="description"></textarea>
+      <textarea name="milestones"></textarea>
+      <input type="text" name="links" />
+      <input type="text" name="bot-field" />
+    </form>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

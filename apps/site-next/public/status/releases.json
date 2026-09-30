@@ -1,0 +1,17 @@
+{
+  "_doc": "Public release facts shown on /status. Edit and redeploy the site; no code change needed.",
+  "updated": "2026-09-24",
+  "node": { "version": "v1.4.0", "tag": "https://github.com/cyberdreadx/rougechain-node/releases/tag/v1.4.0", "binarySha256": "d50f7e5d34d03200f6efc45c8b7b63c61079e7f9d5b5c70f5b3c3c3544105eba", "sourceCommit": "203507e", "mandatory": true, "notes": "https://docs.rougechain.io/running-a-node/mandatory-upgrade-2026-09.html" },
+  "consensus": [
+    { "name": "Protocol upgrade (bridge hardening, stake accounting)", "activationHeight": 49, "state": "live" },
+    { "name": "Transaction integrity (signed-payload binding, uniqueness)", "activationHeight": 90, "state": "live" },
+    { "name": "Deterministic proposer selection, Release 1", "activationHeight": 100, "state": "live" },
+    { "name": "Verified BFT finality (FINALITY_V2)", "activationHeight": null, "state": "built, not activated" }
+  ],
+  "bridge": [
+    { "name": "XRGE bridge (BridgeVaultV2, Base mainnet)", "state": "live", "auth": "classical (Safe 2-of-3 + capped relayer)", "address": "0x7BB10752E99e8872d7D2DE5D92bfd43cd935Cd2D" },
+    { "name": "qETH / qUSDC bridge (RougeBridge, Base mainnet)", "state": "live", "auth": "classical (operator key + Safe guardian)", "address": "0x0c09C764AdC024497729cd452ECfeE8869d35d83" },
+    { "name": "Post-quantum XRGE bridge (BridgeVaultV3)", "state": "built, not deployed", "auth": "ML-DSA-65 authority set", "address": null }
+  ],
+  "audits": { "external": "none yet", "internal": "adversarial review 2026-09-23 (V3 candidate), reproducible builds for node and signer", "reportSecurity": "https://github.com/cyberdreadx/rougechain-node/security" }
+}

@@ -1,2 +1,4 @@
-# Isolated POC SPA routing only. Never copy to a production migration unchanged.
-/* /index.html 200
+# SPA routing (same rule as apps/web). Non-forced (200 without "!"), so real files win: the
+# prerendered per-route shells from scripts/prerender-og.mjs (e.g. /validators → validators.html)
+# are served to social crawlers before this catch-all rewrite.
+/*    /index.html   200
