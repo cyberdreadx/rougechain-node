@@ -13,7 +13,6 @@ import {
   listVoteProposals,
   openProposal,
   recordPayout,
-  timeLeft,
   type RegenVoteConfig,
   type VoteChoice,
   type VoteEntry,
@@ -22,33 +21,48 @@ import { useChain } from "../explorer/chain";
 import { useRougeAddress } from "../wallet/hooks";
 import { useWallet } from "../wallet/WalletProvider";
 import { toast } from "../wallet/toast";
-import { votes as t } from "./strings";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
+import { fmtDate, fmtNum } from "../i18n/format";
+import { useNetworkLabel } from "./common";
 
-const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+/** Vote weights / requested amounts are display figures here (nothing typed back or signed as an amount). */
+const fmt = (n: number) => fmtNum(n, 2);
+
+/** core's timeLeft(), in the current language. */
+function timeLeftText(t: TFunction, endsAtMs: number, now = Date.now()): string {
+  const ms = endsAtMs - now;
+  if (ms <= 0) return t("votes.timeLeftClosed");
+  const h = Math.floor(ms / 3_600_000);
+  if (h >= 48) return t("votes.timeLeftDays", { count: Math.floor(h / 24) });
+  if (h >= 1) return t("votes.timeLeftHours", { count: h });
+  return t("votes.timeLeftMinutes", { count: Math.max(1, Math.floor(ms / 60_000)) });
+}
 const pct = (part: number, whole: number) => (whole > 0 ? Math.min(100, (part / whole) * 100) : 0);
 const CHOICES: VoteChoice[] = ["yes", "no", "abstain"];
 const STATUS_CLASS: Record<string, string> = { open: "live", passed: "warning", paid: "live", failed: "loading", cancelled: "loading" };
 
 function Tally({ s }: { s: VoteEntry["summaryXrge"] }) {
+  const { t } = useTranslation("pages");
   const total = s.yes + s.no + s.abstain;
   return (
     <div className="rc-tally">
-      <div className="rc-tally-bar" role="img" aria-label={`${t.yes} ${fmt(s.yes)}, ${t.no} ${fmt(s.no)}, ${t.abstain} ${fmt(s.abstain)} XRGE`}>
+      <div className="rc-tally-bar" role="img" aria-label={t("votes.tallyLabel", { yes: fmt(s.yes), no: fmt(s.no), abstain: fmt(s.abstain) })}>
         <span className="yes" style={{ width: `${pct(s.yes, total)}%` }} />
         <span className="no" style={{ width: `${pct(s.no, total)}%` }} />
         <span className="abstain" style={{ width: `${pct(s.abstain, total)}%` }} />
       </div>
       <div className="rc-tally-legend mono">
         <span className="yes">
-          {t.yes} {fmt(s.yes)}
+          {t("votes.choice.yes")} {fmt(s.yes)}
         </span>
         <span className="no">
-          {t.no} {fmt(s.no)}
+          {t("votes.choice.no")} {fmt(s.no)}
         </span>
         <span>
-          {t.abstain} {fmt(s.abstain)}
+          {t("votes.choice.abstain")} {fmt(s.abstain)}
         </span>
-        <span className="rc-push">{t.turnout(fmt(s.turnout), fmt(s.turnoutNeeded))}</span>
+        <span className="rc-push">{t("votes.turnout", { have: fmt(s.turnout), need: fmt(s.turnoutNeeded) })}</span>
       </div>
       <div className="rc-bar thin">
         <span style={{ width: `${pct(s.turnout, s.turnoutNeeded)}%` }} />
@@ -58,6 +72,8 @@ function Tally({ s }: { s: VoteEntry["summaryXrge"] }) {
 }
 
 function ProposalRow({ e, isCurator, onChanged }: { e: VoteEntry; isCurator: boolean; onChanged: () => void }) {
+  const { t } = useTranslation("pages");
+  const networkLabel = useNetworkLabel();
   const p = e.proposal;
   const { network } = useChain();
   const w = useWallet();
@@ -77,7 +93,7 @@ function ProposalRow({ e, isCurator, onChanged }: { e: VoteEntry; isCurator: boo
     setBusy(c);
     try {
       await castVote(p.id, c);
-      toast.success(t.recorded(c));
+      toast.success(t("votes.recorded", { choice: t(`votes.choiceLower.${c}`) }));
       setReview(null);
       void qc.invalidateQueries({ queryKey: ["pages", "regen-weight", network, p.id] });
       onChanged();
@@ -91,7 +107,7 @@ function ProposalRow({ e, isCurator, onChanged }: { e: VoteEntry; isCurator: boo
     setBusy("payout");
     try {
       await recordPayout(p.id, payoutTx.trim());
-      toast.success(t.payoutRecorded);
+      toast.success(t("votes.payoutRecorded"));
       onChanged();
     } catch (err) {
       toast.error((err as Error).message);
@@ -111,25 +127,25 @@ function ProposalRow({ e, isCurator, onChanged }: { e: VoteEntry; isCurator: boo
           </p>
           <h3>{p.title}</h3>
         </div>
-        <span className={`status ${STATUS_CLASS[e.status] ?? "loading"}`}>{t.status[e.status] ?? e.status}</span>
+        <span className={`status ${STATUS_CLASS[e.status] ?? "loading"}`}>{t(`votes.status.${e.status}`, { defaultValue: e.status })}</span>
       </div>
       <p className="rc-pre">{p.summary}</p>
       <p className="rc-meta">
         {p.requestedXrge ? (
           <span>
-            {t.requests} <strong>{fmt(p.requestedXrge)} XRGE</strong>
+            {t("votes.requests")} <strong>{fmt(p.requestedXrge)} XRGE</strong>
           </span>
         ) : null}
         {p.recipient ? (
           <span>
-            {t.to} <span className="mono">{formatAddress(p.recipient)}</span>
+            {t("votes.to")} <span className="mono">{formatAddress(p.recipient)}</span>
           </span>
         ) : null}
-        <span>{e.status === "open" ? timeLeft(p.endsAtMs) : t.closed(new Date(p.endsAtMs).toLocaleDateString())}</span>
-        <span>{t.voters(e.tally.voters, p.snapshotHeight)}</span>
+        <span>{e.status === "open" ? timeLeftText(t, p.endsAtMs) : t("votes.closed", { date: fmtDate(p.endsAtMs) })}</span>
+        <span>{t("votes.voters", { count: e.tally.voters, height: p.snapshotHeight })}</span>
         {p.link && /^https:\/\//.test(p.link) ? (
           <a className="text-link inline" href={p.link} target="_blank" rel="noopener noreferrer">
-            {t.details} <ExternalLink size={11} />
+            {t("votes.details")} <ExternalLink size={11} />
           </a>
         ) : null}
       </p>
@@ -138,19 +154,25 @@ function ProposalRow({ e, isCurator, onChanged }: { e: VoteEntry; isCurator: boo
       {e.status === "open" && (
         <div className="actions rc-vote-actions">
           {w.status === "locked" ? (
-            <p className="form-hint">{t.locked}</p>
+            <p className="form-hint">{t("votes.locked")}</p>
           ) : !voterKey ? (
-            <p className="form-hint">{t.connect}</p>
+            <p className="form-hint">{t("votes.connect")}</p>
           ) : wt && !wt.eligible ? (
-            <p className="form-hint">{wt.excluded ? t.excluded : t.noWeight}</p>
+            <p className="form-hint">{wt.excluded ? t("votes.excluded") : t("votes.noWeight")}</p>
           ) : (
             <>
               {CHOICES.map((c) => (
                 <Button key={c} variant={wt?.vote === c ? "small" : "outline small"} disabled={!!busy} onClick={() => setReview(c)} aria-pressed={wt?.vote === c}>
-                  {t[c]}
+                  {t(`votes.choice.${c}`)}
                 </Button>
               ))}
-              {wt && <span className="form-hint">{t.weight(fmt(wt.weightXrge), wt.vote)}</span>}
+              {wt && (
+                <span className="form-hint">
+                  {wt.vote
+                    ? t("votes.weightVoted", { weight: fmt(wt.weightXrge), vote: t(`votes.choiceLower.${wt.vote}`) })
+                    : t("votes.weight", { weight: fmt(wt.weightXrge) })}
+                </span>
+              )}
             </>
           )}
         </div>
@@ -158,7 +180,7 @@ function ProposalRow({ e, isCurator, onChanged }: { e: VoteEntry; isCurator: boo
 
       {e.status === "paid" && p.payoutTxId && (
         <p className="form-hint">
-          {t.paidFrom(p.payoutXrge != null ? `${fmt(p.payoutXrge)} XRGE` : "")}{" "}
+          {t("votes.paidFrom", { amount: p.payoutXrge != null ? `${fmt(p.payoutXrge)} XRGE` : "" })}{" "}
           <Link className="mono" to={txUrl(p.payoutTxId)}>
             #{p.payoutTxId.slice(0, 10)}…
           </Link>
@@ -167,45 +189,45 @@ function ProposalRow({ e, isCurator, onChanged }: { e: VoteEntry; isCurator: boo
 
       {e.status === "passed" && isCurator && (
         <div className="field-row">
-          <input className="input mono" value={payoutTx} onChange={(ev) => setPayoutTx(ev.target.value)} placeholder={t.payoutPh} aria-label={t.payoutPh} />
+          <input className="input mono" value={payoutTx} onChange={(ev) => setPayoutTx(ev.target.value)} placeholder={t("votes.payoutPh")} aria-label={t("votes.payoutPh")} />
           <Button variant="small" disabled={!payoutTx.trim() || busy === "payout"} onClick={payout}>
-            {t.recordPayout}
+            {t("votes.recordPayout")}
           </Button>
         </div>
       )}
 
       {review && voterKey && (
-        <Dialog open onClose={() => busy === null && setReview(null)} title={t.reviewTitle}>
+        <Dialog open onClose={() => busy === null && setReview(null)} title={t("votes.reviewTitle")}>
           <div className="wallet-form">
             <dl className="review-list">
               <div>
-                <dt>{t.reviewRows.proposal}</dt>
+                <dt>{t("votes.reviewRows.proposal")}</dt>
                 <dd>{p.title}</dd>
               </div>
               <div>
-                <dt>{t.reviewRows.choice}</dt>
-                <dd>{t[review]}</dd>
+                <dt>{t("votes.reviewRows.choice")}</dt>
+                <dd>{t(`votes.choice.${review}`)}</dd>
               </div>
               <div>
-                <dt>{t.reviewRows.weight}</dt>
+                <dt>{t("votes.reviewRows.weight")}</dt>
                 <dd className="mono">{wt ? `${fmt(wt.weightXrge)} XRGE` : "—"}</dd>
               </div>
               <div>
-                <dt>{t.reviewRows.voter}</dt>
+                <dt>{t("votes.reviewRows.voter")}</dt>
                 <dd className="mono">{formatIdentity(voterKey)}</dd>
               </div>
               <div>
-                <dt>{t.reviewRows.network}</dt>
-                <dd>{getNetworkLabel()}</dd>
+                <dt>{t("votes.reviewRows.network")}</dt>
+                <dd>{networkLabel(getNetworkLabel())}</dd>
               </div>
             </dl>
-            <p className="form-hint">{t.reviewNote}</p>
+            <p className="form-hint">{t("votes.reviewNote")}</p>
             <div className="actions">
               <Button variant="outline" onClick={() => setReview(null)} disabled={busy !== null}>
-                {t.cancel}
+                {t("votes.cancel")}
               </Button>
               <Button onClick={() => void vote(review)} disabled={busy !== null}>
-                {busy ? "…" : t.sign}
+                {busy ? "…" : t("votes.sign")}
               </Button>
             </div>
           </div>
@@ -216,6 +238,7 @@ function ProposalRow({ e, isCurator, onChanged }: { e: VoteEntry; isCurator: boo
 }
 
 function OpenProposalForm({ config, onCreated }: { config: RegenVoteConfig; onCreated: () => void }) {
+  const { t } = useTranslation("pages");
   const empty = { title: "", summary: "", territory: "Tulum", recipient: "", requested: "", link: "" };
   const [f, setF] = useState(empty);
   const [busy, setBusy] = useState(false);
@@ -233,7 +256,7 @@ function OpenProposalForm({ config, onCreated }: { config: RegenVoteConfig; onCr
         link: f.link.trim() || undefined,
         requestedXrge: f.requested ? Number(f.requested) : undefined,
       });
-      toast.success(t.form.opened);
+      toast.success(t("votes.form.opened"));
       setF(empty);
       onCreated();
     } catch (err) {
@@ -244,22 +267,22 @@ function OpenProposalForm({ config, onCreated }: { config: RegenVoteConfig; onCr
   };
   return (
     <form onSubmit={submit} className="surface wallet-form rc-open-form">
-      <p className="form-hint">{t.form.intro(config.defaultDays, fmt(config.minCreatorXrge))}</p>
+      <p className="form-hint">{t("votes.form.intro", { days: config.defaultDays, min: fmt(config.minCreatorXrge) })}</p>
       <label className="field">
-        {t.form.title}
+        {t("votes.form.title")}
         <input className="input" required maxLength={120} value={f.title} onChange={set("title")} />
       </label>
       <label className="field">
-        {t.form.summary}
+        {t("votes.form.summary")}
         <textarea className="input" required maxLength={4000} rows={4} value={f.summary} onChange={set("summary")} />
       </label>
       <div className="two-fields">
         <label className="field">
-          {t.form.territory}
+          {t("votes.form.territory")}
           <input className="input" maxLength={80} value={f.territory} onChange={set("territory")} />
         </label>
         <label className="field">
-          {t.form.requested}
+          {t("votes.form.requested")}
           <input
             className="input mono"
             inputMode="decimal"
@@ -269,15 +292,15 @@ function OpenProposalForm({ config, onCreated }: { config: RegenVoteConfig; onCr
         </label>
       </div>
       <label className="field">
-        {t.form.recipient}
+        {t("votes.form.recipient")}
         <input className="input mono" maxLength={120} value={f.recipient} onChange={set("recipient")} />
       </label>
       <label className="field">
-        {t.form.link}
+        {t("votes.form.link")}
         <input className="input" maxLength={500} value={f.link} onChange={set("link")} />
       </label>
       <Button type="submit" disabled={busy}>
-        <Plus size={15} /> {t.form.submit}
+        <Plus size={15} /> {t("votes.form.submit")}
       </Button>
     </form>
   );
@@ -290,6 +313,7 @@ function OpenProposalForm({ config, onCreated }: { config: RegenVoteConfig; onCr
  * serve votes), this says so, so the state is never ambiguous.
  */
 export default function CommunityVotes() {
+  const { t } = useTranslation("pages");
   const { network } = useChain();
   const w = useWallet();
   const qc = useQueryClient();
@@ -312,22 +336,22 @@ export default function CommunityVotes() {
   return (
     <section id="votes" className="rc-block" aria-labelledby="votes-title">
       <div className="panel-head">
-        <h2 id="votes-title">{t.title}</h2>
+        <h2 id="votes-title">{t("votes.title")}</h2>
         {config && w.status === "unlocked" && (
           <Button variant="outline small" onClick={() => setShowOpen((v) => !v)}>
-            <Plus size={15} /> {t.open}
+            <Plus size={15} /> {t("votes.open")}
           </Button>
         )}
       </div>
       {data.isPending ? (
-        <p className="muted">{t.loading}</p>
+        <p className="muted">{t("votes.loading")}</p>
       ) : !config || !entries ? (
-        <p className="notice">{t.unavailable}</p>
+        <p className="notice">{t("votes.unavailable")}</p>
       ) : (
         <>
-          <p className="muted">{t.lead(config.capBps / 100, config.turnoutBps / 100)}</p>
+          <p className="muted">{t("votes.lead", { cap: fmtNum(config.capBps / 100), turnout: fmtNum(config.turnoutBps / 100) })}</p>
           <p className="form-hint rc-signed">
-            <ShieldCheck size={14} aria-hidden="true" /> {t.signed}
+            <ShieldCheck size={14} aria-hidden="true" /> {t("votes.signed")}
           </p>
           {showOpen && (
             <OpenProposalForm
@@ -339,7 +363,7 @@ export default function CommunityVotes() {
             />
           )}
           {entries.length === 0 ? (
-            <p className="notice">{t.empty}</p>
+            <p className="notice">{t("votes.empty")}</p>
           ) : (
             <div className="rc-proposals">
               {entries.map((e) => (

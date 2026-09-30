@@ -1,5 +1,6 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { Route } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import type { FeatureArea } from "./types";
 
 // Each page loads on demand (keeps core's signing / PQC code out of the landing bundle).
@@ -11,17 +12,21 @@ const Status = lazy(() => import("../pages/Status"));
 const Regenerate = lazy(() => import("../pages/Regenerate"));
 const Privacy = lazy(() => import("../pages/Privacy"));
 
+/** Route fallback ("common" is always preloaded, so this never suspends itself). */
+function PageLoading() {
+  const { t } = useTranslation("common");
+  return (
+    <main id="main" className="app-main">
+      <div className="container">
+        <p className="muted">{t("loading")}</p>
+      </div>
+    </main>
+  );
+}
+
 function Page({ children }: { children: ReactNode }) {
   return (
-    <Suspense
-      fallback={
-        <main id="main" className="app-main">
-          <div className="container">
-            <p className="muted">Loading…</p>
-          </div>
-        </main>
-      }
-    >
+    <Suspense fallback={<PageLoading />}>
       {children}
     </Suspense>
   );

@@ -9,7 +9,6 @@ import {
   getTreasuryStats,
   hasFundedProjects,
   REGEN_CATEGORIES,
-  REGEN_STATUS_LABEL,
   REGEN_TREASURY_ADDRESS,
   txUrl,
   verifiedFunding,
@@ -19,30 +18,36 @@ import {
 import { useChain } from "../explorer/chain";
 import { TestnetNotice, useRouteSeo } from "./common";
 import CommunityVotes from "./CommunityVotes";
-import { proposalForm as pf, regen as t, seo } from "./strings";
+import { Trans, useTranslation } from "react-i18next";
+import { fmtNum } from "../i18n/format";
 import "./pages.css";
 
-const fmt = (n: number | null, suffix = "") =>
-  n == null ? null : `${n.toLocaleString("en-US", { maximumFractionDigits: 4 })}${suffix}`;
-const CATEGORY_LABEL = Object.fromEntries(REGEN_CATEGORIES.map((c) => [c.key, c.title]));
+/** Display figures (treasury stats, requested amounts) in the current locale. */
+const fmt = (n: number | null, suffix = "") => (n == null ? null : `${fmtNum(n, 4)}${suffix}`);
+const PROTOCOL = ["project", "location", "funding", "milestones", "evidence", "verification"] as const;
 
 /** Must match the hidden form in index.html (Netlify Forms detection) — same name as apps/web. */
 export const PROPOSAL_FORM_NAME = "regenerate-proposal";
+const TERRITORY_COORDS = "20.2114° N · 87.4654° W · Quintana Roo, MX";
 const DISCORD_URL = "https://discord.gg/wZKsHfhXxm";
 const FIELDS = ["name", "contact", "project", "location", "category", "requested_xrge", "payout_address", "description", "milestones", "links"] as const;
 type Field = (typeof FIELDS)[number];
 const EMPTY = Object.fromEntries(FIELDS.map((f) => [f, ""])) as Record<Field, string>;
 
 function Stat({ label, value }: { label: string; value: string | null }) {
+  const { t } = useTranslation("pages");
   return (
     <div className="rc-stat">
       <div className="metric-label">{label}</div>
-      {value !== null ? <div className="rc-stat-value">{value}</div> : <div className="rc-stat-sub">{t.stat.notLive}</div>}
+      {value !== null ? <div className="rc-stat-value">{value}</div> : <div className="rc-stat-sub">{t("regen.stat.notLive")}</div>}
     </div>
   );
 }
 
 function ProjectCard({ project, ledger }: { project: RegenProject; ledger: TreasuryLedger | null }) {
+  const { t } = useTranslation("pages");
+  // Illustrative projects come from core in English; translated copies are keyed by project id.
+  const tp = (k: string, en: string) => t(`regen.projects.${project.id}.${k}`, { defaultValue: en });
   const funding = verifiedFunding(project, ledger);
   // Funding is only what the chain shows leaving the treasury for this project (apps/web rule).
   const status: RegenProject["status"] =
@@ -57,23 +62,23 @@ function ProjectCard({ project, ledger }: { project: RegenProject; ledger: Treas
     <article className="surface rc-card rc-project">
       <div className="panel-head">
         <div>
-          <h3>{project.name}</h3>
+          <h3>{tp("name", project.name)}</h3>
           <p className="form-hint">{project.location}</p>
         </div>
-        <span className={`status ${funding.txs.length ? "live" : "loading"}`}>{REGEN_STATUS_LABEL[status]}</span>
+        <span className={`status ${funding.txs.length ? "live" : "loading"}`}>{t(`regen.projectStatus.${status}`)}</span>
       </div>
       <p className="rc-tags">
-        <span className="pill">{CATEGORY_LABEL[project.category] ?? project.category}</span>
-        <span className="pill">{project.requestedXrge != null ? t.requested(project.requestedXrge.toLocaleString("en-US")) : t.fundingTbd}</span>
+        <span className="pill">{t(`regen.categories.${project.category}.title`, { defaultValue: project.category })}</span>
+        <span className="pill">{project.requestedXrge != null ? t("regen.requested", { amount: fmtNum(project.requestedXrge, 4) }) : t("regen.fundingTbd")}</span>
       </p>
-      <p>{project.description}</p>
+      <p>{tp("description", project.description)}</p>
       {project.milestones.length > 0 && (
         <>
-          <div className="metric-label">{t.milestones}</div>
+          <div className="metric-label">{t("regen.milestones")}</div>
           <ul className="rc-milestones">
-            {project.milestones.map((m) => (
+            {project.milestones.map((m, i) => (
               <li key={m.title} className={m.done ? "done" : undefined}>
-                {m.done ? <CheckCircle2 size={14} aria-hidden="true" /> : <Circle size={14} aria-hidden="true" />} {m.title}
+                {m.done ? <CheckCircle2 size={14} aria-hidden="true" /> : <Circle size={14} aria-hidden="true" />} {tp(`m${i}`, m.title)}
               </li>
             ))}
           </ul>
@@ -82,14 +87,14 @@ function ProjectCard({ project, ledger }: { project: RegenProject; ledger: Treas
       <p className="rc-meta rc-card-foot">
         {project.evidenceUrl ? (
           <a className="text-link inline" href={project.evidenceUrl} target="_blank" rel="noopener noreferrer">
-            {t.evidence} <ExternalLink size={11} />
+            {t("regen.evidence")} <ExternalLink size={11} />
           </a>
         ) : (
-          <span>{t.evidencePending}</span>
+          <span>{t("regen.evidencePending")}</span>
         )}
         {funding.txs.length > 0 ? (
           <>
-            <span>{t.fundedOnChain(funding.xrge.toLocaleString("en-US"))}</span>
+            <span>{t("regen.fundedOnChain", { amount: fmtNum(funding.xrge, 4) })}</span>
             {funding.txs.map((x) => (
               <Link key={x.txId} className="mono" to={txUrl(x.txId)}>
                 #{x.txId.slice(0, 10)}…
@@ -97,7 +102,7 @@ function ProjectCard({ project, ledger }: { project: RegenProject; ledger: Treas
             ))}
           </>
         ) : (
-          <span>{t.fundingNone}</span>
+          <span>{t("regen.fundingNone")}</span>
         )}
       </p>
     </article>
@@ -106,6 +111,7 @@ function ProjectCard({ project, ledger }: { project: RegenProject; ledger: Treas
 
 /** Project proposal form → Netlify Forms (POST / urlencoded, same fields and name as apps/web). */
 export function ProposalForm() {
+  const { t } = useTranslation("pages");
   const [v, setV] = useState(EMPTY);
   const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const set = (k: Field) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
@@ -131,10 +137,10 @@ export function ProposalForm() {
     return (
       <div className="rc-sent" role="status">
         <CheckCircle2 size={32} aria-hidden="true" />
-        <h3>{pf.sentTitle}</h3>
-        <p>{pf.sentBody}</p>
+        <h3>{t("proposalForm.sentTitle")}</h3>
+        <p>{t("proposalForm.sentBody")}</p>
         <Button variant="outline" onClick={() => setState("idle")}>
-          {pf.another}
+          {t("proposalForm.another")}
         </Button>
       </div>
     );
@@ -148,73 +154,74 @@ export function ProposalForm() {
       </p>
       <div className="two-fields">
         <label className="field">
-          {pf.name}
+          {t("proposalForm.name")}
           <input className="input" required maxLength={120} value={v.name} onChange={set("name")} />
         </label>
         <label className="field">
-          {pf.contact}
-          <input className="input" required maxLength={160} value={v.contact} onChange={set("contact")} placeholder={pf.contactPh} />
+          {t("proposalForm.contact")}
+          <input className="input" required maxLength={160} value={v.contact} onChange={set("contact")} placeholder={t("proposalForm.contactPh")} />
         </label>
         <label className="field">
-          {pf.project}
+          {t("proposalForm.project")}
           <input className="input" required maxLength={120} value={v.project} onChange={set("project")} />
         </label>
         <label className="field">
-          {pf.location}
-          <input className="input" required maxLength={120} value={v.location} onChange={set("location")} placeholder={pf.locationPh} />
+          {t("proposalForm.location")}
+          <input className="input" required maxLength={120} value={v.location} onChange={set("location")} placeholder={t("proposalForm.locationPh")} />
         </label>
         <label className="field">
-          {pf.category}
+          {t("proposalForm.category")}
           <select required value={v.category} onChange={set("category")}>
             <option value="" disabled>
-              {pf.choose}
+              {t("proposalForm.choose")}
             </option>
             {REGEN_CATEGORIES.map((c) => (
+              // The submitted value stays core's English title (what the team reviews); only the label is translated.
               <option key={c.key} value={c.title}>
-                {c.title}
+                {t(`regen.categories.${c.key}.title`, { defaultValue: c.title })}
               </option>
             ))}
           </select>
         </label>
         <label className="field">
-          {pf.amount}
+          {t("proposalForm.amount")}
           <input
             className="input mono"
             inputMode="decimal"
             maxLength={24}
             value={v.requested_xrge}
             onChange={(e) => setV((s) => ({ ...s, requested_xrge: e.target.value.replace(/[^0-9.]/g, "") }))}
-            placeholder={pf.amountPh}
+            placeholder={t("proposalForm.amountPh")}
           />
         </label>
       </div>
       <label className="field">
-        {pf.payout}
+        {t("proposalForm.payout")}
         <input className="input mono" maxLength={120} value={v.payout_address} onChange={set("payout_address")} placeholder="rouge1…" />
       </label>
       <label className="field">
-        {pf.description}
+        {t("proposalForm.description")}
         <textarea className="input" required minLength={40} maxLength={4000} rows={5} value={v.description} onChange={set("description")} />
       </label>
       <label className="field">
-        {pf.milestones}
-        <textarea className="input" maxLength={2000} rows={3} value={v.milestones} onChange={set("milestones")} placeholder={pf.milestonesPh} />
+        {t("proposalForm.milestones")}
+        <textarea className="input" maxLength={2000} rows={3} value={v.milestones} onChange={set("milestones")} placeholder={t("proposalForm.milestonesPh")} />
       </label>
       <label className="field">
-        {pf.links}
-        <input className="input" maxLength={500} value={v.links} onChange={set("links")} placeholder={pf.linksPh} />
+        {t("proposalForm.links")}
+        <input className="input" maxLength={500} value={v.links} onChange={set("links")} placeholder={t("proposalForm.linksPh")} />
       </label>
       <div className="actions">
         <Button type="submit" disabled={state === "sending"}>
-          {state === "sending" ? pf.sending : pf.submit}
+          {state === "sending" ? t("proposalForm.sending") : t("proposalForm.submit")}
         </Button>
         <a className="text-link" href={DISCORD_URL} target="_blank" rel="noopener noreferrer">
-          {pf.discord}
+          {t("proposalForm.discord")}
         </a>
       </div>
       {state === "error" && (
         <p className="form-error" role="alert">
-          {pf.error}
+          {t("proposalForm.error")}
         </p>
       )}
     </form>
@@ -222,7 +229,8 @@ export function ProposalForm() {
 }
 
 export default function Regenerate() {
-  useRouteSeo(seo.regenerate);
+  const { t } = useTranslation("pages");
+  useRouteSeo({ title: t("seo.regenerate.title"), description: t("seo.regenerate.description") });
   const { network } = useChain();
   const mainnet = network === "mainnet";
   const [copied, setCopied] = useState(false);
@@ -252,92 +260,90 @@ export default function Regenerate() {
     <main id="main" className="app-main rc-page rc-regen">
       <div className="container rc-narrow">
         <header className="rc-hero center">
-          <div className="eyebrow">{t.kicker}</div>
-          <p className="mono muted">{t.sub}</p>
+          <div className="eyebrow">{t("regen.kicker")}</div>
+          <p className="mono muted">{t("regen.sub")}</p>
           <h1>
-            <span className="gradient-text">{t.titleEm}</span>
-            {t.titleRest}
+            <Trans t={t} i18nKey="regen.title" components={{ em: <span className="gradient-text" /> }} />
           </h1>
-          <p className="rc-lead">{t.lead}</p>
+          <p className="rc-lead">{t("regen.lead")}</p>
           <div className="actions">
             <a className="button" href="#projects">
-              {t.viewProjects}
+              {t("regen.viewProjects")}
             </a>
             <a className="button outline" href="#propose">
-              {t.propose}
+              {t("regen.propose")}
             </a>
           </div>
         </header>
 
-        <TestnetNotice>{t.testnet}</TestnetNotice>
+        <TestnetNotice>{t("regen.testnet")}</TestnetNotice>
 
         <section className="rc-statement">
           <h2>
-            {t.statementA}
-            <span className="gradient-text">{t.statementEm}</span>
+            <Trans t={t} i18nKey="regen.statement" components={{ em: <span className="gradient-text" /> }} />
           </h2>
-          <p>{t.statementBody}</p>
-          <p className="form-hint">{t.solarpunk}</p>
+          <p>{t("regen.statementBody")}</p>
+          <p className="form-hint">{t("regen.solarpunk")}</p>
         </section>
 
-        <section className="rc-cards four" aria-label="Categories">
+        <section className="rc-cards four" aria-label={t("regen.categoriesLabel")}>
           {REGEN_CATEGORIES.map((c) => (
             <article key={c.key} className="surface rc-card">
-              <h3>{c.title}</h3>
-              <p>{c.blurb}</p>
+              <h3>{t(`regen.categories.${c.key}.title`, { defaultValue: c.title })}</h3>
+              <p>{t(`regen.categories.${c.key}.blurb`, { defaultValue: c.blurb })}</p>
             </article>
           ))}
         </section>
 
         <section className="surface rc-territory" aria-labelledby="territory">
-          <div className="eyebrow">{t.territoryKicker}</div>
+          <div className="eyebrow">{t("regen.territoryKicker")}</div>
           <h2 id="territory">
-            {t.territoryName} <span className="mono muted">{t.territoryCoords}</span>
+            {t("regen.territoryName")} <span className="mono muted">{TERRITORY_COORDS}</span>
           </h2>
-          <p>{t.territoryBody}</p>
-          <p className="form-hint">{anyFunded ? t.funded : t.notFunded}</p>
+          <p>{t("regen.territoryBody")}</p>
+          <p className="form-hint">{anyFunded ? t("regen.funded") : t("regen.notFunded")}</p>
         </section>
 
         <section className="rc-block" aria-labelledby="treasury">
           <div className="panel-head">
-            <h2 id="treasury">{t.treasuryTitle}</h2>
-            <span className="form-hint">{ledger ? t.treasuryLive : t.treasuryPending}</span>
+            <h2 id="treasury">{t("regen.treasuryTitle")}</h2>
+            <span className="form-hint">{ledger ? t("regen.treasuryLive") : t("regen.treasuryPending")}</span>
           </div>
           <div className="rc-stats four">
-            <Stat label={t.stat.balance} value={fmt(treasury.balanceXrge, " XRGE")} />
-            <Stat label={t.stat.funded} value={fmt(treasury.projectsFunded)} />
-            <Stat label={t.stat.deployed} value={fmt(treasury.totalDeployedXrge, " XRGE")} />
-            <Stat label={t.stat.territories} value={fmt(treasury.activeTerritories)} />
+            <Stat label={t("regen.stat.balance")} value={fmt(treasury.balanceXrge, " XRGE")} />
+            <Stat label={t("regen.stat.funded")} value={fmt(treasury.projectsFunded)} />
+            <Stat label={t("regen.stat.deployed")} value={fmt(treasury.totalDeployedXrge, " XRGE")} />
+            <Stat label={t("regen.stat.territories")} value={fmt(treasury.activeTerritories)} />
           </div>
           {REGEN_TREASURY_ADDRESS && mainnet && (
             <div className="rc-grid even">
               <div className="surface rc-panel">
-                <div className="metric-label">{t.wallet}</div>
-                <button type="button" className="rc-address" onClick={copy} aria-label={t.copyAddress}>
+                <div className="metric-label">{t("regen.wallet")}</div>
+                <button type="button" className="rc-address" onClick={copy} aria-label={t("regen.copyAddress")}>
                   <code className="mono">{REGEN_TREASURY_ADDRESS}</code>
                   <span className="form-hint">
-                    {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />} {copied ? "Copied" : t.copyAddress}
+                    {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />} {copied ? t("common.copied") : t("regen.copyAddress")}
                   </span>
                 </button>
-                <p className="form-hint">{t.donate}</p>
+                <p className="form-hint">{t("regen.donate")}</p>
                 {ledger && (
                   <p className="form-hint">
-                    {t.donations}: <span className="mono">{fmt(ledger.receivedXrge, " XRGE")}</span>
+                    {t("regen.donations")}: <span className="mono">{fmt(ledger.receivedXrge, " XRGE")}</span>
                   </p>
                 )}
                 <Link className="text-link" to={`/address/${REGEN_TREASURY_ADDRESS}`}>
-                  {t.viewExplorer} <ArrowRight size={14} />
+                  {t("regen.viewExplorer")} <ArrowRight size={14} />
                 </Link>
               </div>
               <div className="surface rc-panel">
-                <div className="metric-label">{t.recent}</div>
+                <div className="metric-label">{t("regen.recent")}</div>
                 {ledger && ledger.txs.length > 0 ? (
                   <ul className="rc-rows">
                     {ledger.txs.slice(0, 8).map((x) => (
                       <li key={x.txId}>
                         <span className={x.direction === "in" ? "rc-in" : "rc-out"}>
                           {x.direction === "in" ? <ArrowDownLeft size={14} aria-hidden="true" /> : <ArrowUpRight size={14} aria-hidden="true" />}{" "}
-                          {x.direction === "in" ? t.donation : t.grant}
+                          {x.direction === "in" ? t("regen.donation") : t("regen.grant")}
                         </span>
                         <span className="mono">{fmt(x.amountXrge, " XRGE")}</span>
                         <Link className="mono" to={txUrl(x.txId)}>
@@ -347,7 +353,7 @@ export default function Regenerate() {
                     ))}
                   </ul>
                 ) : (
-                  <p className="muted">{ledgerQ.isPending ? "…" : ledger ? t.noTxs : t.treasuryUnreachable}</p>
+                  <p className="muted">{ledgerQ.isPending ? "…" : ledger ? t("regen.noTxs") : t("regen.treasuryUnreachable")}</p>
                 )}
               </div>
             </div>
@@ -356,14 +362,14 @@ export default function Regenerate() {
 
         <section className="surface rc-panel" aria-labelledby="proof">
           <div id="proof" className="eyebrow">
-            {t.proofKicker}
+            {t("regen.proofKicker")}
           </div>
-          <p>{t.proofBody}</p>
+          <p>{t("regen.proofBody")}</p>
           <ol className="rc-protocol">
-            {t.protocol.map((s, i) => (
+            {PROTOCOL.map((s, i) => (
               <li key={s}>
                 <span className="mono muted">{String(i + 1).padStart(2, "0")}</span>
-                <strong>{s}</strong>
+                <strong>{t(`regen.protocol.${s}`)}</strong>
               </li>
             ))}
           </ol>
@@ -372,8 +378,8 @@ export default function Regenerate() {
         <CommunityVotes />
 
         <section id="projects" className="rc-block" aria-labelledby="projects-title">
-          <h2 id="projects-title">{t.projectsTitle}</h2>
-          {!anyFunded && <p className="muted">{t.illustrative}</p>}
+          <h2 id="projects-title">{t("regen.projectsTitle")}</h2>
+          {!anyFunded && <p className="muted">{t("regen.illustrative")}</p>}
           <div className="rc-cards three">
             {projects.map((p) => (
               <ProjectCard key={p.id} project={p} ledger={ledger} />
@@ -382,8 +388,8 @@ export default function Regenerate() {
         </section>
 
         <section id="propose" className="surface rc-panel rc-propose" aria-labelledby="propose-title">
-          <h2 id="propose-title">{t.proposeTitle}</h2>
-          <p>{t.proposeLead}</p>
+          <h2 id="propose-title">{t("regen.proposeTitle")}</h2>
+          <p>{t("regen.proposeLead")}</p>
           <ProposalForm />
         </section>
       </div>

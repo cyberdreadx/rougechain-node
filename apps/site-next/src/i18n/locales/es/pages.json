@@ -1,1 +1,736 @@
-{}
+{
+  "common": {
+    "loading": "Cargando…",
+    "mainnet": "Mainnet",
+    "testnet": "Testnet",
+    "devnet": "Devnet",
+    "mainnetLower": "mainnet",
+    "testnetLower": "testnet",
+    "copied": "Copiado",
+    "copyWhat": "Copiar {{what}}",
+    "command": "comando",
+    "refresh": "Actualizar",
+    "openWallet": "Abrir billetera",
+    "unknown": "desconocida",
+    "apiUnavailable": "No se pudo leer la API del nodo de {{network}}. Preferimos no mostrar nada antes que adivinar."
+  },
+  "seo": {
+    "validators": {
+      "title": "Validadores — RougeChain",
+      "description": "Haz stake de XRGE y ayuda a proteger una red poscuántica. Conjunto de validadores, stake y finalidad en vivo."
+    },
+    "genesis": {
+      "title": "Validadores Génesis — RougeChain",
+      "description": "Conviértete en validador independiente fundador de la primera Layer 1 poscuántica."
+    },
+    "node": {
+      "title": "Ejecuta un nodo — RougeChain",
+      "description": "Ejecuta un nodo de RougeChain: requisitos, comandos y estado de los nodos en vivo."
+    },
+    "agents": {
+      "title": "Agentes de IA (MCP) — RougeChain",
+      "description": "Servidor Model Context Protocol para RougeChain: permite que los agentes de IA lean la cadena y firmen transacciones."
+    },
+    "status": {
+      "title": "Estado de la red — RougeChain",
+      "description": "Cifras en vivo de la red RougeChain, reglas de consenso y estado de los puentes."
+    },
+    "regenerate": {
+      "title": "RougeChain Regenerate — Financia el futuro donde vives",
+      "description": "RougeChain Regenerate es un programa de regeneración y tesorería en RougeChain que financia proyectos locales transparentes y medibles, empezando en Tulum, México."
+    },
+    "privacy": {
+      "title": "Política de privacidad — RougeChain",
+      "description": "Qué recopilan la extensión de billetera de RougeChain y rougechain.io, y qué no."
+    }
+  },
+  "validators": {
+    "eyebrow": "Explorar / Staking · Consenso",
+    "title": "Validadores",
+    "lead": "Los participantes que protegen RougeChain, leídos en vivo desde el nodo. Haz stake de XRGE para unirte a ellos.",
+    "testnetNotice": "Estás viendo testnet. El stake y los validadores que se muestran aquí son de testnet. El XRGE de testnet no tiene valor.",
+    "stats": {
+      "total": "Validadores",
+      "active": "{{count}} activos",
+      "staked": "Total en stake",
+      "entropy": "Entropía cuántica",
+      "entropySub": "contribuciones",
+      "participation": "Participación en votos",
+      "height": "Altura {{height}}"
+    },
+    "tiers": {
+      "title": "Distribución por nivel",
+      "standard": "Estándar",
+      "operator": "Operador",
+      "genesis": "Génesis"
+    },
+    "tierBenefits": {
+      "standard": {
+        "b0": "Participa en la validación de bloques",
+        "b1": "Gana recompensas de validación"
+      },
+      "operator": {
+        "b0": "Todos los beneficios del nivel Estándar",
+        "b1": "Prioridad en la selección de proponente"
+      },
+      "genesis": {
+        "b0": "Todos los beneficios del nivel Operador",
+        "b1": "Máxima prioridad como proponente"
+      }
+    },
+    "proposer": {
+      "title": "Proponente actual",
+      "height": "Altura",
+      "proposer": "Proponente designado",
+      "you": "Eres el proponente designado",
+      "weight": "Peso de selección",
+      "totalStake": "Stake total",
+      "entropy": "Entropía",
+      "unavailable": "La selección de proponente no está disponible en este nodo."
+    },
+    "finality": {
+      "title": "Finalidad",
+      "finalized": "Finalizado",
+      "tip": "Punta",
+      "lag": "Detrás de la punta",
+      "quorum": "Stake de quórum",
+      "unavailable": "El estado de finalidad no está disponible en este nodo."
+    },
+    "list": {
+      "title": "Clasificación de validadores",
+      "total": "{{count}} en total",
+      "empty": "Aún no hay validadores",
+      "emptyBody": "Sé el primero en hacer stake de XRGE y convertirte en validador.",
+      "loading": "Cargando validadores",
+      "votes": "{{pct}} % de votos",
+      "seen": "Visto por última vez #{{height}}",
+      "power": "{{pct}} % de poder de voto",
+      "powerLabel": "Poder de voto {{pct}} %",
+      "slashed": "Penalizado {{count}}×",
+      "jailedUntil": "Encarcelado hasta #{{height}}",
+      "you": "Tú"
+    },
+    "status": {
+      "active": "Activo",
+      "pending": "Pendiente",
+      "jailed": "Encarcelado",
+      "unbonding": "Desvinculando",
+      "inactive": "Inactivo"
+    },
+    "mine": {
+      "title": "Tu stake",
+      "notConnected": "Conecta una billetera para ver tu stake y hacer stake de XRGE.",
+      "locked": "Tu billetera está bloqueada. Desbloquéala para hacer o retirar stake.",
+      "available": "Disponible para stake",
+      "staked": "En stake",
+      "tier": "Nivel",
+      "status": "Estado",
+      "notValidator": "Esta billetera aún no es validadora.",
+      "youAre": "Eres un validador de nivel {{tier}}",
+      "needMore": "Necesitas {{amount}} XRGE más para alcanzar el mínimo de 10,000 XRGE.",
+      "stake": "Hacer stake de XRGE",
+      "addStake": "Añadir stake",
+      "unstake": "Retirar stake",
+      "pending": "Stake enviado",
+      "pendingBody": "Esperando a que un bloque incluya tu transacción de stake.",
+      "extension": "Tu extensión de RougeChain aprueba cada firma.",
+      "slashed": "Penalizado {{count}}×",
+      "slashedJailed": "Penalizado {{count}}× · encarcelado hasta el bloque #{{height}}",
+      "missed": "Si no produces bloques cuando eres el proponente designado, tu turno se congela; 50 bloques perdidos provocan una penalización automática. Mantén el nodo en línea."
+    },
+    "how": {
+      "title": "Cómo funciona la validación",
+      "stakedTitle": "La clave del nodo es el validador",
+      "stakedBody": "La clave que hace stake es la clave que valida. Tu nodo firma bloques con su clave de identidad en node-keys.json, así que haz stake desde esa misma clave (por ejemplo rougechain --node-keys <path> stake 10000) o importa esa clave a tu billetera antes de hacer stake aquí. Hacer stake desde otra billetera no convierte a tu nodo en validador.",
+      "steps": {
+        "stake": {
+          "title": "Haz stake de XRGE",
+          "body": "Bloquea al menos 10,000 XRGE desde la clave del validador (10k estándar · 100k operador · 1M génesis)."
+        },
+        "run": {
+          "title": "Ejecuta el nodo con --mine",
+          "body": "Inicia un nodo cuyo node-keys.json sea esa clave con stake, con --mine, y mantenlo en línea con peers."
+        },
+        "propose": {
+          "title": "Propón y vota",
+          "body": "El proponente designado de cada altura se elige del conjunto ponderado por stake; los bloques se firman con ML-DSA-65."
+        },
+        "reliable": {
+          "title": "Sé fiable",
+          "body": "Los turnos perdidos congelan al proponente; las penalizaciones y el encarcelamiento llegan tras fallos repetidos o doble firma."
+        }
+      },
+      "guide": "Guía del validador"
+    },
+    "tierBenefitsTitle": "Niveles de staking",
+    "runNode": {
+      "title": "Ejecuta un nodo",
+      "body": "Fortalece la red ejecutando tu propio nodo. Haz stake de XRGE para participar en el consenso y recibir parte de las comisiones.",
+      "guide": "Guía completa",
+      "nodePage": "Configuración y estado del nodo",
+      "genesis": "Únete al programa de Validadores Génesis"
+    },
+    "securityBody": "Cada firma de validador usa ML-DSA-65 (CRYSTALS-Dilithium), nivel de seguridad 3 del NIST."
+  },
+  "staking": {
+    "stakeTitle": "Hacer stake de XRGE",
+    "unstakeTitle": "Retirar stake de XRGE",
+    "reviewTitle": "Revisar y firmar",
+    "amount": "Cantidad",
+    "max": "Máx. {{amount}} XRGE",
+    "tier": "Nivel de validador",
+    "minimum": "El stake mínimo para el nivel {{tier}} es {{amount}} XRGE.",
+    "insufficient": "Saldo de XRGE insuficiente.",
+    "insufficientFee": "Reserva {{fee}} XRGE para la comisión de red.",
+    "overStaked": "Tienes {{amount}} XRGE en stake.",
+    "wholeNumber": "Introduce un número entero de XRGE.",
+    "enterAmount": "Introduce una cantidad.",
+    "balances": "Disponible para stake: {{available}} XRGE · En stake: {{staked}} XRGE · {{network}}",
+    "review": "Revisar",
+    "back": "Atrás",
+    "sign": "Firmar y hacer stake",
+    "signUnstake": "Firmar y retirar stake",
+    "signing": "Firmando…",
+    "cancel": "Cancelar",
+    "rows": {
+      "action": "Acción",
+      "stake": "Stake",
+      "unstake": "Retiro de stake",
+      "amount": "Cantidad",
+      "from": "Desde",
+      "tier": "Nivel resultante",
+      "remaining": "Stake restante",
+      "fee": "Comisión de red",
+      "network": "Red"
+    },
+    "localSign": "Se firma en este navegador con tu clave ML-DSA-65. Tu clave nunca sale de esta página.",
+    "extensionSign": "Tu extensión de RougeChain te pedirá que apruebes esta transacción.",
+    "nodeKeyWarning": "Solo un nodo cuyo node-keys.json contenga ESTA clave validará con este stake.",
+    "unstakeWarning": "Bajar de 10,000 XRGE elimina esta clave del conjunto de validadores.",
+    "staked": "Stake de {{amount}} XRGE realizado",
+    "unstaked": "Retirados {{amount}} XRGE del stake",
+    "submitted": "Enviado: surte efecto cuando el siguiente bloque lo incluya.",
+    "failed": "La transacción falló"
+  },
+  "genesis": {
+    "eyebrow": "RougeChain · Programa de validadores",
+    "title": "Conviértete en <em>Validador Génesis</em> de la primera L1 poscuántica.",
+    "lead": "RougeChain está en funcionamiento, es resistente a la computación cuántica y no requiere permisos, pero una red solo es tan descentralizada como las personas que la protegen. Estamos reclutando la cohorte fundadora de validadores independientes. Una convocatoria para operadores, no para especuladores.",
+    "facts": {
+      "network": { "k": "Red", "v": "mainnet-1 · en vivo" },
+      "cohort": { "k": "Cohorte", "v": "10 operadores" },
+      "stake": { "k": "Stake para unirse", "v": "10,000 XRGE" },
+      "signatures": { "k": "Firmas", "v": "ML-DSA-65" }
+    },
+    "honestTitle": "Lee esto primero: la parte honesta",
+    "honestBody": "Ahora mismo, validar RougeChain no genera casi nada: no hay emisión de tokens, la reserva de recompensas está vacía y, en una cadena joven, las comisiones son casi cero. No te unas por el rendimiento. Únete para ser operador fundador de una cadena construida para lo único que todas las demás ignoran: el día en que los ordenadores cuánticos rompan la criptografía actual. La economía llegará después, si la cadena se la gana. El rol, el reconocimiento y la posición están disponibles ahora.",
+    "getsTitle": "Qué recibe un Validador Génesis",
+    "getsLead": "No se creó inflación para financiar esto: funciona con reconocimiento, la participación en comisiones existente y subvenciones en XRGE de la tesorería, no con tokens recién acuñados.",
+    "perks": {
+      "recognition": {
+        "tag": "Reconocimiento",
+        "title": "Estatus de fundador, on-chain",
+        "body": "Una insignia permanente de Validador Génesis, tu nodo con nombre en el mapa de la red y un lugar en la clasificación pública de validadores."
+      },
+      "weight": {
+        "tag": "Peso real",
+        "title": "Un stake real, no un cameo",
+        "body": "El peso en el consenso viene del XRGE en stake propio, así que los validadores génesis reciben una subvención de XRGE de la tesorería para hacer stake como propio, y el equipo reduce su propio stake con el tiempo. Tu voto y tu parte de las comisiones cuentan de verdad."
+      },
+      "grant": {
+        "tag": "Subvención inicial",
+        "title": "Cubre tus costes",
+        "body": "Una subvención mensual en XRGE durante los primeros 6 meses para cubrir servidor + gas mientras las comisiones son escasas. Un puente hacia un volumen real de comisiones, no un salario."
+      },
+      "support": {
+        "tag": "Soporte",
+        "title": "Ayuda directa de incorporación",
+        "body": "Configuración acompañada, un canal privado de operadores y acceso anticipado a las actualizaciones. No depurarás solo."
+      },
+      "voice": {
+        "tag": "Voz",
+        "title": "Voz en lo que viene",
+        "body": "Los validadores génesis opinan primero en las decisiones importantes, incluida la de si RougeChain adopta una emisión de staking sostenible."
+      },
+      "mission": {
+        "tag": "La misión",
+        "title": "Protege algo que importa",
+        "body": "Ejecutarás el consenso de la primera L1 en producción que ya es poscuántica. Esa es la propuesta. Si no te motiva, esto no es para ti, y no pasa nada."
+      }
+    },
+    "asksTitle": "Lo que te pedimos",
+    "asks": {
+      "stake": { "k": "Stake", "v": "Tener y hacer stake de al menos 10,000 XRGE desde tu clave de validador: fácil de conseguir; la barrera es el compromiso, no el capital." },
+      "node": { "k": "Un nodo real", "v": "Un nodo accesible (1 vCPU / 1 GB / 5 GB es suficiente) con una URL pública, siempre en línea." },
+      "uptime": { "k": "Disponibilidad", "v": "Objetivo ≥ 95 %. Perder 50 bloques provoca una penalización automática, así que trátalo como infraestructura." },
+      "keys": { "k": "Higiene de claves", "v": "Una clave de validador dedicada (nunca la de tu tesorería), con copia de seguridad, y nunca en dos nodos a la vez: la doble firma se penaliza." },
+      "independence": { "k": "Independencia", "v": "No eres el equipo fundador. La idea es precisamente que seas otra persona." },
+      "commitment": { "k": "Compromiso", "v": "Un periodo de 6 meses para que la cohorte sea lo bastante estable como para significar algo." }
+    },
+    "joinTitle": "Cómo unirte",
+    "steps": {
+      "apply": { "t": "Solicita", "body": "Cuéntanos quién eres y dónde vas a ejecutar el nodo." },
+      "spin": { "t": "Pon en marcha un nodo", "body": "Sigue la <link>guía del validador</link>: genera tu clave de identidad (node-keys.json) en la primera ejecución." },
+      "fund": { "t": "Fondéalo y haz stake", "body": "hace stake con la misma clave con la que tu nodo firma bloques." },
+      "live": { "t": "Actívalo y verifica", "body": "Ejecútalo con --mine y luego validator-status hasta que todas las comprobaciones muestren ✓. Financiamos tu subvención de stake, te damos la insignia y estás dentro." }
+    },
+    "fyi": "Nota: la realidad de \"todavía sin rendimiento\" es intencionada, no descuido. Una emisión de staking sostenible está sobre la mesa como decisión deliberada y visible para los holders, y los validadores génesis ayudan a tomarla.",
+    "ctaTitle": "Protege la cadena a prueba de computación cuántica",
+    "ctaBody": "Diez operadores. Independencia real. El conjunto fundador de validadores de la primera L1 poscuántica en funcionamiento. Si eres tú, da el paso.",
+    "ctaGuide": "Empieza la guía del validador",
+    "ctaValidators": "Ver validadores"
+  },
+  "node": {
+    "eyebrow": "Construir / Ejecutar un nodo",
+    "title": "Ejecuta un nodo",
+    "lead": "Ayuda a impulsar la red. Requisitos, comandos y el estado en vivo de los nodos que esta página puede alcanzar.",
+    "dashboardTitle": "Nodos en vivo",
+    "scanning": "Buscando nodos…",
+    "scanningBody": "Comprobando la API de la red y los puertos locales 5100–5104.",
+    "none": "No se detectaron nodos",
+    "noneBody": "Inicia un nodo para verlo aquí. Los nodos locales en los puertos 5100–5104 se detectan automáticamente.",
+    "online": "Red en línea · {{count}} validadores",
+    "summary": {
+      "validators": "Validadores",
+      "peers": "Peers totales",
+      "tip": "Altura de la punta",
+      "finalized": "Finalizado",
+      "mining": "Nodos minando"
+    },
+    "card": {
+      "core": "Nodo {{n}}",
+      "mining": "Minando",
+      "peers": "Peers",
+      "tip": "Altura de la punta",
+      "finalized": "Finalizado",
+      "chain": "Cadena",
+      "port": "Puerto",
+      "fees": "Comisiones",
+      "lastBlock": "Último bloque",
+      "yes": "Sí",
+      "no": "No"
+    },
+    "chains": "IDs de cadena detectados: {{ids}}",
+    "needTitle": "Qué necesitas",
+    "needs": {
+      "computer": "Un ordenador o VPS (1 vCPU / 1 GB / 5 GB)",
+      "tooling": "Docker, o Rust para compilar desde el código fuente",
+      "internet": "Una conexión a internet"
+    },
+    "stepsTitle": "Comandos",
+    "steps": {
+      "docker": {
+        "title": "Opción A: Docker (lo más rápido)",
+        "body": "No necesitas Rust: un solo comando y estará funcionando. Pasa al paso 3 cuando esté en marcha."
+      },
+      "rust": {
+        "title": "Opción B, paso 1: instala Rust",
+        "body": "Si aún no tienes Rust, ejecuta esto en tu terminal. Tarda unos 2 minutos."
+      },
+      "build": {
+        "title": "Paso 2: descarga y compila",
+        "body": "Clona el código desde GitHub y compílalo. La primera vez tarda unos minutos."
+      },
+      "start": {
+        "title": "Paso 3: inicia tu nodo",
+        "body": "Tu nodo se conecta a la red, sincroniza la cadena y empieza a funcionar. --genesis y --chain-id son obligatorios para unirse a mainnet: sin ellos, el nodo crea su propio génesis y se niega a sincronizar."
+      },
+      "name": {
+        "title": "Opcional: ponle nombre a tu nodo",
+        "body": "Aparece con un nombre en el mapa de la red con --node-name."
+      }
+    },
+    "optionsTitle": "Más opciones",
+    "options": {
+      "mine": "Minar bloques",
+      "dataDir": "Directorio de datos personalizado",
+      "apiKeys": "Autenticación con clave de API",
+      "publicUrl": "URL pública"
+    },
+    "validatorTitle": "Conviértete en validador",
+    "validatorLead": "Los validadores son nodos que proponen bloques y votan. La clave de identidad del nodo es el validador: debe tener al menos 10,000 XRGE en stake.",
+    "validatorSteps": {
+      "find": {
+        "title": "Encuentra la clave de tu nodo",
+        "body": "En la primera ejecución, el nodo escribe su clave de identidad en node-keys.json dentro de su directorio de datos. Esa clave firma cada bloque que propone tu nodo."
+      },
+      "fund": {
+        "title": "Fondea esa clave",
+        "body": "Envía al menos 10,000 XRGE (más comisiones) a la dirección de la clave del nodo. Si lo necesitas, primero haz bridge desde Base o compra XRGE."
+      },
+      "stake": {
+        "title": "Haz stake desde esa clave",
+        "body": "Ejecuta rougechain --node-keys <path> stake 10000, o importa esa clave a una billetera y haz stake en la página de Validadores. Hacer stake desde cualquier otra billetera no convierte a tu nodo en validador."
+      },
+      "mine": {
+        "title": "Activa la minería",
+        "body": "Reinicia el nodo con --mine y mantenlo en línea con peers. Comprueba validator-status hasta que pasen todas las comprobaciones."
+      }
+    },
+    "validatorsLink": "Ir a Validadores",
+    "guideLink": "Guía del validador",
+    "testnetHint": "Estos comandos se unen a mainnet. Para testnet, usa el génesis y el ID de cadena de testnet del README del nodo."
+  },
+  "agents": {
+    "eyebrow": "Construir / MCP nativo",
+    "title": "Agentes de IA en RougeChain",
+    "lead": "RougeChain incluye un servidor Model Context Protocol. Los agentes de IA pueden consultar el estado de la cadena, usar DeFi, desplegar contratos y gestionar billeteras, todo mediante un protocolo estándar.",
+    "howTitle": "Cómo funciona",
+    "flow": {
+      "agent": { "label": "Agente de IA", "sub": "Claude, GPT, personalizado" },
+      "server": { "label": "Servidor MCP", "sub": "{{count}} herramientas blockchain" },
+      "api": { "label": "API del nodo", "sub": "REST + JSON-RPC" },
+      "chain": { "label": "RougeChain L1", "sub": "ML-DSA + ML-KEM" }
+    },
+    "flowNote": "Los agentes se comunican por stdio mediante el protocolo MCP. Todas las operaciones on-chain mantienen las garantías poscuánticas (ML-DSA-65 / ML-KEM-768).",
+    "toolsTitle": "Qué pueden hacer los agentes",
+    "toolsLead": "{{total}} herramientas en {{cats}} categorías: {{read}} de solo lectura y {{write}} que firman transacciones reales. Las herramientas de escritura se activan cuando el servidor se configura con una billetera.",
+    "signsTx": "firma tx",
+    "toolsCount_one": "{{count}} herramienta",
+    "toolsCount_other": "{{count}} herramientas",
+    "quickTitle": "Inicio rápido",
+    "install": "Instala el servidor MCP",
+    "installNote": "O usa npx @rougechain/mcp-server directamente, sin instalación global.",
+    "configTitle": "Añádelo a la configuración de tu agente",
+    "configLabel": "configuración",
+    "readOnly": "Claude Desktop: solo lectura",
+    "recommended": "Recomendado",
+    "readWrite": "Lectura + escritura",
+    "writeNote": "Añade ROUGECHAIN_MNEMONIC para desbloquear las {{count}} herramientas de firma. Cada transacción se firma localmente con ML-DSA-65: tu frase semilla nunca sale del servidor. Usa una billetera dedicada para el agente con poco saldo; genera una con la herramienta generate_wallet.",
+    "talkTitle": "Empieza a hablar con la cadena",
+    "prompts": {
+      "height": "¿Cuál es la altura de bloque actual y cuántos validadores están activos?",
+      "balance": "Consulta el saldo de rouge1q8f3x... y lista sus transacciones recientes",
+      "quote": "Obtén una cotización de swap de 1000 XRGE a QSHIB con un 2 % de slippage",
+      "social": "Muéstrame las últimas publicaciones del timeline social y los artistas más populares",
+      "launch": "Crea un token llamado AGENT, crea un pool XRGE/AGENT y publica sobre el lanzamiento",
+      "deploy": "Despliega este contrato WASM y llama a la función init",
+      "resolve": "Resuelve rougeboss@rouge.quant y muestra sus tokens"
+    },
+    "needsWallet": "requiere una billetera: firma transacciones reales",
+    "compatibleTitle": "Agentes compatibles",
+    "compatible": {
+      "claude": { "name": "Claude Desktop", "desc": "Configuración lista para usar con soporte MCP nativo" },
+      "cursor": { "name": "Cursor IDE", "desc": "Herramientas MCP disponibles en el modo agente" },
+      "custom": { "name": "Agentes personalizados", "desc": "Cualquier cliente compatible con MCP por stdio" }
+    },
+    "supported": "Compatible",
+    "resourcesTitle": "Recursos",
+    "resources": {
+      "source": { "title": "Código del servidor MCP", "sub": "Ver en GitHub" },
+      "docs": { "title": "Documentación", "sub": "Guía completa de configuración y API" },
+      "sdk": { "title": "@rougechain/sdk", "sub": "SDK de TypeScript en npm" },
+      "spec": { "title": "Especificación MCP", "sub": "Documentación de Model Context Protocol" }
+    },
+    "categories": {
+      "keys": "Claves de billetera",
+      "chain": "Cadena",
+      "wallet": "Billetera",
+      "tokens": "Tokens",
+      "defi": "DeFi",
+      "nfts": "NFTs",
+      "staking": "Staking y faucet",
+      "validators": "Validadores",
+      "contracts": "Contratos inteligentes",
+      "social": "Social",
+      "messaging": "Mensajería",
+      "names": "Nombres e identidad",
+      "bridge": "Puente",
+      "governance": "Gobernanza y comisiones"
+    },
+    "tools": {
+      "generate_wallet": "Crea una billetera ML-DSA-65 nueva + mnemónico",
+      "wallet_info": "Firmante configurado, dirección, saldo, estado de escritura",
+      "get_chain_stats": "Altura de bloque, validadores, suministro, comisiones",
+      "get_block": "Obtén cualquier bloque por altura",
+      "get_latest_blocks": "Transmite los bloques recientes",
+      "get_balance": "Consulta saldos de XRGE y tokens",
+      "get_transaction": "Busca cualquier transacción por hash",
+      "send_transaction": "Envía XRGE o cualquier token a una dirección",
+      "burn_tokens": "Quema XRGE o un token de forma permanente",
+      "list_tokens": "Todos los tokens de la red",
+      "get_token": "Metadatos, suministro y creador del token",
+      "get_token_holders": "Principales holders y desglose del suministro",
+      "create_token": "Emite un nuevo token personalizado",
+      "mint_tokens": "Acuña más suministro de un token acuñable",
+      "update_token_metadata": "Actualiza logo, enlaces, descripción",
+      "claim_token_metadata": "Reclama la autoridad de metadatos del creador",
+      "list_pools": "Todos los pools de liquidez AMM",
+      "get_swap_quote": "Cotiza un swap de tokens con slippage",
+      "swap": "Ejecuta un swap en el DEX AMM",
+      "create_pool": "Crea un nuevo pool de liquidez",
+      "add_liquidity": "Añade liquidez y recibe tokens LP",
+      "remove_liquidity": "Quema tokens LP para retirar",
+      "list_nft_collections": "Explora colecciones de NFT",
+      "get_nft_collection": "Metadatos y tokens de la colección",
+      "nft_create_collection": "Lanza una nueva colección de NFT",
+      "nft_mint": "Acuña un solo NFT",
+      "nft_batch_mint": "Acuña muchos NFT en una sola tx",
+      "nft_transfer": "Transfiere un NFT (con precio de venta opcional)",
+      "nft_burn": "Quema un NFT de forma permanente",
+      "nft_lock": "Bloquea / desbloquea un NFT",
+      "nft_freeze_collection": "Congela / descongela una colección",
+      "stake": "Haz stake de XRGE para proteger la cadena",
+      "unstake": "Retira XRGE del stake a tu billetera",
+      "request_faucet": "Reclama XRGE de testnet (solo testnet)",
+      "list_validators": "Validadores activos y stake",
+      "list_contracts": "Contratos WASM desplegados",
+      "get_contract": "Metadatos y bytecode del contrato",
+      "get_contract_state": "Lee el almacenamiento del contrato",
+      "get_contract_events": "Historial de eventos del contrato",
+      "deploy_contract": "Despliega un nuevo contrato WASM",
+      "call_contract": "Ejecuta un método del contrato",
+      "get_global_timeline": "Feed global: todas las publicaciones, las más nuevas primero",
+      "get_post": "Una publicación con estadísticas de interacción",
+      "get_user_posts": "Publicaciones de un usuario concreto",
+      "get_post_replies": "Respuestas en hilo a una publicación",
+      "get_track_stats": "Reproducciones, likes y comentarios de una pista",
+      "get_artist_stats": "Seguidores del artista y estado de seguimiento",
+      "create_post": "Publica un post on-chain",
+      "delete_post": "Elimina tu propia publicación",
+      "repost": "Comparte la publicación de otro usuario",
+      "follow": "Sigue / deja de seguir una cuenta",
+      "like_track": "Da / quita like a una pista o NFT",
+      "comment_on_track": "Comenta una pista o NFT",
+      "list_messenger_wallets": "Billeteras registradas con nombres visibles",
+      "resolve_name": "Resuelve nombres rouge.quant / qwalla.mail",
+      "reverse_lookup_name": "Busca el nombre de una billetera o clave pública",
+      "register_name": "Registra un nombre para una billetera",
+      "release_name": "Libera un nombre que registraste",
+      "bridge_withdraw": "Retira un activo del puente a una dirección EVM",
+      "list_proposals": "Propuestas de gobernanza",
+      "get_fee_info": "Datos actuales de comisiones dinámicas EIP-1559"
+    }
+  },
+  "status": {
+    "eyebrow": "Explorar / Estado de la red",
+    "title": "Estado de la red",
+    "lead": "Cifras en vivo de {{network}} leídas de la API pública del nodo, más lo que está activo y lo que no.",
+    "autoRefresh": "se actualiza cada 15 s",
+    "apiError": "No se pudo conectar con la API",
+    "height": "Altura",
+    "finalized": "Finalizado",
+    "validators": "Validadores (activos / total)",
+    "peers": "Peers",
+    "totalStake": "Stake total",
+    "baseFee": "Tarifa base",
+    "burned": "Comisiones quemadas",
+    "chainId": "ID de cadena",
+    "consensusTitle": "Consenso",
+    "stateRoot": "Raíz de estado",
+    "designatedProposer": "Proponente designado (siguiente bloque)",
+    "rule": "Regla",
+    "activation": "Altura de activación",
+    "state": "Estado",
+    "validatorsTitle": "Validadores y versión del nodo",
+    "active": "activo",
+    "inactive": "inactivo",
+    "noValidators": "No se informaron validadores.",
+    "nodeRelease": "Versión actual del nodo",
+    "mandatory": "actualización obligatoria",
+    "bridgeTitle": "Puentes",
+    "audits": "Auditorías",
+    "footer": "Lo que está activo frente a lo construido pero no activado se mantiene en",
+    "updated": "Datos actualizados",
+    "factsMainnet": "Los datos de versión, consenso y puentes describen mainnet.",
+    "factsUnavailable": "No se pudieron cargar los datos de versión."
+  },
+  "regen": {
+    "kicker": "RougeChain Regenerate",
+    "sub": "Un programa de regeneración y tesorería en RougeChain",
+    "title": "<em>Financia el futuro</em> donde vives.",
+    "lead": "RougeChain Regenerate conecta la infraestructura digital con la regeneración en el mundo real, financiando proyectos transparentes y medibles que mejoran las comunidades y los ecosistemas que nos rodean.",
+    "viewProjects": "Ver proyectos",
+    "propose": "Propón un proyecto",
+    "statement": "La tecnología debería mejorar el <em>territorio que toca.</em>",
+    "statementBody": "Los problemas globales son reales, pero el cambio se vuelve tangible a nivel local. RougeChain Regenerate empieza por comunidades, ecosistemas e infraestructuras que podemos ver, medir y mejorar de verdad.",
+    "solarpunk": "Una postura solarpunk: tecnología, arquitectura, arte y comunidad construyendo un futuro en el que valga la pena vivir, no solo uno que sobreviva.",
+    "categoriesLabel": "Categorías",
+    "categories": {
+      "ecology": { "title": "Ecología local", "blurb": "Manglares, restauración del agua, biodiversidad, reforestación." },
+      "infrastructure": { "title": "Infraestructura regenerativa", "blurb": "Solar, captación de agua, huertos, compostaje, energía comunitaria." },
+      "technology": { "title": "Tecnología abierta", "blurb": "Sensores ambientales, herramientas de mapeo, software de infraestructura pública, tecnología climática de código abierto." },
+      "art": { "title": "Arte + comunidad", "blurb": "Instalaciones públicas, educación, talleres, espacios comunitarios y proyectos solarpunk." }
+    },
+    "projectStatus": {
+      "proposed": "Propuesto",
+      "reviewing": "En revisión",
+      "funded": "Financiado",
+      "in_progress": "En curso",
+      "completed": "Completado"
+    },
+    "projects": {
+      "tulum-mangrove-01": {
+        "name": "Restauración del corredor de manglar",
+        "description": "Replantar y monitorear tramos degradados de manglar que protegen la costa, filtran el agua y almacenan carbono, con guardianes comunitarios y datos de monitoreo abiertos.",
+        "m0": "Estudio del sitio y línea base",
+        "m1": "Guardianes comunitarios incorporados",
+        "m2": "Replantación, fase 1",
+        "m3": "Panel público de monitoreo"
+      },
+      "tulum-cenote-water-02": {
+        "name": "Red de sensores de calidad del agua en cenotes",
+        "description": "Sensores de bajo costo y código abierto que monitorean el sistema de cenotes y el acuífero, y publican las lecturas abiertamente para que la comunidad vea la salud del agua a lo largo del tiempo.",
+        "m0": "Especificación de hardware abierto",
+        "m1": "Sensores piloto instalados",
+        "m2": "Flujo de datos abiertos activo"
+      },
+      "tulum-community-solar-03": {
+        "name": "Solar comunitaria + captación de agua",
+        "description": "Energía solar compartida en tejados y captación de agua de lluvia para un espacio comunitario: infraestructura local resiliente que sigue funcionando cuando la red eléctrica falla.",
+        "m0": "Acuerdo con el sitio anfitrión",
+        "m1": "Instalación",
+        "m2": "Medición pública"
+      }
+    },
+    "territoryKicker": "Primer territorio",
+    "territoryName": "TULUM",
+    "territoryBody": "La regeneración debe empezar en un lugar real. RougeChain Regenerate empezará explorando proyectos en Tulum, donde se cruzan la tecnología, la ecología, la cultura y un desarrollo acelerado.",
+    "funded": "Financiación activa: consulta los proyectos de abajo y sus subvenciones on-chain.",
+    "notFunded": "Explorando proyectos: todavía no se ha financiado nada.",
+    "treasuryTitle": "Tesorería e impacto",
+    "treasuryLive": "Leído en vivo desde RougeChain",
+    "treasuryPending": "Se activa cuando se publique la dirección de la tesorería",
+    "treasuryUnreachable": "No se pudo conectar con el nodo en este momento.",
+    "stat": {
+      "balance": "Saldo de la tesorería",
+      "funded": "Proyectos financiados",
+      "deployed": "Total desplegado",
+      "territories": "Territorios activos",
+      "notLive": "Aún no activo"
+    },
+    "wallet": "Billetera de la tesorería",
+    "copyAddress": "Copiar dirección",
+    "donate": "Cualquiera puede donar XRGE a esta dirección. Cada donación y cada subvención son públicas on-chain.",
+    "donations": "Donaciones recibidas",
+    "viewExplorer": "Ver en el explorador",
+    "recent": "Actividad reciente",
+    "donation": "Donación",
+    "grant": "Subvención",
+    "noTxs": "Aún no hay transacciones.",
+    "testnet": "Estás en testnet. La tesorería de Regenerate es una billetera de mainnet, así que sus cifras se ocultan aquí; los votos que se muestran vienen del nodo de testnet.",
+    "proofKicker": "Prueba de impacto",
+    "proofBody": "Cada proyecto financiado lleva un registro de impacto permanente on-chain: a dónde fue la financiación, qué se prometió, qué se completó y la evidencia del resultado. No es marketing solidario: es un protocolo.",
+    "protocol": {
+      "project": "Proyecto",
+      "location": "Ubicación",
+      "funding": "Financiación",
+      "milestones": "Hitos",
+      "evidence": "Evidencia",
+      "verification": "Verificación"
+    },
+    "projectsTitle": "Proyectos",
+    "illustrative": "Propuestas candidatas ilustrativas: todavía no hay proyectos financiados. Las tarjetas se llenarán con propuestas reales y registros on-chain cuando se abra el proceso.",
+    "milestones": "Hitos",
+    "evidence": "Evidencia",
+    "evidencePending": "Evidencia: pendiente",
+    "fundingNone": "Financiación: ninguna todavía",
+    "fundingTbd": "Financiación: por definir",
+    "requested": "{{amount}} XRGE solicitados",
+    "fundedOnChain": "{{amount}} XRGE financiados on-chain",
+    "proposeTitle": "¿Tienes un proyecto para el territorio?",
+    "proposeLead": "Estamos construyendo el primer territorio en Tulum. Si trabajas en ecología local, infraestructura, tecnología abierta o comunidad, envíanoslo. Revisamos cada propuesta y respondemos."
+  },
+  "proposalForm": {
+    "name": "Tu nombre u organización",
+    "contact": "Correo o Telegram",
+    "contactPh": "para poder responderte",
+    "project": "Nombre del proyecto",
+    "location": "Ubicación",
+    "locationPh": "p. ej. Tulum, Quintana Roo",
+    "category": "Categoría",
+    "choose": "Elige una",
+    "amount": "Financiación solicitada (XRGE)",
+    "amountPh": "déjalo en blanco si no lo sabes",
+    "payout": "Dirección de RougeChain para el pago (opcional)",
+    "description": "¿Qué vas a hacer y qué cambia para el lugar?",
+    "milestones": "Hitos y cómo veremos el resultado",
+    "milestonesPh": "Uno por línea: qué se hace y la evidencia (fotos, datos, recibos)",
+    "links": "Enlaces (opcional)",
+    "linksPh": "sitio web, redes sociales, trabajos anteriores",
+    "submit": "Enviar propuesta",
+    "sending": "Enviando…",
+    "discord": "¿Preguntas antes? Pregunta en Discord",
+    "error": "No se pudo enviar. Revisa tu conexión e inténtalo de nuevo, o publícalo en Discord.",
+    "sentTitle": "Propuesta recibida",
+    "sentBody": "Gracias. Revisamos cada propuesta y respondemos al contacto que indicaste. Los proyectos aceptados aparecen en esta página y su financiación se ve on-chain desde la billetera de la tesorería.",
+    "another": "Enviar otra"
+  },
+  "votes": {
+    "title": "Votaciones de la comunidad",
+    "lead": "Los holders de XRGE deciden qué proyectos financia la tesorería. El peso es tu saldo cuando se abre una votación, con un límite del {{cap}} % del suministro elegible; las billeteras del equipo, la tesorería y los exchanges no votan. Una propuesta se aprueba con un {{turnout}} % de participación y más votos a favor que en contra.",
+    "signed": "Cada voto lo firma la billetera del votante y se publica con su firma, para que cualquiera pueda hacer el recuento.",
+    "open": "Abrir una propuesta",
+    "empty": "Aún no hay propuestas. Las propuestas de proyectos aceptadas se abren aquí a votación de la comunidad.",
+    "unavailable": "Las votaciones de la comunidad no están disponibles en este nodo ahora mismo.",
+    "loading": "Cargando votaciones de la comunidad…",
+    "status": {
+      "open": "Votación abierta",
+      "passed": "Aprobada · pendiente de pago",
+      "paid": "Aprobada · pagada",
+      "failed": "No aprobada",
+      "cancelled": "Cancelada"
+    },
+    "choice": {
+      "yes": "Sí",
+      "no": "No",
+      "abstain": "Abstención"
+    },
+    "choiceLower": {
+      "yes": "sí",
+      "no": "no",
+      "abstain": "abstención"
+    },
+    "tallyLabel": "Sí {{yes}}, No {{no}}, Abstención {{abstain}} XRGE",
+    "turnout": "Participación {{have}} / {{need}} necesarios",
+    "requests": "Solicita",
+    "to": "Para",
+    "closed": "Cerrada el {{date}}",
+    "timeLeftDays": "quedan {{count}} días",
+    "timeLeftHours": "quedan {{count}} h",
+    "timeLeftMinutes": "quedan {{count}} min",
+    "timeLeftClosed": "cerrada",
+    "voters_one": "{{count}} votante · snapshot en el bloque {{height}}",
+    "voters_other": "{{count}} votantes · snapshot en el bloque {{height}}",
+    "details": "Detalles",
+    "connect": "Conecta una billetera para votar.",
+    "locked": "Desbloquea tu billetera para votar.",
+    "excluded": "Esta billetera es del equipo, la tesorería o un exchange, así que no puede votar.",
+    "noWeight": "Esta billetera no tenía XRGE cuando se abrió la votación, así que no tiene voto en esta propuesta.",
+    "weight": "Tu peso {{weight}} XRGE",
+    "weightVoted": "Tu peso {{weight}} XRGE · votaste {{vote}} (puedes cambiarlo)",
+    "reviewTitle": "Revisa y firma tu voto",
+    "reviewRows": {
+      "proposal": "Propuesta",
+      "choice": "Tu voto",
+      "weight": "Tu peso",
+      "voter": "Firmado por",
+      "network": "Red"
+    },
+    "reviewNote": "Los votos son mensajes firmados, no transacciones: sin comisión y sin movimiento de saldo. Puedes cambiar tu voto mientras la votación esté abierta.",
+    "sign": "Firmar voto",
+    "cancel": "Cancelar",
+    "recorded": "Voto registrado: {{choice}}",
+    "paidFrom": "Pagado {{amount}} desde la tesorería",
+    "payoutPh": "ID de la tx de pago de la tesorería",
+    "recordPayout": "Registrar pago",
+    "payoutRecorded": "Pago registrado",
+    "form": {
+      "intro": "Abrir una propuesta toma ahora un snapshot de cada saldo elegible; la votación dura {{days}} días. Requiere permisos de curador o {{min}} XRGE.",
+      "title": "Título",
+      "summary": "Resumen",
+      "territory": "Territorio",
+      "requested": "XRGE solicitados",
+      "recipient": "Destinatario (rouge1…)",
+      "link": "Enlace de detalles (https://)",
+      "submit": "Abrir a votación",
+      "opened": "Propuesta abierta a votación"
+    }
+  },
+  "privacy": {
+    "eyebrow": "Legal",
+    "title": "Política de privacidad",
+    "lastUpdated": "Última actualización: {{date}}",
+    "englishOnly": "Esta política se ofrece en inglés. El texto en inglés es la versión vinculante."
+  }
+}

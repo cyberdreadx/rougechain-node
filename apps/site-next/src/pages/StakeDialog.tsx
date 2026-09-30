@@ -4,7 +4,8 @@ import { formatStake, getTierFromStake, STAKE_REQUIREMENTS } from "@rougechain/c
 import { getNetworkLabel } from "@rougechain/core/network";
 import { formatIdentity } from "@rougechain/core/address";
 import { toast } from "../wallet/toast";
-import { staking as t, validators as vt } from "./strings";
+import { useTranslation } from "react-i18next";
+import { useNetworkLabel } from "./common";
 import {
   checkStake,
   checkUnstake,
@@ -17,6 +18,7 @@ import {
 } from "./validators-data";
 
 type Step = "form" | "review" | "signing";
+/** Amounts being reviewed / signed stay exact en-US (never localised). */
 const fmt = (n: number) => n.toLocaleString("en-US");
 
 /**
@@ -40,6 +42,8 @@ export function StakeDialog({
   onClose: () => void;
   onDone: (amount: number) => void;
 }) {
+  const { t } = useTranslation("pages");
+  const networkLabel = useNetworkLabel();
   const [input, setInput] = useState("");
   const [step, setStep] = useState<Step>("form");
   const [error, setError] = useState("");
@@ -62,17 +66,19 @@ export function StakeDialog({
     try {
       if (isStake) await submitStake(wallet, check.amount);
       else await submitUnstake(wallet, check.amount);
-      toast.success(isStake ? t.staked(fmt(check.amount)) : t.unstaked(fmt(check.amount)), { description: t.submitted });
+      toast.success(t(isStake ? "staking.staked" : "staking.unstaked", { amount: fmt(check.amount) }), {
+        description: t("staking.submitted"),
+      });
       setStep("form");
       setInput("");
       onDone(check.amount);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t.failed);
+      setError(e instanceof Error ? e.message : t("staking.failed"));
       setStep("review");
     }
   };
 
-  const title = step === "form" ? (isStake ? t.stakeTitle : t.unstakeTitle) : t.reviewTitle;
+  const title = step === "form" ? t(isStake ? "staking.stakeTitle" : "staking.unstakeTitle") : t("staking.reviewTitle");
   return (
     <Dialog open={open} onClose={close} title={title}>
       {step === "form" ? (
@@ -84,7 +90,7 @@ export function StakeDialog({
           }}
         >
           {isStake && (
-            <div className="rc-tier-pick" role="group" aria-label={t.tier}>
+            <div className="rc-tier-pick" role="group" aria-label={t("staking.tier")}>
               {TIERS.map((tier) => {
                 const need = Math.max(0, STAKE_REQUIREMENTS[tier] - staked);
                 const affordable = need > 0 && need + STAKE_FEE <= available;
@@ -96,7 +102,7 @@ export function StakeDialog({
                     disabled={!affordable}
                     onClick={() => setInput(String(need))}
                   >
-                    <strong>{vt.tiers[tier]}</strong>
+                    <strong>{t(`validators.tiers.${tier}`)}</strong>
                     <small className="mono">{formatStake(STAKE_REQUIREMENTS[tier])} XRGE</small>
                   </button>
                 );
@@ -105,13 +111,13 @@ export function StakeDialog({
           )}
           <label className="field">
             <span className="field-row">
-              {t.amount}
+              {t("staking.amount")}
               <button
                 type="button"
                 className="inline-link"
                 onClick={() => setInput(String(isStake ? maxStake(available) : staked))}
               >
-                {t.max(fmt(isStake ? maxStake(available) : staked))}
+                {t("staking.max", { amount: fmt(isStake ? maxStake(available) : staked) })}
               </button>
             </span>
             <input
@@ -126,14 +132,14 @@ export function StakeDialog({
           </label>
           {check && !check.ok && <p className="form-hint error">{check.error}</p>}
           <p className="form-hint">
-            {vt.mine.available}: {fmt(available)} XRGE · {vt.mine.staked}: {fmt(staked)} XRGE · {getNetworkLabel()}
+            {t("staking.balances", { available: fmt(available), staked: fmt(staked), network: networkLabel(getNetworkLabel()) })}
           </p>
           <div className="actions">
             <Button type="button" variant="outline" onClick={close}>
-              {t.cancel}
+              {t("staking.cancel")}
             </Button>
             <Button type="submit" disabled={!check?.ok}>
-              {t.review}
+              {t("staking.review")}
             </Button>
           </div>
         </form>
@@ -141,36 +147,36 @@ export function StakeDialog({
         <div className="wallet-form">
           <dl className="review-list">
             <div>
-              <dt>{t.rows.action}</dt>
-              <dd>{isStake ? t.rows.stake : t.rows.unstake}</dd>
+              <dt>{t("staking.rows.action")}</dt>
+              <dd>{t(isStake ? "staking.rows.stake" : "staking.rows.unstake")}</dd>
             </div>
             <div>
-              <dt>{t.rows.amount}</dt>
+              <dt>{t("staking.rows.amount")}</dt>
               <dd className="mono">{fmt(amount)} XRGE</dd>
             </div>
             <div>
-              <dt>{t.rows.from}</dt>
+              <dt>{t("staking.rows.from")}</dt>
               <dd className="mono" title={wallet.signingPublicKey}>
                 {formatIdentity(wallet.signingPublicKey)}
               </dd>
             </div>
             <div>
-              <dt>{isStake ? t.rows.tier : t.rows.remaining}</dt>
+              <dt>{t(isStake ? "staking.rows.tier" : "staking.rows.remaining")}</dt>
               <dd className="mono">
-                {isStake ? vt.tiers[getTierFromStake(resulting)] : `${fmt(resulting)} XRGE`}
+                {isStake ? t(`validators.tiers.${getTierFromStake(resulting)}`) : `${fmt(resulting)} XRGE`}
               </dd>
             </div>
             <div>
-              <dt>{t.rows.fee}</dt>
+              <dt>{t("staking.rows.fee")}</dt>
               <dd className="mono">{STAKE_FEE} XRGE</dd>
             </div>
             <div>
-              <dt>{t.rows.network}</dt>
-              <dd>{getNetworkLabel()}</dd>
+              <dt>{t("staking.rows.network")}</dt>
+              <dd>{networkLabel(getNetworkLabel())}</dd>
             </div>
           </dl>
-          <p className="form-hint">{isStake ? t.nodeKeyWarning : resulting < STAKE_REQUIREMENTS.standard ? t.unstakeWarning : ""}</p>
-          <p className="form-hint">{wallet.signingPrivateKey ? t.localSign : t.extensionSign}</p>
+          <p className="form-hint">{isStake ? t("staking.nodeKeyWarning") : resulting < STAKE_REQUIREMENTS.standard ? t("staking.unstakeWarning") : ""}</p>
+          <p className="form-hint">{wallet.signingPrivateKey ? t("staking.localSign") : t("staking.extensionSign")}</p>
           {error && (
             <p className="form-error" role="alert">
               {error}
@@ -178,10 +184,10 @@ export function StakeDialog({
           )}
           <div className="actions">
             <Button variant="outline" onClick={() => setStep("form")} disabled={step === "signing"}>
-              {t.back}
+              {t("staking.back")}
             </Button>
             <Button onClick={sign} disabled={step === "signing"}>
-              {step === "signing" ? t.signing : isStake ? t.sign : t.signUnstake}
+              {step === "signing" ? t("staking.signing") : isStake ? t("staking.sign") : t("staking.signUnstake")}
             </Button>
           </div>
         </div>
