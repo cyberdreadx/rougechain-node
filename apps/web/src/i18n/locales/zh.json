@@ -526,7 +526,15 @@
       "invalidQbtcAmount": "请输入有效的 qBTC 金额",
       "invalidEvmAddress": "请输入有效的 EVM 地址",
       "withdrawFailed": "提取失败",
-      "btcWithdrawPaused": "比特币支付服务上线期间，BTC 提现暂停。您的 qBTC 是安全的；充值和其他提现正常进行。"
+      "btcWithdrawPaused": "比特币支付服务上线期间，BTC 提现暂停。您的 qBTC 是安全的；充值和其他提现正常进行。",
+      "btcBelowMinimum": "qBTC 最低提现金额为 {{min}} BTC（比特币网络手续费从支付金额中扣除）。"
+    },
+    "btcWithdraw": {
+      "minimum": "最低提现金额",
+      "networkFee": "比特币网络手续费",
+      "feeUnavailable": "暂无估算",
+      "youReceive": "您将收到",
+      "feeNote": "手续费为估算值；支付交易的实际网络手续费将从您收到的 BTC 中扣除（最多 {{max}} BTC）。"
     }
   },
   "wallet": {

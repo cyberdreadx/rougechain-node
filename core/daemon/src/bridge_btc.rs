@@ -54,6 +54,9 @@ struct EsploraVout {
 struct EsploraPrevout {
     #[serde(default)]
     scriptpubkey_address: Option<String>,
+    /// Value of the spent output, in sats (Esplora includes it on every prevout).
+    #[serde(default)]
+    value: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -78,6 +81,10 @@ struct EsploraTx {
     vin: Vec<EsploraVin>,
     #[serde(default)]
     vout: Vec<EsploraVout>,
+    /// Network fee in sats as reported by the provider. Cross-checked against
+    /// Σ(prevout values) − Σ(output values) before it is trusted (see `tx_fee_sats`).
+    #[serde(default)]
+    fee: Option<u64>,
     status: EsploraStatus,
 }
 
@@ -120,6 +127,42 @@ pub fn btc_min_confirmations() -> u64 {
         .ok()
         .and_then(|v| v.trim().parse().ok())
         .unwrap_or(2)
+}
+
+/// Default cap on the Bitcoin network fee a qBTC payout may deduct from the withdrawer.
+pub const DEFAULT_MAX_NETWORK_FEE_SATS: u64 = 10_000;
+/// Default minimum qBTC withdrawal (sats) admitted by the API.
+pub const DEFAULT_MIN_WITHDRAW_SATS: u64 = 2_000;
+
+fn env_u64(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(default)
+}
+
+/// Largest Bitcoin network fee (sats) a payout may deduct from the amount the withdrawer
+/// receives. From `QV_BRIDGE_BTC_MAX_NETWORK_FEE_SATS`, default 10 000. The relayer uses the
+/// same cap (`BTC_MAX_NETWORK_FEE_SATS`) and never builds a payout above it.
+pub fn btc_max_network_fee_sats() -> u64 {
+    env_u64("QV_BRIDGE_BTC_MAX_NETWORK_FEE_SATS", DEFAULT_MAX_NETWORK_FEE_SATS)
+}
+
+/// Minimum qBTC withdrawal in sats (1 qBTC unit = 1 sat). From
+/// `QV_BRIDGE_BTC_MIN_WITHDRAW_SATS`, default 2 000. Checked at API admission, before any burn.
+pub fn btc_min_withdraw_sats() -> u64 {
+    env_u64("QV_BRIDGE_BTC_MIN_WITHDRAW_SATS", DEFAULT_MIN_WITHDRAW_SATS)
+}
+
+/// API admission check for a qBTC withdrawal amount (sats). Pure so it can be unit-tested.
+pub fn check_btc_withdraw_minimum(amount_sats: u64, min_sats: u64) -> Result<(), String> {
+    if amount_sats < min_sats {
+        return Err(format!(
+            "qBTC withdrawal of {} sats is below the minimum of {} sats (the Bitcoin network fee is deducted from the amount you receive)",
+            amount_sats, min_sats
+        ));
+    }
+    Ok(())
 }
 
 /// When true, a deposit may be honored on the primary provider alone if the secondary is
@@ -442,17 +485,116 @@ pub async fn verify_btc_deposit(txid: &str, custody: &str) -> Result<BtcDeposit,
     Ok(dep1)
 }
 
-/// Verify a qBTC → BTC payout before marking a withdrawal fulfilled. Requires: an output that
-/// pays `dest` at least `min_sats`, at least one input funded by the `custody` address (so the
-/// relayer cannot pass off an unrelated payment as a fulfillment), and the required confirmation
-/// depth. Uses the primary provider only — this runs after the relayer already broadcast, and
-/// the payout is additionally bounded by the burn that preceded it.
+/// Which rule accepted a payout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PayoutRule {
+    /// Paid `dest` at least the full owed amount (custody paid the network fee). Pre-fee-policy form.
+    FullAmount,
+    /// Paid `dest` the owed amount minus this tx's own network fee (withdrawer paid the fee).
+    FeeDeducted,
+}
+
+/// Result of evaluating a payout transaction against a withdrawal record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PayoutVerdict {
+    pub paid_sats: u64,
+    /// The tx's network fee, computed by the node (None when not needed: full-amount rule).
+    pub fee_sats: Option<u64>,
+    pub rule: PayoutRule,
+}
+
+/// The network fee of a transaction, computed from the provider's data: Σ(prevout values) −
+/// Σ(output values). Every input must carry its prevout value (fail closed otherwise). When the
+/// provider also reports `fee`, it must equal the computed value — a disagreement fails closed.
+fn tx_fee_sats(tx: &EsploraTx) -> Result<u64, String> {
+    if tx.vin.is_empty() {
+        return Err("payout has no inputs".to_string());
+    }
+    let mut total_in: u64 = 0;
+    for v in &tx.vin {
+        let value = v
+            .prevout
+            .as_ref()
+            .and_then(|p| p.value)
+            .ok_or("payout input is missing its prevout value; cannot compute the network fee")?;
+        total_in = total_in.checked_add(value).ok_or("input sum overflow")?;
+    }
+    let mut total_out: u64 = 0;
+    for v in &tx.vout {
+        total_out = total_out.checked_add(v.value).ok_or("output sum overflow")?;
+    }
+    let computed = total_in
+        .checked_sub(total_out)
+        .ok_or("payout outputs exceed inputs (inconsistent provider data)")?;
+    if let Some(reported) = tx.fee {
+        if reported != computed {
+            return Err(format!(
+                "provider fee {} sats disagrees with inputs − outputs {} sats — refusing to verify",
+                reported, computed
+            ));
+        }
+    }
+    Ok(computed)
+}
+
+/// Pure payout acceptance rule (no network, no confirmations). A payout is accepted when:
+///   * at least one input is funded by `custody`, AND
+///   * it pays `dest` a non-zero amount, AND EITHER
+///   * `paid ≥ owed` (full-amount / legacy form — custody paid the fee), OR
+///   * `paid + fee ≥ owed` with `fee ≤ max_fee`, where `fee` is this tx's network fee as computed
+///     by `tx_fee_sats` from provider data (never supplied by the relayer).
+fn evaluate_payout(
+    tx: &EsploraTx,
+    custody: &str,
+    dest: &str,
+    owed_sats: u64,
+    max_fee_sats: u64,
+) -> Result<PayoutVerdict, String> {
+    let from_custody = tx.vin.iter().any(|v| {
+        v.prevout.as_ref().and_then(|p| p.scriptpubkey_address.as_deref()) == Some(custody)
+    });
+    if !from_custody {
+        return Err("payout was not funded by the custody address".to_string());
+    }
+    let paid: u64 = tx
+        .vout
+        .iter()
+        .filter(|v| v.scriptpubkey_address.as_deref() == Some(dest))
+        .fold(0u64, |a, v| a.saturating_add(v.value));
+    if paid == 0 {
+        return Err(format!("payout pays nothing to {}", dest));
+    }
+    if paid >= owed_sats {
+        return Ok(PayoutVerdict { paid_sats: paid, fee_sats: None, rule: PayoutRule::FullAmount });
+    }
+    let fee = tx_fee_sats(tx)?;
+    if fee > max_fee_sats {
+        return Err(format!(
+            "payout network fee {} sats exceeds the {} sat cap (QV_BRIDGE_BTC_MAX_NETWORK_FEE_SATS)",
+            fee, max_fee_sats
+        ));
+    }
+    if paid.saturating_add(fee) < owed_sats {
+        return Err(format!(
+            "payout paid {} sats to {} plus {} sats network fee, less than the {} owed",
+            paid, dest, fee, owed_sats
+        ));
+    }
+    Ok(PayoutVerdict { paid_sats: paid, fee_sats: Some(fee), rule: PayoutRule::FeeDeducted })
+}
+
+/// Verify a qBTC → BTC payout before marking a withdrawal fulfilled. Requires the confirmation
+/// depth plus `evaluate_payout`: funded by `custody`, a non-zero payment to `dest`, and either
+/// the full `owed_sats` or `owed_sats` minus the tx's own network fee (fee ≤
+/// `QV_BRIDGE_BTC_MAX_NETWORK_FEE_SATS`). The fee is computed here from the provider's tx data,
+/// never taken from the relayer. Uses the primary provider only — this runs after the relayer
+/// already broadcast, and the payout is additionally bounded by the burn that preceded it.
 pub async fn verify_btc_payout(
     txid: &str,
     custody: &str,
     dest: &str,
-    min_sats: u64,
-) -> Result<(), String> {
+    owed_sats: u64,
+) -> Result<PayoutVerdict, String> {
     let txid = txid.trim().trim_start_matches("0x").to_lowercase();
     if !valid_txid(&txid) {
         return Err("invalid BTC payout txid (expected 64 hex chars)".to_string());
@@ -472,27 +614,7 @@ pub async fn verify_btc_payout(
     if confs < min_conf {
         return Err(format!("payout has {} confirmation(s); {} required", confs, min_conf));
     }
-
-    let paid: u64 = tx
-        .vout
-        .iter()
-        .filter(|v| v.scriptpubkey_address.as_deref() == Some(dest))
-        .map(|v| v.value)
-        .sum();
-    if paid < min_sats {
-        return Err(format!(
-            "payout paid {} sats to {}, less than the {} owed",
-            paid, dest, min_sats
-        ));
-    }
-
-    let from_custody = tx.vin.iter().any(|v| {
-        v.prevout.as_ref().and_then(|p| p.scriptpubkey_address.as_deref()) == Some(custody)
-    });
-    if !from_custody {
-        return Err("payout was not funded by the custody address".to_string());
-    }
-    Ok(())
+    evaluate_payout(&tx, custody, dest, owed_sats, btc_max_network_fee_sats())
 }
 
 /// Structural validation of a destination BTC address for a qBTC withdrawal. This is a
@@ -543,4 +665,125 @@ pub fn validate_btc_address(addr: &str, network: &str) -> Result<(), String> {
     }
 
     Err(format!("unrecognized BTC address format for {}", network))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CUSTODY: &str = "bc1q4963wmznu5xjqq623v5d34ne0w78p0g0e83vvc";
+    const DEST: &str = "bc1qdestxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+    const OTHER: &str = "bc1qotherxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+    /// One-input payout: `input` sats from `from`, paying `paid` to DEST and `change` back to custody.
+    fn tx(from: &str, input: u64, paid: u64, change: u64, reported_fee: Option<u64>) -> EsploraTx {
+        let fee = reported_fee.or(Some(input - paid - change));
+        let mut j = serde_json::json!({
+            "txid": "ab".repeat(32),
+            "vin": [{ "prevout": { "scriptpubkey_address": from, "value": input } }],
+            "vout": [{ "scriptpubkey": "0014", "scriptpubkey_address": DEST, "value": paid }],
+            "fee": fee,
+            "status": { "confirmed": true, "block_height": 100 }
+        });
+        if change > 0 {
+            j["vout"].as_array_mut().unwrap().push(serde_json::json!({
+                "scriptpubkey": "0014", "scriptpubkey_address": CUSTODY, "value": change
+            }));
+        }
+        serde_json::from_value(j).unwrap()
+    }
+
+    #[test]
+    fn fee_deducted_payout_is_accepted() {
+        // 5 000 owed, fee 141 → dest gets 4 859; custody change = 100 000 − 5 000.
+        let t = tx(CUSTODY, 100_000, 4_859, 95_000, None);
+        let v = evaluate_payout(&t, CUSTODY, DEST, 5_000, 10_000).unwrap();
+        assert_eq!(v, PayoutVerdict { paid_sats: 4_859, fee_sats: Some(141), rule: PayoutRule::FeeDeducted });
+    }
+
+    #[test]
+    fn legacy_full_amount_payout_is_accepted() {
+        // The first mainnet withdrawal: 5 000 paid in full, 141 fee from custody.
+        let t = tx(CUSTODY, 100_000, 5_000, 94_859, None);
+        let v = evaluate_payout(&t, CUSTODY, DEST, 5_000, 10_000).unwrap();
+        assert_eq!(v.rule, PayoutRule::FullAmount);
+        assert_eq!(v.paid_sats, 5_000);
+        // Full-amount payouts never depend on fee data (so a large custody-paid fee still verifies).
+        let big = tx(CUSTODY, 100_000, 5_000, 70_000, None);
+        assert_eq!(evaluate_payout(&big, CUSTODY, DEST, 5_000, 10_000).unwrap().rule, PayoutRule::FullAmount);
+    }
+
+    #[test]
+    fn fee_over_cap_is_rejected() {
+        // fee 12 000 > cap 10 000, even though paid + fee covers the owed amount.
+        let t = tx(CUSTODY, 100_000, 38_000, 50_000, None);
+        let e = evaluate_payout(&t, CUSTODY, DEST, 50_000, 10_000).unwrap_err();
+        assert!(e.contains("exceeds"), "{e}");
+        // The same tx passes with a higher cap.
+        assert!(evaluate_payout(&t, CUSTODY, DEST, 50_000, 12_000).is_ok());
+    }
+
+    #[test]
+    fn paid_plus_fee_below_owed_is_rejected() {
+        // fee 141, paid 4 800 → 4 941 < 5 000.
+        let t = tx(CUSTODY, 100_000, 4_800, 95_059, None);
+        let e = evaluate_payout(&t, CUSTODY, DEST, 5_000, 10_000).unwrap_err();
+        assert!(e.contains("less than the 5000 owed"), "{e}");
+    }
+
+    #[test]
+    fn zero_paid_is_rejected() {
+        let t = tx(CUSTODY, 100_000, 0, 95_000, None);
+        assert!(evaluate_payout(&t, CUSTODY, DEST, 5_000, 10_000).unwrap_err().contains("pays nothing"));
+        // Paying a different address is also "nothing to dest".
+        let other: EsploraTx = serde_json::from_value(serde_json::json!({
+            "vin": [{ "prevout": { "scriptpubkey_address": CUSTODY, "value": 10_000 } }],
+            "vout": [{ "scriptpubkey": "0014", "scriptpubkey_address": OTHER, "value": 9_000 }],
+            "status": { "confirmed": true, "block_height": 1 }
+        })).unwrap();
+        assert!(evaluate_payout(&other, CUSTODY, DEST, 5_000, 10_000).is_err());
+    }
+
+    #[test]
+    fn not_funded_by_custody_is_rejected() {
+        let full = tx(OTHER, 100_000, 5_000, 0, None);
+        assert!(evaluate_payout(&full, CUSTODY, DEST, 5_000, 10_000).unwrap_err().contains("custody"));
+        let deducted = tx(OTHER, 100_000, 4_859, 95_000, None);
+        assert!(evaluate_payout(&deducted, CUSTODY, DEST, 5_000, 10_000).unwrap_err().contains("custody"));
+    }
+
+    #[test]
+    fn provider_fee_mismatch_fails_closed() {
+        // Provider claims fee 500, but inputs − outputs = 141: never trust the reported figure.
+        let t = tx(CUSTODY, 100_000, 4_859, 95_000, Some(500));
+        let e = evaluate_payout(&t, CUSTODY, DEST, 5_000, 10_000).unwrap_err();
+        assert!(e.contains("disagrees"), "{e}");
+    }
+
+    #[test]
+    fn missing_prevout_value_fails_closed_for_fee_rule() {
+        let t: EsploraTx = serde_json::from_value(serde_json::json!({
+            "vin": [{ "prevout": { "scriptpubkey_address": CUSTODY } }],
+            "vout": [{ "scriptpubkey": "0014", "scriptpubkey_address": DEST, "value": 4_859 }],
+            "fee": 141,
+            "status": { "confirmed": true, "block_height": 1 }
+        })).unwrap();
+        assert!(evaluate_payout(&t, CUSTODY, DEST, 5_000, 10_000).unwrap_err().contains("prevout value"));
+    }
+
+    #[test]
+    fn fee_is_computed_without_provider_fee_field() {
+        let mut t = tx(CUSTODY, 100_000, 4_859, 95_000, None);
+        t.fee = None;
+        assert_eq!(evaluate_payout(&t, CUSTODY, DEST, 5_000, 10_000).unwrap().fee_sats, Some(141));
+    }
+
+    #[test]
+    fn withdraw_minimum() {
+        assert!(check_btc_withdraw_minimum(1_999, 2_000).is_err());
+        assert!(check_btc_withdraw_minimum(2_000, 2_000).is_ok());
+        assert!(check_btc_withdraw_minimum(0, 2_000).unwrap_err().contains("below the minimum of 2000 sats"));
+        assert_eq!(DEFAULT_MIN_WITHDRAW_SATS, 2_000);
+        assert_eq!(DEFAULT_MAX_NETWORK_FEE_SATS, 10_000);
+    }
 }

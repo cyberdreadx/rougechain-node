@@ -7032,6 +7032,13 @@ struct BridgeConfigResponse {
     /// Bitcoin network the BTC bridge is on ("mainnet"/"testnet"). None when not configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     btc_network: Option<String>,
+    /// Minimum qBTC withdrawal in sats (QV_BRIDGE_BTC_MIN_WITHDRAW_SATS). None when BTC is off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    btc_min_withdraw_sats: Option<u64>,
+    /// Max Bitcoin network fee (sats) deducted from a qBTC payout
+    /// (QV_BRIDGE_BTC_MAX_NETWORK_FEE_SATS). None when BTC is off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    btc_max_network_fee_sats: Option<u64>,
 }
 
 /// The Base chain the bridge is configured to talk to. Fail-safe by design:
@@ -7204,6 +7211,19 @@ fn check_withdraw_guardrails(amount_units: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// qBTC-only admission rule: reject withdrawals below the BTC minimum (sats) before any burn.
+/// Other routes are unaffected. Pure (the minimum is passed in) so it is unit-testable.
+fn check_btc_withdraw_admission(
+    route: quantum_vault_bridge_exec::PayoutRoute,
+    amount_units: u64,
+    btc_min_sats: u64,
+) -> Result<(), String> {
+    if route == quantum_vault_bridge_exec::PayoutRoute::Btc {
+        bridge_btc::check_btc_withdraw_minimum(amount_units, btc_min_sats)?;
+    }
+    Ok(())
+}
+
 /// Constant-time comparison for secrets / API keys. Avoids the trivial early-exit timing
 /// oracle of `==` on the relayer secret and admin key, both of which authorize custody
 /// payouts and mints. Runs over the longer of the two lengths and folds a length mismatch
@@ -7245,6 +7265,8 @@ async fn bridge_config(State(state): State<AppState>) -> Json<BridgeConfigRespon
         custody_address,
         chain_id,
         supported_tokens,
+        btc_min_withdraw_sats: btc_network.as_ref().map(|_| bridge_btc::btc_min_withdraw_sats()),
+        btc_max_network_fee_sats: btc_network.as_ref().map(|_| bridge_btc::btc_max_network_fee_sats()),
         btc_custody_address,
         btc_network,
     })
@@ -7858,6 +7880,11 @@ async fn bridge_withdraw(
             });
         }
         if let Err(e) = check_withdraw_guardrails(auth.amount) {
+            return fail(e);
+        }
+        // qBTC minimum: the Bitcoin network fee is deducted from the payout, so tiny withdrawals
+        // are refused HERE — before submit_bridge_withdraw_tx_signed builds the burn tx below.
+        if let Err(e) = check_btc_withdraw_admission(auth.route, auth.amount, bridge_btc::btc_min_withdraw_sats()) {
             return fail(e);
         }
         // The node-cosigned TxV1 is built ONLY from authorized (signed + canonicalized) values.
@@ -8508,8 +8535,9 @@ fn btc_payout_txid_from_body(body: &str) -> Option<String> {
 }
 
 /// DELETE /api/bridge/btc/withdrawals/:tx_id — mark a qBTC withdrawal fulfilled, but only after
-/// verifying the Bitcoin payout on-chain (custody-funded, paid the recipient ≥ the owed sats,
-/// with enough confirmations). Auth mirrors the ETH path: relayer secret or node-signed body.
+/// verifying the Bitcoin payout on-chain (custody-funded, enough confirmations, and paid the
+/// recipient either the full owed sats or the owed sats minus that tx's own network fee, with
+/// the fee — computed by the node from provider data — at most QV_BRIDGE_BTC_MAX_NETWORK_FEE_SATS). Auth mirrors the ETH path: relayer secret or node-signed body.
 async fn bridge_btc_withdrawal_fulfill(
     State(state): State<AppState>,
     Path(tx_id): Path<String>,
@@ -8568,11 +8596,19 @@ async fn bridge_btc_withdrawal_fulfill(
         None => return Json(BridgeFulfillResponse { success: false, error: Some("BTC bridge custody not configured".to_string()) }),
     };
     // qBTC: 1 unit == 1 satoshi, so the owed sats equal the burned unit count.
-    let min_sats = record.amount_units;
-    if let Err(e) = bridge_btc::verify_btc_payout(&payout_txid, &custody, &record.evm_address, min_sats).await {
-        return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout not verified: {}", e)) });
+    let owed_sats = record.amount_units;
+    match bridge_btc::verify_btc_payout(&payout_txid, &custody, &record.evm_address, owed_sats).await {
+        Ok(v) => eprintln!(
+            "[bridge-btc] payout {} for {} verified: {:?}, paid {} sats, fee {:?} sats, owed {}",
+            payout_txid, tx_id, v.rule, v.paid_sats, v.fee_sats, owed_sats
+        ),
+        Err(e) => {
+            return Json(BridgeFulfillResponse { success: false, error: Some(format!("payout not verified: {}", e)) });
+        }
     }
-    match state.bridge_withdraw_store.mark_fulfilled(&tx_id, &payout_txid) {
+    // A Bitcoin payment carries no withdrawal id, so one payment must never settle two
+    // withdrawals (e.g. two equal withdrawals to the same address): enforced atomically in the store.
+    match state.bridge_withdraw_store.mark_fulfilled_unique_payout(&tx_id, &payout_txid) {
         Ok(true) => Json(BridgeFulfillResponse { success: true, error: None }),
         Ok(false) => Json(BridgeFulfillResponse { success: false, error: Some("Withdrawal not found or already fulfilled".to_string()) }),
         Err(e) => Json(BridgeFulfillResponse { success: false, error: Some(e) }),
@@ -10835,6 +10871,27 @@ mod image_guard_tests {
 // ─────────────────────────────────────────────────────────────────────────────
 // R1B/R1D — daemon-side unit tests for the bridge payout helpers (no network).
 // ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod btc_withdraw_admission_tests {
+    use super::check_btc_withdraw_admission;
+    use quantum_vault_bridge_exec::PayoutRoute;
+
+    #[test]
+    fn qbtc_below_minimum_is_rejected_before_burn() {
+        let e = check_btc_withdraw_admission(PayoutRoute::Btc, 1_999, 2_000).unwrap_err();
+        assert!(e.contains("below the minimum of 2000 sats"), "{e}");
+        assert!(check_btc_withdraw_admission(PayoutRoute::Btc, 2_000, 2_000).is_ok());
+        assert!(check_btc_withdraw_admission(PayoutRoute::Btc, 5_000, 2_000).is_ok());
+    }
+
+    #[test]
+    fn minimum_only_applies_to_qbtc() {
+        for r in [PayoutRoute::Eth, PayoutRoute::Usdc, PayoutRoute::Xrge] {
+            assert!(check_btc_withdraw_admission(r, 1, 2_000).is_ok());
+        }
+    }
+}
+
 #[cfg(test)]
 mod bridge_refund_withhold_tests {
     use super::*;

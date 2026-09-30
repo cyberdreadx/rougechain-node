@@ -16,6 +16,11 @@
  *   • DRY-RUN BY DEFAULT. Nothing is broadcast unless BTC_RELAYER_LIVE=true. Testnet-verify
  *     the whole round-trip first (QV_BRIDGE_BTC_NETWORK=testnet), then flip to live.
  *   • Per-payout satoshi cap (BTC_MAX_WITHDRAW_SATS) bounds the blast radius of any single bug.
+ *   • The WITHDRAWER pays the Bitcoin network fee: dest receives `sats − fee` (fee = ceil(vsize ×
+ *     rate) of that payout) and custody change = inputs − sats, so custody falls by exactly the
+ *     burned amount. Fee capped by BTC_MAX_NETWORK_FEE_SATS (above it: skip, retry next cycle);
+ *     if `sats − fee` would be dust the withdrawal is flagged for manual review, never paid.
+ *     Keep this cap ≤ the daemon's QV_BRIDGE_BTC_MAX_NETWORK_FEE_SATS or fulfilment is refused.
  *   • Idempotency (scripts/btc-relayer-core.ts): a payout is signed ONCE and its txid + raw bytes
  *     are saved BEFORE broadcast; after that only the same bytes are ever re-sent, so a lost
  *     response or crash cannot produce a second, different payment. Before any new payout we also
@@ -34,6 +39,7 @@
  *   QV_BRIDGE_BTC_MIN_CONFIRMATIONS  confirmations before fulfilling (default 2)
  *   BTC_MAX_WITHDRAW_SATS         per-payout cap in sats (0 = no cap, default 0)
  *   BTC_FEE_TARGET_BLOCKS         fee target for estimation (default 3)
+ *   BTC_MAX_NETWORK_FEE_SATS      max network fee deducted from one payout (default 10000)
  *   BTC_RELAYER_LIVE             "true" to actually broadcast (default false = dry-run)
  *   POLL_INTERVAL_MS              poll cadence (default 15000)
  *   MAX_RETRIES                   max broadcast attempts per withdrawal (default 3)
@@ -53,6 +59,11 @@ import {
   type BtcState,
   type BtcPayoutDeps,
   type BroadcastResult,
+  type BuildResult,
+  type EsploraTxLike,
+  planPayout,
+  payoutSettles,
+  DEFAULT_MAX_NETWORK_FEE_SATS,
 } from "./btc-relayer-core";
 
 // ── Config ──
@@ -69,6 +80,7 @@ const ESPLORA = (
 const MIN_CONFIRMATIONS = parseInt(process.env.QV_BRIDGE_BTC_MIN_CONFIRMATIONS || "2", 10);
 const MAX_SATS = BigInt(process.env.BTC_MAX_WITHDRAW_SATS || "0"); // 0 = no cap
 const FEE_TARGET_BLOCKS = process.env.BTC_FEE_TARGET_BLOCKS || "3";
+const MAX_NETWORK_FEE_SATS = BigInt(process.env.BTC_MAX_NETWORK_FEE_SATS || DEFAULT_MAX_NETWORK_FEE_SATS.toString());
 const LIVE = (process.env.BTC_RELAYER_LIVE || "false").toLowerCase() === "true";
 const POLL_MS = parseInt(process.env.POLL_INTERVAL_MS || "15000", 10);
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || "3", 10);
@@ -143,12 +155,7 @@ async function esploraText(path: string): Promise<string> {
 }
 
 type Utxo = { txid: string; vout: number; value: number; status: { confirmed: boolean; block_height?: number } };
-type EsTx = {
-  txid: string;
-  vin?: { prevout?: { scriptpubkey_address?: string } }[];
-  vout: { scriptpubkey_address?: string; value: number }[];
-  status: { confirmed: boolean; block_height?: number };
-};
+type EsTx = EsploraTxLike & { status: { confirmed: boolean; block_height?: number } };
 
 async function tipHeight(): Promise<number> {
   return parseInt(await esploraText("/blocks/tip/height"), 10);
@@ -205,24 +212,15 @@ async function daemonHealthOk(): Promise<boolean> {
     return false;
   }
 }
-/** Scan custody's recent txs for one that already pays `dest` at least `sats`, and is not the
- *  funding of some OTHER known withdrawal. Used to adopt a payout after a crash-before-save. */
+/** Scan custody's recent txs for one that already settles `sats` to `dest` (full amount, or
+ *  sats − its own fee with fee ≤ BTC_MAX_NETWORK_FEE_SATS — see payoutSettles), and is not the
+ *  payout of some OTHER known withdrawal. Used to adopt a payout after a crash-before-save. */
 async function findExistingPayout(dest: string, sats: bigint, knownTxids: Set<string>): Promise<string | null> {
   try {
     const txs = await esploraJson<EsTx[]>(`/address/${CUSTODY_ADDRESS}/txs`);
     for (const tx of txs) {
       if (knownTxids.has(tx.txid)) continue;
-      // Only a real payout SPENDS custody (custody appears as an input). A deposit has custody
-      // as an OUTPUT and its change can land on any address — never adopt those, or a deposit
-      // whose change happens to pay `dest` would be mistaken for the payout.
-      const custodySpent = (tx.vin || []).some(
-        (v) => v.prevout?.scriptpubkey_address === CUSTODY_ADDRESS
-      );
-      if (!custodySpent) continue;
-      const paid = tx.vout
-        .filter((v) => v.scriptpubkey_address === dest)
-        .reduce((a, v) => a + BigInt(v.value), 0n);
-      if (paid >= sats) return tx.txid;
+      if (payoutSettles(tx, CUSTODY_ADDRESS, dest, sats, MAX_NETWORK_FEE_SATS)) return tx.txid;
     }
   } catch (e) {
     // Never treat "could not look" as "nothing there": the caller must not pay on a failed scan.
@@ -231,45 +229,46 @@ async function findExistingPayout(dest: string, sats: bigint, knownTxids: Set<st
   return null;
 }
 
-// ── Build + sign + broadcast a payout ──
-function estFeeSats(nIn: number, nOut: number, feeRate: number): bigint {
-  // P2WPKH: ~68 vbytes/input, ~31 vbytes/output, ~11 overhead.
-  return BigInt(Math.ceil((nIn * 68 + nOut * 31 + 11) * feeRate));
-}
+// ── Build + sign a payout (withdrawer pays the network fee) ──
 
-/** Build + sign (NOT broadcast) a custody payout, never spending `exclude` ("txid:vout"). */
-async function buildPayout(dest: string, sats: bigint, exclude: Set<string>): Promise<{ txid: string; rawHex: string; inputs: string[] }> {
+/** Build + sign (NOT broadcast) a custody payout of `sats − fee` to `dest`, never spending
+ *  `exclude` ("txid:vout"). Fee-policy refusals are returned, not thrown. */
+async function buildPayout(dest: string, sats: bigint, exclude: Set<string>): Promise<BuildResult> {
   const utxos = (await getUtxos(CUSTODY_ADDRESS)).filter((u) => u.status.confirmed && !exclude.has(`${u.txid}:${u.vout}`));
   if (utxos.length === 0) throw new Error("no confirmed custody UTXOs available");
-  utxos.sort((a, b) => b.value - a.value);
   const feeRate = await getFeeRate();
+  const destScript = btc.OutScript.encode(btc.Address(NETWORK).decode(dest));
 
-  const selected: Utxo[] = [];
-  let inSats = 0n;
-  for (const u of utxos) {
-    selected.push(u);
-    inSats += BigInt(u.value);
-    if (inSats >= sats + estFeeSats(selected.length, 2, feeRate)) break;
+  const plan = planPayout({ utxos, sats, feeRate, destScriptLen: destScript.length, maxFee: MAX_NETWORK_FEE_SATS, dust: DUST });
+  if (plan.kind === "insufficient") {
+    throw new Error(`insufficient custody balance: have ${plan.have} sats, need ${plan.need}`);
   }
-  const fee = estFeeSats(selected.length, 2, feeRate);
-  if (inSats < sats + fee) {
-    throw new Error(`insufficient custody balance: have ${inSats} sats, need ${sats + fee} (incl. fee)`);
-  }
+  if (plan.kind !== "ok") return plan;
 
   const tx = new btc.Transaction();
-  for (const u of selected) {
+  for (const u of plan.inputs) {
     tx.addInput({
       txid: u.txid,
       index: u.vout,
       witnessUtxo: { script: CUSTODY_SCRIPT, amount: BigInt(u.value) },
     });
   }
-  tx.addOutputAddress(dest, sats, NETWORK);
-  const change = inSats - sats - fee;
-  if (change > DUST) tx.addOutputAddress(CUSTODY_ADDRESS, change, NETWORK);
+  tx.addOutputAddress(dest, plan.pay, NETWORK);
+  if (plan.change > 0n) tx.addOutputAddress(CUSTODY_ADDRESS, plan.change, NETWORK);
   tx.sign(PRIV);
   tx.finalize();
-  return { txid: tx.id, rawHex: tx.hex, inputs: selected.map((u) => `${u.txid}:${u.vout}`) };
+  // The plan's vsize is a worst-case-signature upper bound; the signed tx must not exceed it
+  // (otherwise the fee would fall below the chosen rate).
+  if (tx.vsize > plan.vsize) throw new Error(`signed vsize ${tx.vsize} exceeds planned ${plan.vsize} — not broadcasting`);
+  console.log(`  [plan] ${sats} sats owed: pay ${plan.pay} + fee ${plan.fee} (${plan.vsize} vB @ ${feeRate} sat/vB), change ${plan.change}`);
+  return {
+    kind: "built",
+    txid: tx.id,
+    rawHex: tx.hex,
+    inputs: plan.inputs.map((u) => `${u.txid}:${u.vout}`),
+    pay: plan.pay.toString(),
+    fee: plan.fee.toString(),
+  };
 }
 
 async function broadcastRaw(rawHex: string, expectedTxid: string): Promise<BroadcastResult> {
@@ -437,7 +436,7 @@ async function main() {
   console.log(`  Custody:   ${CUSTODY_ADDRESS}`);
   console.log(`  Esplora:   ${ESPLORA}`);
   console.log(`  Daemon:    ${CORE_API_URL}`);
-  console.log(`  Min confs: ${MIN_CONFIRMATIONS}   Cap: ${MAX_SATS === 0n ? "none" : MAX_SATS + " sats"}`);
+  console.log(`  Min confs: ${MIN_CONFIRMATIONS}   Cap: ${MAX_SATS === 0n ? "none" : MAX_SATS + " sats"}   Max network fee: ${MAX_NETWORK_FEE_SATS} sats (paid by withdrawer)`);
   console.log(`  HD deposits: ${HD_ENABLED ? `on (pool target ${POOL_TARGET})` : "off (set BRIDGE_BTC_HD_MNEMONIC)"}`);
   console.log(`  Mode:      ${LIVE ? "LIVE (broadcasting)" : "DRY-RUN (no broadcast)"}`);
   console.log("═".repeat(60));

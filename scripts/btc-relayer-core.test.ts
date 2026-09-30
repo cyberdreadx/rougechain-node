@@ -7,6 +7,12 @@ import {
   classifyBroadcastResponse,
   knownPayoutTxids,
   reservedInputs,
+  p2wpkhVsize,
+  feeForVsize,
+  planPayout,
+  payoutSettles,
+  esploraTxFee,
+  P2WPKH_SCRIPT_LEN,
   type BtcState,
   type BtcPayoutDeps,
   type BroadcastResult,
@@ -32,7 +38,7 @@ function fakeDeps(over: Partial<BtcPayoutDeps> = {}) {
     findExistingPayout: async () => null,
     build: async () => {
       calls.build += 1;
-      return { txid: calls.build === 1 ? TX_A : TX_B, rawHex: `raw-${calls.build}`, inputs: [`in${calls.build}:0`] };
+      return { kind: "built", txid: calls.build === 1 ? TX_A : TX_B, rawHex: `raw-${calls.build}`, inputs: [`in${calls.build}:0`] };
     },
     broadcast: async (raw, txid): Promise<BroadcastResult> => {
       calls.broadcast.push(raw);
@@ -176,7 +182,7 @@ describe("processBtcWithdrawal — new payouts", () => {
     const { deps } = fakeDeps({
       build: async (_d, _s, ex) => {
         excluded = ex;
-        return { txid: TX_A, rawHex: "raw-1", inputs: ["free:0"] };
+        return { kind: "built", txid: TX_A, rawHex: "raw-1", inputs: ["free:0"] };
       },
     });
     await processBtcWithdrawal(W, state, deps);
@@ -263,5 +269,180 @@ describe("helpers", () => {
     expect([...knownPayoutTxids(state)].sort()).toEqual([TX_A, TX_B]);
     expect([...reservedInputs(state)].sort()).toEqual(["x:0", "y:1"]);
     expect([...reservedInputs(state, "b")]).toEqual([]);
+  });
+});
+
+// ── Withdrawer-pays-fee policy ──
+
+const CUSTODY = "bc1q4963wmznu5xjqq623v5d34ne0w78p0g0e83vvc";
+const u = (value: number, i = 0) => ({ txid: String(i).repeat(64).slice(0, 64), vout: i, value });
+const P2TR_SCRIPT_LEN = 34;
+
+describe("fee math", () => {
+  it("exact P2WPKH vsize for 1–3 inputs, with and without change", () => {
+    const W = P2WPKH_SCRIPT_LEN;
+    // weight = 4×(10 + 41n + 31·outs) + 2 + 108n  → vsize = ceil(weight / 4)
+    expect(p2wpkhVsize(1, [W])).toBe(110); //  438 WU
+    expect(p2wpkhVsize(1, [W, W])).toBe(141); //  562 WU — the first mainnet payout was 141 vB
+    expect(p2wpkhVsize(2, [W])).toBe(178); //  710 WU
+    expect(p2wpkhVsize(2, [W, W])).toBe(209); //  834 WU
+    expect(p2wpkhVsize(3, [W])).toBe(246); //  982 WU
+    expect(p2wpkhVsize(3, [W, W])).toBe(277); // 1106 WU
+    // A Taproot destination output is 12 bytes bigger than a P2WPKH one.
+    expect(p2wpkhVsize(1, [P2TR_SCRIPT_LEN, W])).toBe(153);
+    expect(() => p2wpkhVsize(0, [W])).toThrow();
+  });
+
+  it("fee = ceil(vsize × rate)", () => {
+    expect(feeForVsize(141, 1)).toBe(141n);
+    expect(feeForVsize(141, 1.5)).toBe(212n); // 211.5 → 212
+    expect(feeForVsize(141, 1.1)).toBe(156n); // 155.1 → 156 (no float phantom)
+    expect(feeForVsize(110, 10)).toBe(1100n);
+    expect(() => feeForVsize(141, 0)).toThrow();
+  });
+});
+
+describe("planPayout", () => {
+  const base = { feeRate: 1, destScriptLen: P2WPKH_SCRIPT_LEN, maxFee: 10_000n, dust: 546n };
+
+  it("5 000 sats at 1 sat/vB: dest gets 4 859, fee 141, custody falls by exactly 5 000", () => {
+    const plan = planPayout({ ...base, utxos: [u(100_000)], sats: 5_000n });
+    expect(plan).toMatchObject({ kind: "ok", pay: 4_859n, fee: 141n, change: 95_000n, vsize: 141 });
+    if (plan.kind !== "ok") throw new Error();
+    const inputs = plan.inputs.reduce((a, x) => a + BigInt(x.value), 0n);
+    expect(inputs - plan.change).toBe(5_000n); // custody's balance drop == burned amount
+    expect(plan.pay + plan.fee).toBe(5_000n);
+  });
+
+  it("multiple inputs raise the fee the withdrawer pays", () => {
+    const plan = planPayout({ ...base, feeRate: 2, utxos: [u(3_000, 1), u(3_000, 2), u(3_000, 3)], sats: 8_000n });
+    // 3 inputs cover 9 000; change 1 000 > dust → 2 outputs, 277 vB × 2 = 554.
+    expect(plan).toMatchObject({ kind: "ok", fee: 554n, pay: 7_446n, change: 1_000n });
+  });
+
+  it("exact-cover inputs produce no change output", () => {
+    const plan = planPayout({ ...base, utxos: [u(5_000)], sats: 5_000n });
+    expect(plan).toMatchObject({ kind: "ok", change: 0n, vsize: 110, fee: 110n, pay: 4_890n });
+  });
+
+  it("a sub-dust remainder goes to the withdrawer, not to miners", () => {
+    const plan = planPayout({ ...base, utxos: [u(5_300)], sats: 5_000n });
+    // change 300 ≤ dust and no more UTXOs: 1 output; dest gets 5 300 − 110.
+    expect(plan).toMatchObject({ kind: "ok", change: 0n, fee: 110n, pay: 5_190n });
+  });
+
+  it("adds another input rather than leaving sub-dust change when it can", () => {
+    // All UTXOs used and only 300 left → remainder to dest: 2 inputs, 1 output (178 vB).
+    const plan = planPayout({ ...base, utxos: [u(5_300, 1), u(20_000, 2)], sats: 25_000n });
+    expect(plan).toMatchObject({ kind: "ok", change: 0n, fee: 178n, pay: 25_122n });
+    const p2 = planPayout({ ...base, utxos: [u(5_200, 1), u(1_000, 2)], sats: 5_000n });
+    // 5 200 leaves 200 (≤ dust) → take the 1 000 too → change 1 200.
+    expect(p2).toMatchObject({ kind: "ok", change: 1_200n, fee: 209n, pay: 4_791n });
+  });
+
+  it("fee above the cap → fee_too_high, nothing to sign", () => {
+    const plan = planPayout({ ...base, feeRate: 100, maxFee: 10_000n, utxos: [u(1_000_000)], sats: 500_000n });
+    expect(plan).toMatchObject({ kind: "fee_too_high", fee: 14_100n, maxFee: 10_000n });
+    const atCap = planPayout({ ...base, feeRate: 100, maxFee: 14_100n, utxos: [u(1_000_000)], sats: 500_000n });
+    expect(atCap.kind).toBe("ok");
+  });
+
+  it("amount minus fee at or below dust → below_minimum_after_fee", () => {
+    // fee 141 at 1 sat/vB: 687 − 141 = 546 = dust → refused; 688 → 547 → ok.
+    expect(planPayout({ ...base, utxos: [u(100_000)], sats: 687n })).toMatchObject({ kind: "below_minimum_after_fee", fee: 141n, pay: 546n });
+    expect(planPayout({ ...base, utxos: [u(100_000)], sats: 688n })).toMatchObject({ kind: "ok", pay: 547n });
+    // 2 000 sats at 20 sat/vB: fee 2 820 > amount.
+    expect(planPayout({ ...base, feeRate: 20, utxos: [u(100_000)], sats: 2_000n }).kind).toBe("below_minimum_after_fee");
+  });
+
+  it("insufficient custody balance", () => {
+    expect(planPayout({ ...base, utxos: [u(1_000)], sats: 5_000n })).toEqual({ kind: "insufficient", have: 1_000n, need: 5_000n });
+  });
+});
+
+describe("payoutSettles (adopt rule, mirrors the daemon)", () => {
+  const tx = (paid: number, change: number, input = 100_000, fromCustody = true, fee?: number) => ({
+    txid: TX_A,
+    fee: fee ?? input - paid - change,
+    vin: [{ prevout: { scriptpubkey_address: fromCustody ? CUSTODY : "bc1qsomeoneelse", value: input } }],
+    vout: [
+      { scriptpubkey_address: DEST, value: paid },
+      ...(change ? [{ scriptpubkey_address: CUSTODY, value: change }] : []),
+    ],
+  });
+
+  it("accepts the legacy full-amount form (e.g. the first mainnet 5 000-sat payout)", () => {
+    expect(payoutSettles(tx(5_000, 94_859), CUSTODY, DEST, 5_000n, 10_000n)).toBe(true);
+  });
+  it("accepts the new sats − fee form", () => {
+    expect(payoutSettles(tx(4_859, 95_000), CUSTODY, DEST, 5_000n, 10_000n)).toBe(true);
+  });
+  it("rejects paid + fee < owed, fee over cap, zero paid, not custody-funded, fee mismatch", () => {
+    expect(payoutSettles(tx(4_800, 95_059), CUSTODY, DEST, 5_000n, 10_000n)).toBe(false);
+    expect(payoutSettles(tx(38_000, 50_000), CUSTODY, DEST, 50_000n, 10_000n)).toBe(false); // fee 12 000
+    expect(payoutSettles(tx(0, 95_000), CUSTODY, DEST, 5_000n, 10_000n)).toBe(false);
+    expect(payoutSettles(tx(5_000, 94_859, 100_000, false), CUSTODY, DEST, 5_000n, 10_000n)).toBe(false);
+    expect(payoutSettles(tx(4_859, 95_000, 100_000, true, 500), CUSTODY, DEST, 5_000n, 10_000n)).toBe(false);
+  });
+  it("esploraTxFee needs every prevout value", () => {
+    expect(esploraTxFee(tx(4_859, 95_000))).toBe(141n);
+    expect(esploraTxFee({ txid: TX_A, vin: [{ prevout: { scriptpubkey_address: CUSTODY } }], vout: [] })).toBeNull();
+  });
+});
+
+describe("processBtcWithdrawal — fee policy outcomes", () => {
+  it("fee_too_high persists nothing and is retried next cycle", async () => {
+    const state: BtcState = {};
+    let refuse = true;
+    const { deps, calls } = fakeDeps({
+      build: async () => {
+        calls.build += 1;
+        return refuse ? { kind: "fee_too_high", fee: 12_000n, maxFee: 10_000n } : { kind: "built", txid: TX_A, rawHex: "raw", inputs: ["i:0"] };
+      },
+    });
+    expect(await processBtcWithdrawal(W, state, deps)).toBe("fee_too_high");
+    expect(state).toEqual({});
+    expect(calls.saves).toBe(0);
+    expect(calls.broadcast).toEqual([]);
+    refuse = false;
+    expect(await processBtcWithdrawal(W, state, deps)).toBe("broadcast");
+  });
+
+  it("below_minimum_after_fee flags for review (live) and never broadcasts", async () => {
+    const state: BtcState = {};
+    const { deps, calls } = fakeDeps({ build: async () => ({ kind: "below_minimum_after_fee", fee: 700n, pay: 300n }) });
+    expect(await processBtcWithdrawal({ ...W, amountUnits: 1_000 }, state, deps)).toBe("below_minimum_after_fee");
+    expect(state["wd-1"].needsReview).toMatch(/minus 700 sats network fee/);
+    expect(calls.broadcast).toEqual([]);
+    expect(await processBtcWithdrawal({ ...W, amountUnits: 1_000 }, state, deps)).toBe("needs_review");
+  });
+
+  it("below_minimum_after_fee in dry-run persists nothing", async () => {
+    const state: BtcState = {};
+    const { deps, calls } = fakeDeps({ live: false, build: async () => ({ kind: "below_minimum_after_fee", fee: 700n, pay: 300n }) });
+    expect(await processBtcWithdrawal({ ...W, amountUnits: 1_000 }, state, deps)).toBe("below_minimum_after_fee");
+    expect(state).toEqual({});
+    expect(calls.saves).toBe(0);
+  });
+
+  it("the saved plan carries pay/fee and is re-sent byte-identical", async () => {
+    const state: BtcState = {};
+    const results: BroadcastResult[] = [{ kind: "unknown", reason: "timeout" }];
+    const { deps, calls } = fakeDeps({
+      build: async () => {
+        calls.build += 1;
+        return { kind: "built", txid: TX_A, rawHex: "raw-fee", inputs: ["i:0"], pay: "49859", fee: "141" };
+      },
+      broadcast: async (raw, txid) => {
+        calls.broadcast.push(raw);
+        return results.shift() ?? { kind: "accepted", txid };
+      },
+    });
+    expect(await processBtcWithdrawal(W, state, deps)).toBe("broadcast_unknown");
+    expect(state["wd-1"].planned).toMatchObject({ pay: "49859", fee: "141" });
+    expect(state["wd-1"].planned).not.toHaveProperty("kind");
+    expect(await processBtcWithdrawal(W, state, deps)).toBe("broadcast");
+    expect(calls.build).toBe(1);
+    expect(calls.broadcast).toEqual(["raw-fee", "raw-fee"]);
   });
 });
