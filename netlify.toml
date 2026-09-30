@@ -1,8 +1,17 @@
+# rougechain.io (and testnet.rougechain.io, via VITE_NETWORK_LOCK=testnet on that Netlify site)
+# serve the new frontend, apps/site-next — launched 2026-09-30. This root file is what those
+# Netlify sites use (it overrides the dashboard build settings). The previous site, apps/web,
+# stays in the repo; to roll back, restore the apps/web version of this file
+# (command "npm run build", publish "apps/web/dist") or publish the previous deploy in Netlify.
+#
+# SPA fallback and prerendered route shells: apps/site-next/public/_redirects (non-forced, so
+# real files — /og/*.png, /RougeChain-Whitepaper.pdf, /sw.js, … — are served first).
 [build]
-  # Monorepo: the site lives in apps/web. npm installs all workspaces from the root;
-  # `npm run build` runs apps/web's build (vite + OG images + prerender).
-  command = "npm run build"
-  publish = "apps/web/dist"
+  command = "npm run build -w @rougechain/site-next"
+  publish = "apps/site-next/dist"
+
+[build.environment]
+  NODE_VERSION = "20.19.0"
 
 [[headers]]
   for = "/assets/*"
@@ -19,7 +28,9 @@
   [headers.values]
     Content-Type = "application/javascript"
 
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
+# Never cache the service-worker script, so returning visitors of the old site immediately pick up
+# the retirement worker (it clears the old caches and unregisters itself).
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
