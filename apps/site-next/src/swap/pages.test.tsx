@@ -14,6 +14,7 @@ import { WalletProvider } from "../wallet/WalletProvider";
 import { Toaster } from "../wallet/toast";
 import { mockFetch, resetBrowserState, seedAppsWebLockedWallet, seedAppsWebWallet, type Handler } from "../wallet/test-utils";
 import { swapArea, isSwapPath } from "../features/swap";
+import i18n from "../i18n";
 
 const POOLS = [
   { pool_id: "XRGE-qUSDC", token_a: "XRGE", token_b: "qUSDC", reserve_a: 10_000, reserve_b: 20_000_000_000, total_lp_supply: 14_141_135, fee_rate: 0.003 },
@@ -309,5 +310,33 @@ describe("pool detail and buy", () => {
     expect(screen.getByText("0x147120faEC9277ec02d957584CFCD92B56A24317")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Buy on Aerodrome/ })).toHaveAttribute("href", expect.stringContaining("aerodrome.finance/swap"));
     expect(screen.getByRole("link", { name: /Bridge XRGE/ })).toHaveAttribute("href", "/bridge");
+  });
+});
+
+describe("language", () => {
+  it("renders the Swap page in Spanish and Japanese", async () => {
+    node(null);
+    await i18n.changeLanguage("es");
+    const { unmount } = renderAt("/swap");
+    expect(await screen.findByRole("heading", { name: "Swap", level: 2 })).toBeInTheDocument();
+    expect(screen.getByText("Un camino claro", { exact: false })).toBeInTheDocument();
+    expect(screen.getByLabelText("Pagas")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Invertir par de tokens" })).toBeInTheDocument();
+    expect(screen.getByText("Conecta una cartera")).toBeInTheDocument();
+    unmount();
+
+    await i18n.changeLanguage("ja");
+    renderAt("/swap");
+    expect(await screen.findByRole("heading", { name: "スワップ", level: 2 })).toBeInTheDocument();
+    expect(screen.getByLabelText("支払い")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "ウォレットを開く" })).toHaveAttribute("href", "/wallet");
+  });
+
+  it("formats validation errors in the active language", async () => {
+    node(null);
+    await i18n.changeLanguage("zh");
+    renderAt("/swap");
+    await userEvent.type(await screen.findByLabelText("您支付"), "1.5");
+    expect((await screen.findAllByText("XRGE 数量必须为整数")).length).toBeGreaterThan(0);
   });
 });

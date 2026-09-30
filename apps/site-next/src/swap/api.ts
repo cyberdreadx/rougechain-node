@@ -11,7 +11,7 @@ import { getCoreApiBaseUrl, getCoreApiHeaders } from "@rougechain/core/network";
 import { secureAddLiquidity, secureCreatePool, secureRemoveLiquidity, secureSwap } from "@rougechain/core/secure-api";
 import { canCollect, computeLpEarnings, type LpEarnings, type LpPoolEvent } from "@rougechain/core/lp-earnings";
 import type { PoolReserves } from "./amm";
-import { S } from "./strings";
+import i18n from "../i18n";
 
 export interface Pool extends PoolReserves {
   fee_rate: number;
@@ -79,7 +79,7 @@ const headers = () => getCoreApiHeaders();
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${base()}${path}`, { headers: headers() });
-  if (!res.ok) throw new Error(`${S.errors.node} (${res.status})`);
+  if (!res.ok) throw new Error(`${i18n.t("swap:errors.node")} (${res.status})`);
   return (await res.json()) as T;
 }
 
@@ -92,7 +92,7 @@ export async function fetchPools(): Promise<Pool[]> {
 export async function fetchPool(poolId: string): Promise<Pool | null> {
   const res = await fetch(`${base()}/pool/${encodeURIComponent(poolId)}`, { headers: headers() });
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`${S.errors.node} (${res.status})`);
+  if (!res.ok) throw new Error(`${i18n.t("swap:errors.node")} (${res.status})`);
   const data = (await res.json()) as { pool?: Pool | null };
   return data?.pool ?? null;
 }
@@ -137,7 +137,7 @@ export async function fetchQuote(tokenIn: string, tokenOut: string, amountInRaw:
     /* non-JSON error body */
   }
   if (!res.ok || !data.success || typeof data.amount_out !== "number") {
-    return { ok: false, error: data.error || S.swap.noRoute };
+    return { ok: false, error: data.error || i18n.t("swap:swap.noRoute") };
   }
   return {
     ok: true,
@@ -179,27 +179,27 @@ function unwrap<T = unknown>(r: CoreResult, fallback: string): T | undefined {
 
 export async function submitSwap(w: SigningWallet, tokenIn: string, tokenOut: string, amountInRaw: number, minOutRaw: number) {
   const r = await secureSwap(w.signingPublicKey, w.signingPrivateKey, tokenIn, tokenOut, amountInRaw, minOutRaw);
-  return unwrap(r, S.toasts.swapFailed);
+  return unwrap(r, i18n.t("swap:toasts.swapFailed"));
 }
 
 export async function submitCreatePool(w: SigningWallet, tokenA: string, tokenB: string, amountARaw: number, amountBRaw: number) {
   const r = await secureCreatePool(w.signingPublicKey, w.signingPrivateKey, tokenA, tokenB, amountARaw, amountBRaw);
-  return unwrap<{ pool_id?: string }>(r, S.toasts.createFailed);
+  return unwrap<{ pool_id?: string }>(r, i18n.t("swap:toasts.createFailed"));
 }
 
 export async function submitAddLiquidity(w: SigningWallet, poolId: string, amountARaw: number, amountBRaw: number) {
   const r = await secureAddLiquidity(w.signingPublicKey, w.signingPrivateKey, poolId, amountARaw, amountBRaw);
-  return unwrap(r, S.toasts.addFailed);
+  return unwrap(r, i18n.t("swap:toasts.addFailed"));
 }
 
 export async function submitRemoveLiquidity(w: SigningWallet, poolId: string, lpAmount: number) {
   const r = await secureRemoveLiquidity(w.signingPublicKey, w.signingPrivateKey, poolId, lpAmount);
-  return unwrap(r, S.toasts.removeFailed);
+  return unwrap(r, i18n.t("swap:toasts.removeFailed"));
 }
 
 /** Collect fees = remove exactly the LP tokens fees have added (apps/web handleCollectFees). */
 export async function submitCollectFees(w: SigningWallet, poolId: string, earned: LpEarnings) {
-  if (!canCollect(earned)) throw new Error(S.pools.nothingToCollect);
+  if (!canCollect(earned)) throw new Error(i18n.t("swap:pools.nothingToCollect"));
   const r = await secureRemoveLiquidity(w.signingPublicKey, w.signingPrivateKey, poolId, earned.lpToCollect);
-  return unwrap(r, S.toasts.collectFailed);
+  return unwrap(r, i18n.t("swap:toasts.collectFailed"));
 }

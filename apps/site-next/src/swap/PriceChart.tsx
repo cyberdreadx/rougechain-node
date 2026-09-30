@@ -4,6 +4,7 @@
  */
 import { useMemo } from "react";
 import { fmtPrice } from "./amm";
+import { fmtDateTime } from "../i18n/format";
 
 export interface PricePoint {
   timestamp: number;
@@ -57,7 +58,7 @@ export function PriceChart({ points, type, label }: { points: PricePoint[]; type
   const ticks = [hi, lo + range / 2, lo];
   const first = toMs(data[0].timestamp);
   const last = toMs(data[data.length - 1].timestamp);
-  const fmtT = (ms: number) => new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const fmtT = (ms: number) => fmtDateTime(ms, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   return (
     <svg className="dex-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label} preserveAspectRatio="none">
       {ticks.map((v, i) => (
