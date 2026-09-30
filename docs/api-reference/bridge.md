@@ -26,6 +26,11 @@ Returns bridge status, custody address, chain ID, and supported tokens.
 > **ETH** (→ qETH) and **USDC** (→ qUSDC) are claimable through this endpoint. `"BTC"` also
 > appears in `supportedTokens` when the separate Bitcoin bridge is configured. These endpoints are
 > the R1 production bridge; no V3 endpoint is live.
+>
+> When the Bitcoin bridge is configured the response also carries `btcCustodyAddress`,
+> `btcNetwork`, `btcMinWithdrawSats` (minimum qBTC withdrawal, default 2000) and
+> `btcMaxNetworkFeeSats` (largest Bitcoin network fee deducted from a payout, default 10000).
+> See [Bitcoin Bridge → Fees](../bridge/btc-bridge.md#fees-and-minimum).
 
 ### Claim Bridge Deposit
 

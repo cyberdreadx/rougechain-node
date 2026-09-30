@@ -42,12 +42,39 @@ payout on the Bitcoin chain before marking it fulfilled.
 ## Withdraw flow (qBTC → BTC)
 
 1. User burns qBTC via `POST /api/bridge/withdraw` with `tokenSymbol: "qBTC"`,
-   `evmAddress: <destination BTC address>`, `amountUnits: <sats>` (signed).
+   `evmAddress: <destination BTC address>`, `amountUnits: <sats>` (signed). Amounts below the
+   minimum (`btcMinWithdrawSats`, default 2 000 sats) are rejected before anything is burned.
 2. The withdrawal appears in `GET /api/bridge/btc/withdrawals`. The **BTC relayer**
-   (`scripts/btc-bridge-relayer.ts`) builds, signs, and broadcasts the Bitcoin payout from custody.
+   (`scripts/btc-bridge-relayer.ts`) builds, signs, and broadcasts the Bitcoin payout from custody,
+   sending the destination the burned amount **minus the payout's Bitcoin network fee**.
 3. Once confirmed, the relayer calls `DELETE /api/bridge/btc/withdrawals/:txId` `{ btcTxid }`. The
-   daemon verifies the payout on-chain (custody-funded, paid the recipient ≥ owed sats, enough
-   confirmations) before marking it fulfilled.
+   daemon verifies the payout on-chain (custody-funded, enough confirmations, and paid the
+   recipient the owed sats minus at most the capped network fee) before marking it fulfilled.
+
+## Fees and minimum
+
+**The withdrawer pays the Bitcoin network fee.** For a withdrawal of `N` sats the relayer builds a
+payout transaction and sends the destination `N − fee`, where `fee` is that transaction's real
+network fee (its virtual size × the current fee rate, rounded up). Custody's change is
+`inputs − N`, so custody's balance falls by exactly the `N` sats that were burned.
+
+Example: a 5 000-sat withdrawal at 1 sat/vB. A typical payout (one custody input, destination +
+change outputs) is 141 vB, so the fee is 141 sats and the destination receives **4 859 sats**.
+
+| Rule | Value |
+|---|---|
+| Minimum withdrawal | `btcMinWithdrawSats` from `GET /api/bridge/config` (default **2 000 sats**) |
+| Network-fee cap | `btcMaxNetworkFeeSats` (default **10 000 sats**). When fees are higher the payout waits until they drop — it is never paid with a larger fee. |
+| Tiny remainders | If `N − fee` would be at or below the Bitcoin dust limit (546 sats) at current fees, the payout is not sent and the withdrawal is held for manual review — never silently lost. |
+
+The site shows an **estimate** of the fee (mempool.space rate × ~141 vB) and "you receive ≈ amount −
+fee"; the exact fee depends on the transaction the relayer builds.
+
+**Node verification rule.** A payout is accepted when it is funded by custody, has the required
+confirmations, pays the destination a non-zero amount, and either pays the full owed amount
+(the pre-fee-policy form, still accepted) or `paid + fee ≥ owed` with `fee ≤` the cap. The node
+computes `fee` itself from the Bitcoin transaction data (sum of inputs minus sum of outputs,
+cross-checked against the provider's reported fee); it never takes the fee from the relayer.
 
 ## Operators
 
