@@ -7,12 +7,13 @@ import { useRougeAddress } from "../wallet/hooks";
 import { toast } from "../wallet/toast";
 import { formatRelativeTime } from "./codec";
 import { conversationTitle, isSelfChat, otherParticipant } from "./model";
-import { S } from "./strings";
+import { useTranslation } from "react-i18next";
 import { PeerAvatar, StackedAvatars } from "./ui";
 
 function NameWithAddress({ name, pubkey }: { name: string; pubkey?: string }) {
+  const { t } = useTranslation("messenger");
   const { display } = useRougeAddress(name ? null : pubkey);
-  const shown = name || display || (pubkey ? `${pubkey.slice(0, 12)}…` : S.common.unknown);
+  const shown = name || display || (pubkey ? `${pubkey.slice(0, 12)}…` : t("common.unknown"));
   return <span className="msg-row-name">{shown}</span>;
 }
 
@@ -34,6 +35,7 @@ export interface ConversationListProps {
 }
 
 export function ConversationList(p: ConversationListProps) {
+  const { t } = useTranslation("messenger");
   const [tab, setTab] = useState<"primary" | "requests">("primary");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const showRequests = tab === "requests" && p.requests.length > 0;
@@ -45,14 +47,14 @@ export function ConversationList(p: ConversationListProps) {
   };
 
   const remove = async (c: Conversation) => {
-    if (deletingId || !window.confirm(S.list.deleteConfirm)) return;
+    if (deletingId || !window.confirm(t("list.deleteConfirm"))) return;
     setDeletingId(c.id);
     try {
       await deleteConversation(p.identity, c.id);
       p.onDeleted(c.id);
-      toast.success(S.list.deleted);
+      toast.success(t("list.deleted"));
     } catch {
-      toast.error(S.list.deleteFailed);
+      toast.error(t("list.deleteFailed"));
     } finally {
       setDeletingId(null);
     }
@@ -65,14 +67,14 @@ export function ConversationList(p: ConversationListProps) {
           const on = k === "primary" ? !showRequests : showRequests;
           return (
             <button key={k} type="button" role="tab" aria-selected={on} className={on ? "active" : ""} onClick={() => setTab(k)}>
-              {k === "primary" ? S.requests.primary : `${S.requests.tab} (${p.requests.length})`}
+              {k === "primary" ? t("requests.primary") : t("requests.tabCount", { n: p.requests.length })}
             </button>
           );
         })}
       </div>
     ) : (
       <div className="msg-list-title">
-        <span className="eyebrow">{S.list.title}</span>
+        <span className="eyebrow">{t("list.title")}</span>
       </div>
     );
 
@@ -80,7 +82,7 @@ export function ConversationList(p: ConversationListProps) {
     return (
       <div className="msg-list">
         {tabs}
-        <p className="msg-hint">{S.requests.hint}</p>
+        <p className="msg-hint">{t("requests.hint")}</p>
         <ul className="msg-rows">
           {p.requests.map((c) => {
             const other = otherParticipant(c, p.myIds, p.identity.displayName);
@@ -95,17 +97,17 @@ export function ConversationList(p: ConversationListProps) {
                 )}
                 <button type="button" className="msg-row-main" onClick={() => p.onSelect(c)}>
                   <NameWithAddress name={title(c)} pubkey={pubkeyOf(c)} />
-                  <span className="msg-row-preview">{S.requests.wantsToMessage}</span>
+                  <span className="msg-row-preview">{t("requests.wantsToMessage")}</span>
                 </button>
                 <span className="msg-row-actions">
-                  <button type="button" className="button ghost icon msg-icon" aria-label={S.block.block} title={S.block.block} onClick={() => p.onBlockRequest(c)}>
+                  <button type="button" className="button ghost icon msg-icon" aria-label={t("block.block")} title={t("block.block")} onClick={() => p.onBlockRequest(c)}>
                     <Ban size={16} />
                   </button>
                   <button type="button" className="button outline small" onClick={() => p.onDeleteRequest(c)}>
-                    {S.requests.delete}
+                    {t("requests.delete")}
                   </button>
                   <button type="button" className="button small" onClick={() => p.onAcceptRequest(c)}>
-                    {S.requests.accept}
+                    {t("requests.accept")}
                   </button>
                 </span>
               </li>
@@ -118,16 +120,16 @@ export function ConversationList(p: ConversationListProps) {
   return (
     <div className="msg-list">
       {tabs}
-      {p.error && <p className="msg-hint error">{S.list.loadFailed}</p>}
+      {p.error && <p className="msg-hint error">{t("list.loadFailed")}</p>}
       {p.loading && p.conversations.length === 0 ? (
         <div className="msg-center">
-          <Loader2 className="spin" size={20} aria-label={S.common.loading} />
+          <Loader2 className="spin" size={20} aria-label={t("common.loading")} />
         </div>
       ) : p.conversations.length === 0 ? (
         <div className="msg-center msg-empty">
           <Lock size={36} aria-hidden="true" />
-          <strong>{S.list.emptyTitle}</strong>
-          <span>{S.list.emptyHint}</span>
+          <strong>{t("list.emptyTitle")}</strong>
+          <span>{t("list.emptyHint")}</span>
         </div>
       ) : (
         <ul className="msg-rows">
@@ -155,14 +157,14 @@ export function ConversationList(p: ConversationListProps) {
                   <span className="msg-row-text">
                     <span className="msg-row-top">
                       <NameWithAddress name={title(c)} pubkey={pubkeyOf(c)} />
-                      {p.muted.has(c.id) && <BellOff size={13} className="muted-icon" aria-label={S.mute.muted} />}
+                      {p.muted.has(c.id) && <BellOff size={13} className="muted-icon" aria-label={t("mute.muted")} />}
                       {unread > 0 && <span className="msg-badge">{unread > 9 ? "9+" : unread}</span>}
                       {c.lastMessageAt && <span className="msg-row-time">{formatRelativeTime(c.lastMessageAt)}</span>}
                     </span>
                     <span className="msg-row-preview">
                       {c.lastMessagePreview || (
                         <>
-                          <Lock size={11} aria-hidden="true" /> {S.list.e2e}
+                          <Lock size={11} aria-hidden="true" /> {t("list.e2e")}
                         </>
                       )}
                     </span>
@@ -171,8 +173,8 @@ export function ConversationList(p: ConversationListProps) {
                 <button
                   type="button"
                   className="button ghost icon msg-icon msg-row-delete"
-                  aria-label={S.list.delete}
-                  title={S.list.delete}
+                  aria-label={t("list.delete")}
+                  title={t("list.delete")}
                   disabled={deletingId === c.id}
                   onClick={() => void remove(c)}
                 >

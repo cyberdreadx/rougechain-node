@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { ImageIcon, Loader2, Search, X } from "lucide-react";
 import { classifyBody, fetchGifs, isAutoloadImage, isRenderableImageUrl, parseSticker, type GifItem } from "@rougechain/core/messenger-content";
-import { S, fmt } from "./strings";
+import { useTranslation } from "react-i18next";
 
 function safeHost(url: string): string {
   try {
@@ -18,6 +18,7 @@ function safeHost(url: string): string {
 }
 
 export function RichBody({ body, blurred, onImageClick }: { body: string | undefined; blurred?: boolean; onImageClick?: (url: string) => void }) {
+  const { t } = useTranslation("messenger");
   const kind = classifyBody(body);
   const [load, setLoad] = useState(false);
   if (!body) return null;
@@ -37,13 +38,13 @@ export function RichBody({ body, blurred, onImageClick }: { body: string | undef
           }}
         >
           <ImageIcon size={15} aria-hidden="true" />
-          <span>{fmt(S.media.loadImage, { host: safeHost(url) })}</span>
+          <span>{t("media.loadImage", { host: safeHost(url) })}</span>
         </button>
       );
     return (
       <img
         src={url}
-        alt={kind === "gif" ? "GIF" : S.media.image}
+        alt={kind === "gif" ? "GIF" : t("media.image")}
         loading="lazy"
         referrerPolicy="no-referrer"
         className={`msg-media ${blurred ? "blurred" : ""}`}
@@ -55,7 +56,7 @@ export function RichBody({ body, blurred, onImageClick }: { body: string | undef
     );
   }
   if (kind === "voice")
-    return <audio controls src={blurred ? undefined : body} className="msg-audio" aria-label={S.media.voice} onClick={(e) => e.stopPropagation()} />;
+    return <audio controls src={blurred ? undefined : body} className="msg-audio" aria-label={t("media.voice")} onClick={(e) => e.stopPropagation()} />;
   if (kind === "sticker") {
     const s = parseSticker(body);
     if (!s) return null;
@@ -74,10 +75,11 @@ export function RichBody({ body, blurred, onImageClick }: { body: string | undef
  * Selecting sends the original GIF URL as the message body. Only rendered when gifsEnabled().
  */
 export function GifPicker({ onSelect, onClose }: { onSelect: (url: string) => void; onClose: () => void }) {
+  const { t } = useTranslation("messenger");
   const [query, setQuery] = useState("");
   const [gifs, setGifs] = useState<GifItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<"gif.none" | "gif.unavailable" | null>(null);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -88,11 +90,11 @@ export function GifPicker({ onSelect, onClose }: { onSelect: (url: string) => vo
         try {
           const items = await fetchGifs(query, ctrl.signal);
           setGifs(items);
-          if (items.length === 0) setError(S.gif.none);
+          if (items.length === 0) setError("gif.none");
         } catch (e) {
           if ((e as Error).name === "AbortError") return;
           setGifs([]);
-          setError(S.gif.unavailable);
+          setError("gif.unavailable");
         } finally {
           if (!ctrl.signal.aborted) setLoading(false);
         }
@@ -109,8 +111,8 @@ export function GifPicker({ onSelect, onClose }: { onSelect: (url: string) => vo
     <div className="msg-gifs">
       <div className="msg-gifs-head">
         <Search size={15} aria-hidden="true" />
-        <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={S.gif.search} aria-label={S.gif.search} autoFocus />
-        <button type="button" className="button ghost icon msg-icon" aria-label={S.common.close} onClick={onClose}>
+        <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("gif.search")} aria-label={t("gif.search")} autoFocus />
+        <button type="button" className="button ghost icon msg-icon" aria-label={t("common.close")} onClick={onClose}>
           <X size={15} />
         </button>
       </div>
@@ -118,7 +120,7 @@ export function GifPicker({ onSelect, onClose }: { onSelect: (url: string) => vo
         {loading && gifs.length === 0 ? (
           <Loader2 className="spin" size={18} />
         ) : error && gifs.length === 0 ? (
-          <p className="muted">{error}</p>
+          <p className="muted">{t(error)}</p>
         ) : (
           gifs.map((g) => (
             <button key={g.id} type="button" onClick={() => onSelect(g.full || g.preview)}>
@@ -127,7 +129,7 @@ export function GifPicker({ onSelect, onClose }: { onSelect: (url: string) => vo
           ))
         )}
       </div>
-      <p className="msg-gifs-foot">{S.gif.powered}</p>
+      <p className="msg-gifs-foot">{t("gif.powered")}</p>
     </div>
   );
 }

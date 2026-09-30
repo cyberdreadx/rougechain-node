@@ -6,6 +6,8 @@
  */
 import { buildMsgEnvelope, buildRxEnvelope, parseEnvelope, parseTip, type EnvelopeData } from "@rougechain/core/messenger-envelope";
 import type { Message } from "@rougechain/core/pqc-messenger";
+import i18n from "../i18n";
+import { fmtDate, fmtTime } from "../i18n/format";
 
 // ── Payments ──────────────────────────────────────────────────────────────
 
@@ -181,25 +183,25 @@ export function previewText(m: Message | undefined): string {
   if (req) return `🧾 ${req.amount} ${req.token}`;
   const tip = parseTip(m.plaintext);
   if (tip) return `💸 ${tip.amount} ${tip.symbol}`;
-  if (m.mediaUrl) return m.messageType === "video" ? "🎬 Video" : "🖼️ Image";
+  if (m.mediaUrl) return m.messageType === "video" ? `🎬 ${i18n.t("messenger:media.video")}` : `🖼️ ${i18n.t("messenger:media.image")}`;
   const legacy = m.plaintext ? parseReplyMessage(m.plaintext) : null;
   return (legacy?.text ?? m.plaintext ?? "").slice(0, 80);
 }
 
 export function formatMessageTime(input: string | number | Date): string {
   const d = new Date(input);
-  return isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return isNaN(d.getTime()) ? "" : fmtTime(d);
 }
 
 export function formatRelativeTime(dateStr: string, now = Date.now()): string {
   const date = new Date(dateStr);
   if (isNaN(date.getTime())) return "";
   const min = Math.floor((now - date.getTime()) / 60000);
-  if (min < 1) return "now";
-  if (min < 60) return `${min}m`;
+  if (min < 1) return i18n.t("messenger:time.now");
+  if (min < 60) return i18n.t("messenger:time.minutes", { n: min });
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h`;
+  if (hr < 24) return i18n.t("messenger:time.hours", { n: hr });
   const day = Math.floor(hr / 24);
-  if (day < 7) return `${day}d`;
-  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  if (day < 7) return i18n.t("messenger:time.days", { n: day });
+  return fmtDate(date, { month: "short", day: "numeric" });
 }

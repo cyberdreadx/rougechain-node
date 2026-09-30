@@ -16,7 +16,7 @@ import { useWallet } from "../wallet/WalletProvider";
 import { displayAmount, parseAmount } from "../wallet/send";
 import { toast } from "../wallet/toast";
 import type { PaymentMessageData, RequestMessageData } from "./codec";
-import { S, fmt } from "./strings";
+import { useTranslation } from "react-i18next";
 import { Sheet } from "./ui";
 
 export function ChatPayment({
@@ -36,6 +36,7 @@ export function ChatPayment({
   /** Offer the "Request" mode (posts a request card instead of paying). */
   onRequest?: (data: RequestMessageData) => void;
 }) {
+  const { t } = useTranslation("messenger");
   const { wallet, network, isExtension } = useWallet();
   const [mode, setMode] = useState<"send" | "request">("send");
   const [token, setToken] = useState(initial?.token ?? "XRGE");
@@ -62,10 +63,10 @@ export function ChatPayment({
 
   const send = async () => {
     setError("");
-    if (!wallet) return setError(S.pay.noSigner);
+    if (!wallet) return setError(t("pay.noSigner"));
     const human = Number(amount);
     if (mode === "request") {
-      if (!Number.isFinite(human) || human <= 0) return setError("Enter a valid amount");
+      if (!Number.isFinite(human) || human <= 0) return setError(t("pay.invalidAmount"));
       onRequest?.({ type: "request", token, amount: human, memo: memo.trim() || undefined });
       onClose();
       return;
@@ -82,9 +83,9 @@ export function ChatPayment({
         WALLET_TRANSFER_FEE,
         token,
       );
-      if (!result.success) throw new Error(result.error || "Transfer failed");
+      if (!result.success) throw new Error(result.error || t("pay.transferFailed"));
       const data = (result.data ?? {}) as { txHash?: string; tx_hash?: string };
-      toast.success(fmt(S.pay.sent, { amount: check.human, symbol: token, name: recipientName }));
+      toast.success(t("pay.sent", { amount: check.human, symbol: token, name: recipientName }));
       onPaymentSent({
         type: "payment",
         token,
@@ -95,15 +96,15 @@ export function ChatPayment({
       });
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : S.pay.failed);
-      toast.error(S.pay.failed, { description: e instanceof Error ? e.message : undefined });
+      setError(e instanceof Error ? e.message : t("pay.failed"));
+      toast.error(t("pay.failed"), { description: e instanceof Error ? e.message : undefined });
     } finally {
       setSending(false);
     }
   };
 
   return (
-    <Sheet title={`${mode === "send" ? S.pay.sendTo : S.pay.requestFrom} ${recipientName}`} icon={<DollarSign size={16} className="accent" />} onClose={onClose}>
+    <Sheet title={mode === "send" ? t("pay.sendTo", { name: recipientName }) : t("pay.requestFrom", { name: recipientName })} icon={<DollarSign size={16} className="accent" />} onClose={onClose}>
       <form
         className="msg-pay"
         onSubmit={(e) => {
@@ -115,13 +116,13 @@ export function ChatPayment({
           <div className="msg-tabs" role="tablist">
             {(["send", "request"] as const).map((m) => (
               <button key={m} type="button" role="tab" aria-selected={mode === m} className={mode === m ? "active" : ""} onClick={() => setMode(m)}>
-                {m === "send" ? S.pay.modeSend : S.pay.modeRequest}
+                {m === "send" ? t("pay.modeSend") : t("pay.modeRequest")}
               </button>
             ))}
           </div>
         )}
         <label className="msg-pay-amount">
-          <span className="sr-only">{S.pay.amount}</span>
+          <span className="sr-only">{t("pay.amount")}</span>
           <input
             className="input"
             inputMode="decimal"
@@ -133,7 +134,7 @@ export function ChatPayment({
           <span className="mono">{token}</span>
         </label>
         {mode === "send" && (
-          <p className="msg-hint center">{q.isLoading ? S.common.loading : fmt(S.pay.balance, { amount: displayAmount(balanceRaw, token), symbol: token })}</p>
+          <p className="msg-hint center">{q.isLoading ? t("common.loading") : t("pay.balance", { amount: displayAmount(balanceRaw, token), symbol: token })}</p>
         )}
         <div className="msg-chips">
           {quick.map((v) => (
@@ -143,15 +144,15 @@ export function ChatPayment({
           ))}
         </div>
         {tokens.length > 1 && (
-          <div className="msg-chips" aria-label={S.pay.token}>
-            {tokens.map((t) => (
-              <button key={t} type="button" className={`msg-chip ${token === t ? "active" : ""}`} onClick={() => setToken(t)}>
-                {t}
+          <div className="msg-chips" aria-label={t("pay.token")}>
+            {tokens.map((tk) => (
+              <button key={tk} type="button" className={`msg-chip ${token === tk ? "active" : ""}`} onClick={() => setToken(tk)}>
+                {tk}
               </button>
             ))}
           </div>
         )}
-        <input className="input" value={memo} maxLength={140} placeholder={S.pay.memo} aria-label={S.pay.memo} onChange={(e) => setMemo(e.target.value)} />
+        <input className="input" value={memo} maxLength={140} placeholder={t("pay.memo")} aria-label={t("pay.memo")} onChange={(e) => setMemo(e.target.value)} />
         {error && (
           <p className="form-error" role="alert">
             {error}
@@ -160,25 +161,26 @@ export function ChatPayment({
         <button type="submit" className="button" disabled={sending || !amount || Number(amount) <= 0}>
           {sending ? <Loader2 size={16} className="spin" /> : <ArrowUp size={16} />}
           {sending
-            ? S.pay.sending
-            : fmt(mode === "send" ? S.pay.send : S.pay.request, { amount: amount || "", symbol: token }).replace(/\s+/g, " ")}
+            ? t("pay.sending")
+            : t(mode === "send" ? "pay.send" : "pay.request", { amount: amount || "", symbol: token }).replace(/\s+/g, " ")}
         </button>
-        {mode === "send" && <p className="msg-hint center">{fmt(isExtension ? S.pay.feeExtension : S.pay.fee, { fee: WALLET_TRANSFER_FEE })}</p>}
+        {mode === "send" && <p className="msg-hint center">{t(isExtension ? "pay.feeExtension" : "pay.fee", { fee: WALLET_TRANSFER_FEE })}</p>}
       </form>
     </Sheet>
   );
 }
 
 export function PaymentBubble({ payment, isOwn }: { payment: PaymentMessageData; isOwn: boolean }) {
+  const { t } = useTranslation("messenger");
   return (
     <div className={`msg-card pay ${isOwn ? "own" : ""}`}>
-      <span className="msg-card-label">{isOwn ? S.pay.youSent : S.pay.received}</span>
+      <span className="msg-card-label">{isOwn ? t("pay.youSent") : t("pay.received")}</span>
       <strong className="msg-card-amount">
         {payment.amount} <span>{payment.token}</span>
       </strong>
       {payment.memo && <em>“{payment.memo}”</em>}
       <span className="msg-card-foot">
-        <CheckCircle2 size={12} /> {payment.status === "confirmed" ? S.pay.confirmed : S.pay.sentLabel}
+        <CheckCircle2 size={12} /> {payment.status === "confirmed" ? t("pay.confirmed") : t("pay.sentLabel")}
         {payment.txHash && <code className="mono">{payment.txHash.slice(0, 12)}…</code>}
       </span>
     </div>
@@ -186,9 +188,10 @@ export function PaymentBubble({ payment, isOwn }: { payment: PaymentMessageData;
 }
 
 export function PaymentRequestBubble({ request, isOwn, onAccept }: { request: RequestMessageData; isOwn: boolean; onAccept?: () => void }) {
+  const { t } = useTranslation("messenger");
   return (
     <div className="msg-card req">
-      <span className="msg-card-label">{isOwn ? S.pay.youRequested : S.pay.requested}</span>
+      <span className="msg-card-label">{isOwn ? t("pay.youRequested") : t("pay.requested")}</span>
       <strong className="msg-card-amount">
         {request.amount} <span>{request.token}</span>
       </strong>
@@ -202,25 +205,26 @@ export function PaymentRequestBubble({ request, isOwn, onAccept }: { request: Re
             onAccept();
           }}
         >
-          {fmt(S.pay.payNow, { amount: request.amount, symbol: request.token })}
+          {t("pay.payNow", { amount: request.amount, symbol: request.token })}
         </button>
       )}
       <span className="msg-card-foot">
-        <DollarSign size={12} /> {S.pay.requestLabel}
+        <DollarSign size={12} /> {t("pay.requestLabel")}
       </span>
     </div>
   );
 }
 
 export function TipBubble({ amount, symbol, isOwn }: { amount: string; symbol: string; isOwn: boolean }) {
+  const { t } = useTranslation("messenger");
   return (
     <div className="msg-tip">
       <span aria-hidden="true">💸</span>
       <span>
         <strong>
-          {S.tip.label}: {amount} {symbol}
+          {t("tip.amount", { amount, symbol })}
         </strong>
-        <small>{isOwn ? S.tip.sent : S.tip.received}</small>
+        <small>{isOwn ? t("tip.sent") : t("tip.received")}</small>
       </span>
     </div>
   );

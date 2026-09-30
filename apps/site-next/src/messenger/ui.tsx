@@ -5,7 +5,7 @@ import { PROFILE_CHANGED_EVENT, isSafeAvatarUrl } from "@rougechain/core/avatar"
 import { peekWalletEntry, resolveWalletEntry } from "@rougechain/core/wallet-directory";
 import type { ParticipantLike } from "@rougechain/core/messenger-prefs";
 import { Avatar } from "../wallet/profile";
-import { S } from "./strings";
+import { useTranslation } from "react-i18next";
 
 /**
  * A wallet's directory avatar (image → initials), resolved from core's cached messenger directory
@@ -85,6 +85,7 @@ export function Sheet({
   footer?: ReactNode;
   wide?: boolean;
 }) {
+  const { t } = useTranslation("messenger");
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     ref.current?.focus();
@@ -108,7 +109,7 @@ export function Sheet({
         <div className="msg-sheet-head">
           {icon}
           <h2>{title}</h2>
-          <button type="button" className="button ghost icon" aria-label={S.common.close} onClick={onClose}>
+          <button type="button" className="button ghost icon" aria-label={t("common.close")} onClick={onClose}>
             <X size={16} />
           </button>
         </div>

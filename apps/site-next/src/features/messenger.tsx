@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { useTranslation } from "react-i18next";
 import { Route } from "react-router-dom";
 import type { FeatureArea } from "./types";
 
@@ -8,10 +9,11 @@ const MessengerPage = lazy(() => import("../messenger/MessengerPage"));
 const MailPage = lazy(() => import("../mail/MailPage"));
 
 function Loading() {
+  const { t } = useTranslation("common");
   return (
     <main id="main" className="app-main">
       <div className="container">
-        <p className="muted">Loading…</p>
+        <p className="muted">{t("loading")}</p>
       </div>
     </main>
   );

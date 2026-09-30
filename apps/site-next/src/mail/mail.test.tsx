@@ -10,6 +10,7 @@ import { sendMail, type MailItem } from "@rougechain/core/pqc-mail";
 import type { UnifiedWallet } from "@rougechain/core/unified-wallet";
 import { mockFetch, resetBrowserState, seedAppsWebWallet } from "../wallet/test-utils";
 import { FakeWebSocket, asPhone, dirEntry, makePeer, qwallaDecryptV2, renderRoute, signedBody, type Peer } from "../messenger/test-helpers";
+import i18n from "../i18n";
 import { MAIL_SETTINGS_KEY, buildThread, groupByThread, loadMailSettings, signatureBlock } from "./threads";
 
 const WAIT = { timeout: 30_000 };
@@ -196,5 +197,22 @@ describe("states", () => {
     renderRoute("/mail");
     expect(await screen.findByText("Inbox zero", {}, WAIT)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Compose" })).toBeVisible();
+  });
+});
+
+describe("language", () => {
+  it("renders the gate and the empty inbox in the selected language (ja / es)", async () => {
+    await i18n.changeLanguage("ja");
+    mockFetch();
+    const { unmount } = renderRoute("/mail");
+    expect(await screen.findByText("RougeChain Mail を使うには、ウォレットを作成または接続してください。")).toBeInTheDocument();
+    unmount();
+    await i18n.changeLanguage("es");
+    me = seedAppsWebWallet({ displayName: "Alice" });
+    mailNode({});
+    renderRoute("/mail");
+    expect(await screen.findByText("Bandeja vacía", {}, WAIT)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Redactar" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: /Recibidos/ })).toBeInTheDocument();
   });
 });
