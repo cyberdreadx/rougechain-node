@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "title": "RougeChain — Post-cuántica desde el génesis.",
+    "description": "RougeChain — una blockchain de capa 1 post-cuántica construida sobre criptografía de retículos estandarizada por el NIST.",
+    "explorerTitle": "RougeChain Explorer — bloques, transacciones, direcciones y tokens",
+    "explorerDescription": "Explora RougeChain, la capa 1 post-cuántica: bloques, transacciones, direcciones, tokens, NFT y contratos."
+  },
+  "language": {
+    "label": "Idioma"
+  },
+  "loading": "Cargando…",
+  "skipToContent": "Saltar al contenido",
+  "ui": {
+    "closeDialog": "Cerrar diálogo",
+    "designDemo": "DEMO DE DISEÑO"
+  }
+}

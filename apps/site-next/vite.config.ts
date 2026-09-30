@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv, type Plugin } from "vite";
+import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { applySiteHead, siteHead } from "./src/pages/site-head";
@@ -25,6 +26,13 @@ export default defineConfig(({ mode }) => ({
   // dedupe makes every import of these (including from packages/brand, ui, chain-readonly)
   // resolve from THIS app's dependencies, so there is exactly one React in the bundle.
   resolve: {
+    // react-i18next's use-sync-external-store shim → React 19's built-in hook (src/i18n/…-shim.ts).
+    alias: [
+      {
+        find: /^use-sync-external-store\/shim(\/index\.js)?$/,
+        replacement: fileURLToPath(new URL("./src/i18n/use-sync-external-store-shim.ts", import.meta.url)),
+      },
+    ],
     dedupe: [
       "react",
       "react-dom",

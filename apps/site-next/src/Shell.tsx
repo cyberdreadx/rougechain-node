@@ -10,6 +10,7 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 import { matchesPrefix } from "./explorer/routes";
 import { ArrowUpRight } from "lucide-react";
 import { TextLink, RougeAppShell, Status } from "@rougechain/ui";
+import { LanguageSwitcher } from "./i18n/LanguageSwitcher";
 export const DOCS = DOCS_URL;
 export const GITHUB = SOURCE_URL;
 export function MarketingHeader() {
@@ -161,6 +162,7 @@ export function Footer() {
         </div>
         <div className="footer-bottom">
           <span>© {new Date().getFullYear()} RougeChain</span>
+          <LanguageSwitcher />
           <span>Post-quantum from genesis.</span>
         </div>
       </div>

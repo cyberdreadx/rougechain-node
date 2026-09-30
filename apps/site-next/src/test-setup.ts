@@ -1,12 +1,16 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, configure } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
+import i18n, { initTestI18n } from "./i18n/test-i18n";
+// Every locale bundled synchronously; tests render in English unless they switch language.
+void initTestI18n("en");
 // Wallet tests run the real vault crypto (PBKDF2-SHA256, 600k iterations). On a loaded machine
 // that can take seconds, so waits for UI that follows it get a realistic ceiling. A real failure
 // still fails; it just waits longer before reporting.
 configure({ asyncUtilTimeout: 30_000 });
 afterEach(() => {
   cleanup();
+  if (i18n.language !== "en") void i18n.changeLanguage("en");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });

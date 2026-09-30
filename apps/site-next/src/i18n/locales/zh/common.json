@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "title": "RougeChain — 从创世起即后量子安全。",
+    "description": "RougeChain — 基于 NIST 标准化格密码构建的后量子 Layer 1 区块链。",
+    "explorerTitle": "RougeChain 浏览器 — 区块、交易、地址和代币",
+    "explorerDescription": "探索后量子 Layer 1 区块链 RougeChain：区块、交易、地址、代币、NFT 和合约。"
+  },
+  "language": {
+    "label": "语言"
+  },
+  "loading": "加载中…",
+  "skipToContent": "跳到主要内容",
+  "ui": {
+    "closeDialog": "关闭对话框",
+    "designDemo": "设计演示"
+  }
+}

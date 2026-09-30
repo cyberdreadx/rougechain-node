@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "title": "RougeChain — Post-quantum from genesis.",
+    "description": "RougeChain — a post-quantum Layer 1 blockchain built on NIST-standardized lattice cryptography.",
+    "explorerTitle": "RougeChain Explorer — blocks, transactions, addresses and tokens",
+    "explorerDescription": "Explore RougeChain, the post-quantum Layer 1: blocks, transactions, addresses, tokens, NFTs and contracts."
+  },
+  "language": {
+    "label": "Language"
+  },
+  "loading": "Loading…",
+  "skipToContent": "Skip to content",
+  "ui": {
+    "closeDialog": "Close dialog",
+    "designDemo": "DESIGN DEMO"
+  }
+}

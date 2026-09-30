@@ -14,6 +14,8 @@ import Overview from "./explorer/Overview";
 import { explorerRoutes, matchesPrefix } from "./explorer/routes";
 import { BridgeActivityPage } from "./explorer/Bridge";
 import { DOCS_URL, SOURCE_URL, appById } from "./ecosystem/apps";
+import { LanguageSwitcher } from "./i18n/LanguageSwitcher";
+import { UiText } from "./i18n/UiText";
 
 /**
  * explorer.rougechain.io — the Explorer as a standalone, read-only site (VITE_APP_MODE=explorer).
@@ -116,6 +118,7 @@ function ExplorerFooter() {
         </div>
         <div className="footer-bottom">
           <span>© {new Date().getFullYear()} RougeChain</span>
+          <LanguageSwitcher />
           <span>Post-quantum from genesis.</span>
         </div>
       </div>
@@ -152,12 +155,14 @@ export default function ExplorerSite() {
       <ChainProvider>
         <NetworkProvider>
           <BrowserRouter>
-            <a className="skip" href="#main">
-              Skip to content
-            </a>
-            <ExplorerHeader />
-            <ExplorerRoutes />
-            <ExplorerFooter />
+            <UiText>
+              <a className="skip" href="#main">
+                Skip to content
+              </a>
+              <ExplorerHeader />
+              <ExplorerRoutes />
+              <ExplorerFooter />
+            </UiText>
           </BrowserRouter>
         </NetworkProvider>
       </ChainProvider>

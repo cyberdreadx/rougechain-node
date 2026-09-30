@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "title": "RougeChain — ジェネシスからポスト量子。",
+    "description": "RougeChain — NIST標準化の格子暗号で構築されたポスト量子レイヤー1ブロックチェーン。",
+    "explorerTitle": "RougeChain エクスプローラー — ブロック、トランザクション、アドレス、トークン",
+    "explorerDescription": "ポスト量子レイヤー1、RougeChainを探索：ブロック、トランザクション、アドレス、トークン、NFT、コントラクト。"
+  },
+  "language": {
+    "label": "言語"
+  },
+  "loading": "読み込み中…",
+  "skipToContent": "コンテンツへスキップ",
+  "ui": {
+    "closeDialog": "ダイアログを閉じる",
+    "designDemo": "デザインデモ"
+  }
+}
