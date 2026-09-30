@@ -41,7 +41,7 @@ import {
   type WalletSnapshot,
 } from "./store";
 import { setOnboardingActive } from "./tour";
-import { useExtensionProvider, useRougeAddress } from "./hooks";
+import { useRougeAddress } from "./hooks";
 import { toast } from "./toast";
 
 export type OnboardingMode = "create" | "import";
@@ -108,44 +108,28 @@ function extensionWallet(result: { publicKey: string; displayName?: string; encr
 }
 
 /**
- * apps/web's App.tsx `WalletAutoRegister`: once per page load, (re-)register an unlocked local
- * wallet in the messenger directory, or auto-connect an injected extension when there is none.
+ * Once per page load, (re-)register an unlocked local wallet in the messenger directory (as
+ * apps/web's `WalletAutoRegister`). It deliberately does NOT auto-connect the browser extension:
+ * the extension's connect() opens an approval prompt on any site it hasn't approved yet, and a
+ * site must never ask for a wallet connection before the user clicks Connect. An extension wallet
+ * connected once is remembered by the site (saved like any wallet), so later visits need no prompt.
  */
 export function useWalletAutoRegister(enabled: boolean): void {
   const done = useRef(false);
-  const extension = useExtensionProvider();
   useEffect(() => {
     if (!enabled || done.current || isWalletLocked()) return;
-    const w = loadUnifiedWallet();
-    if (w?.signingPublicKey) {
-      done.current = true;
-      if (w.encryptionPublicKey && w.signingPrivateKey) {
-        registerWalletOnNode({
-          id: w.id,
-          displayName: w.displayName,
-          signingPublicKey: w.signingPublicKey,
-          signingPrivateKey: w.signingPrivateKey,
-          encryptionPublicKey: w.encryptionPublicKey,
-        }).catch(() => {});
-      }
-      return;
-    }
-    // No local wallet: wait for the extension (it may announce itself after this first run).
-    const provider = extension;
-    if (!provider) return;
     done.current = true;
-    (async () => {
-      try {
-        const result = await provider.connect();
-        if (result?.publicKey) {
-          saveUnifiedWallet(extensionWallet(result));
-          notifyWalletChanged();
-        }
-      } catch {
-        /* extension auto-connect failed silently (as in apps/web) */
-      }
-    })();
-  }, [enabled, extension]);
+    const w = loadUnifiedWallet();
+    if (w?.signingPublicKey && w.encryptionPublicKey && w.signingPrivateKey) {
+      registerWalletOnNode({
+        id: w.id,
+        displayName: w.displayName,
+        signingPublicKey: w.signingPublicKey,
+        signingPrivateKey: w.signingPrivateKey,
+        encryptionPublicKey: w.encryptionPublicKey,
+      }).catch(() => {});
+    }
+  }, [enabled]);
 }
 
 export function WalletProvider({ children, autoRegister = true }: { children: ReactNode; autoRegister?: boolean }) {

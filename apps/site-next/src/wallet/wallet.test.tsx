@@ -169,7 +169,7 @@ it("detects an extension that loads after the page has rendered", async () => {
   delete (window as { rougechain?: unknown }).rougechain;
 });
 
-it("auto-connects a late-loading extension when there is no local wallet", async () => {
+it("never prompts the extension on page load — it connects only when the user clicks Connect", async () => {
   delete (window as { rougechain?: unknown }).rougechain;
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
@@ -180,8 +180,14 @@ it("auto-connects a late-loading extension when there is no local wallet", async
       </WalletProvider>
     </QueryClientProvider>,
   );
-  expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
   const connect = injectExtensionLater();
+  // Loaded, extension present, no local wallet: no approval prompt is opened.
+  await new Promise((r) => setTimeout(r, 50));
+  expect(connect).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Connect Wallet" })).toBeInTheDocument();
+  // The user chooses the extension: now (and only now) it connects.
+  await userEvent.click(screen.getByRole("button", { name: "Connect Wallet" }));
+  await userEvent.click(screen.getByRole("button", { name: /RougeChain Wallet/ }));
   const address = await pubkeyToAddress("ab".repeat(1952));
   expect(await screen.findByRole("button", { name: `Wallet ${address}` })).toBeInTheDocument();
   expect(connect).toHaveBeenCalledTimes(1);
