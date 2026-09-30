@@ -4,7 +4,7 @@ import { formatIdentity } from "@rougechain/core/address";
 import type { WalletBalance } from "@rougechain/core/pqc-wallet";
 import { getNetworkLabel } from "@rougechain/core/network";
 import { useWallet } from "./WalletProvider";
-import { BASE_TRANSFER_FEE, displayAmount, maxFractionDigits, parseAmount, parseRecipient, resolveRecipient, submitTransfer } from "./send";
+import { WALLET_TRANSFER_FEE, displayAmount, maxFractionDigits, parseAmount, parseRecipient, resolveRecipient, submitTransfer } from "./send";
 import { toast } from "./toast";
 
 type Step = "form" | "review" | "sending";
@@ -140,7 +140,7 @@ export function SendDialog({
           </label>
           {amountCheck && !amountCheck.valid && <p className="form-hint error">{amountCheck.error}</p>}
           <p className="form-hint">
-            Network fee {BASE_TRANSFER_FEE} XRGE · {getNetworkLabel()}
+            Network fee {WALLET_TRANSFER_FEE} XRGE · {getNetworkLabel()}
           </p>
           {error && (
             <p className="form-error" role="alert">
@@ -169,7 +169,7 @@ export function SendDialog({
               </div>
               <div>
                 <dt>Fee</dt>
-                <dd className="mono">{BASE_TRANSFER_FEE} XRGE</dd>
+                <dd className="mono">{WALLET_TRANSFER_FEE} XRGE</dd>
               </div>
               <div>
                 <dt>Network</dt>
@@ -203,7 +203,7 @@ export function SendDialog({
 
 /** Max amount the form offers: the whole balance, minus the fee for XRGE. */
 function maxSendable(raw: number, symbol: string): string {
-  if (symbol === "XRGE") return String(Math.max(0, Math.floor((raw - BASE_TRANSFER_FEE) * 1e8) / 1e8));
+  if (symbol === "XRGE") return String(Math.max(0, Math.floor(raw - WALLET_TRANSFER_FEE))); // whole XRGE, after the fee
   const d = maxFractionDigits(symbol);
   return d > 0 ? String(raw / 10 ** d) : String(raw);
 }

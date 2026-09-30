@@ -202,7 +202,7 @@ describe("wallet page", () => {
 
     const review = screen.getByRole("dialog", { name: "Review and sign" });
     expect(within(review).getByText("0.5 qBTC")).toBeInTheDocument();
-    expect(within(review).getByText("0.1 XRGE")).toBeInTheDocument();
+    expect(within(review).getByText("1 XRGE")).toBeInTheDocument();
     await user.click(
       within(review).getByRole("button", { name: "Sign and send" }),
     );
@@ -215,7 +215,7 @@ describe("wallet page", () => {
       to: OTHER,
       amount: 50_000_000,
       token: "qBTC",
-      fee: 0.1,
+      fee: 1,
     });
     expect(verifyTransaction(signed)).toBe(true);
   });

@@ -38,7 +38,9 @@ describe("amount + decimals", () => {
   it("converts human amounts to raw units with core's token decimals", () => {
     expect(parseAmount("1.5", "qBTC", balances)).toEqual({ valid: true, human: 1.5, raw: 150_000_000 });
     expect(parseAmount("0.000001", "qUSDC", balances)).toEqual({ valid: true, human: 0.000001, raw: 1 });
-    expect(parseAmount("12.5", "XRGE", balances)).toEqual({ valid: true, human: 12.5, raw: 12.5 });
+    expect(parseAmount("12", "XRGE", balances)).toEqual({ valid: true, human: 12, raw: 12 });
+    // The node stores transfer amounts as whole numbers (v2 binding `amount as u64`): no fractional XRGE.
+    expect(parseAmount("12.5", "XRGE", balances)).toMatchObject({ valid: false, error: "XRGE amounts must be whole numbers" });
     expect(parseAmount("42", "MEME", balances)).toEqual({ valid: true, human: 42, raw: 42 });
   });
   it("uses the daemon's decimals when known", () => {
@@ -54,11 +56,12 @@ describe("amount + decimals", () => {
     for (const junk of ["", "abc", "1e3", "-1", "1.2.3", "0x10"]) expect(parseAmount(junk, "XRGE", balances).valid).toBe(false);
     expect(parseAmount("0", "XRGE", balances)).toMatchObject({ valid: false, error: "Amount must be greater than zero" });
   });
-  it("checks the balance in raw units and reserves the 0.1 XRGE fee", () => {
+  it("checks the balance in raw units and reserves the 1 XRGE wallet-transfer fee", () => {
     expect(parseAmount("1.51", "qBTC", balances)).toMatchObject({ valid: false, error: expect.stringContaining("Insufficient qBTC") });
     expect(parseAmount("1000", "XRGE", balances)).toMatchObject({ valid: false, error: expect.stringContaining("fee") });
-    expect(parseAmount("999.9", "XRGE", balances).valid).toBe(true);
-    expect(parseAmount("1", "qUSDC", [bal("XRGE", 0.05), bal("qUSDC", 5_000_000)])).toMatchObject({ valid: false, error: expect.stringContaining("fee") });
+    expect(parseAmount("999", "XRGE", balances).valid).toBe(true);
+    expect(parseAmount("1", "qUSDC", [bal("XRGE", 0.5), bal("qUSDC", 5_000_000)])).toMatchObject({ valid: false, error: "Insufficient XRGE for the fee. Sending needs 1 XRGE" });
+    expect(parseAmount("1", "qUSDC", [bal("XRGE", 1), bal("qUSDC", 5_000_000)]).valid).toBe(true);
   });
 });
 
@@ -77,7 +80,7 @@ describe("submit", () => {
     expect(post.url).toBe("http://localhost:5101/api/v2/transfer"); // core network base (jsdom = localhost)
     expect(post.init?.method).toBe("POST");
     const signed = JSON.parse(String(post.init?.body)) as SignedTransaction;
-    expect(signed.payload).toMatchObject({ type: "transfer", from: w.signingPublicKey, to: HEX_KEY, amount: 150_000_000, fee: 0.1, token: "qBTC" });
+    expect(signed.payload).toMatchObject({ type: "transfer", from: w.signingPublicKey, to: HEX_KEY, amount: 150_000_000, fee: 1, token: "qBTC" });
     expect(verifyTransaction(signed)).toBe(true);
     expect(String(post.init?.body)).not.toContain(w.signingPrivateKey);
   });

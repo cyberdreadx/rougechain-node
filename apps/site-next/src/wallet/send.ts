@@ -5,15 +5,16 @@
  */
 import { isRougeAddress } from "@rougechain/core/address";
 import { getCoreApiBaseUrl, getCoreApiHeaders } from "@rougechain/core/network";
-import { BASE_TRANSFER_FEE, type WalletBalance } from "@rougechain/core/pqc-wallet";
+import { WALLET_TRANSFER_FEE, type WalletBalance } from "@rougechain/core/pqc-wallet";
 import { secureTransfer } from "@rougechain/core/secure-api";
 import { formatTokenAmount, humanToRaw, l1TokenDecimals, rawToHuman } from "@rougechain/core/token-decimals";
 
 // ML-DSA-65 public key = 1952 bytes = 3904 hex chars (small tolerance, as apps/web).
 const ML_DSA65_PUBKEY_HEX_LEN = 3904;
 const MIN_ADDRESS_LEN = ML_DSA65_PUBKEY_HEX_LEN - 100;
-/** XRGE is fractional on-chain (the fee is 0.1 XRGE) but has no daemon decimals; cap input precision. */
-const XRGE_MAX_FRACTION_DIGITS = 8;
+/** The node stores a wallet transfer amount as a whole number (v2_binding: `amount as u64`), so XRGE
+ *  transfers are whole XRGE: a fraction would silently be dropped on-chain. */
+const XRGE_MAX_FRACTION_DIGITS = 0;
 
 export type RecipientCheck = { valid: true; address: string; isRouge: boolean } | { valid: false; error: string };
 
@@ -56,8 +57,8 @@ export function parseAmount(input: string, symbol: string, balances: WalletBalan
   if (raw > balanceRaw)
     return { valid: false, error: `Insufficient ${symbol} balance. You have ${formatTokenAmount(balanceRaw, symbol)} ${symbol}` };
   const xrge = balances.find((b) => b.symbol === "XRGE")?.balance ?? 0;
-  const xrgeNeeded = symbol === "XRGE" ? raw + BASE_TRANSFER_FEE : BASE_TRANSFER_FEE;
-  if (xrgeNeeded > xrge) return { valid: false, error: `Insufficient XRGE for the fee. Sending needs ${BASE_TRANSFER_FEE} XRGE` };
+  const xrgeNeeded = symbol === "XRGE" ? raw + WALLET_TRANSFER_FEE : WALLET_TRANSFER_FEE;
+  if (xrgeNeeded > xrge) return { valid: false, error: `Insufficient XRGE for the fee. Sending needs ${WALLET_TRANSFER_FEE} XRGE` };
   return { valid: true, human, raw };
 }
 
@@ -89,7 +90,7 @@ export async function submitTransfer(req: SendRequest): Promise<void> {
     req.wallet.signingPrivateKey,
     req.recipientPublicKey,
     req.raw,
-    BASE_TRANSFER_FEE,
+    WALLET_TRANSFER_FEE,
     req.symbol,
   );
   if (!result.success) throw new Error(result.error || "Transfer failed");
@@ -99,7 +100,7 @@ export function displayAmount(raw: number, symbol: string): string {
   return l1TokenDecimals(symbol) > 0 ? formatTokenAmount(raw, symbol) : raw.toLocaleString(undefined, { maximumFractionDigits: 8 });
 }
 
-export { rawToHuman, BASE_TRANSFER_FEE };
+export { rawToHuman, WALLET_TRANSFER_FEE };
 
 /**
  * Testnet faucets — the same unsigned endpoints apps/web's Wallet page calls
