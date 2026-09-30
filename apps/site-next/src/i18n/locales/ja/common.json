@@ -13,5 +13,410 @@
   "ui": {
     "closeDialog": "ダイアログを閉じる",
     "designDemo": "デザインデモ"
+  },
+  "header": {
+    "mainNav": "メインナビゲーション",
+    "docs": "ドキュメント",
+    "localNav": "{{name}}のナビゲーション",
+    "workspace": "ワークスペース"
+  },
+  "sections": {
+    "technology": "テクノロジー",
+    "build": "開発",
+    "security": "セキュリティ",
+    "ecosystem": "エコシステム",
+    "regenerate": "Regenerate",
+    "explore": "探索"
+  },
+  "footer": {
+    "tagline": "次の時代のために。",
+    "docs": "ドキュメント",
+    "community": "コミュニティ",
+    "designSystem": "デザインシステム",
+    "architecture": "アーキテクチャ",
+    "motto": "ジェネシスからポスト量子。"
+  },
+  "explorerSite": {
+    "wordmark": "RougeChain エクスプローラー",
+    "tagline": "RougeChain のすべてのブロック、トランザクション、アドレス。"
+  },
+  "notFound": {
+    "title": "ページが見つかりません。",
+    "body": "「アプリ」から利用可能なページをご覧ください。",
+    "home": "RougeChain に戻る",
+    "explorerBody": "ブロック、トランザクション、アドレス、トークン、コントラクトを検索してください。",
+    "explorerHome": "エクスプローラーのホーム"
+  },
+  "projectNav": {
+    "label": "プロジェクトナビゲーション",
+    "title": "RougeChain を探索",
+    "sections": "プロジェクトのセクション",
+    "home": "RougeChain ホーム",
+    "walletConnected": "ウォレット接続済み · {{address}}",
+    "walletDisconnected": "ウォレット未接続 · ヘッダーの「ウォレットを接続」を使用してください。"
+  },
+  "switcher": {
+    "apps": "アプリ",
+    "dialog": "RougeChain アプリ",
+    "home": "RougeChain ホーム",
+    "closeLabel": "アプリを閉じる",
+    "close": "閉じる",
+    "localNav": "{{name}}のモバイルナビゲーション",
+    "global": "すべてのアプリ",
+    "comingSoon": "近日公開",
+    "extensionLabel": "RougeChain ウォレット拡張機能 ↗",
+    "workspace": "ワークスペース全体"
+  },
+  "appStatus": {
+    "live": "公開中",
+    "preview": "プレビュー",
+    "demo": "デモ",
+    "external": "外部",
+    "future": "予定"
+  },
+  "appGroups": {
+    "Hold": "保管",
+    "Trade": "取引",
+    "Play": "遊ぶ",
+    "Talk": "話す",
+    "Explore": "探索",
+    "Build": "開発",
+    "Community": "コミュニティ"
+  },
+  "appNav": {
+    "wallet": "ウォレット",
+    "settings": "設定",
+    "swap": "スワップ",
+    "pools": "プール",
+    "positions": "ポジション",
+    "overview": "概要",
+    "blocks": "ブロック",
+    "transactions": "トランザクション",
+    "tokens": "トークン",
+    "nfts": "NFT",
+    "contracts": "コントラクト",
+    "bridgeActivity": "ブリッジ",
+    "validators": "バリデーター",
+    "genesis": "ジェネシスプログラム",
+    "status": "ステータス"
+  },
+  "apps": {
+    "qwalla": {
+      "name": "Qwalla モバイルウォレット",
+      "description": "Qwalla のエコシステムを探索しましょう。"
+    },
+    "wallet": {
+      "name": "Web ウォレット",
+      "description": "あなたの資産を、未来に向けて安全に。"
+    },
+    "wallet-extension": {
+      "name": "ウォレット拡張機能",
+      "description": "RougeChain ウォレットのブラウザ拡張機能です。"
+    },
+    "rougee": {
+      "name": "Rougee",
+      "description": "Rougee をチェックしましょう。"
+    },
+    "qwave": {
+      "name": "qWave",
+      "description": "qWave をチェックしましょう。"
+    },
+    "arcade": {
+      "name": "アーケード",
+      "description": "ゲームは近日公開予定です。"
+    },
+    "messenger": {
+      "name": "メッセンジャー",
+      "description": "ポスト量子暗号で守られたチャット、グループ、送金。"
+    },
+    "mail": {
+      "name": "メール",
+      "description": "@rouge.quant と @qwalla.mail の暗号化メール。"
+    },
+    "swap": {
+      "name": "スワップ",
+      "description": "資産を交換し、可能性を広げましょう。"
+    },
+    "bridge": {
+      "name": "ブリッジ",
+      "description": "ネットワークをつなぐ架け橋。"
+    },
+    "liquidity": {
+      "name": "流動性",
+      "description": "流動性を提供してスワップ手数料を獲得しましょう。"
+    },
+    "explorer": {
+      "name": "エクスプローラー",
+      "description": "ネットワークを詳しく。"
+    },
+    "validators": {
+      "name": "バリデーター",
+      "description": "ネットワークを守る参加者たち。"
+    },
+    "network": {
+      "name": "ネットワークステータス",
+      "description": "公開 API の読み取り専用テレメトリー。"
+    },
+    "build": {
+      "name": "開発者ポータル",
+      "description": "RougeChain で開発するためのツール。"
+    },
+    "docs": {
+      "name": "ドキュメント",
+      "description": "最新のドキュメントをお読みください。"
+    },
+    "sdk": {
+      "name": "SDK",
+      "description": "開発者ツールのプレビュー。"
+    },
+    "mcp": {
+      "name": "MCP / エージェント",
+      "description": "AI エージェントがチェーンを読み取り、利用できます。"
+    },
+    "node": {
+      "name": "ノードを運用",
+      "description": "コマンド、前提条件、稼働中のノード。"
+    },
+    "regenerate": {
+      "name": "Regenerate",
+      "description": "コミュニティのミッションをご覧ください。"
+    },
+    "community": {
+      "name": "RougeChain コミュニティ",
+      "description": "コミュニティとつながりましょう。"
+    }
+  },
+  "network": {
+    "names": {
+      "mainnet": "メインネット",
+      "testnet": "テストネット"
+    },
+    "state": {
+      "live": "ライブ API",
+      "demo": "デモ",
+      "loading": "読み込み中",
+      "stale": "古いデータ",
+      "unavailable": "利用不可"
+    },
+    "dataState": {
+      "live": "ライブ API データ",
+      "demo": "デモ · 保存済みスナップショット",
+      "stale": "古いデータ · 最後に成功した読み取り",
+      "unavailable": "利用不可",
+      "loading": "ネットワークデータを読み込み中"
+    },
+    "source": {
+      "live": "ライブ API",
+      "demo": "スナップショット",
+      "unavailable": "利用不可",
+      "loading": "読み込み中",
+      "stale": "古いデータ"
+    },
+    "controls": {
+      "mode": "ネットワークデータのモード",
+      "live": "ライブデータ",
+      "snapshot": "スナップショット",
+      "refresh": "ネットワークデータを更新"
+    },
+    "note": {
+      "unavailable": "{{network}}のデータを取得できません。",
+      "captured": "{{date}} に取得。",
+      "lastRead": "最終読み取り：{{date}}。",
+      "liveness": "API に到達できても、チェーンが稼働中とは限りません。"
+    },
+    "metrics": {
+      "height": "ブロック高",
+      "validators": "報告されたバリデーター",
+      "peers": "接続中のピア",
+      "source": "データソース"
+    }
+  },
+  "workspacePage": {
+    "eyebrow": "あなたのエコシステム / ワークスペース",
+    "title": "可能性のための場所を。",
+    "lead": "アプリを開いて、ネットワークに焦点を。",
+    "unknownPreview": "そのプレビューは利用できません。下からアプリを選んでください。"
+  },
+  "explore": {
+    "eyebrow": "08 / RougeChain を探索",
+    "title": "RougeChain を探索",
+    "subtitle": "ネットワーク、ツール、そして可能性を、あなた好みに。",
+    "openWorkspace": "ワークスペース全体を開く",
+    "paneNote": "まずは 3 つのペインから。ランチャーからさらに開けます。"
+  },
+  "workspace": {
+    "views": {
+      "Network": "ネットワーク",
+      "Explorer": "エクスプローラー",
+      "Ecosystem": "エコシステム",
+      "Wallet": "ウォレット",
+      "Swap": "スワップ",
+      "Bridge": "ブリッジ",
+      "Messenger": "メッセンジャー",
+      "Mail": "メール",
+      "Validators": "バリデーター",
+      "Build": "開発",
+      "Security": "セキュリティ"
+    },
+    "groups": {
+      "Network": "ネットワーク",
+      "Use": "使う",
+      "Trade": "取引",
+      "Build": "開発"
+    },
+    "state": {
+      "notOpened": "未表示",
+      "hidden": "非表示",
+      "focused": "選択中",
+      "open": "表示中"
+    },
+    "launcher": "ワークスペースランチャー",
+    "developer": "開発者",
+    "openView": "{{name}}を開く",
+    "hideView": "{{name}}を隠す",
+    "panels": "ワークスペースのパネル",
+    "reset": "ワークスペースをリセット",
+    "compactNote": "コンパクトワークスペース · パネルの状態はこの訪問中のみ保持されます。",
+    "unavailable": "ワークスペースを利用できません。下のコンパクトワークスペースをご利用ください。",
+    "toolbar": "開く · 配置 · タブ · フォーカス · 隠す · 復元",
+    "interactive": "インタラクティブ表示",
+    "simple": "シンプル表示"
+  },
+  "dock": {
+    "menu": "パネルメニュー",
+    "menuFor": "{{name}}パネルのメニュー",
+    "panel": "{{name}}パネル",
+    "openApp": "アプリ全体を開く",
+    "restoreLayout": "レイアウトを戻す",
+    "maximize": "最大化",
+    "newColumn": "新しい列に移動",
+    "dock": "ドッキング",
+    "float": "フローティング",
+    "hide": "隠す",
+    "close": "閉じる",
+    "restoreView": "{{name}}を元に戻す",
+    "maximizeView": "{{name}}を最大化",
+    "closeView": "{{name}}を閉じる",
+    "dockToMaximize": "最大化するにはこのパネルをドッキングしてください",
+    "maximizePanel": "パネルを最大化",
+    "hideTitle": "パネルを隠す（ランチャーから復元できます）",
+    "watermark": "ランチャーでアプリを選ぶと、ワークスペースが復元されます。",
+    "status": {
+      "mainnet": "メインネット",
+      "open_other": "{{count}} 件表示中",
+      "saveOn": "レイアウト自動保存オン",
+      "saveOff": "レイアウトを保存できません"
+    },
+    "overview": "全体表示",
+    "region": "RougeChain インタラクティブワークスペース"
+  },
+  "block": {
+    "title": "ブロック #{{height}}",
+    "liveAtSelection": "選択時のライブ API データ",
+    "dataAtSelection": "選択時のデータ（{{source}}）",
+    "hash": "ハッシュ",
+    "transactions": "トランザクション",
+    "timestamp": "タイムスタンプ",
+    "note": "現在のブロック一覧から取得。詳細エンドポイントへのリクエストはしていません。",
+    "openExplorer": "エクスプローラー全体を開く"
+  },
+  "views": {
+    "network": {
+      "kicker": "ROUGECHAIN メインネット",
+      "connected": "API 接続済み",
+      "latest": "最新の報告ブロック",
+      "validators": "バリデーター",
+      "noteDemo": "保存済みの公開 API スナップショットです。",
+      "noteLive": "公開ネットワークデータの読み取り専用ビューです。",
+      "noteStale": "最後に取得できたデータです。更新できません。",
+      "noteLoading": "公開ネットワークデータをリクエスト中です。"
+    },
+    "explorer": {
+      "kicker": "最新ブロック",
+      "open": "エクスプローラーを開く",
+      "txs_other": "{{count}} 件の tx",
+      "loading": "ネットワークデータを読み込み中…",
+      "publicData": "公開 GET データ",
+      "note": "ウォレットを接続せずにネットワークを確認できます。"
+    },
+    "ecosystem": {
+      "intro": "あなたのエコシステムを、ひとつのワークスペースに。",
+      "openPreview": "プレビューを開く",
+      "architecture": "エコシステムのアーキテクチャを見る"
+    },
+    "build": {
+      "intro": "新しい基盤の上で開発を。",
+      "sdk": "SDK とドキュメント",
+      "wasm": "WASM コントラクト",
+      "agents": "MCP / エージェントとノード運用",
+      "source": "ソースコード"
+    },
+    "security": {
+      "intro": "ポスト量子暗号プリミティブ。",
+      "signatures": "ポスト量子署名",
+      "kem": "ポスト量子鍵カプセル化",
+      "aead": "認証付き暗号",
+      "hashing": "ハッシュ / 証明コミットメント",
+      "stack": "暗号技術スタック"
+    }
+  },
+  "previews": {
+    "account": "アカウント：{{address}}",
+    "noWallet": "ウォレットが接続されていません。",
+    "compose": "作成できません",
+    "developer": "SDK · WASM · MCP / エージェント · ノード運用",
+    "wallet": {
+      "connected": "ウォレット接続済み",
+      "locked": "ウォレットはロック中",
+      "none": "ウォレットなし",
+      "title": "あなたの資産",
+      "unlock": "残高を見るにはウォレットのロックを解除してください。",
+      "open": "ウォレットを開く",
+      "note": "鍵はこのブラウザ内に保管され、署名はウォレットページで行います。"
+    },
+    "swap": {
+      "status": "シミュレーション見積もり",
+      "title": "資産をスワップ",
+      "connect": "ヘッダーでウォレットを接続すると、あなたの ID を使えます。",
+      "pay": "支払い",
+      "receive": "受け取り",
+      "unavailable": "スワップできません",
+      "note": "レートは参考値です。見積もりや取引のサービスはありません。",
+      "open": "スワップ全体を開く"
+    },
+    "bridge": {
+      "status": "ブリッジのプレビュー",
+      "reverse": "方向を反転",
+      "assets": "資産",
+      "activity": "ブリッジのアクティビティ",
+      "unavailable": "ブリッジは利用できません",
+      "note": "承認、入金、出金は行いません。"
+    },
+    "messenger": {
+      "status": "メッセンジャーのプレビュー",
+      "conversations": "会話",
+      "contacts": "連絡先",
+      "noContacts": "連絡先はまだありません",
+      "yours": "あなたの会話",
+      "connected": "ウォレット接続済み。このサイトではまだメッセージを利用できません。",
+      "disconnected": "アカウントが接続されていません。ここにメッセージが表示されます。",
+      "note": "メッセージの送信や暗号化は行いません。"
+    },
+    "mail": {
+      "status": "メールのプレビュー",
+      "inbox": "受信トレイ",
+      "sent": "送信済み",
+      "empty": "{{folder}}は空です",
+      "noAccount": "メールアカウントが接続されていません。",
+      "note": "メールの取得や送信は行いません。"
+    },
+    "validators": {
+      "title": "ネットワークのバリデーター",
+      "connected": "ウォレット接続済み · ステーキングアカウント未読み込み",
+      "reported": "公開 API による報告 · メインネット",
+      "nodeDocs": "ノード運用のドキュメント",
+      "staking": "ステーキングのアーキテクチャ提案",
+      "unavailable": "ステーキングできません"
+    }
   }
 }

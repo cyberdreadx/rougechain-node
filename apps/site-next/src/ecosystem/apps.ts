@@ -2,6 +2,10 @@ export type AppGroup =
   "Hold" | "Trade" | "Play" | "Talk" | "Explore" | "Build" | "Community";
 export type EcosystemItemKind =
   "app" | "developer-resource" | "community" | "utility";
+/**
+ * Display text is translated at render: common:apps.<id>.name / .description, common:appGroups.<group>
+ * and common:appNav.<key>. `name` / `description` here are the English reference (ids stay stable).
+ */
 export interface EcosystemApp {
   kind: EcosystemItemKind;
   id: string;
@@ -14,7 +18,13 @@ export interface EcosystemApp {
   pocRoute?: string;
   externalUrl?: string;
   workspaceView?: string;
-  localNavigation?: { label: string; path: string; match?: string[] }[];
+  /** `key` → common:appNav.<key> (the display label); `label` is the English reference. */
+  localNavigation?: {
+    key: string;
+    label: string;
+    path: string;
+    match?: string[];
+  }[];
 }
 export const DOCS_URL = "https://docs.rougechain.io/";
 export const WHITEPAPER_URL = "https://rougechain.io/RougeChain-Whitepaper.pdf";
@@ -43,8 +53,8 @@ export const apps: EcosystemApp[] = [
     pocRoute: "/wallet",
     workspaceView: "Wallet",
     localNavigation: [
-      { label: "Wallet", path: "/wallet" },
-      { label: "Settings", path: "/settings" },
+      { key: "wallet", label: "Wallet", path: "/wallet" },
+      { key: "settings", label: "Settings", path: "/settings" },
     ],
   },
   {
@@ -120,9 +130,9 @@ export const apps: EcosystemApp[] = [
     workspaceView: "Swap",
     // apps/web paths (/pools, /pool/:id, /buy) plus the /swap/* views; `match` lights the section.
     localNavigation: [
-      { label: "Swap", path: "/swap", match: ["/swap", "/buy"] },
-      { label: "Pools", path: "/pools", match: ["/pools", "/pool", "/swap/pools"] },
-      { label: "Positions", path: "/swap/positions", match: ["/swap/positions"] },
+      { key: "swap", label: "Swap", path: "/swap", match: ["/swap", "/buy"] },
+      { key: "pools", label: "Pools", path: "/pools", match: ["/pools", "/pool", "/swap/pools"] },
+      { key: "positions", label: "Positions", path: "/swap/positions", match: ["/swap/positions"] },
     ],
   },
   {
@@ -163,28 +173,33 @@ export const apps: EcosystemApp[] = [
     // Legacy rougechain.io paths; `match` marks the section active on its detail pages too.
     localNavigation: [
       {
+        key: "overview",
         label: "Overview",
         path: "/explorer",
         match: ["/explorer", "/blockchain"],
       },
       {
+        key: "blocks",
         label: "Blocks",
         path: "/explorer/blocks",
         match: ["/explorer/blocks", "/block"],
       },
       {
+        key: "transactions",
         label: "Transactions",
         path: "/transactions",
         match: ["/transactions", "/tx"],
       },
-      { label: "Tokens", path: "/tokens", match: ["/tokens", "/token"] },
-      { label: "NFTs", path: "/nfts", match: ["/nfts"] },
+      { key: "tokens", label: "Tokens", path: "/tokens", match: ["/tokens", "/token"] },
+      { key: "nfts", label: "NFTs", path: "/nfts", match: ["/nfts"] },
       {
+        key: "contracts",
         label: "Contracts",
         path: "/contracts",
         match: ["/contracts", "/contract"],
       },
       {
+        key: "bridgeActivity",
         label: "Bridge",
         path: "/explorer/bridge",
         // "/bridge" only lights this up on explorer.rougechain.io; on the main site /bridge is
@@ -205,8 +220,8 @@ export const apps: EcosystemApp[] = [
     pocRoute: "/validators",
     workspaceView: "Validators",
     localNavigation: [
-      { label: "Validators", path: "/validators" },
-      { label: "Genesis program", path: "/genesis-validators" },
+      { key: "validators", label: "Validators", path: "/validators" },
+      { key: "genesis", label: "Genesis program", path: "/genesis-validators" },
     ],
   },
   {
@@ -220,7 +235,7 @@ export const apps: EcosystemApp[] = [
     status: "live",
     pocRoute: "/status",
     workspaceView: "Network",
-    localNavigation: [{ label: "Status", path: "/status" }],
+    localNavigation: [{ key: "status", label: "Status", path: "/status" }],
   },
   {
     id: "build",

@@ -89,12 +89,10 @@ export default function App() {
                       path="*"
                       element={
                         <main id="main" className="container page-intro">
-                          <h1>Page not found.</h1>
-                          <p>
-                            Use Apps to explore the available review routes.
-                          </p>
+                          <h1>{t("notFound.title")}</h1>
+                          <p>{t("notFound.body")}</p>
                           <a className="button" href="/">
-                            Return to RougeChain
+                            {t("notFound.home")}
                           </a>
                         </main>
                       }

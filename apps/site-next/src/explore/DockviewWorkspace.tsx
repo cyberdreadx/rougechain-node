@@ -30,6 +30,9 @@ import {
   type SerializedDockview,
 } from "dockview-react";
 import { MoreHorizontal } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
+import { fmtInt } from "../i18n/format";
 import { apps } from "../ecosystem/apps";
 import { useNetwork } from "../Network";
 import { BlockDetail } from "./BlockDetail";
@@ -115,6 +118,14 @@ export function onTabKeyDown(
   target.focus();
 }
 
+/** Translated panel title: the view name, or "Block #<height>" for Block Detail windows. */
+export function panelLabel(id: string, params?: unknown): string {
+  if (isWorkspaceView(id)) return i18n.t(`common:workspace.views.${id}`);
+  if (isBlockPreview(params))
+    return i18n.t("common:block.title", { height: fmtInt(params.height) });
+  return id;
+}
+
 const fullAppRoute = (name: WorkspaceView) =>
   apps.find((a) => a.workspaceView === name && a.pocRoute)?.pocRoute;
 
@@ -164,6 +175,12 @@ function makeTab(
   actions: Actions,
 ): FunctionComponent<IDockviewPanelHeaderProps> {
   return function Tab(props) {
+    // Keep dockview's stored title in the current language (it renders api.title).
+    useTranslation("common"); // re-render on a language change
+    const label = panelLabel(props.api.id, props.params);
+    useEffect(() => {
+      if (props.api.title !== label) props.api.setTitle(label);
+    }, [label, props.api]);
     // Singleton views are never destroyed: like the approved design their tabs carry no close
     // control (hide lives in the header), while Block Detail tabs close normally.
     return isWorkspaceView(props.api.id) ? (
@@ -187,6 +204,7 @@ interface MenuItem {
 
 /** The "…" panel menu: dock / move / float / open full app / hide, keyboard operable. */
 function PanelMenu({ title, items }: { title: string; items: MenuItem[] }) {
+  const { t } = useTranslation("common");
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, right: 0 });
   const button = useRef<HTMLButtonElement>(null);
@@ -236,10 +254,10 @@ function PanelMenu({ title, items }: { title: string; items: MenuItem[] }) {
         ref={button}
         type="button"
         className="panel-menu-button"
-        aria-label={`${title} panel menu`}
+        aria-label={t("dock.menuFor", { name: title })}
         aria-haspopup="menu"
         aria-expanded={open}
-        title="Panel menu"
+        title={t("dock.menu")}
         onClick={() => {
           const r = button.current!.getBoundingClientRect();
           setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
@@ -253,7 +271,7 @@ function PanelMenu({ title, items }: { title: string; items: MenuItem[] }) {
           <div
             ref={menu}
             role="menu"
-            aria-label={`${title} panel`}
+            aria-label={t("dock.panel", { name: title })}
             className="panel-menu"
             style={{ top: pos.top, right: pos.right }}
             onKeyDown={onKeyDown}
@@ -284,6 +302,7 @@ function makeHeaderActions(
   actions: Actions,
 ): FunctionComponent<IDockviewHeaderActionsProps> {
   return function HeaderActions({ api, containerApi, group }) {
+    const { t } = useTranslation("common");
     const [, rerender] = useReducer((n: number) => n + 1, 0);
     useEffect(() => {
       const subs = [
@@ -296,7 +315,7 @@ function makeHeaderActions(
     }, [api, containerApi]);
     const panel = group.activePanel;
     if (!panel) return null;
-    const title = panel.title ?? panel.id;
+    const title = panelLabel(panel.id, panel.params);
     const singleton = isWorkspaceView(panel.id);
     const floating = api.location.type === "floating";
     const maximized = !floating && api.isMaximized();
@@ -308,17 +327,17 @@ function makeHeaderActions(
     const items: MenuItem[] = [];
     if (route)
       items.push({
-        label: "Open full app",
+        label: t("dock.openApp"),
         run: () => window.location.assign(route),
       });
     items.push({
-      label: maximized ? "Restore layout" : "Maximize",
+      label: maximized ? t("dock.restoreLayout") : t("dock.maximize"),
       run: toggleMaximize,
       disabled: floating,
     });
     if (group.panels.length > 1 || floating)
       items.push({
-        label: "Move to new column",
+        label: t("dock.newColumn"),
         run: () => {
           if (containerApi.hasMaximizedGroup())
             containerApi.exitMaximizedGroup();
@@ -329,9 +348,12 @@ function makeHeaderActions(
     if (floatingAllowed(embedded))
       items.push(
         floating
-          ? { label: "Dock", run: () => api.moveTo({ position: "right" }) }
+          ? {
+              label: t("dock.dock"),
+              run: () => api.moveTo({ position: "right" }),
+            }
           : {
-              label: "Float",
+              label: t("dock.float"),
               run: () => {
                 if (containerApi.hasMaximizedGroup())
                   containerApi.exitMaximizedGroup();
@@ -345,7 +367,7 @@ function makeHeaderActions(
             },
       );
     items.push({
-      label: singleton ? "Hide" : "Close",
+      label: singleton ? t("dock.hide") : t("dock.close"),
       run: () => actions.hide(panel.id),
     });
     return (
@@ -354,13 +376,17 @@ function makeHeaderActions(
           type="button"
           disabled={floating}
           aria-pressed={maximized}
-          aria-label={maximized ? `Restore ${title}` : `Maximize ${title}`}
+          aria-label={
+            maximized
+              ? t("dock.restoreView", { name: title })
+              : t("dock.maximizeView", { name: title })
+          }
           title={
             floating
-              ? "Dock this panel to maximize it"
+              ? t("dock.dockToMaximize")
               : maximized
-                ? "Restore layout"
-                : "Maximize panel"
+                ? t("dock.restoreLayout")
+                : t("dock.maximizePanel")
           }
           onClick={toggleMaximize}
         >
@@ -368,8 +394,12 @@ function makeHeaderActions(
         </button>
         <button
           type="button"
-          aria-label={singleton ? `Hide ${title}` : `Close ${title}`}
-          title={singleton ? "Hide panel (restore from the launcher)" : "Close"}
+          aria-label={
+            singleton
+              ? t("workspace.hideView", { name: title })
+              : t("dock.closeView", { name: title })
+          }
+          title={singleton ? t("dock.hideTitle") : t("dock.close")}
           onClick={() => actions.hide(panel.id)}
         >
           −
@@ -381,9 +411,10 @@ function makeHeaderActions(
 }
 
 function Watermark() {
+  const { t } = useTranslation("common");
   return (
     <div className="dock-watermark">
-      <p>Choose an app in the launcher to restore your workspace.</p>
+      <p>{t("dock.watermark")}</p>
     </div>
   );
 }
@@ -400,18 +431,22 @@ function StatusBar({
   onReset: () => void;
 }) {
   const n = useNetwork();
+  const { t } = useTranslation("common");
   return (
     <div className="workspace-footer">
       <span className="mono muted">
-        MAINNET · {n.state === "live" ? "LIVE API" : n.state.toUpperCase()} ·{" "}
-        {open} OPEN ·{" "}
-        {saved ? "LAYOUT AUTO-SAVE ON" : "LAYOUT STORAGE UNAVAILABLE"}
+        {[
+          t("dock.status.mainnet"),
+          t(`network.state.${n.state}`).toUpperCase(),
+          t("dock.status.open", { count: open }),
+          saved ? t("dock.status.saveOn") : t("dock.status.saveOff"),
+        ].join(" · ")}
       </span>
       <button type="button" className="button ghost small" onClick={onOverview}>
-        Overview
+        {t("dock.overview")}
       </button>
       <button type="button" className="button ghost small" onClick={onReset}>
-        Reset workspace
+        {t("workspace.reset")}
       </button>
     </div>
   );
@@ -423,7 +458,7 @@ function buildDefault(api: DockviewApi) {
     api.addPanel({
       id: view,
       component: view,
-      title: view,
+      title: panelLabel(view),
       position: previous
         ? { referencePanel: previous, direction: "right" }
         : undefined,
@@ -455,6 +490,7 @@ export default function DockviewWorkspace({
   embedded?: boolean;
   requested?: WorkspaceView;
 }) {
+  const { t } = useTranslation("common");
   const key = dockLayoutKey(embedded);
   const [saved] = useState(storageAvailable);
   const [store] = useState(() => new HostStore());
@@ -605,7 +641,7 @@ export default function DockviewWorkspace({
       current.addPanel({
         id: name,
         component: name,
-        title: name,
+        title: panelLabel(name),
         position: group
           ? { referenceGroup: group, direction: "within" }
           : undefined,
@@ -630,7 +666,7 @@ export default function DockviewWorkspace({
         current.addPanel({
           id,
           component: BLOCK_DETAIL,
-          title: `Block #${block.height}`,
+          title: panelLabel(id, block),
           params: { ...block },
           position: groupWith
             ? { referencePanel: groupWith, direction: "within" }
@@ -698,7 +734,7 @@ export default function DockviewWorkspace({
         <div
           className="dock-shell"
           role="region"
-          aria-label="Explore RougeChain interactive workspace"
+          aria-label={t("dock.region")}
           onKeyDown={(e) => onTabKeyDown(e, reveal)}
         >
           <DockviewReact
