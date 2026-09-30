@@ -1,1 +1,365 @@
-{}
+{
+  "hero": {
+    "status": "Mainnet",
+    "kicker": "UNA NUEVA BASE CRIPTOGRÁFICA",
+    "title": "Post-cuántica<br/><grad>desde el génesis.</grad>",
+    "lead": "Una capa 1 programable construida sobre<dbr/> criptografía post-cuántica estandarizada por el NIST.<dbr/> La próxima era empieza desde la base.",
+    "explore": "Explora RougeChain",
+    "build": "Empieza a construir",
+    "whitepaper": "Whitepaper",
+    "designedFor": "DISEÑADA PARA UN FUTURO DIFERENTE",
+    "discover": "DESCUBRE LA BASE ↓"
+  },
+  "proof": {
+    "signatures": "FIRMAS",
+    "kem": "ENCAPSULAMIENTO DE CLAVES",
+    "contracts": "CONTRATOS INTELIGENTES",
+    "programmable": "Programable por diseño",
+    "seeNetwork": "VER LA RED",
+    "exploreMainnet": "Explora la mainnet",
+    "readOnly": "Explorador de red de solo lectura"
+  },
+  "technology": {
+    "eyebrow": "01 / Un punto de partida diferente",
+    "title": "El futuro no debería<br/>ser un parche.",
+    "lead": "La criptografía post-cuántica pertenece al núcleo.<br/>RougeChain empieza ahí y luego abre las<br/>posibilidades de una red programable.",
+    "pillars": {
+      "pq": {
+        "title": "Post-cuántica\ndesde el génesis.",
+        "body": "Firmas digitales construidas sobre ML-DSA-65. Una base criptográfica diseñada para la era post-cuántica."
+      },
+      "programmable": {
+        "title": "Programable\npor diseño.",
+        "body": "Los contratos inteligentes WASM abren espacio para aplicaciones, tokens y experiencias on-chain completamente nuevas."
+      },
+      "ecosystem": {
+        "title": "Un ecosistema,\nconectado.",
+        "body": "De exploradores y swaps a comunicación cifrada. Una sola red, un conjunto creciente de posibilidades."
+      }
+    }
+  },
+  "build": {
+    "eyebrow": "02 / Hecha para quienes construyen",
+    "title": "Tu próxima idea.<br/>Una nueva base.",
+    "lead": "De la primera consulta a una aplicación programable.<br/>Explora las herramientas detrás de RougeChain.",
+    "sdkHeading": "EMPIEZA CON EL SDK",
+    "resources": {
+      "sdk": {
+        "title": "SDK y API",
+        "body": "Conecta tu aplicación a la red."
+      },
+      "wasm": {
+        "title": "Contratos WASM",
+        "body": "Crea experiencias on-chain programables."
+      },
+      "node": {
+        "title": "Ejecuta un nodo",
+        "body": "Comprende la infraestructura de la red."
+      },
+      "mcp": {
+        "title": "MCP para agentes",
+        "body": "Explora la integración de agentes con la red."
+      }
+    },
+    "viewSource": "Ver el código",
+    "allDocs": "Toda la documentación"
+  },
+  "security": {
+    "eyebrow": "03 / Seguridad y transparencia",
+    "title": "Criptografía creada<br/>para la próxima era.<br/><muted>Construida en público.</muted>",
+    "lead": "Un stack criptográfico deliberado. Materiales técnicos abiertos.<br/>Explora las primitivas detrás del protocolo.",
+    "inspect": "Inspecciona el código",
+    "whitepaper": "Whitepaper",
+    "primitives": {
+      "signatures": "Firmas digitales post-cuánticas",
+      "kem": "Encapsulamiento de claves post-cuántico",
+      "aead": "Cifrado autenticado de datos",
+      "hashing": "Hashing y compromisos de prueba"
+    },
+    "note": "ML-KEM-768 establece o envuelve claves; AES-256-GCM cifra los datos. SHA-256 y BLAKE3 son primitivas de hashing, no de cifrado. Los estándares identifican las primitivas; no implican una auditoría externa de RougeChain."
+  },
+  "ecosystem": {
+    "eyebrow": "04 / Más allá de la cadena",
+    "title": "Una sola base.<br/>Muchas posibilidades.",
+    "lead": "Guarda. Opera. Mueve. Comunica. Valida. Construye.<br/>Explora lo que es posible en RougeChain."
+  },
+  "xrge": {
+    "eyebrow": "05 / El activo nativo",
+    "logoAlt": "Logotipo de XRGE",
+    "title": "Parte de la red.<br/>En el centro de su utilidad.",
+    "lead": "El activo nativo de RougeChain. Explora su papel en las comisiones de la red, el staking de validadores y el ecosistema en general.",
+    "understand": "Conoce XRGE",
+    "swapDemo": "Ver la demo de diseño de Swap"
+  },
+  "team": {
+    "eyebrow": "06 / Las personas detrás del protocolo",
+    "title": "Construyendo el próximo capítulo.",
+    "lead": "Ingeniería, creatividad y comunidad.",
+    "about": "Sobre {{name}}",
+    "members": {
+      "brandon": {
+        "role": "Fundador / Desarrollador principal",
+        "bio": "Brandon Menard, conocido profesionalmente como CyberDreadx, es un productor musical, desarrollador de IA e innovador blockchain estadounidense radicado en Miami. Como fundador de Rougee y RougeCoin, está construyendo la plataforma musical de próxima generación que une la propiedad Web3, el streaming y el empoderamiento de los creadores. Con experiencia en IA y ciberseguridad, Brandon lidera la visión técnica y el desarrollo del ecosistema descentralizado de Rougee, uniendo arte, tecnología y libertad de expresión."
+      },
+      "andersen": {
+        "role": "Director de Crecimiento y Operaciones",
+        "bio": "Andersen Scherberger es un veterano de la industria musical con más de 15 años de experiencia. Fundó un club nocturno galardonado como «Best of Miami», organizó innumerables festivales y eventos, y representó a artistas que se han presentado en grandes festivales como EDC. Su galería NFT apareció en Destination Miami de CBS y consolidó alianzas con grandes marcas cripto como Near, Bored Ape Yacht Club y NFT.com."
+      },
+      "elijah": {
+        "role": "Presidente, Grupo de Trabajo de Criptomonedas del Condado de Miami-Dade",
+        "bio": "Elijah John Bowdre preside el Grupo de Trabajo de Criptomonedas del Condado de Miami-Dade y es presidente y cofundador de la US Crypto Policy Alliance. Es autor del primer proyecto de ley blockchain del estado de Florida, de la ordenanza de la Junta Blockchain del Condado de Miami-Dade y de la política de pagos cripto de la Ciudad de Miami; presenta el programa de noticias cripto TheBitPoint y fue candidato a alcalde de Miami en 2025."
+      },
+      "teresa": {
+        "role": "CEO y cofundadora, Like Group Management",
+        "bio": "Teresa Castagnino es CEO y cofundadora de Like Group Management, una aceleradora e incubadora con sede en Tulum enfocada en proyectos regenerativos; cofundadora de Tulum Crypto Fest y Head de Forbes México para el Caribe. Con formación en diseño industrial y arquitectura, conecta a fundadores, empresas e inversionistas en toda la Riviera Maya."
+      },
+      "ghulam": {
+        "role": "Estratega de marketing digital y gestor de proyectos",
+        "bio": "El Dr. Ghulam Abbas es estratega de marketing digital y gestor de proyectos, con formación en salud como médico homeópata titulado (DHMS) y fundador de Eco Cure Clinic. Combina estrategia digital basada en datos, contenido optimizado para buscadores y gestión de proyectos multifuncional con conocimientos médicos profesionales, centrándose en el crecimiento orgánico de la audiencia, el posicionamiento de marca y flujos de trabajo operativos ágiles que generan resultados sostenibles y medibles."
+      },
+      "brenda": {
+        "role": "Periodista, medios y relaciones públicas",
+        "bio": "Brenda Miranda es periodista multimedia y presentadora en Caplin News de la Florida International University, y colaboradora de medios en el Kopenhaver Center for Women in Communication. Ahora radicada en Tulum, cubre temas de comunidad, bienestar, artes e historias de interés humano. Este otoño se gradúa de FIU con una licenciatura en comunicación y medios digitales."
+      }
+    }
+  },
+  "regenerate": {
+    "eyebrow": "07 / Regenerate",
+    "title": "La tecnología debería mejorar<br/><muted>el territorio que toca.</muted>",
+    "body": "RougeChain Regenerate conecta la infraestructura blockchain con el desarrollo comunitario del mundo real, financiando iniciativas locales transparentes y medibles en ecología, infraestructura, tecnología, arte y comunidad. Empezando en Tulum, el financiamiento de proyectos, los hitos, la evidencia y el impacto pueden registrarse en RougeChain para que el progreso sea visible desde el capital hasta el resultado.",
+    "explore": "Explora Regenerate",
+    "propose": "Propón un proyecto"
+  },
+  "finalCta": {
+    "eyebrow": "La próxima era empieza aquí",
+    "title": "Construye en una cadena diseñada<br/>para la era post-cuántica.",
+    "explore": "Explora la red",
+    "docs": "Lee la documentación"
+  },
+  "carousel": {
+    "tabsLabel": "Posibilidades de RougeChain",
+    "previous": "Posibilidad anterior",
+    "next": "Siguiente posibilidad",
+    "trackLabel": "Casos de uso del ecosistema desplazables",
+    "slideLabel": "{{n}} de {{total}}: {{name}}",
+    "hint": "ARRASTRA / DESLIZA O USA LAS FLECHAS",
+    "slides": {
+      "qwalla": {
+        "short": "Qwalla",
+        "label": "GUARDA",
+        "headline": "Tus activos.<br/>Listos para lo que viene.",
+        "body": "Qwalla lleva el ecosistema de RougeChain a tu bolsillo. Guarda XRGE, gestiona tu billetera y muévete por la red desde una sola experiencia móvil.",
+        "primary": "Descubre Qwalla"
+      },
+      "swap": {
+        "short": "Swap",
+        "label": "OPERA",
+        "headline": "Opera. Aporta liquidez.<br/>Quédate on-chain.",
+        "body": "Intercambia activos, descubre liquidez y participa en los mercados de RougeChain con una experiencia DeFi nativa construida en torno a la red.",
+        "primary": "Explora Swap",
+        "secondary": "Ver pools de liquidez"
+      },
+      "bridge": {
+        "short": "Bridge",
+        "label": "MUEVE",
+        "headline": "Mueve activos entre cadenas.<br/>Llévalos a la era post-cuántica.",
+        "body": "Mueve activos compatibles entre RougeChain y redes conectadas, trayendo valor desde cadenas convencionales a una red diseñada en torno a la seguridad post-cuántica.",
+        "technical": "Base mainnet · ETH ↔ qETH · USDC ↔ qUSDC · XRGE",
+        "primary": "Explora Bridge"
+      },
+      "talk": {
+        "short": "Habla",
+        "label": "HABLA",
+        "headline": "Tu billetera también es<br/>una identidad privada.",
+        "emphasis": "Mensajes. Correo. Cifrado.<br/>Comunicación post-cuántica, de billetera a billetera.",
+        "body": "Envía mensajes y correos con cifrado post-cuántico directamente entre identidades de billetera. RougeChain convierte la billetera en algo más que una forma de hacer transacciones: se vuelve una capa de comunicación segura.",
+        "technical": "Encapsulamiento de claves ML-KEM-768 · cifrado autenticado AES-256-GCM",
+        "primary": "Abrir Messenger",
+        "secondary": "Explora Mail"
+      },
+      "validate": {
+        "short": "Valida",
+        "label": "VALIDA",
+        "headline": "No solo uses la red.<br/>Ayuda a protegerla.",
+        "body": "De un servidor Linux recién instalado a un nodo de RougeChain sincronizando con un solo comando. Haz stake de al menos {{amount}} XRGE, verifica el estado de tu validador y empieza a participar directamente en el consenso de la red.",
+        "technical": "Instalador de un solo comando · servicio systemd · estado del validador integrado · requisitos de VPS modestos",
+        "primary": "Ejecuta un validador",
+        "secondary": "Explora los validadores"
+      },
+      "build": {
+        "short": "Construye",
+        "label": "CONSTRUYE",
+        "headline": "Hecha para desarrolladores.<br/>Lista para agentes.",
+        "emphasis": "Construye la aplicación. Construye el agente. Conecta ambos a la cadena.",
+        "body": "RougeChain fue diseñada para un mundo donde los desarrolladores crean aplicaciones y agentes autónomos lado a lado. Usa contratos inteligentes WASM y el SDK de RougeChain para crear software on-chain, y luego da a los agentes de IA herramientas MCP nativas para entender la red, trabajar entre aplicaciones, coordinar flujos de trabajo y realizar acciones on-chain autorizadas.",
+        "technical": "Contratos inteligentes WASM · SDK de RougeChain · herramientas MCP nativas",
+        "primary": "Empieza a construir",
+        "secondary": "Explora MCP para agentes"
+      }
+    },
+    "qwalla": {
+      "caption": "BILLETERA MÓVIL · MAINNET",
+      "imageAlt": "La aplicación de billetera Qwalla mostrada en el marco de un teléfono",
+      "meta": "BILLETERA POST-CUÁNTICA"
+    },
+    "swap": {
+      "label": "Interfaz ilustrativa de swap de RougeChain",
+      "caption": "INTERFAZ ILUSTRATIVA · DEX DE ROUGECHAIN",
+      "title": "SWAP",
+      "network": "MAINNET",
+      "pay": "PAGAS",
+      "receive": "RECIBES",
+      "route": "Ruta",
+      "liquidity": "Liquidez",
+      "amm": "AMM nativo",
+      "pools": "POOLS"
+    },
+    "bridge": {
+      "caption": "BASE MAINNET ↔ ROUGECHAIN L1 · RUTAS COMPATIBLES",
+      "label": "Rutas de puente compatibles entre Base y RougeChain",
+      "baseMainnet": "BASE MAINNET",
+      "chain": "CADENA {{id}}",
+      "bridge": "PUENTE",
+      "routes": "RUTAS",
+      "rougechainL1": "ROUGECHAIN L1",
+      "pqNetwork": "RED POST-CUÁNTICA",
+      "asset": "ACTIVO",
+      "route": "RUTA",
+      "receive": "RECIBES",
+      "forward": "BASE → ROUGE",
+      "twoWay": "BIDIRECCIONAL",
+      "deposit": "DEPÓSITO · BLOQUEO / EMISIÓN",
+      "withdraw": "RETIRO · LIBERACIÓN / PROTECCIÓN DE REEMBOLSO"
+    },
+    "talk": {
+      "caption": "IDENTIDAD DE BILLETERA · COMUNICACIÓN PRIVADA",
+      "yourIdentity": "TU IDENTIDAD DE BILLETERA",
+      "messenger": "MESSENGER",
+      "encrypted": "CIFRADO",
+      "incoming": "¿Te unes a la llamada de validadores?",
+      "you": "TÚ",
+      "outgoing": "Sí, te envío las notas ahora.",
+      "mail": "MAIL",
+      "from": "DE",
+      "subject": "ASUNTO",
+      "subjectValue": "Propuesta de validador",
+      "encryptedFor": "CIFRADO PARA",
+      "kem": "ENCAPSULAMIENTO DE CLAVES",
+      "aead": "CIFRADO AUTENTICADO"
+    },
+    "validate": {
+      "live": "DATOS DE RED EN VIVO",
+      "stale": "LECTURA DE RED DESACTUALIZADA",
+      "snapshot": "INSTANTÁNEA DE RED GUARDADA",
+      "caption": "VISTA DEL OPERADOR DE VALIDADOR · {{state}}",
+      "label": "Panel del operador de validador de RougeChain y flujo de configuración",
+      "validator": "VALIDADOR DE ROUGECHAIN",
+      "ready": "Listo para participar.",
+      "operatorFlow": "FLUJO DEL OPERADOR",
+      "targetStatus": "ESTADO OBJETIVO",
+      "producing": "Produciendo bloques",
+      "check": "La verificación integrada <code>validator-status</code> confirma cada requisito antes de que entres en funcionamiento.",
+      "minStake": "STAKE MÍNIMO",
+      "peers": "PARES DE LA RED",
+      "latestBlock": "ÚLTIMO BLOQUE",
+      "networkHeight": "ALTURA DE LA RED",
+      "setup": "CONFIGURACIÓN",
+      "installer": "INSTALADOR DE UN SOLO COMANDO",
+      "steps": {
+        "install": {
+          "title": "Instala el nodo",
+          "detail": "Dependencias, compilación, servicio systemd"
+        },
+        "stake": {
+          "title": "Fondea y haz stake",
+          "detail": "Haz stake de al menos {{amount}} XRGE"
+        },
+        "verify": {
+          "title": "Verifica el estado",
+          "detail": "Con fondos · En stake · Conjunto activo"
+        },
+        "produce": {
+          "title": "Produce bloques",
+          "detail": "Empieza a participar en el consenso"
+        }
+      },
+      "validators": "VALIDADORES {{n}}",
+      "publicRead": "LECTURA PÚBLICA · {{state}}"
+    },
+    "build": {
+      "caption": "INTEGRACIÓN REAL DE SDK + MCP · MAINNET",
+      "label": "Terminal escribiendo una integración del SDK y MCP de RougeChain",
+      "footer": "SDK · CONTRATOS WASM · MCP · FIRMA ML-DSA-65 LOCAL"
+    }
+  },
+  "architecture": {
+    "eyebrow": "Ecosistema / Propuesta de arquitectura",
+    "title": "Una identidad.<br/><muted>Aplicaciones independientes.</muted>",
+    "lead": "Bases compartidas conectan el ecosistema. Cada aplicación es dueña de sus rutas, su despliegue y su ciclo de lanzamientos.",
+    "status": "Topología POC · Sin migración de hosts",
+    "seeWallet": "Ver la arquitectura del proveedor de billetera ↓",
+    "comingSoon": "{{name}} · Próximamente",
+    "destinations": {
+      "eyebrow": "01 / Destinos propuestos",
+      "title": "Una red de aplicaciones.",
+      "root": "Marketing · descubrimiento · menú global de Apps",
+      "proposed": "Destino propuesto · {{status}}"
+    },
+    "beyond": {
+      "eyebrow": "02 / Más allá de las aplicaciones",
+      "title": "Preguntas distintas. Destinos claros.",
+      "build": "Construir",
+      "community": "Comunidad",
+      "utilities": "Utilidades",
+      "buildQuestion": "¿Qué puedo construir?",
+      "communityQuestion": "¿Dónde puedo participar?",
+      "utilitiesQuestion": "¿Qué puedo inspeccionar?",
+      "note": "La navegación de marketing presenta el proyecto. Apps agrupa las aplicaciones en Guardar, Operar, Jugar, Hablar y Explorar. La navegación local pertenece a la dApp actual. El lanzador del espacio de trabajo abre aplicaciones y herramientas como Construir, Seguridad y Red."
+    },
+    "wallet": {
+      "eyebrow": "03 / Arquitectura de billetera compartida",
+      "title": "Una identidad. Un límite de proveedor revisado.",
+      "lead": "Cada dApp consume un contrato común de proveedor de billetera en lugar de custodiar claves privadas por sí misma.",
+      "figureLabel": "Arquitectura propuesta del proveedor de billetera",
+      "extension": "Billetera de navegador de RougeChain",
+      "extensionNote": "Candidata a proveedor de extensión",
+      "qwallaNote": "Candidata móvil / navegador de dApps",
+      "contractNote": "Contrato propuesto · cuenta · red · permisos",
+      "caption": "Arquitectura de producción conceptual. El diseño final del proveedor y de la seguridad corresponde al desarrollador principal.",
+      "demonstratesTitle": "Lo que demuestra el POC",
+      "demonstrates1": "WalletProvider comparte la billetera de navegador real entre rutas y vistas previas del espacio de trabajo, mediante @rougechain/core: las mismas claves de almacenamiento, el mismo formato de bóveda y la misma firma que el rougechain.io actual.",
+      "demonstrates2": "Es de un solo origen: esto no demuestra la conectividad de billetera entre orígenes para apps alojadas por separado.",
+      "evaluateTitle": "Lo que producción debe evaluar",
+      "evaluate1": "La extensión de navegador de RougeChain, Qwalla y un origen web de billetera autoritativo son candidatos a proveedor.",
+      "evaluate2": "La conexión, el estado de cuenta/red y los permisos de transacción necesitan un contrato revisado. Aquí no se implementa ningún método de firma ni de transacción.",
+      "noteTitle": "Identidad/proveedor de billetera ≠ almacenamiento de claves privadas en bruto",
+      "note": "localStorage no cruza orígenes ni subdominios. La futura estrategia de proveedor no debe intentar compartir el almacenamiento de bóveda en bruto entre dApps. Conserva el acceso a las bóvedas existentes hasta que se apruebe una migración deliberada."
+    },
+    "boundaries": {
+      "eyebrow": "04 / Límites",
+      "title": "Comparte el lenguaje. Sé dueño del producto.",
+      "implementedTitle": "Implementado en este POC",
+      "brand": "@rougechain/brand — tokens e identidad",
+      "ui": "@rougechain/ui — primitivas y RougeAppShell",
+      "chainReadonly": "@rougechain/chain-readonly — datos GET en lista permitida",
+      "showcase": "Showcase es dueño del registro del ecosistema, las rutas y las vistas previas del espacio de trabajo.",
+      "proposedTitle": "Paquetes de producción propuestos",
+      "walletProvider": "@rougechain/wallet-provider requiere una arquitectura de confianza y de origen aprobada por separado.",
+      "independent": "Los despliegues independientes consumen paquetes versionados. Este POC no requiere ningún servidor de ejecución compartido."
+    },
+    "transition": {
+      "eyebrow": "05 / Transición",
+      "title": "Avanza con intención.",
+      "steps": {
+        "1": "Adoptar los tokens compartidos de marca y UI en una superficie existente.",
+        "2": "Extraer el shell de la app y el registro de navegación con una propiedad acordada.",
+        "3": "Pilotar el Explorador en su propio host con contratos de datos verificados.",
+        "4": "Mover Swap solo después de aprobar los límites de billetera, firma y origen.",
+        "5": "Redirigir las rutas antiguas solo cuando cada destino esté desplegado y estable."
+      },
+      "note": "El selector global cruza aplicaciones y hosts. La navegación local se queda dentro de la aplicación actual. Las rutas del POC demuestran estos límites en un solo origen.",
+      "originTitle": "Límite de origen de la billetera",
+      "origin": "localStorage está limitado al origen. El material de billetera en rougechain.io no se transferirá automáticamente a wallet.rougechain.io. Se requieren un diseño de proveedor de billetera, una política de migración y una revisión de seguridad antes de cualquier separación. Este POC nunca lee ni almacena material de billetera."
+    }
+  }
+}
