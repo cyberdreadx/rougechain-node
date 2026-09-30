@@ -11,7 +11,6 @@ import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { Section, Status, TextLink } from "@rougechain/ui";
 import { GITHUB } from "./Shell";
 import { NetworkMetrics, DataNote } from "./Network";
-import Explore from "./explore/Explore";
 import MarketingSections from "./MarketingSections";
 export default function Home() {
   const reduced = useReducedMotion();
@@ -97,9 +96,6 @@ export default function Home() {
               />
             </motion.svg>
             <img className="hero-mark" src="/xrge-logo.webp" alt="" />
-            <span className="art-caption mono">
-              01 / CRYPTOGRAPHY, RECONSIDERED
-            </span>
             <span className="art-coordinate mono">ML-DSA-65 · ML-KEM-768</span>
           </div>
         </div>
@@ -181,7 +177,6 @@ export default function Home() {
           ))}
         </div>
       </Section>
-      <Explore />
       <MarketingSections />
     </main>
   );

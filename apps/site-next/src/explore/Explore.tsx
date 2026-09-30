@@ -3,7 +3,7 @@ import { NetworkControls, DataNote } from "../Network";
 import WorkspaceExperience from "./WorkspaceExperience";
 export default function Explore() {
   return (
-    <Section id="explore" eyebrow="02 / Your window into the network">
+    <Section id="explore" eyebrow="08 / Explore RougeChain">
       <div className="section-heading">
         <div>
           <h2>Explore RougeChain</h2>

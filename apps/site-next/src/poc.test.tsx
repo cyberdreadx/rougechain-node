@@ -41,6 +41,68 @@ it("renders the complete homepage with honest fallback", async () => {
   );
   expect(screen.queryByText("MAINNET LIVE")).not.toBeInTheDocument();
 });
+
+it("keeps the approved homepage section order", () => {
+  const { container } = wrap(<Home />);
+  const ids = [
+    "technology",
+    "build",
+    "security",
+    "ecosystem",
+    "xrge",
+    "team",
+    "regenerate",
+    "explore",
+  ];
+  const sections = ids.map((id) => container.querySelector(`#${id}`));
+  sections.forEach((section) => expect(section).not.toBeNull());
+  for (let i = 0; i < sections.length - 1; i += 1) {
+    expect(
+      sections[i]!.compareDocumentPosition(sections[i + 1]!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  }
+});
+
+it("renders and navigates the six ecosystem possibilities", async () => {
+  wrap(<Home />);
+  for (const name of [
+    "Qwalla",
+    "Swap",
+    "Bridge",
+    "Talk",
+    "Validate",
+    "Build",
+  ]) {
+    expect(
+      screen.getByRole("tab", { name: new RegExp(name, "i") }),
+    ).toBeInTheDocument();
+  }
+  expect(
+    screen.getByRole("heading", {
+      name: "Your assets. Ready for what’s next.",
+    }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", {
+      name: "Trade. Provide liquidity. Stay onchain.",
+    }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      /Send post-quantum encrypted messages and email directly between wallet identities/i,
+    ),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", {
+      name: "Built for developers. Ready for agents.",
+    }),
+  ).toBeInTheDocument();
+
+  const talkTab = screen.getByRole("tab", { name: /Talk/i });
+  await userEvent.click(talkTab);
+  expect(talkTab).toHaveAttribute("aria-selected", "true");
+});
 it("renders the Explorer with a labelled snapshot and no synthetic data", async () => {
   wrap(<Explorer />);
   expect(screen.getByRole("heading", { name: "Explorer" })).toBeInTheDocument();
