@@ -104,3 +104,7 @@ chrome.runtime.onMessage.addListener((message) => {
         }, "*");
     }
 });
+
+// Module scope (no runtime exports): keeps this script's top-level consts out of the global
+// type scope it would otherwise share with the other content scripts under tsc.
+export {};
