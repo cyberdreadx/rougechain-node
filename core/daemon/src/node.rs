@@ -12665,7 +12665,31 @@ mod game_ready_tests {
             let ev = a.node.contract_store.as_ref().unwrap().get_events_page(&market, 1, None, Some(h)).unwrap();
             (ev[0].topic.clone(), serde_json::from_str(&ev[0].data).unwrap())
         };
-        assert_eq!(ev(&h), ("listed".to_string(), json!({ "listing": 2, "collection": col, "token_id": 2, "price": PRICE })));
+        // The seller is the caller string as stored: the wallet's raw public key hex.
+        assert_eq!(ev(&h), ("listed".to_string(), json!({ "listing": 2, "seller": spk, "collection": col, "token_id": 2, "price": PRICE })));
+        // Read-only views through the free query path (what POST /api/contract/:addr/query runs:
+        // query_contract_ext with the preview game extension, no caller, no attachment). They
+        // return JSON, emit nothing and write nothing; both nodes answer the same.
+        let view = |n: &L1Node, method: &str, args: Value| -> Value {
+            let h = n.get_tip_height().unwrap() + 1;
+            let r = n.wasm_runtime.as_ref().unwrap().query_contract_ext(n.contract_store.as_ref().unwrap(), &market, method, &args, "",
+                n.native_balances_quanta(), h, 0, n.game_ext_for_preview(h)).unwrap();
+            assert!(r.success, "{method}: {:?}", r.error);
+            assert!(r.events.is_empty(), "{method} emits nothing");
+            assert!(r.storage_writes.as_ref().map_or(true, |w| w.is_empty()) && r.storage_deletes.as_ref().map_or(true, |d| d.is_empty()));
+            r.return_data.expect("return data")
+        };
+        let listing = |id: u64| -> Value {
+            let (va, vb) = (view(&a.node, "listing", json!({ "listing": id })), view(&b.node, "listing", json!({ "listing": id })));
+            assert_eq!(va, vb, "both nodes agree");
+            va
+        };
+        let found = |id: u64, nft: u64, active: bool, escrowed: bool| json!({ "listing": id, "exists": true, "seller": spk,
+            "collection": col, "token_id": nft, "price": PRICE, "active": active, "escrowed": escrowed });
+        assert_eq!(listing(1), found(1, 1, true, false), "listed, not escrowed yet");
+        assert_eq!(listing(2), found(2, 2, true, false));
+        assert_eq!(listing(99), json!({ "listing": 99, "exists": false }), "unknown listing: clean answer, no trap");
+        assert_eq!(view(&a.node, "listing_count", Value::Null), json!({ "next": 2 }));
         // A non-owner can't list someone else's NFT.
         let h = mine_relay(call_tx(&buyer, &market, "list", json!({ "collection": col, "token_id": 1, "price": 1 }), Value::Null, 1)).unwrap();
         assert!(matches!(status(&h), TxStatus::Failed(_)));
@@ -12673,6 +12697,8 @@ mod game_ready_tests {
             mine_relay(v2(seller, "nft_transfer", &json!({ "from": spk, "collectionId": col, "tokenId": nft, "to": market, "timestamp": ts(k) }), k)).expect("escrow");
             assert_eq!(owner(nft), market);
         }
+        assert_eq!(listing(1), found(1, 1, true, true), "escrowed: the contract owns the NFT");
+        assert_eq!(listing(2), found(2, 2, true, true));
 
         // Wrong payment: one quantum short → the call fails, the buyer only pays gas, nothing moves.
         let gas_fee: u128 = 1_000_000 * 1_000; // gasLimit × 0.000001 XRGE, in quanta
@@ -12708,6 +12734,25 @@ mod game_ready_tests {
         let h = mine_relay(call_tx(seller, &market, "cancel", json!({ "listing": 2 }), Value::Null, 10)).unwrap(); ok(&h);
         assert_eq!(ev(&h), ("cancelled".to_string(), json!({ "listing": 2, "returned": true })));
         assert_eq!(owner(2), spk);
+        assert_eq!(listing(1), json!({ "listing": 1, "exists": false }), "sold");
+        assert_eq!(listing(2), json!({ "listing": 2, "exists": false }), "cancelled");
+
+        // Relisting replaces the older listing: #3 goes stale (active:false) once #4 lists the same
+        // NFT, and the escrow belongs to #4. Cancelling stale #3 must NOT hand the NFT back.
+        let h = mine_relay(list(2, 11)).unwrap(); ok(&h);
+        let h = mine_relay(list(2, 12)).unwrap(); ok(&h);
+        mine_relay(v2(seller, "nft_transfer", &json!({ "from": spk, "collectionId": col, "tokenId": 2, "to": market, "timestamp": ts(13) }), 13)).expect("escrow");
+        assert_eq!(listing(3), found(3, 2, false, false), "stale: not buyable, its escrow isn't its own");
+        assert_eq!(listing(4), found(4, 2, true, true));
+        assert_eq!(view(&b.node, "listing_count", json!({})), json!({ "next": 4 }));
+        let h = mine_relay(call_tx(seller, &market, "cancel", json!({ "listing": 3 }), Value::Null, 14)).unwrap(); ok(&h);
+        assert_eq!(ev(&h), ("cancelled".to_string(), json!({ "listing": 3, "returned": false })));
+        assert_eq!(owner(2), market, "the NFT stays escrowed for the current listing");
+        assert_eq!(listing(4), found(4, 2, true, true));
+        let h = mine_relay(call_tx(seller, &market, "cancel", json!({ "listing": 4 }), Value::Null, 15)).unwrap(); ok(&h);
+        assert_eq!(ev(&h), ("cancelled".to_string(), json!({ "listing": 4, "returned": true })));
+        assert_eq!(owner(2), spk);
+        assert_eq!(listing(4), json!({ "listing": 4, "exists": false }));
 
         // The peer received every block as JSON and agrees on everything.
         assert_eq!(a.node.get_state_root().unwrap(), b.node.get_state_root().unwrap());
@@ -12778,6 +12823,13 @@ mod game_ready_tests {
         ok(mine(&e, call_tx(seller, &market, "list", json!({ "collection": col, "token_id": 1, "price": 5_000_000_001u64 }), Value::Null, 6)).unwrap());
         mine(&e, v2(seller, "nft_transfer", &json!({ "from": spk, "collectionId": col, "tokenId": 1, "to": market, "timestamp": ts(7) }), 7)).unwrap();
         assert_eq!(e.node.nft_store.get_token(&col, 1).unwrap().unwrap().owner, market);
+        // The listing's seller is the raw key that called `list` (what `cancel` compares and `buy` pays),
+        // even though the NFT was held under the rouge1 address.
+        let hq = e.node.get_tip_height().unwrap() + 1;
+        let r = e.node.wasm_runtime.as_ref().unwrap().query_contract_ext(e.node.contract_store.as_ref().unwrap(), &market, "listing",
+            &json!({ "listing": 1 }), "", e.node.native_balances_quanta(), hq, 0, e.node.game_ext_for_preview(hq)).unwrap();
+        assert_eq!(r.return_data, Some(json!({ "listing": 1, "exists": true, "seller": spk, "collection": col, "token_id": 1,
+            "price": 5_000_000_001u64, "active": true, "escrowed": true })));
         ok(mine(&e, call_tx(&buyer, &market, "buy", json!({ "listing": 1 }), json!({ "symbol": "XRGE", "amount": 5_000_000_001u64 }), 1)).unwrap());
         let q = |k: &str| *e.node.balances.lock().unwrap().get(k).unwrap_or(&0);
         assert_eq!(q(&splitter), 500_000_000, "10% of 5.000000001 XRGE, floored, on the splitter's entry");
