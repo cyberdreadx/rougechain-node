@@ -1,0 +1,16 @@
+[package]
+name = "rougechain-nft-marketplace"
+version = "0.1.0"
+edition = "2021"
+
+# Example RougeChain escrow NFT marketplace (CONTRACT_NFT_ROYALTY): sellers list NFTs they escrow
+# with the contract, buyers pay the exact price as an attached XRGE payment, and the contract pays
+# the collection's royalty (read with host_nft_royalty_*) before paying the seller.
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
