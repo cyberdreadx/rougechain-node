@@ -100,6 +100,17 @@ export interface ChainStats {
   totalFeesCollected: number | null;
   totalFeesBurned: number | null;
   nodeName: string | null;
+  /**
+   * TOKEN_MINTING activation height (`upgrade_schedule.token_minting`); `null` = not scheduled
+   * (or a node too old to report it).
+   */
+  tokenMintingHeight: number | null;
+}
+
+/** TOKEN_MINTING applies to the next block (`height + 1 >= activation`). */
+export function tokenMintingActiveAt(stats: Pick<ChainStats, "height" | "tokenMintingHeight"> | null | undefined): boolean {
+  if (!stats || stats.tokenMintingHeight === null) return false;
+  return stats.height + 1 >= stats.tokenMintingHeight;
 }
 
 export function normalizeStats(
@@ -124,7 +135,14 @@ export function normalizeStats(
     ),
     totalFeesBurned: optNum(s.total_fees_burned, "stats.total_fees_burned"),
     nodeName: optText(s.node_name, "stats.node_name"),
+    tokenMintingHeight: upgradeHeight(s.upgrade_schedule, "token_minting"),
   };
+}
+
+function upgradeHeight(schedule: unknown, key: string): number | null {
+  if (schedule === null || schedule === undefined) return null;
+  const v = obj(schedule, "stats.upgrade_schedule")[key];
+  return v === null || v === undefined ? null : uint(v, `stats.upgrade_schedule.${key}`);
 }
 
 export function normalizeValidatorCount(raw: unknown): number {
@@ -494,8 +512,13 @@ export interface TokenInfo {
   createdAt: number;
   decimals: number;
   frozen: boolean;
+  /** Mintable by its creator under the TOKEN_MINTING rules (the node reports the consensus flag). */
   mintable: boolean;
   maxSupply: number | null;
+  /** TOKEN_MINTING: supply minted after creation (`null` when the node does not report it). */
+  totalMinted: number | null;
+  /** TOKEN_MINTING: supply credited at creation (mintable tokens only). */
+  initialSupply: number | null;
 }
 
 export function normalizeToken(raw: unknown, what = "token"): TokenInfo {
@@ -516,6 +539,8 @@ export function normalizeToken(raw: unknown, what = "token"): TokenInfo {
     frozen: optBool(t.frozen, `${what}.frozen`),
     mintable: optBool(t.mintable, `${what}.mintable`),
     maxSupply: optNum(t.max_supply, `${what}.max_supply`),
+    totalMinted: optNum(t.total_minted, `${what}.total_minted`),
+    initialSupply: optNum(t.initial_supply, `${what}.initial_supply`),
   };
 }
 

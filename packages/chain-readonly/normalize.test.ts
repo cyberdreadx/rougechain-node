@@ -285,3 +285,32 @@ describe("formatting", () => {
     );
   });
 });
+
+describe("TOKEN_MINTING read fields", () => {
+  const chainId = mainnetStats.chain_id;
+  it("stats carry the token_minting activation height (null = not scheduled)", () => {
+    const off = n.normalizeStats(mainnetStats, chainId);
+    expect(off.tokenMintingHeight).toBeNull();
+    expect(n.tokenMintingActiveAt(off)).toBe(false);
+    const sched = (h: number) =>
+      n.normalizeStats(
+        { ...mainnetStats, upgrade_schedule: { ...mainnetStats.upgrade_schedule, token_minting: h } },
+        chainId,
+      );
+    expect(sched(500).tokenMintingHeight).toBe(500);
+    expect(n.tokenMintingActiveAt(sched(500))).toBe(false); // height 200
+    expect(n.tokenMintingActiveAt(sched(201))).toBe(true); // next block is 201
+    expect(n.tokenMintingActiveAt(sched(150))).toBe(true);
+    expect(n.normalizeStats({ ...mainnetStats, upgrade_schedule: undefined }, chainId).tokenMintingHeight).toBeNull();
+    expect(() =>
+      n.normalizeStats({ ...mainnetStats, upgrade_schedule: { token_minting: "x" } }, chainId),
+    ).toThrow();
+  });
+
+  it("tokens carry minted / initial supply when the node reports them", () => {
+    const fixed = n.normalizeTokenMetadata(tokenMeta);
+    expect(fixed).toMatchObject({ mintable: false, maxSupply: null, totalMinted: null, initialSupply: null });
+    const m = n.normalizeTokenMetadata({ ...tokenMeta, mintable: true, max_supply: 5000, total_minted: 250, initial_supply: 1000 });
+    expect(m).toMatchObject({ mintable: true, maxSupply: 5000, totalMinted: 250, initialSupply: 1000 });
+  });
+});

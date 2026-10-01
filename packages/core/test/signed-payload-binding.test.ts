@@ -53,7 +53,8 @@ describe("nft_batch_mint attributes", () => {
 
 describe("create_token fee default", () => {
   const nodeFee = () => {
-    const m = /\},\s*([0-9]+(?:\.[0-9]+)?)\)\s*,?\s*$/.exec(arm('"create_token" =>', '"mint_tokens" =>').trim());
+    // `=> (TxPayload {…}, 100.0),` or a block arm `=> { …; (TxPayload {…}, 100.0) }`.
+    const m = /\},\s*([0-9]+(?:\.[0-9]+)?)\)\s*,?\s*\}?\s*$/.exec(arm('"create_token" =>', '"mint_tokens" =>').trim());
     expect(m, "could not find the create_token fee in v2_binding.rs").not.toBeNull();
     return Number(m![1]);
   };
