@@ -154,7 +154,7 @@ Input can be either a `rouge1…` address or a hex public key. The endpoint auto
 
 Get the current and next sequential nonce for a wallet. A v2 signed payload may include an optional `account_nonce`; when present it must equal `next_nonce`.
 
-The path parameter must be the **hex public key** (a `rouge1…` address always returns `0`).
+The path parameter is the **hex public key** or a `rouge1…` address. An address is resolved to its public key through the node's address index; an address the node has not indexed (or a malformed one) returns `400` with `{"success": false, "error": "..."}` instead of a nonce. The JSON-RPC `rouge_getTransactionCount` / `eth_getTransactionCount` methods resolve addresses the same way (`-32602` when unresolvable).
 
 ```http
 GET /api/account/:publicKey/nonce

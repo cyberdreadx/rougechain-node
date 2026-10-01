@@ -9964,16 +9964,35 @@ async fn get_allowances(
     }
 }
 
+/// Nonces are keyed by hex public key. A `rouge1…` address is canonicalised to its public key
+/// through the node's persistent address index (`resolve_rouge1`); an address the node has never
+/// indexed (or a malformed one) is an error rather than a misleading nonce of 0.
+fn resolve_nonce_account(input: &str, resolve_rouge1: impl Fn(&str) -> Option<String>) -> Result<String, String> {
+    let input = input.trim();
+    if input.starts_with("rouge1") {
+        if !quantum_vault_crypto::is_rouge_address(input) {
+            return Err(format!("invalid rouge1 address: {}", input));
+        }
+        return resolve_rouge1(input).ok_or_else(|| format!(
+            "rouge1 address {} is not in this node's address index; query the nonce by hex public key",
+            input
+        ));
+    }
+    Ok(input.to_string())
+}
+
 async fn get_account_nonce(
     State(state): State<AppState>,
-    Path(pubkey): Path<String>,
-) -> Json<serde_json::Value> {
+    Path(account): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let pubkey = resolve_nonce_account(&account, |a| state.node.resolve_rouge1(a))
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))))?;
     let current = state.node.get_account_nonce(&pubkey);
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "success": true,
         "nonce": current,
         "next_nonce": current + 1
-    }))
+    })))
 }
 
 async fn v2_token_freeze(
@@ -11241,4 +11260,25 @@ mod rate_limit_key_tests {
         assert!(l.allow("a", 0), "0 = unlimited");
     }
 
+}
+
+#[cfg(test)]
+mod nonce_account_tests {
+    use super::*;
+
+    #[test]
+    fn nonce_account_resolves_rouge1_via_index_or_errors() {
+        let kp = quantum_vault_crypto::pqc_keygen();
+        let addr = quantum_vault_crypto::pub_key_to_address(&kp.public_key_hex).unwrap();
+        let pk = kp.public_key_hex.clone();
+        // hex public keys pass through unchanged
+        assert_eq!(resolve_nonce_account(&pk, |_| None).unwrap(), pk);
+        // indexed rouge1 → its public key
+        assert_eq!(resolve_nonce_account(&addr, |a| (a == addr).then(|| pk.clone())).unwrap(), pk);
+        // unindexed rouge1 → clear error (handler maps it to 400), never a silent 0
+        let e = resolve_nonce_account(&addr, |_| None).unwrap_err();
+        assert!(e.contains("not in this node's address index"), "{e}");
+        // malformed rouge1
+        assert!(resolve_nonce_account("rouge1notvalid", |_| Some(pk.clone())).unwrap_err().contains("invalid rouge1 address"));
+    }
 }

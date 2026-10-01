@@ -925,13 +925,14 @@ Input can be a `rouge1…` address or a hex public key. The endpoint detects the
 
 ### Get Account Nonce
 
-**Endpoint:** `GET /api/account/{publicKey}/nonce`
+**Endpoint:** `GET /api/account/{publicKeyOrRouge1}/nonce`
+
+A `rouge1…` address is resolved to its public key via the node's address index; an unknown or malformed address returns `400`.
 
 **Response:**
 ```json
 {
   "success": true,
-  "publicKey": "a1b2c3d4...",
   "nonce": 5,
   "next_nonce": 6
 }

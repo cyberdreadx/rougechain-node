@@ -35,7 +35,7 @@ Accepted formats differ per endpoint:
 | `/api/address/:pubkey/transactions` | hex public key **or** `rouge1…` address |
 | `/api/resolve/:input` | hex public key **or** `rouge1…` address |
 | `/api/nft/owner/:pubkey` | exact match on the owner as recorded — normally the hex public key; a `rouge1…` address does not match a pubkey-owned NFT |
-| `/api/account/:pubkey/nonce` | hex public key only |
+| `/api/account/:pubkey/nonce` | hex public key **or** `rouge1…` address (resolved via the node's address index; an unknown address returns `400`) |
 
 When in doubt, pass the hex public key.
 
