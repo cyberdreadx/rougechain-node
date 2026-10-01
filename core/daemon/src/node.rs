@@ -357,6 +357,36 @@ pub fn token_minting_active(height: u64) -> bool {
     matches!(token_minting_activation_height(), Some(a) if height >= a)
 }
 
+/// CONTRACT_NFT_ROYALTY — two read-only host functions, `host_nft_royalty_bps` and
+/// `host_nft_royalty_recipient` (`quantum_vault_vm::game::register_nft_royalty_functions`), so a
+/// contract that sells NFTs (an escrow marketplace) can read a collection's royalty and pay it
+/// itself with `host_transfer` (`host_nft_transfer` pays none). The recipient is returned as
+/// `canon_addr(royalty_recipient)` — the ledger entry the wallet `nft_transfer` sale path credits.
+/// From this height every contract call (block apply and previews) links them; before it they are
+/// not linked, so a module importing them fails to instantiate exactly like a module importing any
+/// unknown function (deploy never inspects imports, before or after). Nothing else changes: no new
+/// tx fields, no state-root change. `None` = not scheduled (the per-network height lives in
+/// `upgrades.rs`; activate together with TOKEN_MINTING — see the runbook).
+pub const CONTRACT_NFT_ROYALTY_ACTIVATION_HEIGHT: Option<u64> = None;
+#[cfg(test)]
+thread_local! {
+    static TEST_CONTRACT_NFT_ROYALTY_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+pub(crate) fn set_test_contract_nft_royalty(h: Option<u64>) {
+    TEST_CONTRACT_NFT_ROYALTY_OVERRIDE.with(|c| c.set(Some(h)));
+}
+#[inline]
+pub fn contract_nft_royalty_active(height: u64) -> bool {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_CONTRACT_NFT_ROYALTY_OVERRIDE.with(|c| c.get()) {
+            return matches!(h, Some(a) if height >= a);
+        }
+    }
+    matches!(crate::upgrades::current().contract_nft_royalty, Some(a) if height >= a)
+}
+
 /// Largest integer a JSON client can send exactly (2^53 - 1). Mint amounts, mintable initial
 /// supplies and caps are bounded by it, so every amount survives JSON relay and the ledger's
 /// `as f64` credit path exactly.
@@ -441,6 +471,7 @@ impl quantum_vault_vm::ChainView for NodeChainView {
     fn nft_collection(&self, collection_id: &str) -> Option<quantum_vault_vm::CollectionView> {
         self.nfts.get_collection(collection_id).ok().flatten().map(|c| quantum_vault_vm::CollectionView {
             creator: c.creator, max_supply: c.max_supply, minted: c.minted, frozen: c.frozen,
+            royalty_bps: c.royalty_bps, royalty_recipient: c.royalty_recipient,
         })
     }
     fn block_hash(&self, height: u64) -> Option<String> {
@@ -4098,6 +4129,7 @@ impl L1Node {
             seed: quantum_vault_vm::game::random_seed(&tip_hash, "preview"),
             block_hashes: game_ready_3_active(height),
             payable: payable_calls_active(height),
+            nft_royalty: contract_nft_royalty_active(height),
             attached: attach.map(|(_, _, s, a)| (s.to_string(), a)),
         })
     }
@@ -5200,6 +5232,7 @@ impl L1Node {
                                 seed: quantum_vault_vm::game::random_seed(&block.header.prev_hash, &tx_hash_str),
                                 block_hashes: game_ready_3_active(block.header.height),
                                 payable: payable_calls_active(block.header.height),
+                                nft_royalty: contract_nft_royalty_active(block.header.height),
                                 attached: attach.clone(),
                             });
                             match rt.execute_contract_ext(
