@@ -5,7 +5,7 @@
  * carries over if both read/write exactly these keys, formats and vault parameters. If a test here
  * fails, existing users' stored wallets would stop loading — do not "fix" the expectation.
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 import { installStorage } from "./storage-shim";
@@ -17,7 +17,12 @@ import {
   VAULT_SETTINGS_KEY,
   WALLET_LOCKED_KEY,
   WALLET_METADATA_KEY,
+  MIN_VAULT_PASSWORD_LENGTH,
+  autoLockWallet,
   decryptWallet,
+  hasPlaintextStoredWallet,
+  isWalletPending,
+  stageUnifiedWallet,
   encryptWallet,
   isWalletLocked,
   loadUnifiedWallet,
@@ -139,12 +144,12 @@ describe("unified wallet storage layout", () => {
     expect(store.local.keys()).toEqual([
       "pqc-blockchain-wallet:mainnet",
       "pqc-unified-wallet-metadata:mainnet",
-      "pqc-unified-wallet:mainnet",
       "pqc_messenger_wallet:mainnet",
     ]);
-    // Full wallet (with private keys) in session + local while no vault password is set.
+    // Full wallet (with private keys) in sessionStorage ONLY — never plaintext in localStorage,
+    // even while no vault password is set (security fix 2026-10; older builds wrote it there).
     expect(JSON.parse(store.session.getItem("pqc-unified-wallet:mainnet")!)).toEqual(w);
-    expect(JSON.parse(store.local.getItem("pqc-unified-wallet:mainnet")!)).toEqual(w);
+    expect(store.local.getItem("pqc-unified-wallet:mainnet")).toBeNull();
     // Public-only mirrors.
     expect(JSON.parse(store.local.getItem("pqc-unified-wallet-metadata:mainnet")!)).toEqual({
       id: w.id,
@@ -180,7 +185,6 @@ describe("unified wallet storage layout", () => {
       "pqc-blockchain-wallet:testnet",
       "pqc-unified-wallet-metadata:testnet",
       "pqc-unified-wallet-vault-settings:testnet",
-      "pqc-unified-wallet:testnet",
       "pqc_messenger_wallet:testnet",
       "rougechain-network",
     ]);
@@ -212,6 +216,142 @@ describe("unified wallet storage layout", () => {
     expect(JSON.parse(store.session.getItem("pqc-unified-wallet:mainnet")!)).toEqual(w);
     // Vault exists → private keys are NOT persisted to localStorage again.
     expect(store.local.getItem("pqc-unified-wallet:mainnet")).toBeNull();
+  }, 60_000);
+});
+
+describe("no plaintext private keys in localStorage", () => {
+  let store: ReturnType<typeof installStorage>;
+  beforeEach(() => {
+    store = installStorage();
+  });
+  const localHasSecret = (w: UnifiedWallet) =>
+    store.local.keys().some((k) => {
+      const v = store.local.getItem(k) ?? "";
+      return v.includes(w.signingPrivateKey) || v.includes(w.encryptionPrivateKey);
+    });
+
+  it("stageUnifiedWallet writes only sessionStorage (wallet + pending flag)", () => {
+    const w = { ...fixtureWallet(), mnemonic: "abandon ".repeat(11) + "about" };
+    stageUnifiedWallet(w);
+    expect(store.local.keys()).toEqual([]);
+    expect(store.session.keys()).toEqual(["pqc-unified-wallet-pending:mainnet", "pqc-unified-wallet:mainnet"]);
+    expect(isWalletPending()).toBe(true);
+    expect(loadUnifiedWallet()).toEqual(w);
+    // Abandoning (tab closed = sessionStorage gone) leaves nothing behind.
+    store.session.clear();
+    expect(loadUnifiedWallet()).toBeNull();
+    expect(localHasSecret(w)).toBe(false);
+  });
+
+  it("saveUnifiedWallet never persists private keys without a vault; extension wallets are remembered", () => {
+    const w = fixtureWallet();
+    saveUnifiedWallet(w);
+    expect(localHasSecret(w)).toBe(false);
+    const ext = { ...w, id: "ext-1", signingPrivateKey: "", encryptionPrivateKey: "" };
+    saveUnifiedWallet(ext);
+    expect(JSON.parse(store.local.getItem("pqc-unified-wallet:mainnet")!)).toEqual(ext);
+    store.session.clear();
+    expect(loadUnifiedWallet()).toEqual(ext);
+  });
+
+  it("a legacy plaintext wallet is still read, and setting a password encrypts it and deletes the plaintext", async () => {
+    const w = fixtureWallet();
+    store.local.setItem("pqc-unified-wallet:mainnet", JSON.stringify(w)); // written by an older build
+    expect(hasPlaintextStoredWallet()).toBe(true);
+    expect(loadUnifiedWallet()).toEqual(w);
+    await lockUnifiedWallet("correct horse");
+    expect(hasPlaintextStoredWallet()).toBe(false);
+    expect(localHasSecret(w)).toBe(false);
+    expect(await unlockUnifiedWallet("correct horse")).toEqual(w);
+    expect(localHasSecret(w)).toBe(false);
+    expect(isWalletPending()).toBe(false);
+  }, 60_000);
+
+  it("locking a staged wallet replaces the vault and clears the pending flag", async () => {
+    const w = fixtureWallet();
+    stageUnifiedWallet(w);
+    await lockUnifiedWallet("correct horse");
+    expect(isWalletPending()).toBe(false);
+    expect(localHasSecret(w)).toBe(false);
+    expect(await refDecrypt(store.local.getItem("pqc-unified-wallet-encrypted:mainnet")!, "correct horse", 600_000)).toEqual(w);
+    expect(MIN_VAULT_PASSWORD_LENGTH).toBe(8);
+  }, 60_000);
+});
+
+describe("legacy plaintext is deleted only once ITS vault is written", () => {
+  let store: ReturnType<typeof installStorage>;
+  beforeEach(() => {
+    store = installStorage();
+  });
+  const localWith = (secret: string) => store.local.keys().filter((k) => (store.local.getItem(k) ?? "").includes(secret));
+  // A slice of the ML-DSA secret key that is not part of the public key.
+  const secretOf = (w: UnifiedWallet) => w.signingPrivateKey.slice(-200);
+  const tabClose = () => store.session.clear();
+
+  async function encryptsAndScrubs(w: UnifiedWallet) {
+    await lockUnifiedWallet("correct horse");
+    expect(localWith(secretOf(w))).toEqual([]);
+    for (const k of ["pqc_messenger_wallet:mainnet", "pqc-blockchain-wallet:mainnet", "pqc-unified-wallet:mainnet", "pqc-unified-wallet", "pqc_messenger_wallet", "pqc-blockchain-wallet"]) {
+      const v = store.local.getItem(k);
+      if (v) {
+        const p = JSON.parse(v);
+        expect(p.signingPrivateKey || p.privateKey || p.encryptionPrivateKey || "").toBe("");
+      }
+    }
+    tabClose();
+    expect((await unlockUnifiedWallet("correct horse")).signingPrivateKey).toBe(w.signingPrivateKey);
+    expect(localWith(secretOf(w))).toEqual([]);
+  }
+
+  it("unscoped pqc-unified-wallet: moved to the scoped key, survives tab close, then encrypted", async () => {
+    const w = { ...fixtureWallet(), mnemonic: "legacy words" };
+    store.local.setItem("pqc-unified-wallet", JSON.stringify(w));
+    expect(loadUnifiedWallet()?.signingPrivateKey).toBe(w.signingPrivateKey);
+    tabClose();
+    expect(store.local.getItem("pqc-unified-wallet")).toBeNull();
+    expect(localWith(secretOf(w))).toEqual(["pqc-unified-wallet:mainnet"]);
+    expect(hasPlaintextStoredWallet(w.signingPublicKey)).toBe(true);
+    expect(loadUnifiedWallet()?.signingPrivateKey).toBe(w.signingPrivateKey);
+    await encryptsAndScrubs(w);
+  }, 60_000);
+
+  it("v1 split keys (scoped pqc_messenger_wallet / pqc-blockchain-wallet, unscoped messenger) survive tab close", async () => {
+    const w = fixtureWallet();
+    const messenger = JSON.stringify({ id: w.id, displayName: "Old", signingPublicKey: w.signingPublicKey, signingPrivateKey: w.signingPrivateKey, encryptionPublicKey: w.encryptionPublicKey, encryptionPrivateKey: w.encryptionPrivateKey });
+    const blockchain = JSON.stringify({ publicKey: w.signingPublicKey, privateKey: w.signingPrivateKey, createdAt: 1 });
+    for (const [key, value] of [["pqc_messenger_wallet:mainnet", messenger], ["pqc-blockchain-wallet:mainnet", blockchain], ["pqc_messenger_wallet", messenger]] as const) {
+      store = installStorage();
+      store.local.setItem(key, value);
+      expect(loadUnifiedWallet()?.signingPrivateKey, key).toBe(w.signingPrivateKey);
+      tabClose();
+      expect(localWith(secretOf(w)), key).toContain("pqc-unified-wallet:mainnet");
+      expect(loadUnifiedWallet()?.signingPrivateKey, key).toBe(w.signingPrivateKey);
+      tabClose();
+      expect(loadUnifiedWallet()?.signingPrivateKey, key).toBe(w.signingPrivateKey);
+      await encryptsAndScrubs({ ...w });
+    }
+  }, 120_000);
+
+  it("keeps the plaintext when encryption fails", async () => {
+    const w = fixtureWallet();
+    store.local.setItem("pqc-unified-wallet:mainnet", JSON.stringify(w));
+    const spy = vi.spyOn(crypto.subtle, "encrypt").mockRejectedValueOnce(new Error("boom"));
+    await expect(lockUnifiedWallet("correct horse")).rejects.toThrow("boom");
+    spy.mockRestore();
+    expect(JSON.parse(store.local.getItem("pqc-unified-wallet:mainnet")!)).toEqual(w);
+    expect(store.local.getItem("pqc-unified-wallet-encrypted:mainnet")).toBeNull();
+  });
+
+  it("never deletes another wallet's plaintext: vaulting a different wallet or auto-lock keeps it", async () => {
+    const legacy = fixtureWallet();
+    store.local.setItem("pqc-unified-wallet:mainnet", JSON.stringify(legacy));
+    const other = { ...fixtureWallet(), signingPublicKey: "ab".repeat(1952), signingPrivateKey: "cd".repeat(4032), id: "other" };
+    stageUnifiedWallet(other);
+    await lockUnifiedWallet("correct horse"); // vault for OTHER
+    expect(JSON.parse(store.local.getItem("pqc-unified-wallet:mainnet")!)).toEqual(legacy);
+    expect(hasPlaintextStoredWallet(legacy.signingPublicKey)).toBe(true);
+    autoLockWallet();
+    expect(JSON.parse(store.local.getItem("pqc-unified-wallet:mainnet")!)).toEqual(legacy);
   }, 60_000);
 });
 

@@ -82,6 +82,7 @@ export interface TransactionPayload {
   salePrice?: number;
   names?: string[];
   uris?: string[];
+  /** @deprecated Ignored by the node; batch mints sign per-NFT attributes as `attributes`. */
   batchAttributes?: unknown[];
   website?: string;
   twitter?: string;
@@ -597,6 +598,9 @@ export interface BatchMintNftParams {
   collectionId: string;
   names: string[];
   uris?: string[];
+  /** Per-NFT attributes, one entry per name. */
+  attributes?: unknown[];
+  /** @deprecated Alias of `attributes` (SDK ≤ 1.10.0 sent these under a field the node ignored). */
   batchAttributes?: unknown[];
 }
 

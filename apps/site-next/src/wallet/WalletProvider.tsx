@@ -19,12 +19,13 @@ import {
   clearUnifiedWallet,
   decryptWallet,
   getVaultSettings,
-  hasEncryptedWallet,
   isWalletLocked,
   loadUnifiedWallet,
   lockUnifiedWallet,
+  MIN_VAULT_PASSWORD_LENGTH,
   saveUnifiedWallet,
   saveVaultSettings,
+  stageUnifiedWallet,
   unlockUnifiedWallet,
   type UnifiedWallet,
 } from "@rougechain/core/unified-wallet";
@@ -60,7 +61,10 @@ export interface WalletContextValue extends WalletSnapshot {
   importMnemonic(phrase: string): Promise<void>;
   importBackup(data: string, password: string): Promise<void>;
   connectExtension(): Promise<void>;
-  /** First password (encrypts the vault) — same as apps/web: lock with it, then unlock. */
+  /**
+   * First password (encrypts the vault) — same as apps/web: lock with it, then unlock. Required to
+   * finish create / import and to keep using a legacy plaintext wallet; min 8 characters.
+   */
   setPassword(password: string): Promise<void>;
   unlock(password: string): Promise<void>;
   lock(): void;
@@ -166,19 +170,20 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
     return () => ACTIVITY_EVENTS.forEach((e) => window.removeEventListener(e, onActivity));
   }, [snapshot.status]);
   useEffect(() => {
-    if (snapshot.status !== "unlocked" || !snapshot.hasPassword || autoLockMinutes <= 0) return;
+    // Not while a staged wallet still needs its password: locking would drop it from the session.
+    if (snapshot.status !== "unlocked" || !snapshot.hasPassword || snapshot.needsPassword || autoLockMinutes <= 0) return;
     const id = window.setTimeout(() => {
       autoLockWallet();
       notifyWalletChanged();
       toast.info(i18n.t("wallet:lock.locked"), { description: i18n.t("wallet:lock.autoLocked") });
     }, autoLockMinutes * 60_000);
     return () => window.clearTimeout(id);
-  }, [snapshot.status, snapshot.hasPassword, autoLockMinutes, lastActivity]);
+  }, [snapshot.status, snapshot.hasPassword, snapshot.needsPassword, autoLockMinutes, lastActivity]);
 
-  // Keep the tour from auto-opening while a create / import flow runs.
+  // Keep the tour from auto-opening while a create / import flow runs or a password is required.
   useEffect(() => {
-    setOnboardingActive(flow !== null);
-  }, [flow]);
+    setOnboardingActive(flow !== null || snapshot.needsPassword);
+  }, [flow, snapshot.needsPassword]);
 
   const create = useCallback(async () => {
     const mnemonic = generateMnemonic();
@@ -195,7 +200,8 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
       version: 2,
       mnemonic,
     };
-    saveUnifiedWallet(wallet);
+    // Session only until the password step encrypts it: never plaintext in localStorage.
+    stageUnifiedWallet(wallet);
     notifyWalletChanged();
     registerWalletOnNode({
       id: wallet.id,
@@ -207,9 +213,11 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
   }, []);
 
   const afterImport = useCallback((wallet: UnifiedWallet) => {
-    saveUnifiedWallet(wallet);
+    // Session only until a password encrypts it. The password step is mandatory, also when a vault
+    // already exists (it then replaces that vault with the imported wallet).
+    stageUnifiedWallet(wallet);
     notifyWalletChanged();
-    setFlow({ mode: "import", step: hasEncryptedWallet() ? "onboarding" : "password" });
+    setFlow({ mode: "import", step: "password" });
   }, []);
 
   const importMnemonic = useCallback(
@@ -257,7 +265,10 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
   }, []);
 
   const setPassword = useCallback(async (password: string) => {
-    await lockUnifiedWallet(password);
+    if (password.length < MIN_VAULT_PASSWORD_LENGTH) {
+      throw new WalletError(i18n.t("wallet:backup.passwordMin", { count: MIN_VAULT_PASSWORD_LENGTH }));
+    }
+    await lockUnifiedWallet(password); // encrypts + removes any plaintext copy
     await unlockUnifiedWallet(password);
     notifyWalletChanged();
   }, []);

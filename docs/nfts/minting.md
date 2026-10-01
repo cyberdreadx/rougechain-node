@@ -22,7 +22,7 @@ Mint multiple NFTs at once:
 
 Fee is 5 XRGE per NFT in the batch.
 
-> Per-token attributes are not currently applied by batch mints from the web app or SDK. If a token needs on-chain attributes, mint it individually.
+> Per-token attributes in a batch mint are applied once the client signs them as the payload's `attributes` field (one entry per name). `@rougechain/sdk` **1.11.0** and later do this (`rc.nft.batchMint(wallet, { ..., attributes: [...] })`); SDK 1.10.0 and earlier, and site builds before this fix, sent them under `batchAttributes`, which the node ignores, so those batch-minted tokens have no attributes. Upgrade the SDK (or mint individually) if a token needs on-chain attributes.
 
 ## Token Properties
 

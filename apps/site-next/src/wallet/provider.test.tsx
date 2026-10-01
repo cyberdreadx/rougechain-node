@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { pubkeyToAddress } from "@rougechain/core/address";
+import { generateMnemonic, keypairFromMnemonic } from "@rougechain/core/mnemonic";
 import { PROFILE_CHANGED_EVENT } from "@rougechain/core/avatar";
 import { verifyTransaction, generateNonce } from "@rougechain/core/pqc-signer";
 import {
@@ -14,6 +15,14 @@ import {
 import { WalletProvider, useSigner, useWallet, useWalletIdentity, normalizeRecoveryPhrase, type WalletContextValue, type Signer } from "./WalletProvider";
 import { readWalletSnapshot } from "./store";
 import { dumpStorage, mockFetch, resetBrowserState, seedAppsWebLockedWallet, seedAppsWebWallet } from "./test-utils";
+
+/** localStorage keys whose value contains any of the wallet's secrets (must stay empty). */
+function localSecrets(w: { signingPrivateKey: string; encryptionPrivateKey: string; mnemonic?: string }): string[] {
+  const secrets = [w.signingPrivateKey, w.encryptionPrivateKey, w.mnemonic].filter((x): x is string => !!x);
+  return Object.entries(dumpStorage(localStorage))
+    .filter(([, v]) => secrets.some((sec) => v.includes(sec)))
+    .map(([k]) => k);
+}
 
 let ctx: WalletContextValue;
 let signer: Signer | null;
@@ -101,7 +110,8 @@ describe("same-origin continuity with apps/web", () => {
   it("uses apps/web's network-scoped keys (a testnet wallet is not the mainnet wallet)", () => {
     localStorage.setItem("rougechain-network", "testnet");
     const w = seedAppsWebWallet();
-    expect(Object.keys(dumpStorage(localStorage))).toContain("pqc-unified-wallet:testnet");
+    expect(Object.keys(dumpStorage(sessionStorage))).toContain("pqc-unified-wallet:testnet");
+    expect(Object.keys(dumpStorage(localStorage))).toContain("pqc-unified-wallet-metadata:testnet");
     mount();
     expect(status()).toBe("unlocked");
     expect(ctx.network).toBe("testnet");
@@ -136,14 +146,22 @@ describe("provider state machine", () => {
     expect(ctx.flow).toEqual({ mode: "create", step: "seed" });
     expect(ctx.wallet?.mnemonic?.split(" ")).toHaveLength(24);
     expect(ctx.hasPassword).toBe(false);
-    // Stored by core under apps/web's key.
-    expect(JSON.parse(localStorage.getItem("pqc-unified-wallet:mainnet")!).signingPublicKey).toBe(ctx.publicKey);
+    expect(ctx.needsPassword).toBe(true);
+    expect(ctx.pending).toBe(true);
+    // Held in this tab's sessionStorage only until the password is set — never plaintext in localStorage.
+    expect(JSON.parse(sessionStorage.getItem("pqc-unified-wallet:mainnet")!).signingPublicKey).toBe(ctx.publicKey);
+    expect(localStorage.getItem("pqc-unified-wallet:mainnet")).toBeNull();
+    expect(localSecrets(ctx.wallet!)).toEqual([]);
 
     const pub = ctx.publicKey;
+    await expect(ctx.setPassword("short12")).rejects.toThrow("at least 8 characters");
+    expect(hasEncryptedWallet()).toBe(false);
     await act(() => ctx.setPassword("s3cret-pass"));
     expect(ctx.hasPassword).toBe(true);
+    expect(ctx.needsPassword).toBe(false);
     expect(hasEncryptedWallet()).toBe(true);
-    expect(localStorage.getItem("pqc-unified-wallet:mainnet")).toBeNull(); // plaintext copy removed by core
+    expect(localStorage.getItem("pqc-unified-wallet:mainnet")).toBeNull();
+    expect(localSecrets(ctx.wallet!)).toEqual([]);
     expect(status()).toBe("unlocked");
 
     act(() => ctx.lock());
@@ -168,9 +186,67 @@ describe("provider state machine", () => {
     expect(ctx.publicKey).toBe(w.signingPublicKey);
     expect(ctx.displayName).toBe("Recovered Wallet");
     expect(ctx.flow).toEqual({ mode: "import", step: "password" });
+    expect(ctx.needsPassword).toBe(true);
+    expect(localSecrets(ctx.wallet!)).toEqual([]);
     await expect(ctx.importMnemonic("abandon abandon")).rejects.toThrow("12 or 24 words");
     expect(() => normalizeRecoveryPhrase(Array(12).fill("zzzz").join(" "))).toThrow("Invalid seed phrase");
   });
+
+  it("abandoning create / import before the password leaves no key material in localStorage", async () => {
+    mount();
+    await act(() => ctx.create());
+    const created = ctx.wallet!;
+    expect(localSecrets(created)).toEqual([]);
+    // The user leaves (tab closed: sessionStorage gone) during the recovery-phrase step.
+    sessionStorage.clear();
+    act(() => ctx.refresh());
+    expect(status()).toBe("none");
+    expect(localSecrets(created)).toEqual([]);
+
+    await act(() => ctx.importMnemonic(created.mnemonic!));
+    expect(ctx.flow).toEqual({ mode: "import", step: "password" });
+    sessionStorage.clear();
+    act(() => ctx.refresh());
+    expect(status()).toBe("none");
+    expect(localSecrets(created)).toEqual([]);
+  });
+
+  it("requires the password step for an import even when a vault already exists (and then replaces it)", async () => {
+    const other = seedAppsWebWallet();
+    await lockUnifiedWallet("old-vault-pass");
+    await unlockUnifiedWallet("old-vault-pass");
+    mount();
+    expect(ctx.publicKey).toBe(other.signingPublicKey);
+    const phrase = generateMnemonic();
+    const fresh = { signingPublicKey: keypairFromMnemonic(phrase).publicKey };
+    await act(() => ctx.importMnemonic(phrase));
+    expect(ctx.publicKey).toBe(fresh.signingPublicKey);
+    expect(ctx.flow).toEqual({ mode: "import", step: "password" });
+    expect(ctx.hasPassword).toBe(true);
+    expect(ctx.needsPassword).toBe(true); // the vault still holds the OTHER wallet
+    expect(localSecrets(ctx.wallet!)).toEqual([]);
+    await act(() => ctx.setPassword("new-vault-pass"));
+    expect(ctx.needsPassword).toBe(false);
+    sessionStorage.clear();
+    expect((await unlockUnifiedWallet("new-vault-pass")).signingPublicKey).toBe(fresh.signingPublicKey);
+  }, 60_000);
+
+  it("migrates a legacy plaintext wallet: password required, then only the encrypted vault remains", async () => {
+    const w = seedAppsWebWallet();
+    sessionStorage.clear();
+    localStorage.setItem("pqc-unified-wallet:mainnet", JSON.stringify(w)); // written by an older build
+    mount();
+    expect(status()).toBe("unlocked");
+    expect(ctx.publicKey).toBe(w.signingPublicKey);
+    expect(ctx.needsPassword).toBe(true);
+    expect(ctx.pending).toBe(false);
+    await act(() => ctx.setPassword("migrate-pass"));
+    expect(ctx.needsPassword).toBe(false);
+    expect(localStorage.getItem("pqc-unified-wallet:mainnet")).toBeNull();
+    expect(localSecrets(w)).toEqual([]);
+    sessionStorage.clear();
+    expect(await unlockUnifiedWallet("migrate-pass")).toMatchObject({ signingPublicKey: w.signingPublicKey, signingPrivateKey: w.signingPrivateKey, mnemonic: w.mnemonic });
+  }, 60_000);
 
   it("imports an encrypted .pqcbackup made by core's encryptWallet (apps/web export)", async () => {
     const { encryptWallet } = await import("@rougechain/core/unified-wallet");

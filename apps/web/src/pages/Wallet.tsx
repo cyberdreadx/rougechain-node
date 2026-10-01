@@ -94,7 +94,7 @@ const Wallet = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [minting, setMinting] = useState(false);
-  const [showSend, setShowSend] = useState<string | false>(false);
+  const [showSend, setShowSend] = useState<string | boolean>(false); // true = open with the default token, string = preselected symbol
   const [showReceive, setShowReceive] = useState(false);
   const [showShield, setShowShield] = useState(false);
   const [showUnshield, setShowUnshield] = useState(false);

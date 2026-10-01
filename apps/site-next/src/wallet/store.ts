@@ -8,7 +8,9 @@
 import {
   getLockedWalletMetadata,
   hasEncryptedWallet,
+  hasPlaintextStoredWallet,
   isWalletLocked,
+  isWalletPending,
   loadUnifiedWallet,
   type UnifiedWallet,
 } from "@rougechain/core/unified-wallet";
@@ -29,6 +31,14 @@ export interface WalletSnapshot {
   isExtension: boolean;
   /** A password vault exists (so lock / auto-lock are possible). */
   hasPassword: boolean;
+  /**
+   * The unlocked wallet holds private keys that are NOT protected by the vault: a wallet staged by
+   * create / import whose password is not set yet, or a legacy wallet an older build stored in
+   * plaintext. The user must set a password before using it (SecureWalletGate).
+   */
+  needsPassword: boolean;
+  /** needsPassword because of an unfinished create / import in this tab (vs. a legacy wallet). */
+  pending: boolean;
 }
 
 /**
@@ -64,6 +74,8 @@ export function readWalletSnapshot(): WalletSnapshot {
   const wallet = lockedFlag ? null : safe(loadUnifiedWallet, null);
 
   if (wallet) {
+    const hasKeys = !!(wallet.signingPrivateKey || wallet.encryptionPrivateKey);
+    const pending = hasKeys && safe(isWalletPending, false);
     return {
       status: "unlocked",
       network,
@@ -72,6 +84,10 @@ export function readWalletSnapshot(): WalletSnapshot {
       displayName: wallet.displayName,
       isExtension: !wallet.signingPrivateKey,
       hasPassword,
+      // A plaintext copy of THIS wallet still on disk (legacy) also needs the password, even when
+      // some vault exists: only encrypting this wallet removes it.
+      needsPassword: hasKeys && (!hasPassword || pending || safe(() => hasPlaintextStoredWallet(wallet.signingPublicKey), false)),
+      pending,
     };
   }
   // Locked flag set, or a password vault exists but this tab has no session copy of the keys
@@ -86,9 +102,11 @@ export function readWalletSnapshot(): WalletSnapshot {
       displayName: meta?.displayName ?? null,
       isExtension: false,
       hasPassword,
+      needsPassword: false,
+      pending: false,
     };
   }
-  return { status: "none", network, wallet: null, publicKey: null, displayName: null, isExtension: false, hasPassword };
+  return { status: "none", network, wallet: null, publicKey: null, displayName: null, isExtension: false, hasPassword, needsPassword: false, pending: false };
 }
 
 function sameSnapshot(a: WalletSnapshot, b: WalletSnapshot): boolean {
@@ -99,6 +117,8 @@ function sameSnapshot(a: WalletSnapshot, b: WalletSnapshot): boolean {
     a.displayName === b.displayName &&
     a.isExtension === b.isExtension &&
     a.hasPassword === b.hasPassword &&
+    a.needsPassword === b.needsPassword &&
+    a.pending === b.pending &&
     a.wallet?.signingPrivateKey === b.wallet?.signingPrivateKey &&
     a.wallet?.encryptionPublicKey === b.wallet?.encryptionPublicKey &&
     a.wallet?.mnemonic === b.wallet?.mnemonic &&
@@ -135,6 +155,8 @@ export const SERVER_SNAPSHOT: WalletSnapshot = {
   displayName: null,
   isExtension: false,
   hasPassword: false,
+  needsPassword: false,
+  pending: false,
 };
 
 /**

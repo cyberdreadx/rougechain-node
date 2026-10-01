@@ -156,7 +156,7 @@ The messenger tracks public key fingerprints (SHA-256 hash) for contacts:
 | **Unified signatures** | Mail signed over all encrypted parts (subject + body + attachment) |
 | **CEK multi-recipient** | Efficient per-recipient key wrapping without re-encryption |
 | **Atomic name registry** | Compare-and-swap prevents race conditions on name claims |
-| **Persistent or vaulted keys** | Private keys in localStorage (no password) or AES-256-GCM encrypted blob (with vault passphrase); active session keys in sessionStorage |
+| **Vaulted keys** | Private keys persisted only as an AES-256-GCM encrypted blob (vault password required); active session keys in sessionStorage |
 
 ## Notifications & Unread Badges
 

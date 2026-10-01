@@ -30,6 +30,7 @@ function PageFallback() {
 
 import { IncomingTransferWatcher } from "./wallet/IncomingTransferWatcher";
 import { TourHost } from "./wallet/TourHost";
+import { SecureWalletGate } from "./wallet/SecureWalletGate";
 import { Toaster } from "./wallet/toast";
 const queryClient = new QueryClient();
 export const WALLET_PATHS = ["/wallet", "/settings"];
@@ -61,43 +62,46 @@ export default function App() {
                 </Suspense>
                 {/* Pages load their locale namespace on first visit (explorer, pages, …). */}
                 <Suspense fallback={<PageFallback />}>
-                  <Routes>
-                    <Route path="/" element={<Home />} />
-                    <Route path="/workspace" element={<WorkspacePage />} />
-                    {explorerRoutes}
-                    {/* Feature areas (swap, bridge, messenger/mail, validators & pages): src/features/ */}
-                    {featureRoutes}
-                    <Route
-                      path="/wallet"
-                      element={
-                        <Suspense fallback={<PageFallback />}>
-                          <WalletPage />
-                        </Suspense>
-                      }
-                    />
-                    <Route
-                      path="/settings"
-                      element={
-                        <Suspense fallback={<PageFallback />}>
-                          <SettingsPage />
-                        </Suspense>
-                      }
-                    />
-                    <Route path="/architecture" element={<Architecture />} />
-                    <Route path="/design-system" element={<DesignSystem />} />
-                    <Route
-                      path="*"
-                      element={
-                        <main id="main" className="container page-intro">
-                          <h1>{t("notFound.title")}</h1>
-                          <p>{t("notFound.body")}</p>
-                          <a className="button" href="/">
-                            {t("notFound.home")}
-                          </a>
-                        </main>
-                      }
-                    />
-                  </Routes>
+                  {/* A wallet whose keys no password protects must be secured before any page is used. */}
+                  <SecureWalletGate>
+                    <Routes>
+                      <Route path="/" element={<Home />} />
+                      <Route path="/workspace" element={<WorkspacePage />} />
+                      {explorerRoutes}
+                      {/* Feature areas (swap, bridge, messenger/mail, validators & pages): src/features/ */}
+                      {featureRoutes}
+                      <Route
+                        path="/wallet"
+                        element={
+                          <Suspense fallback={<PageFallback />}>
+                            <WalletPage />
+                          </Suspense>
+                        }
+                      />
+                      <Route
+                        path="/settings"
+                        element={
+                          <Suspense fallback={<PageFallback />}>
+                            <SettingsPage />
+                          </Suspense>
+                        }
+                      />
+                      <Route path="/architecture" element={<Architecture />} />
+                      <Route path="/design-system" element={<DesignSystem />} />
+                      <Route
+                        path="*"
+                        element={
+                          <main id="main" className="container page-intro">
+                            <h1>{t("notFound.title")}</h1>
+                            <p>{t("notFound.body")}</p>
+                            <a className="button" href="/">
+                              {t("notFound.home")}
+                            </a>
+                          </main>
+                        }
+                      />
+                    </Routes>
+                  </SecureWalletGate>
                 </Suspense>
                 <Footer />
                 <Suspense fallback={null}>

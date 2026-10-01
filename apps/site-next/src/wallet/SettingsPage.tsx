@@ -8,7 +8,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { AtSign, Bell, Compass, Eye, Languages, Network, Puzzle, Shield, User } from "lucide-react";
 import { Button } from "@rougechain/ui";
-import { changeVaultPassword } from "@rougechain/core/unified-wallet";
+import { changeVaultPassword, MIN_VAULT_PASSWORD_LENGTH } from "@rougechain/core/unified-wallet";
 import { siteUrlFor, type NetworkType } from "@rougechain/core/network";
 import { loadNotificationSettings, requestNotificationPermission, saveNotificationSettings, type NotificationSettings } from "@rougechain/core/notifications";
 import { getPrivacySettings, registerWalletOnNode, savePrivacySettings } from "@rougechain/core/pqc-messenger";
@@ -78,7 +78,7 @@ export default function SettingsPage() {
   };
 
   const submitPassword = async () => {
-    if (pwNew.length < 8) return toast.error(t("backup.passwordMin", { count: 8 }));
+    if (pwNew.length < MIN_VAULT_PASSWORD_LENGTH) return toast.error(t("backup.passwordMin", { count: MIN_VAULT_PASSWORD_LENGTH }));
     if (pwNew !== pwConfirm) return toast.error(t("backup.passwordMismatch"));
     setPwBusy(true);
     try {

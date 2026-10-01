@@ -78,7 +78,7 @@ POST /api/v2/nft/batch-mint
 **Payload fields:** `collectionId`, `names`, `uris`, `attributes` (array, one entry per NFT)
 **Fee:** 5 XRGE per NFT
 
-> **Note:** the node reads per-NFT attributes only from `attributes`. The SDK currently sends its `batchAttributes` option as a `batchAttributes` payload field, which the node ignores — attributes passed that way are not stored. When signing payloads yourself, use `attributes`.
+> **Note:** the node reads per-NFT attributes only from `attributes`. `@rougechain/sdk` **1.11.0+** and the current site sign them there (`batchMint({ ..., attributes })`; the old `batchAttributes` option is a deprecated alias). SDK ≤ 1.10.0 sent a `batchAttributes` payload field, which the node ignores, so attributes passed through those versions were not stored — upgrade the SDK. When signing payloads yourself, use `attributes`.
 
 ### Transfer NFT
 

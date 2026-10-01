@@ -17,13 +17,13 @@ Open `http://localhost:5173` in your browser.
 
 ## Step 2: Create Your Wallet
 
-Create (or import) a wallet and **set a password** when asked (min 6 characters at onboarding; 8 when set later in Settings). It includes:
+Create (or import) a wallet and **set a password** when asked (required, min 8 characters — the wallet is saved only once it's encrypted). It includes:
 
 - **Address** (`rouge1...`) — Your compact Bech32m address, share freely
 - **Private Key** (ML-DSA-65) — Never share this!
 - **Encryption Key** (ML-KEM-768) — For secure messaging
 
-On the web, your keys are encrypted at rest with AES-256-GCM (PBKDF2, 600k iterations) **once you set a password** — until then the wallet is stored unencrypted in the browser's `localStorage`. While unlocked, the decrypted wallet is kept in `sessionStorage` (cleared when the tab closes). In the browser extension, the decrypted key lives in `chrome.storage.session` and only the encrypted vault is persisted (legacy plaintext extension wallets are force-migrated to encrypted storage on next unlock). Either way, export a `.pqcbackup` — your 24-word phrase alone does not restore your messaging/mail key ([details](create-wallet.md#backup-your-wallet)).
+On the web, your keys are encrypted at rest with AES-256-GCM (PBKDF2, 600k iterations): the password is required, and until you set it during create / import the wallet exists only in the tab's `sessionStorage` (it is never written to `localStorage` unencrypted). While unlocked, the decrypted wallet is kept in `sessionStorage` (cleared when the tab closes). In the browser extension, the decrypted key lives in `chrome.storage.session` and only the encrypted vault is persisted (legacy plaintext extension wallets are force-migrated to encrypted storage on next unlock). Either way, export a `.pqcbackup` — your 24-word phrase alone does not restore your messaging/mail key ([details](create-wallet.md#backup-your-wallet)).
 
 ## Step 3: Get Test Tokens
 

@@ -2,10 +2,11 @@
  * Create / import flow (same order as apps/web): recovery phrase → password → mail name →
  * profile → done → tour. The tour flag is shared with apps/web (see tour.ts).
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@rougechain/ui";
 import { mailAddresses } from "@rougechain/core/mail-name";
+import { MIN_VAULT_PASSWORD_LENGTH } from "@rougechain/core/unified-wallet";
 import { getProfileAvatar, setProfileDisplayName } from "@rougechain/core/profile";
 import { useWallet, type OnboardingMode } from "./WalletProvider";
 import { PhraseGrid } from "./BackupDialog";
@@ -60,23 +61,34 @@ export function SeedReveal() {
   );
 }
 
-/** First password: apps/web's setup (min 6 chars) → core lockUnifiedWallet + unlockUnifiedWallet. */
-export function PasswordSetup({ mode }: { mode: OnboardingMode }) {
+/**
+ * New vault password (+ confirmation), min MIN_VAULT_PASSWORD_LENGTH (8) → WalletProvider.setPassword
+ * (core lockUnifiedWallet + unlockUnifiedWallet: encrypted blob only, plaintext copies removed).
+ * Shared by the onboarding password step and the SecureWalletGate.
+ */
+export function NewPasswordForm({
+  header,
+  submitLabel,
+  onSecured,
+}: {
+  header: ReactNode;
+  submitLabel: string;
+  onSecured: () => void;
+}) {
   const { t } = useTranslation("wallet");
-  const { setPassword, advanceFlow } = useWallet();
+  const { setPassword } = useWallet();
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const submit = async () => {
-    if (pw.length < 6) return setError(t("backup.passwordMin", { count: 6 }));
+    if (pw.length < MIN_VAULT_PASSWORD_LENGTH) return setError(t("backup.passwordMin", { count: MIN_VAULT_PASSWORD_LENGTH }));
     if (pw !== pw2) return setError(t("backup.passwordMismatch"));
     setError("");
     setBusy(true);
     try {
       await setPassword(pw);
-      toast.success(t("onboarding.password.secured"), { description: t("onboarding.password.securedBody") });
-      advanceFlow("onboarding");
+      onSecured();
     } catch {
       setError(t("onboarding.password.failed"));
     } finally {
@@ -91,9 +103,7 @@ export function PasswordSetup({ mode }: { mode: OnboardingMode }) {
         void submit();
       }}
     >
-      <StepIndicator index={2} mode={mode} />
-      <h2>{t("onboarding.password.title")}</h2>
-      <p>{t("onboarding.password.body")}</p>
+      {header}
       <label className="field">
         {t("unlock.password")}
         <input className="input" type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} />
@@ -108,10 +118,33 @@ export function PasswordSetup({ mode }: { mode: OnboardingMode }) {
         </p>
       )}
       <Button type="submit" disabled={busy || !pw || !pw2}>
-        {busy ? t("backup.encrypting") : t("onboarding.password.submit")}
+        {busy ? t("backup.encrypting") : submitLabel}
       </Button>
       <p className="form-hint">{t("onboarding.password.hint")}</p>
     </form>
+  );
+}
+
+/** Mandatory first password of a created / imported wallet (it is saved only once encrypted). */
+export function PasswordSetup({ mode }: { mode: OnboardingMode }) {
+  const { t } = useTranslation("wallet");
+  const { advanceFlow } = useWallet();
+  return (
+    <NewPasswordForm
+      header={
+        <>
+          <StepIndicator index={2} mode={mode} />
+          <h2>{t("onboarding.password.title")}</h2>
+          <p>{t("onboarding.password.body")}</p>
+          <p className="notice">{t("onboarding.password.required")}</p>
+        </>
+      }
+      submitLabel={t("onboarding.password.submit")}
+      onSecured={() => {
+        toast.success(t("onboarding.password.secured"), { description: t("onboarding.password.securedBody") });
+        advanceFlow("onboarding");
+      }}
+    />
   );
 }
 

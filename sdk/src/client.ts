@@ -661,7 +661,7 @@ class NftClient {
       wallet,
       params.collectionId,
       params.names,
-      { uris: params.uris, batchAttributes: params.batchAttributes }
+      { uris: params.uris, attributes: params.attributes ?? params.batchAttributes }
     );
     return this.rc.submitTx("/v2/nft/batch-mint", tx);
   }
