@@ -4,6 +4,20 @@ All notable changes to RougeChain.
 
 ---
 
+## Node: mintable tokens (TOKEN_MINTING) — built, activation not scheduled — 2026-10-01
+
+- Consensus upgrade, **not active on any network** (`upgrade_schedule.token_minting` is `null`).
+  From its height a token can be created with `mintable: true` and an optional integer
+  `max_supply` (≥ `initial_supply`; cap on total issuance), and its creator can mint more through
+  `/api/v2/token/mint`. Block apply enforces creator-only, mintable-at-creation and the cap, and
+  advances `total_minted` deterministically; once a mintable token exists the state root commits the
+  mint ledger.
+- Before activation nothing changes on-chain. The API now **refuses** `mintable` / `max_supply` on
+  create (they used to be silently ignored, giving a fixed-supply token) and refuses mint requests,
+  instead of accepting a mint that every block then dropped.
+- History is unaffected: the new transaction fields are omitted when unset, so every existing
+  transaction and block encodes and hashes exactly as before (pinned by tests, mainnet replay 0–137).
+
 ## Web wallet: messaging key derived from the recovery phrase — 2026-10-01
 
 - New wallets created on rougechain.io, and wallets imported from a recovery phrase (or private
