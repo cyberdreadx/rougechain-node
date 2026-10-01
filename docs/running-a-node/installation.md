@@ -45,7 +45,7 @@ API_PORT=5100
 QV_PEERS=https://api.rougechain.io/api
 ```
 
-The compose file always uses the mainnet genesis (chain id `rougechain-mainnet-1`; a `CHAIN_ID` setting is ignored) and always passes `--mine`, so point `QV_PEERS` at mainnet peers.
+The compose file always uses the mainnet genesis (chain id `rougechain-mainnet-1`; there is no chain-id setting) and always passes `--mine`, so point `QV_PEERS` at mainnet peers. The API is published on `127.0.0.1:${API_PORT}` only; set `API_BIND=0.0.0.0` to expose it on every interface.
 
 Then start:
 

@@ -53,7 +53,7 @@ QV_PEERS=https://api.rougechain.io/api
 QV_CORS_ORIGINS=https://yourdapp.com,https://rougechain.io
 ```
 
-The compose file always starts the node from the **mainnet** genesis (`--genesis /etc/rougechain/genesis.json`), which sets the chain id to `rougechain-mainnet-1`; a `CHAIN_ID` value is ignored when a genesis file is given, so point `QV_PEERS` at mainnet peers. It also always passes `--mine`. `API_PORT` is the host port mapped to the container's `8900`. If `QV_CORS_ORIGINS` is unset (or `*`), the node uses its built-in origin list.
+The compose file always starts the node from the **mainnet** genesis (`--genesis /etc/rougechain/genesis.json`), which sets the chain id to `rougechain-mainnet-1` (there is no chain-id setting), so point `QV_PEERS` at mainnet peers; for another network use `docker run` with your own flags (see [Custom Configuration](#custom-configuration)). It also always passes `--mine`. `API_PORT` is the host port mapped to the container's `8900`, published on `127.0.0.1` only; set `API_BIND=0.0.0.0` to expose it on every interface (prefer a reverse proxy, see [Public Node](../p2p-networking/public-node.md)). The optional Prometheus service (`--profile monitoring`) is likewise published on `127.0.0.1:9090`. If `QV_CORS_ORIGINS` is unset (or `*`), the node uses its built-in origin list.
 
 Start:
 
