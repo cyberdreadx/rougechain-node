@@ -130,7 +130,30 @@ curl -X POST https://testnet.rougechain.io/api/v2/token/mint -H "Content-Type: a
   "signature": "...", "public_key": "your-public-key-hex" }'
 ```
 
-`GET /api/token/:symbol/metadata` reports `mintable`, `max_supply` and `total_minted`.
+`GET /api/token/:symbol/metadata` and `GET /api/tokens` report `mintable` (true only for a token a
+block created mintable), `max_supply` (`null` = uncapped), `total_minted`, and for a mintable token
+`initial_supply` and `mint_enabled_height`. `GET /api/token/:symbol/holders` counts minted supply in
+`total_supply`.
+
+### With the SDK (1.12.0+)
+
+```typescript
+if (await rc.isTokenMintingActive()) {          // reads /api/stats upgrade_schedule.token_minting
+  await rc.createToken(wallet, { name: "My Token", symbol: "MTK", totalSupply: 1_000_000,
+                                 mintable: true, maxSupply: 5_000_000 });  // maxSupply optional
+  await rc.mintTokens(wallet, { symbol: "MTK", amount: 250_000 });      // signed mint_tokens, 1 XRGE
+}
+```
+
+The SDK validates the numbers before signing (integers, `maxSupply` ≥ `totalSupply`, at most
+2^53 − 1) and returns `{ success: false, error }` instead of posting an invalid request.
+
+### On rougechain.io
+
+The **Create a token** dialog shows a **Mintable** option (and an optional **Max supply**) only on
+a network where the upgrade is active. On a mintable token's page in the Explorer, the token's
+creator sees **Mint more** (amount, room left under the cap, 1 XRGE fee); it signs with the local
+wallet or the connected extension / Qwalla. Everyone sees the initial, minted and max supply.
 
 ## Creating a Liquidity Pool
 
