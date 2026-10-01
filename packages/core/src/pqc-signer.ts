@@ -79,6 +79,7 @@ export interface TransactionPayload {
   salePrice?: number;
   names?: string[];
   uris?: string[];
+  /** @deprecated Ignored by the node; batch mints sign per-NFT attributes as `attributes`. */
   batchAttributes?: unknown[];
   // Token metadata
   website?: string;
@@ -223,7 +224,7 @@ export function createSignedTokenCreation(
   tokenName: string,
   tokenSymbol: string,
   initialSupply: number,
-  fee: number = 10,
+  fee: number = 100, // the node charges a fixed 100 XRGE for create_token
   image?: string,
   description?: string
 ): SignedTransaction {
@@ -573,7 +574,7 @@ export function createSignedNftBatchMint(
   privateKey: string,
   collectionId: string,
   names: string[],
-  opts: { uris?: string[]; batchAttributes?: unknown[] } = {}
+  opts: { uris?: string[]; attributes?: unknown[]; /** @deprecated alias of attributes */ batchAttributes?: unknown[] } = {}
 ): SignedTransaction {
   const payload: TransactionPayload = {
     type: "nft_batch_mint",
@@ -582,7 +583,8 @@ export function createSignedNftBatchMint(
     names,
     fee: 5 * names.length,
     uris: opts.uris,
-    batchAttributes: opts.batchAttributes,
+    // The node reads per-NFT batch attributes only from `attributes` (v2_binding nft_batch_mint).
+    attributes: opts.attributes ?? opts.batchAttributes,
     timestamp: Date.now(),
     nonce: generateNonce(),
   };

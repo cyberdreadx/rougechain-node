@@ -4,6 +4,14 @@ All notable changes to RougeChain.
 
 ---
 
+## SDK 1.11.0: NFT batch-mint attributes, create-token fee — 2026-10-01
+
+- Batch mints now sign per-NFT attributes as `attributes`, the field the node reads (SDK, site and
+  core client). Earlier clients sent `batchAttributes`, which the node ignored, so batch-minted NFTs
+  got no attributes. Requires `@rougechain/sdk` **1.11.0**; no node change.
+- The SDK / core `create_token` builders now default the signed fee to 100 XRGE, what the node
+  charges (it was 10).
+
 ## Web wallet: keys never stored unencrypted — 2026-10-01
 
 - **Security fix (rougechain.io).** A new or imported wallet was saved to `localStorage` unencrypted
