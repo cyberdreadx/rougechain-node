@@ -194,15 +194,17 @@ its data directory (`ProtectSystem=strict`, `ReadWritePaths=<data dir>`) and rem
 itself is rewritten on every run.
 
 **The CLI and the node key.** `node-keys.json` can be read only by the `rougechain` user (and
-root), so run the CLI as that user and pass the network's API explicitly:
+root), so run the CLI as that user:
 
 ```bash
-sudo -u rougechain rougechain --rpc https://api.rougechain.io \
-  --node-keys /var/lib/rougechain/mainnet/node-keys.json whoami      # also: stake 10000, validator-status
+sudo -u rougechain rougechain --node-keys /var/lib/rougechain/mainnet/node-keys.json whoami      # also: stake 10000, validator-status
 ```
 
 Without `sudo`, as root: `runuser -u rougechain -- rougechain …`. On testnet the commands are
-`rougechain-testnet --rpc https://testnet.rougechain.io --node-keys /var/lib/rougechain/testnet/node-keys.json …`.
+`rougechain-testnet --network testnet --node-keys /var/lib/rougechain/testnet/node-keys.json …`.
+The CLI submits to the network's public node (`https://api.rougechain.io`, or
+`https://testnet.rougechain.io` with `--network testnet`) through the signed `/api/v2` routes; see
+[CLI Wallet](../advanced/cli.md).
 
 Settings: `NETWORK`, `NODE_NAME`, `PUBLIC_URL`, `VALIDATOR`, `DATA_DIR`, `API_PORT`, `P2P_PORT`,
 `HOST`, `PEERS`, `NO_START`, `ALLOW_DOWNGRADE`, `REPLACE_LEGACY_UNIT`, `RELEASE_BASE_URLS` — see the

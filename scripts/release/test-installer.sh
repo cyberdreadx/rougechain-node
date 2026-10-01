@@ -20,7 +20,8 @@
 #   requires it to reach REAL_SYNC_MIN_HEIGHT (default 200).
 # REAL_CLI (optional, with REAL_BINARY): also ship the REAL rougechain CLI in that release and
 #   run the printed `sudo -u rougechain rougechain --node-keys … whoami` (offline) — with
-#   REAL_SYNC=1 also `validator-status` (read-only requests to the public mainnet API).
+#   REAL_SYNC=1 also `validator-status` and `balance` (read-only requests to the public mainnet
+#   API). The CLI must be a build with the signed /api/v2 submission (default node api.rougechain.io).
 # KEEP_IMAGES=1: do not remove images this run pulled.
 #
 # Needs: docker, Node.js >= 20 (and `npm ci` in scripts/release — done automatically).
@@ -107,19 +108,20 @@ fake_cli() { # fake_cli TAG DEST
   cat > "$2" <<FAKE
 #!/bin/bash
 # fake rougechain CLI ($1) for installer tests
-keys=""; rpc=""; cmd=""
+keys=""; rpc=""; net="mainnet"; cmd=""
 while [ \$# -gt 0 ]; do
   case "\$1" in
     --version) echo "rougechain fake-$1"; exit 0 ;;
     --node-keys) keys="\$2"; shift ;;
     --rpc) rpc="\$2"; shift ;;
+    --network) net="\$2"; shift ;;
     *) cmd="\$1" ;;
   esac
   shift
 done
 pk="\$(sed -n 's/.*"public_key_hex":"\([0-9a-f]*\)".*/\1/p' "\$keys")" || exit 4
 [ -n "\$pk" ] || { echo "Failed to read node-keys file \$keys" >&2; exit 4; }
-echo "cmd=\$cmd rpc=\$rpc user=\$(id -un) Address: rouge1test\${pk:0:12}"
+echo "cmd=\$cmd rpc=\$rpc net=\$net user=\$(id -un) Address: rouge1test\${pk:0:12}"
 FAKE
   chmod 0755 "$2"
 }
@@ -278,14 +280,16 @@ if [ "${HAVE_REAL_CLI:-0}" = 1 ]; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sudo > /dev/null
   test "$(stat -c '%a %U:%G' /usr/local/bin/rougechain)" = "755 root:root"
   /usr/local/bin/rougechain --version
-  who="$(sudo -u rougechain rougechain --rpc https://api.rougechain.io --node-keys $K whoami)"
+  who="$(sudo -u rougechain rougechain --node-keys $K whoami)"
   echo "$who"
   echo "$who" | grep -q '^Address: rouge1'
-  grep -q "sudo -u rougechain rougechain --rpc https://api.rougechain.io --node-keys $K stake 10000" /tmp/install.log
+  grep -q "sudo -u rougechain rougechain --node-keys $K stake 10000" /tmp/install.log
   if [ "${REAL_SYNC:-0}" = 1 ]; then
-    # read-only requests to the public mainnet API
-    sudo -u rougechain rougechain --rpc https://api.rougechain.io --node-keys $K validator-status | tee /tmp/vs.log
-    grep -q 'RPC height: *[0-9]' /tmp/vs.log
+    # read-only requests to the public mainnet API (the CLI's default network)
+    sudo -u rougechain rougechain --node-keys $K validator-status | tee /tmp/vs.log
+    grep -q 'RPC height: *[0-9]* (https://api.rougechain.io)' /tmp/vs.log
+    sudo -u rougechain rougechain --node-keys $K balance | grep -q '^Balance: 0 XRGE'
+    sudo -u rougechain rougechain --rpc https://api.rougechain.io/api/ --node-keys $K balance | grep -q '^Balance: 0 XRGE'
   fi
 fi
 # anything the daemon or the CLI wrote outside the data dir?

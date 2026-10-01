@@ -119,11 +119,11 @@ check "no .prev binary on a first install" test ! -e "$BIN.prev"
 V1_CLI_SHA="$(curl -fsS "$WEB/rel/v1/manifest-mainnet.json" | jq -r .cli.sha256)"
 check "rougechain CLI installed and matches the signed sha256" test "$(sha $CLI)" = "$V1_CLI_SHA"
 check "CLI is 0755 root:root, no .prev on a first install" test "$(mode_owner $CLI)" = "755 root:root" -a ! -e "$CLI.prev"
-check "next steps use the installed CLI as the service user (whoami, stake, validator-status)" bash -c "grep -q 'sudo -u rougechain rougechain --rpc https://api.rougechain.io --node-keys $KEYS whoami' $LOG && grep -q 'sudo -u rougechain rougechain --rpc https://api.rougechain.io --node-keys $KEYS stake 10000' $LOG && grep -q 'sudo -u rougechain rougechain --rpc https://api.rougechain.io --node-keys $KEYS validator-status' $LOG"
-check "next steps do not tell the operator to build the CLI" bash -c "! grep -q 'cargo build' $LOG"
+check "next steps use the installed CLI as the service user (whoami, stake, validator-status)" bash -c "grep -q 'sudo -u rougechain rougechain --node-keys $KEYS whoami' $LOG && grep -q 'sudo -u rougechain rougechain --node-keys $KEYS stake 10000' $LOG && grep -q 'sudo -u rougechain rougechain --node-keys $KEYS validator-status' $LOG"
+check "next steps do not tell the operator to build the CLI, and need no --rpc" bash -c "! grep -q 'cargo build' $LOG && ! grep -q -- '--rpc' $LOG"
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sudo > /dev/null 2>&1
-check "the printed command works: service user can read the 0600 key via sudo -u" bash -c "sudo -u rougechain rougechain --rpc https://api.rougechain.io --node-keys $KEYS whoami | grep -q 'user=rougechain Address: rouge1test'"
-check "…and via runuser (no sudo)" bash -c "runuser -u rougechain -- rougechain --rpc https://api.rougechain.io --node-keys $KEYS whoami | grep -q 'Address: rouge1test'"
+check "the printed command works: service user can read the 0600 key via sudo -u" bash -c "sudo -u rougechain rougechain --node-keys $KEYS whoami | grep -q 'net=mainnet user=rougechain Address: rouge1test'"
+check "…and via runuser (no sudo)" bash -c "runuser -u rougechain -- rougechain --node-keys $KEYS whoami | grep -q 'Address: rouge1test'"
 check "…while another unprivileged user cannot read the key" bash -c "! runuser -u nobody -- rougechain --node-keys $KEYS whoami"
 check "system user exists with no login shell" bash -c 'getent passwd rougechain | grep -q ":/usr/sbin/nologin$"'
 check "system user has a system uid (<1000)" test "$(id -u rougechain)" -lt 1000
@@ -355,7 +355,7 @@ reset_state
 run "${TEST_ENV[@]}" "$(base testnet)" NO_START=1 NETWORK=testnet
 expect_ok "testnet install succeeds (manifest without a genesis)"
 TUNIT=/etc/systemd/system/rougechain-validator-testnet.service
-check "testnet CLI installed under its own name, next steps use the testnet API" bash -c "test -x /usr/local/bin/rougechain-testnet && grep -q 'sudo -u rougechain rougechain-testnet --rpc https://testnet.rougechain.io --node-keys /var/lib/rougechain/testnet/node-keys.json stake 10000' $LOG"
+check "testnet CLI installed under its own name; next steps use --network testnet and the command works" bash -c "test -x /usr/local/bin/rougechain-testnet && grep -q 'sudo -u rougechain rougechain-testnet --network testnet --node-keys /var/lib/rougechain/testnet/node-keys.json stake 10000' $LOG && sudo -u rougechain rougechain-testnet --network testnet --node-keys /var/lib/rougechain/testnet/node-keys.json whoami | grep -q 'net=testnet user=rougechain Address: rouge1test'"
 check "separate binary + unit + data dir" test -x /usr/local/bin/quantum-vault-daemon-testnet -a -s "$TUNIT" -a -s /var/lib/rougechain/testnet/node-keys.json
 check "unit: testnet chain id, ports 5101/4101, testnet peer, no --genesis" bash -c "grep -q -- '--chain-id rougechain-devnet-1' $TUNIT && grep -q -- '--api-port 5101 --port 4101' $TUNIT && grep -q -- '--peers https://testnet.rougechain.io/api' $TUNIT && ! grep -q -- '--genesis' $TUNIT"
 check "mainnet paths not created" test ! -e "$BIN" -a ! -e "$CLI" -a ! -e "$UNIT" -a ! -e "$DATA"

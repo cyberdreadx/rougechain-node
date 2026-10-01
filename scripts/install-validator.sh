@@ -160,12 +160,12 @@ load_config() {
       CHAIN_ID="rougechain-mainnet-1"
       DEF_PEERS="https://api.rougechain.io/api"; DEF_API_PORT=5100; DEF_P2P_PORT=4100
       SERVICE="rougechain-validator"; BIN_PATH="/usr/local/bin/quantum-vault-daemon"
-      CLI_PATH="/usr/local/bin/rougechain"; CLI_RPC="https://api.rougechain.io" ;;
+      CLI_PATH="/usr/local/bin/rougechain"; CLI_NET_ARG="" ;;
     testnet)
       CHAIN_ID="rougechain-devnet-1"
       DEF_PEERS="https://testnet.rougechain.io/api"; DEF_API_PORT=5101; DEF_P2P_PORT=4101
       SERVICE="rougechain-validator-testnet"; BIN_PATH="/usr/local/bin/quantum-vault-daemon-testnet"
-      CLI_PATH="/usr/local/bin/rougechain-testnet"; CLI_RPC="https://testnet.rougechain.io" ;;
+      CLI_PATH="/usr/local/bin/rougechain-testnet"; CLI_NET_ARG=" --network testnet" ;;
     *) die "NETWORK must be 'mainnet' or 'testnet' (got '$NETWORK')" ;;
   esac
   PEERS="${PEERS:-$DEF_PEERS}"
@@ -674,8 +674,9 @@ print_next_steps() {
     key_short="$(jq -r '.public_key_hex // "" | .[0:16]' "$KEYS_FILE" 2>/dev/null || true)"
   fi
   cli_name="$(basename "$CLI_PATH")"
-  # --rpc is always given: the CLI signs with the node key and talks to the network's public API.
-  cli="$cli_name --rpc $CLI_RPC --node-keys $KEYS_FILE"
+  # The CLI signs with the node key and submits to the network's public API (mainnet by default,
+  # --network testnet for testnet); stake/unstake/transfer go through the signed /api/v2 routes.
+  cli="$cli_name$CLI_NET_ARG --node-keys $KEYS_FILE"
   echo
   log "Done. RougeChain node release $REL_VERSION is installed ($NETWORK)."
   cat <<STEPS
@@ -715,9 +716,9 @@ STEPS
        git clone https://github.com/cyberdreadx/rougechain-node && cd rougechain-node/core
        cargo build --release -p quantum-vault-cli        # -> target/release/rougechain
      then, as root on this server (the key file is readable only by '$RUN_USER' and root):
-       rougechain --rpc $CLI_RPC --node-keys $KEYS_FILE whoami     # your validator address
-       rougechain --rpc $CLI_RPC --node-keys $KEYS_FILE stake 10000
-       rougechain --rpc $CLI_RPC --node-keys $KEYS_FILE validator-status
+       rougechain$CLI_NET_ARG --node-keys $KEYS_FILE whoami     # your validator address
+       rougechain$CLI_NET_ARG --node-keys $KEYS_FILE stake 10000
+       rougechain$CLI_NET_ARG --node-keys $KEYS_FILE validator-status
 STEPS
   fi
   cat <<STEPS
