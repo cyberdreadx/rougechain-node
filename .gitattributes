@@ -1,0 +1,4 @@
+# Signed release manifests: signatures cover the exact file bytes — never convert line endings.
+releases/*.json -text
+releases/*.sig -text
+releases/keys/* -text
