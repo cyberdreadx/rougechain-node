@@ -7,6 +7,7 @@ import { getCoreApiBaseUrl, getCoreApiHeaders } from "./network";
 import { cachedFetch, invalidate } from "./api-cache";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
+import { deriveMessagingKeypair } from "@rougechain/core/messaging-keys";
 
 export interface Wallet {
     id: string;
@@ -76,7 +77,7 @@ const TOFU_STORE_KEY = "pqc_tofu_fingerprints";
 
 export async function keyFingerprint(publicKeyHex: string): Promise<string> {
     if (!publicKeyHex) return "";
-    const hash = await crypto.subtle.digest("SHA-256", hexToBytes(publicKeyHex));
+    const hash = await crypto.subtle.digest("SHA-256", hexToBytes(publicKeyHex) as BufferSource);
     const hex = bytesToHex(new Uint8Array(hash));
     return hex.substring(0, 32).replace(/(.{4})/g, "$1 ").trim().toUpperCase();
 }
@@ -514,6 +515,11 @@ export async function decryptMessage(
     return { plaintext, signatureValid };
 }
 
+/**
+ * A RANDOM ML-KEM-768 keypair. Not used for new or imported wallets any more — those derive
+ * their messaging key from the recovery phrase / signing key (lib/messaging-keys.ts) so the same
+ * phrase restores it in the website and Qwalla. Kept for an explicit "regenerate" action only.
+ */
 export function generateEncryptionKeypair(): { publicKey: string; privateKey: string } {
     const keypair = ml_kem768.keygen();
     return {
@@ -525,7 +531,8 @@ export function generateEncryptionKeypair(): { publicKey: string; privateKey: st
 export async function createWallet(displayName: string): Promise<WalletWithPrivateKeys> {
     const { generateKeypair } = await import("./pqc-blockchain");
     const { keypair: signingKeypair } = await generateKeypair();
-    const encKeypair = generateEncryptionKeypair();
+    // No mnemonic here: derive the messaging key from the signing private key (Qwalla/website rule).
+    const encKeypair = deriveMessagingKeypair(null, signingKeypair.privateKey);
     const id = crypto.randomUUID();
 
     const wallet: WalletWithPrivateKeys = {

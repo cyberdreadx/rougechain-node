@@ -14,7 +14,8 @@
   "scripts": {
     "dev": "npm run dev -w @rougechain/web",
     "build": "npm run build -w @rougechain/web",
-    "test": "npm run test -w @rougechain/web && npm run test -w @rougechain/core",
+    "test": "npm run test -w @rougechain/web && npm run test -w @rougechain/core && npm run test -w rougechain-wallet-ext",
+    "test:extension": "npm run test -w rougechain-wallet-ext",
     "test:core": "npm run test -w @rougechain/core",
     "lint": "npm run lint -w @rougechain/web",
     "build:extension": "npm run build -w rougechain-wallet-ext",

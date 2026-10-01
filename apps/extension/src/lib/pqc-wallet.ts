@@ -11,7 +11,11 @@ export const TOKEN_SYMBOL = "XRGE";
 export const TOKEN_NAME = "RougeCoin";
 export const CHAIN_ID = "rougechain-devnet-1";
 
-export const BASE_TRANSFER_FEE = 0.1;
+/** Fee the node charges for a wallet-signed XRGE transfer (/v2/transfer, also stake/unstake/shield):
+ *  1 XRGE — core/daemon/src/v2_binding.rs. Transfer amounts are whole XRGE (stored as u64). */
+export const WALLET_TRANSFER_FEE = 1;
+/** @deprecated legacy name; the real wallet transfer fee is WALLET_TRANSFER_FEE (1 XRGE). */
+export const BASE_TRANSFER_FEE = WALLET_TRANSFER_FEE;
 
 export interface WalletBalance {
     symbol: string;

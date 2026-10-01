@@ -11,6 +11,7 @@ import {
     truncateAddress,
     formatTimestamp,
     TOKEN_SYMBOL,
+    WALLET_TRANSFER_FEE,
     getShieldedStats,
     createShieldedNote,
     saveNote,
@@ -137,6 +138,10 @@ export default function WalletTab({ wallet }: Props) {
         const amountNum = Number(sendAmount);
         if (!Number.isInteger(amountNum) || amountNum <= 0) {
             showToast("XRGE amounts must be whole numbers");
+            return;
+        }
+        if (amountNum + WALLET_TRANSFER_FEE > xrgeBalance) {
+            showToast(`Insufficient balance (amount + ${WALLET_TRANSFER_FEE} XRGE fee)`);
             return;
         }
         setIsSending(true);
@@ -288,7 +293,9 @@ export default function WalletTab({ wallet }: Props) {
                     <div className="flex gap-2">
                         <input
                             type="number"
-                            placeholder="Amount"
+                            min="1"
+                            step="1"
+                            placeholder="Amount (whole XRGE)"
                             value={sendAmount}
                             onChange={e => setSendAmount(e.target.value)}
                             className="flex-1 px-3 py-2 rounded-lg bg-input border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
@@ -300,6 +307,10 @@ export default function WalletTab({ wallet }: Props) {
                             onChange={e => setSendMemo(e.target.value)}
                             className="flex-1 px-3 py-2 rounded-lg bg-input border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                         />
+                    </div>
+                    <div className="text-[10px] text-muted-foreground flex justify-between">
+                        <span>Available: {xrgeBalance.toLocaleString()} {TOKEN_SYMBOL}</span>
+                        <span>Fee: {WALLET_TRANSFER_FEE} XRGE</span>
                     </div>
                     <button
                         onClick={handleSend}
@@ -374,8 +385,8 @@ export default function WalletTab({ wallet }: Props) {
                             </div>
                             <button
                                 onClick={async () => {
-                                    const amt = parseInt(shieldAmount);
-                                    if (!amt || amt <= 0) return;
+                                    const amt = Number(shieldAmount);
+                                    if (!Number.isInteger(amt) || amt <= 0) { showToast("XRGE amounts must be whole numbers"); return; }
                                     if (amt + 1 > xrgeBalance) return;
                                     setIsShielding(true);
                                     try {
@@ -399,7 +410,7 @@ export default function WalletTab({ wallet }: Props) {
                                     }
                                     setIsShielding(false);
                                 }}
-                                disabled={isShielding || !shieldAmount || parseInt(shieldAmount) <= 0}
+                                disabled={isShielding || !shieldAmount || !(Number(shieldAmount) > 0)}
                                 className="w-full py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
                             >
                                 {isShielding ? "Shielding..." : `Shield ${TOKEN_SYMBOL}`}
