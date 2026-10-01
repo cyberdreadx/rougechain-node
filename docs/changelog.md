@@ -4,6 +4,19 @@ All notable changes to RougeChain.
 
 ---
 
+## Web wallet: messaging key derived from the recovery phrase — 2026-10-01
+
+- New wallets created on rougechain.io, and wallets imported from a recovery phrase (or private
+  key), now get an ML-KEM-768 messaging/mail key **derived from the phrase**, exactly as Qwalla
+  does: `ml_kem768.keygen(SHA-512("<phrase>|rougee-gram|kem-v1"))` (signing private key hex in place
+  of the phrase when there is none). Restoring from the 24-word phrase on the website or in Qwalla
+  now gives the same messaging key, so old messages and mail stay readable.
+- Existing wallets keep their current key — nothing stored is re-derived. Wallets created on the
+  website before this change have a random key: keep their `.pqcbackup` to read old messages.
+  Importing such a wallet from its phrase gives it the derived key (registered on next messenger /
+  mail visit), as a phrase import already gave it a new key before.
+- A `.pqcbackup` that contains encryption keys keeps them exactly; one without gets the derived pair.
+
 ## SDK 1.11.0: NFT batch-mint attributes, create-token fee — 2026-10-01
 
 - Batch mints now sign per-NFT attributes as `attributes`, the field the node reads (SDK, site and

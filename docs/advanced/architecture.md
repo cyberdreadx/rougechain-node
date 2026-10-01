@@ -184,7 +184,7 @@ All node state lives in [sled](https://github.com/spacejam/sled) embedded databa
 | **Keys never leave client** | All signing/encryption happens in-browser |
 | **Server is untrusted** | Messages and mail are stored only as ciphertext (the server still sees metadata such as sender, recipients, and timing) |
 | **Quantum-resistant L1** | NIST-approved PQC algorithms for L1 signatures and messaging. Base-side bridge custody is classical today — see [Security Overview](../security.md) |
-| **BIP-39 mnemonics** | Wallets derive from a 24-word BIP-39 mnemonic (256-bit entropy); the mnemonic is the primary backup for the signing key. The ML-KEM-768 messaging key is generated randomly, not from the mnemonic — a `.pqcbackup` file restores it. With a wallet password set, keys are encrypted at rest with AES-256-GCM (PBKDF2, 600k iterations) |
+| **BIP-39 mnemonics** | Wallets derive from a 24-word BIP-39 mnemonic (256-bit entropy); the mnemonic is the primary backup for the signing key. The ML-KEM-768 messaging key is derived from the mnemonic (`ml_kem768.keygen(SHA-512("<mnemonic>|rougee-gram|kem-v1"))`, same as Qwalla) for wallets created or imported from the phrase since 2026-10-01; older website wallets and extension wallets have a random one that only their `.pqcbackup` file restores. With a wallet password set, keys are encrypted at rest with AES-256-GCM (PBKDF2, 600k iterations) |
 | **Signed v2 writes** | `/api/v2` writes require an ML-DSA-65 signature over a canonical payload; legacy v1 write endpoints return `410 Gone` in production |
 | **Per-recipient encryption** | Messages encrypted for the sender and every recipient |
 

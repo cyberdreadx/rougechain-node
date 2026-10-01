@@ -58,7 +58,7 @@ Wallets also support **24-word BIP-39 mnemonic** backup (256-bit entropy for pos
 2. Write down all 24 words in order
 3. Store securely — anyone with your seed phrase has full access to your wallet
 
-> **Important:** The seed phrase restores your **signing key and address** (and so your funds), but **not** your messaging/mail encryption key — that key is generated randomly, not derived from the phrase. A wallet restored from the phrase alone gets a new encryption key and cannot read your earlier messages or mail. Keep a `.pqcbackup` file as well: it contains both keys.
+> **Important:** The seed phrase restores your **signing key and address** (and so your funds). Wallets created or imported from the phrase on rougechain.io (since 2026-10-01) or in Qwalla also get a messaging/mail encryption key **derived from the phrase**, so the phrase alone restores it — the same key in both apps. Wallets created on the website **before** that change have a random encryption key that the phrase cannot restore: keep their `.pqcbackup` file, which contains both keys, to read earlier messages and mail. The browser extension still generates a random encryption key, so keep a `.pqcbackup` for extension wallets too.
 
 ## `.pqcbackup` File Format
 
@@ -90,7 +90,7 @@ The encrypted backup file uses industry-standard cryptography:
 3. The salt, IV, and ciphertext are bundled into a `.pqcbackup` JSON file
 4. Without the correct password, the file cannot be decrypted
 
-> **Warning:** There is no password recovery. If you forget your backup password, you can restore your address and funds from your seed phrase, but not your old messages or mail.
+> **Warning:** There is no password recovery. If you forget your backup password, you can restore your address and funds from your seed phrase; your old messages and mail come back too only if the wallet's encryption key is seed-derived (see above).
 
 ## Security Best Practices
 
@@ -115,8 +115,11 @@ const seed = hkdf(sha256, mnemonicToSeed(mnemonic), undefined, "rougechain-ml-ds
 // Signing keypair (ML-DSA-65 / FIPS 204)
 const signingKeypair = ml_dsa65.keygen(seed);
 
-// Encryption keypair (ML-KEM-768 / FIPS 203) — random, NOT derived from the seed
-const encryptionKeypair = ml_kem768.keygen();
+// Encryption keypair (ML-KEM-768 / FIPS 203) — derived from the phrase, identical to Qwalla.
+// (No phrase, e.g. a private-key import: the signing private key hex is used instead.)
+const kemSeed = sha512(utf8(`${mnemonic || signingPrivateKeyHex}|rougee-gram|kem-v1`)); // 64 bytes
+const encryptionKeypair = ml_kem768.keygen(kemSeed);
+// Wallets created on the website before 2026-10-01 keep their original random key.
 ```
 
 ### Key Storage

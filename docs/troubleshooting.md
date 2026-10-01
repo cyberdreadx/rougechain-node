@@ -141,7 +141,7 @@ Common causes:
 
 Private keys are stored locally in your browser, so clearing browser data deletes them. You can restore the wallet from:
 
-- your **24-word seed phrase** — restores your signing key, address and funds, but not your messaging/mail encryption key, or
+- your **24-word seed phrase** — restores your signing key, address and funds; it also restores your messaging/mail encryption key if the wallet was created or imported from the phrase on the website since 2026-10-01 or in Qwalla (older website wallets and extension wallets have a random key), or
 - an encrypted **`.pqcbackup`** file and its password — restores both keys.
 
 See [Create a Wallet → Backup](getting-started/create-wallet.md#backup-your-wallet). Without either, the keys cannot be recovered.
