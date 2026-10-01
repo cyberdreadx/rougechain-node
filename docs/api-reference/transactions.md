@@ -220,7 +220,7 @@ Content-Type: application/json
 
 ### Limits
 
-The faucet refuses a request (`429`) while you already have a faucet transfer pending, or if your balance is already above the faucet threshold.
+The faucet refuses a request with `429` while you already have a faucet transfer pending, if your balance is already above the faucet threshold, or during the 24-hour per-key cooldown (shared with `POST /api/faucet`; the response then also carries `retryAfterSecs`). When the node sets `--faucet-whitelist`, keys that are not listed get `403`.
 
 ---
 

@@ -325,6 +325,57 @@ fn normalize_recipient(value: &str) -> String {
     stripped.to_lowercase()
 }
 
+// ── Faucet admission (shared by legacy `/api/faucet` and signed `/api/v2/faucet`) ──────────
+// Both endpoints apply the same `--faucet-whitelist` gate and the same per-recipient 24 h
+// cooldown. The cooldown is keyed by the raw recipient public key and shared between the two
+// endpoints (one claim per key per window, whichever endpoint is used), persisted in sled, and
+// recorded only AFTER a successful mint so a failed request never locks the recipient out.
+
+/// `true` when the whitelist is empty (open faucet) or lists `recipient` (normalised).
+fn faucet_whitelisted(whitelist: &[String], recipient: &str) -> bool {
+    if whitelist.is_empty() {
+        return true;
+    }
+    let recipient = normalize_recipient(recipient);
+    whitelist.iter().any(|item| item == &recipient)
+}
+
+/// Seconds left on the cooldown given the last successful claim, or `None` when it has elapsed.
+fn faucet_cooldown_remaining(last_used: Option<i64>, now: i64) -> Option<i64> {
+    let last = last_used?;
+    let elapsed = now - last;
+    if elapsed < FAUCET_COOLDOWN_SECS { Some(FAUCET_COOLDOWN_SECS - elapsed) } else { None }
+}
+
+fn faucet_cooldown_message(remaining: i64) -> String {
+    format!(
+        "Faucet cooldown: please wait {}h {}m before requesting again.",
+        remaining / 3600,
+        (remaining % 3600) / 60
+    )
+}
+
+const FAUCET_NOT_WHITELISTED_MSG: &str =
+    "Faucet restricted: your address is not whitelisted. Unset QV_FAUCET_WHITELIST for local dev.";
+
+/// Remaining cooldown for `recipient`: in-memory first, then the persisted (sled) record.
+async fn faucet_cooldown_for(state: &AppState, recipient: &str, now: i64) -> Option<i64> {
+    let last_used = {
+        let cooldowns = state.faucet_cooldowns.lock().await;
+        cooldowns.get(recipient).copied()
+    }
+    .or_else(|| state.node.store_ref().get_faucet_cooldown(recipient));
+    faucet_cooldown_remaining(last_used, now)
+}
+
+/// Start `recipient`'s cooldown after a successful mint (in memory + persisted).
+async fn faucet_record_claim(state: &AppState, recipient: &str, now: i64) {
+    let mut cooldowns = state.faucet_cooldowns.lock().await;
+    cooldowns.insert(recipient.to_string(), now);
+    // SECURITY: persist so the cooldown survives node restarts
+    state.node.store_ref().set_faucet_cooldown(recipient, now);
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), String> {
     let args = Args::parse();
@@ -3883,16 +3934,13 @@ async fn faucet(
         }));
     }
     let node = &state.node;
-    if !state.faucet_whitelist.is_empty() {
-        let recipient = normalize_recipient(&body.recipient_public_key);
-        if !state.faucet_whitelist.iter().any(|item| item == &recipient) {
-            return Ok(Json(TxResponse {
-                success: false,
-                tx_id: None,
-                tx: None,
-                error: Some("Faucet restricted: your address is not whitelisted. Unset QV_FAUCET_WHITELIST for local dev.".to_string()),
-            }));
-        }
+    if !faucet_whitelisted(&state.faucet_whitelist, &body.recipient_public_key) {
+        return Ok(Json(TxResponse {
+            success: false,
+            tx_id: None,
+            tx: None,
+            error: Some(FAUCET_NOT_WHITELISTED_MSG.to_string()),
+        }));
     }
 
     // Anti-abuse: reject if balance already exceeds threshold
@@ -3929,43 +3977,23 @@ async fn faucet(
     let amount = body.amount.unwrap_or(10000).min(FAUCET_MAX_AMOUNT);
 
     let now = chrono::Utc::now().timestamp();
-    {
-        let cooldowns = state.faucet_cooldowns.lock().await;
-        // Check in-memory cooldown first, then fall back to persisted cooldown in sled
-        let last_used = cooldowns.get(&body.recipient_public_key).copied()
-            .or_else(|| node.store_ref().get_faucet_cooldown(&body.recipient_public_key));
-        if let Some(last) = last_used {
-            let elapsed = now - last;
-            if elapsed < FAUCET_COOLDOWN_SECS {
-                let remaining = FAUCET_COOLDOWN_SECS - elapsed;
-                let hours = remaining / 3600;
-                let mins = (remaining % 3600) / 60;
-                return Ok(Json(TxResponse {
-                    success: false,
-                    tx_id: None,
-                    tx: None,
-                    error: Some(format!(
-                        "Faucet cooldown: please wait {}h {}m before requesting again.",
-                        hours, mins
-                    )),
-                }));
-            }
-        }
-        // NOTE: the cooldown is recorded only AFTER a successful mint (below), so a
-        // failed faucet request (e.g. transient nonce contention with the miner)
-        // never locks the recipient out for 24h. Concurrent double-mint in the tiny
-        // window before that is still blocked by the pending-faucet-tx check above.
+    // NOTE: the cooldown is recorded only AFTER a successful mint (below), so a failed faucet
+    // request (e.g. transient nonce contention with the miner) never locks the recipient out
+    // for 24h. Concurrent double-mint in the tiny window before that is still blocked by the
+    // pending-faucet-tx check above.
+    if let Some(remaining) = faucet_cooldown_for(&state, &body.recipient_public_key, now).await {
+        return Ok(Json(TxResponse {
+            success: false,
+            tx_id: None,
+            tx: None,
+            error: Some(faucet_cooldown_message(remaining)),
+        }));
     }
 
     match node.submit_faucet_tx(&body.recipient_public_key, amount) {
         Ok(tx) => {
             // Mint succeeded — now start the recipient's cooldown.
-            {
-                let mut cooldowns = state.faucet_cooldowns.lock().await;
-                cooldowns.insert(body.recipient_public_key.clone(), now);
-                // SECURITY: Persist cooldown to sled so it survives node restarts
-                node.store_ref().set_faucet_cooldown(&body.recipient_public_key, now);
-            }
+            faucet_record_claim(&state, &body.recipient_public_key, now).await;
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
             Ok(Json(TxResponse { success: true, tx_id: Some(id), tx: Some(tx), error: None }))
         }
@@ -6541,6 +6569,14 @@ async fn v2_faucet(
     let node = &state.node;
     let faucet_amount = 10000_u64;
 
+    // Same `--faucet-whitelist` gate as the legacy `/api/faucet`.
+    if !faucet_whitelisted(&state.faucet_whitelist, &body.public_key) {
+        return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({
+            "success": false,
+            "error": FAUCET_NOT_WHITELISTED_MSG
+        }))));
+    }
+
     // Rate limit: check if user already has a significant balance (anti-abuse)
     let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
     if bal > 50000.0 {
@@ -6564,10 +6600,22 @@ async fn v2_faucet(
         }
     }
 
+    // Same per-recipient 24 h cooldown as the legacy `/api/faucet` (shared record).
+    let now = chrono::Utc::now().timestamp();
+    if let Some(remaining) = faucet_cooldown_for(&state, &body.public_key, now).await {
+        return Err((StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({
+            "success": false,
+            "error": faucet_cooldown_message(remaining),
+            "retryAfterSecs": remaining
+        }))));
+    }
+
     // Use the node's built-in faucet mechanism (creates a proper transfer tx from node key)
     node.submit_faucet_tx(&body.public_key, faucet_amount)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"success": false, "error": e}))))?;
-    
+    // Mint succeeded — start the cooldown (never on failure).
+    faucet_record_claim(&state, &body.public_key, now).await;
+
     Ok(Json(serde_json::json!({
         "success": true,
         "message": format!("Faucet: {} XRGE sent", faucet_amount)
@@ -11019,4 +11067,30 @@ mod bridge_r1_helper_tests {
         assert_eq!(rouge_bridge_address().as_deref(), Some("0x00000000000000000000000000000000000000bb"));
         std::env::remove_var("QV_ROUGE_BRIDGE_ADDRESS");
     }
+}
+
+#[cfg(test)]
+mod faucet_admission_tests {
+    use super::*;
+
+    #[test]
+    fn faucet_whitelist_open_when_empty_and_gates_when_set() {
+        assert!(faucet_whitelisted(&[], "abcd"));
+        let wl = parse_whitelist(Some("xrge:ABCD, ef01".to_string()));
+        assert!(faucet_whitelisted(&wl, "abcd"));
+        assert!(faucet_whitelisted(&wl, "ABCD"), "normalised (case, xrge: prefix)");
+        assert!(faucet_whitelisted(&wl, "xrge:ef01"));
+        assert!(!faucet_whitelisted(&wl, "9999"), "unlisted recipient refused");
+    }
+
+    #[test]
+    fn faucet_cooldown_window() {
+        let now = 1_000_000;
+        assert_eq!(faucet_cooldown_remaining(None, now), None, "never claimed");
+        assert_eq!(faucet_cooldown_remaining(Some(now - 10), now), Some(FAUCET_COOLDOWN_SECS - 10));
+        assert_eq!(faucet_cooldown_remaining(Some(now - FAUCET_COOLDOWN_SECS + 1), now), Some(1));
+        assert_eq!(faucet_cooldown_remaining(Some(now - FAUCET_COOLDOWN_SECS), now), None, "elapsed exactly");
+        assert_eq!(faucet_cooldown_message(3 * 3600 + 25 * 60), "Faucet cooldown: please wait 3h 25m before requesting again.");
+    }
+
 }

@@ -102,7 +102,7 @@ Content-Type: application/json
 }
 ```
 
-The faucet is only enabled on test networks; elsewhere it returns `403`. See [Get Test Tokens](../getting-started/faucet.md) for details.
+The faucet is only enabled on test networks; elsewhere it returns `403`. It applies the node's `--faucet-whitelist` (`403` for unlisted keys) and the same 24-hour per-key cooldown as `POST /api/faucet` (`429`). See [Get Test Tokens](../getting-started/faucet.md) for details.
 
 ---
 
