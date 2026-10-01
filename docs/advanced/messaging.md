@@ -13,7 +13,7 @@ RougeChain includes two built-in communication systems — both fully end-to-end
 | **Self-destruct** | ✅ Configurable timer | ❌ |
 | **Folders** | — | Inbox, Sent, Trash |
 | **Threading** | Conversations | Reply chains |
-| **Server sees** | Encrypted blobs only | Encrypted blobs only |
+| **Server sees** | Ciphertext + metadata (sender, conversation members, timing, size, message type) | Ciphertext + metadata (sender, recipients, timing, size) |
 
 ## Why Post-Quantum?
 
@@ -41,7 +41,9 @@ Alice                                       Bob
   │                  8. AES-GCM decrypt
 ```
 
-**Key principle:** The server stores two encrypted blobs per message — one for the sender, one for the recipient. It never has the keys to decrypt either.
+**Key principle:** In a 1:1 conversation each message package holds two ciphertexts — one encapsulated to the recipient's ML-KEM key, one to the sender's own. Group conversations (2+ other members) use the same CEK pattern as mail: one ciphertext plus a per-member KEM-wrapped key (sender included). The server never has the private keys to decrypt any of them.
+
+**Your encryption key is not derived from your seed phrase.** The ML-KEM-768 key is generated randomly. Restoring a wallet from the 24-word phrase alone gives you a new encryption key and you lose access to old messages and mail; restore from a `.pqcbackup` file to keep them.
 
 ### Mail Encryption (CEK Pattern)
 
@@ -144,10 +146,10 @@ The messenger tracks public key fingerprints (SHA-256 hash) for contacts:
 | Property | Details |
 |----------|---------|
 | **Quantum-resistant** | ML-KEM-768 key encapsulation (FIPS 203) |
-| **Forward secrecy** | Each message uses a fresh encapsulation |
-| **Zero-knowledge server** | Server stores only ciphertext — cannot read messages |
-| **Client-side crypto** | All encryption/decryption in the browser via WebAssembly |
-| **Dual ciphertext** | Sender and recipient each get their own encrypted copy |
+| **No forward secrecy** | Each message uses a fresh encapsulation, but always to the recipient's (and sender's) long-term ML-KEM key — there is no ratchet. Anyone who later obtains that key can decrypt every stored message sent to or from it. Protect your encryption key and backups accordingly |
+| **Server can't read content** | Server stores only ciphertext and cannot read messages, but it does see metadata (who talks to whom, when, and message size) |
+| **Client-side crypto** | All encryption/decryption happens on the client |
+| **Per-member ciphertext** | Sender and every recipient can each decrypt their own copy (two ciphertexts in 1:1, wrapped CEK per member in groups) |
 | **Signed requests** | All API calls authenticated with ML-DSA-65 signatures |
 | **Anti-replay** | Nonce + timestamp prevents request replay attacks |
 | **TOFU** | Key fingerprint tracking with change detection |

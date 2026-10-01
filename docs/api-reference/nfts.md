@@ -34,6 +34,8 @@ GET /api/nft/token/:collection_id/:token_id
 GET /api/nft/owner/:pubkey
 ```
 
+Matches the owner exactly as recorded — normally the owner's hex public key. Querying with a `rouge1…` address does not return NFTs owned by the public key.
+
 ## Write Endpoints (v2 Signed)
 
 All write endpoints accept a signed transaction body:
@@ -73,8 +75,10 @@ POST /api/v2/nft/mint
 POST /api/v2/nft/batch-mint
 ```
 
-**Payload fields:** `collectionId`, `names`, `uris`, `batchAttributes`
+**Payload fields:** `collectionId`, `names`, `uris`, `attributes` (array, one entry per NFT)
 **Fee:** 5 XRGE per NFT
+
+> **Note:** the node reads per-NFT attributes only from `attributes`. The SDK currently sends its `batchAttributes` option as a `batchAttributes` payload field, which the node ignores — attributes passed that way are not stored. When signing payloads yourself, use `attributes`.
 
 ### Transfer NFT
 

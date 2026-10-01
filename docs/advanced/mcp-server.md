@@ -4,7 +4,7 @@ RougeChain is the **first blockchain with native MCP (Model Context Protocol) in
 
 ## What is MCP?
 
-The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standard for AI agents to interact with external services. RougeChain's MCP server exposes **61 blockchain tools** — read the chain **and**, with a wallet configured, sign and submit real transactions. Every write is signed locally with ML-DSA-65 via [`@rougechain/sdk`](sdk.md); private keys never leave the server process.
+The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standard for AI agents to interact with external services. RougeChain's MCP server exposes **63 blockchain tools** — read the chain **and**, with a wallet configured, sign and submit real transactions. Every write is signed locally with ML-DSA-65 via [`@rougechain/sdk`](sdk.md); private keys never leave the server process.
 
 ## Two modes
 
@@ -63,7 +63,7 @@ Add a wallet to unlock the signing tools:
 > **Host note:** `ROUGECHAIN_URL` must be the API host (`api.rougechain.io`), **not**
 > `rougechain.io`, which serves the web app for every `/api/*` path.
 
-## Available Tools (61)
+## Available Tools (63)
 
 ### Wallet (always available)
 
@@ -82,7 +82,7 @@ Add a wallet to unlock the signing tools:
 | **DeFi** | `list_pools`, `get_swap_quote` |
 | **NFTs** | `list_nft_collections`, `get_nft_collection` |
 | **Validators** | `list_validators` |
-| **Contracts** | `list_contracts`, `get_contract`, `get_contract_state`, `get_contract_events`, `deploy_contract`, `call_contract` |
+| **Contracts** | `list_contracts`, `get_contract`, `get_contract_state`, `get_contract_events`, `query_contract` (free read-only dry run), `get_tx_receipt` |
 | **Social** | `get_global_timeline`, `get_post`, `get_user_posts`, `get_post_replies`, `get_track_stats`, `get_artist_stats` |
 | **Mail & Messaging** | `resolve_name`, `reverse_lookup_name`, `list_messenger_wallets` |
 | **Governance & Fees** | `list_proposals`, `get_fee_info` |
@@ -98,6 +98,7 @@ Add a wallet to unlock the signing tools:
 | **Names** | `register_name`, `release_name` |
 | **Social** | `create_post`, `delete_post`, `repost`, `follow`, `like_track`, `comment_on_track` |
 | **Bridge** | `bridge_withdraw` |
+| **Contracts** | `publish_contract`, `execute_contract` |
 
 ## Architecture
 

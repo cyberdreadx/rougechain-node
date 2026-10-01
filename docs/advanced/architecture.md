@@ -24,12 +24,12 @@ An overview of RougeChain's system architecture.
 │                                                           │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
 │  │ REST API │  │Blockchain│  │Validator │  │Messenger │ │
-│  │ (Actix)  │  │ Engine   │  │ / PoS    │  │ Server   │ │
+│  │ (Axum)   │  │ Engine   │  │ / PoS    │  │ Server   │ │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘ │
 │       │              │              │              │       │
 │  ┌────┴──────────────┴──────────────┴──────────────┴────┐ │
 │  │                    Storage Layer                      │ │
-│  │  chain.jsonl │ validators-db (RocksDB) │ messenger-db│ │
+│  │  sled: chain-db │ validators-db │ messenger-db │ …   │ │
 │  └──────────────────────────────────────────────────────┘ │
 └────────────────────┬──────────────────────────────────────┘
                      │ P2P (HTTP)
@@ -48,12 +48,13 @@ The backend is a single Rust binary (`quantum-vault-daemon`) that includes:
 
 | Module | Responsibility |
 |--------|---------------|
-| **REST API** | HTTP endpoints via Actix-web |
+| **REST API** | HTTP endpoints via Axum 0.6 (on hyper), default `--api-port` 5101. Peers sync over this same port — there is no separate P2P port |
+| **gRPC API** | tonic client services (chain, wallet, validator, messenger) on `--port`, default 4101. Not used for peer traffic |
 | **Blockchain Engine** | Block production, transaction processing, state management |
 | **Validator / PoS** | Stake tracking, proposer selection, rewards |
 | **Messenger Server** | Stores encrypted messages and wallet registrations |
 | **Mail Server** | Stores encrypted mail, name registry |
-| **P2P Layer** | Peer discovery, block/tx propagation |
+| **P2P Layer** | HTTP polling of peers' `/api/peers`, `/api/stats` and `/api/blocks`; HTTP push of new blocks and txs |
 | **AMM/DEX** | Liquidity pools, swap execution, price calculation |
 | **Bridge** | R1 production bridge to Base mainnet (XRGE, qETH, qUSDC); separate Bitcoin bridge. V3 post-quantum XRGE bridge code is present but not activated |
 
@@ -111,7 +112,7 @@ The npm package `@rougechain/sdk` provides a programmatic interface for interact
 │  └─ Key derivation from shared secrets │
 │                                         │
 │  SHA-256                               │
-│  └─ Block hashes, tx hashes, Merkle   │
+│  └─ Block hashes, tx hashes           │
 └─────────────────────────────────────────┘
 ```
 
@@ -126,7 +127,7 @@ The npm package `@rougechain/sdk` provides a programmatic interface for interact
 4. Signed transaction is sent to node via REST API
 5. Node verifies signature
 6. Transaction enters mempool
-7. Validator includes it in next block
+7. The designated proposer includes it in the next block
 8. Block is signed and propagated to peers
 ```
 
@@ -137,7 +138,7 @@ The npm package `@rougechain/sdk` provides a programmatic interface for interact
 2. ML-KEM-768 encapsulation generates shared secret
 3. HKDF derives AES-256 key from shared secret
 4. Message is encrypted with AES-GCM (for both sender and recipient)
-5. Encrypted blobs are sent to server
+5. The encrypted package is sent to the server
 6. Recipient fetches encrypted blob
 7. ML-KEM-768 decapsulation recovers shared secret
 8. Message is decrypted client-side
@@ -157,18 +158,21 @@ The npm package `@rougechain/sdk` provides a programmatic interface for interact
 
 ### Node Storage
 
+All node state lives in [sled](https://github.com/spacejam/sled) embedded databases (`*-db/` directories) under the data directory, plus a few JSON files.
+
 | Store | Format | Content |
 |-------|--------|---------|
-| `chain.jsonl` | Append-only JSON lines | Block data |
-| `tip.json` | JSON | Current chain tip reference |
-| `validators-db/` | RocksDB | Validator stakes and state |
-| `messenger-db/` | RocksDB | Encrypted messages and wallets |
+| `chain-db/` | sled | Block data (the chain tip is the last key) |
+| `validators-db/` | sled | Validator stakes and state |
+| `messenger-db/`, `mail-db/` | sled | Encrypted messages, mail, and wallet registrations |
+| other `*-db/` | sled | Pools, NFTs, finality, nonces, social, and other state |
+| `chain.jsonl` | JSON lines | Legacy only: imported once into `chain-db` on first start, then renamed to `chain.jsonl.bak` |
 
 ### Client Storage
 
 | Store | Location | Content |
 |-------|----------|---------|
-| Wallet keys | `localStorage` | Encrypted ML-DSA-65 and ML-KEM-768 keys |
+| Wallet keys | `localStorage` | ML-DSA-65 and ML-KEM-768 keys — AES-256-GCM encrypted once a wallet password is set |
 | Block list | `localStorage` | Blocked wallet addresses |
 | Mail settings | `localStorage` | Email signature preferences |
 | Display name | `localStorage` | User's messenger display name |
@@ -178,11 +182,11 @@ The npm package `@rougechain/sdk` provides a programmatic interface for interact
 | Principle | Implementation |
 |-----------|---------------|
 | **Keys never leave client** | All signing/encryption happens in-browser |
-| **Server is untrusted** | Server only stores encrypted data |
+| **Server is untrusted** | Messages and mail are stored only as ciphertext (the server still sees metadata such as sender, recipients, and timing) |
 | **Quantum-resistant L1** | NIST-approved PQC algorithms for L1 signatures and messaging. Base-side bridge custody is classical today — see [Security Overview](../security.md) |
-| **BIP-39 mnemonics** | Wallets derive from a 24-word BIP-39 mnemonic (256-bit entropy); the mnemonic is the primary backup. Keys are also encrypted at rest with AES-256-GCM (PBKDF2, 600k iterations) |
+| **BIP-39 mnemonics** | Wallets derive from a 24-word BIP-39 mnemonic (256-bit entropy); the mnemonic is the primary backup for the signing key. The ML-KEM-768 messaging key is generated randomly, not from the mnemonic — a `.pqcbackup` file restores it. With a wallet password set, keys are encrypted at rest with AES-256-GCM (PBKDF2, 600k iterations) |
 | **Signed v2 writes** | `/api/v2` writes require an ML-DSA-65 signature over a canonical payload; legacy v1 write endpoints return `410 Gone` in production |
-| **Dual encryption** | Messages encrypted for both sender and recipient |
+| **Per-recipient encryption** | Messages encrypted for the sender and every recipient |
 
 ### v2 Signed Write Requirements
 
@@ -192,5 +196,5 @@ Every write through `/api/v2` is authenticated by signature, not by a session:
 2. The signature is an **ML-DSA-65** signature over the canonical `payload` bytes.
 3. `payload.timestamp` must fall within a **±5-minute** window of server time.
 4. `payload.from` must equal the signing public key (`public_key`).
-5. A **signature replay guard** (process-global `SEEN_SIGNATURES`, keyed by `sha256(signature)`, 5-minute window) rejects any signature already seen in-window.
+5. A **signature replay guard** (`SEEN_SIGNATURES`, keyed by `sha256(signature)`, 5-minute window, persisted to `replay_guard.json` across restarts) rejects any signature already seen in-window.
 6. Legacy v1 write endpoints return **410 Gone** in production.

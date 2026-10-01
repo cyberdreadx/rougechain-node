@@ -31,7 +31,7 @@ Mainnet (`rougechain-mainnet-1`) is live. Since height 150 every block must carr
 
 Version 2.1 (28 September 2026) records the two protocol upgrades activated after v2.0:
 
-- **Finality (3.1, 3.1.3, 11.5):** FINALITY_V2 is active from height 150 (Release 2a). Every block from 151 carries `parent_commit`, a verified precommit certificate for its parent, and `finalized_height` tracks verified certificates. Release 2b (fallback proposer, slashing, spreading stake across validators) is not done.
+- **Finality (3.1, 3.1.3, 11.5):** FINALITY_V2 is active from height 150 (Release 2a). Every block from 151 carries `parent_commit`, a verified precommit certificate for its parent, and `finalized_height` tracks verified certificates. Release 2b (fallback proposer, skip certificates and slashing tied to them, spreading stake across validators) is not done; slashing on equivocation evidence is planned as Release 3.
 - **Contracts (3.1.3, 10.5):** GAME_READY (height 150) makes contract deployments and calls player-signed. GAME_READY 2 (height 160) lets contracts hold and move custom tokens and NFTs, create NFT collections and mint to players, and draw per-transaction randomness; cross-contract calls now apply their asset moves. Section 10.5 corrects v2.0's statement that sub-call balance changes were already applied.
 - **State root (2.4, 3.2, 3.8):** from height 160 the header state root (v2) also covers NFT collections and ownership, contract code and contract storage.
 - **DEX (5.4):** liquidity providers can withdraw accrued swap fees with "Collect fees", backed by a per-position fee ledger on each node.
@@ -233,7 +233,7 @@ The trade-off is size: ML-DSA-65 signatures and keys are significantly larger th
 
 RougeChain uses a Proof-of-Stake consensus protocol. Any account that stakes at least **10,000 XRGE** becomes a validator; the staking key is the validator's identity, and a node proposes blocks with the key stored in its `node-keys.json`.
 
-**Block Cadence.** Mainnet genesis sets a **1,000 ms** block slot (`block_time_ms`; the daemon's command-line default of 400 ms applies only to networks without that genesis setting). A block is produced only when the mempool holds at least one transaction -- the chain does not produce empty blocks. Block height therefore tracks network activity rather than wall-clock time (mainnet passed height 160 in late September 2026), and every protocol timer -- unbonding, jailing, missed-block thresholds -- is measured in blocks, not seconds.
+**Block Cadence.** There is no fixed block slot. The producer polls its mempool every `--block-time-ms` (command-line default **400 ms**; mainnet nodes run with the default) and is woken early when a new transaction arrives. The `block_time_ms` value in the genesis file (1,000 ms on mainnet) is recorded in the chain configuration but is not used for timing. A block is produced only when the mempool holds at least one transaction -- the chain does not produce empty blocks -- so 400 ms is a ceiling on how long a pending transaction waits for the designated proposer to try to seal it, not a block interval. Block height therefore tracks network activity rather than wall-clock time (mainnet passed height 160 in late September 2026), and every protocol timer -- unbonding, jailing, missed-block thresholds -- is measured in blocks, not seconds.
 
 **Proposer Selection (Release 1).** From height 100, each height has exactly one designated proposer:
 
@@ -263,7 +263,7 @@ What finality does not yet add is liveness. Only one validator produces blocks, 
 - At each new block, the node processes the unbonding queue and releases matured entries to the delegator's balance.
 - This prevents stake-and-run attacks and ensures validators remain accountable for the blocks they participated in.
 
-**Fee Distribution.** Transaction fees follow an EIP-1559-inspired dynamic fee model. The total fee consists of a **base fee** and a **priority fee**. **50%** of the base fee is burned; the remaining 50% flows into the distributable tip pool alongside the priority fee. The tip pool is split:
+**Fee Distribution.** Transaction fees follow an EIP-1559-inspired dynamic fee model. A transaction's full signed fee is debited from the sender. Of a block's collected fees, half of the current base fee per transaction is burned (`burned = min(total fees, base fee × tx count / 2)`); everything else forms the distributable tip pool. The tip pool is split:
 - **20%** to the block proposer.
 - **70%** distributed to all active validators, weighted by their stake.
 - **10%** allocated to the on-chain treasury, controlled by governance.
@@ -449,10 +449,10 @@ Nodes communicate over HTTP with the following mechanisms:
 
 **Current Mainnet Topology.** Mainnet runs on two nodes: the producing validator and a second node that follows it without producing blocks. On the public mainnet endpoint (`api.rougechain.io`), the unauthenticated peer-write routes `POST /api/blocks/import`, `POST /api/peers/register` and `POST /api/tx/broadcast` are closed at the reverse proxy; other nodes sync by pulling blocks. Node-to-node communication is HTTP polling; a dedicated peer-to-peer transport is not yet implemented.
 
-**Rate Limiting.** The API implements three-tier rate limiting applied to all endpoints:
+**Rate Limiting.** The REST API supports three-tier rate limiting. Each tier's limit is an operator flag that defaults to 0 (unlimited), and clients are identified by the connecting socket address (forwarded-for headers are not used), so behind a reverse proxy all clients share one limit:
 - **Tier 1 (Validators):** Elevated throughput for staked validators. Authentication requires three headers: `X-Validator-Key` (public key), `X-Validator-Sig` (ML-DSA-65 signature over the timestamp), and `X-Validator-Ts` (Unix millisecond timestamp). The signature is verified via `pqc_verify`, and the timestamp must be within a 30-second drift window. This prevents spoofing of validator status.
 - **Tier 2 (Peers):** Moderate limits for registered peer nodes, identified by socket address.
-- **Tier 3 (General):** Configurable rate limits for public API consumers, with separate limits for read (GET) and write (POST) operations.
+- **Tier 3 (General):** Configurable rate limits for public API consumers, with separate limits for read (GET) and write (all other methods) requests.
 
 ### 3.6 Mempool
 
@@ -585,10 +585,10 @@ All operations on RougeChain require an XRGE fee. The fee schedule is designed t
 
 | Operation | Fee (XRGE) |
 |---|---|
-| Transfer | 0.1 |
+| Transfer | 1 |
 | Token creation | 100 |
 | Liquidity pool creation | 10 |
-| Token swap | 0.1 |
+| Token swap | 1 |
 | NFT collection creation | 50 |
 | NFT mint | 5 |
 | NFT batch mint | 5 per token |
@@ -600,13 +600,13 @@ All operations on RougeChain require an XRGE fee. The fee schedule is designed t
 | Unshield (private → public) | 1 |
 | Bridge withdrawal (any asset) | 0.1 (exactly) |
 
-> **Note:** The v2 client-signed API endpoints enforce a minimum fee of **1.0 XRGE** for transfers, swaps, and liquidity operations to discourage spam. The base protocol fees listed above apply at the consensus layer; the API layer may enforce higher minimums.
+> **Note:** These are the fees bound to wallet- and API-signed (v2) transactions: a transaction whose fee differs from the fee bound to its signed payload is rejected. A transaction signed as a CLI envelope carries whatever fee its signer chose (the CLI defaults to 1 XRGE). Either way the full signed fee is debited; the base fee (Section 4.3) only determines how much of it is burned.
 
 ### 4.3 Fee Distribution
 
-RougeChain uses an **EIP-1559-inspired dynamic fee model**. Each transaction fee consists of a **base fee** and a **priority fee** (tip):
+RougeChain uses an **EIP-1559-inspired dynamic fee model**. The sender pays the full signed fee; the protocol's **base fee** decides how much of it is burned:
 
-- **50%** of the base fee is **burned**, permanently reducing the circulating supply. This makes XRGE deflationary under sustained network activity. The remaining 50% of the base fee flows into the tip pool alongside priority fees.
+- Half of the current base fee per transaction is **burned** (`burned = min(total fees, base fee × tx count / 2)`), permanently reducing the circulating supply. This makes XRGE deflationary under sustained network activity. The rest of the collected fees forms the tip pool.
 - The **tip pool** is distributed as follows:
   - **20%** to the block proposer as a direct reward for block production.
   - **70%** to all active validators, distributed proportionally to their staked XRGE.
@@ -1159,7 +1159,7 @@ Validators stake at least 10,000 XRGE, and the slash count and jail status of ea
 ### 11.4 Network Resilience
 
 - **Mempool limits** (2,000 transactions) prevent memory exhaustion.
-- **Three-tier rate limiting** with cryptographic validator authentication protects all endpoints.
+- **Three-tier rate limiting** with cryptographic validator authentication is available to node operators (off by default).
 - **Block pagination** caps API responses to prevent unbounded data dumps.
 - **Exponential backoff** on peer sync failures prevents cascade overloads.
 - **Adaptive polling** reduces unnecessary network traffic during quiet periods.

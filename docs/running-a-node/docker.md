@@ -15,17 +15,20 @@ Any VPS or machine with Docker installed. Minimum specs:
 ```bash
 docker run -d \
   --name rougechain-node \
-  -p 5100:5100 \
-  -v qv-data:/data \
+  -p 127.0.0.1:5100:8900 \
+  -v qv-data:/data/rougechain \
   rougechain/node \
+  --data-dir /data/rougechain --host 0.0.0.0 --api-port 8900 \
   --mine --peers https://testnet.rougechain.io/api
 ```
 
+Inside the container the node listens on port `8900` and stores data in `/data/rougechain` (the image's volume). Arguments after the image name **replace** the image's default command (`--data-dir /data/rougechain --host 0.0.0.0 --api-port 8900 --mine`), so always repeat `--data-dir`, `--host` and `--api-port` as above; otherwise the node binds to `127.0.0.1:5101` inside the container (unreachable), writes outside the volume, and fails the image's health check (which probes `8900`). Publishing on `127.0.0.1` keeps the API off the public internet; put a reverse proxy in front if peers need to reach you (see [Public Node](../p2p-networking/public-node.md)).
+
 Your node will:
 - Sync with the testnet
-- Produce blocks (`--mine`)
+- Produce blocks (`--mine`) whenever it is the designated proposer
 - Persist chain data to the `qv-data` Docker volume
-- Serve the REST API on port `5100`
+- Serve the REST API on host port `5100`
 
 Verify:
 
@@ -46,10 +49,11 @@ Optionally create a `.env` file to override defaults:
 
 ```env
 API_PORT=5100
-QV_PEERS=https://testnet.rougechain.io/api
+QV_PEERS=https://api.rougechain.io/api
 QV_CORS_ORIGINS=https://yourdapp.com,https://rougechain.io
-CHAIN_ID=rougechain-devnet-1
 ```
+
+The compose file always starts the node from the **mainnet** genesis (`--genesis /etc/rougechain/genesis.json`), which sets the chain id to `rougechain-mainnet-1`; a `CHAIN_ID` value is ignored when a genesis file is given, so point `QV_PEERS` at mainnet peers. It also always passes `--mine`. `API_PORT` is the host port mapped to the container's `8900`. If `QV_CORS_ORIGINS` is unset (or `*`), the node uses its built-in origin list.
 
 Start:
 
@@ -79,18 +83,18 @@ docker build -t rougechain/node .
 
 The Dockerfile uses a multi-stage build:
 1. **Builder stage** — compiles the Rust daemon in a full Rust image
-2. **Runtime stage** — copies only the binary into a minimal Debian image (~50 MB)
+2. **Runtime stage** — copies the daemon (`rougechain-node`) and the `rougechain` CLI, plus the genesis files, into a minimal Debian image
 
 ## Data Persistence
 
-Chain data is stored at `/data` inside the container. Mount a volume to keep it across restarts:
+Chain data is stored at `/data/rougechain` inside the container (when the node runs with `--data-dir /data/rougechain`, as the image's default command and the examples here do). Mount a volume there to keep it across restarts:
 
 ```bash
 # Named volume (recommended)
--v qv-data:/data
+-v qv-data:/data/rougechain
 
 # Host directory
--v /srv/rougechain-data:/data
+-v /srv/rougechain-data:/data/rougechain
 ```
 
 Data includes:
@@ -106,9 +110,10 @@ Pass CLI flags after the image name:
 
 ```bash
 docker run -d \
-  -p 5100:5100 \
-  -v qv-data:/data \
+  -p 127.0.0.1:5100:8900 \
+  -v qv-data:/data/rougechain \
   rougechain/node \
+  --data-dir /data/rougechain --host 0.0.0.0 --api-port 8900 \
   --mine \
   --peers https://testnet.rougechain.io/api \
   --chain-id rougechain-devnet-1 \
@@ -119,10 +124,11 @@ Set CORS origins via environment variable:
 
 ```bash
 docker run -d \
-  -p 5100:5100 \
-  -v qv-data:/data \
+  -p 127.0.0.1:5100:8900 \
+  -v qv-data:/data/rougechain \
   -e QV_CORS_ORIGINS="https://yourdapp.com" \
   rougechain/node \
+  --data-dir /data/rougechain --host 0.0.0.0 --api-port 8900 \
   --mine --peers https://testnet.rougechain.io/api
 ```
 
@@ -130,14 +136,13 @@ docker run -d \
 
 Once your Docker node is running and synced:
 
-1. Open the [Validators page](https://rougechain.io/validators) in your browser
-2. Connect your wallet
-3. Stake XRGE to register as a validator
-4. Your node will begin participating in block production
+1. Fund your node's own key (`/data/rougechain/node-keys.json`) with ≥ 10,000 XRGE plus the fee
+2. Stake **from that key** with the bundled CLI, e.g. `docker exec rougechain-node rougechain --node-keys /data/rougechain/node-keys.json stake 10000` (add `--rpc` for testnet). Staking from a browser wallet stakes the wallet's key, not the node's, and the node then never counts as a validator. See [Becoming a Validator](../staking/becoming-validator.md)
+3. Your node then votes on blocks, and proposes whenever it is the designated proposer (the validator with the most stake)
 
 Your node earns:
-- **20%** of priority tips when selected as block proposer
-- **A share of 70%** of priority tips, weighted by your stake
+- **20%** of priority tips when it is the designated proposer
+- **A share of 70%** of priority tips in every block, weighted by your stake
 - A minimum tip floor of 0.1 XRGE/block is guaranteed from staking reserves
 
 ## Health Checks
@@ -168,7 +173,7 @@ Or if using `docker run`:
 docker build -t rougechain/node .
 docker stop rougechain-node
 docker rm rougechain-node
-docker run -d --name rougechain-node -p 5100:5100 -v qv-data:/data rougechain/node --mine --peers https://testnet.rougechain.io/api
+docker run -d --name rougechain-node -p 127.0.0.1:5100:8900 -v qv-data:/data/rougechain rougechain/node --data-dir /data/rougechain --host 0.0.0.0 --api-port 8900 --mine --peers https://testnet.rougechain.io/api
 ```
 
 The `qv-data` volume persists across container rebuilds, so your chain data is preserved.

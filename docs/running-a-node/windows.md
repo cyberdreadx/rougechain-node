@@ -125,11 +125,11 @@ nssm start rougechain
 
 ## Windows Firewall
 
-If you want your node to be publicly accessible:
+If you want your node to be publicly accessible, don't open the daemon's API port directly: the daemon binds to `127.0.0.1` by default, and a public node should sit behind a TLS reverse proxy (see [Public Node](../p2p-networking/public-node.md)). Open only the proxy's HTTPS port:
 
 ```powershell
-# Allow inbound connections to port 5100
-New-NetFirewallRule -DisplayName "RougeChain Node" -Direction Inbound -Protocol TCP -LocalPort 5100 -Action Allow
+# Allow inbound HTTPS to the reverse proxy
+New-NetFirewallRule -DisplayName "RougeChain Node (HTTPS)" -Direction Inbound -Protocol TCP -LocalPort 443 -Action Allow
 ```
 
 ---
@@ -139,7 +139,7 @@ New-NetFirewallRule -DisplayName "RougeChain Node" -Direction Inbound -Protocol 
 If you prefer Docker, install [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/) and run:
 
 ```powershell
-docker run -d --name rougechain-node -p 5100:5100 -v qv-data:/data rougechain/node --mine --peers https://testnet.rougechain.io/api
+docker run -d --name rougechain-node -p 127.0.0.1:5100:8900 -v qv-data:/data/rougechain rougechain/node --data-dir /data/rougechain --host 0.0.0.0 --api-port 8900 --mine --peers https://testnet.rougechain.io/api
 ```
 
 ---

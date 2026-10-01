@@ -268,6 +268,37 @@ XRGE withdrawals reuse the shared withdrawal endpoints by `txId`:
 `POST /api/bridge/withdrawals/:txId/failure` and `.../refund` (see above). The relayer
 reports failures and the refund re-mints XRGE to `ownerPubkey`.
 
+## Bitcoin Bridge
+
+### Get BTC Deposit Address
+
+```
+POST /api/bridge/btc/deposit-address
+```
+
+Returns a Bitcoin deposit address bound to a RougeChain recipient. The address is stable per
+recipient: asking again for the same recipient returns the same address. BTC sent to it is
+credited as qBTC to that recipient. The node only stores addresses (watch-only); they are
+derived and swept by the relayer.
+
+**Request:**
+```json
+{ "recipient": "rouge1..." }
+```
+
+**Response:**
+```json
+{ "success": true, "address": "bc1q...", "error": null }
+```
+
+On failure `success` is `false`, `address` is `null` and `error` explains why (bridge not
+enabled, missing recipient, or no address available yet while the relayer refills its pool —
+retry shortly). The custody address with an `OP_RETURN` memo (see
+[Bitcoin Bridge](../bridge/btc-bridge.md)) remains a fallback.
+
+`POST /api/bridge/btc/deposit-pool` and `GET /api/bridge/btc/deposit-addresses` are
+relayer-only (relayer secret required).
+
 ## Bridge Activity (public, read-only)
 
 Every cross-chain bridge transfer (deposits into RougeChain and withdrawals out of it) with its

@@ -148,8 +148,10 @@ const toolCategories: {
       { name: "get_contract", desc: "Contract metadata and bytecode" },
       { name: "get_contract_state", desc: "Read contract storage" },
       { name: "get_contract_events", desc: "Contract event history" },
-      { name: "deploy_contract", desc: "Deploy a new WASM contract" },
-      { name: "call_contract", desc: "Execute a contract method" },
+      { name: "query_contract", desc: "Free read-only dry run of a contract method" },
+      { name: "get_tx_receipt", desc: "Receipt (success / failure) of an included tx" },
+      { name: "publish_contract", desc: "Deploy a new WASM contract", write: true },
+      { name: "execute_contract", desc: "Execute a state-changing contract method", write: true },
     ],
   },
   {

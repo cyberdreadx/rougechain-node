@@ -3,13 +3,13 @@
 //! Unlike the EVM bridges, Bitcoin has no event logs and no EVM signatures, so none of the
 //! `eth_getLogs` / ECDSA machinery applies. Two design choices make the BTC path safe:
 //!
-//!   1. **Recipient binding via OP_RETURN.** A depositor writes their RougeChain (ML-DSA)
-//!      recipient address into an `OP_RETURN` output of the very transaction that funds
-//!      custody. The binding is therefore baked into a signed Bitcoin transaction — a third
-//!      party who merely learns the txid cannot redirect the mint. This adds no new key
-//!      material (no xpub, no HD derivation), which also keeps the quantum attack surface
-//!      minimal: the only post-quantum-relevant identity on the wire is the RougeChain
-//!      address, written in the clear.
+//!   1. **Recipient binding.** Either a per-user HD deposit address (derived by the relayer,
+//!      registered here, and bound to one RougeChain recipient — the daemon only watches it;
+//!      see `scan_btc_address_deposits`), or, as a fallback, an `OP_RETURN` output: the
+//!      depositor writes their RougeChain (ML-DSA) recipient address into an `OP_RETURN`
+//!      output of the very transaction that funds custody. That binding is baked into a
+//!      signed Bitcoin transaction — a third party who merely learns the txid cannot redirect
+//!      the mint.
 //!
 //!   2. **Two-provider cross-check.** Every deposit is verified against TWO independent
 //!      Esplora providers (mempool.space + blockstream.info by default). Both must agree on
@@ -18,8 +18,8 @@
 //!      unbacked qBTC. If a provider is unreachable we fail CLOSED (the claim is idempotent
 //!      and pollable, so a provider outage only delays, never loses funds).
 //!
-//! The daemon holds NO Bitcoin private key for deposits — custody is watch-only here. The hot
-//! key lives only in the external BTC relayer, which pays withdrawals out; the daemon then
+//! The daemon holds NO Bitcoin private key for deposits — custody and the HD deposit addresses
+//! are watch-only here. The hot keys live only in the external BTC relayer, which pays withdrawals out; the daemon then
 //! verifies that payout on the Bitcoin chain before marking a withdrawal fulfilled.
 
 use serde::Deserialize;
