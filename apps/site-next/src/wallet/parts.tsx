@@ -3,7 +3,7 @@ import { useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@rougechain/ui";
-import { SafeImage } from "../explorer/ui";
+import { TokenLogo } from "../explorer/ui";
 import { useWallet } from "./WalletProvider";
 import { toast } from "./toast";
 
@@ -125,8 +125,6 @@ export function SettingRow({ title, hint, children }: { title: string; hint?: st
 }
 
 export function TokenIcon({ symbol, image, large }: { symbol: string; image?: string | null; large?: boolean }) {
-  const cls = `token-mark${large ? " large" : ""}`;
-  // The native token's logo ships with the site; other logos come from token metadata (https / data: only).
-  if (symbol === "XRGE") return <img className={cls} src="/xrge-logo.webp" alt="" />;
-  return <SafeImage src={image} alt="" fallback={symbol} className={cls} />;
+  // Built-in logos for XRGE and the bridged majors; other logos come from token metadata (https / data: only).
+  return <TokenLogo symbol={symbol} image={image} className={`token-mark${large ? " large" : ""}`} />;
 }
