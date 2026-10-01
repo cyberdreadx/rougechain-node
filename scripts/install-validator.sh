@@ -8,12 +8,12 @@
 #   1. Downloads the release manifest for the chosen network and its detached Ed25519
 #      signature, and verifies the signature with OpenSSL against the release public key
 #      EMBEDDED in this script (never a downloaded key). Nothing is installed unless it verifies.
-#   2. Downloads the node binary (and the genesis file) named in that signed manifest and
-#      checks size + sha256 against it.
+#   2. Downloads the node binary, the `rougechain` CLI and the genesis file named in that
+#      signed manifest (primary URL, then mirrors) and checks size + sha256 against it.
 #   3. Creates a dedicated system user, installs the binary, writes a hardened systemd unit
 #      and starts the node. It generates the node identity (node-keys.json, mode 0600) only
 #      if none exists; existing keys and chain data are never overwritten.
-#   Re-running it upgrades in place (the previous binary is kept as <binary>.prev).
+#   Re-running it upgrades in place (the previous binaries are kept as <file>.prev).
 #
 # Settings (environment variables; pass them after `sudo`, e.g. `| sudo NETWORK=testnet bash`)
 #   NETWORK      mainnet (default) | testnet
@@ -160,12 +160,12 @@ load_config() {
       CHAIN_ID="rougechain-mainnet-1"
       DEF_PEERS="https://api.rougechain.io/api"; DEF_API_PORT=5100; DEF_P2P_PORT=4100
       SERVICE="rougechain-validator"; BIN_PATH="/usr/local/bin/quantum-vault-daemon"
-      RPC_HINT="" ;;
+      CLI_PATH="/usr/local/bin/rougechain"; CLI_RPC="https://api.rougechain.io" ;;
     testnet)
       CHAIN_ID="rougechain-devnet-1"
       DEF_PEERS="https://testnet.rougechain.io/api"; DEF_API_PORT=5101; DEF_P2P_PORT=4101
       SERVICE="rougechain-validator-testnet"; BIN_PATH="/usr/local/bin/quantum-vault-daemon-testnet"
-      RPC_HINT=" --rpc https://testnet.rougechain.io/api" ;;
+      CLI_PATH="/usr/local/bin/rougechain-testnet"; CLI_RPC="https://testnet.rougechain.io" ;;
     *) die "NETWORK must be 'mainnet' or 'testnet' (got '$NETWORK')" ;;
   esac
   PEERS="${PEERS:-$DEF_PEERS}"
@@ -336,6 +336,16 @@ validate_manifest() {
   mapfile -t BIN_URLS < <(mf '.binary | [.url] + .mirrors | .[]')
   [ ${#BIN_URLS[@]} -ge 1 ] || die "manifest: no binary URL"
   for url in "${BIN_URLS[@]}"; do [[ "$url" =~ $re_url ]] || die "manifest: binary URL is not an https URL: $url"; done
+  HAS_CLI=0; CLI_URLS=()
+  if [ "$(jq -r '.cli | type' "$WORK/manifest.json")" = "object" ]; then
+    HAS_CLI=1
+    CLI_NAME="$(mf '.cli.name')"; CLI_SHA="$(mf '.cli.sha256')"; CLI_SIZE="$(mf '.cli.size | tostring')"
+    [[ "$CLI_NAME" =~ $re_file && "$CLI_SHA" =~ $re_sha && "$CLI_SIZE" =~ $re_int ]] || die "manifest: bad cli entry"
+    [ "$CLI_NAME" != "$BIN_NAME" ] || die "manifest: cli and binary have the same name"
+    mapfile -t CLI_URLS < <(mf '.cli | [.url] + .mirrors | .[]')
+    [ ${#CLI_URLS[@]} -ge 1 ] || die "manifest: no cli URL"
+    for url in "${CLI_URLS[@]}"; do [[ "$url" =~ $re_url ]] || die "manifest: cli URL is not an https URL: $url"; done
+  fi
   HAS_GENESIS=0; GEN_URLS=()
   if [ "$(jq -r '.genesis | type' "$WORK/manifest.json")" = "object" ]; then
     HAS_GENESIS=1
@@ -350,6 +360,7 @@ validate_manifest() {
   log "release $REL_VERSION ($(mf '.released')), source commit $(mf '.source_commit')"
   note "binary  $BIN_NAME"
   note "sha256  $BIN_SHA"
+  if [ "$HAS_CLI" = 1 ]; then note "cli     $CLI_NAME  sha256 $CLI_SHA"; fi
   if [ "$REL_MANDATORY" = "true" ]; then note "MANDATORY upgrade — install before block $REL_BEFORE"; fi
   jq -r '.activations[] | "    activation  \(.height)  \(.name)"' "$WORK/manifest.json"
   if [ -n "$REL_NOTES" ]; then note "notes   $REL_NOTES"; fi
@@ -392,6 +403,11 @@ print_plan() {
   note "network           $NETWORK ($CHAIN_ID)"
   note "release           $REL_VERSION${INSTALLED_VERSION:+ (installed: $INSTALLED_VERSION)}"
   note "binary            $BIN_PATH"
+  if [ "$HAS_CLI" = 1 ]; then
+    note "staking CLI       $CLI_PATH"
+  else
+    note "staking CLI       not part of this release"
+  fi
   note "service           $SERVICE  ($UNIT_FILE)"
   note "runs as           $RUN_USER (system user, no login shell)"
   note "data + node key   $DATA_DIR  (node-keys.json: $keys_state)"
@@ -414,6 +430,18 @@ download_release() {
     log "downloading the node binary"
     download_verified "binary" "$NEW_BIN" "$BIN_SHA" "$BIN_SIZE" "${BIN_URLS[@]}" \
       || die "could not obtain a binary matching the signed manifest from any source — nothing was installed"
+  fi
+  CLI_CURRENT=1
+  if [ "$HAS_CLI" = 1 ]; then
+    NEW_CLI="$WORK/$CLI_NAME"
+    if [ -f "$CLI_PATH" ] && [ "$(file_sha256 "$CLI_PATH")" = "$CLI_SHA" ]; then
+      note "rougechain CLI already installed and matches the signed manifest"
+    else
+      CLI_CURRENT=0
+      log "downloading the rougechain CLI"
+      download_verified "cli" "$NEW_CLI" "$CLI_SHA" "$CLI_SIZE" "${CLI_URLS[@]}" \
+        || die "could not obtain a rougechain CLI matching the signed manifest from any source — nothing was installed"
+    fi
   fi
   if [ "$HAS_GENESIS" = 1 ]; then
     if [ -f "$CONF_DIR/genesis.json" ] && [ "$(file_sha256 "$CONF_DIR/genesis.json")" = "$GEN_SHA" ]; then
@@ -460,6 +488,19 @@ install_files() {
       sed 's/^/      /' "$WORK/version.log" >&2
       die "the installed binary does not run on this system (see above). The previous binary, if any, is $BIN_PATH.prev."
     fi
+  fi
+  if [ "$HAS_CLI" = 1 ] && [ "$CLI_CURRENT" = 0 ]; then
+    if [ -f "$CLI_PATH" ]; then
+      cp -p -- "$CLI_PATH" "$CLI_PATH.prev"
+      note "previous CLI kept as $CLI_PATH.prev"
+    fi
+    install -m 0755 -o root -g root "$NEW_CLI" "$CLI_PATH.new"
+    mv -f -- "$CLI_PATH.new" "$CLI_PATH"
+    if ! runuser -u "$RUN_USER" -- "$CLI_PATH" --version > "$WORK/version.log" 2>&1; then
+      sed 's/^/      /' "$WORK/version.log" >&2
+      die "the installed rougechain CLI does not run on this system (see above). The previous CLI, if any, is $CLI_PATH.prev."
+    fi
+    log "installed $CLI_PATH (rougechain CLI, release $REL_VERSION)"
   fi
   if [ "$HAS_GENESIS" = 1 ] && [ "$GEN_CURRENT" = 0 ]; then
     if [ -f "$CONF_DIR/genesis.json" ] && [ -n "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
@@ -622,7 +663,7 @@ start_service() {
 }
 
 print_next_steps() {
-  local key_short="" cli="rougechain$RPC_HINT --node-keys $KEYS_FILE"
+  local key_short="" cli cli_name
   local svc_state="(not started — start it with: systemctl enable --now $SERVICE)" mine_note="(block production is off)."
   if [ "$STARTED" = 1 ]; then svc_state="(running)"; fi
   if [ "$VALIDATOR" = 1 ]; then mine_note="until its key is staked (--mine is on)."; fi
@@ -632,6 +673,9 @@ print_next_steps() {
   if [ -r "$KEYS_FILE" ]; then
     key_short="$(jq -r '.public_key_hex // "" | .[0:16]' "$KEYS_FILE" 2>/dev/null || true)"
   fi
+  cli_name="$(basename "$CLI_PATH")"
+  # --rpc is always given: the CLI signs with the node key and talks to the network's public API.
+  cli="$cli_name --rpc $CLI_RPC --node-keys $KEYS_FILE"
   echo
   log "Done. RougeChain node release $REL_VERSION is installed ($NETWORK)."
   cat <<STEPS
@@ -651,14 +695,32 @@ print_next_steps() {
 
   To become a validator
   3) Fund and stake THIS key (min. 10,000 XRGE on mainnet, + 1 XRGE fee). The stake transaction
-     must be signed by the key in node-keys.json. This release ships the node only, not the
-     'rougechain' CLI — build the CLI from source on a machine with Rust:
+     must be signed by the key in node-keys.json.
+STEPS
+  if [ -x "$CLI_PATH" ] && [ "$HAS_CLI" = 1 ]; then
+    cat <<STEPS
+     The 'rougechain' CLI from this signed release is installed as $CLI_PATH.
+     The key file is readable only by the '$RUN_USER' user, so run the CLI as that user:
+       sudo -u $RUN_USER $cli whoami
+           # prints your validator address (rouge1…) — send the XRGE to it, then:
+       sudo -u $RUN_USER $cli stake 10000
+       sudo -u $RUN_USER $cli validator-status
+           # want: Staked + In active set
+     (no sudo? as root: runuser -u $RUN_USER -- $cli_name …)
+STEPS
+  else
+    cat <<STEPS
+     This release does not include the 'rougechain' CLI — build it from source on a machine
+     with Rust:
        git clone https://github.com/cyberdreadx/rougechain-node && cd rougechain-node/core
        cargo build --release -p quantum-vault-cli        # -> target/release/rougechain
      then, as root on this server (the key file is readable only by '$RUN_USER' and root):
-       $cli whoami              # your validator address — send the XRGE here
-       $cli stake 10000
-       $cli validator-status    # want: Staked + In active set
+       rougechain --rpc $CLI_RPC --node-keys $KEYS_FILE whoami     # your validator address
+       rougechain --rpc $CLI_RPC --node-keys $KEYS_FILE stake 10000
+       rougechain --rpc $CLI_RPC --node-keys $KEYS_FILE validator-status
+STEPS
+  fi
+  cat <<STEPS
      Guide: https://docs.rougechain.io/staking/becoming-validator.html
 $(if [ "$VALIDATOR" = 1 ]; then
     echo "  4) Block production (--mine) is already enabled: once the key is staked and in the active set,
@@ -670,8 +732,8 @@ $(if [ "$VALIDATOR" = 1 ]; then
          | sudo NETWORK=$NETWORK VALIDATOR=1 PUBLIC_URL=https://node.example.com bash"
   fi)
 
-  Upgrades: re-run this installer. It verifies the new signed release and keeps the old binary
-  as $BIN_PATH.prev. Your keys and data are not touched.
+  Upgrades: re-run this installer. It verifies the new signed release and keeps the old binaries
+  as $BIN_PATH.prev (and $CLI_PATH.prev). Your keys and data are not touched.
 STEPS
   if [ -z "$PUBLIC_URL" ] && [ "$VALIDATOR" = 1 ]; then
     warn "VALIDATOR=1 without PUBLIC_URL: peers cannot reach this node, so its votes and blocks will not propagate."

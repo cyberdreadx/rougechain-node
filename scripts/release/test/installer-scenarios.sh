@@ -14,6 +14,7 @@ PASS=0
 FAIL=0
 TEST_ENV=(ROUGECHAIN_INSTALLER_TEST=1 ROUGECHAIN_INSTALLER_TEST_PUBKEY_FILE=/ctx/keys/release-ed25519.pub.pem)
 BIN=/usr/local/bin/quantum-vault-daemon
+CLI=/usr/local/bin/rougechain
 UNIT=/etc/systemd/system/rougechain-validator.service
 DATA=/var/lib/rougechain/mainnet
 KEYS=$DATA/node-keys.json
@@ -51,7 +52,7 @@ state() {
   } | sha256sum | cut -d ' ' -f 1
 }
 reset_state() {
-  rm -rf /usr/local/bin/quantum-vault-daemon* /etc/rougechain /var/lib/rougechain /etc/systemd/system/rougechain-validator*
+  rm -rf /usr/local/bin/quantum-vault-daemon* /usr/local/bin/rougechain* /etc/rougechain /var/lib/rougechain /etc/systemd/system/rougechain-validator*
   userdel rougechain > /dev/null 2>&1 || true
   groupdel rougechain > /dev/null 2>&1 || true
 }
@@ -115,6 +116,15 @@ V1_SHA="$(manifest_sha v1)"
 check "binary installed and matches the signed sha256" test "$(sha $BIN)" = "$V1_SHA"
 check "binary is 0755 root:root" test "$(mode_owner $BIN)" = "755 root:root"
 check "no .prev binary on a first install" test ! -e "$BIN.prev"
+V1_CLI_SHA="$(curl -fsS "$WEB/rel/v1/manifest-mainnet.json" | jq -r .cli.sha256)"
+check "rougechain CLI installed and matches the signed sha256" test "$(sha $CLI)" = "$V1_CLI_SHA"
+check "CLI is 0755 root:root, no .prev on a first install" test "$(mode_owner $CLI)" = "755 root:root" -a ! -e "$CLI.prev"
+check "next steps use the installed CLI as the service user (whoami, stake, validator-status)" bash -c "grep -q 'sudo -u rougechain rougechain --rpc https://api.rougechain.io --node-keys $KEYS whoami' $LOG && grep -q 'sudo -u rougechain rougechain --rpc https://api.rougechain.io --node-keys $KEYS stake 10000' $LOG && grep -q 'sudo -u rougechain rougechain --rpc https://api.rougechain.io --node-keys $KEYS validator-status' $LOG"
+check "next steps do not tell the operator to build the CLI" bash -c "! grep -q 'cargo build' $LOG"
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sudo > /dev/null 2>&1
+check "the printed command works: service user can read the 0600 key via sudo -u" bash -c "sudo -u rougechain rougechain --rpc https://api.rougechain.io --node-keys $KEYS whoami | grep -q 'user=rougechain Address: rouge1test'"
+check "…and via runuser (no sudo)" bash -c "runuser -u rougechain -- rougechain --rpc https://api.rougechain.io --node-keys $KEYS whoami | grep -q 'Address: rouge1test'"
+check "…while another unprivileged user cannot read the key" bash -c "! runuser -u nobody -- rougechain --node-keys $KEYS whoami"
 check "system user exists with no login shell" bash -c 'getent passwd rougechain | grep -q ":/usr/sbin/nologin$"'
 check "system user has a system uid (<1000)" test "$(id -u rougechain)" -lt 1000
 check "data dir is 0700 rougechain" test "$(mode_owner $DATA)" = "700 rougechain:rougechain"
@@ -150,6 +160,7 @@ check "node key untouched (same content, same inode)" test "$(sha $KEYS)" = "$KE
 check "says the key was kept" logged "node key exists — keeping it"
 check "says the binary is current" logged "already installed and matches"
 check "no .prev binary created by a no-op re-run" test ! -e "$BIN.prev"
+check "CLI reported current, no .prev CLI created" bash -c "grep -q 'rougechain CLI already installed and matches' $LOG && test ! -e $CLI.prev"
 chmod 0644 "$KEYS"
 run "${TEST_ENV[@]}" "$(base v1)" NO_START=1 NODE_NAME=ci-node
 check "loose key permissions are tightened back to 0600, content untouched" test "$(mode_owner $KEYS)" = "600 rougechain:rougechain" -a "$(sha $KEYS)" = "$KEY_SHA"
@@ -184,6 +195,13 @@ check "…nothing installed" test ! -e "$BIN" -a ! -e "$UNIT" -a ! -e "$DATA"
 run "${TEST_ENV[@]}" "$(base badgenesis)" NO_START=1
 expect_refused "genesis not matching the manifest is refused" "could not obtain a genesis file matching the signed manifest"
 check "…nothing installed (binary neither)" test ! -e "$BIN" -a ! -e "$UNIT" -a ! -e "$DATA"
+
+run "${TEST_ENV[@]}" "$(base badcli)" NO_START=1
+expect_refused "CLI with the right size but wrong sha256 is refused" "cli: sha256 .* does not match the signed manifest"
+check "…with a final refusal, nothing installed (node binary neither)" bash -c "grep -q 'could not obtain a rougechain CLI matching the signed manifest' $LOG && test ! -e $BIN -a ! -e $CLI -a ! -e $UNIT -a ! -e $DATA"
+run "${TEST_ENV[@]}" "$(base badredirect)" NO_START=1
+expect_refused "a redirecting mirror that leads to a tampered binary is refused" "sha256 .* does not match the signed manifest"
+check "…nothing installed" test ! -e "$BIN" -a ! -e "$UNIT" -a ! -e "$DATA"
 
 section "manifest content checks (validly signed, still refused)"
 run "${TEST_ENV[@]}" "$(base mininst)" NO_START=1
@@ -220,6 +238,15 @@ check "…connection failure reported" logged "binary: download failed from http
 check "…tampered mirror rejected by sha256" logged "binary: sha256 .* does not match the signed manifest"
 check "…installed binary matches the signed sha256" test "$(sha $BIN)" = "$V1_SHA"
 check "genesis: primary 404 → mirror used" bash -c "grep -q 'genesis: download failed' $LOG && test -s $CONF/genesis.json"
+check "cli: primary down, 2nd tampered → 3rd (good mirror) installed" bash -c "grep -q 'cli: download failed from http://rc-inst-test-web:8081/' $LOG && grep -q 'cli: sha256 .* does not match the signed manifest' $LOG && test \"\$(sha256sum $CLI | cut -d ' ' -f 1)\" = $V1_CLI_SHA"
+
+section "GitHub-style mirror: 302 redirect to the file"
+check "fixture: the mirror really answers 302 with a Location" bash -c "curl -s -o /dev/null -w '%{http_code} %{redirect_url}' '$WEB/cgi-bin/dl?v1/quantum-vault-daemon-test' | grep -q '^302 http://rc-inst-test-web:8080/files/v1/quantum-vault-daemon-test$'"
+reset_state
+run "${TEST_ENV[@]}" "$(base redirect)" NO_START=1
+expect_ok "primaries down, mirrors redirect (302) → install succeeds"
+check "…the redirecting mirrors were the source" bash -c "grep -q 'downloading binary: $WEB/cgi-bin/dl' $LOG && grep -q 'downloading cli: $WEB/cgi-bin/dl' $LOG && grep -q 'downloading genesis: $WEB/cgi-bin/dl' $LOG"
+check "…binary, CLI and genesis all match the signed manifest" test "$(sha $BIN)" = "$V1_SHA" -a "$(sha $CLI)" = "$V1_CLI_SHA" -a "$(sha $CONF/genesis.json)" = "$(jq -r .genesis.sha256 $CONF/manifest.json)"
 
 section "upgrade in place keeps a .prev binary, keys and data"
 reset_state
@@ -234,7 +261,10 @@ check ".prev is the v1 binary" test "$(sha $BIN.prev)" = "$V1_SHA"
 check "node key untouched" test "$(sha $KEYS)" = "$KEY_SHA" -a "$(mode_owner $KEYS)" = "600 rougechain:rougechain"
 check "chain data untouched" grep -q "chain data sentinel" "$DATA/sentinel"
 check "recorded manifest is v2" test "$(jq -r .version $CONF/manifest.json)" = "9.1.0"
-check "no leftover .new file" test ! -e "$BIN.new"
+check "no leftover .new file" test ! -e "$BIN.new" -a ! -e "$CLI.new"
+V2_CLI_SHA="$(curl -fsS "$WEB/rel/v2/manifest-mainnet.json" | jq -r .cli.sha256)"
+check "new CLI installed, rougechain.prev is the v1 CLI" test "$(sha $CLI)" = "$V2_CLI_SHA" -a "$(sha $CLI.prev)" = "$V1_CLI_SHA" -a "$V2_CLI_SHA" != "$V1_CLI_SHA"
+check "upgraded CLI runs" bash -c "$CLI --version | grep -q 'fake-v2'"
 BEFORE="$(state)"
 run "${TEST_ENV[@]}" "$(base v1)" NO_START=1
 expect_refused "downgrade v2 → v1 (replayed old manifest) is refused" "refusing to downgrade"
@@ -242,6 +272,23 @@ check "…state unchanged" test "$(state)" = "$BEFORE"
 run "${TEST_ENV[@]}" "$(base v1)" NO_START=1 ALLOW_DOWNGRADE=1
 expect_ok "explicit ALLOW_DOWNGRADE=1 rolls back"
 check "…binary is v1 again, .prev is v2, key untouched" test "$(sha $BIN)" = "$V1_SHA" -a "$(sha $BIN.prev)" = "$V2_SHA" -a "$(sha $KEYS)" = "$KEY_SHA"
+
+section "release without the CLI (cli: null)"
+reset_state
+run "${TEST_ENV[@]}" "$(base nocli)" NO_START=1
+expect_ok "install succeeds when the manifest has no cli"
+check "…node installed, no CLI installed" test "$(sha $BIN)" = "$V1_SHA" -a -s "$UNIT" -a -s "$KEYS" -a ! -e "$CLI"
+check "…next steps fall back to building the CLI from source" bash -c "grep -q 'does not include the .rougechain. CLI' $LOG && grep -q 'cargo build --release -p quantum-vault-cli' $LOG && ! grep -q 'sudo -u rougechain' $LOG"
+run "${TEST_ENV[@]}" "$(base v1)" NO_START=1
+expect_ok "re-run with a release that has the CLI adds it"
+check "…CLI now installed, node binary untouched (no .prev)" test "$(sha $CLI)" = "$V1_CLI_SHA" -a ! -e "$BIN.prev" -a ! -e "$CLI.prev"
+run "${TEST_ENV[@]}" "$(base nocli)" NO_START=1
+expect_ok "re-run with a release without the CLI again"
+check "…an already installed CLI is left in place" test "$(sha $CLI)" = "$V1_CLI_SHA"
+reset_state
+run "${TEST_ENV[@]}" "$(base v1)" NO_START=1
+KEY_SHA="$(sha $KEYS)"
+run "${TEST_ENV[@]}" "$(base v2)" NO_START=1
 
 section "validator opt-in + options"
 run "${TEST_ENV[@]}" "$(base v1)" NO_START=1 VALIDATOR=1 PUBLIC_URL=https://node.example.com NODE_NAME=my-validator API_PORT=5200 P2P_PORT=4200 ALLOW_DOWNGRADE=1
@@ -308,9 +355,10 @@ reset_state
 run "${TEST_ENV[@]}" "$(base testnet)" NO_START=1 NETWORK=testnet
 expect_ok "testnet install succeeds (manifest without a genesis)"
 TUNIT=/etc/systemd/system/rougechain-validator-testnet.service
+check "testnet CLI installed under its own name, next steps use the testnet API" bash -c "test -x /usr/local/bin/rougechain-testnet && grep -q 'sudo -u rougechain rougechain-testnet --rpc https://testnet.rougechain.io --node-keys /var/lib/rougechain/testnet/node-keys.json stake 10000' $LOG"
 check "separate binary + unit + data dir" test -x /usr/local/bin/quantum-vault-daemon-testnet -a -s "$TUNIT" -a -s /var/lib/rougechain/testnet/node-keys.json
 check "unit: testnet chain id, ports 5101/4101, testnet peer, no --genesis" bash -c "grep -q -- '--chain-id rougechain-devnet-1' $TUNIT && grep -q -- '--api-port 5101 --port 4101' $TUNIT && grep -q -- '--peers https://testnet.rougechain.io/api' $TUNIT && ! grep -q -- '--genesis' $TUNIT"
-check "mainnet paths not created" test ! -e "$BIN" -a ! -e "$UNIT" -a ! -e "$DATA"
+check "mainnet paths not created" test ! -e "$BIN" -a ! -e "$CLI" -a ! -e "$UNIT" -a ! -e "$DATA"
 run "${TEST_ENV[@]}" "$(base v1)" NO_START=1
 expect_ok "mainnet installs next to testnet"
 check "both units present, separate keys" test -s "$UNIT" -a -s "$TUNIT" -a "$(sha $KEYS)" != "$(sha /var/lib/rougechain/testnet/node-keys.json)"
