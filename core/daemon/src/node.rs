@@ -42,8 +42,13 @@ const BASE_TRANSFER_FEE: f64 = 0.1;
 const TOKEN_CREATION_FEE: f64 = 100.0;
 const JAIL_BLOCKS: u64 = 20;
 const SLASH_DIVISOR: u128 = 10;
-const UNBONDING_BLOCKS: u64 = 500;             // ~8 hours at 1 block/min
-const MISSED_BLOCK_SLASH_THRESHOLD: u64 = 50;  // Auto-slash after 50 missed blocks
+// 500 BLOCKS, not a wall-clock period: blocks are produced only when transactions are pending,
+// so the real-time length of the unbonding window varies with chain activity.
+const UNBONDING_BLOCKS: u64 = 500;
+// Legacy missed-block auto-slash after 50 consecutive missed blocks. FROZEN from the proposer
+// selection activation height (see `check_missed_blocks`): no validator accumulates missed blocks
+// or is auto-slashed/jailed for them any more.
+const MISSED_BLOCK_SLASH_THRESHOLD: u64 = 50;
 const MAX_MEMPOOL: usize = 2000;
 
 // EIP-1559 dynamic fee constants. The base fee is consensus state — it sets each
