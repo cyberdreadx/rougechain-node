@@ -335,7 +335,7 @@ pub fn payable_calls_active(height: u64) -> bool {
 /// Before it, behaviour is exactly the pre-upgrade one: the fields are invalid on any tx (old nodes
 /// would drop them and compute a different tx hash), no token is mintable, every mint is skipped.
 /// `None` = not scheduled (the per-network height lives in `upgrades.rs`).
-pub const TOKEN_MINTING_ACTIVATION_HEIGHT: Option<u64> = None;
+pub const TOKEN_MINTING_ACTIVATION_HEIGHT: Option<u64> = Some(235);
 #[cfg(test)]
 thread_local! {
     static TEST_TOKEN_MINTING_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
@@ -367,7 +367,7 @@ pub fn token_minting_active(height: u64) -> bool {
 /// unknown function (deploy never inspects imports, before or after). Nothing else changes: no new
 /// tx fields, no state-root change. `None` = not scheduled (the per-network height lives in
 /// `upgrades.rs`; activate together with TOKEN_MINTING — see the runbook).
-pub const CONTRACT_NFT_ROYALTY_ACTIVATION_HEIGHT: Option<u64> = None;
+pub const CONTRACT_NFT_ROYALTY_ACTIVATION_HEIGHT: Option<u64> = Some(235);
 #[cfg(test)]
 thread_local! {
     static TEST_CONTRACT_NFT_ROYALTY_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };

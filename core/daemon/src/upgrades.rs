@@ -134,8 +134,8 @@ mod tests {
             game_ready_2: Some(160),
             game_ready_3: Some(170),
             payable_calls: Some(190),
-            token_minting: None,
-            contract_nft_royalty: None,
+            token_minting: Some(235),
+            contract_nft_royalty: Some(235),
             validator_retirement: None,
         });
         assert_eq!(schedule_for(MAINNET_CHAIN_ID), &MAINNET);
