@@ -43,7 +43,7 @@ Alice                                       Bob
 
 **Key principle:** In a 1:1 conversation each message package holds two ciphertexts — one encapsulated to the recipient's ML-KEM key, one to the sender's own. Group conversations (2+ other members) use the same CEK pattern as mail: one ciphertext plus a per-member KEM-wrapped key (sender included). The server never has the private keys to decrypt any of them.
 
-**Your encryption key is not derived from your seed phrase.** The ML-KEM-768 key is generated randomly. Restoring a wallet from the 24-word phrase alone gives you a new encryption key and you lose access to old messages and mail; restore from a `.pqcbackup` file to keep them.
+**Your encryption key is derived from your seed phrase** for wallets created or imported from the phrase on rougechain.io (since 2026-10-01) or in Qwalla: the ML-KEM-768 seed is `SHA-512("<phrase>|rougee-gram|kem-v1")`, so restoring from the 24-word phrase in either app restores the same key and your old messages and mail. Wallets created on the website before that change (and extension wallets) have a random key: restore those from their `.pqcbackup` file to keep old messages. A backup that contains encryption keys always keeps them as they are.
 
 ### Mail Encryption (CEK Pattern)
 

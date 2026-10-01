@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { WalletWithPrivateKeys } from "@/lib/pqc-messenger";
-import { createWallet } from "@/lib/pqc-messenger";
+import { createWallet, withDerivedMessagingKeys } from "@/lib/pqc-messenger";
 import type { UnifiedWallet } from "@/lib/unified-wallet";
 import { decryptWallet } from "@/lib/unified-wallet";
 
@@ -45,7 +45,7 @@ const WalletSetup = ({ onWalletCreated, onWalletImported }: WalletSetupProps) =>
     if (!importData.trim() || !importPassword) return;
     setIsImporting(true);
     try {
-      const wallet = await decryptWallet(importData.trim(), importPassword);
+      const wallet = withDerivedMessagingKeys(await decryptWallet(importData.trim(), importPassword));
       onWalletImported?.(wallet);
     } catch (error) {
       console.error("Failed to import wallet:", error);

@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { pubkeyToAddress } from "@rougechain/core/address";
 import { generateMnemonic, keypairFromMnemonic } from "@rougechain/core/mnemonic";
 import { PROFILE_CHANGED_EVENT } from "@rougechain/core/avatar";
+import { deriveMessagingKeypair } from "@rougechain/core/messaging-keys";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { verifyTransaction, generateNonce } from "@rougechain/core/pqc-signer";
 import {
   hasEncryptedWallet,
@@ -13,7 +15,7 @@ import {
   unlockUnifiedWallet,
 } from "@rougechain/core/unified-wallet";
 import { WalletProvider, useSigner, useWallet, useWalletIdentity, normalizeRecoveryPhrase, type WalletContextValue, type Signer } from "./WalletProvider";
-import { readWalletSnapshot } from "./store";
+import { readWalletSnapshot, resetWalletStoreForTests } from "./store";
 import { dumpStorage, mockFetch, resetBrowserState, seedAppsWebLockedWallet, seedAppsWebWallet } from "./test-utils";
 
 /** localStorage keys whose value contains any of the wallet's secrets (must stay empty). */
@@ -329,6 +331,94 @@ describe("provider state machine", () => {
       vi.useRealTimers();
     }
   });
+});
+
+describe("seed-derived messaging key (same as Qwalla)", () => {
+  const PHRASE_A =
+    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon " +
+    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+  // sha256(ML-KEM-768 public key hex) that Qwalla's deriveRougeeKem produces for PHRASE_A.
+  const QWALLA_KEM_PUB_SHA_A = "247ad31332921ff43fada11b8d3a0f7373b13add2c6e122e81ed89917d79b72a";
+  const sha = (s: string) => Array.from(sha256(new TextEncoder().encode(s))).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const derived = (w: { mnemonic?: string; signingPrivateKey: string }) => deriveMessagingKeypair(w.mnemonic ?? null, w.signingPrivateKey);
+
+  it("create derives the messaging key from the new wallet's recovery phrase", async () => {
+    mount();
+    await act(() => ctx.create());
+    const w = ctx.wallet!;
+    expect(w.encryptionPublicKey).toBe(derived(w).publicKey);
+    expect(w.encryptionPrivateKey).toBe(derived(w).privateKey);
+    await act(() => ctx.setPassword("s3cret-pass"));
+    act(() => ctx.lock());
+    await act(() => ctx.unlock("s3cret-pass"));
+    expect(ctx.wallet?.encryptionPublicKey).toBe(derived(w).publicKey);
+  });
+
+  it("phrase import restores Qwalla's messaging key (normalized phrase), replacing nothing stored", async () => {
+    mount();
+    await act(() => ctx.importMnemonic(`  ${PHRASE_A.toUpperCase()}  `));
+    expect(ctx.wallet?.mnemonic).toBe(PHRASE_A);
+    expect(sha(ctx.wallet!.encryptionPublicKey)).toBe(QWALLA_KEM_PUB_SHA_A);
+    expect(ctx.wallet?.encryptionPrivateKey).toBe(deriveMessagingKeypair(PHRASE_A, ctx.wallet!.signingPrivateKey).privateKey);
+  });
+
+  it("phrase import of an older website wallet (random key) gets the derived key", async () => {
+    const old = seedAppsWebWallet();
+    resetBrowserState();
+    mockFetch();
+    mount();
+    await act(() => ctx.importMnemonic(old.mnemonic!));
+    expect(ctx.publicKey).toBe(old.signingPublicKey);
+    expect(ctx.wallet?.encryptionPublicKey).toBe(derived(old).publicKey);
+    expect(ctx.wallet?.encryptionPublicKey).not.toBe(old.encryptionPublicKey);
+  });
+
+  it("a .pqcbackup WITH messaging keys keeps them exactly", async () => {
+    const { encryptWallet } = await import("@rougechain/core/unified-wallet");
+    const w = seedAppsWebWallet(); // random (pre-change) messaging key
+    const blob = await encryptWallet(w, "backup-pass");
+    resetBrowserState();
+    mockFetch();
+    mount();
+    await act(() => ctx.importBackup(blob, "backup-pass"));
+    expect(ctx.wallet?.encryptionPublicKey).toBe(w.encryptionPublicKey);
+    expect(ctx.wallet?.encryptionPrivateKey).toBe(w.encryptionPrivateKey);
+  });
+
+  it("a .pqcbackup WITHOUT messaging keys gets the seed-derived pair (mnemonic, else signing key)", async () => {
+    const { encryptWallet } = await import("@rougechain/core/unified-wallet");
+    const w = seedAppsWebWallet();
+    const noKeys = { ...w, encryptionPublicKey: "", encryptionPrivateKey: "" };
+    const blob = await encryptWallet(noKeys, "backup-pass");
+    const blobNoPhrase = await encryptWallet({ ...noKeys, mnemonic: undefined }, "backup-pass");
+    resetBrowserState();
+    mockFetch();
+    mount();
+    await act(() => ctx.importBackup(blob, "backup-pass"));
+    expect(ctx.wallet?.encryptionPublicKey).toBe(derived(w).publicKey);
+    await act(() => ctx.importBackup(blobNoPhrase, "backup-pass"));
+    expect(ctx.wallet?.encryptionPublicKey).toBe(deriveMessagingKeypair(null, w.signingPrivateKey).publicKey);
+  }, 60_000);
+
+  it("never re-derives an already stored wallet (session, legacy plaintext, vault)", async () => {
+    const w = seedAppsWebWallet(); // session copy, random messaging key
+    expect(w.encryptionPublicKey).not.toBe(derived(w).publicKey);
+    const view = mount(true);
+    expect(ctx.wallet?.encryptionPublicKey).toBe(w.encryptionPublicKey);
+    expect(ctx.wallet?.encryptionPrivateKey).toBe(w.encryptionPrivateKey);
+    view.unmount();
+
+    sessionStorage.clear();
+    localStorage.setItem("pqc-unified-wallet:mainnet", JSON.stringify(w)); // legacy plaintext
+    resetWalletStoreForTests();
+    mount();
+    expect(ctx.wallet?.encryptionPublicKey).toBe(w.encryptionPublicKey);
+    await act(() => ctx.setPassword("vault-pass-1"));
+    act(() => ctx.lock());
+    await act(() => ctx.unlock("vault-pass-1"));
+    expect(ctx.wallet?.encryptionPublicKey).toBe(w.encryptionPublicKey);
+    expect(ctx.wallet?.encryptionPrivateKey).toBe(w.encryptionPrivateKey);
+  }, 60_000);
 });
 
 describe("cross-tab sync", () => {

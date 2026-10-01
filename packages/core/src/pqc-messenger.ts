@@ -5,6 +5,8 @@ import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 import { encryptAndSignV2, decryptV2Package, isV2Package, verifyPackageSignature } from "./messenger-crypto-v2";
 import { blockWalletKeys, getBlockedList, unblockWalletKeys } from "./messenger-prefs";
 import { fitsAvatarLimit, getStoredAvatar, isSafeAvatarUrl, normalizeAvatarField, setStoredAvatar } from "./avatar";
+import { deriveMessagingKeypair } from "./messaging-keys";
+export { deriveMessagingKeypair, hasMessagingKeys, withDerivedMessagingKeys } from "./messaging-keys";
 
 export interface Wallet {
   id: string;
@@ -779,7 +781,8 @@ export async function decryptMessage(
   return { plaintext, signatureValid };
 }
 
-// Generate only encryption keypair (ML-KEM-768)
+// Random encryption keypair (ML-KEM-768). Only for an explicit "regenerate messaging keys" action:
+// new / imported wallets use the seed-derived deriveMessagingKeypair (messaging-keys.ts).
 export function generateEncryptionKeypair(): { publicKey: string; privateKey: string } {
   // Let the library generate its own secure random seed
   const encryptionKeypair = ml_kem768.keygen();
@@ -791,17 +794,19 @@ export function generateEncryptionKeypair(): { publicKey: string; privateKey: st
 
 // Create a new wallet with ML-DSA-65 + ML-KEM-768 keypairs
 export async function createWallet(displayName: string, discoverable?: boolean): Promise<WalletWithPrivateKeys> {
-  // Let the libraries generate their own secure random seeds
+  // Random signing key; the messaging key is derived from it (no phrase), as Qwalla does for a
+  // private-key wallet, so the signing key alone restores it.
   const signingKeypair = ml_dsa65.keygen();
-  const encryptionKeypair = ml_kem768.keygen();
+  const signingPrivateKey = bytesToHex(signingKeypair.secretKey);
+  const enc = deriveMessagingKeypair(null, signingPrivateKey);
 
   const wallet: WalletWithPrivateKeys = {
     id: crypto.randomUUID(),
     displayName,
     signingPublicKey: bytesToHex(signingKeypair.publicKey),
-    encryptionPublicKey: bytesToHex(encryptionKeypair.publicKey),
-    signingPrivateKey: bytesToHex(signingKeypair.secretKey),
-    encryptionPrivateKey: bytesToHex(encryptionKeypair.secretKey),
+    encryptionPublicKey: enc.publicKey,
+    signingPrivateKey,
+    encryptionPrivateKey: enc.privateKey,
   };
 
   // Save locally

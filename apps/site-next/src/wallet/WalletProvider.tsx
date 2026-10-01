@@ -30,7 +30,8 @@ import {
   type UnifiedWallet,
 } from "@rougechain/core/unified-wallet";
 import { generateMnemonic, keypairFromMnemonic, validateMnemonic } from "@rougechain/core/mnemonic";
-import { generateEncryptionKeypair, registerWalletOnNode } from "@rougechain/core/pqc-messenger";
+import { registerWalletOnNode } from "@rougechain/core/pqc-messenger";
+import { deriveMessagingKeypair, withDerivedMessagingKeys } from "@rougechain/core/messaging-keys";
 import { getRougeChainProvider, signViaExtension } from "@rougechain/core/extension-bridge";
 import { signTransaction, type SignedTransaction, type TransactionPayload } from "@rougechain/core/pqc-signer";
 import { useChain } from "../explorer/chain";
@@ -188,7 +189,8 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
   const create = useCallback(async () => {
     const mnemonic = generateMnemonic();
     const { publicKey, secretKey } = keypairFromMnemonic(mnemonic);
-    const enc = generateEncryptionKeypair();
+    // Seed-derived (same as Qwalla): the recovery phrase alone restores the messaging key.
+    const enc = deriveMessagingKeypair(mnemonic, secretKey);
     const wallet: UnifiedWallet = {
       id: `wallet-${Date.now()}`,
       displayName: "My Wallet",
@@ -224,7 +226,7 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
     async (phrase: string) => {
       const mnemonic = normalizeRecoveryPhrase(phrase);
       const { publicKey, secretKey } = keypairFromMnemonic(mnemonic);
-      const enc = generateEncryptionKeypair();
+      const enc = deriveMessagingKeypair(mnemonic, secretKey);
       afterImport({
         id: `wallet-${Date.now()}`,
         displayName: "Recovered Wallet",
@@ -250,7 +252,8 @@ export function WalletProvider({ children, autoRegister = true }: { children: Re
       } catch {
         throw new WalletError(i18n.t("wallet:import.errors.badBackup"));
       }
-      afterImport(wallet);
+      // A backup's own messaging keys are kept exactly; only one without them gets the seed-derived pair.
+      afterImport(withDerivedMessagingKeys(wallet));
     },
     [afterImport],
   );

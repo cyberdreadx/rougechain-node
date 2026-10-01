@@ -910,7 +910,7 @@
       },
       "backup": {
         "title": "Haz un respaldo — no pierdas tus mensajes",
-        "body": "Dos cosas te protegen, y son diferentes:\n\n• La frase de recuperación restaura tu billetera y tus fondos — pero NO tu historial de chat.\n• El archivo de respaldo cifrado (.pqcbackup) restaura tu billetera, tus fondos Y tus mensajes.\n\nExporta un respaldo en Ajustes → Seguridad y respaldo y guarda ambos en un lugar seguro."
+        "body": "Dos cosas te protegen:\n\n• La frase de recuperación restaura tu billetera, tus fondos y tus mensajes — excepto el historial de chat de billeteras creadas en este sitio antes de octubre de 2026.\n• El archivo de respaldo cifrado (.pqcbackup) restaura tu billetera, tus fondos Y tus mensajes en cualquier billetera.\n\nExporta un respaldo en Ajustes → Seguridad y respaldo y guarda ambos en un lugar seguro."
       }
     }
   },
