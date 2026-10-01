@@ -360,11 +360,12 @@ The daemon supports configurable rate limiting via CLI flags:
 
 | Flag | Description |
 |------|-------------|
-| `--rate-limit-per-minute N` | Global rate limit per IP |
+| `--rate-limit-per-minute N` | Deprecated alias: used for both read and write limits when neither is set |
 | `--rate-limit-read-per-minute N` | Read endpoint rate limit |
 | `--rate-limit-write-per-minute N` | Write endpoint rate limit |
+| `--trust-proxy` | Key clients by `X-Real-IP` / rightmost `X-Forwarded-For` when the TCP peer is loopback (local reverse proxy); env `QV_TRUST_PROXY` |
 
-Set to `0` (default) for unlimited. Rate-limited requests receive HTTP 429.
+Set to `0` (default) for unlimited. Clients are keyed by socket IP unless `--trust-proxy` is set. Rate-limited requests receive HTTP 429.
 
 ---
 

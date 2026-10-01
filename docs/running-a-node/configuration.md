@@ -22,6 +22,8 @@ All node configuration is done via command-line flags or environment variables.
 | `--rate-limit-write-per-minute` | - | `0` (unlimited) | Per-client limit for all other methods |
 | `--rate-limit-validator` | - | `0` (unlimited) | Limit for requests carrying valid signed validator headers |
 | `--rate-limit-peer` | - | `0` (unlimited) | Limit for requests from registered peers (matched by IP) |
+| `--rate-limit-per-minute` | - | `0` | Deprecated alias: used for both read and write limits when neither is set |
+| `--trust-proxy` | `QV_TRUST_PROXY` | `false` | Key rate limits by `X-Real-IP` / rightmost `X-Forwarded-For` for requests from a loopback peer (a local reverse proxy); other peers are always keyed by socket IP |
 | `--dev` | - | `false` | Dev mode: enables legacy v1 unsigned write endpoints **and** allows any CORS origin |
 | — | `QV_CORS_ORIGINS` | *(built-in list)* | Comma-separated origins allowed to call the API from a browser |
 | — | `QV_FAUCET_ENABLED` | `false` | Enable the faucet endpoints (testnet/dev only — never set on mainnet) |

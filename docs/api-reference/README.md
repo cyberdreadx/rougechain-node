@@ -317,4 +317,6 @@ Rate limiting is disabled by default (all limits `0` = unlimited). Limits are pe
 - **Tier 2 (Registered peers):** Recognized by IP — `--rate-limit-peer`
 - **Tier 3 (Public):** GET requests use `--rate-limit-read-per-minute`, all other methods `--rate-limit-write-per-minute`
 
-The older `--rate-limit-per-minute` flag is still accepted but has no effect.
+`--rate-limit-per-minute` is a deprecated alias: when it is set and neither read nor write limit is, it applies to both (a deprecation warning is logged); explicit read/write limits take precedence.
+
+Clients are keyed by the connecting IP. Behind a reverse proxy on the same host, start the node with `--trust-proxy` (env `QV_TRUST_PROXY=true`): requests whose TCP peer is loopback are then keyed by `X-Real-IP`, else the rightmost `X-Forwarded-For` entry; requests from any other peer always use the socket IP. Every route is rate-limited, including the peer routes `/api/finality/*` (which stay API-key exempt).

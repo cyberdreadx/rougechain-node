@@ -173,9 +173,10 @@ tmux attach -t daemon     # view logs
 | `--public-url` | `None` | Public URL for peer discovery (env: `QV_PUBLIC_URL`) |
 | `--bridge-custody-address` | `None` | Bridge custody address (env: `QV_BRIDGE_CUSTODY_ADDRESS`) |
 | `--base-sepolia-rpc` | `https://sepolia.base.org` | Base Sepolia RPC URL |
-| `--rate-limit-per-minute` | `0` | Global rate limit (0 = unlimited) |
+| `--rate-limit-per-minute` | `0` | Deprecated alias: applies to both read and write limits when neither is set |
 | `--rate-limit-read-per-minute` | `0` | Read operation rate limit |
 | `--rate-limit-write-per-minute` | `0` | Write operation rate limit |
+| `--trust-proxy` | `false` | Key rate limits by `X-Real-IP` / rightmost `X-Forwarded-For` when the peer is loopback (env: `QV_TRUST_PROXY`) |
 | `--faucet-whitelist` | `None` | Faucet whitelist (env: `QV_FAUCET_WHITELIST`) |
 | `--dev` | `false` | Enable legacy v1 endpoints that accept raw private keys (UNSAFE — local dev only; without it, v1 write endpoints return `410 Gone`) |
 
