@@ -82,8 +82,8 @@ pub const TESTNET: UpgradeSchedule = UpgradeSchedule {
     game_ready_2: Some(1200),
     game_ready_3: Some(1200),
     payable_calls: Some(1200),
-    token_minting: None,
-    contract_nft_royalty: None,
+    token_minting: Some(1360),
+    contract_nft_royalty: Some(1360),
     validator_retirement: Some(ValidatorRetirement { height: 1240, validators: &[TESTNET_RETIRED_VALIDATOR] }),
 };
 
@@ -134,8 +134,8 @@ mod tests {
             game_ready_2: Some(160),
             game_ready_3: Some(170),
             payable_calls: Some(190),
-            token_minting: None,
-            contract_nft_royalty: None,
+            token_minting: Some(235),
+            contract_nft_royalty: Some(235),
             validator_retirement: None,
         });
         assert_eq!(schedule_for(MAINNET_CHAIN_ID), &MAINNET);
@@ -152,8 +152,8 @@ mod tests {
         for h in [TESTNET.tx_uniqueness, TESTNET.game_ready, TESTNET.game_ready_2, TESTNET.game_ready_3, TESTNET.payable_calls] {
             assert_eq!(h, Some(1200));
         }
-        assert_eq!(TESTNET.token_minting, None, "TOKEN_MINTING is not scheduled on testnet yet");
-        assert_eq!(TESTNET.contract_nft_royalty, None, "CONTRACT_NFT_ROYALTY is not scheduled on testnet yet");
+        assert_eq!(TESTNET.token_minting, Some(1360), "TOKEN_MINTING activates on testnet at 1360");
+        assert_eq!(TESTNET.contract_nft_royalty, Some(1360), "CONTRACT_NFT_ROYALTY activates on testnet at 1360");
     }
 
     #[test]
