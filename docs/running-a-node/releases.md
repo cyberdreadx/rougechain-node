@@ -1,8 +1,8 @@
 # Signed releases
 
-Node releases are published as a prebuilt `quantum-vault-daemon` binary (Linux x86_64) described by
-a **signed release manifest**. The installer and anyone verifying by hand check the same thing:
-the manifest's signature, then the binary's sha256 and size against the manifest.
+Node releases are published as a prebuilt `quantum-vault-daemon` binary and the `rougechain` CLI
+(Linux x86_64), described by a **signed release manifest**. The installer and anyone verifying by hand check the same thing:
+the manifest's signature, then each file's sha256 and size against the manifest.
 
 > **Status (2026-10-01): release keys are pending provisioning.** The manifests in
 > [`releases/`](https://github.com/cyberdreadx/rougechain-node/tree/main/releases) are published
@@ -16,11 +16,15 @@ the manifest's signature, then the binary's sha256 and size against the manifest
 | What | Primary | Mirror |
 |---|---|---|
 | Manifest + signatures | `https://api.rougechain.io/releases/manifest-<network>.json` (+ `.ed25519.sig`, `.mldsa65.sig`) | `https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/releases/` |
-| Binary | `binary.url` in the manifest (`https://api.rougechain.io/releases/<name>`) | `binary.mirrors` in the manifest |
-| Genesis file | `genesis.url` in the manifest | `core/daemon/` in the public repository |
+| Node binary | `binary.url` in the manifest (`https://api.rougechain.io/releases/<name>`) | `binary.mirrors`: asset of the GitHub release `v<version>` |
+| `rougechain` CLI | `cli.url` in the manifest | `cli.mirrors`: asset of the GitHub release `v<version>` |
+| Genesis file | `genesis.url` in the manifest | `genesis.mirrors`: GitHub release asset, and `core/daemon/` in the public repository |
 | Public keys | [`releases/keys/`](https://github.com/cyberdreadx/rougechain-node/tree/main/releases/keys) in the public repository | — |
 
-`<network>` is `mainnet` or `testnet`. A mirror cannot weaken anything: a file from any source is
+`<network>` is `mainnet` or `testnet`. GitHub release assets are at
+`https://github.com/cyberdreadx/rougechain-node/releases/download/v<version>/<name>` (GitHub answers
+with a redirect to the file). The manifest and its signatures are mirrored as files of the
+repository, not as release assets. A mirror cannot weaken anything: a file from any source is
 used only if the manifest's signature verifies and the file's sha256 matches the manifest.
 
 ## The manifest (`schema: 1`)
@@ -37,10 +41,11 @@ used only if the manifest's signature verifies and the file's sha256 matches the
   "binary": {
     "name": "quantum-vault-daemon-mint-royalty-03613ef",
     "url": "https://api.rougechain.io/releases/quantum-vault-daemon-mint-royalty-03613ef",
-    "mirrors": [],
+    "mirrors": ["https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/quantum-vault-daemon-mint-royalty-03613ef"],
     "sha256": "673bf7b1a469b7f9937b17228faab1e81ae48fb2a90aa32b2fd1b7fcc9cc2984",
     "size": 28463856
   },
+  "cli": { "name": "rougechain-03613ef", "url": "…", "mirrors": ["…"], "sha256": "…", "size": 0 },
   "genesis": { "name": "genesis-mainnet.json", "url": "…", "mirrors": ["…"], "sha256": "…", "size": 4460 },
   "mandatory": true,
   "upgrade_before_height": 235,
@@ -59,13 +64,17 @@ used only if the manifest's signature verifies and the file's sha256 matches the
 | `released` | string | ISO date (`YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SSZ`). |
 | `source_commit` | string | Git commit the binary was built from. |
 | `public_commit` | string or null | The commit of the public `rougechain-node` repository that contains that source. |
-| `binary` | object | `name`, `url` (primary), `mirrors` (array of URLs), `sha256` (lowercase hex), `size` (bytes). |
+| `binary` | object | The node (`quantum-vault-daemon`): `name`, `url` (primary), `mirrors` (array of URLs, tried in order after `url`), `sha256` (lowercase hex), `size` (bytes). |
+| `cli` | object or null | Same shape as `binary`, for the `rougechain` CLI built from the same commit. `null` when a release ships no CLI. |
 | `genesis` | object or null | Same shape as `binary`, for the genesis file the node is started with. `null` when the network runs on default parameters (testnet). |
 | `mandatory` | boolean | `true` if every node of the network must install this release. |
 | `upgrade_before_height` | integer or null | Install before this block height (the first activation the release introduces). |
 | `activations` | array | The network's upgrade schedule carried by this binary: `{ "name", "height" }`. Names are the `upgrade_schedule` fields of `GET /api/stats`. |
 | `notes_url` | string or null | Release / upgrade notes. |
 | `min_installer_version` | string | Oldest `install-validator.sh` that can install this release. |
+
+The example is abridged (`…`); the manifests currently in the repository still have `"cli": null`
+and no binary mirror — they are regenerated with the CLI and the GitHub mirrors before they are signed.
 
 All URLs are `https://`. Unknown fields are not allowed in schema 1. The current manifests list the
 full schedule in `activations` (mainnet: 49, 90, 100, 150, 150, 160, 170, 190, 235, 235) — see the
@@ -113,10 +122,13 @@ base64 -d manifest-$NET.json.ed25519.sig > manifest.sig.bin
 openssl pkeyutl -verify -pubin -inkey release-ed25519.pub.pem -rawin \
   -in manifest-$NET.json -sigfile manifest.sig.bin
 
-# 3. The binary is the one the manifest describes  →  "OK", and the size matches
-curl -fLO "$(jq -r .binary.url manifest-$NET.json)"
-echo "$(jq -r .binary.sha256 manifest-$NET.json)  $(jq -r .binary.name manifest-$NET.json)" | sha256sum -c
-test "$(stat -c %s "$(jq -r .binary.name manifest-$NET.json)")" = "$(jq -r .binary.size manifest-$NET.json)" && echo "size OK"
+# 3. The files are the ones the manifest describes  →  "OK" and "size OK" for each
+for f in binary cli; do                      # drop "cli" if the manifest has "cli": null
+  name=$(jq -r .$f.name manifest-$NET.json)
+  curl -fL -o "$name" "$(jq -r .$f.url manifest-$NET.json)"     # or one of .$f.mirrors[]
+  echo "$(jq -r .$f.sha256 manifest-$NET.json)  $name" | sha256sum -c
+  test "$(stat -c %s "$name")" = "$(jq -r .$f.size manifest-$NET.json)" && echo "size OK"
+done
 ```
 
 Get the public key from the Git repository (or from a copy you saved earlier), not from the same
@@ -140,7 +152,7 @@ of the repository:
 
 ```bash
 cd scripts/release && npm ci
-node verify-manifest.mjs --binary /path/to/the/binary ../../releases/manifest-mainnet.json   # exit 0 = VERIFIED
+node verify-manifest.mjs --binary /path/to/the/binary --cli /path/to/rougechain ../../releases/manifest-mainnet.json   # exit 0 = VERIFIED
 ```
 
 ## What the installer does
@@ -154,9 +166,10 @@ node verify-manifest.mjs --binary /path/to/the/binary ../../releases/manifest-ma
    never downloads a key — and stops if no source provides a manifest that verifies;
 3. checks the manifest is for the requested network, and is not older than the release already
    installed (`ALLOW_DOWNGRADE=1` overrides);
-4. downloads the binary and the genesis file (primary, then mirrors) and requires size and sha256
-   to match the signed manifest;
-5. installs, as described below, and keeps the previous binary as `<binary>.prev`.
+4. downloads the node binary, the `rougechain` CLI (when the manifest has one) and the genesis file
+   — primary URL, then mirrors, following redirects — and requires size and sha256 of each to match
+   the signed manifest;
+5. installs, as described below, and keeps the previous binaries as `<file>.prev`.
 
 It never overwrites `node-keys.json` or chain data. `--dry-run` performs steps 1–4 and changes
 nothing.
@@ -164,7 +177,8 @@ nothing.
 | | mainnet | testnet |
 |---|---|---|
 | Service | `rougechain-validator` | `rougechain-validator-testnet` |
-| Binary | `/usr/local/bin/quantum-vault-daemon` | `/usr/local/bin/quantum-vault-daemon-testnet` |
+| Node binary | `/usr/local/bin/quantum-vault-daemon` | `/usr/local/bin/quantum-vault-daemon-testnet` |
+| CLI | `/usr/local/bin/rougechain` | `/usr/local/bin/rougechain-testnet` |
 | Data + `node-keys.json` (`DATA_DIR`) | `/var/lib/rougechain/mainnet` | `/var/lib/rougechain/testnet` |
 | Genesis, installed manifest, optional `node.env` | `/etc/rougechain/mainnet/` | `/etc/rougechain/testnet/` |
 | API (`HOST`:`API_PORT`) | `127.0.0.1:5100` | `127.0.0.1:5101` |
@@ -179,13 +193,24 @@ its data directory (`ProtectSystem=strict`, `ReadWritePaths=<data dir>`) and rem
 `VALIDATOR=1`. Extra `QV_*` settings go in `/etc/rougechain/<network>/node.env`; the unit file
 itself is rewritten on every run.
 
+**The CLI and the node key.** `node-keys.json` can be read only by the `rougechain` user (and
+root), so run the CLI as that user and pass the network's API explicitly:
+
+```bash
+sudo -u rougechain rougechain --rpc https://api.rougechain.io \
+  --node-keys /var/lib/rougechain/mainnet/node-keys.json whoami      # also: stake 10000, validator-status
+```
+
+Without `sudo`, as root: `runuser -u rougechain -- rougechain …`. On testnet the commands are
+`rougechain-testnet --rpc https://testnet.rougechain.io --node-keys /var/lib/rougechain/testnet/node-keys.json …`.
+
 Settings: `NETWORK`, `NODE_NAME`, `PUBLIC_URL`, `VALIDATOR`, `DATA_DIR`, `API_PORT`, `P2P_PORT`,
 `HOST`, `PEERS`, `NO_START`, `ALLOW_DOWNGRADE`, `REPLACE_LEGACY_UNIT`, `RELEASE_BASE_URLS` — see the
 header of the script.
 
 ### Upgrading
 
-Re-run the installer. It verifies the new signed release, replaces the binary, and restarts the
+Re-run the installer. It verifies the new signed release, replaces the binary and the CLI, and restarts the
 service (with `NO_START=1` it installs without restarting, so you can restart at a time you
 choose: `systemctl restart rougechain-validator`). To go back to the previous binary:
 
