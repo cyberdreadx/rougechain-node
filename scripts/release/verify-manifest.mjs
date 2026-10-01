@@ -15,6 +15,7 @@
 //
 // --keys-dir <dir>        public keys (default: <repo>/releases/keys)
 // --binary <file>         check sha256 + size of the binary against the manifest
+// --cli <file>            check sha256 + size of the rougechain CLI against the manifest
 // --genesis <file>        check sha256 + size of the genesis file against the manifest
 // --network <name>        require the manifest to be for this network
 // --check-installer <sh>  require the Ed25519 key embedded in install-validator.sh to equal the
@@ -117,6 +118,10 @@ export async function verifyManifest(manifestPath, opts = {}) {
 
   // ── files described by the manifest ──
   if (opts.binary) problems.push(...(await checkFileAgainst(manifest.binary, opts.binary, 'binary')));
+  if (opts.cli) {
+    if (manifest.cli === null) problems.push('cli: a file was given but the manifest has no cli');
+    else problems.push(...(await checkFileAgainst(manifest.cli, opts.cli, 'cli')));
+  }
   if (opts.genesis) {
     if (manifest.genesis === null) problems.push('genesis: a file was given but the manifest has no genesis');
     else problems.push(...(await checkFileAgainst(manifest.genesis, opts.genesis, 'genesis')));
@@ -170,6 +175,7 @@ async function main() {
     args = parseArgs(process.argv.slice(2), {
       'keys-dir': 'string',
       binary: 'string',
+      cli: 'string',
       genesis: 'string',
       network: 'string',
       'check-installer': 'string',
@@ -183,13 +189,14 @@ async function main() {
     process.exit(1);
   }
   if (args.help || args._.length !== 1) {
-    process.stdout.write(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 23).join('\n') + '\n');
+    process.stdout.write(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 24).join('\n') + '\n');
     process.exit(args.help ? 0 : 1);
   }
   const manifestPath = resolve(args._[0]);
   const r = await verifyManifest(manifestPath, {
     keysDir: args['keys-dir'] ? resolve(args['keys-dir']) : undefined,
     binary: args.binary,
+    cli: args.cli,
     genesis: args.genesis,
     network: args.network,
     checkInstaller: args['check-installer'],

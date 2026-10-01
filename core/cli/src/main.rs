@@ -5,15 +5,28 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const DEFAULT_RPC: &str = "https://rougechain.rougee.app";
+mod net;
+mod v2;
 
 /// RougeChain CLI Wallet — Post-Quantum Secure
 #[derive(Parser)]
 #[command(name = "rougechain", version, about)]
 struct Cli {
-    /// RPC endpoint (default: mainnet)
-    #[arg(long, default_value = DEFAULT_RPC, global = true)]
-    rpc: String,
+    /// Node to talk to: a base URL such as https://api.rougechain.io or http://127.0.0.1:5100
+    /// (a trailing `/` or `/api` is accepted). Default: the public node of --network.
+    #[arg(long, global = true)]
+    rpc: Option<String>,
+
+    /// Network whose public node is used when --rpc is not given: mainnet (https://api.rougechain.io)
+    /// or testnet (https://testnet.rougechain.io)
+    #[arg(long, global = true, default_value = "mainnet")]
+    network: String,
+
+    /// Submit stake / unstake / transfer as a raw transaction to /api/tx/broadcast instead of
+    /// the signed /api/v2 routes. The public nodes refuse that route; it only reaches the
+    /// mempool of the node it is posted to, so use it only against your own node.
+    #[arg(long, global = true)]
+    legacy_broadcast: bool,
 
     /// Wallet directory (default: ~/.rougechain)
     #[arg(long, global = true)]
@@ -55,12 +68,17 @@ enum Commands {
     Transfer {
         /// Recipient public key hex
         to: String,
-        /// Amount in XRGE
+        /// Amount (whole units)
         amount: u64,
-        /// Fee
+        /// Fee. The node charges a fixed 1 XRGE; another value only applies with --legacy-broadcast
         #[arg(long, default_value = "1")]
         fee: u64,
+        /// Token symbol
+        #[arg(long, default_value = "XRGE")]
+        token: String,
     },
+    /// Request test XRGE from the faucet (testnet only; one claim per key per 24 h)
+    Faucet,
     /// Stake XRGE to become a validator
     Stake {
         /// Amount to stake
@@ -296,6 +314,14 @@ fn resolve_key(dir: &PathBuf, node_keys: &Option<PathBuf>) -> Option<SavedKey> {
     }
 }
 
+/// Parse a response body as JSON; when it is not JSON (a proxy's 403/404 page), say which URL
+/// answered with which status instead of a bare parse error.
+fn read_json(resp: reqwest::blocking::Response, url: &str) -> Result<Value, String> {
+    let status = resp.status();
+    let text = resp.text().map_err(|e| format!("could not read the response from {}: {}", url, e))?;
+    serde_json::from_str(&text).map_err(|_| format!("HTTP {} from {} (the response is not JSON)", status.as_u16(), url))
+}
+
 fn rpc_call(rpc: &str, method: &str, params: Value) -> Result<Value, String> {
     let client = reqwest::blocking::Client::new();
     let body = serde_json::json!({
@@ -304,11 +330,12 @@ fn rpc_call(rpc: &str, method: &str, params: Value) -> Result<Value, String> {
         "params": params,
         "id": 1
     });
-    let resp = client.post(&format!("{}/rpc", rpc))
+    let url = net::rpc_url(rpc);
+    let resp = client.post(&url)
         .json(&body)
         .send()
         .map_err(|e| format!("RPC error: {}", e))?;
-    let json: Value = resp.json().map_err(|e| format!("Parse error: {}", e))?;
+    let json = read_json(resp, &url)?;
     if let Some(err) = json.get("error") {
         Err(format!("RPC error: {}", err))
     } else {
@@ -318,19 +345,45 @@ fn rpc_call(rpc: &str, method: &str, params: Value) -> Result<Value, String> {
 
 fn api_get(rpc: &str, path: &str) -> Result<Value, String> {
     let client = reqwest::blocking::Client::new();
-    let resp = client.get(&format!("{}{}", rpc, path))
+    let url = net::url(rpc, path);
+    let resp = client.get(&url)
         .send()
         .map_err(|e| format!("API error: {}", e))?;
-    resp.json().map_err(|e| format!("Parse error: {}", e))
+    read_json(resp, &url)
 }
 
 fn api_post(rpc: &str, path: &str, body: Value) -> Result<Value, String> {
     let client = reqwest::blocking::Client::new();
-    let resp = client.post(&format!("{}{}", rpc, path))
+    let url = net::url(rpc, path);
+    let resp = client.post(&url)
         .json(&body)
         .send()
         .map_err(|e| format!("API error: {}", e))?;
-    resp.json().map_err(|e| format!("Parse error: {}", e))
+    read_json(resp, &url)
+}
+
+/// Submit a chain transaction through its signed `/api/v2` route (the SDK / site format).
+fn submit_v2(rpc: &str, dir: &PathBuf, node_keys: &Option<PathBuf>, tx_type: &str, fields: serde_json::Map<String, Value>) -> Result<(), String> {
+    let route = v2::route_for(tx_type).ok_or_else(|| format!("no /api/v2 route for '{}'", tx_type))?;
+    let key = resolve_key(dir, node_keys).ok_or("No signing key. Run: rougechain key-gen (or pass --node-keys <path>)")?;
+    let req = v2::build_signed_v2(&key.public_key_hex, &key.secret_key_hex, fields, timestamp_ms(), &generate_nonce())?;
+    let result = api_post(rpc, route, req)?;
+    let failed = result.get("success").and_then(|v| v.as_bool()) == Some(false)
+        || result.get("error").map(|e| !e.is_null()).unwrap_or(false);
+    if failed {
+        let msg = result.get("error").and_then(|e| e.as_str()).map(String::from).unwrap_or_else(|| result.to_string());
+        return Err(format!("{} refused by {}: {}", tx_type, rpc, msg));
+    }
+    println!("✅ {} submitted to {}", tx_type, rpc);
+    if let Some(m) = result.get("message").and_then(|v| v.as_str()) {
+        println!("   {}", m);
+    }
+    for k in ["tx_id", "txId", "tx_hash"] {
+        if let Some(h) = result.get(k).and_then(|v| v.as_str()) {
+            println!("   Tx: {}", h);
+        }
+    }
+    Ok(())
 }
 
 fn submit_tx(rpc: &str, dir: &PathBuf, node_keys: &Option<PathBuf>, tx_type: &str, payload: Value, fee: u64) -> Result<(), String> {
@@ -349,7 +402,7 @@ fn submit_tx(rpc: &str, dir: &PathBuf, node_keys: &Option<PathBuf>, tx_type: &st
     };
 
     // Build signed payload
-    let mut tx_payload = payload.as_object().cloned().unwrap_or_default();
+    let tx_payload = payload.as_object().cloned().unwrap_or_default();
     let signed_data = serde_json::json!({
         "tx_type": tx_type,
         "from": key.public_key_hex,
@@ -376,9 +429,10 @@ fn submit_tx(rpc: &str, dir: &PathBuf, node_keys: &Option<PathBuf>, tx_type: &st
         "signed_payload": canonical,
     });
 
-    let result = api_post(rpc, "/api/tx/broadcast", tx)?;
+    let result = api_post(rpc, "/api/tx/broadcast", tx)
+        .map_err(|e| format!("{} — /api/tx/broadcast is refused by the public nodes; it is only usable against your own node", e))?;
     if result.get("error").map(|e| !e.is_null()).unwrap_or(false) {
-        eprintln!("❌ {}", serde_json::to_string_pretty(&result).unwrap());
+        return Err(serde_json::to_string_pretty(&result).unwrap());
     } else {
         println!("✅ Transaction submitted");
         if let Some(hash) = result.get("tx_hash") {
@@ -449,7 +503,12 @@ fn main() {
     let cli = Cli::parse();
     let dir = wallet_dir(cli.wallet_dir.clone());
     let node_keys = cli.node_keys.clone();
-    let rpc = &cli.rpc;
+    let rpc_base = match net::resolve_base(cli.rpc.as_deref(), Some(cli.network.as_str())) {
+        Ok(b) => b,
+        Err(e) => { eprintln!("Error: {}", e); std::process::exit(2); }
+    };
+    let rpc = &rpc_base;
+    let legacy = cli.legacy_broadcast;
 
     match cli.command {
         Commands::KeyGen { label } => {
@@ -501,9 +560,12 @@ fn main() {
         Commands::Balance { pubkey } => {
             let pk = pubkey.unwrap_or_else(|| resolve_key(&dir, &node_keys).map(|k| k.public_key_hex).unwrap_or_default());
             if pk.is_empty() { eprintln!("No key specified"); return; }
-            match rpc_call(rpc, "eth_getBalance", serde_json::json!([pk])) {
-                Ok(v) => println!("Balance: {} (raw hex)", v),
-                Err(e) => eprintln!("Error: {}", e),
+            match api_get(rpc, &format!("/api/balance/{}", pk)) {
+                Ok(b) => match b.get("balance").and_then(|v| v.as_f64()) {
+                    Some(x) => println!("Balance: {} XRGE", x),
+                    None => println!("Balance: ? (unexpected /api/balance response: {})", b),
+                },
+                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
             }
         }
 
@@ -515,27 +577,57 @@ fn main() {
             }
         }
 
-        Commands::Transfer { to, amount, fee } => {
-            let payload = serde_json::json!({
-                "to_pub_key_hex": to,
-                "amount": amount,
-            });
-            if let Err(e) = submit_tx(rpc, &dir, &node_keys, "transfer", payload, fee) {
+        Commands::Transfer { to, amount, fee, token } => {
+            let result = if legacy {
+                if token != "XRGE" {
+                    eprintln!("Error: --legacy-broadcast transfers XRGE only");
+                    std::process::exit(1);
+                }
+                let payload = serde_json::json!({
+                    "to_pub_key_hex": to,
+                    "amount": amount,
+                });
+                submit_tx(rpc, &dir, &node_keys, "transfer", payload, fee)
+            } else {
+                if fee != v2::V2_FEE_XRGE {
+                    eprintln!("Note: the node charges a fixed fee of {} XRGE for a transfer; --fee {} is ignored.", v2::V2_FEE_XRGE, fee);
+                }
+                submit_v2(rpc, &dir, &node_keys, "transfer", v2::transfer_fields(&to, amount, &token))
+            };
+            if let Err(e) = result {
                 eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+
+        Commands::Faucet => {
+            if let Err(e) = submit_v2(rpc, &dir, &node_keys, "faucet", v2::faucet_fields()) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
             }
         }
 
         Commands::Stake { amount } => {
-            let payload = serde_json::json!({"amount": amount});
-            if let Err(e) = submit_tx(rpc, &dir, &node_keys, "stake", payload, 1) {
+            let result = if legacy {
+                submit_tx(rpc, &dir, &node_keys, "stake", serde_json::json!({"amount": amount}), 1)
+            } else {
+                submit_v2(rpc, &dir, &node_keys, "stake", v2::stake_fields("stake", amount))
+            };
+            if let Err(e) = result {
                 eprintln!("Error: {}", e);
+                std::process::exit(1);
             }
         }
 
         Commands::Unstake { amount } => {
-            let payload = serde_json::json!({"amount": amount});
-            if let Err(e) = submit_tx(rpc, &dir, &node_keys, "unstake", payload, 1) {
+            let result = if legacy {
+                submit_tx(rpc, &dir, &node_keys, "unstake", serde_json::json!({"amount": amount}), 1)
+            } else {
+                submit_v2(rpc, &dir, &node_keys, "unstake", v2::stake_fields("unstake", amount))
+            };
+            if let Err(e) = result {
                 eprintln!("Error: {}", e);
+                std::process::exit(1);
             }
         }
 

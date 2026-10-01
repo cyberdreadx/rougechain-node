@@ -3,11 +3,16 @@
 //
 //   node make-manifest.mjs --network mainnet --version 1.6.0 \
 //     --binary /srv/rougechain-releases/quantum-vault-daemon-mint-royalty-03613ef \
+//     --cli /home/cyberdreadx/rougechain-releases/03613ef/rougechain \
 //     --source-commit 03613ef --public-commit e048bf1 \
 //     --genesis core/daemon/genesis-mainnet.json \
 //     --mandatory --upgrade-before-height 235 \
 //     --activation token_minting=235 --activation contract_nft_royalty=235 \
 //     --notes-url https://docs.rougechain.io/running-a-node/mandatory-upgrade-2026-10.html
+//
+// --cli <file> adds the `rougechain` CLI built from the same commit (or pass --no-cli).
+// --binary-mirror / --cli-mirror / --genesis-mirror <url> (repeatable) add download mirrors, e.g.
+// GitHub release assets: https://github.com/cyberdreadx/rougechain-node/releases/download/v<version>/<name>
 //
 // Writes releases/manifest-<network>.json (or --out). Refuses to overwrite an existing manifest
 // unless --force is given, and --force also requires that no signature files are left next to it
@@ -37,6 +42,11 @@ const SPEC = {
   'binary-name': 'string',
   'binary-url': 'string',
   'binary-mirror': 'list',
+  cli: 'string',
+  'cli-name': 'string',
+  'cli-url': 'string',
+  'cli-mirror': 'list',
+  'no-cli': 'boolean',
   'source-commit': 'string',
   'public-commit': 'string',
   genesis: 'string',
@@ -86,13 +96,15 @@ async function main() {
     die(e.message);
   }
   if (args.help) {
-    process.stdout.write(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 20).join('\n') + '\n');
+    process.stdout.write(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 25).join('\n') + '\n');
     return;
   }
   for (const req of ['network', 'version', 'binary', 'source-commit']) if (!args[req]) die(`--${req} is required`);
   if (!Object.hasOwn(NETWORKS, args.network)) die(`--network must be one of ${Object.keys(NETWORKS).join(', ')}`);
   if (args.genesis && args['no-genesis']) die('--genesis and --no-genesis are mutually exclusive');
   if (!args.genesis && !args['no-genesis']) die('pass --genesis <file>, or --no-genesis if the network runs on default parameters');
+  if (args.cli && args['no-cli']) die('--cli and --no-cli are mutually exclusive');
+  if (!args.cli && !args['no-cli']) die('pass --cli <file> (the rougechain CLI built from the same commit), or --no-cli to ship a release without it');
 
   const binaryName = args['binary-name'] ?? basename(args.binary);
   const binary = await fileEntry(
@@ -101,6 +113,13 @@ async function main() {
     args['binary-url'] ?? `${PRIMARY_BASE}/${binaryName}`,
     args['binary-mirror'],
   );
+  let cli = null;
+  if (args.cli) {
+    // Default published name: rougechain-<source commit>, next to the daemon binary.
+    const cliName = args['cli-name'] ?? `rougechain-${args['source-commit']}`;
+    cli = await fileEntry(args.cli, cliName, args['cli-url'] ?? `${PRIMARY_BASE}/${cliName}`, args['cli-mirror']);
+    if (cli.sha256 === binary.sha256) die('--cli and --binary are the same file');
+  }
   let genesis = null;
   if (args.genesis) {
     const gName = basename(args.genesis);
@@ -137,6 +156,7 @@ async function main() {
     source_commit: args['source-commit'],
     public_commit: args['public-commit'] ?? null,
     binary,
+    cli,
     genesis,
     mandatory: args.mandatory === true,
     upgrade_before_height: args['upgrade-before-height'] === undefined ? null : toInt(args['upgrade-before-height'], '--upgrade-before-height'),

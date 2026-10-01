@@ -41,7 +41,8 @@ sudo systemctl start rougechain-validator
 Paths and the service name are those of a source-build install (repository in `~/rougechain`, data
 in `~/.quantum-vault/mainnet`); adjust them to your setup. A node installed with the current
 `install-validator.sh` runs a signed release binary instead (`/usr/local/bin/quantum-vault-daemon`,
-data in `/var/lib/rougechain/mainnet`) and is upgraded by re-running the installer, which verifies
+with the `rougechain` CLI from the same release in `/usr/local/bin/rougechain`; data in
+`/var/lib/rougechain/mainnet`) and is upgraded by re-running the installer, which verifies
 the release signature before installing anything — see [Signed releases](running-a-node/releases.md).
 `node-keys.json` is your validator identity — keep it and never share it. A fresh sync takes under
 a minute.

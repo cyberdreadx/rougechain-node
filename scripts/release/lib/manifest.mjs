@@ -24,6 +24,7 @@ export const TOP_LEVEL_KEYS = [
   'source_commit',
   'public_commit',
   'binary',
+  'cli',
   'genesis',
   'mandatory',
   'upgrade_before_height',
@@ -111,6 +112,8 @@ export function validateManifest(m, { allowHttp = false } = {}) {
     errors.push('public_commit: must be a 7-40 character lowercase hex git commit, or null');
   }
   checkFile(errors, 'binary', m.binary, { allowHttp });
+  if (m.cli !== null) checkFile(errors, 'cli', m.cli, { allowHttp });
+  if (isObj(m.cli) && isObj(m.binary) && m.cli.name === m.binary.name) errors.push('cli.name: must differ from binary.name');
   if (m.genesis !== null) checkFile(errors, 'genesis', m.genesis, { allowHttp });
   if (typeof m.mandatory !== 'boolean') errors.push('mandatory: must be true or false');
   if (m.upgrade_before_height !== null && !isHeight(m.upgrade_before_height)) {
@@ -141,7 +144,7 @@ export function serializeManifest(m) {
   const file = (f) => (f === null ? null : Object.fromEntries(FILE_KEYS.map((k) => [k, f[k]])));
   const ordered = {};
   for (const k of TOP_LEVEL_KEYS) {
-    if (k === 'binary' || k === 'genesis') ordered[k] = file(m[k]);
+    if (k === 'binary' || k === 'cli' || k === 'genesis') ordered[k] = file(m[k]);
     else if (k === 'activations') ordered[k] = m[k].map((a) => ({ name: a.name, height: a.height }));
     else ordered[k] = m[k];
   }
@@ -200,9 +203,22 @@ export function summarize(m) {
     `    size                 ${m.binary.size} bytes`,
     `    url                  ${m.binary.url}`,
     ...m.binary.mirrors.map((u) => `    mirror               ${u}`),
-    m.genesis
-      ? `  genesis                ${m.genesis.name}  sha256 ${m.genesis.sha256}`
-      : '  genesis                none (network default parameters)',
+    ...(m.cli
+      ? [
+          `  cli                    ${m.cli.name}`,
+          `    sha256               ${m.cli.sha256}`,
+          `    size                 ${m.cli.size} bytes`,
+          `    url                  ${m.cli.url}`,
+          ...m.cli.mirrors.map((u) => `    mirror               ${u}`),
+        ]
+      : ['  cli                    none (this release ships no rougechain CLI)']),
+    ...(m.genesis
+      ? [
+          `  genesis                ${m.genesis.name}  sha256 ${m.genesis.sha256}`,
+          `    url                  ${m.genesis.url}`,
+          ...m.genesis.mirrors.map((u) => `    mirror               ${u}`),
+        ]
+      : ['  genesis                none (network default parameters)']),
     `  mandatory              ${m.mandatory ? 'YES' : 'no'}`,
     `  upgrade before height  ${m.upgrade_before_height ?? 'n/a'}`,
     '  activations',

@@ -30,7 +30,8 @@ curl -sSL https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/scr
 (`--dry-run` needs no root, but `curl`, `openssl` and `jq` must already be installed.) Verifying a
 release by hand with `openssl` is described in [Signed releases](../running-a-node/releases.md#verify-a-release-by-hand).
 
-**What it sets up.** Binary `/usr/local/bin/quantum-vault-daemon`; service `rougechain-validator`
+**What it sets up.** Node `/usr/local/bin/quantum-vault-daemon` and the CLI
+`/usr/local/bin/rougechain`, both from the signed release; service `rougechain-validator`
 running as the system user `rougechain`; data and `node-keys.json` in `/var/lib/rougechain/mainnet`
 (key file mode `0600`); API on `127.0.0.1:5100`. It generates a node key only if there is none and
 never overwrites an existing key or chain data. Settings are environment variables placed after
@@ -41,10 +42,19 @@ never overwrites an existing key or chain data. Settings are environment variabl
 ask for it, because a node should not claim to produce blocks with a key that is not staked:
 
 1. Run the installer (above). **Back up `/var/lib/rougechain/mainnet/node-keys.json` offline.**
-2. **Fund and stake ≥ 10,000 XRGE** from that key ([Step 2](#step-2--point-the-cli-at-your-nodes-key)
-   and [Step 3](#step-3--fund-and-stake) below; use
-   `--node-keys /var/lib/rougechain/mainnet/node-keys.json`, as root). The release contains the node
-   only — the `rougechain` CLI is built from source (`cargo build --release -p quantum-vault-cli`).
+2. **Fund and stake ≥ 10,000 XRGE** from that key with the installed `rougechain` CLI. The key
+   file is readable only by the `rougechain` user, so run the CLI as that user:
+
+   ```bash
+   K=/var/lib/rougechain/mainnet/node-keys.json
+   sudo -u rougechain rougechain --node-keys $K whoami            # your validator address
+   # send ≥ 10,000 XRGE (+ 1 XRGE fee) to that address from your main wallet, then:
+   sudo -u rougechain rougechain --node-keys $K stake 10000
+   sudo -u rougechain rougechain --node-keys $K validator-status
+   ```
+
+   (Without `sudo`, as root: `runuser -u rougechain -- rougechain …`.) Details of each command are
+   in [Step 2](#step-2--point-the-cli-at-your-nodes-key) and [Step 3](#step-3--fund-and-stake) below.
 3. Once `validator-status` shows `✓ Staked` and `✓ In active set`, turn on block production and
    give peers a URL they can reach over HTTPS (peers talk to each other over the REST API; there is
    no separate P2P port):
@@ -117,7 +127,7 @@ No key copying needed — the CLI signs **directly** from your node's identity f
 rougechain --node-keys ~/.quantum-vault/mainnet/node-keys.json whoami
 ```
 
-This prints your validator's public key + `rouge1…` address — confirm it matches the key the daemon logged in Step 1. Every command below uses the same `--node-keys` flag. (The CLI defaults to the mainnet RPC.)
+This prints your validator's public key + `rouge1…` address — confirm it matches the key the daemon logged in Step 1. Every command below uses the same `--node-keys` flag. The CLI talks to the public mainnet node (`https://api.rougechain.io`) unless you pass `--network testnet` or `--rpc <your node>`; `stake`, `unstake` and `transfer` are submitted through the node's signed `/api/v2` routes, so they work from any machine. This needs a CLI built from the current source (or the one the installer provides): older builds default to a retired host and post to a route the public node refuses.
 
 ## Step 3 — Fund and stake
 
@@ -185,7 +195,8 @@ Since mainnet height 100 (Release 1), each block has exactly one **designated pr
 ## Testing on testnet first
 
 Practice the whole flow with no real value: swap the mainnet flags for testnet —
-`--chain-id rougechain-devnet-1`, `--peers https://testnet.rougechain.io/api`, `--data-dir ~/.quantum-vault/testnet` — point the CLI at it with `rougechain --rpc https://testnet.rougechain.io/api …`, and use the wallet **faucet** to get test XRGE. Everything else is identical.
+`--chain-id rougechain-devnet-1`, `--peers https://testnet.rougechain.io/api`, `--data-dir ~/.quantum-vault/testnet` — point the CLI at it with `rougechain --network testnet …`, and get test XRGE from the faucet (`rougechain --network testnet --node-keys <path> faucet`, 10,000 per key per 24 h — staking 10,000 needs 10,001 with the fee, so top up with a transfer from a second key or the wallet). Everything else is identical.
 
 With the installer: `curl -sSL …/install-validator.sh | sudo NETWORK=testnet bash` (service
-`rougechain-validator-testnet`, data in `/var/lib/rougechain/testnet`, API on `127.0.0.1:5101`).
+`rougechain-validator-testnet`, data in `/var/lib/rougechain/testnet`, API on `127.0.0.1:5101`, CLI
+installed as `rougechain-testnet`; run it as `sudo -u rougechain rougechain-testnet --network testnet --node-keys /var/lib/rougechain/testnet/node-keys.json …`).

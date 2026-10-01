@@ -18,6 +18,10 @@
 #   the unit's sandbox — real systemd is not available in a container) and wait for /api/health.
 #   REAL_SYNC=1 additionally lets it sync from the public mainnet node (read-only traffic) and
 #   requires it to reach REAL_SYNC_MIN_HEIGHT (default 200).
+# REAL_CLI (optional, with REAL_BINARY): also ship the REAL rougechain CLI in that release and
+#   run the printed `sudo -u rougechain rougechain --node-keys … whoami` (offline) — with
+#   REAL_SYNC=1 also `validator-status` and `balance` (read-only requests to the public mainnet
+#   API). The CLI must be a build with the signed /api/v2 submission (default node api.rougechain.io).
 # KEEP_IMAGES=1: do not remove images this run pulled.
 #
 # Needs: docker, Node.js >= 20 (and `npm ci` in scripts/release — done automatically).
@@ -99,7 +103,39 @@ echo "fake daemon $1"; exit 0
 FAKE
   chmod 0755 "$2"
 }
+# A stand-in for the rougechain CLI: --version, and `whoami` reads the --node-keys file.
+fake_cli() { # fake_cli TAG DEST
+  cat > "$2" <<FAKE
+#!/bin/bash
+# fake rougechain CLI ($1) for installer tests
+keys=""; rpc=""; net="mainnet"; cmd=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    --version) echo "rougechain fake-$1"; exit 0 ;;
+    --node-keys) keys="\$2"; shift ;;
+    --rpc) rpc="\$2"; shift ;;
+    --network) net="\$2"; shift ;;
+    *) cmd="\$1" ;;
+  esac
+  shift
+done
+pk="\$(sed -n 's/.*"public_key_hex":"\([0-9a-f]*\)".*/\1/p' "\$keys")" || exit 4
+[ -n "\$pk" ] || { echo "Failed to read node-keys file \$keys" >&2; exit 4; }
+echo "cmd=\$cmd rpc=\$rpc net=\$net user=\$(id -un) Address: rouge1test\${pk:0:12}"
+FAKE
+  chmod 0755 "$2"
+}
 NAME="quantum-vault-daemon-test"
+CLI_NAME="rougechain-test"
+fake_cli "v1" "$FILES/v1/$CLI_NAME"
+fake_cli "v2" "$FILES/v2/$CLI_NAME"
+fake_cli "vX" "$FILES/tampered/$CLI_NAME"                   # same size as v1, different bytes
+[ "$(stat -c %s "$FILES/v1/$CLI_NAME")" = "$(stat -c %s "$FILES/tampered/$CLI_NAME")" ] || { echo "fixture error: tampered cli size differs" >&2; exit 1; }
+# A mirror that answers like GitHub release assets do: 302 to the real location.
+mkdir -p "$WWW/cgi-bin"
+# shellcheck disable=SC2016
+printf '#!/bin/sh\nprintf '"'"'HTTP/1.0 302 Found\\r\\nLocation: http://rc-inst-test-web:8080/files/%%s\\r\\n\\r\\n'"'"' "$QUERY_STRING"\n' > "$WWW/cgi-bin/dl"
+chmod 0755 "$WWW/cgi-bin/dl"
 fake_binary "v1" "$FILES/v1/$NAME"
 fake_binary "v2" "$FILES/v2/$NAME"
 fake_binary "vX" "$FILES/tampered/$NAME"                    # same size as v1, different bytes
@@ -122,10 +158,23 @@ release() {
   tool sign-manifest.mjs --allow-http --yes --key "$TMP/test-keys.json" "$dir/manifest-$net.json"
 }
 GEN=(--genesis "$FILES/genesis-mainnet.json" --genesis-url "$WEB_URL/files/genesis-mainnet.json")
+CLI1=(--cli "$FILES/v1/$CLI_NAME" --cli-name "$CLI_NAME" --cli-url "$WEB_URL/files/v1/$CLI_NAME")
+CLI2=(--cli "$FILES/v2/$CLI_NAME" --cli-name "$CLI_NAME" --cli-url "$WEB_URL/files/v2/$CLI_NAME")
 MF="manifest-mainnet.json"
 
-release v1 mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/v1/$NAME" "${GEN[@]}"
-release v2 mainnet 9.1.0 "$FILES/v2/$NAME" --binary-url "$WEB_URL/files/v2/$NAME" "${GEN[@]}"
+release v1 mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/v1/$NAME" "${GEN[@]}" "${CLI1[@]}"
+release v2 mainnet 9.1.0 "$FILES/v2/$NAME" --binary-url "$WEB_URL/files/v2/$NAME" "${GEN[@]}" "${CLI2[@]}"
+# a release without the CLI (cli: null), and one newer than v2 that drops it again
+release nocli mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/v1/$NAME" "${GEN[@]}" --no-cli
+# the CLI served does not match the signed manifest (same size, different bytes; no mirror)
+release badcli mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/v1/$NAME" "${GEN[@]}" \
+  --cli "$FILES/v1/$CLI_NAME" --cli-name "$CLI_NAME" --cli-url "$WEB_URL/files/tampered/$CLI_NAME"
+# GitHub-style mirrors: primaries down, every mirror answers 302 → the file
+release redirect mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$DOWN_URL/files/v1/$NAME" --binary-mirror "$WEB_URL/cgi-bin/dl?v1/$NAME" \
+  --cli "$FILES/v1/$CLI_NAME" --cli-name "$CLI_NAME" --cli-url "$DOWN_URL/files/v1/$CLI_NAME" --cli-mirror "$WEB_URL/cgi-bin/dl?v1/$CLI_NAME" \
+  --genesis "$FILES/genesis-mainnet.json" --genesis-url "$DOWN_URL/files/genesis-mainnet.json" --genesis-mirror "$WEB_URL/cgi-bin/dl?genesis-mainnet.json"
+# a redirecting mirror that leads to a tampered file must still be refused
+release badredirect mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$DOWN_URL/files/v1/$NAME" --binary-mirror "$WEB_URL/cgi-bin/dl?tampered/$NAME" "${GEN[@]}" --no-cli
 # forged: edited after signing (still schema-valid)
 mkdir -p "$WWW/rel/forged"; cp "$WWW/rel/v1/$MF.ed25519.sig" "$WWW/rel/forged/"
 sed 's#/files/v1/#/files/tampered/#' "$WWW/rel/v1/$MF" > "$WWW/rel/forged/$MF"
@@ -140,23 +189,25 @@ echo "this is not a signature" > "$WWW/rel/garbage/$MF.ed25519.sig"
 base64 -d "$WWW/rel/v1/$MF.ed25519.sig" | head -c 63 | base64 -w 0 > "$WWW/rel/truncsig/$MF.ed25519.sig"
 cp "$WWW/rel/v2/$MF.ed25519.sig" "$WWW/rel/othersig/$MF.ed25519.sig"
 # validly signed manifests whose files do not match
-release badsha mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/tampered/$NAME" "${GEN[@]}"
-release badsize mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/short/$NAME" "${GEN[@]}"
-release badgenesis mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/v1/$NAME" \
+release badsha mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/tampered/$NAME" "${GEN[@]}" "${CLI1[@]}"
+release badsize mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/short/$NAME" "${GEN[@]}" --no-cli
+release badgenesis mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/v1/$NAME" "${CLI1[@]}" \
   --genesis "$FILES/genesis-mainnet.json" --genesis-url "$WEB_URL/files/badgenesis/genesis-mainnet.json" --genesis-mirror "$WEB_URL/files/missing.json"
 # mirrors: primary down, 404, tampered, then good
 release mirror mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$DOWN_URL/files/v1/$NAME" \
   --binary-mirror "$WEB_URL/files/missing/$NAME" --binary-mirror "$WEB_URL/files/tampered/$NAME" --binary-mirror "$WEB_URL/files/v1/$NAME" \
+  --cli "$FILES/v1/$CLI_NAME" --cli-name "$CLI_NAME" --cli-url "$DOWN_URL/files/v1/$CLI_NAME" \
+  --cli-mirror "$WEB_URL/files/tampered/$CLI_NAME" --cli-mirror "$WEB_URL/files/v1/$CLI_NAME" \
   --genesis "$FILES/genesis-mainnet.json" --genesis-url "$WEB_URL/files/missing.json" --genesis-mirror "$WEB_URL/files/genesis-mainnet.json"
-release mininst mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/v1/$NAME" "${GEN[@]}" --min-installer-version 99.0.0
-release testnet testnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/v1/$NAME" --no-genesis
+release mininst mainnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/v1/$NAME" "${GEN[@]}" --no-cli --min-installer-version 99.0.0
+release testnet testnet 9.0.0 "$FILES/v1/$NAME" --binary-url "$WEB_URL/files/v1/$NAME" --no-genesis "${CLI1[@]}"
 # wrongnet: a correctly signed TESTNET manifest served under the mainnet file name
 mkdir -p "$WWW/rel/wrongnet"
 cp "$WWW/rel/testnet/manifest-testnet.json" "$WWW/rel/wrongnet/$MF"
 cp "$WWW/rel/testnet/manifest-testnet.json.ed25519.sig" "$WWW/rel/wrongnet/$MF.ed25519.sig"
 
 # Every fixture that is meant to be validly signed must pass the real verifier (both signatures).
-for d in v1 v2 badsha badsize badgenesis mirror mininst; do
+for d in v1 v2 nocli badcli redirect badredirect badsha badsize badgenesis mirror mininst; do
   tool verify-manifest.mjs --allow-http --keys-dir "$CTX/keys" "$WWW/rel/$d/$MF"
 done
 tool verify-manifest.mjs --allow-http --keys-dir "$CTX/keys" "$WWW/rel/testnet/manifest-testnet.json"
@@ -172,8 +223,15 @@ if [ -n "${REAL_BINARY:-}" ]; then
   cp "$REAL_BINARY" "$FILES/real/quantum-vault-daemon-real"
   chmod 0755 "$FILES/real/quantum-vault-daemon-real"
   cp "$REPO/core/daemon/genesis-mainnet.json" "$FILES/real/genesis-mainnet.json"
+  REAL_CLI_ARGS=(--no-cli)
+  if [ -n "${REAL_CLI:-}" ]; then
+    [ -f "$REAL_CLI" ] || { echo "REAL_CLI: $REAL_CLI not found" >&2; exit 1; }
+    cp "$REAL_CLI" "$FILES/real/rougechain-real"
+    chmod 0755 "$FILES/real/rougechain-real"
+    REAL_CLI_ARGS=(--cli "$FILES/real/rougechain-real" --cli-name rougechain-real --cli-url "$WEB_URL/files/real/rougechain-real")
+  fi
   release real mainnet 9.0.0 "$FILES/real/quantum-vault-daemon-real" --binary-url "$WEB_URL/files/real/quantum-vault-daemon-real" \
-    --genesis "$FILES/real/genesis-mainnet.json" --genesis-url "$WEB_URL/files/real/genesis-mainnet.json"
+    --genesis "$FILES/real/genesis-mainnet.json" --genesis-url "$WEB_URL/files/real/genesis-mainnet.json" "${REAL_CLI_ARGS[@]}"
 fi
 mkdir -p "$WWW/installer" && cp "$REPO/scripts/install-validator.sh" "$WWW/installer/"   # for the `curl | bash` scenario
 chmod -R a+rX "$TMP"
@@ -212,12 +270,29 @@ if [ "$REAL" = 1 ]; then
 set -euo pipefail
 env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root \
   ROUGECHAIN_INSTALLER_TEST=1 ROUGECHAIN_INSTALLER_TEST_PUBKEY_FILE=/ctx/keys/release-ed25519.pub.pem \
-  RELEASE_BASE_URLS="$WEB/rel/real" NO_START=1 NODE_NAME=installer-test bash /src/install-validator.sh
+  RELEASE_BASE_URLS="$WEB/rel/real" NO_START=1 NODE_NAME=installer-test bash /src/install-validator.sh 2>&1 | tee /tmp/install.log
 K=/var/lib/rougechain/mainnet/node-keys.json
 test "$(stat -c '%a %U' $K)" = "600 rougechain"
 test "$(jq -r '.public_key_hex | length' $K)" = 3904
 /usr/local/bin/quantum-vault-daemon --version
-# anything the daemon wrote outside its data dir?
+if [ "${HAVE_REAL_CLI:-0}" = 1 ]; then
+  # The exact command form the installer prints: the CLI, as the service user, reading the 0600 node key.
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sudo > /dev/null
+  test "$(stat -c '%a %U:%G' /usr/local/bin/rougechain)" = "755 root:root"
+  /usr/local/bin/rougechain --version
+  who="$(sudo -u rougechain rougechain --node-keys $K whoami)"
+  echo "$who"
+  echo "$who" | grep -q '^Address: rouge1'
+  grep -q "sudo -u rougechain rougechain --node-keys $K stake 10000" /tmp/install.log
+  if [ "${REAL_SYNC:-0}" = 1 ]; then
+    # read-only requests to the public mainnet API (the CLI's default network)
+    sudo -u rougechain rougechain --node-keys $K validator-status | tee /tmp/vs.log
+    grep -q 'RPC height: *[0-9]* (https://api.rougechain.io)' /tmp/vs.log
+    sudo -u rougechain rougechain --node-keys $K balance | grep -q '^Balance: 0 XRGE'
+    sudo -u rougechain rougechain --rpc https://api.rougechain.io/api/ --node-keys $K balance | grep -q '^Balance: 0 XRGE'
+  fi
+fi
+# anything the daemon or the CLI wrote outside the data dir?
 stray="$(find / -xdev -user rougechain -not -path '/proc/*' -not -path '/var/lib/rougechain*' 2>/dev/null | head -n 5)"
 test -z "$stray" || { echo "daemon wrote outside its data dir: $stray"; exit 1; }
 # The unit's ExecStart (continuation lines joined), for the sandboxed run below.
@@ -225,9 +300,13 @@ awk '/^ExecStart=/{f=1; sub(/^ExecStart=/,"")} f{l=$0; c=sub(/\\$/,"",l); printf
   /etc/systemd/system/rougechain-validator.service > /etc/rougechain/mainnet/execstart
 REALSH
   docker rm -f rc-inst-test-real > /dev/null 2>&1 || true
-  if docker run --name rc-inst-test-real --network "$NET" -e WEB="$WEB_URL" \
+  have_cli=0; if [ -n "${REAL_CLI:-}" ]; then have_cli=1; fi
+  if docker run --name rc-inst-test-real --network "$NET" -e WEB="$WEB_URL" -e HAVE_REAL_CLI="$have_cli" -e REAL_SYNC="${REAL_SYNC:-0}" \
       -v "$REPO/scripts:/src:ro" -v "$CTX:/ctx:ro" "$image" bash /ctx/real.sh > "$log" 2>&1; then
     SUMMARY+=("PASS  real binary: installs, generates a 0600 ML-DSA-65 node key, writes nothing outside its data dir")
+    if [ "$have_cli" = 1 ]; then
+      SUMMARY+=("PASS  real CLI: installed 0755; 'sudo -u rougechain rougechain --node-keys … whoami' -> $(grep -m 1 '^Address: ' "$log" | cut -c 1-40)…")
+    fi
     # Snapshot the installed system, then run the unit's ExecStart from it under restrictions
     # close to the unit's sandbox: read-only root, only the data dir writable, no capabilities,
     # no-new-privileges, the service user.
