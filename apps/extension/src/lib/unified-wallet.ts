@@ -4,8 +4,8 @@
  * Adapted from quantum-vault/src/lib/unified-wallet.ts
  */
 import * as storage from "./storage";
-import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
+import { deriveMessagingKeypair } from "@rougechain/core/messaging-keys";
 
 // Expected key sizes (bytes) for FIPS 204 / FIPS 203
 const ML_DSA65_SECRET_KEY_BYTES = 4032;
@@ -77,11 +77,15 @@ function ensureCorrectKeys(wallet: UnifiedWallet): UnifiedWallet {
     const needsEncRegen = !updated.encryptionPublicKey || !updated.encryptionPrivateKey ||
         encPrivBytes !== ML_KEM768_SECRET_KEY_BYTES;
 
+    // Only fills in a MISSING / malformed messaging key — a wallet that already has a valid
+    // ML-KEM-768 key keeps it untouched (never re-derived on load, unlock or migration). When one
+    // must be created, use the seed-derived key (same as the website and Qwalla) rather than a
+    // random one, so the recovery phrase restores it everywhere.
     if (needsEncRegen) {
-        console.warn(`[Vault] Encryption key size mismatch or missing. Regenerating FIPS 203 keys.`);
-        const encKeypair = ml_kem768.keygen();
-        updated.encryptionPublicKey = bytesToHex(encKeypair.publicKey);
-        updated.encryptionPrivateKey = bytesToHex(encKeypair.secretKey);
+        console.warn(`[Vault] Encryption key size mismatch or missing. Deriving FIPS 203 keys from the wallet seed.`);
+        const encKeypair = deriveMessagingKeypair(updated.mnemonic ?? null, updated.signingPrivateKey);
+        updated.encryptionPublicKey = encKeypair.publicKey;
+        updated.encryptionPrivateKey = encKeypair.privateKey;
         changed = true;
     }
 

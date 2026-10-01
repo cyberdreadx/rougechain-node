@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Loader2, Plus, Upload, KeyRound, Copy, Check, AlertTriangle, ArrowLeft } from "lucide-react";
-import { generateEncryptionKeypair, registerWalletOnNode } from "../../lib/pqc-messenger";
+import { registerWalletOnNode } from "../../lib/pqc-messenger";
 import { persistNewWallet, decryptWallet, type UnifiedWallet } from "../../lib/unified-wallet";
-import { generateMnemonic, keypairFromMnemonic, validateMnemonic } from "../../lib/mnemonic";
+import { generateMnemonic, validateMnemonic } from "../../lib/mnemonic";
+import { normalizeRecoveryPhrase, prepareImportedWallet, walletFromMnemonic } from "../../lib/messaging-keys";
 import SetPasswordScreen from "./SetPasswordScreen";
 
 interface Props {
@@ -36,23 +37,10 @@ export default function CreateWalletScreen({ onCreated }: Props) {
 
         try {
             const phrase = generateMnemonic();
-            const { publicKey: signingPublicKey, secretKey: signingPrivateKey } = keypairFromMnemonic(phrase);
-            const encKeypair = generateEncryptionKeypair();
-            const id = crypto.randomUUID();
+            // Signing AND messaging keys both come from the phrase (website/Qwalla derivation).
+            const wallet = walletFromMnemonic(phrase, name.trim());
 
-            const wallet: UnifiedWallet = {
-                id,
-                displayName: name.trim(),
-                createdAt: Date.now(),
-                signingPublicKey,
-                signingPrivateKey,
-                encryptionPublicKey: encKeypair.publicKey,
-                encryptionPrivateKey: encKeypair.privateKey,
-                version: 3,
-                mnemonic: phrase,
-            };
-
-            setMnemonic(phrase);
+            setMnemonic(wallet.mnemonic!);
             setPendingWallet(wallet);
             setScreen("show-seed");
         } catch (err) {
@@ -89,7 +77,7 @@ export default function CreateWalletScreen({ onCreated }: Props) {
     };
 
     const handleImportSeed = async () => {
-        const trimmed = importPhrase.trim().toLowerCase().replace(/\s+/g, " ");
+        const trimmed = normalizeRecoveryPhrase(importPhrase);
         if (!importName.trim()) {
             setImportError("Enter a wallet name");
             return;
@@ -103,20 +91,8 @@ export default function CreateWalletScreen({ onCreated }: Props) {
         setImportError("");
 
         try {
-            const { publicKey: signingPublicKey, secretKey: signingPrivateKey } = keypairFromMnemonic(trimmed);
-            const encKeypair = generateEncryptionKeypair();
-
-            const wallet: UnifiedWallet = {
-                id: crypto.randomUUID(),
-                displayName: importName.trim(),
-                createdAt: Date.now(),
-                signingPublicKey,
-                signingPrivateKey,
-                encryptionPublicKey: encKeypair.publicKey,
-                encryptionPrivateKey: encKeypair.privateKey,
-                version: 3,
-                mnemonic: trimmed,
-            };
+            // Same phrase → same signing key AND same messaging key as the website / Qwalla.
+            const wallet = walletFromMnemonic(trimmed, importName.trim());
 
             // Require a password before storing — go to the set-password step.
             setPendingWallet(wallet);
@@ -139,7 +115,8 @@ export default function CreateWalletScreen({ onCreated }: Props) {
         try {
             const maybe = JSON.parse(text);
             if (maybe && maybe.signingPublicKey && maybe.signingPrivateKey) {
-                setPendingWallet(maybe as UnifiedWallet);
+                // Keeps the backup's messaging keys; derives them only if it has none.
+                setPendingWallet(prepareImportedWallet(maybe as UnifiedWallet));
                 setScreen("set-password");
                 return;
             }
@@ -159,7 +136,8 @@ export default function CreateWalletScreen({ onCreated }: Props) {
         try {
             const wallet = await decryptWallet(encryptedImport, importPassword);
             if (!wallet.signingPublicKey || !wallet.signingPrivateKey) throw new Error("no keys");
-            setPendingWallet(wallet);
+            // Keeps the backup's messaging keys exactly; derives them only if it has none.
+            setPendingWallet(prepareImportedWallet(wallet));
             setImportPassword("");
             setEncryptedImport("");
             setScreen("set-password");

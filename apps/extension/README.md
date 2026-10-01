@@ -20,14 +20,35 @@ Quantum-safe cryptocurrency wallet & encrypted messenger browser extension for R
 - **ML-KEM-768** (FIPS 203) — CRYSTALS-Kyber key encapsulation
 - **AES-256-GCM** — Symmetric encryption for messages and wallet vault
 
+## Release notes
+
+### 1.7.0
+
+- **One recovery phrase restores your messages everywhere.** New wallets and recovery-phrase
+  imports now derive the ML-KEM-768 messaging/mail key from the phrase exactly like rougechain.io
+  and Qwalla (`SHA-512("<phrase>|rougee-gram|kem-v1")` → `ml_kem768.keygen`, via
+  `@rougechain/core/messaging-keys`), so the same 24 words give the same rouge1 address *and* the
+  same messaging key in all three apps. A wallet without a phrase derives it from its signing key.
+  `.pqcbackup` / JSON backups that already contain messaging keys keep them exactly; only a backup
+  without them gets the derived key. **Wallets already in the extension keep their existing
+  messaging key** — nothing is re-derived on unlock, migration or re-encryption.
+- **Whole XRGE only.** The node stores XRGE transfer amounts as whole numbers, so Send and Shield
+  refuse fractional amounts instead of letting the chain drop the fraction.
+- **1 XRGE transfer fee.** The Send form shows the node's real 1 XRGE fee and checks amount + fee
+  against the balance; the leftover 0.1 XRGE transfer-fee constant is corrected to 1.
+
 ## Development
 
 ```bash
-cd browser-extension
-npm install
-npm run dev     # Vite dev server
-npm run build   # Production build → dist/
+npm ci                                   # from the monorepo root
+npm run dev -w rougechain-wallet-ext     # Vite dev server
+npm run typecheck -w rougechain-wallet-ext
+npm test -w rougechain-wallet-ext        # vitest: messaging-key vectors + wallet storage paths
+npm run build -w rougechain-wallet-ext   # Production build → apps/extension/dist/
 ```
+
+Store package: zip the *contents* of `dist/` (manifest.json at the zip root) as
+`apps/extension/rougechain-wallet-<version>.zip` (`*.zip` is gitignored).
 
 ## Install in Chrome
 
