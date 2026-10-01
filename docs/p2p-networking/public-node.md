@@ -46,7 +46,7 @@ server {
 
 Set `client_max_body_size` to at least 50M to support messenger media uploads.
 
-> The daemon does not read `X-Forwarded-For` / `X-Real-IP`: it keys rate limits by the connecting IP, which behind this proxy is always `127.0.0.1`. See [Rate Limiting](#rate-limiting).
+> By default the daemon keys rate limits by the connecting IP, which behind this proxy is always `127.0.0.1`. Start it with `--trust-proxy` to key them by the `X-Real-IP` / `X-Forwarded-For` this proxy sets (honoured only for loopback connections). See [Rate Limiting](#rate-limiting).
 
 ### 3. Start the Node
 
@@ -129,7 +129,7 @@ The node has built-in rate limiting (disabled by default — every limit default
 ./quantum-vault-daemon --rate-limit-read-per-minute 600 --rate-limit-write-per-minute 60
 ```
 
-`GET` requests count against the read limit and every other method against the write limit; `--rate-limit-validator` and `--rate-limit-peer` set separate limits for signed validator requests and registered peers. `--rate-limit-per-minute` is accepted but not enforced. Limits are keyed by the connecting IP, so behind the nginx proxy above all clients share one bucket; for per-client limits, use nginx's `limit_req`.
+`GET` requests count against the read limit and every other method against the write limit; `--rate-limit-validator` and `--rate-limit-peer` set separate limits for signed validator requests and registered peers. `--rate-limit-per-minute` is a deprecated alias that applies to both reads and writes when neither of those is set. Limits are keyed by the connecting IP, so behind the nginx proxy above all clients share one bucket unless you add `--trust-proxy` (env `QV_TRUST_PROXY=true`): then a request arriving from loopback is keyed by `X-Real-IP` (else the rightmost `X-Forwarded-For` entry), and any non-loopback connection still by its socket IP. Only enable it when the API port is reachable solely through that local proxy. All routes are limited, including `/api/finality/*`.
 
 ### Firewall
 

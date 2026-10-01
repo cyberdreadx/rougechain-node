@@ -22,7 +22,7 @@ This tells the node to try to seal a block whenever it has pending transactions.
 
 ## How Block Production Works
 
-1. **Proposer selection** — Since mainnet height 100, each height has exactly one designated proposer: the eligible validator (stake > 0, not jailed) with the most stake, ties going to the lowest raw public-key bytes. It is deterministic (no randomness, no rotation, no fallback). Every other node refuses to seal, and peers reject blocks from any other proposer. (`GET /api/selection` still shows the legacy QRNG lottery; it is not the consensus rule.)
+1. **Proposer selection** — Since mainnet height 100, each height has exactly one designated proposer: the eligible validator (stake > 0, not jailed) with the most stake, ties going to the lowest raw public-key bytes. It is deterministic (no randomness, no rotation, no fallback). Every other node refuses to seal, and peers reject blocks from any other proposer. (`GET /api/selection` reports the same designated proposer for the next height.)
 2. **Block assembly** — The designated proposer collects pending transactions from the mempool. Since height 150 it first waits for the commit certificate of the previous block (precommits from validators holding ⅔ of the stake)
 3. **Signing** — The block is signed with the validator's ML-DSA-65 key
 4. **Voting** — Validators automatically submit prevote and precommit attestations for each block

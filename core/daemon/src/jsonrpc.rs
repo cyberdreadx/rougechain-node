@@ -170,10 +170,13 @@ pub async fn handle_rpc(state: &AppState, req: JsonRpcRequest) -> JsonRpcRespons
         // ── Transaction count (nonce) ───────────────────────────────
         "eth_getTransactionCount" | "rouge_getTransactionCount" =>
             match param_str(&req.params, 0) {
-                Some(addr) => {
-                    let nonce = state.node.get_account_nonce(addr);
-                    JsonRpcResponse::success(id, Value::String(format!("0x{:x}", nonce)))
-                }
+                Some(addr) => match crate::resolve_nonce_account(addr, |a| state.node.resolve_rouge1(a)) {
+                    Ok(pubkey) => {
+                        let nonce = state.node.get_account_nonce(&pubkey);
+                        JsonRpcResponse::success(id, Value::String(format!("0x{:x}", nonce)))
+                    }
+                    Err(e) => JsonRpcResponse::invalid_params(id, e),
+                },
                 None => JsonRpcResponse::invalid_params(id, "Missing address"),
             },
 

@@ -150,7 +150,8 @@ struct Args {
     print_state_digest: bool,
     #[arg(long, env = "QV_API_KEYS")]
     api_keys: Option<String>,
-    /// Rate limit per minute (0 = unlimited, recommended for public testnets)
+    /// DEPRECATED alias: when > 0 and both --rate-limit-read-per-minute and
+    /// --rate-limit-write-per-minute are 0, it is used for both (0 = unlimited)
     #[arg(long, default_value_t = 0)]
     rate_limit_per_minute: u32,
     /// Rate limit for read operations (0 = unlimited)
@@ -165,6 +166,11 @@ struct Args {
     /// Rate limit for registered peers (Tier 2) - 0 = unlimited
     #[arg(long, default_value_t = 0)]
     rate_limit_peer: u32,
+    /// Key rate limits by the client IP a LOCAL reverse proxy reports (`X-Real-IP`, else the
+    /// rightmost `X-Forwarded-For` entry). Honoured only when the TCP peer is loopback; any other
+    /// peer is keyed by its socket IP. Off by default (every request keyed by socket IP).
+    #[arg(long, env = "QV_TRUST_PROXY", default_value_t = false)]
+    trust_proxy: bool,
     #[arg(long, env = "QV_FAUCET_WHITELIST")]
     faucet_whitelist: Option<String>,
     /// Enable the public faucet endpoints (dev/testnet only). OFF by default — mainnet must never set this.
@@ -205,6 +211,8 @@ struct AppState {
     write_limit: u32,
     validator_limit: u32,  // Tier 1: validators (0 = unlimited)
     peer_limit: u32,       // Tier 2: registered peers
+    /// --trust-proxy: key rate limits by proxy-reported client IP when the peer is loopback
+    trust_proxy: bool,
     faucet_whitelist: Vec<String>,
     faucet_enabled: bool,
     peer_manager: Arc<peer::PeerManager>,
@@ -283,7 +291,7 @@ struct RateLimiter {
 }
 
 impl RateLimiter {
-    fn new(_max_requests: u32, window: StdDuration) -> Self {
+    fn new(window: StdDuration) -> Self {
         Self {
             window,
             buckets: HashMap::new(),
@@ -323,6 +331,57 @@ fn normalize_recipient(value: &str) -> String {
     let trimmed = value.trim();
     let stripped = trimmed.strip_prefix("xrge:").unwrap_or(trimmed);
     stripped.to_lowercase()
+}
+
+// ── Faucet admission (shared by legacy `/api/faucet` and signed `/api/v2/faucet`) ──────────
+// Both endpoints apply the same `--faucet-whitelist` gate and the same per-recipient 24 h
+// cooldown. The cooldown is keyed by the raw recipient public key and shared between the two
+// endpoints (one claim per key per window, whichever endpoint is used), persisted in sled, and
+// recorded only AFTER a successful mint so a failed request never locks the recipient out.
+
+/// `true` when the whitelist is empty (open faucet) or lists `recipient` (normalised).
+fn faucet_whitelisted(whitelist: &[String], recipient: &str) -> bool {
+    if whitelist.is_empty() {
+        return true;
+    }
+    let recipient = normalize_recipient(recipient);
+    whitelist.iter().any(|item| item == &recipient)
+}
+
+/// Seconds left on the cooldown given the last successful claim, or `None` when it has elapsed.
+fn faucet_cooldown_remaining(last_used: Option<i64>, now: i64) -> Option<i64> {
+    let last = last_used?;
+    let elapsed = now - last;
+    if elapsed < FAUCET_COOLDOWN_SECS { Some(FAUCET_COOLDOWN_SECS - elapsed) } else { None }
+}
+
+fn faucet_cooldown_message(remaining: i64) -> String {
+    format!(
+        "Faucet cooldown: please wait {}h {}m before requesting again.",
+        remaining / 3600,
+        (remaining % 3600) / 60
+    )
+}
+
+const FAUCET_NOT_WHITELISTED_MSG: &str =
+    "Faucet restricted: your address is not whitelisted. Unset QV_FAUCET_WHITELIST for local dev.";
+
+/// Remaining cooldown for `recipient`: in-memory first, then the persisted (sled) record.
+async fn faucet_cooldown_for(state: &AppState, recipient: &str, now: i64) -> Option<i64> {
+    let last_used = {
+        let cooldowns = state.faucet_cooldowns.lock().await;
+        cooldowns.get(recipient).copied()
+    }
+    .or_else(|| state.node.store_ref().get_faucet_cooldown(recipient));
+    faucet_cooldown_remaining(last_used, now)
+}
+
+/// Start `recipient`'s cooldown after a successful mint (in memory + persisted).
+async fn faucet_record_claim(state: &AppState, recipient: &str, now: i64) {
+    let mut cooldowns = state.faucet_cooldowns.lock().await;
+    cooldowns.insert(recipient.to_string(), now);
+    // SECURITY: persist so the cooldown survives node restarts
+    state.node.store_ref().set_faucet_cooldown(recipient, now);
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -471,10 +530,22 @@ async fn main() -> Result<(), String> {
     eprintln!("[core-daemon] gRPC server created");
 
     let auth = AuthConfig::new(args.api_keys.clone());
-    let limiter = Arc::new(tokio::sync::Mutex::new(RateLimiter::new(
+    let limiter = Arc::new(tokio::sync::Mutex::new(RateLimiter::new(StdDuration::from_secs(60))));
+    let (read_limit, write_limit) = effective_read_write_limits(
         args.rate_limit_per_minute,
-        StdDuration::from_secs(60),
-    )));
+        args.rate_limit_read_per_minute,
+        args.rate_limit_write_per_minute,
+    );
+    if args.rate_limit_per_minute > 0 {
+        if args.rate_limit_read_per_minute == 0 && args.rate_limit_write_per_minute == 0 {
+            eprintln!("[rate-limit] WARNING: --rate-limit-per-minute is deprecated; applying {} req/min to both reads and writes. Use --rate-limit-read-per-minute / --rate-limit-write-per-minute instead.", args.rate_limit_per_minute);
+        } else {
+            eprintln!("[rate-limit] WARNING: --rate-limit-per-minute is deprecated and IGNORED because --rate-limit-read-per-minute / --rate-limit-write-per-minute are set.");
+        }
+    }
+    if args.trust_proxy {
+        eprintln!("[rate-limit] --trust-proxy: requests from a loopback peer are keyed by X-Real-IP / rightmost X-Forwarded-For");
+    }
     let initial_peers: Vec<String> = args.peers
         .as_ref()
         .map(|p| peer::parse_peers(p))
@@ -514,10 +585,11 @@ async fn main() -> Result<(), String> {
         node: node.clone(),
         auth,
         limiter,
-        read_limit: args.rate_limit_read_per_minute,
-        write_limit: args.rate_limit_write_per_minute,
+        read_limit,
+        write_limit,
         validator_limit: args.rate_limit_validator,
         peer_limit: args.rate_limit_peer,
+        trust_proxy: args.trust_proxy,
         faucet_whitelist: parse_whitelist(args.faucet_whitelist),
         faucet_enabled: args.faucet_enabled,
         peer_manager: peer_manager.clone(),
@@ -1136,8 +1208,14 @@ fn build_http_router(state: AppState) -> Router {
             }
         })
         .with_state(state.clone())
-        // Track A Step 2.4: FINALITY_V2 gossip intake + verified proof serving (own body limit + verification budget)
-        .merge(finality_net::finality_router_with(state.node.clone(), finality_net::IngressPolicy::from_env_and_peers(&state.configured_peer_urls)))
+        // Track A Step 2.4: FINALITY_V2 gossip intake + verified proof serving (own body limit + verification budget).
+        // Wrapped in the same auth/rate-limit middleware as every other route: `/api/finality/*`
+        // stays API-key EXEMPT (peers never send a key — vote gossip and `GET /finality/:h` proof
+        // pulls must keep working on keyed nodes), but now counts against the rate limits.
+        .merge(
+            finality_net::finality_router_with(state.node.clone(), finality_net::IngressPolicy::from_env_and_peers(&state.configured_peer_urls))
+                .layer(middleware::from_fn_with_state(state.clone(), auth_middleware)),
+        )
 }
 
 async fn auth_middleware<B>(
@@ -1192,14 +1270,7 @@ async fn auth_middleware<B>(
         return Err(StatusCode::GONE);
     }
     // Auth bypass for endpoints that handle their own auth (v2 uses signatures, faucet/bridge are public)
-    let skip_auth = path == "/api/faucet"
-        || path == "/api/faucet/bridge"
-        || path == "/api/bot/reply"
-        || path.starts_with("/api/bridge/")
-        || path.starts_with("/api/v2/")
-        || path.starts_with("/api/messenger/")
-        || path.starts_with("/api/mail/")
-        || path.starts_with("/api/names/");
+    let skip_auth = api_key_exempt_path(path);
 
     if !skip_auth && state.auth.is_enabled() {
         let api_key = extract_api_key(request.headers());
@@ -1209,7 +1280,7 @@ async fn auth_middleware<B>(
     }
 
     // Rate limiting applies to ALL endpoints
-    let client_key = client_key(&request);
+    let client_key = client_key(&state, &request);
 
     let limit = determine_rate_limit_tier(&state, &request).await;
 
@@ -1221,6 +1292,21 @@ async fn auth_middleware<B>(
     }
 
     Ok(next.run(request).await)
+}
+
+/// Routes that never require an API key (they handle their own auth, or are peer/public routes).
+/// `/api/finality/*` (vote gossip + proof pulls) is exempt because peers never send a key; it is
+/// still rate-limited like every other route. The status route `/api/finality` is NOT exempt.
+fn api_key_exempt_path(path: &str) -> bool {
+    path == "/api/faucet"
+        || path == "/api/faucet/bridge"
+        || path == "/api/bot/reply"
+        || path.starts_with("/api/finality/")
+        || path.starts_with("/api/bridge/")
+        || path.starts_with("/api/v2/")
+        || path.starts_with("/api/messenger/")
+        || path.starts_with("/api/mail/")
+        || path.starts_with("/api/names/")
 }
 
 /// Determine rate limit based on caller tier:
@@ -1260,7 +1346,7 @@ async fn determine_rate_limit_tier<B>(state: &AppState, request: &Request<B>) ->
     }
     
     // Check if client IP is a registered peer (Tier 2)
-    let client_ip = client_key(request);
+    let client_ip = client_key(state, request);
     if state.peer_manager.is_known_peer_ip(&client_ip).await {
         return state.peer_limit; // Tier 2
     }
@@ -1301,23 +1387,57 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
     None
 }
 
-fn client_key<B>(request: &Request<B>) -> String {
-    // Prefer actual socket address to prevent IP spoofing via headers (MED-03)
-    if let Some(info) = request.extensions().get::<axum::extract::ConnectInfo<SocketAddr>>() {
-        return info.0.ip().to_string();
+/// `--rate-limit-per-minute` is a deprecated alias: when it is > 0 and neither the read nor the
+/// write limit is set, it applies to both. Explicit read/write limits always win.
+fn effective_read_write_limits(legacy: u32, read: u32, write: u32) -> (u32, u32) {
+    if legacy > 0 && read == 0 && write == 0 { (legacy, legacy) } else { (read, write) }
+}
+
+fn client_key<B>(state: &AppState, request: &Request<B>) -> String {
+    let socket = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map(|info| info.0);
+    rate_limit_client_key(socket, request.headers(), state.trust_proxy)
+}
+
+/// The client IP a local reverse proxy reports: `X-Real-IP` (nginx sets it to `$remote_addr`,
+/// overwriting anything the client sent), else the RIGHTMOST `X-Forwarded-For` entry (the hop
+/// nginx's `$proxy_add_x_forwarded_for` appends). The leftmost entries are client-controlled and
+/// are never used. Only well-formed IP addresses are accepted.
+fn proxy_reported_ip(headers: &HeaderMap) -> Option<std::net::IpAddr> {
+    if let Some(ip) = headers
+        .get("x-real-ip")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<std::net::IpAddr>().ok())
+    {
+        return Some(ip);
     }
-    // Fallback only when ConnectInfo is unavailable (e.g., behind trusted reverse proxy)
-    if let Some(value) = request.headers().get("x-forwarded-for") {
-        if let Ok(value) = value.to_str() {
-            if let Some(first) = value.split(',').next() {
-                let trimmed = first.trim();
-                if !trimmed.is_empty() {
-                    return trimmed.to_string();
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit(',').next())
+        .and_then(|v| v.trim().parse::<std::net::IpAddr>().ok())
+}
+
+/// Rate-limit bucket key. Default: the TCP peer's IP (headers are ignored, MED-03). With
+/// `--trust-proxy` AND a loopback peer (a reverse proxy on this host), the proxy-reported client
+/// IP is used instead, so clients behind nginx no longer share one bucket. A non-loopback peer is
+/// always keyed by its socket IP, whatever headers it sends.
+fn rate_limit_client_key(socket: Option<SocketAddr>, headers: &HeaderMap, trust_proxy: bool) -> String {
+    match socket {
+        Some(addr) => {
+            if trust_proxy && addr.ip().is_loopback() {
+                if let Some(ip) = proxy_reported_ip(headers) {
+                    return ip.to_string();
                 }
             }
+            addr.ip().to_string()
         }
+        // ConnectInfo is always present on the real server; without it, fall back to the same
+        // proxy-appended value (never the client-controlled leftmost XFF entry).
+        None => proxy_reported_ip(headers).map(|ip| ip.to_string()).unwrap_or_else(|| "unknown".to_string()),
     }
-    "unknown".to_string()
 }
 
 // JSON-RPC 2.0 handler (supports single + batch requests)
@@ -3883,16 +4003,13 @@ async fn faucet(
         }));
     }
     let node = &state.node;
-    if !state.faucet_whitelist.is_empty() {
-        let recipient = normalize_recipient(&body.recipient_public_key);
-        if !state.faucet_whitelist.iter().any(|item| item == &recipient) {
-            return Ok(Json(TxResponse {
-                success: false,
-                tx_id: None,
-                tx: None,
-                error: Some("Faucet restricted: your address is not whitelisted. Unset QV_FAUCET_WHITELIST for local dev.".to_string()),
-            }));
-        }
+    if !faucet_whitelisted(&state.faucet_whitelist, &body.recipient_public_key) {
+        return Ok(Json(TxResponse {
+            success: false,
+            tx_id: None,
+            tx: None,
+            error: Some(FAUCET_NOT_WHITELISTED_MSG.to_string()),
+        }));
     }
 
     // Anti-abuse: reject if balance already exceeds threshold
@@ -3929,43 +4046,23 @@ async fn faucet(
     let amount = body.amount.unwrap_or(10000).min(FAUCET_MAX_AMOUNT);
 
     let now = chrono::Utc::now().timestamp();
-    {
-        let cooldowns = state.faucet_cooldowns.lock().await;
-        // Check in-memory cooldown first, then fall back to persisted cooldown in sled
-        let last_used = cooldowns.get(&body.recipient_public_key).copied()
-            .or_else(|| node.store_ref().get_faucet_cooldown(&body.recipient_public_key));
-        if let Some(last) = last_used {
-            let elapsed = now - last;
-            if elapsed < FAUCET_COOLDOWN_SECS {
-                let remaining = FAUCET_COOLDOWN_SECS - elapsed;
-                let hours = remaining / 3600;
-                let mins = (remaining % 3600) / 60;
-                return Ok(Json(TxResponse {
-                    success: false,
-                    tx_id: None,
-                    tx: None,
-                    error: Some(format!(
-                        "Faucet cooldown: please wait {}h {}m before requesting again.",
-                        hours, mins
-                    )),
-                }));
-            }
-        }
-        // NOTE: the cooldown is recorded only AFTER a successful mint (below), so a
-        // failed faucet request (e.g. transient nonce contention with the miner)
-        // never locks the recipient out for 24h. Concurrent double-mint in the tiny
-        // window before that is still blocked by the pending-faucet-tx check above.
+    // NOTE: the cooldown is recorded only AFTER a successful mint (below), so a failed faucet
+    // request (e.g. transient nonce contention with the miner) never locks the recipient out
+    // for 24h. Concurrent double-mint in the tiny window before that is still blocked by the
+    // pending-faucet-tx check above.
+    if let Some(remaining) = faucet_cooldown_for(&state, &body.recipient_public_key, now).await {
+        return Ok(Json(TxResponse {
+            success: false,
+            tx_id: None,
+            tx: None,
+            error: Some(faucet_cooldown_message(remaining)),
+        }));
     }
 
     match node.submit_faucet_tx(&body.recipient_public_key, amount) {
         Ok(tx) => {
             // Mint succeeded — now start the recipient's cooldown.
-            {
-                let mut cooldowns = state.faucet_cooldowns.lock().await;
-                cooldowns.insert(body.recipient_public_key.clone(), now);
-                // SECURITY: Persist cooldown to sled so it survives node restarts
-                node.store_ref().set_faucet_cooldown(&body.recipient_public_key, now);
-            }
+            faucet_record_claim(&state, &body.recipient_public_key, now).await;
             let id = quantum_vault_crypto::bytes_to_hex(&quantum_vault_crypto::sha256(&quantum_vault_types::encode_tx_v1(&tx)));
             Ok(Json(TxResponse { success: true, tx_id: Some(id), tx: Some(tx), error: None }))
         }
@@ -4125,25 +4222,28 @@ async fn get_validators(State(state): State<AppState>) -> Result<Json<Validators
 struct SelectionResponse {
     success: bool,
     height: u64,
+    /// `designated_max_stake` (consensus rule, from the proposer-selection activation height) or
+    /// `legacy_qrng_lottery` (heights before activation).
+    rule: String,
     proposer: Option<String>,
     total_stake: Option<String>,
     selection_weight: Option<String>,
+    /// legacy lottery only (`null` under the designated rule — no entropy is fetched)
     entropy_source: Option<String>,
     entropy_hex: Option<String>,
 }
 
 async fn get_selection(State(state): State<AppState>) -> Result<Json<SelectionResponse>, StatusCode> {
-    let node = &state.node;
-    let height = node.get_tip_height().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? + 1;
-    let selection = node.get_selection_info().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let view = state.node.next_proposer_view().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(SelectionResponse {
         success: true,
-        height,
-        proposer: selection.as_ref().map(|s| s.proposer_pub_key.clone()),
-        total_stake: selection.as_ref().map(|s| s.total_stake.to_string()),
-        selection_weight: selection.as_ref().map(|s| s.selection_weight.to_string()),
-        entropy_source: selection.as_ref().map(|s| s.entropy_source.clone()),
-        entropy_hex: selection.as_ref().map(|s| s.entropy_hex.clone()),
+        height: view.height,
+        rule: view.rule.to_string(),
+        proposer: view.proposer,
+        total_stake: view.total_stake.map(|v| v.to_string()),
+        selection_weight: view.selection_weight.map(|v| v.to_string()),
+        entropy_source: view.entropy_source,
+        entropy_hex: view.entropy_hex,
     }))
 }
 
@@ -6541,6 +6641,14 @@ async fn v2_faucet(
     let node = &state.node;
     let faucet_amount = 10000_u64;
 
+    // Same `--faucet-whitelist` gate as the legacy `/api/faucet`.
+    if !faucet_whitelisted(&state.faucet_whitelist, &body.public_key) {
+        return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({
+            "success": false,
+            "error": FAUCET_NOT_WHITELISTED_MSG
+        }))));
+    }
+
     // Rate limit: check if user already has a significant balance (anti-abuse)
     let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
     if bal > 50000.0 {
@@ -6564,10 +6672,22 @@ async fn v2_faucet(
         }
     }
 
+    // Same per-recipient 24 h cooldown as the legacy `/api/faucet` (shared record).
+    let now = chrono::Utc::now().timestamp();
+    if let Some(remaining) = faucet_cooldown_for(&state, &body.public_key, now).await {
+        return Err((StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({
+            "success": false,
+            "error": faucet_cooldown_message(remaining),
+            "retryAfterSecs": remaining
+        }))));
+    }
+
     // Use the node's built-in faucet mechanism (creates a proper transfer tx from node key)
     node.submit_faucet_tx(&body.public_key, faucet_amount)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"success": false, "error": e}))))?;
-    
+    // Mint succeeded — start the cooldown (never on failure).
+    faucet_record_claim(&state, &body.public_key, now).await;
+
     Ok(Json(serde_json::json!({
         "success": true,
         "message": format!("Faucet: {} XRGE sent", faucet_amount)
@@ -9844,16 +9964,34 @@ async fn get_allowances(
     }
 }
 
+/// Nonces are keyed by hex public key. A `rouge1…` address is canonicalised to its public key
+/// through the node's persistent address index (`resolve_rouge1`). Every sender is indexed when
+/// its first tx is applied, so a valid address the index doesn't know has never sent a tx: it is
+/// passed through unchanged and reads as nonce 0 (a brand-new wallet's first send must keep
+/// working). Only a malformed `rouge1…` string is an error.
+fn resolve_nonce_account(input: &str, resolve_rouge1: impl Fn(&str) -> Option<String>) -> Result<String, String> {
+    let input = input.trim();
+    if input.starts_with("rouge1") {
+        if !quantum_vault_crypto::is_rouge_address(input) {
+            return Err(format!("invalid rouge1 address: {}", input));
+        }
+        return Ok(resolve_rouge1(input).unwrap_or_else(|| input.to_string()));
+    }
+    Ok(input.to_string())
+}
+
 async fn get_account_nonce(
     State(state): State<AppState>,
-    Path(pubkey): Path<String>,
-) -> Json<serde_json::Value> {
+    Path(account): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let pubkey = resolve_nonce_account(&account, |a| state.node.resolve_rouge1(a))
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))))?;
     let current = state.node.get_account_nonce(&pubkey);
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "success": true,
         "nonce": current,
         "next_nonce": current + 1
-    }))
+    })))
 }
 
 async fn v2_token_freeze(
@@ -11018,5 +11156,128 @@ mod bridge_r1_helper_tests {
         std::env::set_var("QV_ROUGE_BRIDGE_ADDRESS", "0x00000000000000000000000000000000000000BB");
         assert_eq!(rouge_bridge_address().as_deref(), Some("0x00000000000000000000000000000000000000bb"));
         std::env::remove_var("QV_ROUGE_BRIDGE_ADDRESS");
+    }
+}
+
+#[cfg(test)]
+mod faucet_admission_tests {
+    use super::*;
+
+    #[test]
+    fn faucet_whitelist_open_when_empty_and_gates_when_set() {
+        assert!(faucet_whitelisted(&[], "abcd"));
+        let wl = parse_whitelist(Some("xrge:ABCD, ef01".to_string()));
+        assert!(faucet_whitelisted(&wl, "abcd"));
+        assert!(faucet_whitelisted(&wl, "ABCD"), "normalised (case, xrge: prefix)");
+        assert!(faucet_whitelisted(&wl, "xrge:ef01"));
+        assert!(!faucet_whitelisted(&wl, "9999"), "unlisted recipient refused");
+    }
+
+    #[test]
+    fn faucet_cooldown_window() {
+        let now = 1_000_000;
+        assert_eq!(faucet_cooldown_remaining(None, now), None, "never claimed");
+        assert_eq!(faucet_cooldown_remaining(Some(now - 10), now), Some(FAUCET_COOLDOWN_SECS - 10));
+        assert_eq!(faucet_cooldown_remaining(Some(now - FAUCET_COOLDOWN_SECS + 1), now), Some(1));
+        assert_eq!(faucet_cooldown_remaining(Some(now - FAUCET_COOLDOWN_SECS), now), None, "elapsed exactly");
+        assert_eq!(faucet_cooldown_message(3 * 3600 + 25 * 60), "Faucet cooldown: please wait 3h 25m before requesting again.");
+    }
+
+}
+
+#[cfg(test)]
+mod rate_limit_key_tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn deprecated_per_minute_flag_is_an_alias_only_when_read_write_unset() {
+        assert_eq!(effective_read_write_limits(0, 0, 0), (0, 0), "defaults stay unlimited");
+        assert_eq!(effective_read_write_limits(120, 0, 0), (120, 120));
+        assert_eq!(effective_read_write_limits(120, 600, 0), (600, 0), "explicit limits win");
+        assert_eq!(effective_read_write_limits(120, 0, 60), (0, 60));
+        assert_eq!(effective_read_write_limits(0, 600, 60), (600, 60));
+    }
+
+    fn hdrs(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs { h.append(axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(), v.parse().unwrap()); }
+        h
+    }
+    fn sock(ip: [u8; 4]) -> Option<SocketAddr> { Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::from(ip)), 40000)) }
+
+    #[test]
+    fn rate_key_default_off_ignores_headers() {
+        let h = hdrs(&[("x-real-ip", "9.9.9.9"), ("x-forwarded-for", "1.1.1.1, 2.2.2.2")]);
+        assert_eq!(rate_limit_client_key(sock([127, 0, 0, 1]), &h, false), "127.0.0.1");
+        assert_eq!(rate_limit_client_key(sock([5, 6, 7, 8]), &h, false), "5.6.7.8");
+    }
+
+    #[test]
+    fn rate_key_trust_proxy_uses_real_ip_then_rightmost_xff_from_loopback() {
+        let lo = sock([127, 0, 0, 1]);
+        assert_eq!(rate_limit_client_key(lo, &hdrs(&[("x-real-ip", "9.9.9.9"), ("x-forwarded-for", "1.1.1.1, 2.2.2.2")]), true), "9.9.9.9");
+        // spoofed leftmost XFF entry must not win: nginx appends the real peer on the right
+        assert_eq!(rate_limit_client_key(lo, &hdrs(&[("x-forwarded-for", "6.6.6.6, 203.0.113.7")]), true), "203.0.113.7");
+        assert_eq!(rate_limit_client_key(lo, &hdrs(&[("x-forwarded-for", "203.0.113.7")]), true), "203.0.113.7");
+        // garbage header → fall back to the socket IP
+        assert_eq!(rate_limit_client_key(lo, &hdrs(&[("x-real-ip", "not-an-ip"), ("x-forwarded-for", "1.1.1.1, junk")]), true), "127.0.0.1");
+        assert_eq!(rate_limit_client_key(lo, &HeaderMap::new(), true), "127.0.0.1");
+        // IPv6 loopback proxy too
+        let lo6 = Some(SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), 1));
+        assert_eq!(rate_limit_client_key(lo6, &hdrs(&[("x-real-ip", "2001:db8::1")]), true), "2001:db8::1");
+    }
+
+    #[test]
+    fn rate_key_trust_proxy_ignores_headers_from_non_loopback_peer() {
+        let h = hdrs(&[("x-real-ip", "9.9.9.9"), ("x-forwarded-for", "1.1.1.1, 2.2.2.2")]);
+        assert_eq!(rate_limit_client_key(sock([198, 51, 100, 4]), &h, true), "198.51.100.4");
+    }
+
+    #[test]
+    fn rate_key_without_connect_info_never_uses_leftmost_xff() {
+        let h = hdrs(&[("x-forwarded-for", "6.6.6.6, 203.0.113.7")]);
+        assert_eq!(rate_limit_client_key(None, &h, false), "203.0.113.7");
+        assert_eq!(rate_limit_client_key(None, &HeaderMap::new(), false), "unknown");
+    }
+
+    #[test]
+    fn finality_routes_are_api_key_exempt_but_status_route_is_not() {
+        assert!(api_key_exempt_path("/api/finality/42"));
+        assert!(api_key_exempt_path("/api/finality/votes"));
+        assert!(!api_key_exempt_path("/api/finality"), "status route keeps requiring a key on keyed nodes");
+        assert!(api_key_exempt_path("/api/v2/faucet") && api_key_exempt_path("/api/faucet"));
+        assert!(!api_key_exempt_path("/api/blocks") && !api_key_exempt_path("/api/selection"));
+    }
+
+    #[test]
+    fn rate_limiter_counts_per_key() {
+        let mut l = RateLimiter::new(StdDuration::from_secs(60));
+        assert!(l.allow("a", 2) && l.allow("a", 2));
+        assert!(!l.allow("a", 2), "third request in the window refused");
+        assert!(l.allow("b", 2), "separate client, separate bucket");
+        assert!(l.allow("a", 0), "0 = unlimited");
+    }
+
+}
+
+#[cfg(test)]
+mod nonce_account_tests {
+    use super::*;
+
+    #[test]
+    fn nonce_account_resolves_rouge1_via_index_or_errors() {
+        let kp = quantum_vault_crypto::pqc_keygen();
+        let addr = quantum_vault_crypto::pub_key_to_address(&kp.public_key_hex).unwrap();
+        let pk = kp.public_key_hex.clone();
+        // hex public keys pass through unchanged
+        assert_eq!(resolve_nonce_account(&pk, |_| None).unwrap(), pk);
+        // indexed rouge1 → its public key
+        assert_eq!(resolve_nonce_account(&addr, |a| (a == addr).then(|| pk.clone())).unwrap(), pk);
+        // unindexed (never-sent) rouge1 → passed through, so it reads as nonce 0 — a new wallet's
+        // first send must not fail
+        assert_eq!(resolve_nonce_account(&addr, |_| None).unwrap(), addr);
+        // malformed rouge1
+        assert!(resolve_nonce_account("rouge1notvalid", |_| Some(pk.clone())).unwrap_err().contains("invalid rouge1 address"));
     }
 }

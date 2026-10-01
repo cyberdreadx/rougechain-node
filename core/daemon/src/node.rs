@@ -42,8 +42,13 @@ const BASE_TRANSFER_FEE: f64 = 0.1;
 const TOKEN_CREATION_FEE: f64 = 100.0;
 const JAIL_BLOCKS: u64 = 20;
 const SLASH_DIVISOR: u128 = 10;
-const UNBONDING_BLOCKS: u64 = 500;             // ~8 hours at 1 block/min
-const MISSED_BLOCK_SLASH_THRESHOLD: u64 = 50;  // Auto-slash after 50 missed blocks
+// 500 BLOCKS, not a wall-clock period: blocks are produced only when transactions are pending,
+// so the real-time length of the unbonding window varies with chain activity.
+const UNBONDING_BLOCKS: u64 = 500;
+// Legacy missed-block auto-slash after 50 consecutive missed blocks. FROZEN from the proposer
+// selection activation height (see `check_missed_blocks`): no validator accumulates missed blocks
+// or is auto-slashed/jailed for them any more.
+const MISSED_BLOCK_SLASH_THRESHOLD: u64 = 50;
 const MAX_MEMPOOL: usize = 2000;
 
 // EIP-1559 dynamic fee constants. The base fee is consensus state — it sets each
@@ -452,6 +457,25 @@ pub struct LpEarnings {
     pub earned_b: u64,
     /// Fee growth of the position since deposit (0.004 = +0.4%).
     pub growth: f64,
+}
+
+/// `rule` value of [`NextProposerView`] once proposer selection is active (consensus rule).
+pub const NEXT_PROPOSER_RULE_DESIGNATED: &str = "designated_max_stake";
+/// `rule` value of [`NextProposerView`] before activation (legacy QRNG stake-weighted lottery).
+pub const NEXT_PROPOSER_RULE_LEGACY: &str = "legacy_qrng_lottery";
+
+/// Who proposes the next height, as reported by `GET /api/selection` (informational, read-only).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NextProposerView {
+    pub height: u64,
+    pub rule: &'static str,
+    pub proposer: Option<String>,
+    /// designated rule: total stake of the ELIGIBLE validators; legacy: the lottery's total
+    pub total_stake: Option<u128>,
+    /// designated rule: the designated proposer's stake; legacy: the lottery's selection weight
+    pub selection_weight: Option<u128>,
+    pub entropy_source: Option<String>,
+    pub entropy_hex: Option<String>,
 }
 
 fn canon_addr<S: AsRef<str>>(key: S) -> String {
@@ -3195,6 +3219,39 @@ impl L1Node {
     /// List all validators (for rate limiting tier checks)
     pub fn list_validators(&self) -> Result<Vec<(String, ValidatorState)>, String> {
         self.validator_store.list_validators()
+    }
+
+    /// Read-only view of who proposes the next height (`GET /api/selection`). While proposer
+    /// selection is active for `tip + 1` this is the consensus rule itself — the same
+    /// `designated_proposer` that `import_block` and the miner use — and involves no entropy
+    /// fetch. Before activation it reports the legacy QRNG lottery (`get_selection_info`).
+    pub fn next_proposer_view(&self) -> Result<NextProposerView, String> {
+        let height = self.store.get_tip()?.height + 1;
+        if proposer_selection_active(height) {
+            let eligible = self.eligible_validators_ordered(height)?;
+            let total: u128 = eligible.iter().map(|(_, _, s)| *s).sum();
+            let proposer = self.designated_proposer(height)?;
+            let weight = proposer.as_ref().and_then(|p| eligible.iter().find(|(_, pk, _)| pk == p).map(|(_, _, s)| *s));
+            return Ok(NextProposerView {
+                height,
+                rule: NEXT_PROPOSER_RULE_DESIGNATED,
+                proposer,
+                total_stake: Some(total),
+                selection_weight: weight,
+                entropy_source: None,
+                entropy_hex: None,
+            });
+        }
+        let legacy = self.get_selection_info()?;
+        Ok(NextProposerView {
+            height,
+            rule: NEXT_PROPOSER_RULE_LEGACY,
+            proposer: legacy.as_ref().map(|s| s.proposer_pub_key.clone()),
+            total_stake: legacy.as_ref().map(|s| s.total_stake),
+            selection_weight: legacy.as_ref().map(|s| s.selection_weight),
+            entropy_source: legacy.as_ref().map(|s| s.entropy_source.clone()),
+            entropy_hex: legacy.as_ref().map(|s| s.entropy_hex.clone()),
+        })
     }
 
     pub fn get_selection_info(&self) -> Result<Option<ProposerSelectionResult>, String> {
@@ -11183,6 +11240,44 @@ mod proposer_selection_tests {
         set_v(&node, &lo.public_key_hex, vstate(100_000));
         assert_eq!(node.designated_proposer(1).unwrap().unwrap(), lo.public_key_hex, "equal stake → lowest raw key bytes");
         // hex case of the stored key must not matter for the ordering (raw bytes are compared)
+    }
+
+    /// `GET /api/selection` reports the consensus designated proposer once the rule is active —
+    /// never the legacy lottery — with no entropy fetch, and ignores jailed validators exactly
+    /// like `designated_proposer`.
+    #[test]
+    fn selection_view_reports_designated_proposer_when_active() {
+        let (_d, node) = setup(Some(1));
+        let (lo, hi) = ordered_pair();
+        let jailed = pqc_keygen();
+        set_v(&node, &lo.public_key_hex, vstate(10_000));
+        set_v(&node, &hi.public_key_hex, vstate(40_000));
+        // a jailed validator with the largest stake is not eligible
+        let mut j = vstate(1_000_000); j.jailed_until = 1_000; set_v(&node, &jailed.public_key_hex, j);
+        let v = node.next_proposer_view().unwrap();
+        assert_eq!(v.height, 1);
+        assert_eq!(v.rule, NEXT_PROPOSER_RULE_DESIGNATED);
+        assert_eq!(v.proposer, node.designated_proposer(1).unwrap());
+        assert_eq!(v.proposer.as_deref(), Some(hi.public_key_hex.as_str()));
+        assert_eq!(v.selection_weight, Some(40_000));
+        assert_eq!(v.total_stake, Some(50_000), "eligible stake only");
+        assert_eq!((v.entropy_source, v.entropy_hex), (None, None), "no QRNG entropy under the designated rule");
+        // no eligible validator → proposer None, still the designated rule
+        set_v(&node, &lo.public_key_hex, vstate(0)); set_v(&node, &hi.public_key_hex, vstate(0));
+        let v = node.next_proposer_view().unwrap();
+        assert_eq!((v.rule, v.proposer, v.total_stake), (NEXT_PROPOSER_RULE_DESIGNATED, None, Some(0)));
+    }
+
+    #[test]
+    fn selection_view_is_legacy_before_activation() {
+        // activation at 5, next height 1 → legacy lottery (entropy from the local cache / RNG)
+        let (_d, node) = setup(Some(5));
+        let a = pqc_keygen();
+        set_v(&node, &a.public_key_hex, vstate(10_000));
+        let v = node.next_proposer_view().unwrap();
+        assert_eq!(v.height, 1);
+        assert_eq!(v.rule, NEXT_PROPOSER_RULE_LEGACY);
+        assert!(v.proposer.is_some() && v.entropy_source.is_some() && v.entropy_hex.is_some());
     }
 
     #[test]

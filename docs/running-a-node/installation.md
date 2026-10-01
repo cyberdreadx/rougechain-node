@@ -45,7 +45,7 @@ API_PORT=5100
 QV_PEERS=https://api.rougechain.io/api
 ```
 
-The compose file always uses the mainnet genesis (chain id `rougechain-mainnet-1`; a `CHAIN_ID` setting is ignored) and always passes `--mine`, so point `QV_PEERS` at mainnet peers.
+The compose file always uses the mainnet genesis (chain id `rougechain-mainnet-1`; there is no chain-id setting) and always passes `--mine`, so point `QV_PEERS` at mainnet peers. The API is published on `127.0.0.1:${API_PORT}` only; set `API_BIND=0.0.0.0` to expose it on every interface.
 
 Then start:
 
@@ -239,6 +239,7 @@ Some CLI flags can also be set via environment variables (others, such as `--hos
 | `QV_PUBLIC_URL` | `--public-url` | — | This node's public URL for peer discovery |
 | `QV_CORS_ORIGINS` | — | built-in list (local dev servers, rougechain.io, www.rougechain.io, testnet.rougechain.io, rougee.app, www.rougee.app) | Comma-separated allowed CORS origins |
 | `QV_API_KEYS` | `--api-keys` | — | Comma-separated API keys for authenticated access |
+| `QV_TRUST_PROXY` | `--trust-proxy` | `false` | Key rate limits by the client IP a local reverse proxy reports (loopback peers only) |
 | `QV_BRIDGE_CUSTODY_ADDRESS` | `--bridge-custody-address` | — | EVM custody address (enables bridge) |
 | `QV_BASE_SEPOLIA_RPC` | `--base-sepolia-rpc` | `https://sepolia.base.org` | Base RPC URL used for bridge verification. The name is historical: on mainnet nodes set it to a **Base mainnet** RPC (chain id `8453`) |
 

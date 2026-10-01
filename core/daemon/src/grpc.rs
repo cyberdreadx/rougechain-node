@@ -150,27 +150,20 @@ impl ValidatorService for GrpcNode {
     }
 
     async fn get_selection_info(&self, _request: Request<Empty>) -> Result<Response<SelectionInfo>, Status> {
-        let height = self.node.get_tip_height().map_err(|e| Status::internal(e))? + 1;
-        let selection = self.node.get_selection_info().map_err(|e| Status::internal(e))?;
-        if let Some(result) = selection {
-            Ok(Response::new(SelectionInfo {
-                height,
-                proposer: result.proposer_pub_key,
-                total_stake: result.total_stake.to_string(),
-                selection_weight: result.selection_weight.to_string(),
-                entropy_source: result.entropy_source,
-                entropy_hex: result.entropy_hex,
-            }))
-        } else {
-            Ok(Response::new(SelectionInfo {
-                height,
-                proposer: "".to_string(),
-                total_stake: "0".to_string(),
-                selection_weight: "0".to_string(),
-                entropy_source: "none".to_string(),
-                entropy_hex: "".to_string(),
-            }))
-        }
+        // Same source as REST `/api/selection`: the consensus designated proposer once proposer
+        // selection is active (no entropy fetch), the legacy lottery before. The proto has no
+        // `rule` field, so under the designated rule `entropy_source` carries the rule name.
+        let view = self.node.next_proposer_view().map_err(|e| Status::internal(e))?;
+        Ok(Response::new(SelectionInfo {
+            height: view.height,
+            proposer: view.proposer.unwrap_or_default(),
+            total_stake: view.total_stake.unwrap_or(0).to_string(),
+            selection_weight: view.selection_weight.unwrap_or(0).to_string(),
+            entropy_source: view.entropy_source.unwrap_or_else(|| {
+                if view.rule == crate::node::NEXT_PROPOSER_RULE_DESIGNATED { view.rule.to_string() } else { "none".to_string() }
+            }),
+            entropy_hex: view.entropy_hex.unwrap_or_default(),
+        }))
     }
 
     async fn get_finality(&self, _request: Request<Empty>) -> Result<Response<FinalityStatus>, Status> {

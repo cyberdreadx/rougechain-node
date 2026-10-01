@@ -35,7 +35,7 @@ Accepted formats differ per endpoint:
 | `/api/address/:pubkey/transactions` | hex public key **or** `rouge1…` address |
 | `/api/resolve/:input` | hex public key **or** `rouge1…` address |
 | `/api/nft/owner/:pubkey` | exact match on the owner as recorded — normally the hex public key; a `rouge1…` address does not match a pubkey-owned NFT |
-| `/api/account/:pubkey/nonce` | hex public key only |
+| `/api/account/:pubkey/nonce` | hex public key **or** `rouge1…` address (resolved via the node's address index; an address that has never sent a transaction returns `0`; a malformed one returns `400`) |
 
 When in doubt, pass the hex public key.
 
@@ -127,7 +127,7 @@ The `payload` is JSON-serialized with keys sorted alphabetically, then signed wi
 |----------|--------|-------------|
 | `/api/validators` | GET | List validators |
 | `/api/validators/stats` | GET | Validator vote stats |
-| `/api/selection` | GET | Legacy stake-weighted QRNG lottery (informational only — **not** the consensus rule; the next designated proposer is `designated_proposer_next` in `/api/stats`) |
+| `/api/selection` | GET | Proposer for the next height. Once proposer selection is active, the consensus designated proposer (`rule: "designated_max_stake"`, same as `designated_proposer_next` in `/api/stats`; no entropy fields); before activation, the legacy QRNG lottery (`rule: "legacy_qrng_lottery"`) |
 | `/api/finality` | GET | Finality status (legacy, informational — see [Finality](../staking/finality.md)) |
 | `/api/votes` | GET | Vote quorum info |
 | `/api/v2/stake` | POST | Stake tokens (signed) |
@@ -317,4 +317,6 @@ Rate limiting is disabled by default (all limits `0` = unlimited). Limits are pe
 - **Tier 2 (Registered peers):** Recognized by IP — `--rate-limit-peer`
 - **Tier 3 (Public):** GET requests use `--rate-limit-read-per-minute`, all other methods `--rate-limit-write-per-minute`
 
-The older `--rate-limit-per-minute` flag is still accepted but has no effect.
+`--rate-limit-per-minute` is a deprecated alias: when it is set and neither read nor write limit is, it applies to both (a deprecation warning is logged); explicit read/write limits take precedence.
+
+Clients are keyed by the connecting IP. Behind a reverse proxy on the same host, start the node with `--trust-proxy` (env `QV_TRUST_PROXY=true`): requests whose TCP peer is loopback are then keyed by `X-Real-IP`, else the rightmost `X-Forwarded-For` entry; requests from any other peer always use the socket IP. Every route is rate-limited, including the peer routes `/api/finality/*` (which stay API-key exempt).

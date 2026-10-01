@@ -173,7 +173,7 @@ You need at least **10,000 XRGE** plus the transaction fee — the 10,000 XRGE m
   **same key** — see [Becoming a Validator](staking/becoming-validator.md).
 - Ensure the `--mine` flag is set on your node
 - Your node must be synced (height matches the network)
-- **Only the designated proposer produces blocks.** Since mainnet height 100 that is the eligible validator with the most stake; every other staked validator never proposes (its log shows `not the designated proposer … — not sealing`), but it still votes and earns a stake-weighted share of fees in every block. Check `designated_proposer_next` in `GET /api/stats` (`GET /api/selection` shows a legacy lottery, not the consensus rule)
+- **Only the designated proposer produces blocks.** Since mainnet height 100 that is the eligible validator with the most stake; every other staked validator never proposes (its log shows `not the designated proposer … — not sealing`), but it still votes and earns a stake-weighted share of fees in every block. Check `designated_proposer_next` in `GET /api/stats` or `proposer` in `GET /api/selection`
 - Check your validator status: `GET /api/validators` — your node's public key should appear with active stake
 
 ### Unstaked but balance not returned

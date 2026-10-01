@@ -271,9 +271,25 @@ Get the current validator set and stake amounts.
 
 ### 7. Proposer Selection
 
-Get the current proposer selection info.
+Who proposes the next height. Once proposer selection is active this is the consensus designated proposer (the eligible validator with the most stake); before activation it is the legacy QRNG lottery.
 
 **Endpoint:** `GET /api/selection`
+
+**Response:**
+```json
+{
+  "success": true,
+  "height": 1234,
+  "rule": "designated_max_stake",
+  "proposer": "a1b2c3d4...",
+  "totalStake": "150000",
+  "selectionWeight": "100000",
+  "entropySource": null,
+  "entropyHex": null
+}
+```
+
+`rule` is `designated_max_stake` (consensus rule; `totalStake` = stake of eligible validators, `selectionWeight` = the proposer's stake, no entropy) or `legacy_qrng_lottery` (heights before activation; entropy fields set).
 
 ---
 
@@ -360,11 +376,12 @@ The daemon supports configurable rate limiting via CLI flags:
 
 | Flag | Description |
 |------|-------------|
-| `--rate-limit-per-minute N` | Global rate limit per IP |
+| `--rate-limit-per-minute N` | Deprecated alias: used for both read and write limits when neither is set |
 | `--rate-limit-read-per-minute N` | Read endpoint rate limit |
 | `--rate-limit-write-per-minute N` | Write endpoint rate limit |
+| `--trust-proxy` | Key clients by `X-Real-IP` / rightmost `X-Forwarded-For` when the TCP peer is loopback (local reverse proxy); env `QV_TRUST_PROXY` |
 
-Set to `0` (default) for unlimited. Rate-limited requests receive HTTP 429.
+Set to `0` (default) for unlimited. Clients are keyed by socket IP unless `--trust-proxy` is set. Rate-limited requests receive HTTP 429.
 
 ---
 
@@ -908,13 +925,14 @@ Input can be a `rouge1…` address or a hex public key. The endpoint detects the
 
 ### Get Account Nonce
 
-**Endpoint:** `GET /api/account/{publicKey}/nonce`
+**Endpoint:** `GET /api/account/{publicKeyOrRouge1}/nonce`
+
+A `rouge1…` address is resolved to its public key via the node's address index; an unknown or malformed address returns `400`.
 
 **Response:**
 ```json
 {
   "success": true,
-  "publicKey": "a1b2c3d4...",
   "nonce": 5,
   "next_nonce": 6
 }
