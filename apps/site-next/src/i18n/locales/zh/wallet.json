@@ -314,7 +314,7 @@
     "title": "Base 钱包",
     "testnetPill": "{{chain}} · Testnet",
     "noAccountTitle": "此钱包没有 Base 账户",
-    "noAccountBody": "Base 地址由助记词派生。此钱包是通过私钥导入或经由扩展连接的，因此在这里没有 Base 地址。请使用助记词恢复该钱包（或使用 Qwalla / 扩展）以使用 Base。",
+    "noAccountBody": "在本站，Base 地址由助记词派生，而此钱包在这里没有助记词（它是通过原始密钥导入的，或通过 Qwalla 或扩展程序连接的）。要使用它的 Base 账户，请在 Qwalla 的内置浏览器中打开 rougechain.io、使用 RougeChain 浏览器扩展，或在此用助记词恢复钱包。",
     "deriving": "正在派生你的 Base 地址…",
     "sameAsQwalla": "与 Qwalla 使用相同的助记词，因此 Base 地址相同。",
     "viewOnBaseScan": "在 BaseScan 上查看 ↗",
@@ -330,7 +330,11 @@
       "checksum": "校验和不匹配，请仔细核对地址（大小写混合时必须符合 EIP-55）。",
       "feeShortBy": "ETH 不足以支付网络手续费（约 {{fee}} ETH）。",
       "estimate": "无法估算手续费，此转账很可能会失败。",
-      "feeShort": "ETH 不足以支付网络手续费。"
+      "feeShort": "ETH 不足以支付网络手续费。",
+      "rejected": "请求已在钱包中被拒绝。",
+      "connectFailed": "无法连接 {{wallet}}。",
+      "noHash": "{{wallet}} 没有返回交易哈希。",
+      "wrongChain": "{{wallet}} 当前在链 {{actual}} 上，而不是 {{chain}}（{{expected}}），且未能切换。请在 {{wallet}} 中切换网络后重试。"
     },
     "warnMainnet": "这是 Base 主网，涉及真实资金。交易无法撤销，请核对地址。",
     "warnTestnet": "Base Sepolia 测试网：这些代币没有价值。",
@@ -349,7 +353,16 @@
     "sending": "发送中…",
     "signAndSend": "签名并发送",
     "confirmSoon": "几秒钟后将在 {{chain}} 上确认。",
-    "done": "完成"
+    "done": "完成",
+    "injectedFallbackName": "浏览器钱包",
+    "checkingWallet": "正在检查 {{wallet}} 中的 Base 账户…",
+    "injectedConnectBody": "在这里使用 {{wallet}} 的 Base 账户：查看余额并从中转出。每笔交易都需在 {{wallet}} 中批准。",
+    "injectedConnect": "连接 {{wallet}} 的 Base 账户",
+    "viaWallet": "通过 {{wallet}} 使用的 Base 账户——交易在其中批准。",
+    "approveInWallet": "{{wallet}} 会请你批准这笔交易，并用它自己的密钥签名。",
+    "walletSetsFee": "网络手续费由 {{wallet}} 设定。",
+    "waitingWallet": "正在等待 {{wallet}}…",
+    "confirmInWallet": "在 {{wallet}} 中确认"
   },
   "control": {
     "wallet": "钱包",
