@@ -9,11 +9,21 @@
   "binary": {
     "name": "quantum-vault-daemon-mint-royalty-03613ef",
     "url": "https://api.rougechain.io/releases/quantum-vault-daemon-mint-royalty-03613ef",
-    "mirrors": [],
+    "mirrors": [
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/quantum-vault-daemon-mint-royalty-03613ef"
+    ],
     "sha256": "673bf7b1a469b7f9937b17228faab1e81ae48fb2a90aa32b2fd1b7fcc9cc2984",
     "size": 28463856
   },
-  "cli": null,
+  "cli": {
+    "name": "rougechain-ff5fa33",
+    "url": "https://api.rougechain.io/releases/rougechain-ff5fa33",
+    "mirrors": [
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/rougechain-ff5fa33"
+    ],
+    "sha256": "d9602a821e722ea33bff2edb0f6bcbdf710db0ed22d74301f946eca7204a8b7c",
+    "size": 5237184
+  },
   "genesis": null,
   "mandatory": true,
   "upgrade_before_height": 1360,

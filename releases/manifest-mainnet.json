@@ -9,15 +9,26 @@
   "binary": {
     "name": "quantum-vault-daemon-mint-royalty-03613ef",
     "url": "https://api.rougechain.io/releases/quantum-vault-daemon-mint-royalty-03613ef",
-    "mirrors": [],
+    "mirrors": [
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/quantum-vault-daemon-mint-royalty-03613ef"
+    ],
     "sha256": "673bf7b1a469b7f9937b17228faab1e81ae48fb2a90aa32b2fd1b7fcc9cc2984",
     "size": 28463856
   },
-  "cli": null,
+  "cli": {
+    "name": "rougechain-ff5fa33",
+    "url": "https://api.rougechain.io/releases/rougechain-ff5fa33",
+    "mirrors": [
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/rougechain-ff5fa33"
+    ],
+    "sha256": "d9602a821e722ea33bff2edb0f6bcbdf710db0ed22d74301f946eca7204a8b7c",
+    "size": 5237184
+  },
   "genesis": {
     "name": "genesis-mainnet.json",
     "url": "https://api.rougechain.io/releases/genesis-mainnet.json",
     "mirrors": [
+      "https://github.com/cyberdreadx/rougechain-node/releases/download/v1.6.0/genesis-mainnet.json",
       "https://raw.githubusercontent.com/cyberdreadx/rougechain-node/main/core/daemon/genesis-mainnet.json"
     ],
     "sha256": "28459ca0f9dce287f7eeac7148df252485a30ae7f42b4d63a192fc8f2eec101c",
