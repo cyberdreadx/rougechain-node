@@ -1,60 +1,83 @@
-name: Release
+name: Release manifests
 
-# Publishes a prebuilt Linux x86_64 binary (daemon + CLI) as a GitHub Release,
-# so operators' install-validator.sh can download instead of building from source.
-# Trigger by pushing a version tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`)
-# or run manually from the Actions tab with a tag input.
+# Node releases are built reproducibly by the release owner and described by SIGNED manifests in
+# releases/ (see scripts/release/README.md). CI does not build or publish release binaries: it
+# checks that the committed manifests are schema-valid and carry valid Ed25519 + ML-DSA-65
+# signatures from the committed release keys, that the installer embeds the same Ed25519 key,
+# and that the release tooling and the installer pass their tests.
+#
+# While no release key is committed under releases/keys/ the manifests are allowed to be
+# unsigned (--allow-unsigned has no effect once keys exist: an unsigned manifest then fails).
 on:
+  pull_request:
+    paths:
+      - 'releases/**'
+      - 'scripts/release/**'
+      - 'scripts/install-validator.sh'
+      - '.github/workflows/release.yml'
   push:
-    tags: [ 'v*' ]
+    branches: [ main ]
+    paths:
+      - 'releases/**'
+      - 'scripts/release/**'
+      - 'scripts/install-validator.sh'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag (e.g. v1.0.0)'
-        required: true
 
 permissions:
-  contents: write   # create the release + upload assets
+  contents: read
+
+concurrency:
+  group: release-manifests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-release:
-    name: build + publish (linux x86_64)
+  verify-manifests:
+    name: verify release manifests + tooling tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: core
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler libssl-dev pkg-config
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
         with:
-          workspaces: core
+          node-version: 22
+          cache: npm
+          cache-dependency-path: scripts/release/package-lock.json
 
-      - name: Build daemon + CLI (release)
+      - name: Install release tooling
+        working-directory: scripts/release
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify manifests (schema, both signatures, installer key)
+        working-directory: scripts/release
         run: |
-          cargo build --release -p quantum-vault-daemon
-          cargo build --release -p quantum-vault-cli
+          for net in mainnet testnet; do
+            node verify-manifest.mjs --allow-unsigned --network "$net" \
+              --check-installer ../install-validator.sh "../../releases/manifest-$net.json"
+          done
 
-      - name: Package + checksum
-        run: |
-          cd target/release
-          tar czf quantum-vault-linux-x86_64.tar.gz quantum-vault-daemon rougechain
-          sha256sum quantum-vault-linux-x86_64.tar.gz > quantum-vault-linux-x86_64.tar.gz.sha256
-          ls -la quantum-vault-linux-x86_64.tar.gz*
+      - name: Mainnet manifest matches the committed genesis file
+        working-directory: scripts/release
+        run: node verify-manifest.mjs --allow-unsigned --genesis ../../core/daemon/genesis-mainnet.json ../../releases/manifest-mainnet.json
 
-      - name: Create release + upload assets
-        uses: softprops/action-gh-release@v2
+      - name: Tooling tests
+        working-directory: scripts/release
+        run: npm test
+
+      - name: shellcheck
+        run: shellcheck scripts/install-validator.sh scripts/release/test-installer.sh scripts/release/test/installer-scenarios.sh
+
+  installer-e2e:
+    name: installer end-to-end (Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          name: ${{ github.event.inputs.tag || github.ref_name }}
-          generate_release_notes: true
-          files: |
-            core/target/release/quantum-vault-linux-x86_64.tar.gz
-            core/target/release/quantum-vault-linux-x86_64.tar.gz.sha256
+          node-version: 22
+          cache: npm
+          cache-dependency-path: scripts/release/package-lock.json
+
+      - name: Installer scenarios (ubuntu:24.04, debian:12, ubuntu:22.04)
+        run: scripts/release/test-installer.sh
