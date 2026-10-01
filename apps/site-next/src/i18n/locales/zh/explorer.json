@@ -320,7 +320,11 @@
     "recentActivity": "近期活动",
     "activityMeta_other": "有 {{n}} 笔交易涉及 {{symbol}}。显示最近 50 笔。",
     "noActivity": "暂无活动",
-    "noActivityBody": "尚无涉及此代币的交易。"
+    "noActivityBody": "尚无涉及此代币的交易。",
+    "initialSupply": "初始供应量",
+    "minted": "创建后已增发",
+    "maxSupply": "最大供应量",
+    "uncapped": "不设上限"
   },
   "nft": {
     "imageAlt": "{{name}} 图片",

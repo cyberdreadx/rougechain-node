@@ -74,6 +74,8 @@ own** tokens and NFTs; players stock it by sending tokens/NFTs/XRGE to the contr
 | `host_block_hash(height, out) → i32` | From block **170**: the 32-byte hash of a finished block up to 256 back; `-1` otherwise. Use it to settle rolls |
 | `host_get_attached_amount() → i64` | From block **190**: the payment attached to this call, in quanta for XRGE or raw units for a token; `0` if none (always `0` in a cross-contract sub-call). See [Payable calls](#payable-calls) |
 | `host_get_attached_symbol(out, cap) → i32` | From block **190**: writes the attached symbol (`XRGE` or a token symbol, upper-case). Returns bytes written, `0` if nothing is attached, `-2` if `cap` is too small |
+| `host_nft_royalty_bps(col, clen) → i32` | **CONTRACT_NFT_ROYALTY** (built, activation not scheduled): the collection's royalty in basis points, `0`–`10000`; `-1` collection not found / invalid input. See [Selling NFTs from a contract](#nft-royalty) |
+| `host_nft_royalty_recipient(col, clen, out, cap) → i32` | **CONTRACT_NFT_ROYALTY**: writes the royalty recipient in canonical ledger form (`rouge1…`, or a 40-hex contract address) and returns its length; `-1` not found / invalid input, `-2` `cap` too small |
 
 Addresses a contract passes are normalised: paying the value `host_get_caller` returns (a public
 key) credits the player's `rouge1…` wallet.
@@ -98,6 +100,95 @@ collections and ownership plus contract code and storage, so every node must agr
 
 A complete example — a loot box paying NFTs, tokens or XRGE — is in
 [`contracts/loot_roll`](https://github.com/cyberdreadx/rougechain-node/tree/main/contracts/loot_roll).
+
+<a id="nft-royalty"></a>
+
+## Selling NFTs from a contract: royalties (CONTRACT_NFT_ROYALTY)
+
+> **Status: built, activation not scheduled.** Until the CONTRACT_NFT_ROYALTY height is set
+> (`GET /api/stats` → `upgrade_schedule.contract_nft_royalty`, `null` today), these two functions do
+> not exist: a contract importing them can be published, but every call to it fails, exactly like a
+> contract importing any unknown function.
+
+`host_nft_transfer` moves an NFT **without** paying royalty, and the royalty a wallet `nft_transfer`
+with a `salePrice` pays only applies to wallet sales. A contract that sells NFTs — an escrow
+marketplace, an auction — reads the royalty and pays it itself:
+
+| Function | Returns |
+|---|---|
+| `host_nft_royalty_bps(col, clen) → i32` | Basis points `0`–`10000` (`250` = 2.5%); `-1` if the collection doesn't exist. A stored value above 10000 is reported as 10000. |
+| `host_nft_royalty_recipient(col, clen, out, cap) → i32` | Bytes of the recipient written to `out`; `-1` not found, `-2` `cap` too small. |
+
+- **Recipient form.** The recipient is returned as the **canonical ledger key** the wallet royalty
+  path credits: a creator's public key comes back as its `rouge1…` address, a `rouge1…` address or a
+  contract address (40 hex) unchanged. `host_transfer(recipient, royalty)` therefore credits exactly
+  the balance a wallet sale would — including a [royalty splitter](https://github.com/cyberdreadx/rougechain-node/tree/main/contracts/royalty_splitter)
+  contract used as the recipient. A 128-byte buffer is ample for these forms.
+- **Contract-created collections** (`host_nft_create_collection`) have no royalty: bps `0`,
+  recipient = the creating contract's address. A collection created earlier in the same call (or by
+  the caller of a cross-contract call) is visible immediately.
+- Royalty is immutable: it is set once by `nft_create_collection` (`royaltyBps`, `royaltyRecipient`,
+  defaulting to the creator). From CONTRACT_NFT_ROYALTY activation, creating a collection with
+  `royaltyBps` above `10000` (more than 100%) — or one that is not an exact integer (negative,
+  fractional, a string) — is rejected (`400 royaltyBps must be an integer between 0 and 10000`, and
+  invalid in a block). Collections created before it keep their stored value; reads clamp it to 10000.
+- **Integer math.** Compute `royalty = price × bps / 10000` in integer quanta (round down) and pay the
+  seller `price − royalty`. Never use floats.
+
+### Example: escrow marketplace
+
+[`contracts/nft_marketplace`](https://github.com/cyberdreadx/rougechain-node/tree/main/contracts/nft_marketplace)
+is a small, commented reference (prebuilt `nft_marketplace.wasm`):
+
+1. **`list {"collection","token_id","price"}`** — the seller must **own** the NFT when listing (the
+   contract can't tell who deposited an NFT, so listing after the deposit would let anyone claim it).
+   Returns `listed {"listing":N,"seller":…,"collection":…,"token_id":…,"price":…}`. `seller` is the
+   caller exactly as stored — for a wallet, its **raw public key hex**, not the `rouge1` address —
+   and is what `cancel` compares and `buy` pays.
+2. The seller escrows the NFT with a plain wallet `nft_transfer` to the contract address (no sale
+   price).
+3. **`buy {"listing":N}`** with `attach: {"symbol":"XRGE","amount":price}` — the contract checks the
+   payment is exactly the price (otherwise it traps, so the payment is refunded), moves the NFT to
+   the buyer with `host_nft_transfer`, then pays:
+
+   ```rust
+   let bps = unsafe { host_nft_royalty_bps(col.as_ptr(), col.len() as u32) };
+   if bps < 0 { revert(); }
+   let royalty = (price as u128 * bps as u128 / 10_000) as u64;        // floor, quanta
+   if royalty > 0 {
+       let n = unsafe { host_nft_royalty_recipient(col.as_ptr(), col.len() as u32, buf.as_mut_ptr(), buf.len() as u32) };
+       if n <= 0 || unsafe { host_transfer(buf.as_ptr(), n as u32, royalty as i64) } != 0 { revert(); }
+   }
+   if unsafe { host_transfer(seller.as_ptr(), seller.len() as u32, (price - royalty) as i64) } != 0 { revert(); }
+   ```
+
+   and emits `sold {"listing":N,"price":…,"royalty":…,"seller_proceeds":…}`.
+4. **`cancel {"listing":N}`** — seller only; returns the escrowed NFT (only for the NFT's current
+   listing — a listing replaced by a newer listing of the same NFT never takes the escrow back).
+
+A list/buy UI reads listings for free with the query endpoint (`POST /api/contract/{addr}/query`, no
+signature, fee or caller). These methods only call `host_set_return` — no event, no storage write:
+
+| Read method | Args | Returns |
+|---|---|---|
+| `listing` | `{"listing":N}` | `{"listing":N,"exists":true,"seller":…,"collection":…,"token_id":…,"price":…,"active":…,"escrowed":…}` or `{"listing":N,"exists":false}` (unknown, sold or cancelled — no trap) |
+| `listing_count` | `{}` | `{"next":N}` — highest listing id issued (`0` = none) |
+
+`active` is false for a listing replaced by a newer one of the same NFT; `escrowed` means active and
+the contract owns the NFT. Buyable = `exists && escrowed`.
+
+```ts
+const { returnData: { next } } = await rc.contracts.query(market, "listing_count", {});
+for (let id = 1; id <= next; id++) {
+  const { returnData: l } = await rc.contracts.query(market, "listing", { listing: id });
+  if (l.exists && l.escrowed) render(l); // l.price is in quanta; l.seller is the seller's public key
+}
+```
+
+For a 1.234567891 XRGE sale (1,234,567,891 quanta) of a 3% collection, the artist gets 37,037,036
+quanta and the seller 1,197,530,855 — the node test
+`nft_marketplace_example_pays_royalty_and_seller_exactly_across_json_relay` checks those exact numbers
+on two nodes.
 
 <a id="payable-calls"></a>
 

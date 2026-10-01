@@ -326,7 +326,11 @@
     "activityMeta_one": "{{n}} transacción involucra a {{symbol}}. Se muestran las últimas 50.",
     "activityMeta_other": "{{n}} transacciones involucran a {{symbol}}. Se muestran las últimas 50.",
     "noActivity": "Sin actividad",
-    "noActivityBody": "Aún no hay transacciones con este token."
+    "noActivityBody": "Aún no hay transacciones con este token.",
+    "initialSupply": "Suministro inicial",
+    "minted": "Acuñado desde la creación",
+    "maxSupply": "Suministro máximo",
+    "uncapped": "Sin límite"
   },
   "nft": {
     "imageAlt": "Imagen de {{name}}",

@@ -422,9 +422,10 @@ async fn main() -> Result<(), String> {
     };
     // Protocol upgrade heights for this network (mainnet / testnet), before any block is applied.
     let schedule = upgrades::select(&chain.chain_id)?;
-    eprintln!("[upgrades] {} schedule for {}: tx-integrity {:?}, proposer selection {:?}, finality {:?}, GAME_READY {:?}, GAME_READY 2 {:?}, GAME_READY 3 {:?}, payable calls {:?}",
+    eprintln!("[upgrades] {} schedule for {}: tx-integrity {:?}, proposer selection {:?}, finality {:?}, GAME_READY {:?}, GAME_READY 2 {:?}, GAME_READY 3 {:?}, payable calls {:?}, token minting {:?}, contract NFT royalty {:?}",
         schedule.network, chain.chain_id, schedule.tx_uniqueness, schedule.proposer_selection, schedule.finality_v2,
-        schedule.game_ready, schedule.game_ready_2, schedule.game_ready_3, schedule.payable_calls);
+        schedule.game_ready, schedule.game_ready_2, schedule.game_ready_3, schedule.payable_calls, schedule.token_minting,
+        schedule.contract_nft_royalty);
     let data_dir_clone = data_dir.clone();
     let bridge_withdraw_store = std::sync::Arc::new(
         BridgeWithdrawStore::new(&data_dir_clone).map_err(|e| format!("bridge withdraw store: {}", e))?
@@ -1954,11 +1955,31 @@ struct TokenMetadataResponse {
     created_at: i64,
     updated_at: i64,
     frozen: bool,
+    /// TOKEN_MINTING: mintable under consensus (created mintable by a block), not the legacy flag.
     mintable: bool,
     max_supply: Option<u64>,
     total_minted: u64,
+    /// TOKEN_MINTING: supply credited at creation (mintable tokens only; omitted otherwise).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    initial_supply: Option<u64>,
+    /// TOKEN_MINTING: height of the block that created the token mintable (omitted otherwise).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mint_enabled_height: Option<u64>,
     /// Canonical token decimals (source of truth for display/amount conversion).
     decimals: u8,
+}
+
+/// TOKEN_MINTING read-only fields shared by `/api/tokens` and `/api/token/:symbol/metadata`.
+/// `mintable` is the consensus flag (`consensus_mintable`): a `mintable` written by older
+/// API-time code without `mint_enabled_height` can never be minted, so it reads `false`.
+fn token_mint_json_fields(meta: &quantum_vault_storage::token_metadata_store::TokenMetadata) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = serde_json::Map::new();
+    m.insert("mintable".into(), serde_json::json!(meta.consensus_mintable()));
+    m.insert("max_supply".into(), serde_json::json!(meta.max_supply));
+    m.insert("total_minted".into(), serde_json::json!(meta.total_minted));
+    if let Some(v) = meta.initial_supply { m.insert("initial_supply".into(), serde_json::json!(v)); }
+    if let Some(v) = meta.mint_enabled_height { m.insert("mint_enabled_height".into(), serde_json::json!(v)); }
+    m
 }
 
 #[derive(Serialize)]
@@ -2003,7 +2024,8 @@ async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensR
         Ok(tokens) => {
             let token_list: Vec<TokenMetadataResponse> = tokens
                 .into_iter()
-                .map(|t| TokenMetadataResponse {
+                .map(|t| (t.consensus_mintable(), t))
+                .map(|(mintable, t)| TokenMetadataResponse {
                     success: true,
                     decimals: token_decimals(&t.symbol),
                     symbol: t.symbol,
@@ -2017,9 +2039,11 @@ async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensR
                     created_at: t.created_at,
                     updated_at: t.updated_at,
                     frozen: t.frozen,
-                    mintable: t.mintable,
+                    mintable,
                     max_supply: t.max_supply,
                     total_minted: t.total_minted,
+                    initial_supply: t.initial_supply,
+                    mint_enabled_height: t.mint_enabled_height,
                 })
                 .collect();
             // Prepend the built-in native + bridge tokens that aren't already registered as
@@ -2046,6 +2070,8 @@ async fn get_all_tokens(State(state): State<AppState>) -> Result<Json<AllTokensR
                     mintable: false,
                     max_supply: None,
                     total_minted: 0,
+                    initial_supply: None,
+                    mint_enabled_height: None,
                 })
                 .collect();
             merged.extend(token_list);
@@ -2064,20 +2090,25 @@ async fn get_token_metadata(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let node = &state.node;
     match node.get_token_metadata(&symbol) {
-        Ok(Some(meta)) => Ok(Json(serde_json::json!({
-            "success": true,
-            "decimals": token_decimals(&meta.symbol),
-            "symbol": meta.symbol,
-            "name": meta.name,
-            "creator": meta.creator,
-            "image": meta.image,
-            "description": meta.description,
-            "website": meta.website,
-            "twitter": meta.twitter,
-            "discord": meta.discord,
-            "created_at": meta.created_at,
-            "updated_at": meta.updated_at,
-        }))),
+        Ok(Some(meta)) => {
+            let mut v = serde_json::json!({
+                "success": true,
+                "decimals": token_decimals(&meta.symbol),
+                "symbol": meta.symbol,
+                "name": meta.name,
+                "creator": meta.creator,
+                "image": meta.image,
+                "description": meta.description,
+                "website": meta.website,
+                "twitter": meta.twitter,
+                "discord": meta.discord,
+                "created_at": meta.created_at,
+                "updated_at": meta.updated_at,
+                "frozen": meta.frozen,
+            });
+            if let Some(obj) = v.as_object_mut() { obj.extend(token_mint_json_fields(&meta)); }
+            Ok(Json(v))
+        }
         Ok(None) => {
             // Fall back to a built-in token (native/bridge) so /token/qBTC etc. resolve even
             // without an on-chain metadata row.
@@ -2248,7 +2279,10 @@ async fn get_token_holders(
     let original_supply = if symbol.eq_ignore_ascii_case("XRGE") {
         36_000_000_000u64
     } else {
-        node.get_token_original_supply(&symbol).unwrap_or(0)
+        // TOKEN_MINTING: supply minted after creation counts toward the total (0 for every token
+        // that was never minted, so fixed-supply tokens read exactly as before).
+        let minted = node.get_token_metadata(&symbol).ok().flatten().map(|m| m.total_minted).unwrap_or(0);
+        node.get_token_original_supply(&symbol).unwrap_or(0).saturating_add(minted)
     };
     
     // Get all wallet balances for this symbol
@@ -5954,8 +5988,19 @@ async fn v2_create_token(
     let initial_supply = payload.get("initial_supply").and_then(|v| v.as_u64()).unwrap_or(0);
     let token_image = payload.get("image").and_then(|v| v.as_str()).map(|s| s.to_string());
     let _token_description = payload.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let _mintable = payload.get("mintable").and_then(|v| v.as_bool()).unwrap_or(false);
-    let _max_supply = payload.get("max_supply").and_then(|v| v.as_u64());
+    // TOKEN_MINTING: `mintable` / `max_supply` take effect only from the upgrade height. Before it
+    // they are refused (they used to be silently ignored, leaving a fixed-supply token).
+    let next_height = node.get_tip_height().unwrap_or(0) + 1;
+    let wants_minting = payload.get("mintable").and_then(|v| v.as_bool()).unwrap_or(false)
+        || payload.get("max_supply").map(|v| !v.is_null()).unwrap_or(false);
+    if wants_minting && !crate::node::token_minting_active(next_height) {
+        let when = match crate::node::token_minting_activation_height() {
+            Some(h) => format!("it activates at block {}", h),
+            None => "its activation is not scheduled".to_string(),
+        };
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false,
+            "error": format!("token minting is not active yet ({}); create the token without mintable/max_supply", when)}))));
+    }
     let fee = 100.0_f64; // Server-enforced token creation fee
 
     if token_name.is_empty() || token_symbol.is_empty() {
@@ -6006,7 +6051,11 @@ async fn v2_create_token(
     }
 
     // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
-    let tx = match crate::v2_binding::build_v2_tx("create_token", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
+    // TOKEN_MINTING: derived for the next block (mintable / max_supply validated there).
+    let tx = match crate::v2_binding::build_v2_tx_at("create_token", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload, next_height) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
+    if let Err(e) = crate::node::token_minting_tx_rule(&tx, next_height) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
+    }
     
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
@@ -6730,6 +6779,11 @@ async fn v2_nft_create_collection(
 
     // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
     let tx = match crate::v2_binding::build_v2_tx("nft_create_collection", body.public_key.clone(), chrono::Utc::now().timestamp_millis() as u64, &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
+    // CONTRACT_NFT_ROYALTY: royalties above 100% (or a non-integer royaltyBps) are invalid from activation.
+    let next_height = state.node.get_tip_height().unwrap_or(0) + 1;
+    if let Err(e) = crate::node::nft_royalty_cap_tx_rule(&tx, next_height) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
+    }
 
     let creator_short = if body.public_key.len() >= 16 { &body.public_key[..16] } else { &body.public_key };
     let collection_id = format!("col:{}:{}", creator_short, symbol.to_uppercase());
@@ -10043,77 +10097,52 @@ async fn v2_token_mint(
 
     let node = &state.node;
     let payload = &body.payload;
+    let bad = |code: StatusCode, e: String| (code, Json(serde_json::json!({"success": false, "error": e})));
 
     let token_symbol = payload.get("token_symbol").and_then(|v| v.as_str()).unwrap_or_default();
-    let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
-    let fee = 1.0_f64;
-
     let sym_upper = token_symbol.trim().to_uppercase();
     if sym_upper.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "token_symbol is required"}))));
+        return Err(bad(StatusCode::BAD_REQUEST, "token_symbol is required".into()));
     }
+    // Integers only: a float/string amount would derive to 0 and be refused below.
+    let amount = payload.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
     if amount == 0 {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": "amount must be greater than zero"}))));
+        return Err(bad(StatusCode::BAD_REQUEST, "amount must be a positive integer".into()));
     }
 
-    // Verify creator authority
-    match node.is_token_creator(&sym_upper, &body.public_key) {
-        Ok(true) => {}
-        Ok(false) => return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({
-            "success": false, "error": "only the token creator can mint"
-        })))),
-        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-            "success": false, "error": e
-        })))),
-    }
-
-    // Check mintable flag
-    match node.is_token_mintable(&sym_upper) {
-        Ok(true) => {}
-        Ok(false) => return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({
-            "success": false, "error": format!("Token {} is not mintable", sym_upper)
-        })))),
-        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-            "success": false, "error": e
-        })))),
-    }
-
-    // Check max_supply cap
-    if let Ok(Some(meta)) = node.get_token_metadata(&sym_upper) {
-        if let Some(max) = meta.max_supply {
-            if meta.total_minted + amount > max {
-                return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                    "success": false,
-                    "error": format!("Would exceed max supply: {} + {} > {}", meta.total_minted, amount, max)
-                }))));
-            }
-        }
-    }
-
-    // Check XRGE balance for fee
-    let bal = node.get_balance(&body.public_key).unwrap_or(0.0);
-    if bal < fee {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "success": false,
-            "error": format!("Insufficient XRGE for mint fee: have {:.4}, need {:.4}", bal, fee)
-        }))));
+    // TOKEN_MINTING: before activation no token is mintable under consensus and every mint is
+    // dropped by block apply, so refuse here instead of charging nothing for nothing.
+    let next_height = node.get_tip_height().unwrap_or(0) + 1;
+    if !crate::node::token_minting_active(next_height) {
+        let when = match crate::node::token_minting_activation_height() {
+            Some(h) => format!("it activates at block {}", h),
+            None => "its activation is not scheduled".to_string(),
+        };
+        return Err(bad(StatusCode::BAD_REQUEST, format!("token minting is not active yet ({})", when)));
     }
 
     if let Err(e) = check_signed_nonce(&state.node, &body.public_key, &body.payload) {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e }))));
+        return Err(bad(StatusCode::BAD_REQUEST, e));
     }
 
     // V2 binding: the ONLY constructor for signed-payload txs (crate::v2_binding).
-    let tx = match crate::v2_binding::build_v2_tx("mint_tokens", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload) { Ok(t) => t, Err(e) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "error": e })))) };
+    let tx = match crate::v2_binding::build_v2_tx_at("mint_tokens", body.public_key.clone(), state.node.get_next_nonce(&body.public_key), &body.payload, body.signature.clone(), signed_payload, next_height) { Ok(t) => t, Err(e) => return Err(bad(StatusCode::BAD_REQUEST, e)) };
+
+    // The consensus rule block apply will enforce (creator, mintable, cap, amount, fee), with its
+    // own error messages. Supply that is already pending in the mempool is not counted here; a
+    // block that would overshoot the cap simply skips the later mint.
+    if let Err(e) = node.check_token_mint_now(&tx) {
+        let code = if e.starts_with("only the creator") { StatusCode::FORBIDDEN } else { StatusCode::BAD_REQUEST };
+        return Err(bad(code, e));
+    }
 
     let tx_clone = tx.clone();
     node.add_tx_to_mempool_verified(tx)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success": false, "error": e}))))?;
+        .map_err(|e| bad(StatusCode::BAD_REQUEST, e))?;
     let peers = state.peer_manager.get_peers().await;
     if !peers.is_empty() { peer::broadcast_tx(&peers, &tx_clone); }
-
-    // Update metadata total_minted
-    let _ = node.record_token_mint(&sym_upper, amount);
+    // `total_minted` is advanced by block apply when the mint is included (deterministically on
+    // every node), never here at submit time.
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -10973,6 +11002,44 @@ async fn social_following_feed_signed(
     let offset: usize = p.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let posts = state.node.social_get_following_feed(&authed_key, limit, offset).map_err(|e| signed_internal(&e))?;
     Ok(Json(serde_json::json!({ "success": true, "posts": posts })))
+}
+
+#[cfg(test)]
+mod token_mint_read_fields_tests {
+    use super::token_mint_json_fields;
+    use quantum_vault_storage::token_metadata_store::TokenMetadata;
+
+    fn meta(mintable: bool, max: Option<u64>, minted: u64, initial: Option<u64>, at: Option<u64>) -> TokenMetadata {
+        TokenMetadata {
+            symbol: "MNT".into(), name: "Mint".into(), creator: "ab".into(), token_id: String::new(),
+            image: None, description: None, website: None, twitter: None, discord: None,
+            created_at: 0, updated_at: 0, frozen: false,
+            mintable, max_supply: max, total_minted: minted, initial_supply: initial, mint_enabled_height: at,
+        }
+    }
+
+    #[test]
+    fn consensus_mintable_token_exposes_supply_fields() {
+        let f = token_mint_json_fields(&meta(true, Some(5_000), 250, Some(1_000), Some(42)));
+        assert_eq!(f["mintable"], serde_json::json!(true));
+        assert_eq!(f["max_supply"], serde_json::json!(5_000));
+        assert_eq!(f["total_minted"], serde_json::json!(250));
+        assert_eq!(f["initial_supply"], serde_json::json!(1_000));
+        assert_eq!(f["mint_enabled_height"], serde_json::json!(42));
+        let uncapped = token_mint_json_fields(&meta(true, None, 0, Some(10), Some(42)));
+        assert_eq!(uncapped["max_supply"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn legacy_mintable_flag_without_enable_height_reads_not_mintable() {
+        let f = token_mint_json_fields(&meta(true, Some(9), 0, None, None));
+        assert_eq!(f["mintable"], serde_json::json!(false));
+        assert!(!f.contains_key("initial_supply"));
+        assert!(!f.contains_key("mint_enabled_height"));
+        let fixed = token_mint_json_fields(&meta(false, None, 0, None, None));
+        assert_eq!(fixed["mintable"], serde_json::json!(false));
+        assert_eq!(fixed["total_minted"], serde_json::json!(0));
+    }
 }
 
 #[cfg(test)]

@@ -80,6 +80,8 @@ Base side.** It is hardened, capped and monitored, but it is not post-quantum on
 | Post-quantum authority rotation + deterministic authority schedule | Built and tested — not in use |
 | Reproducible V3 contract build / audit candidate | Complete |
 | OP-stack deployment rehearsal (local devnet, throwaway keys and token) | Substantially complete |
+| Token minting (`TOKEN_MINTING`: mintable custom tokens, creator-only, optional cap) | Built, activation not scheduled |
+| Contract NFT royalty (`CONTRACT_NFT_ROYALTY`: `host_nft_royalty_bps` / `host_nft_royalty_recipient` for marketplace contracts) | Built, activation not scheduled |
 | Consensus Release 2b (fallback proposer, skip certificates, slashing tied to them) | Designed — not built |
 | Consensus Release 3 (slashing on equivocation evidence) | Planned — not built |
 

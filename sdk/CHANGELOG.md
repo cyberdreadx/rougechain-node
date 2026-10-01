@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.12.0
+
+Client side of the node's TOKEN_MINTING upgrade (mintable custom tokens, creator-only capped minting). The upgrade is built into the node but **not scheduled on any network yet**; until it activates the node refuses the new fields and `mint_tokens` with "token minting is not active yet".
+
+### Fixed
+- `rc.mintTokens` now posts a properly **signed** `mint_tokens` transaction (`{ type: "mint_tokens", token_symbol, amount, fee, from, timestamp, nonce }`) to `POST /api/v2/token/mint`. Up to 1.11.0 it posted an unsigned `{ symbol, amount, signature: "" }` body, which the node always rejected.
+- `rc.createToken` now sends `CreateTokenParams.mintable` / `maxSupply`. They were declared but silently dropped. They are signed as `mintable: true` and `max_supply` only when `mintable` is true, so a fixed-supply token's payload is unchanged.
+
+### Added
+- `createSignedTokenMint(wallet, symbol, amount, fee = 1, accountNonce?)`. The symbol is trimmed and upper-cased. `amount` must be a positive integer of at most 2^53 - 1.
+- `createSignedTokenCreation(..., image?, options?)`: a new 7th argument `{ mintable?, maxSupply?, description? }`. It is also exported from the package index now.
+- `tokenMintFields(initialSupply, { mintable, maxSupply })` validates the mint options the way the node does and returns the exact fields to sign. A cap without `mintable`, a cap below the initial supply, non-integers and values above 2^53 - 1 all throw. `rc.createToken` / `rc.mintTokens` return `{ success: false, error }` for invalid input without posting anything.
+- `rc.isTokenMintingActive()` and the pure `tokenMintingActive(stats)` read `/api/stats` `upgrade_schedule.token_minting` (`null` = not scheduled) and the current `network_height`.
+- `CreateTokenParams.description`, `MintTokenParams.accountNonce`.
+- Constants `TOKEN_MINT_MAX_AMOUNT`, `TOKEN_MINT_FEE_XRGE` (1) and `TOKEN_CREATE_FEE_XRGE` (100).
+- Types: `UpgradeSchedule`, `NodeStats.upgrade_schedule`, the `"mint_tokens"` `TransactionType`, and `TokenMetadata` mint fields (`mintable`, `max_supply`, `total_minted`, `initial_supply`, `mint_enabled_height`, plus `decimals` and `frozen`).
+
 ## 1.11.0
 
 ### Fixed

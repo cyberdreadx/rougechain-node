@@ -323,6 +323,163 @@ pub fn payable_calls_active(height: u64) -> bool {
     matches!(crate::upgrades::current().payable_calls, Some(a) if height >= a)
 }
 
+/// TOKEN_MINTING — custom tokens can be created mintable (optional cap) and then minted by their
+/// creator. From this height:
+///   * a `create_token` may carry `token_mintable: Some(true)` and `token_max_supply` (derived by
+///     `v2_binding` from the signed `mintable` / `max_supply`), and block apply registers them;
+///   * a `mint_tokens` is applied only if the signer is the token's creator, the token was created
+///     mintable by a block at/after this height, and initial + minted + amount stays within
+///     `max_supply` when set; `total_minted` is advanced inside block apply (deterministic);
+///   * the header state root additionally commits the mint ledger of every mintable token
+///     (`state_root::extend_state_root_token_mint`).
+/// Before it, behaviour is exactly the pre-upgrade one: the fields are invalid on any tx (old nodes
+/// would drop them and compute a different tx hash), no token is mintable, every mint is skipped.
+/// `None` = not scheduled (the per-network height lives in `upgrades.rs`).
+pub const TOKEN_MINTING_ACTIVATION_HEIGHT: Option<u64> = Some(235);
+#[cfg(test)]
+thread_local! {
+    static TEST_TOKEN_MINTING_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+pub(crate) fn set_test_token_minting(h: Option<u64>) {
+    TEST_TOKEN_MINTING_OVERRIDE.with(|c| c.set(Some(h)));
+}
+#[inline]
+pub fn token_minting_activation_height() -> Option<u64> {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_TOKEN_MINTING_OVERRIDE.with(|c| c.get()) { return h; }
+    }
+    crate::upgrades::current().token_minting
+}
+#[inline]
+pub fn token_minting_active(height: u64) -> bool {
+    matches!(token_minting_activation_height(), Some(a) if height >= a)
+}
+
+/// CONTRACT_NFT_ROYALTY — two read-only host functions, `host_nft_royalty_bps` and
+/// `host_nft_royalty_recipient` (`quantum_vault_vm::game::register_nft_royalty_functions`), so a
+/// contract that sells NFTs (an escrow marketplace) can read a collection's royalty and pay it
+/// itself with `host_transfer` (`host_nft_transfer` pays none). The recipient is returned as
+/// `canon_addr(royalty_recipient)` — the ledger entry the wallet `nft_transfer` sale path credits.
+/// From this height every contract call (block apply and previews) links them; before it they are
+/// not linked, so a module importing them fails to instantiate exactly like a module importing any
+/// unknown function (deploy never inspects imports, before or after). Nothing else changes: no new
+/// tx fields, no state-root change. `None` = not scheduled (the per-network height lives in
+/// `upgrades.rs`; activate together with TOKEN_MINTING — see the runbook).
+pub const CONTRACT_NFT_ROYALTY_ACTIVATION_HEIGHT: Option<u64> = Some(235);
+#[cfg(test)]
+thread_local! {
+    static TEST_CONTRACT_NFT_ROYALTY_OVERRIDE: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+pub(crate) fn set_test_contract_nft_royalty(h: Option<u64>) {
+    TEST_CONTRACT_NFT_ROYALTY_OVERRIDE.with(|c| c.set(Some(h)));
+}
+#[inline]
+pub fn contract_nft_royalty_active(height: u64) -> bool {
+    #[cfg(test)]
+    {
+        if let Some(h) = TEST_CONTRACT_NFT_ROYALTY_OVERRIDE.with(|c| c.get()) {
+            return matches!(h, Some(a) if height >= a);
+        }
+    }
+    matches!(crate::upgrades::current().contract_nft_royalty, Some(a) if height >= a)
+}
+
+/// Largest integer a JSON client can send exactly (2^53 - 1). Mint amounts, mintable initial
+/// supplies and caps are bounded by it, so every amount survives JSON relay and the ledger's
+/// `as f64` credit path exactly.
+pub const TOKEN_MINT_MAX_AMOUNT: u64 = 9_007_199_254_740_991;
+
+/// The stateless TOKEN_MINTING transaction rule for a block at `height` (consensus at import;
+/// also applied by the mempool and the producer so neither holds a tx a block would reject).
+/// Stateful checks (creator, mintable, cap, fee) are made in block apply, which skips a failing
+/// mint like it always has.
+pub fn token_minting_tx_rule(tx: &TxV1, height: u64) -> Result<(), String> {
+    let p = &tx.payload;
+    let has_fields = p.token_mintable.is_some() || p.token_max_supply.is_some();
+    if !token_minting_active(height) {
+        if has_fields {
+            return Err("token minting is not active yet (token_mintable / token_max_supply)".to_string());
+        }
+        return Ok(());
+    }
+    match tx.tx_type.as_str() {
+        "create_token" => {
+            if p.token_mintable == Some(false) {
+                return Err("token_mintable must be omitted rather than false".to_string());
+            }
+            if p.token_mintable == Some(true) {
+                let initial = p.token_total_supply.unwrap_or(0);
+                if initial > TOKEN_MINT_MAX_AMOUNT {
+                    return Err(format!("a mintable token's initial supply must be at most {}", TOKEN_MINT_MAX_AMOUNT));
+                }
+                if let Some(max) = p.token_max_supply {
+                    if max > TOKEN_MINT_MAX_AMOUNT {
+                        return Err(format!("max_supply must be at most {}", TOKEN_MINT_MAX_AMOUNT));
+                    }
+                    if max < initial {
+                        return Err(format!("max_supply {} is below the initial supply {}", max, initial));
+                    }
+                }
+            } else if p.token_max_supply.is_some() {
+                return Err("max_supply requires mintable: true".to_string());
+            }
+        }
+        "mint_tokens" => {
+            if has_fields {
+                return Err("mint_tokens cannot carry token_mintable / token_max_supply".to_string());
+            }
+            if p.token_total_supply.unwrap_or(0) > TOKEN_MINT_MAX_AMOUNT {
+                return Err(format!("mint amount must be at most {}", TOKEN_MINT_MAX_AMOUNT));
+            }
+        }
+        other => {
+            if has_fields {
+                return Err(format!("{} cannot carry token_mintable / token_max_supply", other));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Largest NFT royalty a collection may be created with from CONTRACT_NFT_ROYALTY: 100%.
+pub const NFT_ROYALTY_MAX_BPS: u64 = 10_000;
+pub const NFT_ROYALTY_BPS_ERROR: &str = "royaltyBps must be an integer between 0 and 10000";
+
+/// CONTRACT_NFT_ROYALTY — the stateless royalty-cap rule for a block at `height` (consensus at
+/// import; also applied by the mempool, the producer and the API). From activation an
+/// `nft_create_collection` is invalid when its royalty exceeds 10000 bps, or — for the `/api/v2`
+/// signed-JSON format — when the signed `royaltyBps` is present (not null) but is not a JSON
+/// integer in 0..=10000 (negative, fractional, a string, or wider than u16 would otherwise be
+/// dropped or truncated by the historical `as u16` derivation). Before activation: no check
+/// (history replays byte-identically, truncation included).
+pub fn nft_royalty_cap_tx_rule(tx: &TxV1, height: u64) -> Result<(), String> {
+    if tx.tx_type != "nft_create_collection" || !contract_nft_royalty_active(height) {
+        return Ok(());
+    }
+    if tx.payload.nft_royalty_bps.map(|b| b as u64 > NFT_ROYALTY_MAX_BPS).unwrap_or(false) {
+        return Err(NFT_ROYALTY_BPS_ERROR.to_string());
+    }
+    if let Some(sp) = tx.signed_payload.as_deref() {
+        // Unparseable / CLI-envelope payloads are judged by the V2 binding (an envelope's payload
+        // is a typed `TxPayload`, so its bps is already the u16 checked above).
+        if let Ok(p) = serde_json::from_str::<serde_json::Value>(sp) {
+            if !crate::v2_binding::is_cli_envelope(&p) {
+                match p.get("royaltyBps") {
+                    None | Some(serde_json::Value::Null) => {}
+                    Some(v) => match v.as_u64() {
+                        Some(b) if b <= NFT_ROYALTY_MAX_BPS => {}
+                        _ => return Err(NFT_ROYALTY_BPS_ERROR.to_string()),
+                    },
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `snapshot_db` key of the finality replay base pinned at a validator retirement (testnet).
 const RETIREMENT_REPLAY_BASE_KEY: &[u8] = b"__validator_replay_base_at_retirement";
 
@@ -350,6 +507,7 @@ impl quantum_vault_vm::ChainView for NodeChainView {
     fn nft_collection(&self, collection_id: &str) -> Option<quantum_vault_vm::CollectionView> {
         self.nfts.get_collection(collection_id).ok().flatten().map(|c| quantum_vault_vm::CollectionView {
             creator: c.creator, max_supply: c.max_supply, minted: c.minted, frozen: c.frozen,
+            royalty_bps: c.royalty_bps, royalty_recipient: c.royalty_recipient,
         })
     }
     fn block_hash(&self, height: u64) -> Option<String> {
@@ -1326,6 +1484,10 @@ impl L1Node {
         for (i, tx) in block.txs.iter().enumerate() {
             game_ready_tx_rule(tx, block.header.height)
                 .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
+            token_minting_tx_rule(tx, block.header.height)
+                .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
+            nft_royalty_cap_tx_rule(tx, block.header.height)
+                .map_err(|e| format!("block {} rejected: tx #{}: {}", block.header.height, i, e))?;
         }
         // Proposer selection (consensus rule from PROPOSER_SELECTION_ACTIVATION_HEIGHT): judged
         // against the validator state after H-1 = the store as it is right now, before any
@@ -1992,6 +2154,23 @@ impl L1Node {
         mintable: bool,
         max_supply: Option<u64>,
     ) -> Result<String, String> {
+        self.register_token_metadata_full(symbol, name, creator, image, description, mintable, max_supply, None)
+    }
+
+    /// `mint`: TOKEN_MINTING `(initial_supply, created_at_height)` for a token a block created
+    /// mintable; `None` writes exactly the pre-upgrade record.
+    #[allow(clippy::too_many_arguments)]
+    fn register_token_metadata_full(
+        &self,
+        symbol: &str,
+        name: &str,
+        creator: &str,
+        image: Option<String>,
+        description: Option<String>,
+        mintable: bool,
+        max_supply: Option<u64>,
+        mint: Option<(u64, u64)>,
+    ) -> Result<String, String> {
         let now = Utc::now().timestamp_millis();
         let token_id = TokenMetadata::generate_token_id(creator, symbol, now);
         let metadata = TokenMetadata {
@@ -2010,6 +2189,8 @@ impl L1Node {
             mintable,
             max_supply,
             total_minted: 0,
+            initial_supply: mint.map(|m| m.0),
+            mint_enabled_height: mint.map(|m| m.1),
         };
         self.token_metadata_store.set_metadata(&metadata)?;
         Ok(token_id)
@@ -2047,6 +2228,8 @@ impl L1Node {
                 mintable: existing.mintable || mintable,
                 max_supply: existing.max_supply.or(max_supply),
                 total_minted: existing.total_minted,
+                initial_supply: existing.initial_supply,
+                mint_enabled_height: existing.mint_enabled_height,
             };
             self.token_metadata_store.set_metadata(&updated)?;
             Ok(updated.token_id)
@@ -2091,6 +2274,8 @@ impl L1Node {
             mintable: existing.mintable,
             max_supply: existing.max_supply,
             total_minted: existing.total_minted,
+            initial_supply: existing.initial_supply,
+            mint_enabled_height: existing.mint_enabled_height,
         };
         self.token_metadata_store.set_metadata(&updated)
     }
@@ -2245,9 +2430,14 @@ impl L1Node {
         // of the (gap-tolerant) nonce check above.
         // V2 binding (node-local, always on): the executable fields must be the canonical
         // derivation of the signed payload, or an outsider could re-point a signed intent.
-        crate::v2_binding::verify_v2_binding(&tx)?;
         let next_height = self.store.get_tip().map(|t| t.height + 1).unwrap_or(1);
+        crate::v2_binding::verify_v2_binding_at(&tx, next_height)?;
         game_ready_tx_rule(&tx, next_height)?;
+        token_minting_tx_rule(&tx, next_height)?;
+        nft_royalty_cap_tx_rule(&tx, next_height)?;
+        if tx.tx_type == "mint_tokens" && token_minting_active(next_height) {
+            self.check_token_mint_now(&tx)?;
+        }
         let identity = quantum_vault_types::tx_identity(&tx);
         if let Some(h) = self.tx_included_at(&identity) {
             return Err(format!("transaction {} already included in block {}", &identity[..16], h));
@@ -3430,6 +3620,11 @@ impl L1Node {
         let verified_entries: Vec<(String, TxV1)> = verified_entries.into_iter()
             .filter(|(_, tx)| !self.tx_already_included(&quantum_vault_types::tx_identity(tx)))
             .filter(|(_, tx)| game_ready_tx_rule(tx, producing_height).is_ok())
+            // TOKEN_MINTING: the binding and the payload rule are judged at the height being
+            // produced (a tx admitted just before activation must still bind after it).
+            .filter(|(_, tx)| token_minting_tx_rule(tx, producing_height).is_ok())
+            .filter(|(_, tx)| nft_royalty_cap_tx_rule(tx, producing_height).is_ok())
+            .filter(|(_, tx)| crate::v2_binding::verify_v2_binding_at(tx, producing_height).is_ok())
             .collect();
         if verified_entries.is_empty() {
             return Ok(None);
@@ -3618,7 +3813,7 @@ impl L1Node {
         for (i, tx) in block.txs.iter().enumerate() {
             // V2 binding is part of the same consensus rule: a signed-payload tx whose fields
             // are not the canonical derivation of its payload makes the block invalid.
-            if let Err(e) = crate::v2_binding::verify_v2_binding(tx) {
+            if let Err(e) = crate::v2_binding::verify_v2_binding_at(tx, block.header.height) {
                 return Err(format!("block {} rejected: tx #{} signed-payload binding failed: {}", block.header.height, i, e));
             }
             let h = quantum_vault_types::tx_identity(tx);
@@ -3974,6 +4169,7 @@ impl L1Node {
             seed: quantum_vault_vm::game::random_seed(&tip_hash, "preview"),
             block_hashes: game_ready_3_active(height),
             payable: payable_calls_active(height),
+            nft_royalty: contract_nft_royalty_active(height),
             attached: attach.map(|(_, _, s, a)| (s.to_string(), a)),
         })
     }
@@ -4257,15 +4453,36 @@ impl L1Node {
     /// with NFTs and contract code/storage.
     fn compute_state_root_for_height(&self, height: u64) -> Result<String, String> {
         let base = self.compute_current_state_root()?;
-        if !game_ready_2_active(height) {
-            return Ok(base);
-        }
-        let (cols, toks) = self.nft_store.commitment_entries()?;
-        let (code, state) = match self.contract_store {
-            Some(ref cs) => cs.commitment_entries()?,
-            None => (Vec::new(), Vec::new()),
+        let root = if !game_ready_2_active(height) {
+            base
+        } else {
+            let (cols, toks) = self.nft_store.commitment_entries()?;
+            let (code, state) = match self.contract_store {
+                Some(ref cs) => cs.commitment_entries()?,
+                None => (Vec::new(), Vec::new()),
+            };
+            crate::state_root::extend_state_root_v2(&base, &cols, &toks, &code, &state)
         };
-        Ok(crate::state_root::extend_state_root_v2(&base, &cols, &toks, &code, &state))
+        // TOKEN_MINTING: commit the mint ledger once at least one token was created mintable.
+        if token_minting_active(height) {
+            let entries = self.token_mint_entries()?;
+            if !entries.is_empty() {
+                return Ok(crate::state_root::extend_state_root_token_mint(&root, &entries));
+            }
+        }
+        Ok(root)
+    }
+
+    /// The consensus mint ledger: every token created mintable by a block (TOKEN_MINTING).
+    fn token_mint_entries(&self) -> Result<Vec<crate::state_root::TokenMintEntry>, String> {
+        Ok(self.token_metadata_store.get_all()?.into_iter()
+            .filter(|m| m.consensus_mintable())
+            .map(|m| crate::state_root::TokenMintEntry {
+                symbol: m.symbol, creator: m.creator, initial_supply: m.initial_supply.unwrap_or(0),
+                max_supply: m.max_supply, total_minted: m.total_minted,
+                enabled_height: m.mint_enabled_height.unwrap_or(0),
+            })
+            .collect())
     }
 
     /// Clone the three in-memory balance maps. Used by import (P2-5) to take a
@@ -4574,7 +4791,12 @@ impl L1Node {
 
         let node_pub_key = self.keys.lock().map(|k| k.public_key_hex.clone()).unwrap_or_default();
         // Apply transaction effects (transfers, stakes, etc.) - fees deducted from senders
+        let token_minting = token_minting_active(block.header.height);
         for (tx_index, tx) in block.txs.iter().enumerate() {
+            // TOKEN_MINTING: (initial supply) of a create_token that creates a mintable token, and
+            // (symbol, amount) of a mint that passed `check_token_mint`; both `None` before activation.
+            let mut mintable_create: Option<u64> = None;
+            let mut approved_mint: Option<(String, u64)> = None;
             // ── SECURITY: Consensus-layer guards (metadata store access) ──
             // These checks require &self and cannot live inside the static apply_balance_tx_inner.
             match tx.tx_type.as_str() {
@@ -4584,6 +4806,28 @@ impl L1Node {
                         let sym_upper = sym.trim().to_uppercase();
                         if let Ok(Some(_)) = self.token_metadata_store.get_metadata(&sym_upper) {
                             eprintln!("[node] Rejecting create_token in block: symbol '{}' already exists", sym_upper);
+                            continue; // skip this tx entirely
+                        }
+                    }
+                    // A mintable token is registered as such only if the creation itself succeeds
+                    // (the same checks and fee test `apply_balance_tx_inner` makes); a failed
+                    // create keeps the pre-upgrade record (not mintable).
+                    if token_minting && tx.payload.token_mintable == Some(true) {
+                        let bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
+                        if Self::create_token_static_check(tx).is_ok() && bal >= xrge_f64_to_quanta(tx.fee) {
+                            mintable_create = Some(tx.payload.token_total_supply.unwrap_or(0));
+                        }
+                    }
+                }
+                "mint_tokens" if token_minting => {
+                    // TOKEN_MINTING: the full rule (creator, mintable, cap, amount, fee) BEFORE the
+                    // ledger is touched, so the inner apply below cannot fail and `total_minted`
+                    // moves exactly with the credited balance.
+                    let bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
+                    match self.check_token_mint(tx, bal) {
+                        Ok(m) => approved_mint = Some(m),
+                        Err(e) => {
+                            eprintln!("[node] Rejecting mint_tokens in block: {}", e);
                             continue; // skip this tx entirely
                         }
                     }
@@ -4630,16 +4874,30 @@ impl L1Node {
                 if let Some(ref sym) = tx.payload.token_symbol {
                     let sym_upper = sym.trim().to_uppercase();
                     let name = tx.payload.token_name.as_deref().unwrap_or(&sym_upper);
-                    let _ = self.register_token_metadata_ext(
+                    // Before TOKEN_MINTING (and for any non-mintable create): (false, None, None),
+                    // byte-for-byte the pre-upgrade record.
+                    let (mintable, max_supply, mint) = match mintable_create {
+                        Some(initial) => (true, tx.payload.token_max_supply, Some((initial, block.header.height))),
+                        None => (false, None, None),
+                    };
+                    let registered = self.register_token_metadata_full(
                         &sym_upper,
                         name,
                         &tx.from_pub_key,
                         tx.payload.metadata_image.clone(),
                         tx.payload.metadata_description.clone(),
-                        false,
-                        None,
+                        mintable,
+                        max_supply,
+                        mint,
                     );
+                    // A mintable record is consensus state (state root, mint rule): a failed write
+                    // rejects the block (rolled back) instead of silently diverging.
+                    if mint.is_some() { registered?; }
                 }
+            }
+            // TOKEN_MINTING: the approved mint was credited by the inner apply; advance the ledger.
+            if let Some((ref sym, amount)) = approved_mint {
+                self.token_metadata_store.add_minted(sym, amount)?;
             }
             // Index sender and recipient addresses for rouge1 resolution
             self.index_address(&tx.from_pub_key);
@@ -5014,6 +5272,7 @@ impl L1Node {
                                 seed: quantum_vault_vm::game::random_seed(&block.header.prev_hash, &tx_hash_str),
                                 block_hashes: game_ready_3_active(block.header.height),
                                 payable: payable_calls_active(block.header.height),
+                                nft_royalty: contract_nft_royalty_active(block.header.height),
                                 attached: attach.clone(),
                             });
                             match rt.execute_contract_ext(
@@ -6557,6 +6816,37 @@ impl L1Node {
         *balances.entry("__treasury__".to_string()).or_insert(0) += treasury_share;
     }
     
+    /// The state-free validity checks of a `create_token` (symbol present, not reserved, 1-10
+    /// chars without whitespace; name 1-64 chars), in the order `apply_balance_tx_inner` has always
+    /// made them. Shared with block apply so the TOKEN_MINTING registration sees the same verdict.
+    fn create_token_static_check(tx: &TxV1) -> Result<(), String> {
+        const RESERVED: &[&str] = &["XRGE", "QETH", "QUSDC", "ETH", "USDC"];
+        let Some(ref sym) = tx.payload.token_symbol else { return Err("missing symbol".to_string()) };
+        let sym_trimmed = sym.trim();
+        let sym_upper = sym_trimmed.to_uppercase();
+        // Reserved symbol check
+        if RESERVED.contains(&sym_upper.as_str()) {
+            return Err(format!("reserved symbol '{}'", sym));
+        }
+        // Symbol length: 1-10 chars
+        let char_count = sym_trimmed.chars().count();
+        if char_count == 0 || char_count > 10 {
+            return Err(format!("symbol must be 1-10 chars (got {})", char_count));
+        }
+        // No whitespace in symbol
+        if sym_trimmed.contains(char::is_whitespace) {
+            return Err("symbol contains whitespace".to_string());
+        }
+        // Name length: 1-64 chars
+        if let Some(ref name) = tx.payload.token_name {
+            let name_len = name.trim().chars().count();
+            if name_len == 0 || name_len > 64 {
+                return Err(format!("name must be 1-64 chars (got {})", name_len));
+            }
+        }
+        Ok(())
+    }
+
     fn apply_balance_tx_inner(
         balances: &mut HashMap<String, u128>,
         token_balances: &mut HashMap<TokenBalanceKey, u128>,
@@ -6688,40 +6978,8 @@ impl L1Node {
                 *validator_out = Some(ValidatorExecution::UnstakeApplied { validator: tx.from_pub_key.clone(), amount: amount_u, release_height: release_at });
             }
             "create_token" => {
-                const RESERVED: &[&str] = &["XRGE", "QETH", "QUSDC", "ETH", "USDC"];
-                if let Some(ref sym) = tx.payload.token_symbol {
-                    let sym_trimmed = sym.trim();
-                    let sym_upper = sym_trimmed.to_uppercase();
-
-                    // Reserved symbol check
-                    if RESERVED.contains(&sym_upper.as_str()) {
-                        eprintln!("[node] Rejecting create_token: reserved symbol '{}'", sym);
-                        return;
-                    }
-
-                    // Symbol length: 1-10 chars
-                    let char_count = sym_trimmed.chars().count();
-                    if char_count == 0 || char_count > 10 {
-                        eprintln!("[node] Rejecting create_token: symbol must be 1-10 chars (got {})", char_count);
-                        return;
-                    }
-
-                    // No whitespace in symbol
-                    if sym_trimmed.contains(char::is_whitespace) {
-                        eprintln!("[node] Rejecting create_token: symbol contains whitespace");
-                        return;
-                    }
-
-                    // Name length: 1-64 chars
-                    if let Some(ref name) = tx.payload.token_name {
-                        let name_len = name.trim().chars().count();
-                        if name_len == 0 || name_len > 64 {
-                            eprintln!("[node] Rejecting create_token: name must be 1-64 chars (got {})", name_len);
-                            return;
-                        }
-                    }
-                } else {
-                    eprintln!("[node] Rejecting create_token: missing symbol");
+                if let Err(e) = Self::create_token_static_check(tx) {
+                    eprintln!("[node] Rejecting create_token: {}", e);
                     return;
                 }
                 let xrge_bal = *balances.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
@@ -7913,12 +8171,48 @@ impl L1Node {
 
     // ===== Token mint authority =====
 
-    pub fn is_token_mintable(&self, symbol: &str) -> Result<bool, String> {
-        self.token_metadata_store.is_mintable(symbol)
+    /// TOKEN_MINTING stateful mint check — the ONE rule block apply enforces (and the mempool and
+    /// `/api/v2/token/mint` pre-check): the signer is the token's creator, the token was created
+    /// mintable by a block, `amount` is a positive integer within `TOKEN_MINT_MAX_AMOUNT`,
+    /// initial + already minted + amount stays within `max_supply` when set (burns do not free
+    /// room: the cap bounds issuance), and the signer can pay the fee (`sender_xrge_quanta`).
+    /// Returns the canonical symbol and the amount.
+    /// [`check_token_mint`] against the live ledger (mempool admission, API pre-check). Callers
+    /// must not hold the balance lock.
+    pub fn check_token_mint_now(&self, tx: &TxV1) -> Result<(String, u64), String> {
+        let bal = *self.balances.lock().map_err(|_| "balance lock")?.get(&canon_addr(&tx.from_pub_key)).unwrap_or(&0);
+        self.check_token_mint(tx, bal)
     }
 
-    pub fn record_token_mint(&self, symbol: &str, amount: u64) -> Result<(), String> {
-        self.token_metadata_store.record_mint(symbol, amount)
+    pub fn check_token_mint(&self, tx: &TxV1, sender_xrge_quanta: u128) -> Result<(String, u64), String> {
+        let sym = tx.payload.token_symbol.as_deref().map(|s| s.trim().to_uppercase()).filter(|s| !s.is_empty())
+            .ok_or("token_symbol is required")?;
+        let amount = tx.payload.token_total_supply.unwrap_or(0);
+        if amount == 0 {
+            return Err("amount must be greater than zero".into());
+        }
+        if amount > TOKEN_MINT_MAX_AMOUNT {
+            return Err(format!("mint amount must be at most {}", TOKEN_MINT_MAX_AMOUNT));
+        }
+        let meta = self.token_metadata_store.get_metadata(&sym)?
+            .ok_or_else(|| format!("token {} does not exist", sym))?;
+        if meta.creator != tx.from_pub_key {
+            return Err(format!("only the creator of {} can mint", sym));
+        }
+        if !meta.consensus_mintable() {
+            return Err(format!("token {} is not mintable", sym));
+        }
+        let issued = meta.initial_supply.unwrap_or(0).checked_add(meta.total_minted).ok_or("supply overflow")?;
+        let after = issued.checked_add(amount).ok_or("supply overflow")?;
+        if let Some(max) = meta.max_supply {
+            if after > max {
+                return Err(format!("mint would exceed the max supply of {}: {} issued + {} > {}", sym, issued, amount, max));
+            }
+        }
+        if sender_xrge_quanta < xrge_f64_to_quanta(tx.fee) {
+            return Err("insufficient XRGE for the mint fee".into());
+        }
+        Ok((sym, amount))
     }
 
     // ===== Rouge1 address index =====
@@ -12153,6 +12447,397 @@ mod game_ready_tests {
         import(&e, vec![deploy]).expect("block is valid; the deploy just installs nothing");
         assert!(e.node.contract_store.as_ref().unwrap().get_contract(&addr).unwrap().is_none());
     }
+
+    // ── CONTRACT_NFT_ROYALTY ──────────────────────────────────────────────────────────────────
+
+    /// `probe {"c":"<collection id>"}` / `probe4` (4-byte buffer) store `bps`, `n` (recipient result)
+    /// and `rcp` (recipient bytes); `make` creates the contract's own `OWN` collection and probes it
+    /// in the same call.
+    const WAT_ROYALTY_PROBE: &str = r#"
+    (module
+      (import "env" "host_nft_royalty_bps"       (func $bps (param i32 i32) (result i32)))
+      (import "env" "host_nft_royalty_recipient" (func $rcp (param i32 i32 i32 i32) (result i32)))
+      (import "env" "host_nft_create_collection" (func $cc (param i32 i32 i32 i32 i64 i32 i32) (result i32)))
+      (import "env" "host_get_args_len"          (func $al (result i32)))
+      (import "env" "host_read_args"             (func $ra (param i32 i32) (result i32)))
+      (import "env" "host_storage_write"         (func $sw (param i32 i32 i32 i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0) "bps")
+      (data (i32.const 4) "n")
+      (data (i32.const 8) "rcp")
+      (data (i32.const 16) "OWN")
+      (func $rec (param $p i32) (param $l i32) (param $cap i32) (local $n i32)
+        (i32.store (i32.const 100) (call $bps (local.get $p) (local.get $l)))
+        (call $sw (i32.const 0) (i32.const 3) (i32.const 100) (i32.const 4))
+        (local.set $n (call $rcp (local.get $p) (local.get $l) (i32.const 10000) (local.get $cap)))
+        (i32.store (i32.const 104) (local.get $n))
+        (call $sw (i32.const 4) (i32.const 1) (i32.const 104) (i32.const 4))
+        (if (i32.gt_s (local.get $n) (i32.const 0))
+          (then (call $sw (i32.const 8) (i32.const 3) (i32.const 10000) (local.get $n)))))
+      ;; args are {"c":"<id>"}: the id starts at byte 6 and is len - 8 long
+      (func $arg_col (result i32)
+        (drop (call $ra (i32.const 1000) (i32.const 4096)))
+        (i32.sub (call $al) (i32.const 8)))
+      (func (export "probe")  (call $rec (i32.const 1006) (call $arg_col) (i32.const 8192)))
+      (func (export "probe4") (call $rec (i32.const 1006) (call $arg_col) (i32.const 4)))
+      (func (export "make") (local $c i32)
+        (local.set $c (call $cc (i32.const 16) (i32.const 3) (i32.const 16) (i32.const 3) (i64.const 0) (i32.const 6000) (i32.const 200)))
+        (call $rec (i32.const 6000) (local.get $c) (i32.const 8192))))
+    "#;
+
+    fn royalty_forks_on() {
+        set_test_game_ready_2(Some(1));
+        set_test_game_ready_3(Some(1));
+        set_test_payable_calls(Some(1));
+    }
+    fn royalty_forks_off() {
+        set_test_game_ready_2(None);
+        set_test_game_ready_3(None);
+        set_test_payable_calls(None);
+        set_test_contract_nft_royalty(None);
+    }
+
+    fn call_tx(kp: &PQKeypair, addr: &str, method: &str, args: Value, attach: Value, n: u64) -> TxV1 {
+        v2(kp, "contract_call", &json!({ "from": kp.public_key_hex, "contractAddr": addr, "method": method, "args": args,
+            "gasLimit": 1_000_000, "attach": attach, "timestamp": n, "nonce": format!("{:016x}", n) }), n)
+    }
+
+    /// Probe results from contract storage after a call.
+    fn probe_state(e: &Env, addr: &str) -> (i32, i32, Option<String>) {
+        let st = e.node.contract_store.as_ref().unwrap().load_all_state(addr).unwrap();
+        let i = |k: &str| i32::from_le_bytes(st[k.as_bytes()].clone().try_into().unwrap());
+        let (bps, n) = (i("bps"), i("n"));
+        (bps, n, if n > 0 { st.get(b"rcp".as_slice()).map(|v| String::from_utf8(v.clone()).unwrap()) } else { None })
+    }
+
+    #[test]
+    fn nft_royalty_host_fns_report_wallet_zero_contract_and_unknown_collections() {
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        royalty_forks_on();
+        set_test_contract_nft_royalty(Some(1));
+        let pk = e.player.public_key_hex.clone();
+        let studio = pqc_keygen();
+        let n = std::cell::Cell::new(0u64);
+        let next = || { n.set(n.get() + 1); n.get() };
+        let ts = |n: u64| 1_790_000_000_000u64 + n;
+
+        // Wallet collections: ART (2.5% to the studio's PUBLIC KEY), FREE (no royalty → creator),
+        // RB (5% to a rouge1 address).
+        let studio_addr = canon_addr(&studio.public_key_hex);
+        for (sym, bps, to) in [("ART", Some(250u64), Some(studio.public_key_hex.clone())), ("FREE", None, None), ("RB", Some(500), Some(studio_addr.clone()))] {
+            let k = next();
+            let mut p = json!({ "from": pk, "symbol": sym, "name": sym, "timestamp": ts(k) });
+            if let Some(b) = bps { p["royaltyBps"] = json!(b); }
+            if let Some(t) = to { p["royaltyRecipient"] = json!(t); }
+            mine(&e, v2(&e.player, "nft_create_collection", &p, k)).expect(sym);
+        }
+        let col = |sym: &str| crate::nft_store::NftCollection::make_collection_id(&pk, sym);
+        assert_eq!(e.node.nft_store.get_collection(&col("ART")).unwrap().unwrap().royalty_recipient, studio.public_key_hex,
+            "stored as given (a public key)");
+
+        let addr = deploy_wat(&e, WAT_ROYALTY_PROBE, next());
+        let probe = |method: &str, c: &str| {
+            let k = next();
+            let h = mine(&e, call_tx(&e.player, &addr, method, json!({ "c": c }), Value::Null, k)).expect(method);
+            assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success), "{method} {c}");
+            probe_state(&e, &addr)
+        };
+        // Recipient = the canonical ledger key the wallet nft_transfer royalty path credits.
+        assert_eq!(probe("probe", &col("ART")), (250, studio_addr.len() as i32, Some(studio_addr.clone())));
+        assert_eq!(canon_addr(&e.node.nft_store.get_collection(&col("ART")).unwrap().unwrap().royalty_recipient), studio_addr);
+        assert_eq!(probe("probe", &col("FREE")), (0, canon_addr(&pk).len() as i32, Some(canon_addr(&pk))), "zero royalty, recipient = creator");
+        assert_eq!(probe("probe", &col("RB")), (500, studio_addr.len() as i32, Some(studio_addr.clone())));
+        assert_eq!(probe("probe", "col:nope:NOPE"), (-1, -1, None), "unknown collection");
+        assert_eq!(probe("probe4", &col("ART")), (250, -2, None), "buffer too small");
+
+        // Contract-created: same call (overlay) …
+        let k = next();
+        mine(&e, call_tx(&e.player, &addr, "make", json!({}), Value::Null, k)).expect("make");
+        assert_eq!(probe_state(&e, &addr), (0, addr.len() as i32, Some(addr.clone())), "no royalty; recipient = the creating contract");
+        // … and later, from the stored collection.
+        let own = crate::nft_store::NftCollection::make_collection_id(&addr, "OWN");
+        let c = e.node.nft_store.get_collection(&own).unwrap().unwrap();
+        assert_eq!((c.royalty_bps, c.royalty_recipient.as_str()), (0, addr.as_str()));
+        assert_eq!(probe("probe", &own), (0, addr.len() as i32, Some(addr.clone())));
+        royalty_forks_off();
+    }
+
+    #[test]
+    fn nft_royalty_host_fns_fail_like_an_unknown_import_before_activation() {
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        royalty_forks_on();
+        set_test_contract_nft_royalty(None);
+        let pk = e.player.public_key_hex.clone();
+        // Deploy: accepted and installed, exactly like a module with an unknown import (deploy
+        // validation never looked at imports).
+        let probe = deploy_wat(&e, WAT_ROYALTY_PROBE, 1);
+        let unknown = deploy_wat(&e, &WAT_ROYALTY_PROBE.replace("host_nft_royalty_bps", "host_no_such_function"), 2);
+        let cs = e.node.contract_store.as_ref().unwrap();
+        assert!(cs.get_contract(&probe).unwrap().is_some() && cs.get_contract(&unknown).unwrap().is_some());
+        let col = crate::nft_store::NftCollection::make_collection_id(&pk, "X");
+        // Call: the producer can't execute either, so it doesn't include them …
+        for (n, addr) in [(3u64, &probe), (4, &unknown)] {
+            let err = mine(&e, call_tx(&e.player, addr, "probe", json!({ "c": col }), Value::Null, n)).unwrap_err();
+            assert!(err.contains("Instantiation: cannot find definition for import"), "{err}");
+            e.node.mempool.lock().unwrap().clear(); // the producer re-queues it; drop it
+        }
+        // … and a block that carries such a call is rejected the same way for both.
+        let tip = e.node.tip_height().unwrap();
+        let e1 = import(&e, vec![call_tx(&e.player, &probe, "probe", json!({ "c": col }), Value::Null, 3)]).unwrap_err();
+        let e2 = import(&e, vec![call_tx(&e.player, &unknown, "probe", json!({ "c": col }), Value::Null, 3)]).unwrap_err();
+        for err in [&e1, &e2] { assert!(err.contains("execution failed under active custody") && err.contains("Instantiation"), "{err}"); }
+        assert_eq!(e.node.tip_height().unwrap(), tip);
+        // Activation: the same deployed contract now runs.
+        set_test_contract_nft_royalty(Some(tip + 1));
+        let h = mine(&e, call_tx(&e.player, &probe, "probe", json!({ "c": col }), Value::Null, 3)).expect("runs after activation");
+        assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success));
+        assert_eq!(probe_state(&e, &probe), (-1, -1, None));
+        let err = mine(&e, call_tx(&e.player, &unknown, "probe", json!({ "c": col }), Value::Null, 4)).unwrap_err();
+        assert!(err.contains("host_no_such_function"), "a truly unknown import still fails: {err}");
+        e.node.mempool.lock().unwrap().clear();
+        royalty_forks_off();
+    }
+
+    /// The shipped example (contracts/nft_marketplace): list → escrow → wrong payment refunded →
+    /// buy pays royalty + seller exactly in quanta and moves the NFT; cancel returns an NFT. Every
+    /// block is relayed to a second node as JSON and the state roots must match. Activation of
+    /// CONTRACT_NFT_ROYALTY happens mid-test: before it the producer can't run the marketplace.
+    #[test]
+    fn nft_marketplace_example_pays_royalty_and_seller_exactly_across_json_relay() {
+        use base64::Engine as _;
+        let a = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        let b = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        royalty_forks_on();
+        set_test_contract_nft_royalty(Some(6)); // blocks 1–5 below; the marketplace runs from 6
+        let seller = &a.player;
+        let buyer = pqc_keygen();
+        let artist = pqc_keygen(); // royalty recipient: never transacts, so its balance is pure royalty
+        let spk = seller.public_key_hex.clone();
+        for n in [&a.node, &b.node] {
+            fund_xrge(n, &spk, 1_000.0);
+            fund_xrge(n, &b.player.public_key_hex, 1_000.0);
+            fund_xrge(n, &buyer.public_key_hex, 100.0);
+        }
+        let relay = |blk: BlockV1| b.node.import_block(serde_json::from_str(&serde_json::to_string(&blk).unwrap()).unwrap());
+        let mine_relay = |tx: TxV1| -> Result<String, String> {
+            let h = compute_single_tx_hash(&tx);
+            a.node.add_tx_to_mempool_verified(tx)?;
+            relay(a.node.mine_pending()?.ok_or("no block")?)?;
+            Ok(h)
+        };
+        let status = |h: &str| a.node.get_receipt(h).unwrap().unwrap().status;
+        let ok = |h: &str| assert!(matches!(status(h), TxStatus::Success), "{:?}", status(h));
+        let q = |n: &L1Node, k: &str| *n.balances.lock().unwrap().get(&canon_addr(k)).unwrap_or(&0);
+        let ts = |n: u64| 1_790_000_000_000u64 + n;
+
+        // Block 1: marketplace deploy. Blocks 2–3: the artist-royalty collection (3%) and a mint.
+        let wasm = include_bytes!("../../../contracts/nft_marketplace/nft_marketplace.wasm");
+        let d = v2(seller, "contract_deploy", &deploy_payload(&spk, &base64::engine::general_purpose::STANDARD.encode(wasm)), 1);
+        let market = d.payload.contract_addr.clone().unwrap();
+        mine_relay(d).expect("deploy");
+        mine_relay(v2(seller, "nft_create_collection", &json!({ "from": spk, "symbol": "ART", "name": "Art", "royaltyBps": 300,
+            "royaltyRecipient": artist.public_key_hex, "timestamp": ts(2) }), 2)).expect("collection");
+        let col = crate::nft_store::NftCollection::make_collection_id(&spk, "ART");
+        for (k, name) in [(3u64, "One"), (4, "Two")] {
+            mine_relay(v2(seller, "nft_mint", &json!({ "from": spk, "collectionId": col, "name": name, "timestamp": ts(k) }), k)).expect("mint");
+        }
+        let owner = |id: u64| a.node.nft_store.get_token(&col, id).unwrap().unwrap().owner;
+        assert_eq!(owner(1), spk);
+
+        // Block 5 (before activation): listing can't run on either node.
+        const PRICE: u64 = 1_234_567_891; // ≈1.23 XRGE; 3% = 37,037,036.73 → floor
+        let list = |nft: u64, n: u64| call_tx(seller, &market, "list", json!({ "collection": col, "token_id": nft, "price": PRICE }), Value::Null, n);
+        let err = mine_relay(list(1, 5)).unwrap_err();
+        assert!(err.contains("cannot find definition for import env::host_nft_royalty"), "{err}");
+        a.node.mempool.lock().unwrap().clear();
+        mine_relay(v2(seller, "transfer", &json!({ "from": spk, "to": b.player.public_key_hex, "amount": 1, "fee": 1.0,
+            "timestamp": ts(5), "nonce": "0000000000000005" }), 5)).expect("filler block 5");
+        assert_eq!(a.node.tip_height().unwrap(), 5);
+
+        // Block 6+: list #1 and #2 (seller owns them), then escrow both with plain wallet transfers.
+        let h = mine_relay(list(1, 6)).unwrap(); ok(&h);
+        let h = mine_relay(list(2, 7)).unwrap(); ok(&h);
+        let ev = |h: &str| -> (String, Value) {
+            let ev = a.node.contract_store.as_ref().unwrap().get_events_page(&market, 1, None, Some(h)).unwrap();
+            (ev[0].topic.clone(), serde_json::from_str(&ev[0].data).unwrap())
+        };
+        // The seller is the caller string as stored: the wallet's raw public key hex.
+        assert_eq!(ev(&h), ("listed".to_string(), json!({ "listing": 2, "seller": spk, "collection": col, "token_id": 2, "price": PRICE })));
+        // Read-only views through the free query path (what POST /api/contract/:addr/query runs:
+        // query_contract_ext with the preview game extension, no caller, no attachment). They
+        // return JSON, emit nothing and write nothing; both nodes answer the same.
+        let view = |n: &L1Node, method: &str, args: Value| -> Value {
+            let h = n.get_tip_height().unwrap() + 1;
+            let r = n.wasm_runtime.as_ref().unwrap().query_contract_ext(n.contract_store.as_ref().unwrap(), &market, method, &args, "",
+                n.native_balances_quanta(), h, 0, n.game_ext_for_preview(h)).unwrap();
+            assert!(r.success, "{method}: {:?}", r.error);
+            assert!(r.events.is_empty(), "{method} emits nothing");
+            assert!(r.storage_writes.as_ref().map_or(true, |w| w.is_empty()) && r.storage_deletes.as_ref().map_or(true, |d| d.is_empty()));
+            r.return_data.expect("return data")
+        };
+        let listing = |id: u64| -> Value {
+            let (va, vb) = (view(&a.node, "listing", json!({ "listing": id })), view(&b.node, "listing", json!({ "listing": id })));
+            assert_eq!(va, vb, "both nodes agree");
+            va
+        };
+        let found = |id: u64, nft: u64, active: bool, escrowed: bool| json!({ "listing": id, "exists": true, "seller": spk,
+            "collection": col, "token_id": nft, "price": PRICE, "active": active, "escrowed": escrowed });
+        assert_eq!(listing(1), found(1, 1, true, false), "listed, not escrowed yet");
+        assert_eq!(listing(2), found(2, 2, true, false));
+        assert_eq!(listing(99), json!({ "listing": 99, "exists": false }), "unknown listing: clean answer, no trap");
+        assert_eq!(view(&a.node, "listing_count", Value::Null), json!({ "next": 2 }));
+        // A non-owner can't list someone else's NFT.
+        let h = mine_relay(call_tx(&buyer, &market, "list", json!({ "collection": col, "token_id": 1, "price": 1 }), Value::Null, 1)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        for (k, nft) in [(8u64, 1u64), (9, 2)] {
+            mine_relay(v2(seller, "nft_transfer", &json!({ "from": spk, "collectionId": col, "tokenId": nft, "to": market, "timestamp": ts(k) }), k)).expect("escrow");
+            assert_eq!(owner(nft), market);
+        }
+        assert_eq!(listing(1), found(1, 1, true, true), "escrowed: the contract owns the NFT");
+        assert_eq!(listing(2), found(2, 2, true, true));
+
+        // Wrong payment: one quantum short → the call fails, the buyer only pays gas, nothing moves.
+        let gas_fee: u128 = 1_000_000 * 1_000; // gasLimit × 0.000001 XRGE, in quanta
+        let buy = |listing: u64, amount: u64, n: u64| call_tx(&buyer, &market, "buy", json!({ "listing": listing }),
+            json!({ "symbol": "XRGE", "amount": amount }), n);
+        let (b0, s0, r0, m0) = (q(&a.node, &buyer.public_key_hex), q(&a.node, &spk), q(&a.node, &artist.public_key_hex), q(&a.node, &market));
+        let h = mine_relay(buy(1, PRICE - 1, 2)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        let h = mine_relay(buy(1, PRICE + 1, 3)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        assert_eq!(b0 - q(&a.node, &buyer.public_key_hex), 2 * gas_fee, "only gas; both payments refunded");
+        assert_eq!((q(&a.node, &spk), q(&a.node, &artist.public_key_hex), q(&a.node, &market)), (s0, r0, m0));
+        assert_eq!(owner(1), market);
+
+        // Exact payment: royalty floor(PRICE × 300 / 10000) to the artist, the rest to the seller.
+        let royalty = (PRICE as u128 * 300 / 10_000) as u128;
+        assert_eq!(royalty, 37_037_036);
+        let b1 = q(&a.node, &buyer.public_key_hex);
+        let h = mine_relay(buy(1, PRICE, 4)).unwrap(); ok(&h);
+        assert_eq!(q(&a.node, &artist.public_key_hex) - r0, royalty, "royalty, exact quanta");
+        assert_eq!(q(&a.node, &spk) - s0, PRICE as u128 - royalty, "seller proceeds, exact quanta");
+        assert_eq!(b1 - q(&a.node, &buyer.public_key_hex), PRICE as u128 + gas_fee);
+        assert_eq!(q(&a.node, &market), m0, "the marketplace keeps nothing");
+        assert_eq!(owner(1), buyer.public_key_hex, "NFT delivered to the buyer");
+        assert_eq!(ev(&h), ("sold".to_string(), json!({ "listing": 1, "price": PRICE, "royalty": 37_037_036u64,
+            "seller_proceeds": PRICE - 37_037_036 })));
+        // The listing is gone: buying it again fails and refunds.
+        let h = mine_relay(buy(1, PRICE, 5)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        // Only the seller can cancel; cancel returns the escrowed NFT.
+        let h = mine_relay(call_tx(&buyer, &market, "cancel", json!({ "listing": 2 }), Value::Null, 6)).unwrap();
+        assert!(matches!(status(&h), TxStatus::Failed(_)));
+        let h = mine_relay(call_tx(seller, &market, "cancel", json!({ "listing": 2 }), Value::Null, 10)).unwrap(); ok(&h);
+        assert_eq!(ev(&h), ("cancelled".to_string(), json!({ "listing": 2, "returned": true })));
+        assert_eq!(owner(2), spk);
+        assert_eq!(listing(1), json!({ "listing": 1, "exists": false }), "sold");
+        assert_eq!(listing(2), json!({ "listing": 2, "exists": false }), "cancelled");
+
+        // Relisting replaces the older listing: #3 goes stale (active:false) once #4 lists the same
+        // NFT, and the escrow belongs to #4. Cancelling stale #3 must NOT hand the NFT back.
+        let h = mine_relay(list(2, 11)).unwrap(); ok(&h);
+        let h = mine_relay(list(2, 12)).unwrap(); ok(&h);
+        mine_relay(v2(seller, "nft_transfer", &json!({ "from": spk, "collectionId": col, "tokenId": 2, "to": market, "timestamp": ts(13) }), 13)).expect("escrow");
+        assert_eq!(listing(3), found(3, 2, false, false), "stale: not buyable, its escrow isn't its own");
+        assert_eq!(listing(4), found(4, 2, true, true));
+        assert_eq!(view(&b.node, "listing_count", json!({})), json!({ "next": 4 }));
+        let h = mine_relay(call_tx(seller, &market, "cancel", json!({ "listing": 3 }), Value::Null, 14)).unwrap(); ok(&h);
+        assert_eq!(ev(&h), ("cancelled".to_string(), json!({ "listing": 3, "returned": false })));
+        assert_eq!(owner(2), market, "the NFT stays escrowed for the current listing");
+        assert_eq!(listing(4), found(4, 2, true, true));
+        let h = mine_relay(call_tx(seller, &market, "cancel", json!({ "listing": 4 }), Value::Null, 15)).unwrap(); ok(&h);
+        assert_eq!(ev(&h), ("cancelled".to_string(), json!({ "listing": 4, "returned": true })));
+        assert_eq!(owner(2), spk);
+        assert_eq!(listing(4), json!({ "listing": 4, "exists": false }));
+
+        // The peer received every block as JSON and agrees on everything.
+        assert_eq!(a.node.get_state_root().unwrap(), b.node.get_state_root().unwrap());
+        assert_eq!(b.node.nft_store.get_token(&col, 1).unwrap().unwrap().owner, buyer.public_key_hex);
+        assert_eq!(q(&b.node, &artist.public_key_hex), r0 + royalty);
+        royalty_forks_off();
+    }
+
+    /// Mainnet history (fixture 0–137) replays to the same blocks and root with CONTRACT_NFT_ROYALTY
+    /// unscheduled and scheduled from block 1 (nothing before activation can depend on it).
+    #[test]
+    fn mainnet_history_replays_identically_with_contract_nft_royalty_scheduled_from_genesis() {
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-137.jsonl");
+        let run = |act: Option<u64>| {
+            set_test_contract_nft_royalty(act);
+            let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node_from(fixture);
+            assert!(fail.is_none(), "activation {act:?}: {fail:?}");
+            (ok, n.get_state_root().unwrap(), n.get_all_blocks().unwrap().iter().map(|b| b.hash.clone()).collect::<Vec<_>>())
+        };
+        let base = run(None);
+        assert_eq!(base.0, 137);
+        assert_eq!(run(Some(1)), base, "identical tip, root and block hashes");
+        set_test_contract_nft_royalty(None);
+    }
+
+    /// Royalty recipient = a royalty-splitter contract (40-hex address): the marketplace's
+    /// host_transfer credits the splitter's ledger entry, and the splitter can fan it out.
+    #[test]
+    fn nft_marketplace_royalty_to_a_splitter_contract_is_credited_and_split() {
+        use base64::Engine as _;
+        let e = setup(Some(1));
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        royalty_forks_on();
+        set_test_contract_nft_royalty(Some(1));
+        let seller = &e.player;
+        let spk = seller.public_key_hex.clone();
+        let buyer = pqc_keygen();
+        fund_xrge(&e.node, &buyer.public_key_hex, 100.0);
+        let ts = |n: u64| 1_790_000_000_000u64 + n;
+        // Same logic as contracts/royalty_splitter: split its whole balance 60/40 (floor; dust stays).
+        let splitter = deploy_wat(&e, r#"
+        (module
+          (import "env" "host_get_self_addr" (func $me (param i32 i32) (result i32)))
+          (import "env" "host_get_balance"   (func $bal (param i32 i32) (result i64)))
+          (import "env" "host_transfer"      (func $tr (param i32 i32 i64) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 100) "1111111111111111111111111111111111111111")
+          (data (i32.const 200) "2222222222222222222222222222222222222222")
+          (func (export "split") (local $b i64)
+            (local.set $b (call $bal (i32.const 0) (call $me (i32.const 0) (i32.const 64))))
+            (drop (call $tr (i32.const 100) (i32.const 40) (i64.div_u (i64.mul (local.get $b) (i64.const 6000)) (i64.const 10000))))
+            (drop (call $tr (i32.const 200) (i32.const 40) (i64.div_u (i64.mul (local.get $b) (i64.const 4000)) (i64.const 10000))))))
+        "#, 1);
+        let wasm = include_bytes!("../../../contracts/nft_marketplace/nft_marketplace.wasm");
+        let d = v2(seller, "contract_deploy", &json!({ "from": spk, "nonce": "fedcba9876543210",
+            "wasm": base64::engine::general_purpose::STANDARD.encode(wasm), "timestamp": 2 }), 2);
+        let market = d.payload.contract_addr.clone().unwrap();
+        mine(&e, d).expect("deploy market");
+        mine(&e, v2(seller, "nft_create_collection", &json!({ "from": spk, "symbol": "SPL", "name": "Split", "royaltyBps": 1000,
+            "royaltyRecipient": splitter, "timestamp": ts(3) }), 3)).unwrap();
+        let col = crate::nft_store::NftCollection::make_collection_id(&spk, "SPL");
+        mine(&e, v2(seller, "nft_mint", &json!({ "from": spk, "collectionId": col, "name": "S", "timestamp": ts(4) }), 4)).unwrap();
+        // The seller holds the NFT under their rouge1 ADDRESS (not the raw key): listing still works
+        // (the contract derives the caller's address with host_pqc_pubkey_to_address).
+        mine(&e, v2(seller, "nft_transfer", &json!({ "from": spk, "collectionId": col, "tokenId": 1, "to": canon_addr(&spk), "timestamp": ts(5) }), 5)).unwrap();
+        assert_eq!(e.node.nft_store.get_token(&col, 1).unwrap().unwrap().owner, canon_addr(&spk));
+        let ok = |h: String| assert!(matches!(e.node.get_receipt(&h).unwrap().unwrap().status, TxStatus::Success));
+        ok(mine(&e, call_tx(seller, &market, "list", json!({ "collection": col, "token_id": 1, "price": 5_000_000_001u64 }), Value::Null, 6)).unwrap());
+        mine(&e, v2(seller, "nft_transfer", &json!({ "from": spk, "collectionId": col, "tokenId": 1, "to": market, "timestamp": ts(7) }), 7)).unwrap();
+        assert_eq!(e.node.nft_store.get_token(&col, 1).unwrap().unwrap().owner, market);
+        // The listing's seller is the raw key that called `list` (what `cancel` compares and `buy` pays),
+        // even though the NFT was held under the rouge1 address.
+        let hq = e.node.get_tip_height().unwrap() + 1;
+        let r = e.node.wasm_runtime.as_ref().unwrap().query_contract_ext(e.node.contract_store.as_ref().unwrap(), &market, "listing",
+            &json!({ "listing": 1 }), "", e.node.native_balances_quanta(), hq, 0, e.node.game_ext_for_preview(hq)).unwrap();
+        assert_eq!(r.return_data, Some(json!({ "listing": 1, "exists": true, "seller": spk, "collection": col, "token_id": 1,
+            "price": 5_000_000_001u64, "active": true, "escrowed": true })));
+        ok(mine(&e, call_tx(&buyer, &market, "buy", json!({ "listing": 1 }), json!({ "symbol": "XRGE", "amount": 5_000_000_001u64 }), 1)).unwrap());
+        let q = |k: &str| *e.node.balances.lock().unwrap().get(k).unwrap_or(&0);
+        assert_eq!(q(&splitter), 500_000_000, "10% of 5.000000001 XRGE, floored, on the splitter's entry");
+        ok(mine(&e, call_tx(seller, &splitter, "split", json!({}), Value::Null, 8)).unwrap());
+        assert_eq!((q("1111111111111111111111111111111111111111"), q("2222222222222222222222222222222222222222"), q(&splitter)),
+            (300_000_000, 200_000_000, 0));
+        royalty_forks_off();
+    }
 }
 
 
@@ -12354,5 +13039,418 @@ mod release_2a_tests {
         let gated = { let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node(); assert!(fail.is_none(), "{fail:?}"); (ok, snap(&n)) };
         TEST_FINALITY_V2_ACTIVATION.with(|c| c.set(None));
         assert_eq!(base, gated, "identical tip, state root and every block hash");
+    }
+}
+
+/// TOKEN_MINTING — mintable custom tokens (see `TOKEN_MINTING_ACTIVATION_HEIGHT`).
+#[cfg(test)]
+mod token_minting_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{fund_xrge, node_with_store, sealed_block, signed, TmpDir};
+    use crate::v2_binding::{build_v2_tx_at, derive_v2_fields, derive_v2_fields_at, verify_v2_binding_at};
+    use quantum_vault_crypto::{pqc_keygen, pqc_sign};
+    use serde_json::{json, Value};
+
+    /// Producer A (its key seals the blocks), importer B; both start from the same funded state.
+    struct Net { _d: Vec<TmpDir>, a: L1Node, b: L1Node, creator: PQKeypair, other: PQKeypair, seq: std::cell::Cell<u64> }
+
+    fn net(activation: Option<u64>) -> Net {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));          // header state root committed + verified
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(Some(1))));  // signed-payload binding is consensus
+        set_test_token_minting(activation);
+        let (da, a, _) = node_with_store();
+        let (db, b, _) = node_with_store();
+        let (creator, other) = (pqc_keygen(), pqc_keygen());
+        for n in [&a, &b] {
+            fund_xrge(n, &creator.public_key_hex, 1_000.0);
+            fund_xrge(n, &other.public_key_hex, 1_000.0);
+        }
+        Net { _d: vec![da, db], a, b, creator, other, seq: std::cell::Cell::new(0) }
+    }
+
+    impl Net {
+        fn next(&self) -> u64 { self.seq.set(self.seq.get() + 1); self.seq.get() }
+        fn h(&self) -> u64 { self.a.tip_height().unwrap() + 1 }
+        /// A client-signed V2 tx built exactly like the API does, for the next block.
+        fn v2(&self, kp: &PQKeypair, ty: &str, mut p: Value) -> TxV1 {
+            let n = self.next();
+            p["from"] = json!(kp.public_key_hex); p["timestamp"] = json!(n); p["nonce"] = json!(format!("{:016x}", n));
+            let sp = serde_json::to_string(&p).unwrap();
+            let sig = pqc_sign(&kp.secret_key_hex, sp.as_bytes()).unwrap();
+            build_v2_tx_at(ty, kp.public_key_hex.clone(), n, &p, sig, sp, self.h()).unwrap()
+        }
+        fn create(&self, sym: &str, initial: u64, extra: Value) -> TxV1 {
+            let mut p = json!({ "type": "create_token", "token_name": sym, "token_symbol": sym, "initial_supply": initial });
+            for (k, v) in extra.as_object().unwrap() { p[k] = v.clone(); }
+            self.v2(&self.creator, "create_token", p)
+        }
+        fn mint(&self, kp: &PQKeypair, sym: &str, amount: u64) -> TxV1 {
+            self.v2(kp, "mint_tokens", json!({ "type": "mint_tokens", "token_symbol": sym, "amount": amount }))
+        }
+        /// Produce on A, relay the block to B as JSON (the P2P shape), import; roots must agree.
+        fn mine(&self, txs: Vec<TxV1>) -> BlockV1 {
+            for tx in txs { self.a.add_tx_to_mempool_verified(tx).expect("admitted"); }
+            self.seal()
+        }
+        /// Bypass admission (stale mempool / a peer without the checks): block apply must decide.
+        fn mine_unchecked(&self, txs: Vec<TxV1>) -> BlockV1 {
+            for tx in txs {
+                let id = compute_single_tx_hash(&tx);
+                self.a.verified_tx_ids.lock().unwrap().insert(id.clone());
+                self.a.mempool.lock().unwrap().insert(id, tx);
+            }
+            self.seal()
+        }
+        fn seal(&self) -> BlockV1 {
+            let blk = self.a.mine_pending().unwrap().expect("block produced");
+            let wire = serde_json::to_string(&blk).unwrap();
+            let relayed: BlockV1 = serde_json::from_str(&wire).unwrap();
+            self.b.import_block(relayed).expect("B imports A's block");
+            assert_eq!(self.a.get_state_root().unwrap(), self.b.get_state_root().unwrap(), "A and B agree at {}", blk.header.height);
+            assert_eq!(self.b.get_block(blk.header.height).unwrap().unwrap().hash, blk.hash);
+            blk
+        }
+        fn tok(&self, n: &L1Node, kp: &PQKeypair, sym: &str) -> u128 {
+            *n.token_balances.lock().unwrap().get(&(canon_addr(&kp.public_key_hex), sym.to_string())).unwrap_or(&0)
+        }
+        fn meta(&self, n: &L1Node, sym: &str) -> quantum_vault_storage::token_metadata_store::TokenMetadata {
+            n.get_token_metadata(sym).unwrap().expect("metadata")
+        }
+    }
+
+    #[test]
+    fn derivation_is_unchanged_before_activation_and_binds_the_fields_from_it() {
+        set_test_token_minting(Some(10));
+        let p = json!({ "token_name": "M", "token_symbol": "M", "initial_supply": 100, "mintable": true, "max_supply": 500 });
+        let legacy = derive_v2_fields("create_token", &p).unwrap();
+        assert_eq!(derive_v2_fields_at("create_token", &p, 9).unwrap(), legacy, "pre-activation derivation is the historical one");
+        assert_eq!((legacy.0.token_mintable, legacy.0.token_max_supply), (None, None), "mintable/max_supply ignored, as always");
+        let (at, fee) = derive_v2_fields_at("create_token", &p, 10).unwrap();
+        assert_eq!((at.token_mintable, at.token_max_supply, fee), (Some(true), Some(500), 100.0));
+        assert_eq!(TxPayload { token_mintable: None, token_max_supply: None, ..at.clone() }, legacy.0, "nothing else changes");
+        // absent / false / null → the same payload as before (a tx built either side of the boundary binds)
+        for q in [json!({ "token_symbol": "M", "initial_supply": 1 }), json!({ "token_symbol": "M", "initial_supply": 1, "mintable": false }),
+                  json!({ "token_symbol": "M", "initial_supply": 1, "mintable": null, "max_supply": null })] {
+            assert_eq!(derive_v2_fields_at("create_token", &q, 10).unwrap(), derive_v2_fields("create_token", &q).unwrap(), "{q}");
+        }
+        // validation (from activation only)
+        for (bad, why) in [
+            (json!({ "initial_supply": 100, "mintable": true, "max_supply": 99 }), "below"),
+            (json!({ "initial_supply": 1, "max_supply": 5 }), "requires mintable"),
+            (json!({ "initial_supply": 1, "mintable": false, "max_supply": 5 }), "requires mintable"),
+            (json!({ "initial_supply": 1, "mintable": true, "max_supply": 5.0 }), "integer"),
+            (json!({ "initial_supply": 1, "mintable": true, "max_supply": "5" }), "integer"),
+            (json!({ "initial_supply": 1, "mintable": true, "max_supply": -5 }), "integer"),
+            (json!({ "initial_supply": 1, "mintable": "yes" }), "boolean"),
+        ] {
+            let e = derive_v2_fields_at("create_token", &bad, 10).unwrap_err();
+            assert!(e.contains(why), "{bad}: {e}");
+            assert!(derive_v2_fields_at("create_token", &bad, 9).is_ok(), "{bad}: ignored before activation");
+        }
+        // max_supply == initial_supply is allowed (a token that can never mint more, but is valid)
+        assert!(derive_v2_fields_at("create_token", &json!({ "initial_supply": 7, "mintable": true, "max_supply": 7 }), 10).is_ok());
+        set_test_token_minting(None);
+    }
+
+    #[test]
+    fn stateless_rule_gates_the_fields_and_bounds_amounts() {
+        set_test_token_minting(Some(10));
+        let tx = |ty: &str, p: TxPayload| TxV1 { version: 1, tx_type: ty.into(), from_pub_key: "k".into(), nonce: 1, payload: p, fee: 1.0, sig: String::new(), signed_payload: None };
+        let mintable = TxPayload { token_symbol: Some("M".into()), token_total_supply: Some(10), token_mintable: Some(true), token_max_supply: Some(20), ..Default::default() };
+        assert!(token_minting_tx_rule(&tx("create_token", mintable.clone()), 9).unwrap_err().contains("not active"));
+        assert!(token_minting_tx_rule(&tx("create_token", mintable.clone()), 10).is_ok());
+        assert!(token_minting_tx_rule(&tx("create_token", TxPayload { token_max_supply: Some(9), ..mintable.clone() }), 10).unwrap_err().contains("below"));
+        assert!(token_minting_tx_rule(&tx("create_token", TxPayload { token_mintable: None, ..mintable.clone() }), 10).unwrap_err().contains("requires mintable"));
+        assert!(token_minting_tx_rule(&tx("create_token", TxPayload { token_mintable: Some(false), token_max_supply: None, ..mintable.clone() }), 10).is_err());
+        assert!(token_minting_tx_rule(&tx("create_token", TxPayload { token_max_supply: Some(TOKEN_MINT_MAX_AMOUNT + 1), ..mintable.clone() }), 10).is_err());
+        assert!(token_minting_tx_rule(&tx("mint_tokens", mintable.clone()), 10).unwrap_err().contains("cannot carry"));
+        assert!(token_minting_tx_rule(&tx("transfer", mintable), 10).unwrap_err().contains("cannot carry"));
+        let mint = |n: u64| TxPayload { token_symbol: Some("M".into()), token_total_supply: Some(n), ..Default::default() };
+        assert!(token_minting_tx_rule(&tx("mint_tokens", mint(TOKEN_MINT_MAX_AMOUNT)), 10).is_ok());
+        assert!(token_minting_tx_rule(&tx("mint_tokens", mint(TOKEN_MINT_MAX_AMOUNT + 1)), 10).is_err());
+        assert!(token_minting_tx_rule(&tx("mint_tokens", mint(u64::MAX)), 9).is_ok(), "pre-activation: untouched (the mint is skipped by apply)");
+        set_test_token_minting(None);
+    }
+
+    #[test]
+    fn before_activation_mintable_is_ignored_and_every_mint_is_dropped() {
+        let n = net(None);
+        n.mine(vec![n.create("OLD", 1_000, json!({ "mintable": true, "max_supply": 5_000 }))]);
+        let m = n.meta(&n.b, "OLD");
+        assert!(!m.mintable && m.max_supply.is_none() && m.mint_enabled_height.is_none() && m.initial_supply.is_none(), "registered exactly as before: {m:?}");
+        assert_eq!(n.tok(&n.b, &n.creator, "OLD"), 1_000);
+        let root_before = n.b.get_state_root().unwrap();
+        assert_eq!(root_before, n.b.compute_current_state_root().unwrap(), "no mint-ledger section before activation");
+        // the creator's mint is skipped by block apply, exactly as today
+        n.mine_unchecked(vec![n.mint(&n.creator, "OLD", 10)]);
+        assert_eq!(n.tok(&n.b, &n.creator, "OLD"), 1_000, "mint dropped");
+        assert_eq!(n.meta(&n.b, "OLD").total_minted, 0);
+        // the new payload fields are invalid on every path before activation
+        let mut forged = TxV1 { version: 1, tx_type: "create_token".into(), from_pub_key: n.creator.public_key_hex.clone(), nonce: 99,
+            payload: TxPayload { token_name: Some("F".into()), token_symbol: Some("F".into()), token_total_supply: Some(1), token_mintable: Some(true), ..Default::default() },
+            fee: 100.0, sig: String::new(), signed_payload: None };
+        forged = signed(forged, &n.creator.secret_key_hex);
+        assert!(n.a.add_tx_to_mempool_verified(forged.clone()).unwrap_err().contains("not active"));
+        let p = pqc_keygen();
+        let blk = sealed_block(&n.b, &p.public_key_hex, &p.secret_key_hex, vec![forged], None, 1);
+        assert!(n.b.import_block(blk).unwrap_err().contains("not active"));
+    }
+
+    #[test]
+    fn mintable_token_mints_creator_only_within_the_cap_and_two_nodes_agree() {
+        let n = net(Some(1));
+        n.mine(vec![n.create("GOLD", 1_000, json!({ "mintable": true, "max_supply": 1_500 }))]);
+        let m = n.meta(&n.b, "GOLD");
+        assert!(m.consensus_mintable());
+        assert_eq!((m.max_supply, m.initial_supply, m.total_minted, m.mint_enabled_height), (Some(1_500), Some(1_000), 0, Some(1)));
+        assert_ne!(n.b.get_state_root().unwrap(), n.b.compute_current_state_root().unwrap(), "mint ledger committed in the root");
+
+        n.mine(vec![n.mint(&n.creator, "GOLD", 300)]);
+        assert_eq!(n.tok(&n.b, &n.creator, "GOLD"), 1_300);
+        assert_eq!(n.meta(&n.b, "GOLD").total_minted, 300);
+
+        // not the creator: refused at admission, and skipped by block apply if it gets in anyway
+        assert!(n.a.add_tx_to_mempool_verified(n.mint(&n.other, "GOLD", 5)).unwrap_err().contains("only the creator"));
+        n.mine_unchecked(vec![n.mint(&n.other, "GOLD", 5)]);
+        assert_eq!((n.tok(&n.b, &n.other, "GOLD"), n.meta(&n.b, "GOLD").total_minted), (0, 300));
+
+        // exactly to the cap is fine
+        n.mine(vec![n.mint(&n.creator, "GOLD", 200)]);
+        assert_eq!((n.tok(&n.b, &n.creator, "GOLD"), n.meta(&n.b, "GOLD").total_minted), (1_500, 500));
+        // one more is refused (admission) and skipped (apply)
+        assert!(n.a.add_tx_to_mempool_verified(n.mint(&n.creator, "GOLD", 1)).unwrap_err().contains("exceed"));
+        n.mine_unchecked(vec![n.mint(&n.creator, "GOLD", 1)]);
+        assert_eq!((n.tok(&n.b, &n.creator, "GOLD"), n.meta(&n.b, "GOLD").total_minted), (1_500, 500));
+        // burning does not free room: the cap bounds issuance
+        *n.a.token_balances.lock().unwrap().get_mut(&(canon_addr(&n.creator.public_key_hex), "GOLD".to_string())).unwrap() -= 100;
+        *n.b.token_balances.lock().unwrap().get_mut(&(canon_addr(&n.creator.public_key_hex), "GOLD".to_string())).unwrap() -= 100;
+        assert!(n.a.check_token_mint_now(&n.mint(&n.creator, "GOLD", 1)).unwrap_err().contains("exceed"));
+
+        // two mints in one block that together overshoot: the first applies, the second is skipped
+        n.mine(vec![n.create("SILVER", 10, json!({ "mintable": true, "max_supply": 20 }))]);
+        n.mine(vec![n.mint(&n.creator, "SILVER", 6), n.mint(&n.creator, "SILVER", 6)]);
+        assert_eq!((n.tok(&n.b, &n.creator, "SILVER"), n.meta(&n.b, "SILVER").total_minted), (16, 6));
+
+        // uncapped mintable token
+        n.mine(vec![n.create("FREE", 1, json!({ "mintable": true }))]);
+        n.mine(vec![n.mint(&n.creator, "FREE", TOKEN_MINT_MAX_AMOUNT)]);
+        assert_eq!(n.tok(&n.b, &n.creator, "FREE"), 1 + TOKEN_MINT_MAX_AMOUNT as u128, "integer-exact through JSON relay and the ledger");
+        assert_eq!(n.meta(&n.b, "FREE").total_minted, TOKEN_MINT_MAX_AMOUNT);
+    }
+
+    #[test]
+    fn non_mintable_token_cannot_be_minted_after_activation() {
+        let n = net(Some(1));
+        n.mine(vec![n.create("FIX", 100, json!({}))]);
+        let m = n.meta(&n.b, "FIX");
+        assert!(!m.mintable && m.mint_enabled_height.is_none());
+        assert_eq!(n.b.get_state_root().unwrap(), n.b.compute_current_state_root().unwrap(), "root unchanged while no token is mintable");
+        assert!(n.a.add_tx_to_mempool_verified(n.mint(&n.creator, "FIX", 1)).unwrap_err().contains("not mintable"));
+        n.mine_unchecked(vec![n.mint(&n.creator, "FIX", 1)]);
+        assert_eq!(n.tok(&n.b, &n.creator, "FIX"), 100);
+        // a stale node-local `mintable: true` (pre-upgrade API-time registration) is never honoured
+        let mut stale = n.meta(&n.a, "FIX"); stale.mintable = true;
+        n.a.token_metadata_store.set_metadata(&stale).unwrap();
+        assert!(n.a.check_token_mint_now(&n.mint(&n.creator, "FIX", 1)).unwrap_err().contains("not mintable"));
+        assert_eq!(n.a.get_state_root().unwrap(), n.b.get_state_root().unwrap(), "and it is not committed either");
+    }
+
+    #[test]
+    fn failed_create_never_registers_a_mintable_token() {
+        let n = net(Some(1));
+        // the creator cannot pay the 100 XRGE fee: creation fails, the pre-upgrade record is written
+        for node in [&n.a, &n.b] { fund_xrge(node, &n.creator.public_key_hex, 50.0); }
+        n.mine_unchecked(vec![n.create("POOR", 10, json!({ "mintable": true, "max_supply": 100 }))]);
+        let m = n.meta(&n.b, "POOR");
+        assert!(!m.consensus_mintable() && !m.mintable, "{m:?}");
+        assert_eq!(n.tok(&n.b, &n.creator, "POOR"), 0);
+    }
+
+    #[test]
+    fn replay_is_deterministic_and_a_rejected_block_leaves_the_mint_ledger_untouched() {
+        let n = net(Some(1));
+        let mut blocks = vec![n.mine(vec![n.create("REP", 1_000, json!({ "mintable": true, "max_supply": 10_000 }))])];
+        for k in 1..=4u64 { blocks.push(n.mine(vec![n.mint(&n.creator, "REP", 100 * k)])); }
+        // a third node replays the relayed JSON blocks from scratch: identical root and ledger
+        let (_dc, c, _) = node_with_store();
+        fund_xrge(&c, &n.creator.public_key_hex, 1_000.0); fund_xrge(&c, &n.other.public_key_hex, 1_000.0);
+        for b in &blocks { c.import_block(serde_json::from_str(&serde_json::to_string(b).unwrap()).unwrap()).unwrap(); }
+        assert_eq!(c.get_state_root().unwrap(), n.a.get_state_root().unwrap());
+        assert_eq!(n.meta(&c, "REP").total_minted, 1_000);
+        // a block whose root is wrong is rejected and rolled back, mint ledger included
+        let mint = n.mint(&n.creator, "REP", 7);
+        let p = pqc_keygen();
+        let bad = sealed_block(&c, &p.public_key_hex, &p.secret_key_hex, vec![mint], Some("00".repeat(32)), 99);
+        assert!(c.import_block(bad).unwrap_err().contains("state root"));
+        assert_eq!((n.meta(&c, "REP").total_minted, n.tok(&c, &n.creator, "REP")), (1_000, 2_000));
+        assert_eq!(c.get_state_root().unwrap(), n.a.get_state_root().unwrap());
+    }
+
+    /// History is unaffected even by the earliest possible activation: mainnet 0..=137 (incl. the
+    /// QWALLA create_token at 60) replays to the same blocks, root and token record with
+    /// TOKEN_MINTING unscheduled and scheduled from block 1.
+    #[test]
+    fn mainnet_history_replays_identically_with_token_minting_scheduled_from_genesis() {
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mainnet-blocks-0-137.jsonl");
+        let run = |act: Option<u64>| {
+            set_test_token_minting(act);
+            let (ok, fail, n, _d) = super::strict_historical_replay_tests::replay_fixture_node_from(fixture);
+            assert!(fail.is_none(), "activation {act:?}: {fail:?}");
+            let q = n.get_token_metadata("QWALLA").unwrap().expect("QWALLA");
+            (ok, n.get_state_root().unwrap(), n.get_all_blocks().unwrap().iter().map(|b| b.hash.clone()).collect::<Vec<_>>(),
+             (q.mintable, q.max_supply, q.total_minted, q.initial_supply, q.mint_enabled_height))
+        };
+        let base = run(None);
+        assert_eq!(base.0, 137);
+        assert_eq!(base.3, (false, None, 0, None, None));
+        assert_eq!(run(Some(1)), base, "identical tip, root, block hashes and token record");
+        set_test_token_minting(None);
+    }
+
+    #[test]
+    fn a_tx_admitted_before_activation_is_not_produced_after_it_if_its_binding_changed() {
+        let n = net(Some(3));
+        n.mine(vec![n.create("PRE", 1, json!({}))]);
+        // signed with mintable:true, derived for height 2 (pre-activation) → fields ignored
+        let early = n.create("EDGE", 5, json!({ "mintable": true }));
+        assert_eq!(early.payload.token_mintable, None);
+        assert!(verify_v2_binding_at(&early, 2).is_ok());
+        assert!(verify_v2_binding_at(&early, 3).is_err(), "from activation the same signed JSON derives a mintable payload");
+        // the block at height 2 is still pre-activation: it is included, as a non-mintable token
+        n.mine(vec![early]);
+        assert!(!n.meta(&n.b, "EDGE").mintable);
+        // the next one is at 3: a stale pre-activation derivation is dropped by the producer
+        let mut late = n.create("LATE", 5, json!({ "mintable": true }));
+        late.payload.token_mintable = None; // as built by a pre-activation node
+        let id = compute_single_tx_hash(&late);
+        n.a.verified_tx_ids.lock().unwrap().insert(id.clone());
+        n.a.mempool.lock().unwrap().insert(id, late);
+        assert!(n.a.mine_pending().unwrap().is_none(), "nothing valid left to produce");
+        assert_eq!(n.a.tip_height().unwrap(), 2);
+        // the same intent derived at the activation height is produced, mintable
+        n.mine(vec![n.create("LATE", 5, json!({ "mintable": true }))]);
+        assert!(n.meta(&n.b, "LATE").consensus_mintable());
+        assert_eq!(n.meta(&n.b, "LATE").mint_enabled_height, Some(3));
+    }
+}
+
+#[cfg(test)]
+mod nft_royalty_cap_tests {
+    use super::*;
+    use super::bridge_r1_daemon_tests::{fund_xrge, node_with_store, sealed_block, TmpDir};
+    use crate::v2_binding::build_v2_tx;
+    use quantum_vault_crypto::{pqc_keygen, pqc_sign};
+    use serde_json::{json, Value};
+
+    /// Producer A, importer B (blocks relayed as JSON); CONTRACT_NFT_ROYALTY at `activation`.
+    struct Net { _d: Vec<TmpDir>, a: L1Node, b: L1Node, creator: PQKeypair, seq: std::cell::Cell<u64> }
+
+    fn net(activation: Option<u64>) -> Net {
+        TEST_FORK_HEIGHT_OVERRIDE.with(|c| c.set(Some(0)));
+        TEST_TX_UNIQUENESS_OVERRIDE.with(|c| c.set(Some(Some(1))));
+        set_test_contract_nft_royalty(activation);
+        let (da, a, _) = node_with_store();
+        let (db, b, _) = node_with_store();
+        let creator = pqc_keygen();
+        for n in [&a, &b] { fund_xrge(n, &creator.public_key_hex, 1_000.0); }
+        Net { _d: vec![da, db], a, b, creator, seq: std::cell::Cell::new(0) }
+    }
+
+    impl Net {
+        /// A client-signed `/api/v2/nft/collection/create` tx, built exactly like the handler does.
+        fn create(&self, sym: &str, royalty: Value) -> TxV1 {
+            self.seq.set(self.seq.get() + 1);
+            let mut p = json!({ "from": self.creator.public_key_hex, "symbol": sym, "name": sym, "timestamp": self.seq.get() });
+            if !royalty.is_null() || sym.starts_with("NUL") { p["royaltyBps"] = royalty; }
+            let sp = serde_json::to_string(&p).unwrap();
+            let sig = pqc_sign(&self.creator.secret_key_hex, sp.as_bytes()).unwrap();
+            build_v2_tx("nft_create_collection", self.creator.public_key_hex.clone(), self.seq.get(), &p, sig, sp).unwrap()
+        }
+        fn mine(&self, txs: Vec<TxV1>) -> BlockV1 {
+            for tx in txs { self.a.add_tx_to_mempool_verified(tx).expect("admitted"); }
+            let blk = self.a.mine_pending().unwrap().expect("block produced");
+            let relayed: BlockV1 = serde_json::from_str(&serde_json::to_string(&blk).unwrap()).unwrap();
+            self.b.import_block(relayed).expect("B imports A's block");
+            assert_eq!(self.a.get_state_root().unwrap(), self.b.get_state_root().unwrap(), "A and B agree at {}", blk.header.height);
+            blk
+        }
+        fn bps(&self, n: &L1Node, sym: &str) -> u16 {
+            n.get_nft_collection(&NftCollection::make_collection_id(&self.creator.public_key_hex, sym)).unwrap().expect("collection").royalty_bps
+        }
+        fn forged_import(&self, tx: TxV1) -> Result<(), String> {
+            let p = pqc_keygen();
+            self.b.import_block(sealed_block(&self.b, &p.public_key_hex, &p.secret_key_hex, vec![tx], None, 1))
+        }
+    }
+
+    #[test]
+    fn rule_bounds_and_inactive_before_activation() {
+        set_test_contract_nft_royalty(Some(10));
+        let tx = |bps: Option<u16>, ty: &str| TxV1 { version: 1, tx_type: ty.into(), from_pub_key: "k".into(), nonce: 1,
+            payload: TxPayload { nft_royalty_bps: bps, ..Default::default() }, fee: 50.0, sig: String::new(), signed_payload: None };
+        assert!(nft_royalty_cap_tx_rule(&tx(Some(20_000), "nft_create_collection"), 9).is_ok(), "inactive before activation");
+        assert_eq!(nft_royalty_cap_tx_rule(&tx(Some(20_000), "nft_create_collection"), 10).unwrap_err(), NFT_ROYALTY_BPS_ERROR);
+        assert!(nft_royalty_cap_tx_rule(&tx(Some(10_001), "nft_create_collection"), 10).is_err());
+        assert!(nft_royalty_cap_tx_rule(&tx(Some(10_000), "nft_create_collection"), 10).is_ok());
+        assert!(nft_royalty_cap_tx_rule(&tx(None, "nft_create_collection"), 10).is_ok());
+        assert!(nft_royalty_cap_tx_rule(&tx(Some(20_000), "transfer"), 10).is_ok(), "only collection creation is judged");
+        // CLI envelope: the typed payload's bps is what counts.
+        let env = |bps: u64| { let mut t = tx(Some(bps as u16), "nft_create_collection");
+            t.signed_payload = Some(json!({ "tx_type": "nft_create_collection", "payload": { "nft_royalty_bps": bps } }).to_string()); t };
+        assert!(nft_royalty_cap_tx_rule(&env(10_000), 10).is_ok());
+        assert!(nft_royalty_cap_tx_rule(&env(10_001), 10).is_err());
+        set_test_contract_nft_royalty(None);
+    }
+
+    #[test]
+    fn before_activation_out_of_range_royalties_behave_exactly_as_today() {
+        let n = net(None);
+        n.mine(vec![n.create("BIG", json!(20_000)), n.create("WRAP", json!(65_536 + 250)), n.create("NEG", json!(-5)), n.create("FRAC", json!(2.5))]);
+        for node in [&n.a, &n.b] {
+            assert_eq!(n.bps(node, "BIG"), 20_000, ">100% stored as signed");
+            assert_eq!(n.bps(node, "WRAP"), 250, "historical truncating u16 cast");
+            assert_eq!(n.bps(node, "NEG"), 0, "non-u64 ignored");
+            assert_eq!(n.bps(node, "FRAC"), 0);
+        }
+    }
+
+    #[test]
+    fn from_activation_cap_is_enforced_at_mempool_producer_and_import() {
+        let n = net(Some(1));
+        // 10000 (100%) and absent / null are valid; two nodes agree after JSON relay.
+        n.mine(vec![n.create("MAX", json!(10_000)), n.create("NONE", Value::Null), n.create("NUL", Value::Null), n.create("ZERO", json!(0))]);
+        assert_eq!(n.bps(&n.b, "MAX"), 10_000);
+        assert_eq!((n.bps(&n.b, "NONE"), n.bps(&n.b, "NUL"), n.bps(&n.b, "ZERO")), (0, 0, 0));
+        // Mempool refuses everything out of range or not an exact integer (the API runs the same rule).
+        for (sym, v) in [("A", json!(10_001)), ("B", json!(20_000)), ("C", json!(65_536 + 250)), ("D", json!(-1)),
+                         ("E", json!(1.5)), ("F", json!("500")), ("G", json!(1e4)), ("H", json!(u64::MAX))] {
+            let tx = n.create(sym, v.clone());
+            assert_eq!(n.a.add_tx_to_mempool_verified(tx.clone()).unwrap_err(), NFT_ROYALTY_BPS_ERROR, "{sym}={v}");
+            assert!(n.forged_import(tx).unwrap_err().contains(NFT_ROYALTY_BPS_ERROR), "{sym}={v}: forged block rejected");
+        }
+        // Producer: a stale mempool entry is never included.
+        let stale = n.create("STALE", json!(20_000));
+        let id = compute_single_tx_hash(&stale);
+        n.a.verified_tx_ids.lock().unwrap().insert(id.clone());
+        n.a.mempool.lock().unwrap().insert(id, stale);
+        assert!(n.a.mine_pending().unwrap().is_none(), "producer filters it out");
+        let tip = n.b.tip_height().unwrap();
+        assert!(n.b.get_nft_collection(&NftCollection::make_collection_id(&n.creator.public_key_hex, "B")).unwrap().is_none());
+        assert_eq!(n.b.tip_height().unwrap(), tip);
+        set_test_contract_nft_royalty(None);
+    }
+
+    #[test]
+    fn activation_boundary_judges_by_block_height() {
+        let n = net(Some(2));
+        let early = n.create("EARLY", json!(20_000));
+        n.mine(vec![early]); // block 1: before activation, accepted as today
+        assert_eq!(n.bps(&n.b, "EARLY"), 20_000);
+        let late = n.create("LATE", json!(20_000)); // judged at block 2
+        assert!(n.a.add_tx_to_mempool_verified(late.clone()).is_err());
+        assert!(n.forged_import(late).is_err());
+        n.mine(vec![n.create("OK", json!(10_000))]);
+        assert_eq!(n.bps(&n.b, "OK"), 10_000);
+        set_test_contract_nft_royalty(None);
     }
 }

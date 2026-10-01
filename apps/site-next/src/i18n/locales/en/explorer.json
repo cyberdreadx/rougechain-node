@@ -326,7 +326,11 @@
     "activityMeta_one": "{{n}} transaction involves {{symbol}}. Latest 50 shown.",
     "activityMeta_other": "{{n}} transactions involve {{symbol}}. Latest 50 shown.",
     "noActivity": "No activity",
-    "noActivityBody": "No transactions involve this token yet."
+    "noActivityBody": "No transactions involve this token yet.",
+    "initialSupply": "Initial supply",
+    "minted": "Minted since creation",
+    "maxSupply": "Max supply",
+    "uncapped": "No cap"
   },
   "nft": {
     "imageAlt": "{{name}} image",

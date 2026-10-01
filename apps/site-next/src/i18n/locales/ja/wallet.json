@@ -135,7 +135,8 @@
       "supply": "総供給量は 0 より大きい整数にしてください",
       "insufficient": "XRGE が不足しています。トークンの作成には {{fee}} XRGE かかります",
       "failed": "トークンの作成に失敗しました",
-      "createFailed": "トークンを作成できませんでした"
+      "createFailed": "トークンを作成できませんでした",
+      "maxSupply": "最大供給量は総供給量以上の整数にしてください"
     },
     "created": "トークン {{symbol}} を作成しました",
     "createdBody": "次のブロックの後にウォレットに表示されます。",
@@ -150,7 +151,11 @@
     "upload": "アップロード",
     "clear": "クリア",
     "feeHint": "手数料 {{fee}} XRGE · 残高 {{balance}} XRGE。供給量はすべてあなたのウォレットに入ります。",
-    "submit": "トークンを作成（{{fee}} XRGE）"
+    "submit": "トークンを作成（{{fee}} XRGE）",
+    "mintable": "追加発行可",
+    "mintableHint": "追加発行可能なトークンは、作成者であるあなたが後から最大供給量まで追加発行できます。",
+    "maxSupply": "最大供給量（任意）",
+    "maxSupplyPlaceholder": "上限なし"
   },
   "lock": {
     "locked": "ウォレットはロック中",
@@ -520,5 +525,23 @@
     "submit": "ウォレットを暗号化",
     "done": "ウォレットを暗号化しました",
     "doneBody": "鍵はこのブラウザに暗号化された形でのみ保存されるようになりました。"
+  },
+  "mintToken": {
+    "title": "{{symbol}} を追加発行",
+    "action": "追加発行",
+    "amount": "追加発行する数量",
+    "room": "あと最大 {{amount}} {{symbol}} を追加発行できます（最大供給量 {{max}}）。",
+    "capOnly": "最大供給量は {{max}} {{symbol}} です。残りの発行可能量はノードが確認します。",
+    "uncapped": "最大供給量はありません。任意の数量を追加発行できます。",
+    "capReached": "最大供給量に達しました。{{symbol}} はこれ以上追加発行できません。",
+    "feeHint": "手数料 {{fee}} XRGE。追加発行したトークンはあなたのウォレットに入ります。",
+    "submit": "追加発行（{{fee}} XRGE）",
+    "minted": "{{amount}} {{symbol}} の追加発行を送信しました",
+    "mintedBody": "次のブロックの後にウォレットに表示されます。",
+    "errors": {
+      "amount": "数量は 0 より大きい整数にしてください",
+      "exceedsCap": "最大供給量の範囲内で追加発行できるのはあと {{room}} です",
+      "failed": "追加発行に失敗しました"
+    }
   }
 }

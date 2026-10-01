@@ -39,6 +39,11 @@ pub struct CollectionView {
     pub max_supply: Option<u64>,
     pub minted: u64,
     pub frozen: bool,
+    /// Royalty in basis points as stored (set once by `nft_create_collection`; 0 for collections
+    /// a contract created). Read only by the CONTRACT_NFT_ROYALTY host functions.
+    pub royalty_bps: u16,
+    /// Royalty recipient as stored (a contract-created collection stores its creator).
+    pub royalty_recipient: String,
 }
 
 /// Per-call extension context supplied by the node.
@@ -52,6 +57,8 @@ pub struct GameExt {
     pub block_hashes: bool,
     /// Payable calls: link `host_get_attached_amount` / `host_get_attached_symbol`.
     pub payable: bool,
+    /// CONTRACT_NFT_ROYALTY: link `host_nft_royalty_bps` / `host_nft_royalty_recipient`.
+    pub nft_royalty: bool,
     /// What the caller attached to this call (symbol, amount in quanta or raw token units). The node
     /// has already credited it to the contract in the balances the call sees; it moves for real only
     /// if the call succeeds. `None` for sub-calls and calls without payment.
@@ -248,7 +255,11 @@ pub fn register_game_functions(linker: &mut Linker<HostEnv>) -> Result<(), Strin
                 let Some(g) = caller.data_mut().game.as_mut() else { return -99 };
                 if g.collection(&col).is_some() { return -1; }
                 let max = if max_supply == 0 { None } else { Some(max_supply as u64) };
-                g.collections.insert(col.clone(), CollectionView { creator: me.clone(), max_supply: max, minted: 0, frozen: false });
+                g.collections.insert(col.clone(), CollectionView {
+                    creator: me.clone(), max_supply: max, minted: 0, frozen: false,
+                    // What `apply_contract_effects` stores for a contract-created collection.
+                    royalty_bps: 0, royalty_recipient: me.clone(),
+                });
                 g.effects.push(ChainEffect::NftCreateCollection {
                     collection_id: col.clone(), symbol: sym, name: name.trim().to_string(), creator: me, max_supply: max,
                 });
@@ -327,6 +338,7 @@ impl OverlayView {
                 ChainEffect::NftCreateCollection { collection_id, creator, max_supply, .. } => {
                     o.collections.insert(collection_id.clone(), CollectionView {
                         creator: creator.clone(), max_supply: *max_supply, minted: 0, frozen: false,
+                        royalty_bps: 0, royalty_recipient: creator.clone(),
                     });
                 }
                 ChainEffect::NftMint { collection_id, token_id, to, .. } => {
@@ -421,6 +433,61 @@ pub fn register_payable_functions(linker: &mut Linker<HostEnv>) -> Result<(), St
             match sym {
                 Some(s) => write(&mut caller, op, oc, s.as_bytes()),
                 None => 0,
+            }
+        }
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Names of the CONTRACT_NFT_ROYALTY host functions (not linked before activation, so a module
+/// importing them fails to instantiate exactly like a module importing any unknown function).
+pub const NFT_ROYALTY_HOST_FUNCTIONS: &[&str] = &["host_nft_royalty_bps", "host_nft_royalty_recipient"];
+
+/// Basis points that mean 100%.
+pub const ROYALTY_BPS_MAX: u16 = 10_000;
+
+/// CONTRACT_NFT_ROYALTY: read a collection's royalty, so a contract that sells NFTs (an escrow
+/// marketplace) can pay it itself — `host_nft_transfer` never pays royalty.
+///
+/// * `host_nft_royalty_bps(col_ptr, col_len) -> i32` — the collection's royalty in basis points,
+///   `0..=10000`; `-1` if the collection doesn't exist or the input can't be read. A stored value
+///   above 10000 (never validated at creation) is reported as 10000, so `price × bps / 10000`
+///   can't exceed the price.
+/// * `host_nft_royalty_recipient(col_ptr, col_len, out_ptr, out_cap) -> i32` — writes the
+///   recipient and returns its length; `-1` not found / invalid input, `-2` `out_cap` too small.
+///   The recipient is returned in CANONICAL ledger form — `canon(stored recipient)`: a `rouge1…`
+///   address for a wallet public key, other strings (a 40-hex contract address, an address already
+///   in `rouge1…` form) unchanged. That is exactly the ledger entry the wallet `nft_transfer` sale
+///   path credits, and `host_transfer` to it credits the same entry.
+///
+/// A collection a contract created with `host_nft_create_collection` has no royalty: bps 0,
+/// recipient = the creating contract's address. Both read the same snapshot + overlay as the other
+/// NFT host functions, so a collection created earlier in the same call (or by a caller in a
+/// multi-hop call) is visible.
+pub fn register_nft_royalty_functions(linker: &mut Linker<HostEnv>) -> Result<(), String> {
+    linker.func_wrap("env", "host_nft_royalty_bps",
+        |caller: Caller<'_, HostEnv>, cp: u32, cl: u32| -> i32 {
+            let Some(col) = read(&caller, cp, cl) else { return -1 };
+            let Some(g) = caller.data().game.as_ref() else { return -1 };
+            match g.collection(&col) {
+                Some(c) => c.royalty_bps.min(ROYALTY_BPS_MAX) as i32,
+                None => -1,
+            }
+        }
+    ).map_err(|e| e.to_string())?;
+    linker.func_wrap("env", "host_nft_royalty_recipient",
+        |mut caller: Caller<'_, HostEnv>, cp: u32, cl: u32, op: u32, oc: u32| -> i32 {
+            let Some(col) = read(&caller, cp, cl) else { return -1 };
+            let recipient = {
+                let Some(g) = caller.data().game.as_ref() else { return -1 };
+                match g.collection(&col) {
+                    Some(c) => g.canon(&c.royalty_recipient),
+                    None => return -1,
+                }
+            };
+            match write(&mut caller, op, oc, recipient.as_bytes()) {
+                -4 => -1, // out_ptr outside memory: invalid input
+                n => n,
             }
         }
     ).map_err(|e| e.to_string())?;

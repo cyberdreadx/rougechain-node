@@ -128,17 +128,24 @@ await rc.updateTokenMetadata(wallet, {
 // Burn tokens
 await rc.burn(wallet, 500);
 
-// Create a mintable token with supply cap
-await rc.createToken(wallet, {
-  name: "Inflation Token",
-  symbol: "INFT",
-  totalSupply: 100_000,
-  mintable: true,
-  maxSupply: 1_000_000,
-});
+// Mintable tokens (node TOKEN_MINTING upgrade — the node refuses these until it is active)
+if (await rc.isTokenMintingActive()) {
+  // Create a mintable token with an optional supply cap (integer >= totalSupply)
+  await rc.createToken(wallet, {
+    name: "Inflation Token",
+    symbol: "INFT",
+    totalSupply: 100_000,
+    mintable: true,
+    maxSupply: 1_000_000, // omit for an uncapped mintable token
+  });
 
-// Mint additional tokens (creator only)
-await rc.mintTokens(wallet, { symbol: "INFT", amount: 50_000 });
+  // Mint more (creator only, signed mint_tokens, 1 XRGE fee; initial + minted must stay <= maxSupply)
+  const res = await rc.mintTokens(wallet, { symbol: "INFT", amount: 50_000 });
+  if (!res.success) console.error(res.error); // e.g. "mint would exceed the max supply of INFT: ..."
+
+  // Supply info: getTokenMetadata → mintable, max_supply, total_minted, initial_supply
+  const meta = await rc.getTokenMetadata("INFT");
+}
 ```
 
 ## Dynamic Fees (EIP-1559)

@@ -7,6 +7,7 @@ import { deriveReadState, type NetworkId } from "@rougechain/chain-readonly";
 import { ChainProvider } from "./chain";
 import { NetworkProvider } from "../Network";
 import { explorerRoutes, isExplorerPath } from "./routes";
+import { ExplorerSlotsProvider, type ExplorerTokenActionProps } from "./slots";
 import { resolveSearch } from "./search";
 import i18n from "../i18n";
 import stats from "../../../../packages/chain-readonly/fixtures/mainnet-stats.json";
@@ -466,5 +467,87 @@ describe("explorer in other languages", () => {
     expect(await within(latest).findByText("Transferencia")).toBeInTheDocument();
     expect(within(latest).getByText("Llamada a contrato")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Buscar" })).toBeInTheDocument();
+  });
+});
+
+describe("token minting (TOKEN_MINTING upgrade)", () => {
+  const mintableMeta = {
+    ...tokenMeta,
+    mintable: true,
+    max_supply: 5000,
+    total_minted: 250,
+    initial_supply: 1000,
+  };
+  const activeStats = {
+    ...stats,
+    upgrade_schedule: { ...stats.upgrade_schedule, token_minting: 150 },
+  };
+
+  function renderTokenWithSlot(network: NetworkId = "mainnet") {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const TokenActions = ({ token, network: net }: ExplorerTokenActionProps) => (
+      <p>{`actions:${token.symbol}:${net}:${token.totalMinted}`}</p>
+    );
+    return render(
+      <QueryClientProvider client={client}>
+        <ChainProvider network={network}>
+          <NetworkProvider>
+            <ExplorerSlotsProvider value={{ TokenActions }}>
+              <MemoryRouter initialEntries={["/token/QTEK"]}>
+                <Routes>{explorerRoutes}</Routes>
+              </MemoryRouter>
+            </ExplorerSlotsProvider>
+          </NetworkProvider>
+        </ChainProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("shows supply cap rows and the host's token actions once active", async () => {
+    mockNode({ "/stats": activeStats, "/token/QTEK/metadata": mintableMeta });
+    renderTokenWithSlot();
+    expect(await screen.findByText("actions:QTEK:mainnet:250")).toBeInTheDocument();
+    expect(screen.getByText("Initial supply")).toBeInTheDocument();
+    expect(screen.getByText("Minted since creation")).toBeInTheDocument();
+    expect(screen.getByText("Max supply")).toBeInTheDocument();
+    expect(screen.getByText("5,000")).toBeInTheDocument();
+  });
+
+  it("an uncapped mintable token reads No cap", async () => {
+    mockNode({
+      "/stats": activeStats,
+      "/token/QTEK/metadata": { ...mintableMeta, max_supply: null },
+    });
+    renderTokenWithSlot();
+    expect(await screen.findByText("No cap")).toBeInTheDocument();
+  });
+
+  it("hides them while the upgrade is not active", async () => {
+    mockNode({ "/token/QTEK/metadata": mintableMeta });
+    renderTokenWithSlot();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: /QTEK Token/ }),
+    ).toBeInTheDocument();
+    await screen.findByText(/7 transactions involve QTEK/);
+    expect(screen.queryByText(/^actions:/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Max supply")).not.toBeInTheDocument();
+    expect(screen.queryByText("Minted since creation")).not.toBeInTheDocument();
+  });
+
+  it("hides them for a fixed-supply token even when active", async () => {
+    mockNode({ "/stats": activeStats });
+    renderTokenWithSlot();
+    await screen.findByText(/7 transactions involve QTEK/);
+    expect(screen.queryByText(/^actions:/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Max supply")).not.toBeInTheDocument();
+  });
+
+  it("the standalone explorer (no slots) shows supply rows but no actions", async () => {
+    mockNode({ "/stats": activeStats, "/token/QTEK/metadata": mintableMeta });
+    renderAt("/token/QTEK");
+    expect(await screen.findByText("Max supply")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /mint/i })).not.toBeInTheDocument();
   });
 });

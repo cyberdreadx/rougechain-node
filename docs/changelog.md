@@ -4,6 +4,39 @@ All notable changes to RougeChain.
 
 ---
 
+## Node: contracts can read NFT royalties (CONTRACT_NFT_ROYALTY) — built, activation not scheduled — 2026-10-01
+
+- Consensus upgrade, **not active on any network** (`upgrade_schedule.contract_nft_royalty` is
+  `null`). From its height contracts get two read-only host functions:
+  `host_nft_royalty_bps(col, clen) → i32` (`0`–`10000`, `-1` not found) and
+  `host_nft_royalty_recipient(col, clen, out, cap) → i32` (length, `-1` not found, `-2` buffer too
+  small). The recipient is the canonical ledger key the wallet royalty path credits, so a contract
+  that sells NFTs can pay royalty with `host_transfer`. Planned to activate at the same height as
+  TOKEN_MINTING.
+- Before activation nothing changes: a contract importing them fails exactly like one importing an
+  unknown function. No new transaction fields, no state-root change; mainnet replay 0–137 identical.
+- Same activation: `nft_create_collection` with `royaltyBps` above `10000` (over 100%) or not an
+  exact integer (negative, fractional, a string, or wider than 16 bits — previously truncated) is
+  rejected at creation: the API returns `400 royaltyBps must be an integer between 0 and 10000`, the
+  mempool and producer refuse it, and a block carrying one is invalid. Before activation creation
+  behaves exactly as before (history replays unchanged).
+- New example: `contracts/nft_marketplace` — an escrow marketplace (list → escrow → buy with an
+  attached XRGE payment → royalty + seller paid in integer quanta → NFT to the buyer; cancel).
+
+## Node: mintable tokens (TOKEN_MINTING) — built, activation not scheduled — 2026-10-01
+
+- Consensus upgrade, **not active on any network** (`upgrade_schedule.token_minting` is `null`).
+  From its height a token can be created with `mintable: true` and an optional integer
+  `max_supply` (≥ `initial_supply`; cap on total issuance), and its creator can mint more through
+  `/api/v2/token/mint`. Block apply enforces creator-only, mintable-at-creation and the cap, and
+  advances `total_minted` deterministically; once a mintable token exists the state root commits the
+  mint ledger.
+- Before activation nothing changes on-chain. The API now **refuses** `mintable` / `max_supply` on
+  create (they used to be silently ignored, giving a fixed-supply token) and refuses mint requests,
+  instead of accepting a mint that every block then dropped.
+- History is unaffected: the new transaction fields are omitted when unset, so every existing
+  transaction and block encodes and hashes exactly as before (pinned by tests, mainnet replay 0–137).
+
 ## Web wallet: messaging key derived from the recovery phrase — 2026-10-01
 
 - New wallets created on rougechain.io, and wallets imported from a recovery phrase (or private

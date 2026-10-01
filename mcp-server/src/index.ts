@@ -703,25 +703,31 @@ if (signer) {
 
   server.tool(
     "create_token",
-    "Create a new custom token on RougeChain (the configured wallet becomes the creator).",
+    "Create a new custom token on RougeChain (the configured wallet becomes the creator; 100 XRGE fee). " +
+      "Set mintable (and optionally maxSupply) to let the creator mint more later — only once the node's " +
+      "TOKEN_MINTING upgrade is active (get_chain_stats → upgrade_schedule.token_minting); before that the node refuses it.",
     {
       name: z.string().describe("Human-readable token name"),
       symbol: z.string().describe("Ticker symbol, e.g. MYTOKEN"),
-      totalSupply: z.number().positive().describe("Initial total supply"),
+      totalSupply: z.number().int().positive().describe("Initial total supply (integer)"),
       image: z.string().optional().describe("Logo URL or data URI"),
-      fee: z.number().optional().describe("Creation fee (default 10)"),
+      fee: z.number().optional().describe("Creation fee (default 100; the node always charges 100)"),
+      mintable: z.boolean().optional().describe("Creator can mint more later (TOKEN_MINTING upgrade only)"),
+      maxSupply: z.number().int().positive().optional()
+        .describe("Optional cap on initial + minted supply; requires mintable, integer >= totalSupply"),
     },
-    async ({ name, symbol, totalSupply, image, fee }) =>
-      tx(() => rc.createToken(w, { name, symbol, totalSupply, image, fee })),
+    async ({ name, symbol, totalSupply, image, fee, mintable, maxSupply }) =>
+      tx(() => rc.createToken(w, { name, symbol, totalSupply, image, fee, mintable, maxSupply })),
   );
 
   server.tool(
     "mint_tokens",
-    "Mint additional supply of a mintable token (configured wallet must be the creator).",
+    "Mint additional supply of a mintable token (configured wallet must be the creator; signed mint_tokens, 1 XRGE fee; " +
+      "initial + minted must stay within the token's max supply). Requires the node's TOKEN_MINTING upgrade.",
     {
       symbol: z.string().describe("Token symbol to mint"),
-      amount: z.number().positive().describe("Amount to mint"),
-      fee: z.number().optional().describe("Network fee (default 1)"),
+      amount: z.number().int().positive().describe("Amount to mint (positive integer)"),
+      fee: z.number().optional().describe("Network fee (default 1; the node charges 1)"),
     },
     async ({ symbol, amount, fee }) =>
       tx(() => rc.mintTokens(w, { symbol, amount, fee })),

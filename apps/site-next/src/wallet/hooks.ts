@@ -8,7 +8,7 @@ import { getRougeChainProvider } from "@rougechain/core/extension-bridge";
 import { pubkeyToAddress, formatAddress } from "@rougechain/core/address";
 import { getCoreApiBaseUrl, getCoreApiHeaders, type NetworkType } from "@rougechain/core/network";
 import { fetchXRGEPrice } from "@rougechain/core/price-service";
-import { getAllTokenMetadata, type TokenMetadata } from "@rougechain/core/secure-api";
+import { fetchTokenMintingActive, getAllTokenMetadata, type TokenMetadata } from "@rougechain/core/secure-api";
 import { setTokenDecimalsCache, type MajorPrices } from "@rougechain/core/token-decimals";
 import { getWalletBalance, getWalletTransactions, type WalletBalance, type WalletTransaction } from "@rougechain/core/pqc-wallet";
 import i18n from "../i18n";
@@ -180,6 +180,22 @@ export function useTokenMetadata(network: string): Record<string, TokenMetadata>
     retry: false,
   });
   return q.data ?? {};
+}
+
+/**
+ * Whether the node's TOKEN_MINTING upgrade is active on the wallet's network (`/stats`
+ * `upgrade_schedule.token_minting`). False until known, so minting UI stays hidden by default.
+ */
+export function useTokenMintingActive(network: string, enabled = true): boolean {
+  const q = useQuery({
+    queryKey: ["wallet", "token-minting-active", network],
+    queryFn: fetchTokenMintingActive,
+    enabled,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: false,
+  });
+  return q.data === true;
 }
 
 // ---------- balances + history ----------

@@ -3,7 +3,7 @@
 //!
 //! Every upgrade check in the node (`tx_uniqueness_rule_active`, `proposer_selection_active`,
 //! `finality_v2_active`, `game_ready_active`, `game_ready_2_active`, `game_ready_3_active`,
-//! `payable_calls_active`) reads its height from the schedule selected here at startup by chain id.
+//! `payable_calls_active`, `token_minting_active`, `contract_nft_royalty_active`) reads its height from the schedule selected here at startup by chain id.
 //!
 //! * **Mainnet** (`rougechain-mainnet-1`) keeps the heights it activated at. They are history now:
 //!   changing any of them would make a node reject mainnet's own blocks. `mainnet_schedule_is_pinned`
@@ -30,6 +30,14 @@ pub struct UpgradeSchedule {
     pub game_ready_2: Option<u64>,
     pub game_ready_3: Option<u64>,
     pub payable_calls: Option<u64>,
+    /// TOKEN_MINTING (mintable custom tokens, creator-only capped minting). Not scheduled on any
+    /// network yet — see `node::TOKEN_MINTING_ACTIVATION_HEIGHT` and the activation runbook in
+    /// `docs/running-a-node/upgrade-schedule.md`.
+    pub token_minting: Option<u64>,
+    /// CONTRACT_NFT_ROYALTY (read-only `host_nft_royalty_bps` / `host_nft_royalty_recipient`). Not
+    /// scheduled on any network yet — see `node::CONTRACT_NFT_ROYALTY_ACTIVATION_HEIGHT`; planned to
+    /// activate at the same height as TOKEN_MINTING (runbook in `docs/running-a-node/upgrade-schedule.md`).
+    pub contract_nft_royalty: Option<u64>,
     /// One-time testnet cleanup: at `height`, these validators' stake is returned to their balances
     /// and their stake set to zero (keys nobody holds, whose stake would block finality). Applied
     /// identically by the node and by the finality validator replay. Never set on mainnet.
@@ -57,6 +65,8 @@ pub const MAINNET: UpgradeSchedule = UpgradeSchedule {
     game_ready_2: crate::node::GAME_READY_2_ACTIVATION_HEIGHT,
     game_ready_3: crate::node::GAME_READY_3_ACTIVATION_HEIGHT,
     payable_calls: crate::node::PAYABLE_CALLS_ACTIVATION_HEIGHT,
+    token_minting: crate::node::TOKEN_MINTING_ACTIVATION_HEIGHT,
+    contract_nft_royalty: crate::node::CONTRACT_NFT_ROYALTY_ACTIVATION_HEIGHT,
     validator_retirement: None,
 };
 
@@ -72,6 +82,8 @@ pub const TESTNET: UpgradeSchedule = UpgradeSchedule {
     game_ready_2: Some(1200),
     game_ready_3: Some(1200),
     payable_calls: Some(1200),
+    token_minting: Some(1360),
+    contract_nft_royalty: Some(1360),
     validator_retirement: Some(ValidatorRetirement { height: 1240, validators: &[TESTNET_RETIRED_VALIDATOR] }),
 };
 
@@ -122,6 +134,8 @@ mod tests {
             game_ready_2: Some(160),
             game_ready_3: Some(170),
             payable_calls: Some(190),
+            token_minting: Some(235),
+            contract_nft_royalty: Some(235),
             validator_retirement: None,
         });
         assert_eq!(schedule_for(MAINNET_CHAIN_ID), &MAINNET);
@@ -138,6 +152,8 @@ mod tests {
         for h in [TESTNET.tx_uniqueness, TESTNET.game_ready, TESTNET.game_ready_2, TESTNET.game_ready_3, TESTNET.payable_calls] {
             assert_eq!(h, Some(1200));
         }
+        assert_eq!(TESTNET.token_minting, Some(1360), "TOKEN_MINTING activates on testnet at 1360");
+        assert_eq!(TESTNET.contract_nft_royalty, Some(1360), "CONTRACT_NFT_ROYALTY activates on testnet at 1360");
     }
 
     #[test]

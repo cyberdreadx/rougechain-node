@@ -135,7 +135,8 @@
       "supply": "总供应量必须是大于零的整数",
       "insufficient": "XRGE 不足。创建代币需要 {{fee}} XRGE",
       "failed": "代币创建失败",
-      "createFailed": "无法创建代币"
+      "createFailed": "无法创建代币",
+      "maxSupply": "最大供应量必须是不小于总供应量的整数"
     },
     "created": "代币 {{symbol}} 已创建",
     "createdBody": "它会在下一个区块之后出现在你的钱包中。",
@@ -150,7 +151,11 @@
     "upload": "上传",
     "clear": "清除",
     "feeHint": "手续费 {{fee}} XRGE · 你有 {{balance}} XRGE。全部供应量将发送到你的钱包。",
-    "submit": "创建代币（{{fee}} XRGE）"
+    "submit": "创建代币（{{fee}} XRGE）",
+    "mintable": "可增发",
+    "mintableHint": "可增发代币允许你（创建者）之后继续增发，最多到最大供应量。",
+    "maxSupply": "最大供应量（可选）",
+    "maxSupplyPlaceholder": "不设上限"
   },
   "lock": {
     "locked": "钱包已锁定",
@@ -520,5 +525,23 @@
     "submit": "加密钱包",
     "done": "钱包已加密",
     "doneBody": "你的密钥现在仅以加密形式存储在此浏览器中。"
+  },
+  "mintToken": {
+    "title": "增发 {{symbol}}",
+    "action": "增发",
+    "amount": "增发数量",
+    "room": "你最多还能增发 {{amount}} {{symbol}}（最大供应量 {{max}}）。",
+    "capOnly": "最大供应量为 {{max}} {{symbol}}。剩余额度由节点检查。",
+    "uncapped": "没有最大供应量：可以增发任意数量。",
+    "capReached": "已达到最大供应量，无法再增发 {{symbol}}。",
+    "feeHint": "手续费 {{fee}} XRGE。增发的代币将发送到你的钱包。",
+    "submit": "增发（{{fee}} XRGE）",
+    "minted": "已提交增发 {{amount}} {{symbol}}",
+    "mintedBody": "它会在下一个区块之后出现在你的钱包中。",
+    "errors": {
+      "amount": "数量必须是大于零的整数",
+      "exceedsCap": "在最大供应量内最多只能再增发 {{room}}",
+      "failed": "增发失败"
+    }
   }
 }

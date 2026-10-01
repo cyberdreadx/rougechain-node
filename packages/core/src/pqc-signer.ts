@@ -6,6 +6,7 @@
  */
 
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
+import { type TokenMintOptions, TOKEN_MINT_FEE_XRGE, assertMintAmount, tokenMintFields } from "./token-minting";
 
 /**
  * The official burn address - tokens sent here are permanently destroyed
@@ -32,7 +33,7 @@ function bytesToHex(bytes: Uint8Array): string {
  * Transaction payload structure for signing
  */
 export interface TransactionPayload {
-  type: "transfer" | "create_token" | "update_token_metadata" | "claim_token_metadata" | "swap" | "create_pool" | "add_liquidity" | "remove_liquidity" | "stake" | "unstake" | "faucet"
+  type: "transfer" | "create_token" | "mint_tokens" | "update_token_metadata" | "claim_token_metadata" | "swap" | "create_pool" | "add_liquidity" | "remove_liquidity" | "stake" | "unstake" | "faucet"
   | "nft_create_collection" | "nft_mint" | "nft_batch_mint" | "nft_transfer" | "nft_burn" | "nft_lock" | "nft_freeze_collection"
   | "bridge_withdraw"
   | "approve" | "transfer_from"
@@ -51,6 +52,10 @@ export interface TransactionPayload {
   token_name?: string;
   token_symbol?: string;
   initial_supply?: number;
+  /** create_token (TOKEN_MINTING): `true` = creator can mint more; omitted for fixed supply. */
+  mintable?: boolean;
+  /** create_token (TOKEN_MINTING): optional cap, only with `mintable: true`. */
+  max_supply?: number;
   // Swap
   token_in?: string;
   token_out?: string;
@@ -216,7 +221,8 @@ export function createSignedTransfer(
 }
 
 /**
- * Create a signed token creation transaction
+ * Create a signed token creation transaction. `mint` (TOKEN_MINTING, node upgrade) adds
+ * `mintable: true` / `max_supply` only when `mint.mintable` is true; validated by `tokenMintFields`.
  */
 export function createSignedTokenCreation(
   creatorPublicKey: string,
@@ -226,7 +232,8 @@ export function createSignedTokenCreation(
   initialSupply: number,
   fee: number = 100, // the node charges a fixed 100 XRGE for create_token
   image?: string,
-  description?: string
+  description?: string,
+  mint?: TokenMintOptions
 ): SignedTransaction {
   const payload: TransactionPayload = {
     type: "create_token",
@@ -239,9 +246,42 @@ export function createSignedTokenCreation(
     nonce: generateNonce(),
     ...(image ? { image } : {}),
     ...(description ? { description } : {}),
+    ...tokenMintFields(initialSupply, mint),
   };
 
   return signTransaction(payload, creatorPrivateKey, creatorPublicKey);
+}
+
+/** Build the unsigned `mint_tokens` payload (TOKEN_MINTING): creator-only, 1 XRGE fee. */
+export function buildTokenMintPayload(
+  creatorPublicKey: string,
+  tokenSymbol: string,
+  amount: number,
+  fee: number = TOKEN_MINT_FEE_XRGE
+): TransactionPayload {
+  const symbol = String(tokenSymbol ?? "").trim().toUpperCase();
+  if (!symbol) throw new Error("token symbol is required");
+  assertMintAmount(amount);
+  return {
+    type: "mint_tokens",
+    from: creatorPublicKey,
+    token_symbol: symbol,
+    amount,
+    fee,
+    timestamp: Date.now(),
+    nonce: generateNonce(),
+  };
+}
+
+/** Create a signed `mint_tokens` transaction (POST /api/v2/token/mint). */
+export function createSignedTokenMint(
+  creatorPublicKey: string,
+  creatorPrivateKey: string,
+  tokenSymbol: string,
+  amount: number,
+  fee: number = TOKEN_MINT_FEE_XRGE
+): SignedTransaction {
+  return signTransaction(buildTokenMintPayload(creatorPublicKey, tokenSymbol, amount, fee), creatorPrivateKey, creatorPublicKey);
 }
 
 /**
